@@ -9,7 +9,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +138,72 @@ class Database:
             "SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    def query_events(
+        self,
+        *,
+        event_types: list[str] | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        keyword: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query events with optional filters."""
+        sql = "SELECT * FROM events"
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if event_types:
+            placeholders = ", ".join("?" for _ in event_types)
+            clauses.append(f"event_type IN ({placeholders})")
+            params.extend(event_types)
+
+        if start_time is not None:
+            clauses.append("created_at >= ?")
+            params.append(start_time.isoformat(sep=" "))
+
+        if end_time is not None:
+            clauses.append("created_at <= ?")
+            params.append(end_time.isoformat(sep=" "))
+
+        if keyword:
+            like = f"%{keyword}%"
+            clauses.append("(url LIKE ? OR title LIKE ? OR metadata LIKE ?)")
+            params.extend([like, like, like])
+
+        if clauses:
+            sql = f"{sql} WHERE {' AND '.join(clauses)}"
+
+        sql = f"{sql} ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        cursor = self.conn.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def count_events_by_type(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict[str, int]:
+        """Count events grouped by event type."""
+        sql = "SELECT event_type, COUNT(*) AS count FROM events"
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if start_time is not None:
+            clauses.append("created_at >= ?")
+            params.append(start_time.isoformat(sep=" "))
+
+        if end_time is not None:
+            clauses.append("created_at <= ?")
+            params.append(end_time.isoformat(sep=" "))
+
+        if clauses:
+            sql = f"{sql} WHERE {' AND '.join(clauses)}"
+
+        sql = f"{sql} GROUP BY event_type ORDER BY event_type ASC"
+        cursor = self.conn.execute(sql, params)
+        return {str(row["event_type"]): int(row["count"]) for row in cursor.fetchall()}
 
     def cache_content(self, bvid: str, **kwargs: Any) -> None:
         """Cache discovered content.

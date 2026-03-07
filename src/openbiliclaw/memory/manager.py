@@ -10,10 +10,14 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.storage.database import Database
+
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+_EVENT_TYPES = {"view", "search", "favorite", "like", "comment", "click", "feedback"}
 
 
 class MemoryLayer:
@@ -70,6 +74,7 @@ class MemoryManager:
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
         self._layers: dict[str, MemoryLayer] = {}
+        self._database = Database(data_dir / "openbiliclaw.db")
         self._working_memory: dict[str, Any] = {}  # Session-only
 
         # Initialize the five layers
@@ -81,6 +86,7 @@ class MemoryManager:
     def initialize(self) -> None:
         """Load all layers from disk."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._database.initialize()
         for layer in self._layers.values():
             layer.load()
         logger.info("Memory manager initialized with %d layers.", len(self._layers))
@@ -156,11 +162,51 @@ class MemoryManager:
         Args:
             event: Behavioral event data.
         """
-        # TODO: Store in event layer
+        event_type = str(event.get("event_type") or event.get("type") or "").strip()
+        if event_type not in _EVENT_TYPES:
+            raise ValueError(f"Unsupported event type: {event_type or 'unknown'}")
+
+        self._database.insert_event(
+            event_type,
+            url=event.get("url", ""),
+            title=event.get("title", ""),
+            context=event.get("context", {}),
+            metadata=event.get("metadata", {}),
+        )
         # TODO: Check if preference layer needs updating
         # TODO: Check if this triggers awareness observations
         # TODO: Check for significant events that bypass to soul layer
-        logger.debug("Event propagated: %s", event.get("type", "unknown"))
+        logger.debug("Event propagated: %s", event_type)
+
+    def query_events(
+        self,
+        *,
+        event_types: list[str] | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        keyword: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query persisted events from the SQLite-backed event layer."""
+        return self._database.query_events(
+            event_types=event_types,
+            start_time=start_time,
+            end_time=end_time,
+            keyword=keyword,
+            limit=limit,
+        )
+
+    def get_event_stats(
+        self,
+        *,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict[str, int]:
+        """Return grouped event counts for the given time range."""
+        return self._database.count_events_by_type(
+            start_time=start_time,
+            end_time=end_time,
+        )
 
     async def top_down_reinterpret(self) -> None:
         """Use top-level understanding to reinterpret lower layers.
