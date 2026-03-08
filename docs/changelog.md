@@ -6,6 +6,14 @@
 
 ## M5: 内容发现引擎（进行中）
 
+### 5.4 跨领域探索策略 — `discovery/m54-explore-strategy`
+
+- `ExploreStrategy` 从空壳升级为可运行策略：先生成“高相关但有陌生感”的探索领域，再调用 B 站搜索
+- 新增结构化 exploration prompt，要求输出 `domain` / `why_it_might_resonate` / `novelty_level` / `queries`
+- 本地过滤与现有高权重兴趣过近的领域，避免“换皮搜索”
+- 搜索候选统一复用 `ContentDiscoveryEngine.evaluate_content()`，并叠加基于 `novelty_level` 与 `exploration_openness` 的 exploration bonus
+- 新增 explore 测试，覆盖领域过滤、bonus、生效阈值、部分失败容错和 engine 注册运行
+
 ### 5.3 相关推荐链策略 — `discovery/m53-related-chain`
 
 - `RelatedChainStrategy` 从空壳升级为可运行策略：优先从事件层中的 `view` / `favorite` / `like` 视频挑选种子

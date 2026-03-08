@@ -345,3 +345,47 @@ def build_content_evaluation_prompt(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+
+
+def build_explore_domains_prompt(
+    *,
+    profile_summary: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a structured prompt for cross-domain exploration ideas."""
+    system_prompt = """
+<task>
+你要为这个用户设计 3 到 5 个“高相关但有陌生感”的跨领域探索方向。
+</task>
+
+<rules>
+1. 输出必须是严格 JSON，不要附带解释。
+2. domain 不能直接重复用户现有高权重兴趣词。
+3. why_it_might_resonate 必须解释这种陌生内容为什么仍然可能打动这个人。
+4. novelty_level 范围必须在 0.4 到 0.8 之间。
+5. 每个 domain 生成 1 到 2 个适合 B 站搜索的 query，不能写抽象句子。
+</rules>
+
+<output_schema>
+{
+  "domains": [
+    {
+      "domain": "城市空间与建筑叙事",
+      "why_it_might_resonate": "你偏好结构清晰、能从具体对象看见更大系统的内容。",
+      "novelty_level": 0.62,
+      "queries": ["城市 建筑 纪录片", "空间 设计 深度讲解"]
+    }
+  ]
+}
+</output_schema>
+""".strip()
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2),
+            "</profile_summary>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]

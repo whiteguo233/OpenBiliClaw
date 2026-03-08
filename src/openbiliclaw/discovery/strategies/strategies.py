@@ -17,7 +17,7 @@ from openbiliclaw.discovery.engine import (
 if TYPE_CHECKING:
     from openbiliclaw.soul.profile import SoulProfile
 
-from openbiliclaw.llm.prompts import build_search_queries_prompt
+from openbiliclaw.llm.prompts import build_explore_domains_prompt, build_search_queries_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -612,8 +612,15 @@ class RelatedChainStrategy(DiscoveryStrategy):
         return max(0.0, 0.02 - max(0, depth - 1) * 0.01)
 
 
+@dataclass
 class ExploreStrategy(DiscoveryStrategy):
     """Cross-domain surprise discovery — find the unexpected."""
+
+    llm_service: SupportsStructuredTask
+    bilibili_client: SupportsSearchClient
+    score_threshold: float = 0.65
+    queries_per_domain: int = 2
+    max_domains: int = 5
 
     @property
     def name(self) -> str:
@@ -634,7 +641,136 @@ class ExploreStrategy(DiscoveryStrategy):
         Returns:
             Discovered content list.
         """
-        # TODO: Use LLM to hypothesize new domain interests from soul
-        # TODO: Search those domains
-        # TODO: Score with extra weight for novelty
-        return []
+        domains = await self._generate_domains(profile)
+        if not domains:
+            return []
+
+        evaluator = ContentDiscoveryEngine(llm_service=self.llm_service)
+        results: list[DiscoveredContent] = []
+        seen_bvids: set[str] = set()
+
+        for domain in domains:
+            novelty_level = self._clamp_novelty(domain.get("novelty_level", 0.5))
+            for query in self._clean_queries(domain.get("queries", [])):
+                try:
+                    search_results = await self.bilibili_client.search(
+                        query,
+                        page=1,
+                        page_size=10,
+                    )
+                except Exception:
+                    logger.exception("Explore query failed: %s", query)
+                    continue
+
+                for item_index, item in enumerate(search_results):
+                    content = SearchStrategy(
+                        llm_service=self.llm_service,
+                        bilibili_client=self.bilibili_client,
+                    )._map_search_result(
+                        item,
+                        query_index=0,
+                        item_index=item_index,
+                    )
+                    if content is None or content.bvid in seen_bvids:
+                        continue
+                    seen_bvids.add(content.bvid)
+                    content.source_strategy = self.name
+                    score = await evaluator.evaluate_content(content, profile)
+                    bonus = self._exploration_bonus(
+                        novelty_level=novelty_level,
+                        openness=profile.preferences.exploration_openness,
+                    )
+                    content.relevance_score = min(1.0, round(score * 0.75 + bonus * 0.25, 4))
+                    if content.relevance_score < self.score_threshold:
+                        continue
+                    results.append(content)
+                    if len(results) >= limit:
+                        return self._sort_results(results)
+
+        return self._sort_results(results)
+
+    async def _generate_domains(self, profile: SoulProfile) -> list[dict[str, object]]:
+        messages = build_explore_domains_prompt(
+            profile_summary=SearchStrategy._profile_summary(profile)
+            | {"exploration_openness": profile.preferences.exploration_openness}
+        )
+        try:
+            response = await self.llm_service.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+            )
+            parsed = json.loads(str(getattr(response, "content", "")).strip())
+        except Exception:
+            logger.exception("Explore domain generation failed.")
+            return []
+
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("domains"), list):
+            return []
+
+        current_interests = {
+            interest.name.strip().lower()
+            for interest in profile.preferences.interests[:10]
+            if interest.name.strip()
+        }
+        domains: list[dict[str, object]] = []
+        seen_domains: set[str] = set()
+        for item in parsed["domains"]:
+            if not isinstance(item, dict):
+                continue
+            domain = str(item.get("domain", "")).strip()
+            normalized = domain.lower()
+            if not domain or normalized in seen_domains:
+                continue
+            if self._looks_too_similar(normalized, current_interests):
+                continue
+            seen_domains.add(normalized)
+            domains.append(
+                {
+                    "domain": domain,
+                    "why_it_might_resonate": str(item.get("why_it_might_resonate", "")).strip(),
+                    "novelty_level": self._clamp_novelty(item.get("novelty_level", 0.5)),
+                    "queries": self._clean_queries(item.get("queries", [])),
+                }
+            )
+            if len(domains) >= self.max_domains:
+                break
+        return [domain for domain in domains if domain["queries"]]
+
+    @staticmethod
+    def _looks_too_similar(domain: str, current_interests: set[str]) -> bool:
+        return any(
+            domain == interest or domain in interest or interest in domain
+            for interest in current_interests
+        )
+
+    def _clean_queries(self, raw_value: object) -> list[str]:
+        if not isinstance(raw_value, list):
+            return []
+        queries: list[str] = []
+        seen: set[str] = set()
+        for item in raw_value:
+            query = str(item).strip()
+            lowered = query.lower()
+            if not query or lowered in seen:
+                continue
+            if any(bad in lowered for bad in ("热门", "推荐", "必看")):
+                continue
+            seen.add(lowered)
+            queries.append(query)
+            if len(queries) >= self.queries_per_domain:
+                break
+        return queries
+
+    @staticmethod
+    def _clamp_novelty(raw_value: object) -> float:
+        value = ContentDiscoveryEngine._clamp_score(raw_value)
+        return min(0.8, max(0.4, value))
+
+    @staticmethod
+    def _exploration_bonus(*, novelty_level: float, openness: float) -> float:
+        return round(novelty_level * max(0.0, min(1.0, openness)), 4)
+
+    @staticmethod
+    def _sort_results(results: list[DiscoveredContent]) -> list[DiscoveredContent]:
+        results.sort(key=lambda item: item.relevance_score, reverse=True)
+        return results

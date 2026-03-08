@@ -7,6 +7,10 @@ import pytest
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 from openbiliclaw.soul.profile import SoulProfile
 
+from .test_explore_strategy import (
+    FakeBilibiliClient as FakeExploreBilibiliClient,
+)
+from .test_explore_strategy import FakeLLMService as FakeExploreLLMService
 from .test_related_chain_strategy import (
     FakeLLMService as FakeRelatedLLMService,
 )
@@ -127,3 +131,48 @@ async def test_discovery_engine_runs_related_chain_strategy() -> None:
     assert len(results) == 1
     assert results[0].bvid == "BV1REL"
     assert results[0].source_strategy == "related_chain"
+
+
+@pytest.mark.asyncio
+async def test_discovery_engine_runs_explore_strategy() -> None:
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+    from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
+
+    engine = ContentDiscoveryEngine(
+        llm_service=FakeExploreLLMService(
+            [
+                """
+                {
+                  "domains": [
+                    {
+                      "domain": "城市空间与建筑叙事",
+                      "why_it_might_resonate": "你偏好理解复杂系统。",
+                      "novelty_level": 0.7,
+                      "queries": ["城市 建筑 纪录片"]
+                    }
+                  ]
+                }
+                """,
+                '{"score": 0.84, "reason": "这个陌生主题仍然符合你的理解欲。"}',
+            ]
+        )
+    )
+    engine.register_strategy(
+        ExploreStrategy(
+            llm_service=engine._llm_service,
+            bilibili_client=FakeExploreBilibiliClient(
+                {
+                    "城市 建筑 纪录片": [
+                        {"bvid": "BV1EXP", "title": "城市建筑", "author": "UPX", "mid": 9}
+                    ]
+                }
+            ),
+            score_threshold=0.65,
+        )
+    )
+
+    results = await engine.discover(_build_profile())
+
+    assert len(results) == 1
+    assert results[0].bvid == "BV1EXP"
+    assert results[0].source_strategy == "explore"
