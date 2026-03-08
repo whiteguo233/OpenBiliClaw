@@ -347,6 +347,48 @@ def build_content_evaluation_prompt(
     ]
 
 
+def build_recommendation_expression_prompt(
+    *,
+    profile_summary: dict[str, object],
+    content_summary: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a structured prompt for friend-style recommendation expression."""
+    system_prompt = """
+<task>
+你要像一个真正懂这个人的朋友一样，给出一段推荐这条 B 站内容的话。
+</task>
+
+<rules>
+1. 输出必须是严格 JSON，不要附带解释。
+2. expression 必须是 50 到 150 字的中文口语表达，像朋友私聊，不像算法推荐。
+3. expression 要解释“为什么这条内容会对上这个人的胃口”，不要说空话。
+4. topic_label 需要是轻度个性化的主题标签，不要只写泛分类词。
+</rules>
+
+<output_schema>
+{
+  "expression": "这条会对上你最近那种想把问题想透的劲头，"
+    "它不是热闹型内容，而是会慢慢把结构给你铺开。",
+  "topic_label": "你最近那股想把问题想透的劲头"
+}
+</output_schema>
+""".strip()
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2),
+            "</profile_summary>",
+            "<content_summary>",
+            json.dumps(content_summary, ensure_ascii=False, indent=2),
+            "</content_summary>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def build_explore_domains_prompt(
     *,
     profile_summary: dict[str, object],

@@ -6,17 +6,32 @@ to the user in a warm, friend-like manner with deep personal insights.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
-    from openbiliclaw.llm.base import LLMProvider
+    from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+class SupportsCoreMemoryTask(Protocol):
+    """Protocol for a core-memory-aware structured LLM task executor."""
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> LLMResponse: ...
 
 
 @dataclass
@@ -24,6 +39,7 @@ class Recommendation:
     """A recommendation ready to present to the user."""
 
     content: DiscoveredContent
+    recommendation_id: int = 0
     expression: str = ""  # Friend-style recommendation reason
     topic_label: str = ""  # Personal topic (not generic categories)
     confidence: float = 0.0  # How confident the agent is in this rec
@@ -54,7 +70,7 @@ class RecommendationEngine:
     - Personal insights connecting content to the user's soul
     """
 
-    def __init__(self, llm: LLMProvider, database: Database) -> None:
+    def __init__(self, llm: SupportsCoreMemoryTask, database: Database) -> None:
         self._llm = llm
         self._database = database
 
@@ -93,12 +109,21 @@ class RecommendationEngine:
             for item in ranked
         ]
         for item in recommendations:
-            self._database.insert_recommendation(
+            item.recommendation_id = self._database.insert_recommendation(
                 item.content.bvid,
                 confidence=item.confidence,
                 expression=item.expression,
                 topic=item.topic_label,
                 presented=0,
+            )
+            item.expression, item.topic_label = await self.generate_expression(
+                item.content,
+                profile,
+            )
+            self._database.update_recommendation_content(
+                item.recommendation_id,
+                expression=item.expression,
+                topic=item.topic_label,
             )
         return recommendations
 
@@ -126,7 +151,7 @@ class RecommendationEngine:
         self,
         content: DiscoveredContent,
         profile: SoulProfile,
-    ) -> str:
+    ) -> tuple[str, str]:
         """Generate a friend-style recommendation expression.
 
         The expression should feel like a close friend recommending something:
@@ -138,16 +163,71 @@ class RecommendationEngine:
             profile: User's soul profile.
 
         Returns:
-            Natural language recommendation expression.
+            Expression text and a lightly personalized topic label.
         """
-        # TODO: Use LLM with soul context + content info
-        return ""
+        from openbiliclaw.llm.prompts import build_recommendation_expression_prompt
+
+        messages = build_recommendation_expression_prompt(
+            profile_summary={
+                "personality_portrait": profile.personality_portrait,
+                "core_traits": profile.core_traits[:5],
+                "deep_needs": profile.deep_needs[:5],
+                "interests": [
+                    {
+                        "name": item.name,
+                        "category": item.category,
+                        "weight": item.weight,
+                    }
+                    for item in profile.preferences.interests[:10]
+                ],
+            },
+            content_summary={
+                "title": content.title,
+                "up_name": content.up_name,
+                "description": content.description,
+                "source_strategy": content.source_strategy,
+                "relevance_score": content.relevance_score,
+            },
+        )
+        try:
+            response = await self._llm.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+            )
+            payload = json.loads(response.content.strip())
+            if not isinstance(payload, dict):
+                raise ValueError("Expression response must be a JSON object.")
+            expression = str(payload.get("expression", "")).strip()
+            topic_label = str(payload.get("topic_label", "")).strip()
+            if expression and topic_label:
+                return expression, topic_label
+        except Exception:
+            logger.exception("Failed to generate recommendation expression: %s", content.bvid)
+        return self._fallback_expression(content), self._fallback_topic_label(profile)
+
+    def mark_presented(self, recommendation_ids: list[int]) -> None:
+        """Mark recommendation rows as presented."""
+        ids = [item for item in recommendation_ids if item > 0]
+        if not ids:
+            return
+        self._database.mark_recommendations_presented(ids)
 
     @staticmethod
     def _normalize_discovered(
         discovered: list[DiscoveredContent],
     ) -> list[DiscoveredContent]:
         return list(discovered)
+
+    @staticmethod
+    def _fallback_expression(content: DiscoveredContent) -> str:
+        title = content.title or "这条内容"
+        return f"我感觉《{title}》会比较对你胃口，它应该能接住你最近那股想继续往深处看的状态。"
+
+    @staticmethod
+    def _fallback_topic_label(profile: SoulProfile) -> str:
+        if profile.core_traits:
+            return f"你最近那股偏{profile.core_traits[0]}的状态"
+        return "想先丢给你的一条"
 
     def _load_unrecommended_content(self, *, limit: int) -> list[DiscoveredContent]:
         from openbiliclaw.discovery.engine import DiscoveredContent

@@ -90,6 +90,14 @@
 
 ## M6: 推荐引擎（进行中）
 
+### 6.2 朋友式推荐表达 — `recommendation/m62-expression`
+
+- `RecommendationEngine.generate_expression()` 从 stub 升级为结构化 LLM 调用，输出 `expression` 和 `topic_label`
+- `generate_recommendations()` 现在会为每条推荐补全朋友式文案，并回写到 `recommendations` 表
+- 新增 `Database.update_recommendation_content()` 和 `mark_recommendations_presented()`，打通推荐文案更新与展示状态更新
+- CLI `recommend` 从 stub 升级为真实展示入口，会读取用户画像、生成推荐并在输出后标记已展示
+- 新增 recommendation/storage/cli 测试，覆盖文案生成、推荐历史回写和展示后状态更新
+
 ### 6.1 推荐排序 — `recommendation/m61-ranking`
 
 - `RecommendationEngine.generate_recommendations()` 从 stub 升级为可运行排序入口

@@ -2,19 +2,41 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.llm.base import LLMResponse
 from openbiliclaw.recommendation.engine import RecommendationEngine
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
 
 
 class _DummyLLM:
-    pass
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "expression": "这条内容会接住你最近那种想把问题想透的状态。",
+                    "topic_label": "你最近那种想把问题想透的状态",
+                },
+                ensure_ascii=False,
+            ),
+            provider="test",
+            model="dummy",
+            usage={},
+        )
 
 
 def _build_profile() -> SoulProfile:
@@ -117,3 +139,34 @@ async def test_generate_recommendations_does_not_repeat_history() -> None:
 
         assert [item.content.bvid for item in first] == ["BV1B"]
         assert [item.content.bvid for item in second] == ["BV1A"]
+
+
+@pytest.mark.asyncio
+async def test_generate_recommendations_populates_expression_and_updates_history() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        recommendations = await engine.generate_recommendations(
+            discovered=[
+                DiscoveredContent(
+                    bvid="BV1EXP",
+                    title="讲透摄影构图的底层逻辑",
+                    up_name="构图实验室",
+                    description="从原理出发解释构图。",
+                    relevance_score=0.91,
+                )
+            ],
+            profile=_build_profile(),
+            limit=1,
+        )
+
+        assert recommendations[0].expression == "这条内容会接住你最近那种想把问题想透的状态。"
+        assert recommendations[0].topic_label == "你最近那种想把问题想透的状态"
+        assert recommendations[0].recommendation_id > 0
+
+        history = db.get_recommendations(limit=10)
+        assert history[0]["expression"] == "这条内容会接住你最近那种想把问题想透的状态。"
+        assert history[0]["topic"] == "你最近那种想把问题想透的状态"
+        assert history[0]["presented"] == 0

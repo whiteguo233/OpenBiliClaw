@@ -201,3 +201,48 @@ class TestDatabase:
             assert rows[0]["presented"] == 0
 
             db.close()
+
+    def test_update_recommendation_content_persists_expression_and_topic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            recommendation_id = db.insert_recommendation(
+                "BV1REC",
+                confidence=0.83,
+                expression="",
+                topic="",
+                presented=0,
+            )
+
+            db.update_recommendation_content(
+                recommendation_id,
+                expression="这条视频会接住你最近想把问题想透的劲头。",
+                topic="你最近那股想把问题想透的劲头",
+            )
+
+            rows = db.get_recommendations(limit=10)
+
+            assert rows[0]["expression"] == "这条视频会接住你最近想把问题想透的劲头。"
+            assert rows[0]["topic"] == "你最近那股想把问题想透的劲头"
+
+            db.close()
+
+    def test_mark_recommendations_presented_sets_presented_and_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            first_id = db.insert_recommendation("BV1REC1", confidence=0.83, presented=0)
+            second_id = db.insert_recommendation("BV1REC2", confidence=0.71, presented=0)
+
+            db.mark_recommendations_presented([first_id, second_id])
+
+            rows = db.get_recommendations(limit=10)
+
+            assert rows[0]["presented"] == 1
+            assert rows[1]["presented"] == 1
+            assert rows[0]["presented_at"] is not None
+            assert rows[1]["presented_at"] is not None
+
+            db.close()

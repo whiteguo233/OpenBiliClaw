@@ -82,6 +82,23 @@ def _build_soul_engine() -> Any:
     return SoulEngine(llm=llm, memory=memory)
 
 
+def _build_recommendation_engine() -> Any:
+    """Build the recommendation engine with core-memory-aware LLM access."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.recommendation.engine import RecommendationEngine
+    from openbiliclaw.storage.database import Database
+
+    config = load_config()
+    memory = MemoryManager(config.data_path)
+    memory.initialize()
+    database = Database(config.data_path / "openbiliclaw.db")
+    database.initialize()
+    llm_service = LLMService(registry=_build_registry(), memory=memory)
+    return RecommendationEngine(llm=llm_service, database=database)
+
+
 @app.callback()
 def main(log_level: str | None = typer.Option(None, "--log-level")) -> None:
     """Global CLI options."""
@@ -153,10 +170,43 @@ def start() -> None:
 @app.command()
 def recommend() -> None:
     """查看推荐内容."""
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
     _require_runtime_config()
+    soul_engine = _build_soul_engine()
+    recommendation_engine = _build_recommendation_engine()
+
+    try:
+        profile_data = asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        console.print("[bold yellow]尚未初始化用户画像[/bold yellow]")
+        console.print("请先执行 `openbiliclaw init` 拉取历史并生成初始画像。")
+        raise typer.Exit(code=1) from exc
+
+    recommendations = asyncio.run(
+        recommendation_engine.generate_recommendations(
+            discovered=None,
+            profile=profile_data,
+            limit=5,
+        )
+    )
+
     console.print("[bold]📬 推荐内容[/bold]")
-    console.print("[dim]功能开发中...[/dim]")
-    # TODO: Display latest recommendations
+    if not recommendations:
+        console.print("[dim]暂无可推荐内容，请先执行 `openbiliclaw discover`。[/dim]")
+        return
+
+    presented_ids: list[int] = []
+    for item in recommendations:
+        console.print(f"[bold cyan]{item.content.title}[/bold cyan]")
+        console.print(f"  UP主: {item.content.up_name or '（未知）'}")
+        if item.topic_label:
+            console.print(f"  话题: {item.topic_label}")
+        console.print(f"  推荐理由: {item.expression}")
+        console.print(f"  BV号: {item.content.bvid}")
+        presented_ids.append(item.recommendation_id)
+
+    recommendation_engine.mark_presented(presented_ids)
 
 
 @app.command()

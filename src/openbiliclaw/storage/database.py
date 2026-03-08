@@ -311,6 +311,40 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def update_recommendation_content(
+        self,
+        recommendation_id: int,
+        *,
+        expression: str,
+        topic: str,
+    ) -> None:
+        """Update the generated expression fields of a recommendation."""
+        self.conn.execute(
+            """
+            UPDATE recommendations
+            SET expression = ?, topic = ?
+            WHERE id = ?
+            """,
+            (expression, topic, recommendation_id),
+        )
+        self.conn.commit()
+
+    def mark_recommendations_presented(self, recommendation_ids: list[int]) -> None:
+        """Mark recommendations as presented and set their presented timestamp."""
+        if not recommendation_ids:
+            return
+        placeholders = ", ".join("?" for _ in recommendation_ids)
+        self.conn.execute(
+            f"""
+            UPDATE recommendations
+            SET presented = 1,
+                presented_at = CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders})
+            """,
+            recommendation_ids,
+        )
+        self.conn.commit()
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

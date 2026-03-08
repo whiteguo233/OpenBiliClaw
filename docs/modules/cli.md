@@ -20,7 +20,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `browser open <url>` | 通过浏览器打开页面 | ✅ |
 | `browser content <url>` | 获取页面文本内容 | ✅ |
 | `start` | 启动 Agent | 🔲 stub |
-| `recommend` | 查看推荐 | 🔲 stub |
+| `recommend` | 查看推荐 | ✅ |
 | `profile` | 查看用户画像 | ✅ |
 | `discover` | 手动触发发现 | 🔲 stub |
 | `chat` | 苏格拉底式对话 | 🔲 stub |
@@ -133,4 +133,24 @@ $ openbiliclaw profile
 
 深层需求
   被理解、持续成长
+```
+
+### `openbiliclaw recommend`
+
+读取推荐缓存，生成朋友式推荐表达，并把已展示条目标记为 `presented=1`。
+
+```bash
+$ openbiliclaw recommend
+📬 推荐内容
+讲透城市与建筑的空间叙事
+  UP主: 城市观察局
+  话题: 你最近那股想把结构想透的劲头
+  推荐理由: 这条会对上你最近那种想把结构想透的劲头，它不是快餐内容，而是会慢慢把结构给你铺开。
+  BV号: BV1REC
+```
+
+如果当前还没有可推荐内容，会提示先执行：
+
+```bash
+openbiliclaw discover
 ```

@@ -10,6 +10,8 @@ from openbiliclaw import config as config_module
 from openbiliclaw.bilibili.auth import AuthStatus
 from openbiliclaw.bilibili.browser import BrowserCommandError
 from openbiliclaw.cli import app
+from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.recommendation.engine import Recommendation
 from openbiliclaw.soul.profile import PreferenceLayer, SoulProfile
 
 
@@ -362,3 +364,91 @@ def test_profile_command_prints_init_guidance_when_missing_profile(
     assert result.exit_code == 1
     assert "尚未初始化" in result.stdout
     assert "openbiliclaw init" in result.stdout
+
+
+def test_recommend_prints_discover_guidance_when_no_results(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeRecommendationEngine:
+        async def generate_recommendations(
+            self,
+            discovered: list[DiscoveredContent] | None,
+            profile: SoulProfile,
+            limit: int = 10,
+        ) -> list[Recommendation]:
+            return []
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_recommendation_engine",
+        lambda: FakeRecommendationEngine(),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["recommend"])
+
+    assert result.exit_code == 0
+    assert "暂无可推荐内容" in result.stdout
+    assert "openbiliclaw discover" in result.stdout
+
+
+def test_recommend_displays_results_and_marks_them_presented(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeRecommendationEngine:
+        def __init__(self) -> None:
+            self.marked_ids: list[int] = []
+
+        async def generate_recommendations(
+            self,
+            discovered: list[DiscoveredContent] | None,
+            profile: SoulProfile,
+            limit: int = 10,
+        ) -> list[Recommendation]:
+            return [
+                Recommendation(
+                    recommendation_id=7,
+                    content=DiscoveredContent(
+                        bvid="BV1REC",
+                        title="讲透城市与建筑的空间叙事",
+                        up_name="城市观察局",
+                    ),
+                    expression="这条会对上你最近那种想把结构想透的劲头。",
+                    topic_label="你最近那股想把结构想透的劲头",
+                    confidence=0.88,
+                )
+            ]
+
+        def mark_presented(self, recommendation_ids: list[int]) -> None:
+            self.marked_ids = recommendation_ids
+
+    fake_engine = FakeRecommendationEngine()
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_recommendation_engine",
+        lambda: fake_engine,
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["recommend"])
+
+    assert result.exit_code == 0
+    assert "讲透城市与建筑的空间叙事" in result.stdout
+    assert "城市观察局" in result.stdout
+    assert "这条会对上你最近那种想把结构想透的劲头。" in result.stdout
+    assert "BV1REC" in result.stdout
+    assert fake_engine.marked_ids == [7]
