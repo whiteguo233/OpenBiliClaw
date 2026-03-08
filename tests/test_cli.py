@@ -800,6 +800,62 @@ def test_feedback_command_requires_note_for_comment(
     assert "comment 需要" in result.stdout
 
 
+def test_feedback_command_triggers_profile_refresh_check(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class FakeRecommendationEngine:
+        async def record_feedback(
+            self,
+            recommendation_id: int,
+            *,
+            feedback_type: str,
+            note: str = "",
+        ) -> None:
+            return None
+
+        def get_recommendation(self, recommendation_id: int) -> dict[str, object] | None:
+            return {"id": recommendation_id, "bvid": "BV1REC", "title": "讲透城市与建筑"}
+
+    class FakeMemoryManager:
+        async def propagate_event(self, event: dict[str, object]) -> None:
+            return None
+
+    class FakeSoulEngine:
+        def __init__(self) -> None:
+            self.called = False
+
+        async def process_feedback_batch_if_needed(self) -> dict[str, object]:
+            self.called = True
+            return {"triggered": False}
+
+    fake_soul_engine = FakeSoulEngine()
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_recommendation_engine",
+        lambda: FakeRecommendationEngine(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_memory_manager",
+        lambda: FakeMemoryManager(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_soul_engine",
+        lambda: fake_soul_engine,
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["feedback", "7", "like"])
+
+    assert result.exit_code == 0
+    assert fake_soul_engine.called is True
+
+
 def test_init_reports_authentication_failure(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:

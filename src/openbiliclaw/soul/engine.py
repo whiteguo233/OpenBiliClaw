@@ -5,7 +5,9 @@ Transforms raw behavioral data into deep, layered understanding of a person.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -152,6 +154,66 @@ class SoulEngine:
         if updated:
             self._save_insights(hypotheses)
 
+    async def process_feedback_batch_if_needed(self) -> dict[str, object]:
+        """Reanalyze preference/profile after enough new feedback has accumulated."""
+        state = self._memory.load_feedback_state()
+        last_processed_id = self._to_int(state.get("last_processed_feedback_event_id", 0))
+        feedback_events = [
+            self._deserialize_event(event)
+            for event in self._memory.query_events(event_types=["feedback"], limit=500)
+            if int(event.get("id", 0) or 0) > last_processed_id
+        ]
+        feedback_events.sort(key=lambda item: int(item.get("id", 0) or 0))
+        feedback_count = len(feedback_events)
+        if feedback_count < 3:
+            return {
+                "triggered": False,
+                "feedback_count": feedback_count,
+                "preference_updated": False,
+                "profile_rebuilt": False,
+            }
+
+        preference_layer = self._memory.get_layer("preference")
+        existing_preference = dict(preference_layer.data)
+        updated_preference = await self._preference_analyzer.analyze_events(
+            events=feedback_events,
+            existing_preference=existing_preference,
+        )
+        preference_layer.data.clear()
+        preference_layer.data.update(updated_preference)
+        preference_layer.save()
+
+        profile_rebuilt = False
+        if self._preference_changed_significantly(existing_preference, updated_preference):
+            try:
+                profile = await self._profile_builder.build(
+                    history=[],
+                    preference=updated_preference,
+                )
+                profile.preferences = preference_layer_from_dict(updated_preference)
+                soul_layer = self._memory.get_layer("soul")
+                soul_layer.data.clear()
+                soul_layer.data.update(profile.to_dict())
+                soul_layer.save()
+                profile_rebuilt = True
+            except Exception:
+                logger.exception("Failed to rebuild soul profile after feedback refresh.")
+
+        self._memory.save_feedback_state(
+            {
+                "last_processed_feedback_event_id": self._to_int(
+                    feedback_events[-1].get("id", 0)
+                ),
+                "last_feedback_reanalyzed_at": datetime.now().isoformat(),
+            }
+        )
+        return {
+            "triggered": True,
+            "feedback_count": feedback_count,
+            "preference_updated": True,
+            "profile_rebuilt": profile_rebuilt,
+        }
+
     async def generate_awareness_note(self) -> str:
         """Generate a daily awareness note.
 
@@ -225,3 +287,71 @@ class SoulEngine:
     @staticmethod
     def _normalize_text(value: str) -> str:
         return "".join(value.split())
+
+    @staticmethod
+    def _deserialize_event(event: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(event)
+        for key in ("context", "metadata"):
+            raw_value = normalized.get(key)
+            if isinstance(raw_value, str):
+                try:
+                    parsed = json.loads(raw_value)
+                except json.JSONDecodeError:
+                    parsed = {}
+                normalized[key] = parsed if isinstance(parsed, dict) else {}
+        return normalized
+
+    @staticmethod
+    def _preference_changed_significantly(
+        old_preference: dict[str, Any],
+        new_preference: dict[str, Any],
+    ) -> bool:
+        def high_weight_interests(source: dict[str, Any]) -> dict[tuple[str, str], float]:
+            items = source.get("interests", [])
+            if not isinstance(items, list):
+                return {}
+            result: dict[tuple[str, str], float] = {}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                weight = float(item.get("weight", 0.0) or 0.0)
+                if weight < 0.6:
+                    continue
+                key = (str(item.get("name", "")).strip(), str(item.get("category", "")).strip())
+                result[key] = weight
+            return result
+
+        old_interests = high_weight_interests(old_preference)
+        new_interests = high_weight_interests(new_preference)
+        changed_keys = set(old_interests) ^ set(new_interests)
+        if len(changed_keys) >= 2:
+            return True
+        for key in set(old_interests) & set(new_interests):
+            if abs(old_interests[key] - new_interests[key]) >= 0.2:
+                return True
+        old_disliked = {
+            str(item).strip()
+            for item in old_preference.get("disliked_topics", [])
+            if str(item).strip()
+        }
+        new_disliked = {
+            str(item).strip()
+            for item in new_preference.get("disliked_topics", [])
+            if str(item).strip()
+        }
+        return len(new_disliked - old_disliked) >= 1
+
+    @staticmethod
+    def _to_int(raw_value: object) -> int:
+        if isinstance(raw_value, bool):
+            return int(raw_value)
+        if isinstance(raw_value, int):
+            return raw_value
+        if isinstance(raw_value, float):
+            return int(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return int(raw_value)
+            except ValueError:
+                return 0
+        return 0

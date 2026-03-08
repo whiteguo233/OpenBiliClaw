@@ -28,6 +28,7 @@
 | SoulEngine.generate_awareness_note() | ✅ | 生成并持久化 `awareness.json` |
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
 | SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并更新匹配洞察状态 |
+| SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像 |
 
 ## 公开 API
 
@@ -44,6 +45,14 @@ await engine.analyze_events([
     {"event_type": "search", "title": "纪录片推荐"},
 ])
 # 执行后 memory_manager.get_layer("preference").data 已更新并持久化
+
+result = await engine.process_feedback_batch_if_needed()
+# {
+#   "triggered": True,
+#   "feedback_count": 3,
+#   "preference_updated": True,
+#   "profile_rebuilt": True,
+# }
 ```
 
 ### SocraticDialogue
@@ -136,3 +145,5 @@ hypotheses = await insight.analyze(
 7. **觉察层保守去重**：同日 observation 标准化后相同则跳过，避免流水账堆积
 8. **洞察层按假设文本合并**：相同 hypothesis 合并 evidence，confidence 取较高值
 9. **验证状态只由代码更新**：LLM 只生成 hypothesis/evidence/confidence，`validated` 不信任模型输出
+10. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
+11. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`

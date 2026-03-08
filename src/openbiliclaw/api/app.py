@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -22,6 +23,7 @@ def create_app(
     *,
     memory_manager: Any | None = None,
     database: Any | None = None,
+    soul_engine: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
     app = FastAPI(title="OpenBiliClaw API")
@@ -32,9 +34,11 @@ def create_app(
         allow_headers=["*"],
     )
 
-    if memory_manager is None or database is None:
+    if memory_manager is None or database is None or soul_engine is None:
         from openbiliclaw.config import load_config
+        from openbiliclaw.llm import build_llm_registry
         from openbiliclaw.memory.manager import MemoryManager
+        from openbiliclaw.soul.engine import SoulEngine
         from openbiliclaw.storage.database import Database
 
         config = load_config()
@@ -44,6 +48,11 @@ def create_app(
         if database is None:
             database = Database(config.data_path / "openbiliclaw.db")
             database.initialize()
+        if soul_engine is None:
+            soul_engine = SoulEngine(
+                llm=build_llm_registry(config),  # type: ignore[arg-type]
+                memory=memory_manager,
+            )
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -115,6 +124,8 @@ def create_app(
                 },
             }
         )
+        with suppress(Exception):
+            await soul_engine.process_feedback_batch_if_needed()
         return FeedbackResponse(
             ok=True,
             recommendation_id=payload.recommendation_id,

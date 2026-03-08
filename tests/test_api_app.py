@@ -197,3 +197,51 @@ class TestBackendAPI:
         )
 
         assert response.status_code == 404
+
+    def test_feedback_endpoint_triggers_profile_refresh_check(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                return None
+
+        class FakeDatabase:
+            def get_recommendation_by_id(self, recommendation_id: int) -> dict[str, object] | None:
+                return {"id": recommendation_id, "bvid": "BV1REC", "title": "讲透城市与建筑"}
+
+            def update_recommendation_feedback(
+                self,
+                recommendation_id: int,
+                *,
+                feedback_type: str,
+                feedback_note: str = "",
+            ) -> None:
+                return None
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.called = False
+
+            async def process_feedback_batch_if_needed(self) -> dict[str, object]:
+                self.called = True
+                return {"triggered": False}
+
+        fake_soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=FakeMemoryManager(),
+            database=FakeDatabase(),
+            soul_engine=fake_soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/feedback",
+            json={
+                "recommendation_id": 7,
+                "feedback_type": "like",
+                "note": "",
+            },
+        )
+
+        assert response.status_code == 200
+        assert fake_soul_engine.called is True

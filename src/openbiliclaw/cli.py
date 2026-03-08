@@ -6,6 +6,7 @@ Provides the command-line entry point using Typer.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any, cast
 
 import click
@@ -504,6 +505,8 @@ def feedback(
             }
         )
     )
+    with suppress(Exception):
+        asyncio.run(_build_soul_engine().process_feedback_batch_if_needed())
 
     _print_status_panel("success", "反馈已记录", f"推荐ID {recommendation_id} 已更新。")
     rows = [

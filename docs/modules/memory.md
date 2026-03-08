@@ -23,6 +23,7 @@
 | 4.3 灵魂层 | ✅ | 初始画像生成 + `profile` CLI 展示 |
 | 4.4 觉察层 + 洞察层 | ✅ | 觉察笔记、洞察假设、反馈更新 |
 | 4.5 核心记忆加载 | ✅ | 统一摘要裁剪 + 所有 Soul LLM 调用自动注入 |
+| 9.2 画像更新 | ✅ | 反馈达到阈值后自动重分析偏好，并持久化反馈处理状态 |
 
 ## 公开 API
 
@@ -67,6 +68,12 @@ prompt_text = memory.render_core_memory_prompt()
 # 返回固定区块："## 用户画像" / "## 偏好摘要" / "## 近期观察" / "## 当前洞察"
 
 memory.save_all()
+
+feedback_state = memory.load_feedback_state()
+# {
+#   "last_processed_feedback_event_id": 0,
+#   "last_feedback_reanalyzed_at": ""
+# }
 ```
 
 ### PreferenceAnalyzer（由 SoulEngine 调用）
@@ -100,3 +107,4 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 4. **核心记忆裁剪**：`get_core_memory()` 只暴露稳定摘要，不把整层原始 JSON 直接塞进 prompt
 5. **统一 Prompt 注入**：`render_core_memory_prompt()` 和 `LLMService` 统一为画像、偏好、觉察、洞察链路注入用户上下文
 6. **插件事件兼容**：事件层白名单已扩到插件采集事件，避免 `/api/events` 在 `snapshot`、`scroll`、`hover`、`seek` 等行为上拒收
+7. **反馈状态独立持久化**：`feedback_state.json` 单独保存反馈处理游标，避免把运行状态塞进 `preference.json` 或 `soul.json`

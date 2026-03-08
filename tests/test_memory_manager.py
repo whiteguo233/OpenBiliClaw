@@ -170,3 +170,32 @@ def test_render_core_memory_prompt_uses_stable_section_order(tmp_path: Path) -> 
     assert prompt.index("## 用户画像") < prompt.index("## 偏好摘要")
     assert prompt.index("## 偏好摘要") < prompt.index("## 近期观察")
     assert prompt.index("## 近期观察") < prompt.index("## 当前洞察")
+
+
+def test_feedback_state_defaults_when_missing(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    state = memory.load_feedback_state()
+
+    assert state == {
+        "last_processed_feedback_event_id": 0,
+        "last_feedback_reanalyzed_at": "",
+    }
+
+
+def test_feedback_state_round_trips_to_json(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    memory.save_feedback_state(
+        {
+            "last_processed_feedback_event_id": 12,
+            "last_feedback_reanalyzed_at": "2026-03-09T12:00:00",
+        }
+    )
+
+    state = memory.load_feedback_state()
+
+    assert state["last_processed_feedback_event_id"] == 12
+    assert state["last_feedback_reanalyzed_at"] == "2026-03-09T12:00:00"

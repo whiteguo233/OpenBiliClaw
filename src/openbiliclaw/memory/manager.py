@@ -89,6 +89,7 @@ class MemoryManager:
         self._data_dir = data_dir
         self._layers: dict[str, MemoryLayer] = {}
         self._database = Database(data_dir / "openbiliclaw.db")
+        self._feedback_state_path = data_dir / "memory" / "feedback_state.json"
         self._working_memory: dict[str, Any] = {}  # Session-only
 
         # Initialize the five layers
@@ -109,6 +110,37 @@ class MemoryManager:
         """Persist all layers to disk."""
         for layer in self._layers.values():
             layer.save()
+
+    def load_feedback_state(self) -> dict[str, object]:
+        """Load feedback-processing cursor state from disk."""
+        default_state = {
+            "last_processed_feedback_event_id": 0,
+            "last_feedback_reanalyzed_at": "",
+        }
+        if not self._feedback_state_path.exists():
+            return default_state
+        with open(self._feedback_state_path, encoding="utf-8") as file:
+            loaded = json.load(file)
+        if not isinstance(loaded, dict):
+            return default_state
+        return {
+            "last_processed_feedback_event_id": self._to_int(
+                loaded.get("last_processed_feedback_event_id", 0)
+            ),
+            "last_feedback_reanalyzed_at": str(loaded.get("last_feedback_reanalyzed_at", "")),
+        }
+
+    def save_feedback_state(self, state: dict[str, object]) -> None:
+        """Persist feedback-processing cursor state to disk."""
+        self._feedback_state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "last_processed_feedback_event_id": self._to_int(
+                state.get("last_processed_feedback_event_id", 0)
+            ),
+            "last_feedback_reanalyzed_at": str(state.get("last_feedback_reanalyzed_at", "")),
+        }
+        with open(self._feedback_state_path, "w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False, indent=2)
 
     def get_layer(self, name: str) -> MemoryLayer:
         """Get a specific memory layer by name."""
@@ -225,6 +257,21 @@ class MemoryManager:
             except ValueError:
                 return 0.0
         return 0.0
+
+    @staticmethod
+    def _to_int(raw_value: object) -> int:
+        if isinstance(raw_value, bool):
+            return int(raw_value)
+        if isinstance(raw_value, int):
+            return raw_value
+        if isinstance(raw_value, float):
+            return int(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return int(raw_value)
+            except ValueError:
+                return 0
+        return 0
 
     def _top_interests(self, raw_value: object) -> list[dict[str, object]]:
         if not isinstance(raw_value, list):

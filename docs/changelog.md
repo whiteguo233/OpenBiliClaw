@@ -6,6 +6,13 @@
 
 ## M8: 插件后端 API（进行中）
 
+### 9.2 画像更新 — `feedback/m92-profile-refresh`
+
+- 新增 `feedback_state.json`，记录反馈重分析处理游标和最近一次处理时间
+- 反馈累计达到阈值后，会自动触发偏好层重新分析
+- 当高权重兴趣或不喜欢主题变化明显时，会自动重建并持久化 `soul.json`
+- CLI `feedback` 与 API `/api/feedback` 在反馈成功后都会同步触发这条更新链
+
 ### 9.1 反馈处理 — `feedback/m91-processing`
 
 - CLI `feedback` 命令扩展为支持 `like / dislike / comment`，其中 `comment` 必须带 `--note`

@@ -256,3 +256,141 @@ async def test_update_from_feedback_persists_feedback_and_marks_insight_validate
     assert insight_data["hypotheses"][0]["validated"] is True
     feedback_events = memory.query_events(event_types=["feedback"])
     assert feedback_events[0]["event_type"] == "feedback"
+
+
+@pytest.mark.asyncio
+async def test_process_feedback_batch_if_needed_skips_below_threshold(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    await memory.propagate_event(
+        {
+            "event_type": "feedback",
+            "title": "讲透城市与建筑",
+            "metadata": {"feedback_type": "dislike", "bvid": "BV1A"},
+        }
+    )
+
+    result = await engine.process_feedback_batch_if_needed()
+
+    assert result == {
+        "triggered": False,
+        "feedback_count": 1,
+        "preference_updated": False,
+        "profile_rebuilt": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_process_feedback_batch_updates_preference_after_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    for index in range(3):
+        await memory.propagate_event(
+            {
+                "event_type": "feedback",
+                "title": f"反馈 {index}",
+                "metadata": {"feedback_type": "dislike", "bvid": f"BV{index}"},
+            }
+        )
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> dict[str, object]:
+        assert len(events) == 3
+        return {
+            "interests": [
+                {"name": "纪录片", "category": "知识", "weight": 0.9, "source": "feedback"}
+            ],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.4,
+            "disliked_topics": ["标题党"],
+            "favorite_up_users": [],
+        }
+
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+
+    result = await engine.process_feedback_batch_if_needed()
+
+    assert result["triggered"] is True
+    assert result["feedback_count"] == 3
+    assert result["preference_updated"] is True
+    assert memory.get_layer("preference").data["interests"][0]["name"] == "纪录片"
+    assert memory.load_feedback_state()["last_processed_feedback_event_id"] > 0
+
+
+@pytest.mark.asyncio
+async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_significantly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    memory.get_layer("preference").data.update(
+        {
+            "interests": [{"name": "科技", "category": "知识", "weight": 0.9}],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.5,
+            "disliked_topics": [],
+            "favorite_up_users": [],
+        }
+    )
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    for index in range(3):
+        await memory.propagate_event(
+            {
+                "event_type": "feedback",
+                "title": f"反馈 {index}",
+                "metadata": {"feedback_type": "dislike", "bvid": f"BV{index}"},
+            }
+        )
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "interests": [
+                {"name": "纪录片", "category": "知识", "weight": 0.95, "source": "feedback"},
+                {"name": "建筑", "category": "人文", "weight": 0.74, "source": "feedback"},
+            ],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.7,
+            "disliked_topics": ["标题党"],
+            "favorite_up_users": [],
+        }
+
+    async def fake_build(
+        *,
+        history: list[dict[str, object]],
+        preference: dict[str, object],
+    ) -> object:
+        from openbiliclaw.soul.profile import SoulProfile
+
+        assert history == []
+        assert preference["interests"][0]["name"] == "纪录片"
+        return SoulProfile(
+            personality_portrait="这个人最近明显从科技内容转向更具体的人文叙事与纪录片表达。" * 8,
+            core_traits=["理性", "耐心", "好奇"],
+            values=["真实", "成长"],
+            life_stage="处于结构调整阶段",
+            deep_needs=["被理解", "看见更深的脉络"],
+        )
+
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+    monkeypatch.setattr(engine._profile_builder, "build", fake_build)
+
+    result = await engine.process_feedback_batch_if_needed()
+
+    assert result["profile_rebuilt"] is True
+    soul = memory.get_layer("soul").data
+    assert soul["core_traits"] == ["理性", "耐心", "好奇"]
+    assert "结构调整阶段" in soul["life_stage"]
