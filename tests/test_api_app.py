@@ -55,6 +55,25 @@ class TestBackendAPI:
         assert memory.events[0]["url"] == "https://www.bilibili.com/video/BV1TEST"
         assert memory.events[0]["metadata"]["timestamp"] == 1710000000000
 
+    def test_events_endpoint_handles_extension_cors_preflight(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app()
+        client = TestClient(app)
+
+        response = client.options(
+            "/api/events",
+            headers={
+                "Origin": "chrome-extension://alolnnalhpddolgelnhfkmmiehhcmokl",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert "POST" in response.headers["access-control-allow-methods"]
+
     def test_recommendations_endpoint_returns_items(self) -> None:
         from fastapi.testclient import TestClient
 

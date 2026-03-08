@@ -5,6 +5,7 @@
     "description": "你的 B 站专属 AI 朋友 — 行为采集与智能推荐",
     "permissions": [
         "activeTab",
+        "alarms",
         "storage",
         "tabs"
     ],
@@ -12,8 +13,7 @@
         "*://*.bilibili.com/*"
     ],
     "background": {
-        "service_worker": "dist/background/service-worker.js",
-        "type": "module"
+        "service_worker": "dist/background/service-worker.js"
     },
     "content_scripts": [
         {

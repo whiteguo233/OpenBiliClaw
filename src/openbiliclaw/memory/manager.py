@@ -17,7 +17,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-_EVENT_TYPES = {"view", "search", "favorite", "like", "comment", "click", "feedback"}
+_EVENT_TYPES = {
+    "view",
+    "pause",
+    "seek",
+    "search",
+    "favorite",
+    "like",
+    "coin",
+    "comment",
+    "click",
+    "scroll",
+    "hover",
+    "snapshot",
+    "feedback",
+}
 
 
 class MemoryLayer:

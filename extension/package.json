@@ -1,0 +1,19 @@
+{
+  "name": "openbiliclaw-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run clean && npm run build:types && npm run build:bundle",
+    "build:bundle": "node scripts/build.mjs",
+    "build:types": "tsc -p tsconfig.json --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.29",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.2"
+  }
+}

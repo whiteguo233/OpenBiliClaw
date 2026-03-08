@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from openbiliclaw.api.models import (
     BehaviorEventBatchIn,
@@ -23,6 +23,12 @@ def create_app(
 ) -> FastAPI:
     """Create the local backend API app."""
     app = FastAPI(title="OpenBiliClaw API")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     if memory_manager is None or database is None:
         from openbiliclaw.config import load_config
@@ -42,7 +48,7 @@ def create_app(
         return HealthResponse(status="ok", service="openbiliclaw-api")
 
     @app.post("/api/events", response_model=EventIngestResponse)
-    def ingest_events(payload: BehaviorEventBatchIn) -> EventIngestResponse:
+    async def ingest_events(payload: BehaviorEventBatchIn) -> EventIngestResponse:
         accepted = 0
         for item in payload.events:
             event = {
@@ -55,12 +61,12 @@ def create_app(
                     "timestamp": item.timestamp,
                 },
             }
-            asyncio.run(memory_manager.propagate_event(event))
+            await memory_manager.propagate_event(event)
             accepted += 1
         return EventIngestResponse(accepted=accepted)
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
-    def recommendations() -> RecommendationListResponse:
+    async def recommendations() -> RecommendationListResponse:
         rows = database.get_recommendations(limit=20)
         return RecommendationListResponse(
             items=[

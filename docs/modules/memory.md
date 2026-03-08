@@ -36,7 +36,7 @@ memory.initialize()  # 创建目录 + 初始化 SQLite + 加载各层
 
 # 写入事件
 await memory.propagate_event({
-    "event_type": "view",           # view|search|favorite|like|comment|click|feedback
+    "event_type": "view",           # view|pause|seek|search|favorite|like|coin|comment|click|scroll|hover|snapshot|feedback
     "url": "https://www.bilibili.com/video/BV1xx",
     "title": "视频标题",
     "metadata": {"bvid": "BV1xx"},
@@ -99,3 +99,4 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 3. **合并策略**：按 `(name, category)` 双键去重，权重取 max，`first_seen` 保持不变
 4. **核心记忆裁剪**：`get_core_memory()` 只暴露稳定摘要，不把整层原始 JSON 直接塞进 prompt
 5. **统一 Prompt 注入**：`render_core_memory_prompt()` 和 `LLMService` 统一为画像、偏好、觉察、洞察链路注入用户上下文
+6. **插件事件兼容**：事件层白名单已扩到插件采集事件，避免 `/api/events` 在 `snapshot`、`scroll`、`hover`、`seek` 等行为上拒收

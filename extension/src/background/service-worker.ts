@@ -5,62 +5,68 @@
  * buffers them, and forwards to the backend API.
  */
 
-interface BehaviorEvent {
-    type: string;
-    url: string;
-    title: string;
-    timestamp: number;
-    context: Record<string, unknown>;
-    metadata: Record<string, unknown>;
-}
+import { enqueueBufferedEvent, shouldFlushImmediately } from "./buffer.js";
+import type { BehaviorEvent } from "../shared/types.js";
 
-// Event buffer for batch sending
 let eventBuffer: BehaviorEvent[] = [];
-const BUFFER_FLUSH_INTERVAL = 30_000; // 30 seconds
+const BUFFER_FLUSH_INTERVAL = 30_000;
 const BUFFER_MAX_SIZE = 50;
+const FLUSH_ALARM_NAME = "openbiliclaw-flush-events";
+const BACKEND_URL = "http://localhost:8420/api/events";
 
-// Backend API endpoint (configurable)
-const BACKEND_URL = 'http://localhost:8420/api/events';
-
-/**
- * Flush buffered events to the backend.
- */
 async function flushEvents(): Promise<void> {
-    if (eventBuffer.length === 0) return;
+  if (eventBuffer.length === 0) return;
 
-    const events = [...eventBuffer];
-    eventBuffer = [];
+  const events = [...eventBuffer];
+  eventBuffer = [];
 
-    try {
-        const response = await fetch(BACKEND_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ events }),
-        });
+  try {
+    const response = await fetch(BACKEND_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
 
-        if (!response.ok) {
-            console.warn('[OpenBiliClaw] Backend returned', response.status);
-            // Re-add events on failure
-            eventBuffer.push(...events);
-        }
-    } catch {
-        console.warn('[OpenBiliClaw] Backend not available, buffering events');
-        eventBuffer.push(...events);
+    if (!response.ok) {
+      console.warn("[OpenBiliClaw] Backend returned", response.status);
+      eventBuffer.unshift(...events);
     }
+  } catch {
+    console.warn("[OpenBiliClaw] Backend not available, buffering events");
+    eventBuffer.unshift(...events);
+  }
 }
 
-// Listen for events from content scripts
-chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
-    if (message.action === 'BEHAVIOR_EVENT') {
-        eventBuffer.push(message.data);
+function ensureFlushAlarm(): void {
+  chrome.alarms.create(FLUSH_ALARM_NAME, {
+    periodInMinutes: BUFFER_FLUSH_INTERVAL / 60_000,
+  });
+}
 
-        if (eventBuffer.length >= BUFFER_MAX_SIZE) {
-            flushEvents();
-        }
-    }
+chrome.runtime.onInstalled.addListener(() => {
+  ensureFlushAlarm();
 });
 
-// Periodic flush
-setInterval(flushEvents, BUFFER_FLUSH_INTERVAL);
+chrome.runtime.onStartup.addListener(() => {
+  ensureFlushAlarm();
+});
 
-console.log('[OpenBiliClaw] Service worker initialized');
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action !== "BEHAVIOR_EVENT") return;
+
+  eventBuffer = enqueueBufferedEvent(eventBuffer, message.data as BehaviorEvent, BUFFER_MAX_SIZE);
+
+  if (eventBuffer.length >= BUFFER_MAX_SIZE || shouldFlushImmediately(message.data as BehaviorEvent)) {
+    void flushEvents();
+  }
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === FLUSH_ALARM_NAME) {
+    void flushEvents();
+  }
+});
+
+ensureFlushAlarm();
+
+console.log("[OpenBiliClaw] Service worker initialized");

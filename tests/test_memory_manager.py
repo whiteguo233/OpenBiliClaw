@@ -40,6 +40,28 @@ async def test_propagate_event_persists_to_sqlite(tmp_path: Path) -> None:
     assert "BV1xx411c7mD" in events[0]["metadata"]
 
 
+@pytest.mark.asyncio
+async def test_propagate_event_accepts_extension_behavior_types(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    for event_type in ["snapshot", "scroll", "hover", "pause", "seek", "coin"]:
+        await memory.propagate_event(
+            {
+                "event_type": event_type,
+                "url": "https://www.bilibili.com/video/BV1xx411c7mD",
+                "title": f"{event_type} 事件",
+                "metadata": {"bvid": "BV1xx411c7mD"},
+            }
+        )
+
+    events = memory.query_events(limit=20)
+    persisted_types = {event["event_type"] for event in events}
+
+    for event_type in ["snapshot", "scroll", "hover", "pause", "seek", "coin"]:
+        assert event_type in persisted_types
+
+
 def test_query_events_and_stats_delegate_to_database(tmp_path: Path) -> None:
     memory = MemoryManager(tmp_path)
     memory.initialize()
