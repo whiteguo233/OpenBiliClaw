@@ -175,6 +175,32 @@ async def test_profile_builder_can_use_unified_service() -> None:
     assert service.calls
 
 
+@pytest.mark.asyncio
+async def test_profile_builder_injects_old_friend_tone_in_prompt() -> None:
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    service = FakeStructuredService(
+        json.dumps(
+            {
+                "personality_portrait": "这是一个长期保持好奇心、偏好深度内容、做判断较为克制的人。"
+                * 8,
+                "core_traits": ["理性", "好奇", "谨慎"],
+                "values": ["真实", "成长"],
+                "life_stage": "处于探索与积累阶段",
+                "deep_needs": ["被理解", "持续成长"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    await ProfileBuilder(service).build(
+        history=[{"title": "国际新闻", "author": "时事UP"}],
+        preference={},
+    )
+
+    assert "老朋友" in str(service.calls[0]["system_instruction"])
+
+
 def test_profile_builder_requires_core_memory_task_service() -> None:
     from openbiliclaw.soul.profile_builder import ProfileBuilder
 

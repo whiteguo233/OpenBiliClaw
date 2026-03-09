@@ -11,6 +11,7 @@
 - **AwarenessAnalyzer** — 基于近期事件生成结构化觉察笔记
 - **InsightAnalyzer** — 基于觉察、偏好和画像生成洞察假设
 - **DialogueInsightAnalyzer** — 从聊天中提取候选长期理解信号
+- **ToneProfile** — 从画像、偏好和近期反馈推断语气风格，用于推荐、画像总结和对话
 - **SocraticDialogue** — 苏格拉底式用户对话，通过追问深化理解
 - **SoulProfile** — 用户灵魂画像数据结构
 
@@ -32,6 +33,7 @@
 | SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像 |
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
 | SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate，并在达阈值时驱动偏好/画像更新 |
+| ToneProfile | ✅ | 从 `SoulProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 
 ## 公开 API
 
@@ -175,6 +177,27 @@ candidates = await analyzer.extract(
 # ]
 ```
 
+### ToneProfile
+
+```python
+from openbiliclaw.soul.tone import build_tone_profile
+
+tone = build_tone_profile(
+    profile=current_profile,
+    preference_summary=memory.get_core_memory()["preference_summary"],
+    recent_feedback=[
+        {"feedback_type": "dislike", "feedback_note": "太油了"},
+        {"feedback_type": "dislike", "feedback_note": "话有点满"},
+    ],
+)
+# {
+#   "density": "dense",
+#   "warmth": "companion",
+#   "playfulness": "medium",
+#   "directness": "soft",
+# }
+```
+
 ## 设计决策
 
 1. **偏好提取用 json_mode**：确保 LLM 返回结构化 JSON，便于程序处理
@@ -189,3 +212,5 @@ candidates = await analyzer.extract(
 10. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
 11. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`
 12. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新
+13. **语气不单独持久化**：`ToneProfile` 是从画像、偏好和近期反馈实时推断出的派生层，避免把易调参的表达风格绑死在 `soul.json`
+14. **“老B友”是基础人格，不是固定模板**：聊天、推荐和画像总结共用同一套语气维度，但会随着用户画像和近期反馈在信息密度、温度、梗感和直给程度上细调

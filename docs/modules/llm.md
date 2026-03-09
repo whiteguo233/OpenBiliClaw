@@ -20,6 +20,7 @@
 | 2.2 Provider Registry | ✅ | 自动注册 + fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
+| 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
 
 ## 公开 API
 
@@ -80,7 +81,7 @@ response = await service.complete_socratic_dialogue(
     user_message="我最近喜欢看纪录片",
     history=[...],
 )
-# prompt 自动包含用户画像（core memory），空响应自动拦截
+# prompt 自动包含用户画像（core memory）和动态 tone profile，空响应自动拦截
 
 response = await service.complete_structured_task(
     system_instruction="你要从用户行为中提取结构化偏好。",
@@ -146,3 +147,4 @@ x_title = "OpenBiliClaw"
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
 5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 负责把核心记忆注入到所有 Soul 相关任务里
 6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头
+7. **Prompt 风格集中收口**：推荐、画像和聊天的“老B友”语气由共享 `ToneProfile` 驱动，不允许各模块各自发散成不同人格

@@ -11,6 +11,7 @@ from openbiliclaw.llm.prompts import build_soul_profile_prompt
 from openbiliclaw.llm.service import LLMServiceError
 
 from .profile import SoulProfile
+from .tone import build_tone_profile
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -48,6 +49,11 @@ class ProfileBuilder:
         messages = build_soul_profile_prompt(
             history_summary=self._summarize_history(history),
             preference_summary=preference,
+            tone_profile=build_tone_profile(
+                profile=None,
+                preference_summary=preference,
+                recent_feedback=[],
+            ),
         )
         try:
             response = await self.registry.complete_structured_task(

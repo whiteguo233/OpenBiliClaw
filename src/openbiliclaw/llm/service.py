@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
+from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
+
 from .base import LLMProviderError
 from .prompts import build_socratic_dialogue_prompt
 
@@ -107,13 +110,29 @@ class LLMService:
         history: list[dict[str, str]],
     ) -> LLMResponse:
         """Generate a Socratic dialogue reply using core memory context."""
+        tone_profile = self._build_dialogue_tone_profile()
         prompt_messages = build_socratic_dialogue_prompt(
             user_message=user_message,
             core_memory_text="",
+            tone_profile=tone_profile,
             history=[],
         )
         return await self.complete_with_core_memory(
             system_instruction=prompt_messages[0]["content"],
             user_input=user_message,
             history=history,
+        )
+
+    def _build_dialogue_tone_profile(self) -> ToneProfile:
+        """Infer tone profile for dialogue from persisted memory."""
+        soul_raw = self.memory.get_layer("soul").data
+        preference_raw = self.memory.get_layer("preference").data
+        profile = None
+        if soul_raw:
+            profile = SoulProfile.from_dict(soul_raw)
+            profile.preferences = preference_layer_from_dict(preference_raw)
+        return build_tone_profile(
+            profile=profile,
+            preference_summary=self.memory.get_core_memory().get("preference_summary", {}),
+            recent_feedback=[],
         )

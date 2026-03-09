@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
-from openbiliclaw.llm.prompts import build_socratic_dialogue_prompt
+from openbiliclaw.llm.prompts import (
+    build_recommendation_expression_prompt,
+    build_socratic_dialogue_prompt,
+    build_soul_profile_prompt,
+)
 from openbiliclaw.memory.manager import MemoryManager
 
 
@@ -30,6 +34,12 @@ def test_build_socratic_dialogue_prompt_orders_messages_correctly() -> None:
     messages = build_socratic_dialogue_prompt(
         user_message="我最近有点迷上纪录片",
         core_memory_text="## 用户画像\n喜欢深度内容",
+        tone_profile={
+            "density": "dense",
+            "warmth": "warm",
+            "playfulness": "medium",
+            "directness": "balanced",
+        },
         history=[
             {"role": "user", "content": "我最近总在看长视频"},
             {"role": "assistant", "content": "你更在意信息密度还是叙事感？"},
@@ -47,8 +57,46 @@ def test_build_socratic_dialogue_prompt_includes_dialogue_instructions() -> None
     messages = build_socratic_dialogue_prompt(
         user_message="我喜欢那种讲得很透的内容",
         core_memory_text="（尚未建立完整画像）",
+        tone_profile={
+            "density": "dense",
+            "warmth": "warm",
+            "playfulness": "medium",
+            "directness": "balanced",
+        },
         history=[],
     )
 
     assert "苏格拉底" in messages[0]["content"]
-    assert "像朋友一样" in messages[0]["content"]
+    assert "老B友" in messages[0]["content"]
+
+
+def test_build_recommendation_expression_prompt_mentions_old_friend_tone() -> None:
+    messages = build_recommendation_expression_prompt(
+        profile_summary={"personality_portrait": "偏好高信息密度内容"},
+        content_summary={"title": "讲透国际局势", "up_name": "某UP"},
+        tone_profile={
+            "density": "dense",
+            "warmth": "warm",
+            "playfulness": "medium",
+            "directness": "balanced",
+        },
+    )
+
+    assert "老B友" in messages[0]["content"]
+    assert "不像算法推荐" in messages[0]["content"]
+
+
+def test_build_soul_profile_prompt_avoids_report_tone() -> None:
+    messages = build_soul_profile_prompt(
+        history_summary={"recent_topics": ["国际新闻"]},
+        preference_summary={"interests": ["国际关系"]},
+        tone_profile={
+            "density": "dense",
+            "warmth": "warm",
+            "playfulness": "medium",
+            "directness": "balanced",
+        },
+    )
+
+    assert "老朋友" in messages[0]["content"]
+    assert "不要写成心理报告" in messages[0]["content"]

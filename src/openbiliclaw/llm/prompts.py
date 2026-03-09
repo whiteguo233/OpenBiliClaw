@@ -3,19 +3,42 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openbiliclaw.soul.tone import ToneProfile
+
+
+def _render_tone_profile(tone_profile: ToneProfile | None) -> str:
+    """Render tone profile guidance for prompt builders."""
+    tone = tone_profile or {
+        "density": "balanced",
+        "warmth": "warm",
+        "playfulness": "medium",
+        "directness": "balanced",
+    }
+    return (
+        "请保持“老B友”基调：懂 B 站语境，像熟人聊天，不像客服。\n"
+        f"- 信息密度: {tone['density']}\n"
+        f"- 情绪温度: {tone['warmth']}\n"
+        f"- 梗感强度: {tone['playfulness']}\n"
+        f"- 直给程度: {tone['directness']}"
+    )
 
 
 def build_socratic_dialogue_prompt(
     *,
     user_message: str,
     core_memory_text: str,
+    tone_profile: ToneProfile | None,
     history: list[dict[str, str]],
 ) -> list[dict[str, str]]:
     """Build chat messages for Socratic dialogue generation."""
     system_prompt = "\n\n".join(
         [
             "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
-            "请使用苏格拉底式对话风格：温和、追问动机、确认理解，不要像客服。",
+            "请使用苏格拉底式对话风格：温和、追问动机、确认理解，但整体更像会接话的老B友，不像客服，也不要像咨询师。",
+            _render_tone_profile(tone_profile),
             "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
             core_memory_text,
         ]
@@ -98,11 +121,12 @@ def build_soul_profile_prompt(
     *,
     history_summary: dict[str, object],
     preference_summary: dict[str, object],
+    tone_profile: ToneProfile | None,
 ) -> list[dict[str, str]]:
     """Build a structured prompt for initial soul-profile generation."""
     system_prompt = """
 <task>
-你要基于用户历史摘要和偏好摘要，生成一份谨慎、温和、像长期观察后的朋友所写的人格画像。
+你要基于用户历史摘要和偏好摘要，生成一份谨慎、温和、像长期观察后的老朋友所写的人格画像。
 </task>
 
 <rules>
@@ -110,6 +134,7 @@ def build_soul_profile_prompt(
 2. 输出必须是严格 JSON，不要附带解释。
 3. 人格描述至少 200 个中文字符。
 4. core_traits 控制在 3 到 5 条，deep_needs 和 values 保持简洁。
+5. 不要写成心理报告、咨询记录或说明书，要像熟人总结这个人的气质和状态。
 </rules>
 
 <output_schema>
@@ -122,6 +147,7 @@ def build_soul_profile_prompt(
 }
 </output_schema>
 """.strip()
+    system_prompt = "\n\n".join([system_prompt, _render_tone_profile(tone_profile)])
     user_prompt = "\n\n".join(
         [
             "<history_summary>",
@@ -407,11 +433,12 @@ def build_recommendation_expression_prompt(
     *,
     profile_summary: dict[str, object],
     content_summary: dict[str, object],
+    tone_profile: ToneProfile | None,
 ) -> list[dict[str, str]]:
     """Build a structured prompt for friend-style recommendation expression."""
     system_prompt = """
 <task>
-你要像一个真正懂这个人的朋友一样，给出一段推荐这条 B 站内容的话。
+你要像一个真正懂这个人的老B友一样，给出一段推荐这条 B 站内容的话。
 </task>
 
 <rules>
@@ -419,6 +446,7 @@ def build_recommendation_expression_prompt(
 2. expression 必须是 50 到 150 字的中文口语表达，像朋友私聊，不像算法推荐。
 3. expression 要解释“为什么这条内容会对上这个人的胃口”，不要说空话。
 4. topic_label 需要是轻度个性化的主题标签，不要只写泛分类词。
+5. 避免机械解释腔、广告腔和“根据你的兴趣”“你可能会喜欢”这类算法套话。
 </rules>
 
 <output_schema>
@@ -429,6 +457,7 @@ def build_recommendation_expression_prompt(
 }
 </output_schema>
 """.strip()
+    system_prompt = "\n\n".join([system_prompt, _render_tone_profile(tone_profile)])
     user_prompt = "\n\n".join(
         [
             "<profile_summary>",

@@ -16,6 +16,9 @@ from openbiliclaw.storage.database import Database
 
 
 class _DummyLLM:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
     async def complete_structured_task(
         self,
         *,
@@ -25,6 +28,13 @@ class _DummyLLM:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> LLMResponse:
+        self.calls.append(
+            {
+                "system_instruction": system_instruction,
+                "user_input": user_input,
+                "history": history,
+            }
+        )
         return LLMResponse(
             content=json.dumps(
                 {
@@ -170,6 +180,28 @@ async def test_generate_recommendations_populates_expression_and_updates_history
         assert history[0]["expression"] == "这条内容会接住你最近那种想把问题想透的状态。"
         assert history[0]["topic"] == "你最近那种想把问题想透的状态"
         assert history[0]["presented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_uses_old_friend_tone_prompt() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV1TONE",
+                title="讲透贸易逆差的底层逻辑",
+                up_name="经济观察",
+                description="从历史和制度角度解释问题。",
+                relevance_score=0.89,
+            ),
+            _build_profile(),
+        )
+
+        assert "老B友" in str(llm.calls[0]["system_instruction"])
 
 
 @pytest.mark.asyncio

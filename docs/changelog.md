@@ -6,6 +6,12 @@
 
 ## M8: 插件后端 API（进行中）
 
+### B站动态语气优化 — `tone/m94-bilibili-tone`
+
+- 新增 `ToneProfile` 派生层，从画像、偏好摘要和近期反馈推断 `density / warmth / playfulness / directness`
+- 推荐表达、画像总结和聊天 prompt 统一接入这层语气系统，基础风格改为“老B友”，但会随用户理解逐步细调
+- 推荐理由减少算法解释腔，画像减少心理报告感，聊天保留追问能力但更像懂 B 站语境的老朋友
+
 ### OpenRouter Provider 支持 — `llm/openrouter-provider`
 
 - 新增 `OpenRouterProvider`，通过 OpenAI-compatible 调用链接入统一的超时、重试、错误归一化和 JSON mode

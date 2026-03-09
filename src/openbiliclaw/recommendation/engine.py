@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from openbiliclaw.soul.tone import build_tone_profile
+
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
@@ -167,6 +169,13 @@ class RecommendationEngine:
         """
         from openbiliclaw.llm.prompts import build_recommendation_expression_prompt
 
+        tone_profile = build_tone_profile(
+            profile=profile,
+            preference_summary={
+                "exploration_openness": profile.preferences.exploration_openness,
+            },
+            recent_feedback=[],
+        )
         messages = build_recommendation_expression_prompt(
             profile_summary={
                 "personality_portrait": profile.personality_portrait,
@@ -188,6 +197,7 @@ class RecommendationEngine:
                 "source_strategy": content.source_strategy,
                 "relevance_score": content.relevance_score,
             },
+            tone_profile=tone_profile,
         )
         try:
             response = await self._llm.complete_structured_task(
