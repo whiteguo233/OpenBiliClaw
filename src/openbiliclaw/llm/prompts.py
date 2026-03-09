@@ -271,6 +271,62 @@ def build_search_queries_prompt(
     ]
 
 
+def build_dialogue_insight_prompt(
+    *,
+    user_message: str,
+    assistant_reply: str,
+    core_memory: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a structured prompt for extracting candidate insights from dialogue."""
+    system_prompt = """
+<task>
+你要从一轮用户对话中提取少量高价值的候选理解，用于后续长期画像更新。
+</task>
+
+<rules>
+1. 输出必须是严格 JSON，不要附带解释。
+2. 只提取用户明确表达或高度暗示的稳定信号，不要记录瞬时情绪碎片。
+3. kind 只允许: interest, dislike, goal, value, state。
+4. confidence 保持保守，0~1。
+5. 最多返回 3 条 candidates。
+</rules>
+
+<output_schema>
+{
+  "candidates": [
+    {
+      "kind": "goal",
+      "content": "想更系统地理解国际局势",
+      "confidence": 0.84,
+      "evidence": "用户明确说想把国际新闻看得更透。"
+    }
+  ]
+}
+</output_schema>
+""".strip()
+    user_prompt = "\n\n".join(
+        [
+            "<core_memory>",
+            json.dumps(core_memory, ensure_ascii=False, indent=2),
+            "</core_memory>",
+            "<dialogue_turn>",
+            json.dumps(
+                {
+                    "user_message": user_message,
+                    "assistant_reply": assistant_reply,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "</dialogue_turn>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def build_trending_rids_prompt(
     *,
     profile_summary: dict[str, object],

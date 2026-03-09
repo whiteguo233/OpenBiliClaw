@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMProvider
@@ -16,6 +17,10 @@ if TYPE_CHECKING:
     from openbiliclaw.memory.manager import MemoryManager
 
 from .awareness_analyzer import AwarenessAnalyzer
+from .dialogue_insight_analyzer import (
+    DialogueInsightAnalysisError,
+    DialogueInsightAnalyzer,
+)
 from .insight_analyzer import InsightAnalyzer
 from .preference_analyzer import PreferenceAnalyzer
 from .profile import (
@@ -59,6 +64,7 @@ class SoulEngine:
         self._memory = memory
         self._llm_service: LLMService = LLMService(registry=llm, memory=memory)
         self._awareness_analyzer = AwarenessAnalyzer(self._llm_service)
+        self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)
         self._insight_analyzer = InsightAnalyzer(self._llm_service)
         self._preference_analyzer = PreferenceAnalyzer(self._llm_service)
         self._profile_builder = ProfileBuilder(self._llm_service)
@@ -153,6 +159,104 @@ class SoulEngine:
             break
         if updated:
             self._save_insights(hypotheses)
+
+    async def learn_from_dialogue(
+        self,
+        *,
+        user_message: str,
+        assistant_reply: str,
+        session: str,
+    ) -> dict[str, object]:
+        """Persist a chat turn and update long-term understanding when warranted."""
+        await self._memory.propagate_event(
+            {
+                "event_type": "dialogue",
+                "title": user_message[:60],
+                "metadata": {
+                    "user_message": user_message,
+                    "assistant_reply": assistant_reply,
+                    "source": "chat",
+                    "session": session,
+                },
+            }
+        )
+        try:
+            extracted = await self._dialogue_insight_analyzer.extract(
+                user_message=user_message,
+                assistant_reply=assistant_reply,
+                core_memory=self._memory.get_core_memory(),
+            )
+        except DialogueInsightAnalysisError:
+            logger.exception("Failed to extract dialogue insight candidates.")
+            extracted = []
+
+        merged_candidates = self._merge_insight_candidates(
+            self._memory.load_insight_candidates(),
+            extracted,
+        )
+        self._memory.save_insight_candidates(merged_candidates)
+        eligible_candidates = [
+            item for item in merged_candidates if self._candidate_ready_for_learning(item)
+        ]
+        if not eligible_candidates:
+            return {
+                "event_logged": True,
+                "candidate_count": len(extracted),
+                "preference_updated": False,
+                "profile_rebuilt": False,
+            }
+
+        preference_layer = self._memory.get_layer("preference")
+        existing_preference = dict(preference_layer.data)
+        updated_preference = await self._preference_analyzer.analyze_events(
+            events=[
+                {
+                    "event_type": "dialogue_insight",
+                    "title": str(item.get("content", "")),
+                    "metadata": {
+                        "kind": item.get("kind", ""),
+                        "confidence": item.get("confidence", 0.0),
+                        "evidence": item.get("evidence", ""),
+                        "source": "dialogue",
+                        "occurrences": item.get("occurrences", 1),
+                    },
+                }
+                for item in eligible_candidates
+            ],
+            existing_preference=existing_preference,
+        )
+        preference_layer.data.clear()
+        preference_layer.data.update(updated_preference)
+        preference_layer.save()
+
+        profile_rebuilt = False
+        if self._preference_changed_significantly(existing_preference, updated_preference):
+            try:
+                profile = await self._profile_builder.build(
+                    history=[],
+                    preference=updated_preference,
+                )
+                profile.preferences = preference_layer_from_dict(updated_preference)
+                soul_layer = self._memory.get_layer("soul")
+                soul_layer.data.clear()
+                soul_layer.data.update(profile.to_dict())
+                soul_layer.save()
+                profile_rebuilt = True
+            except Exception:
+                logger.exception("Failed to rebuild soul profile after dialogue learning.")
+
+        for item in merged_candidates:
+            if self._candidate_ready_for_learning(item):
+                item["applied"] = True
+                item["updated_at"] = datetime.now().isoformat()
+        self._memory.save_insight_candidates(merged_candidates)
+
+        return {
+            "event_logged": True,
+            "candidate_count": len(extracted),
+            "preference_updated": True,
+            "profile_rebuilt": profile_rebuilt,
+        }
 
     async def process_feedback_batch_if_needed(self) -> dict[str, object]:
         """Reanalyze preference/profile after enough new feedback has accumulated."""
@@ -284,6 +388,66 @@ class SoulEngine:
         layer.data.update({"hypotheses": [insight_hypothesis_to_dict(item) for item in insights]})
         layer.save()
 
+    def _merge_insight_candidates(
+        self,
+        existing_candidates: list[dict[str, object]],
+        new_candidates: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        merged = [dict(item) for item in existing_candidates if isinstance(item, dict)]
+        for raw_candidate in new_candidates:
+            kind = str(raw_candidate.get("kind", "")).strip() or "state"
+            content = str(raw_candidate.get("content", "")).strip()
+            if not content:
+                continue
+            normalized_content = self._normalize_text(content)
+            existing = next(
+                (
+                    item
+                    for item in merged
+                    if self._normalize_text(str(item.get("content", ""))) == normalized_content
+                    and str(item.get("kind", "")).strip() == kind
+                ),
+                None,
+            )
+            now = datetime.now().isoformat()
+            confidence = self._to_float(raw_candidate.get("confidence", 0.0))
+            evidence = str(raw_candidate.get("evidence", "")).strip()
+            if existing is None:
+                merged.append(
+                    {
+                        "id": str(uuid4()),
+                        "kind": kind,
+                        "content": content,
+                        "confidence": max(0.0, min(1.0, round(confidence, 4))),
+                        "evidence": evidence,
+                        "occurrences": 1,
+                        "confirmed": False,
+                        "applied": False,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                continue
+            existing["occurrences"] = self._to_int(existing.get("occurrences", 0)) + 1
+            existing["confidence"] = max(
+                self._to_float(existing.get("confidence", 0.0)),
+                max(0.0, min(1.0, round(confidence, 4))),
+            )
+            if evidence:
+                existing["evidence"] = evidence
+            existing["updated_at"] = now
+        return merged
+
+    def _candidate_ready_for_learning(self, candidate: dict[str, object]) -> bool:
+        if bool(candidate.get("applied", False)):
+            return False
+        confidence = self._to_float(candidate.get("confidence", 0.0))
+        occurrences = self._to_int(candidate.get("occurrences", 0))
+        kind = str(candidate.get("kind", "")).strip()
+        if confidence >= 0.9 and kind in {"dislike", "goal"}:
+            return True
+        return confidence >= 0.8 and occurrences >= 2
+
     @staticmethod
     def _normalize_text(value: str) -> str:
         return "".join(value.split())
@@ -323,6 +487,8 @@ class SoulEngine:
 
         old_interests = high_weight_interests(old_preference)
         new_interests = high_weight_interests(new_preference)
+        if not old_interests and new_interests:
+            return True
         changed_keys = set(old_interests) ^ set(new_interests)
         if len(changed_keys) >= 2:
             return True
@@ -355,3 +521,16 @@ class SoulEngine:
             except ValueError:
                 return 0
         return 0
+
+    @staticmethod
+    def _to_float(raw_value: object) -> float:
+        if isinstance(raw_value, bool):
+            return float(raw_value)
+        if isinstance(raw_value, (int, float)):
+            return float(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return float(raw_value)
+            except ValueError:
+                return 0.0
+        return 0.0

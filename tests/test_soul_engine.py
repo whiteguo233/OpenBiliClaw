@@ -326,6 +326,139 @@ async def test_process_feedback_batch_updates_preference_after_threshold(
 
 
 @pytest.mark.asyncio
+async def test_learn_from_dialogue_persists_event_and_candidate_below_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        assert core_memory["soul_summary"]["personality_portrait"] == ""
+        return [
+            {
+                "kind": "goal",
+                "content": "想更系统地理解国际局势",
+                "confidence": 0.82,
+                "evidence": user_message,
+            }
+        ]
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+
+    result = await engine.learn_from_dialogue(
+        user_message="我最近总想把国际新闻看得更透一点。",
+        assistant_reply="听起来你不是只想知道发生了什么，而是想理解背后的结构。",
+        session="cli",
+    )
+
+    assert result["event_logged"] is True
+    assert result["candidate_count"] == 1
+    assert result["profile_rebuilt"] is False
+    dialogue_events = memory.query_events(event_types=["dialogue"])
+    assert len(dialogue_events) == 1
+    assert dialogue_events[0]["title"] == "我最近总想把国际新闻看得更透一点。"
+    candidates = memory.load_insight_candidates()
+    assert candidates[0]["occurrences"] == 1
+    assert candidates[0]["kind"] == "goal"
+
+
+@pytest.mark.asyncio
+async def test_learn_from_dialogue_rebuilds_profile_after_candidate_reaches_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    memory.save_insight_candidates(
+        [
+            {
+                "id": "cand-1",
+                "kind": "goal",
+                "content": "想更系统地理解国际局势",
+                "confidence": 0.81,
+                "evidence": "之前也提过想看更深的国际时事分析。",
+                "occurrences": 1,
+                "confirmed": False,
+                "created_at": "2026-03-10T09:00:00",
+                "updated_at": "2026-03-10T09:00:00",
+            }
+        ]
+    )
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": "goal",
+                "content": "想更系统地理解国际局势",
+                "confidence": 0.86,
+                "evidence": user_message,
+            }
+        ]
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> dict[str, object]:
+        assert events[0]["event_type"] == "dialogue_insight"
+        return {
+            "interests": [
+                {"name": "国际时事", "category": "知识", "weight": 0.88, "source": "dialogue"}
+            ],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.5,
+            "disliked_topics": [],
+            "favorite_up_users": [],
+        }
+
+    async def fake_build(
+        *,
+        history: list[dict[str, object]],
+        preference: dict[str, object],
+    ) -> object:
+        from openbiliclaw.soul.profile import SoulProfile
+
+        return SoulProfile.from_dict(
+            {
+                "personality_portrait": "这是一个会主动追问世界运行逻辑的人。" * 20,
+                "core_traits": ["理性", "主动"],
+                "values": ["真实"],
+                "life_stage": "持续探索",
+                "deep_needs": ["理解复杂世界"],
+                "preferences": preference,
+            }
+        )
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+    monkeypatch.setattr(engine._profile_builder, "build", fake_build)
+
+    result = await engine.learn_from_dialogue(
+        user_message="我还是更想知道国际新闻背后的结构和因果。",
+        assistant_reply="你像是在寻找一种能把复杂事件看清楚的框架。",
+        session="popup",
+    )
+
+    assert result["candidate_count"] == 1
+    assert result["preference_updated"] is True
+    assert result["profile_rebuilt"] is True
+    assert memory.get_layer("preference").data["interests"][0]["name"] == "国际时事"
+    assert memory.get_layer("soul").data["core_traits"] == ["理性", "主动"]
+
+
+@pytest.mark.asyncio
 async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_significantly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

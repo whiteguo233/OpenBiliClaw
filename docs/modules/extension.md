@@ -78,7 +78,7 @@ popup 当前已具备：
 - 修复 popup 卡片误跳转：`喜欢` / `不喜欢` / `写一句` / 输入框 / 发送按钮不再冒泡触发视频打开
 - `喜欢` / `不喜欢` / `写一句` 都会调用 `/api/feedback`
 - 画像 tab：调用 `/api/profile-summary` 展示轻量人格画像、核心特质、深层需求和偏好关键词
-- 聊天 tab：调用 `/api/chat`，在 popup 内和“阿B”进行轻量多轮对话
+- 聊天 tab：调用 `/api/chat`，在 popup 内和“阿B”进行轻量多轮对话；对话会记录为 `dialogue` 事件，并在高置信度重复出现时参与后续画像更新
 
 ### 构建链路
 
@@ -132,6 +132,7 @@ npm run build
 - popup 能根据 `/api/health` 与 `/api/recommendations` 切换在线、空状态与推荐列表展示
 - popup 反馈按钮已能经 `/api/feedback` 写回推荐表和事件层
 - popup 现已支持 `推荐 / 我的画像 / 和阿B聊聊` 三个 tab，并已接通画像摘要与聊天接口
+- popup 聊天信号已进入后端学习链，但仍采用受控积累，不会因为单轮聊天立即重写画像
 
 ## 当前限制
 

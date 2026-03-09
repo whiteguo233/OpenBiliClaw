@@ -51,10 +51,12 @@ class SocraticDialogue:
         llm: LLMProvider | None,
         soul_engine: SoulEngine,
         llm_service: LLMService | None = None,
+        session: str = "cli",
     ) -> None:
         self._llm = llm
         self._soul_engine = soul_engine
         self._llm_service = llm_service
+        self._session = session
         self._history: list[DialogueTurn] = []
 
     async def respond(self, user_message: str) -> str:
@@ -89,6 +91,16 @@ class SocraticDialogue:
             reply = "我刚刚思路断了一下，你可以换个说法再告诉我一次吗？"
 
         self._history.append(DialogueTurn(role="agent", content=reply))
+        learn_from_dialogue = getattr(self._soul_engine, "learn_from_dialogue", None)
+        if callable(learn_from_dialogue):
+            try:
+                await learn_from_dialogue(
+                    user_message=user_message,
+                    assistant_reply=reply,
+                    session=self._session,
+                )
+            except Exception:
+                logger.exception("Failed to learn from dialogue turn.")
         return reply
 
     async def extract_insights(self, turns: list[DialogueTurn]) -> list[dict[str, Any]]:

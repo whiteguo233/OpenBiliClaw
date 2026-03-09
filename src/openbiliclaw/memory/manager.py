@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _EVENT_TYPES = {
     "view",
+    "dialogue",
     "pause",
     "seek",
     "search",
@@ -90,6 +91,7 @@ class MemoryManager:
         self._layers: dict[str, MemoryLayer] = {}
         self._database = Database(data_dir / "openbiliclaw.db")
         self._feedback_state_path = data_dir / "memory" / "feedback_state.json"
+        self._insight_candidates_path = data_dir / "memory" / "insight_candidates.json"
         self._working_memory: dict[str, Any] = {}  # Session-only
 
         # Initialize the five layers
@@ -141,6 +143,22 @@ class MemoryManager:
         }
         with open(self._feedback_state_path, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
+
+    def load_insight_candidates(self) -> list[dict[str, object]]:
+        """Load dialogue-derived insight candidates from disk."""
+        if not self._insight_candidates_path.exists():
+            return []
+        with open(self._insight_candidates_path, encoding="utf-8") as file:
+            loaded = json.load(file)
+        if not isinstance(loaded, list):
+            return []
+        return [item for item in loaded if isinstance(item, dict)]
+
+    def save_insight_candidates(self, candidates: list[dict[str, object]]) -> None:
+        """Persist dialogue-derived insight candidates to disk."""
+        self._insight_candidates_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._insight_candidates_path, "w", encoding="utf-8") as file:
+            json.dump(candidates, file, ensure_ascii=False, indent=2)
 
     def get_layer(self, name: str) -> MemoryLayer:
         """Get a specific memory layer by name."""

@@ -10,6 +10,7 @@
 - **PreferenceAnalyzer** — LLM 驱动的偏好提取和合并
 - **AwarenessAnalyzer** — 基于近期事件生成结构化觉察笔记
 - **InsightAnalyzer** — 基于觉察、偏好和画像生成洞察假设
+- **DialogueInsightAnalyzer** — 从聊天中提取候选长期理解信号
 - **SocraticDialogue** — 苏格拉底式用户对话，通过追问深化理解
 - **SoulProfile** — 用户灵魂画像数据结构
 
@@ -29,6 +30,8 @@
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
 | SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并更新匹配洞察状态 |
 | SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像 |
+| DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
+| SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate，并在达阈值时驱动偏好/画像更新 |
 
 ## 公开 API
 
@@ -53,6 +56,18 @@ result = await engine.process_feedback_batch_if_needed()
 #   "preference_updated": True,
 #   "profile_rebuilt": True,
 # }
+
+learning = await engine.learn_from_dialogue(
+    user_message="我最近更想把国际新闻背后的结构看明白。",
+    assistant_reply="听起来你在追求一种能把复杂事件看清楚的框架。",
+    session="cli",
+)
+# {
+#   "event_logged": True,
+#   "candidate_count": 1,
+#   "preference_updated": False,
+#   "profile_rebuilt": False,
+# }
 ```
 
 ### SocraticDialogue
@@ -60,7 +75,12 @@ result = await engine.process_feedback_batch_if_needed()
 ```python
 from openbiliclaw.soul.dialogue import SocraticDialogue
 
-dialogue = SocraticDialogue(llm=None, soul_engine=engine, llm_service=service)
+dialogue = SocraticDialogue(
+    llm=None,
+    soul_engine=engine,
+    llm_service=service,
+    session="cli",
+)
 
 reply = await dialogue.respond("我最近很喜欢看讲得很透的纪录片")
 # reply: "我猜你喜欢的是那种能慢慢展开逻辑的讲述方式..."
@@ -134,6 +154,27 @@ hypotheses = await insight.analyze(
 )
 ```
 
+### DialogueInsightAnalyzer
+
+```python
+from openbiliclaw.soul.dialogue_insight_analyzer import DialogueInsightAnalyzer
+
+analyzer = DialogueInsightAnalyzer(registry=llm_service)
+candidates = await analyzer.extract(
+    user_message="我其实更想知道国际事件背后的因果链。",
+    assistant_reply="你像是在找一种更稳定的理解框架。",
+    core_memory=memory.get_core_memory(),
+)
+# [
+#   {
+#     "kind": "goal",
+#     "content": "想更系统地理解国际局势",
+#     "confidence": 0.84,
+#     "evidence": "用户明确表达想看清背后的因果链。"
+#   }
+# ]
+```
+
 ## 设计决策
 
 1. **偏好提取用 json_mode**：确保 LLM 返回结构化 JSON，便于程序处理
@@ -147,3 +188,4 @@ hypotheses = await insight.analyze(
 9. **验证状态只由代码更新**：LLM 只生成 hypothesis/evidence/confidence，`validated` 不信任模型输出
 10. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
 11. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`
+12. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新

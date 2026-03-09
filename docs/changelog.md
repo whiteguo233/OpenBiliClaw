@@ -6,6 +6,13 @@
 
 ## M8: 插件后端 API（进行中）
 
+### 9.3 聊天学习链路 — `soul/m93-chat-learning`
+
+- 聊天现在会落 `dialogue` 事件，并额外提取 `interest / dislike / goal / value / state` 类型的候选长期理解信号
+- 新增 `insight_candidates.json` 作为中间状态，先累计聊天候选，再由阈值控制是否进入偏好层
+- 只有高置信度且重复出现的聊天候选才会驱动偏好重分析，并在变化明显时重建画像
+- CLI `chat` 与 popup “和阿B聊聊” 现在共用这条学习链，但仍保持受控更新，不会因为单轮对话立即改写画像
+
 ### 运行时 Cookie 回退修复 — `main`
 
 - 修复 `auth login` 与运行时命令脱节的问题：`init`、浏览器集成和本地服务现在会优先使用显式配置 cookie，留空时自动回退到 `data/bilibili_cookie.json`

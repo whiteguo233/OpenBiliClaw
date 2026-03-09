@@ -198,7 +198,7 @@ def _build_dialogue(soul_engine: Any) -> Any:
     """Build the Socratic dialogue helper for interactive chat."""
     from openbiliclaw.soul.dialogue import SocraticDialogue
 
-    return SocraticDialogue(llm=_build_registry(), soul_engine=soul_engine)
+    return SocraticDialogue(llm=_build_registry(), soul_engine=soul_engine, session="cli")
 
 
 def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:

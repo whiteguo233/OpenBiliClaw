@@ -65,12 +65,13 @@ def create_app(
                 llm=None,
                 soul_engine=soul_engine,
                 llm_service=LLMService(registry=llm_registry, memory=memory_manager),
+                session="popup",
             )
 
     if dialogue is None:
         from openbiliclaw.soul.dialogue import SocraticDialogue
 
-        dialogue = SocraticDialogue(llm=None, soul_engine=soul_engine)
+        dialogue = SocraticDialogue(llm=None, soul_engine=soul_engine, session="popup")
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:

@@ -199,3 +199,39 @@ def test_feedback_state_round_trips_to_json(tmp_path: Path) -> None:
 
     assert state["last_processed_feedback_event_id"] == 12
     assert state["last_feedback_reanalyzed_at"] == "2026-03-09T12:00:00"
+
+
+def test_insight_candidates_default_to_empty_list(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    candidates = memory.load_insight_candidates()
+
+    assert candidates == []
+
+
+def test_save_insight_candidates_round_trips_to_json(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    memory.save_insight_candidates(
+        [
+            {
+                "id": "cand-1",
+                "kind": "goal",
+                "content": "想更系统地理解国际局势",
+                "confidence": 0.88,
+                "evidence": "用户反复提到想看更深的国际时事分析。",
+                "occurrences": 2,
+                "confirmed": False,
+                "created_at": "2026-03-10T10:00:00",
+                "updated_at": "2026-03-10T10:05:00",
+            }
+        ]
+    )
+
+    loaded = memory.load_insight_candidates()
+
+    assert len(loaded) == 1
+    assert loaded[0]["kind"] == "goal"
+    assert loaded[0]["occurrences"] == 2
