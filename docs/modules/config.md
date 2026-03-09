@@ -22,7 +22,7 @@ cp config.example.toml config.toml
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `deepseek` / `ollama` |
+| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `deepseek` / `ollama` / `openrouter` |
 
 ### `[llm.openai]`
 
@@ -55,6 +55,18 @@ cp config.example.toml config.toml
 | `base_url` | string | `"http://localhost:11434"` | Ollama 服务地址 |
 
 > Ollama 不需要 API Key，适合本地开发测试。
+
+### `[llm.openrouter]`
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `api_key` | string | `""` | OpenRouter API Key（default_provider=openrouter 时必填） |
+| `model` | string | `"openai/gpt-4o-mini"` | OpenRouter 模型名称 |
+| `base_url` | string | `"https://openrouter.ai/api/v1"` | OpenRouter API 地址 |
+| `http_referer` | string | `""` | 可选的 `HTTP-Referer` 请求头 |
+| `x_title` | string | `"OpenBiliClaw"` | 可选的 `X-Title` 请求头 |
+
+> `http_referer` 和 `x_title` 都是可选项；留空时不会阻止请求发送。
 
 ### `[bilibili]`
 

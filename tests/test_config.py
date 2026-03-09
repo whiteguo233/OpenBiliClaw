@@ -165,6 +165,42 @@ def test_validate_runtime_config_allows_ollama_without_api_key() -> None:
     validate_runtime_config(config)
 
 
+def test_build_config_supports_openrouter_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "openrouter",
+                "openrouter": {
+                    "api_key": "test-key",
+                    "model": "openai/gpt-4o-mini",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "http_referer": "https://example.com",
+                    "x_title": "OpenBiliClaw",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "openrouter"
+    assert config.llm.openrouter.api_key == "test-key"
+    assert config.llm.openrouter.model == "openai/gpt-4o-mini"
+    assert config.llm.openrouter.base_url == "https://openrouter.ai/api/v1"
+    assert config.llm.openrouter.http_referer == "https://example.com"
+    assert config.llm.openrouter.x_title == "OpenBiliClaw"
+
+
+def test_validate_runtime_config_requires_openrouter_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openrouter",
+            openrouter=LLMProviderConfig(api_key="", model="openai/gpt-4o-mini"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.openrouter.api_key"):
+        validate_runtime_config(config)
+
+
 def test_validate_runtime_config_rejects_invalid_auth_method() -> None:
     config = Config(bilibili=BilibiliConfig(auth_method="invalid"))
 

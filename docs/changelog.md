@@ -6,6 +6,12 @@
 
 ## M8: 插件后端 API（进行中）
 
+### OpenRouter Provider 支持 — `llm/openrouter-provider`
+
+- 新增 `OpenRouterProvider`，通过 OpenAI-compatible 调用链接入统一的超时、重试、错误归一化和 JSON mode
+- 配置层新增 `[llm.openrouter]`，支持 `api_key`、`model`、`base_url` 以及可选请求头 `http_referer` / `x_title`
+- `LLMRegistry` 现在可以自动注册 `openrouter`，并支持把它设为默认 provider
+
 ### 9.3 聊天学习链路 — `soul/m93-chat-learning`
 
 - 聊天现在会落 `dialogue` 事件，并额外提取 `interest / dislike / goal / value / state` 类型的候选长期理解信号

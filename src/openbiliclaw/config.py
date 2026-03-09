@@ -20,6 +20,7 @@ _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
     "claude": "llm.claude.api_key",
     "deepseek": "llm.deepseek.api_key",
+    "openrouter": "llm.openrouter.api_key",
 }
 
 
@@ -52,6 +53,8 @@ class LLMProviderConfig:
     api_key: str = ""
     model: str = ""
     base_url: str = ""
+    http_referer: str = ""
+    x_title: str = ""
 
 
 @dataclass
@@ -63,6 +66,7 @@ class LLMConfig:
     claude: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     deepseek: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     ollama: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    openrouter: LLMProviderConfig = field(default_factory=LLMProviderConfig)
 
 
 @dataclass
@@ -210,6 +214,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
         claude=LLMProviderConfig(**llm_raw.get("claude", {})),
         deepseek=LLMProviderConfig(**llm_raw.get("deepseek", {})),
         ollama=LLMProviderConfig(**llm_raw.get("ollama", {})),
+        openrouter=LLMProviderConfig(**llm_raw.get("openrouter", {})),
     )
 
     browser_raw = bili_raw.pop("browser", {})
@@ -250,6 +255,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         "claude": config.llm.claude,
         "deepseek": config.llm.deepseek,
         "ollama": config.llm.ollama,
+        "openrouter": config.llm.openrouter,
     }
 
     provider_config = provider_configs.get(provider_name)

@@ -14,6 +14,7 @@ from openbiliclaw.llm.base import (
 from openbiliclaw.llm.claude_provider import ClaudeProvider
 from openbiliclaw.llm.ollama_provider import OllamaProvider
 from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
+from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
 
 
 def _openai_response(content: str = "ok") -> SimpleNamespace:
@@ -160,6 +161,22 @@ def test_deepseek_provider_defaults() -> None:
 def test_ollama_provider_defaults() -> None:
     provider = OllamaProvider(model="llama3")
     assert provider.name == "ollama"
+
+
+def test_openrouter_provider_defaults_and_headers() -> None:
+    provider = OpenRouterProvider(
+        api_key="test-key",
+        model="openai/gpt-4o-mini",
+        http_referer="https://example.com",
+        x_title="OpenBiliClaw",
+    )
+
+    assert provider.name == "openrouter"
+    assert provider.base_url == "https://openrouter.ai/api/v1"
+    assert provider._extra_headers() == {
+        "HTTP-Referer": "https://example.com",
+        "X-Title": "OpenBiliClaw",
+    }
 
 
 @pytest.mark.asyncio

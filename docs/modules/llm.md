@@ -1,6 +1,6 @@
 # LLM 多模型支持
 
-> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / DeepSeek / Ollama，带 fallback、retry 和健康检查。
+> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / DeepSeek / Ollama / OpenRouter，带 fallback、retry 和健康检查。
 
 ## 概述
 
@@ -16,7 +16,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 2.1 Provider 实现 | ✅ | OpenAI / Claude / DeepSeek / Ollama，带 retry + 超时 |
+| 2.1 Provider 实现 | ✅ | OpenAI / Claude / DeepSeek / Ollama / OpenRouter，带 retry + 超时 |
 | 2.2 Provider Registry | ✅ | 自动注册 + fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
@@ -26,7 +26,13 @@
 ### Provider 类
 
 ```python
-from openbiliclaw.llm import OpenAIProvider, ClaudeProvider, DeepSeekProvider, OllamaProvider
+from openbiliclaw.llm import (
+    ClaudeProvider,
+    DeepSeekProvider,
+    OllamaProvider,
+    OpenAIProvider,
+    OpenRouterProvider,
+)
 
 # 创建 provider
 provider = OpenAIProvider(api_key="sk-...", model="gpt-4o")
@@ -37,6 +43,13 @@ print(response.usage)     # {"prompt_tokens": N, "completion_tokens": N, "total_
 
 # 健康检查
 available = await provider.health_check()  # bool
+
+provider = OpenRouterProvider(
+    api_key="or-...",
+    model="openai/gpt-4o-mini",
+    http_referer="https://example.com",
+    x_title="OpenBiliClaw",
+)
 ```
 
 ### Registry
@@ -46,7 +59,7 @@ from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.config import load_config
 
 registry = build_llm_registry(load_config())
-print(registry.available_providers)  # ["openai", "deepseek", "ollama"]
+print(registry.available_providers)  # ["openai", "deepseek", "ollama", "openrouter"]
 print(registry.default_provider)     # "openai"
 
 # 带 fallback 的调用（默认 provider 失败时自动尝试下一个）
@@ -97,6 +110,7 @@ LLMServiceError           # Service 层基类
 ```toml
 [llm]
 default_provider = "openai"  # "openai" | "claude" | "deepseek" | "ollama"
+default_provider = "openrouter"  # 也支持 "openrouter"
 
 [llm.openai]
 api_key = ""
@@ -115,6 +129,13 @@ base_url = "https://api.deepseek.com"
 [llm.ollama]
 model = "llama3"
 base_url = "http://localhost:11434"
+
+[llm.openrouter]
+api_key = ""
+model = "openai/gpt-4o-mini"
+base_url = "https://openrouter.ai/api/v1"
+http_referer = ""
+x_title = "OpenBiliClaw"
 ```
 
 ## 设计决策
@@ -124,3 +145,4 @@ base_url = "http://localhost:11434"
 3. **Protocol DI**：`SupportsComplete` Protocol 解耦了调用方和具体实现，测试时可注入 Fake
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
 5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 负责把核心记忆注入到所有 Soul 相关任务里
+6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头

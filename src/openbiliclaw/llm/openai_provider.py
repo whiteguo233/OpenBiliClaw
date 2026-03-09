@@ -37,6 +37,7 @@ class OpenAIProvider(LLMProvider):
     ) -> None:
         self._model = model
         self._provider_name = provider_name
+        self.base_url = base_url or ""
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url or None,
@@ -62,6 +63,9 @@ class OpenAIProvider(LLMProvider):
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        extra_headers = self._extra_headers()
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
 
         response = await self._request_with_retry(**kwargs)
         choice = response.choices[0]
@@ -123,6 +127,10 @@ class OpenAIProvider(LLMProvider):
     def _is_retryable(self, exc: LLMProviderError) -> bool:
         """Whether a mapped exception should be retried."""
         return isinstance(exc, (LLMProviderError, LLMRateLimitError, LLMTimeoutError))
+
+    def _extra_headers(self) -> dict[str, str]:
+        """Return optional provider-specific request headers."""
+        return {}
 
 
 class DeepSeekProvider(OpenAIProvider):

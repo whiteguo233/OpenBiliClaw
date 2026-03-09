@@ -9,6 +9,7 @@ from .base import LLMProvider, LLMProviderError, LLMRegistry
 from .claude_provider import ClaudeProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
+from .openrouter_provider import OpenRouterProvider
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
@@ -42,6 +43,7 @@ def build_llm_registry(
         ("claude", _maybe_claude_provider(config, overrides)),
         ("deepseek", _maybe_deepseek_provider(config, overrides)),
         ("ollama", _maybe_ollama_provider(config, overrides)),
+        ("openrouter", _maybe_openrouter_provider(config, overrides)),
     ]
 
     for _name, provider in provider_specs:
@@ -134,4 +136,20 @@ def _maybe_ollama_provider(
         api_key=config.llm.ollama.api_key or "ollama",
         model=model or "llama3",
         base_url=base_url,
+    )
+
+
+def _maybe_openrouter_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "openrouter" in overrides:
+        return overrides["openrouter"]
+    if not config.llm.openrouter.api_key.strip():
+        return None
+    return OpenRouterProvider(
+        api_key=config.llm.openrouter.api_key,
+        model=config.llm.openrouter.model or "openai/gpt-4o-mini",
+        base_url=config.llm.openrouter.base_url or "https://openrouter.ai/api/v1",
+        http_referer=config.llm.openrouter.http_referer,
+        x_title=config.llm.openrouter.x_title,
     )

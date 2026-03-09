@@ -13,6 +13,7 @@ from .base import (
 from .claude_provider import ClaudeProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
+from .openrouter_provider import OpenRouterProvider
 from .registry import (
     RegistryBuildError,
     RegistrySummary,
@@ -39,6 +40,7 @@ __all__ = [
     "LLMTimeoutError",
     "OllamaProvider",
     "OpenAIProvider",
+    "OpenRouterProvider",
     "RegistryBuildError",
     "RegistrySummary",
     "LLMProviderExecutionError",
