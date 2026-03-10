@@ -135,18 +135,19 @@ class TestBackendAPI:
             "last_refresh_at": "2026-03-10T12:00:00",
             "last_notification_at": "2026-03-10T12:30:00",
             "unread_count": 2,
+            "manual_refresh_state": "idle",
+            "manual_refresh_message": "",
         }
 
     def test_refresh_recommendations_endpoint_triggers_runtime_refresh(self) -> None:
         from fastapi.testclient import TestClient
 
         class FakeRuntimeController:
-            async def force_refresh(self) -> dict[str, object]:
+            async def trigger_manual_refresh(self) -> dict[str, object]:
                 return {
-                    "refreshed": True,
-                    "strategies": ["search", "related_chain"],
-                    "reason": "manual",
-                    "recommendation_count": 8,
+                    "accepted": True,
+                    "state": "running",
+                    "reason": "started",
                 }
 
         app = create_app(
@@ -162,22 +163,20 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {
             "ok": True,
-            "refreshed": True,
-            "strategies": ["search", "related_chain"],
-            "reason": "manual",
-            "recommendation_count": 8,
+            "accepted": True,
+            "state": "running",
+            "reason": "started",
         }
 
     def test_refresh_recommendations_endpoint_reports_uninitialized_runtime(self) -> None:
         from fastapi.testclient import TestClient
 
         class FakeRuntimeController:
-            async def force_refresh(self) -> dict[str, object]:
+            async def trigger_manual_refresh(self) -> dict[str, object]:
                 return {
-                    "refreshed": False,
-                    "strategies": [],
+                    "accepted": False,
+                    "state": "idle",
                     "reason": "not_initialized",
-                    "recommendation_count": 0,
                 }
 
         app = create_app(
@@ -193,10 +192,9 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {
             "ok": True,
-            "refreshed": False,
-            "strategies": [],
+            "accepted": False,
+            "state": "idle",
             "reason": "not_initialized",
-            "recommendation_count": 0,
         }
 
     def test_refresh_recommendations_endpoint_uses_force_refresh(self) -> None:
@@ -215,13 +213,12 @@ class TestBackendAPI:
                     "recommendation_count": 0,
                 }
 
-            async def force_refresh(self) -> dict[str, object]:
-                self.called.append("force")
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                self.called.append("trigger")
                 return {
-                    "refreshed": True,
-                    "strategies": ["search", "related_chain", "trending", "explore"],
-                    "reason": "manual",
-                    "recommendation_count": 12,
+                    "accepted": True,
+                    "state": "running",
+                    "reason": "started",
                 }
 
         runtime = FakeRuntimeController()
@@ -238,12 +235,11 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {
             "ok": True,
-            "refreshed": True,
-            "strategies": ["search", "related_chain", "trending", "explore"],
-            "reason": "manual",
-            "recommendation_count": 12,
+            "accepted": True,
+            "state": "running",
+            "reason": "started",
         }
-        assert runtime.called == ["force"]
+        assert runtime.called == ["trigger"]
 
     def test_pending_notification_endpoint_returns_single_candidate(self) -> None:
         from fastapi.testclient import TestClient

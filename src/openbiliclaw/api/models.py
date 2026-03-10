@@ -51,10 +51,9 @@ class RecommendationRefreshResponse(BaseModel):
     """Result of one explicit recommendation refresh request."""
 
     ok: bool
-    refreshed: bool
-    strategies: list[str] = Field(default_factory=list)
+    accepted: bool
+    state: str = "idle"
     reason: str = ""
-    recommendation_count: int = 0
 
 
 class RuntimeStatusResponse(BaseModel):
@@ -66,6 +65,8 @@ class RuntimeStatusResponse(BaseModel):
     last_refresh_at: str = ""
     last_notification_at: str = ""
     unread_count: int
+    manual_refresh_state: str = "idle"
+    manual_refresh_message: str = ""
 
 
 class PendingNotificationOut(BaseModel):

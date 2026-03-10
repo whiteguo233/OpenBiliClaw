@@ -19,6 +19,12 @@
 - `content_cache` 新增 `relevance_score`、`relevance_reason`、`candidate_tier`，缓存候选与实时发现候选终于共享同一套质量信号
 - `RecommendationEngine` 和 `Database.get_unrecommended_content()` 现已统一按 `candidate_tier -> relevance_score -> last_scored_at -> view_count` 排序，避免缓存回读退化成只看播放量
 
+### Popup 手动刷新异步化 — `runtime/m105-manual-refresh-async`
+
+- `/api/recommendations/refresh` 现在只负责触发后台手动补货任务，立即返回接受结果
+- `runtime-status` 新增 `manual_refresh_state` 和 `manual_refresh_message`，popup 会轮询后台状态，而不是同步等待整轮补货
+- 手动刷新期间 popup 继续保留当前推荐列表，等后台补货完成后再统一重拉推荐
+
 ### Gemini 可选依赖导入修复 — `fix/gemini-optional-import`
 
 - `google-genai` 缺失时，`openbiliclaw.llm` 和 `openbiliclaw.llm.registry` 现在仍可正常导入，不再因为 Gemini 顶层依赖阻塞整个测试收集

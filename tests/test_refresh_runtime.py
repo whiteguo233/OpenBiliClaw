@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
@@ -228,3 +229,36 @@ async def test_refresh_controller_requests_discovery_with_backfill_limit() -> No
     await controller.refresh_if_needed()
 
     assert discovery.calls[0][2] == 18
+
+
+async def test_trigger_manual_refresh_sets_running_state() -> None:
+    class SlowDiscovery(_FakeDiscoveryEngine):
+        async def discover(
+            self,
+            profile: dict[str, object],
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            await asyncio.sleep(0.01)
+            return await super().discover(profile, strategies, limit)
+
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([{"id": 1, "event_type": "view"}]),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=SlowDiscovery(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    result = await controller.trigger_manual_refresh()
+
+    assert result["accepted"] is True
+    assert result["state"] == "running"
+    status = controller.get_runtime_status()
+    assert status["manual_refresh_state"] == "running"
+
+    await asyncio.sleep(0.05)
+    status = controller.get_runtime_status()
+    assert status["manual_refresh_state"] == "success"

@@ -231,23 +231,21 @@ def create_app(
 
     @app.post("/api/recommendations/refresh", response_model=RecommendationRefreshResponse)
     async def refresh_recommendations() -> RecommendationRefreshResponse:
-        force_refresh = getattr(runtime_controller, "force_refresh", None)
-        if not callable(force_refresh):
+        trigger_manual_refresh = getattr(runtime_controller, "trigger_manual_refresh", None)
+        if not callable(trigger_manual_refresh):
             return RecommendationRefreshResponse(
                 ok=True,
-                refreshed=False,
-                strategies=[],
+                accepted=False,
+                state="idle",
                 reason="runtime_unavailable",
-                recommendation_count=0,
             )
 
-        result = await force_refresh()
+        result = await trigger_manual_refresh()
         return RecommendationRefreshResponse(
             ok=True,
-            refreshed=bool(result.get("refreshed", False)),
-            strategies=[str(item) for item in result.get("strategies", [])],
+            accepted=bool(result.get("accepted", False)),
+            state=str(result.get("state", "idle")),
             reason=str(result.get("reason", "")),
-            recommendation_count=int(result.get("recommendation_count", 0)),
         )
 
     @app.get("/api/runtime-status", response_model=RuntimeStatusResponse)

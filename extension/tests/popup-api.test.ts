@@ -12,10 +12,9 @@ test("refreshRecommendations posts to refresh endpoint", async () => {
       async json() {
         return {
           ok: true,
-          refreshed: true,
-          strategies: ["search"],
-          reason: "triggered",
-          recommendation_count: 3,
+          accepted: true,
+          state: "running",
+          reason: "started",
         };
       },
     };
@@ -28,9 +27,8 @@ test("refreshRecommendations posts to refresh endpoint", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.deepEqual(result, {
     ok: true,
-    refreshed: true,
-    strategies: ["search"],
-    reason: "triggered",
-    recommendation_count: 3,
+    accepted: true,
+    state: "running",
+    reason: "started",
   });
 });

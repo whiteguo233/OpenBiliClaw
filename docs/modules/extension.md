@@ -80,12 +80,13 @@ popup 当前已具备：
 
 - 后端连接状态检查
 - 从 `/api/recommendations` 拉取推荐列表
-- 推荐 tab 支持“立即刷新”，会调用 `/api/recommendations/refresh` 强制触发一次完整补货，不再受自动刷新阈值限制
+- 推荐 tab 支持“立即刷新”，会调用 `/api/recommendations/refresh` 异步触发一次完整补货，不再受自动刷新阈值限制
 - 亮色 popup 视觉系统：顶部 hero + inline 状态徽标、胶囊 tab、统一卡片体系，整体更贴近 B 站内容产品气质
 - 推荐 tab：展示标题、UP 主、`topic_label`、朋友式推荐文案，并通过“打开视频”明确跳转到对应 B 站视频页
 - 修复 popup 卡片误跳转：`喜欢` / `不喜欢` / `写一句` / 输入框 / 发送按钮不再冒泡触发视频打开
 - `喜欢` / `不喜欢` / `写一句` 都会调用 `/api/feedback`
 - popup 会读取 `/api/runtime-status`，区分“未初始化 / 正在补货 / 推荐可用”三种状态
+- 手动刷新后，popup 会轮询 `runtime-status` 等待后台补货完成，再重拉推荐列表
 - 手动刷新失败时会保留当前推荐列表，只给出轻量提示，不会把现有内容清空
 - 画像 tab：调用 `/api/profile-summary` 展示轻量人格画像、核心特质、深层需求和偏好关键词
 - 画像 tab 会额外展示“阿B 最近新记住了什么”，让用户能看到最近几次高置信度认知变化

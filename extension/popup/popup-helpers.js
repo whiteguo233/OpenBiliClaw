@@ -79,6 +79,8 @@ export function normalizeRuntimeStatus(status) {
     last_refresh_at: normalizeText(status?.last_refresh_at),
     last_notification_at: normalizeText(status?.last_notification_at),
     unread_count: Number(status?.unread_count ?? 0),
+    manual_refresh_state: normalizeText(status?.manual_refresh_state) || "idle",
+    manual_refresh_message: normalizeText(status?.manual_refresh_message),
   };
 }
 
@@ -124,10 +126,10 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
       };
     }
 
-    if (runtime.pending_signal_events > 0) {
+    if (runtime.manual_refresh_state === "running" || runtime.pending_signal_events > 0) {
       return {
         kind: "refreshing",
-        message: "正在根据你最近的新行为补货，再刷一会儿就会更新。",
+        message: runtime.manual_refresh_message || "正在根据你最近的新行为补货，再刷一会儿就会更新。",
         items: [],
       };
     }

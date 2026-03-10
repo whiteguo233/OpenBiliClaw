@@ -71,6 +71,11 @@ class ContinuousRefreshController:
     notification_cooldown_hours: int = 2
     check_interval_seconds: int = 60
     discovery_limit: int = 18
+    _manual_refresh_task: asyncio.Task[None] | None = None
+    _manual_refresh_state: str = "idle"
+    _manual_refresh_message: str = ""
+    _manual_refresh_started_at: str = ""
+    _manual_refresh_finished_at: str = ""
 
     _signal_event_types = [
         "view",
@@ -105,6 +110,8 @@ class ContinuousRefreshController:
             "last_refresh_at": last_refresh_at,
             "last_notification_at": str(state.get("last_notification_at", "")),
             "unread_count": self.database.count_unread_recommendations(),
+            "manual_refresh_state": self._manual_refresh_state,
+            "manual_refresh_message": self._manual_refresh_message,
         }
 
     async def refresh_if_needed(self) -> dict[str, object]:
@@ -139,6 +146,20 @@ class ContinuousRefreshController:
             strategies=strategies,
             reason="manual",
         )
+
+    async def trigger_manual_refresh(self) -> dict[str, object]:
+        """Schedule one background manual refresh without blocking the caller."""
+        if not self._is_initialized():
+            return {"accepted": False, "state": "idle", "reason": "not_initialized"}
+        if self._manual_refresh_task is not None and not self._manual_refresh_task.done():
+            return {"accepted": True, "state": "running", "reason": "already_running"}
+
+        self._manual_refresh_state = "running"
+        self._manual_refresh_message = "正在补货…"
+        self._manual_refresh_started_at = self._now().isoformat()
+        self._manual_refresh_finished_at = ""
+        self._manual_refresh_task = asyncio.create_task(self._complete_manual_refresh())
+        return {"accepted": True, "state": "running", "reason": "started"}
 
     def get_pending_notification(self) -> dict[str, object] | None:
         """Return one recommendation candidate for browser notification."""
@@ -216,6 +237,18 @@ class ContinuousRefreshController:
     async def refresh_after_init(self) -> dict[str, object]:
         """Allow callers to trigger a refresh immediately after initialization."""
         return await self.refresh_if_needed()
+
+    async def _complete_manual_refresh(self) -> None:
+        try:
+            await self.force_refresh()
+        except Exception as exc:
+            self._manual_refresh_state = "failed"
+            self._manual_refresh_message = f"这次补货没跑通：{exc}"
+            self._manual_refresh_finished_at = self._now().isoformat()
+            return
+        self._manual_refresh_state = "success"
+        self._manual_refresh_message = "刚给你补了一批新的。"
+        self._manual_refresh_finished_at = self._now().isoformat()
 
     async def _run_refresh(
         self,

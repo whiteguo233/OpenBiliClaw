@@ -106,6 +106,8 @@ test("normalizeRuntimeStatus fills stable fallback fields", () => {
     last_refresh_at: "",
     last_notification_at: "",
     unread_count: 2,
+    manual_refresh_state: "idle",
+    manual_refresh_message: "",
   });
 });
 

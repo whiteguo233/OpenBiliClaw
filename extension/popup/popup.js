@@ -69,6 +69,12 @@ function setRefreshButtonState(loading, message = "") {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function setHint(message) {
   if (elements.hintText) {
     elements.hintText.textContent = message;
@@ -456,16 +462,36 @@ async function handleManualRefresh() {
       setHint("先执行 openbiliclaw init，再回来刷新。");
       return;
     }
-    state.profileLoaded = false;
-    await initializeRecommendations();
-    setHint(
-      result.refreshed ? "刚给你补了一批新的。" : "先看着这批，暂时还没到要重刷的时候。",
-    );
+    if (result.reason === "already_running" || result.state === "running") {
+      const finalStatus = await waitForManualRefresh();
+      state.profileLoaded = false;
+      await initializeRecommendations();
+      if (finalStatus?.manual_refresh_state === "failed") {
+        setHint(finalStatus.manual_refresh_message || "这次补货没跑通，稍后再试。");
+        return;
+      }
+      setHint(finalStatus?.manual_refresh_message || "刚给你补了一批新的。");
+      return;
+    }
+    setHint("这次没接到补货任务，稍后再试。");
   } catch {
     setHint("这次没刷新成功，稍后再试。");
   } finally {
     setRefreshButtonState(false);
   }
+}
+
+async function waitForManualRefresh() {
+  const maxAttempts = 30;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = normalizeRuntimeStatus(await fetchRuntimeStatus());
+    state.runtimeStatus = status;
+    if (status.manual_refresh_state !== "running") {
+      return status;
+    }
+    await delay(1000);
+  }
+  return state.runtimeStatus;
 }
 
 function bindTabs() {
