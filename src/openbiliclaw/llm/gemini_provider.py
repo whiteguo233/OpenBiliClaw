@@ -5,8 +5,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from google import genai
-from google.genai import errors, types
+try:
+    from google import genai  # type: ignore[import-not-found]
+    from google.genai import errors, types  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - exercised via integration behavior
+    genai = None
+    errors = None
+    types = None
 
 from .base import (
     LLMProvider,
@@ -18,6 +23,17 @@ from .base import (
 )
 
 
+def gemini_sdk_available() -> bool:
+    """Return whether the optional google-genai dependency is installed."""
+    return genai is not None and types is not None
+
+
+def _raise_missing_sdk() -> None:
+    raise LLMProviderError(
+        "Gemini provider requires the optional dependency 'google-genai' to be installed."
+    )
+
+
 class GeminiProvider(LLMProvider):
     """Gemini provider using the official Gemini Developer API client."""
 
@@ -25,6 +41,9 @@ class GeminiProvider(LLMProvider):
     _BASE_RETRY_DELAY = 0.25
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash") -> None:
+        if not gemini_sdk_available():
+            _raise_missing_sdk()
+        assert genai is not None
         self._model = model
         self._client = genai.Client(api_key=api_key)
 
@@ -40,6 +59,8 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
     ) -> LLMResponse:
+        if types is None:
+            _raise_missing_sdk()
         config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
@@ -98,7 +119,9 @@ class GeminiProvider(LLMProvider):
         message = (getattr(exc, "message", None) or str(exc)).lower()
         if status_code == 429 or "rate limit" in message or "resource_exhausted" in message:
             return LLMRateLimitError("gemini rate limit exceeded")
-        if isinstance(exc, errors.ServerError) or (status_code and int(status_code) >= 500):
+        if (errors is not None and isinstance(exc, errors.ServerError)) or (
+            status_code and int(status_code) >= 500
+        ):
             return LLMProviderError(f"gemini server error: {status_code}")
         return LLMProviderError(f"gemini request failed: {exc}")
 

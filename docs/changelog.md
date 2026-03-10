@@ -6,6 +6,12 @@
 
 ## M8: 插件后端 API（进行中）
 
+### Gemini 可选依赖导入修复 — `fix/gemini-optional-import`
+
+- `google-genai` 缺失时，`openbiliclaw.llm` 和 `openbiliclaw.llm.registry` 现在仍可正常导入，不再因为 Gemini 顶层依赖阻塞整个测试收集
+- 只有真正实例化 `GeminiProvider` 时才会抛出明确错误，提示安装 `google-genai`
+- Gemini 功能测试改为“有 SDK 才跑功能，无 SDK 则验证友好降级”，恢复主线测试可运行性
+
 ### 关键认知变化提醒 — `runtime/m104-cognition-notify`
 
 - 新增 `cognition_updates.json`，记录关键认知变化、来源、置信度和已通知状态

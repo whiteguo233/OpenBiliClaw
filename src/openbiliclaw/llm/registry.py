@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from .base import LLMProvider, LLMProviderError, LLMRegistry
 from .claude_provider import ClaudeProvider
-from .gemini_provider import GeminiProvider
+from .gemini_provider import GeminiProvider, gemini_sdk_available
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
@@ -138,6 +138,8 @@ def _maybe_gemini_provider(
         return overrides["gemini"]
     api_key = config.llm.gemini.api_key.strip() or _gemini_env_api_key()
     if not api_key:
+        return None
+    if not gemini_sdk_available():
         return None
     return GeminiProvider(
         api_key=api_key,

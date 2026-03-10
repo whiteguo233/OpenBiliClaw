@@ -13,6 +13,7 @@ from openbiliclaw.llm.base import (
     LLMResponse,
     LLMResponseError,
 )
+from openbiliclaw.llm.gemini_provider import gemini_sdk_available
 from openbiliclaw.llm.registry import build_llm_registry
 
 
@@ -81,6 +82,7 @@ def test_build_llm_registry_registers_openrouter() -> None:
     assert "openrouter" in registry.available_providers
 
 
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_build_llm_registry_registers_gemini() -> None:
     config = Config(
         llm=LLMConfig(
@@ -98,6 +100,7 @@ def test_build_llm_registry_registers_gemini() -> None:
     assert "gemini" in registry.available_providers
 
 
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_build_llm_registry_registers_gemini_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

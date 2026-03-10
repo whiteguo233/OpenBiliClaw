@@ -12,7 +12,7 @@ from openbiliclaw.llm.base import (
     LLMTimeoutError,
 )
 from openbiliclaw.llm.claude_provider import ClaudeProvider
-from openbiliclaw.llm.gemini_provider import GeminiProvider
+from openbiliclaw.llm.gemini_provider import GeminiProvider, gemini_sdk_available
 from openbiliclaw.llm.ollama_provider import OllamaProvider
 from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
 from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
@@ -180,12 +180,14 @@ def test_openrouter_provider_defaults_and_headers() -> None:
     }
 
 
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_gemini_provider_defaults() -> None:
     provider = GeminiProvider(api_key="test-key")
     assert provider.name == "gemini"
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 async def test_gemini_provider_normalizes_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
