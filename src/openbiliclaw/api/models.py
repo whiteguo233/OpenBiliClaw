@@ -73,6 +73,20 @@ class PendingNotificationResponse(BaseModel):
     item: PendingNotificationOut | None = None
 
 
+class PendingCognitionUpdateOut(BaseModel):
+    """One cognition update worthy of notifying in the extension."""
+
+    id: str
+    kind: str
+    summary: str
+
+
+class PendingCognitionUpdateResponse(BaseModel):
+    """Wrapper for a pending cognition update."""
+
+    item: PendingCognitionUpdateOut | None = None
+
+
 class NotificationAckIn(BaseModel):
     """Acknowledge one browser notification delivery."""
 
@@ -86,6 +100,19 @@ class NotificationAckResponse(BaseModel):
     bvid: str
 
 
+class CognitionUpdateSeenIn(BaseModel):
+    """Acknowledge one cognition update as seen/notified."""
+
+    id: str
+
+
+class CognitionUpdateSeenResponse(BaseModel):
+    """Response after marking a cognition update as seen."""
+
+    ok: bool
+    id: str
+
+
 class ProfileSummaryResponse(BaseModel):
     """Lightweight soul profile exposed to the popup."""
 
@@ -94,6 +121,7 @@ class ProfileSummaryResponse(BaseModel):
     core_traits: list[str] = Field(default_factory=list)
     deep_needs: list[str] = Field(default_factory=list)
     top_interests: list[str] = Field(default_factory=list)
+    recent_cognition_updates: list[str] = Field(default_factory=list)
 
 
 class EventIngestResponse(BaseModel):

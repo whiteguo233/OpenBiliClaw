@@ -65,6 +65,9 @@ export function normalizeProfileSummary(summary) {
     top_interests: Array.isArray(summary?.top_interests)
       ? summary.top_interests.map(normalizeText).filter(Boolean)
       : [],
+    recent_cognition_updates: Array.isArray(summary?.recent_cognition_updates)
+      ? summary.recent_cognition_updates.map(normalizeText).filter(Boolean)
+      : [],
   };
 }
 

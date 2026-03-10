@@ -456,6 +456,10 @@ async def test_learn_from_dialogue_rebuilds_profile_after_candidate_reaches_thre
     assert result["profile_rebuilt"] is True
     assert memory.get_layer("preference").data["interests"][0]["name"] == "国际时事"
     assert memory.get_layer("soul").data["core_traits"] == ["理性", "主动"]
+    cognition_updates = memory.load_cognition_updates()
+    assert cognition_updates
+    assert cognition_updates[0]["kind"] == "interest_added"
+    assert "国际时事" in str(cognition_updates[0]["summary"])
 
 
 @pytest.mark.asyncio
@@ -527,3 +531,7 @@ async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_s
     soul = memory.get_layer("soul").data
     assert soul["core_traits"] == ["理性", "耐心", "好奇"]
     assert "结构调整阶段" in soul["life_stage"]
+    cognition_updates = memory.load_cognition_updates()
+    kinds = {str(item["kind"]) for item in cognition_updates}
+    assert "dislike_added" in kinds
+    assert "profile_shift" in kinds

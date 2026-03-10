@@ -6,6 +6,13 @@
 
 ## M8: 插件后端 API（进行中）
 
+### 关键认知变化提醒 — `runtime/m104-cognition-notify`
+
+- 新增 `cognition_updates.json`，记录关键认知变化、来源、置信度和已通知状态
+- 反馈刷新与聊天学习链路现在会生成 `interest_added`、`dislike_added`、`profile_shift` 三类认知变化
+- 新增 `/api/cognition-updates/pending` 与 `/api/cognition-updates/seen`，供插件拉取并确认认知提醒
+- service worker 现在会在推荐通知之后检查认知变化通知；popup “我的画像” tab 会展示“阿B 最近新记住了什么”
+
 ### 持续候选池刷新与通知 — `runtime/m103-continuous-refresh-notify`
 
 - 新增 `ContinuousRefreshController`，在本地 API 运行时按“事件触发 + 定时保底”持续刷新候选池，并分层调度 Search/Related、Trending、Explore 策略

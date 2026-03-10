@@ -34,6 +34,7 @@
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
 | SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate，并在达阈值时驱动偏好/画像更新 |
 | ToneProfile | ✅ | 从 `SoulProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
+| Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift`，供插件提醒与画像页展示 |
 
 ## 公开 API
 
@@ -70,6 +71,16 @@ learning = await engine.learn_from_dialogue(
 #   "preference_updated": False,
 #   "profile_rebuilt": False,
 # }
+
+updates = memory_manager.load_cognition_updates()
+# [
+#   {
+#     "kind": "interest_added",
+#     "summary": "阿B 现在更确定你会吃“国际时事”这一口。",
+#     "notified": False,
+#     ...
+#   }
+# ]
 ```
 
 ### SocraticDialogue
@@ -214,3 +225,4 @@ tone = build_tone_profile(
 12. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新
 13. **语气不单独持久化**：`ToneProfile` 是从画像、偏好和近期反馈实时推断出的派生层，避免把易调参的表达风格绑死在 `soul.json`
 14. **“老B友”是基础人格，不是固定模板**：聊天、推荐和画像总结共用同一套语气维度，但会随着用户画像和近期反馈在信息密度、温度、梗感和直给程度上细调
+15. **认知变化只在关键时刻生成**：只有新增高权重兴趣、明确避雷方向或画像明显转向时，才会形成 `cognition update`，避免把普通波动都做成提醒

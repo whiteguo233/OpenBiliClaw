@@ -338,6 +338,23 @@ class TestBackendAPI:
     def test_profile_summary_endpoint_returns_initialized_profile(self) -> None:
         from fastapi.testclient import TestClient
 
+        class FakeMemoryManager:
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "cog-2",
+                        "kind": "profile_shift",
+                        "summary": "我对你又对上了一点：你不是只看热闹的人。",
+                        "notified": True,
+                    },
+                    {
+                        "id": "cog-1",
+                        "kind": "interest_added",
+                        "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",
+                        "notified": False,
+                    },
+                ]
+
         class FakeProfile:
             personality_portrait = "这是一个喜欢把问题想透、信息密度偏高的用户。"
             core_traits = ["理性", "好奇"]
@@ -357,7 +374,11 @@ class TestBackendAPI:
             async def get_profile(self) -> FakeProfile:
                 return FakeProfile()
 
-        app = create_app(soul_engine=FakeSoulEngine(), memory_manager=object(), database=object())
+        app = create_app(
+            soul_engine=FakeSoulEngine(),
+            memory_manager=FakeMemoryManager(),
+            database=object(),
+        )
         client = TestClient(app)
 
         response = client.get("/api/profile-summary")
@@ -369,6 +390,10 @@ class TestBackendAPI:
             "core_traits": ["理性", "好奇"],
             "deep_needs": ["理解世界", "持续成长"],
             "top_interests": ["国际新闻", "深度分析"],
+            "recent_cognition_updates": [
+                "阿B 现在更确定你会吃国际时事深拆这一口。",
+                "我对你又对上了一点：你不是只看热闹的人。",
+            ],
         }
 
     def test_profile_summary_endpoint_handles_missing_profile(self) -> None:
@@ -385,6 +410,80 @@ class TestBackendAPI:
 
         assert response.status_code == 200
         assert response.json()["initialized"] is False
+
+    def test_pending_cognition_update_endpoint_returns_latest_unnotified_item(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "cog-1",
+                        "kind": "interest_added",
+                        "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",
+                        "confidence": 0.86,
+                        "created_at": "2026-03-10T12:00:00",
+                        "source": "feedback",
+                        "notified": False,
+                    },
+                    {
+                        "id": "cog-2",
+                        "kind": "profile_shift",
+                        "summary": "我对你又对上了一点：你不是只看热闹的人。",
+                        "confidence": 0.9,
+                        "created_at": "2026-03-10T11:00:00",
+                        "source": "profile_refresh",
+                        "notified": True,
+                    },
+                ]
+
+        app = create_app(
+            memory_manager=FakeMemoryManager(),
+            database=object(),
+            soul_engine=object(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/cognition-updates/pending")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "item": {
+                "id": "cog-1",
+                "kind": "interest_added",
+                "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",
+            }
+        }
+
+    def test_seen_cognition_update_endpoint_marks_item_notified(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self._updates = [
+                    {
+                        "id": "cog-1",
+                        "kind": "interest_added",
+                        "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",
+                        "notified": False,
+                    }
+                ]
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self._updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self._updates = list(updates)
+
+        memory = FakeMemoryManager()
+        app = create_app(memory_manager=memory, database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post("/api/cognition-updates/seen", json={"id": "cog-1"})
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "id": "cog-1"}
+        assert memory._updates[0]["notified"] is True
 
     def test_chat_endpoint_returns_dialogue_reply(self) -> None:
         from fastapi.testclient import TestClient

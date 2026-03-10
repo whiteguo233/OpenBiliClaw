@@ -48,6 +48,7 @@ const elements = {
   profileTraits: document.getElementById("profileTraits"),
   profileNeeds: document.getElementById("profileNeeds"),
   profileInterests: document.getElementById("profileInterests"),
+  profileRecentMemory: document.getElementById("profileRecentMemory"),
   chatMessages: document.getElementById("chatMessages"),
   chatForm: document.getElementById("chatForm"),
   chatInput: document.getElementById("chatInput"),
@@ -158,6 +159,11 @@ function renderProfileSummary(summary) {
   renderChipList(elements.profileTraits, summary.core_traits, "这部分还在慢慢补");
   renderChipList(elements.profileNeeds, summary.deep_needs, "这块还要再多看一点");
   renderChipList(elements.profileInterests, summary.top_interests, "再刷一阵，这里会更准");
+  renderChipList(
+    elements.profileRecentMemory,
+    summary.recent_cognition_updates,
+    "阿B 还在继续观察，过一阵这里会更具体。",
+  );
 }
 
 function appendChatMessage(role, content) {
@@ -487,9 +493,14 @@ function bindChat() {
 }
 
 async function initializePopup() {
+  const requestedTab = new URLSearchParams(window.location.search).get("tab");
   bindTabs();
   bindChat();
-  setActiveTab("recommend");
+  setActiveTab(
+    requestedTab === "profile" || requestedTab === "chat" || requestedTab === "recommend"
+      ? requestedTab
+      : "recommend",
+  );
   setHint("先看看本地后端连上没。");
   await initializeRecommendations();
 }

@@ -208,6 +208,7 @@ class SoulEngine:
 
         preference_layer = self._memory.get_layer("preference")
         existing_preference = dict(preference_layer.data)
+        existing_profile = dict(self._memory.get_layer("soul").data)
         updated_preference = await self._preference_analyzer.analyze_events(
             events=[
                 {
@@ -245,6 +246,14 @@ class SoulEngine:
             except Exception:
                 logger.exception("Failed to rebuild soul profile after dialogue learning.")
 
+        self._record_cognition_updates(
+            existing_preference=existing_preference,
+            updated_preference=updated_preference,
+            previous_profile=existing_profile,
+            current_profile=dict(self._memory.get_layer("soul").data),
+            source="chat",
+        )
+
         for item in merged_candidates:
             if self._candidate_ready_for_learning(item):
                 item["applied"] = True
@@ -279,6 +288,7 @@ class SoulEngine:
 
         preference_layer = self._memory.get_layer("preference")
         existing_preference = dict(preference_layer.data)
+        existing_profile = dict(self._memory.get_layer("soul").data)
         updated_preference = await self._preference_analyzer.analyze_events(
             events=feedback_events,
             existing_preference=existing_preference,
@@ -302,6 +312,14 @@ class SoulEngine:
                 profile_rebuilt = True
             except Exception:
                 logger.exception("Failed to rebuild soul profile after feedback refresh.")
+
+        self._record_cognition_updates(
+            existing_preference=existing_preference,
+            updated_preference=updated_preference,
+            previous_profile=existing_profile,
+            current_profile=dict(self._memory.get_layer("soul").data),
+            source="feedback",
+        )
 
         self._memory.save_feedback_state(
             {
@@ -448,6 +466,104 @@ class SoulEngine:
             return True
         return confidence >= 0.8 and occurrences >= 2
 
+    def _record_cognition_updates(
+        self,
+        *,
+        existing_preference: dict[str, Any],
+        updated_preference: dict[str, Any],
+        previous_profile: dict[str, Any],
+        current_profile: dict[str, Any],
+        source: str,
+    ) -> None:
+        new_updates = self._build_cognition_updates(
+            existing_preference=existing_preference,
+            updated_preference=updated_preference,
+            previous_profile=previous_profile,
+            current_profile=current_profile,
+            source=source,
+        )
+        if not new_updates:
+            return
+        updates = self._memory.load_cognition_updates()
+        updates.extend(new_updates)
+        self._memory.save_cognition_updates(updates)
+
+    def _build_cognition_updates(
+        self,
+        *,
+        existing_preference: dict[str, Any],
+        updated_preference: dict[str, Any],
+        previous_profile: dict[str, Any],
+        current_profile: dict[str, Any],
+        source: str,
+    ) -> list[dict[str, object]]:
+        now = datetime.now().isoformat()
+        updates: list[dict[str, object]] = []
+
+        existing_interests = {
+            self._normalize_text(str(item.get("name", ""))): item
+            for item in self._as_dict_list(existing_preference.get("interests", []))
+            if str(item.get("name", "")).strip()
+        }
+        for item in self._as_dict_list(updated_preference.get("interests", [])):
+            name = str(item.get("name", "")).strip()
+            normalized_name = self._normalize_text(name)
+            if not normalized_name or normalized_name in existing_interests:
+                continue
+            weight = self._to_float(item.get("weight", 0.0))
+            if weight < 0.75:
+                continue
+            updates.append(
+                {
+                    "id": f"cognition-{uuid4()}",
+                    "kind": "interest_added",
+                    "summary": f"阿B 现在更确定你会吃“{name}”这一口。",
+                    "confidence": round(weight, 4),
+                    "created_at": now,
+                    "source": source,
+                    "notified": False,
+                }
+            )
+
+        existing_dislikes = {
+            self._normalize_text(item)
+            for item in self._as_str_list(existing_preference.get("disliked_topics", []))
+        }
+        for topic in self._as_str_list(updated_preference.get("disliked_topics", [])):
+            normalized_topic = self._normalize_text(topic)
+            if not normalized_topic or normalized_topic in existing_dislikes:
+                continue
+            updates.append(
+                {
+                    "id": f"cognition-{uuid4()}",
+                    "kind": "dislike_added",
+                    "summary": f"阿B 记住了：像“{topic}”这种内容你大概率会划走。",
+                    "confidence": 0.86,
+                    "created_at": now,
+                    "source": source,
+                    "notified": False,
+                }
+            )
+
+        if self._profile_shifted(previous_profile, current_profile):
+            portrait = str(current_profile.get("personality_portrait", "")).strip()
+            summary = (
+                portrait[:72].rstrip("，。！？,.!?") if portrait else "我对你又对上了一点。"
+            )
+            updates.append(
+                {
+                    "id": f"cognition-{uuid4()}",
+                    "kind": "profile_shift",
+                    "summary": summary,
+                    "confidence": 0.9,
+                    "created_at": now,
+                    "source": "profile_refresh",
+                    "notified": False,
+                }
+            )
+
+        return updates
+
     @staticmethod
     def _normalize_text(value: str) -> str:
         return "".join(value.split())
@@ -506,6 +622,48 @@ class SoulEngine:
             if str(item).strip()
         }
         return len(new_disliked - old_disliked) >= 1
+
+    @staticmethod
+    def _profile_shifted(previous_profile: dict[str, Any], current_profile: dict[str, Any]) -> bool:
+        if not current_profile:
+            return False
+        if not previous_profile:
+            return bool(
+                SoulEngine._as_str_list(current_profile.get("core_traits", []))
+                or SoulEngine._as_str_list(current_profile.get("deep_needs", []))
+                or str(current_profile.get("personality_portrait", "")).strip()
+            )
+        previous_traits = set(SoulEngine._as_str_list(previous_profile.get("core_traits", [])))
+        current_traits = set(SoulEngine._as_str_list(current_profile.get("core_traits", [])))
+        if current_traits - previous_traits:
+            return True
+        previous_needs = set(SoulEngine._as_str_list(previous_profile.get("deep_needs", [])))
+        current_needs = set(SoulEngine._as_str_list(current_profile.get("deep_needs", [])))
+        if current_needs - previous_needs:
+            return True
+        previous_portrait = SoulEngine._normalize_text(
+            str(previous_profile.get("personality_portrait", ""))
+        )
+        current_portrait = SoulEngine._normalize_text(
+            str(current_profile.get("personality_portrait", ""))
+        )
+        return bool(
+            previous_portrait
+            and current_portrait
+            and previous_portrait != current_portrait
+        )
+
+    @staticmethod
+    def _as_dict_list(raw_value: object) -> list[dict[str, Any]]:
+        if not isinstance(raw_value, list):
+            return []
+        return [item for item in raw_value if isinstance(item, dict)]
+
+    @staticmethod
+    def _as_str_list(raw_value: object) -> list[str]:
+        if not isinstance(raw_value, list):
+            return []
+        return [str(item).strip() for item in raw_value if str(item).strip()]
 
     @staticmethod
     def _to_int(raw_value: object) -> int:

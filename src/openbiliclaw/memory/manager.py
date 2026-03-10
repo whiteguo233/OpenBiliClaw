@@ -93,6 +93,7 @@ class MemoryManager:
         self._feedback_state_path = data_dir / "memory" / "feedback_state.json"
         self._discovery_runtime_state_path = data_dir / "memory" / "discovery_runtime.json"
         self._insight_candidates_path = data_dir / "memory" / "insight_candidates.json"
+        self._cognition_updates_path = data_dir / "memory" / "cognition_updates.json"
         self._working_memory: dict[str, Any] = {}  # Session-only
 
         # Initialize the five layers
@@ -196,6 +197,22 @@ class MemoryManager:
         self._insight_candidates_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._insight_candidates_path, "w", encoding="utf-8") as file:
             json.dump(candidates, file, ensure_ascii=False, indent=2)
+
+    def load_cognition_updates(self) -> list[dict[str, object]]:
+        """Load cognition updates generated from preference/profile shifts."""
+        if not self._cognition_updates_path.exists():
+            return []
+        with open(self._cognition_updates_path, encoding="utf-8") as file:
+            loaded = json.load(file)
+        if not isinstance(loaded, list):
+            return []
+        return [item for item in loaded if isinstance(item, dict)]
+
+    def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+        """Persist cognition updates generated from preference/profile shifts."""
+        self._cognition_updates_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._cognition_updates_path, "w", encoding="utf-8") as file:
+            json.dump(updates, file, ensure_ascii=False, indent=2)
 
     def get_layer(self, name: str) -> MemoryLayer:
         """Get a specific memory layer by name."""

@@ -13,12 +13,16 @@ from openbiliclaw.api.models import (
     BehaviorEventBatchIn,
     ChatIn,
     ChatResponse,
+    CognitionUpdateSeenIn,
+    CognitionUpdateSeenResponse,
     EventIngestResponse,
     FeedbackIn,
     FeedbackResponse,
     HealthResponse,
     NotificationAckIn,
     NotificationAckResponse,
+    PendingCognitionUpdateOut,
+    PendingCognitionUpdateResponse,
     PendingNotificationOut,
     PendingNotificationResponse,
     ProfileSummaryResponse,
@@ -162,12 +166,26 @@ def create_app(
             return ProfileSummaryResponse(initialized=False)
 
         top_interests = [item.name for item in profile.preferences.interests[:5] if item.name]
+        cognition_updates = []
+        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        if callable(load_cognition_updates):
+            raw_updates = [
+                item
+                for item in load_cognition_updates()
+                if isinstance(item, dict) and str(item.get("summary", "")).strip()
+            ]
+            raw_updates.sort(key=lambda item: bool(item.get("notified", False)))
+            cognition_updates = [
+                str(item.get("summary", "")).strip()
+                for item in raw_updates
+            ][:3]
         return ProfileSummaryResponse(
             initialized=True,
             personality_portrait=profile.personality_portrait,
             core_traits=profile.core_traits[:5],
             deep_needs=profile.deep_needs[:5],
             top_interests=top_interests,
+            recent_cognition_updates=cognition_updates,
         )
 
     @app.post("/api/events", response_model=EventIngestResponse)
@@ -240,6 +258,59 @@ def create_app(
         if item is None:
             return PendingNotificationResponse(item=None)
         return PendingNotificationResponse(item=PendingNotificationOut(**item))
+
+    @app.get(
+        "/api/cognition-updates/pending",
+        response_model=PendingCognitionUpdateResponse,
+    )
+    async def pending_cognition_update() -> PendingCognitionUpdateResponse:
+        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        if not callable(load_cognition_updates):
+            return PendingCognitionUpdateResponse(item=None)
+        updates = [
+            item
+            for item in load_cognition_updates()
+            if isinstance(item, dict) and not bool(item.get("notified", False))
+        ]
+        if not updates:
+            return PendingCognitionUpdateResponse(item=None)
+        latest = updates[-1]
+        return PendingCognitionUpdateResponse(
+            item=PendingCognitionUpdateOut(
+                id=str(latest.get("id", "")),
+                kind=str(latest.get("kind", "")),
+                summary=str(latest.get("summary", "")),
+            )
+        )
+
+    @app.post(
+        "/api/cognition-updates/seen",
+        response_model=CognitionUpdateSeenResponse,
+    )
+    async def cognition_update_seen(
+        payload: CognitionUpdateSeenIn,
+    ) -> CognitionUpdateSeenResponse:
+        update_id = payload.id.strip()
+        if not update_id:
+            raise HTTPException(status_code=422, detail="Cognition update id is required.")
+        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        save_cognition_updates = getattr(memory_manager, "save_cognition_updates", None)
+        if not callable(load_cognition_updates) or not callable(save_cognition_updates):
+            raise HTTPException(status_code=500, detail="Cognition update storage unavailable.")
+        updates = load_cognition_updates()
+        found = False
+        for item in updates:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("id", "")).strip() != update_id:
+                continue
+            item["notified"] = True
+            found = True
+            break
+        if not found:
+            raise HTTPException(status_code=404, detail="Cognition update not found.")
+        save_cognition_updates(updates)
+        return CognitionUpdateSeenResponse(ok=True, id=update_id)
 
     @app.post("/api/notifications/sent", response_model=NotificationAckResponse)
     async def mark_notification_sent(payload: NotificationAckIn) -> NotificationAckResponse:

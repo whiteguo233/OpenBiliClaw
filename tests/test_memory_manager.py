@@ -273,3 +273,48 @@ def test_save_insight_candidates_round_trips_to_json(tmp_path: Path) -> None:
     assert len(loaded) == 1
     assert loaded[0]["kind"] == "goal"
     assert loaded[0]["occurrences"] == 2
+
+
+def test_cognition_updates_default_to_empty_list(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    updates = memory.load_cognition_updates()
+
+    assert updates == []
+
+
+def test_save_cognition_updates_round_trips_to_json(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    memory.save_cognition_updates(
+        [
+            {
+                "id": "cog-1",
+                "kind": "interest_added",
+                "summary": "阿B 现在更确定你会吃讲透来龙去脉这一口。",
+                "confidence": 0.86,
+                "source": "feedback",
+                "notified": False,
+                "created_at": "2026-03-10T12:00:00",
+            },
+            {
+                "id": "cog-2",
+                "kind": "profile_shift",
+                "summary": "我对你又对上了一点：你不是只看热闹的人。",
+                "confidence": 0.9,
+                "source": "profile_refresh",
+                "notified": True,
+                "created_at": "2026-03-10T13:00:00",
+            },
+        ]
+    )
+
+    updates = memory.load_cognition_updates()
+
+    assert len(updates) == 2
+    assert updates[0]["kind"] == "interest_added"
+    assert updates[0]["notified"] is False
+    assert updates[1]["kind"] == "profile_shift"
+    assert updates[1]["notified"] is True

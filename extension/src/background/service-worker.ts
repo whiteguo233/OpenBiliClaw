@@ -8,8 +8,11 @@
 import { enqueueBufferedEvent, shouldFlushImmediately } from "./buffer.js";
 import {
   buildChromeNotificationOptions,
+  buildCognitionNotificationId,
   buildNotificationId,
+  buildProfileNotificationUrl,
   parseNotificationBvid,
+  parseCognitionUpdateId,
 } from "./notifications.js";
 import type { BehaviorEvent } from "../shared/types.js";
 
@@ -20,7 +23,10 @@ const FLUSH_ALARM_NAME = "openbiliclaw-flush-events";
 const BACKEND_URL = "http://localhost:8420/api/events";
 const NOTIFICATION_POLL_URL = "http://127.0.0.1:8420/api/notifications/pending";
 const NOTIFICATION_ACK_URL = "http://127.0.0.1:8420/api/notifications/sent";
+const COGNITION_POLL_URL = "http://127.0.0.1:8420/api/cognition-updates/pending";
+const COGNITION_ACK_URL = "http://127.0.0.1:8420/api/cognition-updates/seen";
 type PendingNotification = import("./notifications.js").PendingNotification;
+type PendingCognitionUpdate = import("./notifications.js").PendingCognitionUpdate;
 
 async function acknowledgeNotificationSent(bvid: string): Promise<void> {
   if (!bvid) return;
@@ -40,14 +46,44 @@ async function fetchPendingNotification(): Promise<PendingNotification | null> {
   return payload.item ?? null;
 }
 
+async function fetchPendingCognitionUpdate(): Promise<PendingCognitionUpdate | null> {
+  const response = await fetch(COGNITION_POLL_URL, { method: "GET" });
+  if (!response.ok) {
+    throw new Error(`pending cognition updates failed: ${response.status}`);
+  }
+  const payload = (await response.json()) as { item?: PendingCognitionUpdate | null };
+  return payload.item ?? null;
+}
+
+async function acknowledgeCognitionUpdateSeen(id: string): Promise<void> {
+  if (!id) return;
+  await fetch(COGNITION_ACK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+}
+
 async function checkPendingNotification(): Promise<void> {
   try {
     const item = await fetchPendingNotification();
-    if (!item?.bvid) {
+    if (item?.bvid) {
+      await chrome.notifications.create(
+        buildNotificationId(item.bvid),
+        buildChromeNotificationOptions(item),
+      );
+      await acknowledgeNotificationSent(item.bvid);
       return;
     }
-    await chrome.notifications.create(buildNotificationId(item.bvid), buildChromeNotificationOptions(item));
-    await acknowledgeNotificationSent(item.bvid);
+    const cognition = await fetchPendingCognitionUpdate();
+    if (!cognition?.id) {
+      return;
+    }
+    await chrome.notifications.create(
+      buildCognitionNotificationId(cognition.id),
+      buildChromeNotificationOptions(cognition),
+    );
+    await acknowledgeCognitionUpdateSeen(cognition.id);
   } catch {
     console.warn("[OpenBiliClaw] Pending notification check failed");
   }
@@ -114,10 +150,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.notifications.onClicked.addListener((notificationId) => {
   const bvid = parseNotificationBvid(notificationId);
-  if (!bvid) {
+  if (bvid) {
+    void chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}` });
+    void chrome.notifications.clear(notificationId);
     return;
   }
-  void chrome.tabs.create({ url: `https://www.bilibili.com/video/${bvid}` });
+  const cognitionId = parseCognitionUpdateId(notificationId);
+  if (!cognitionId) {
+    return;
+  }
+  void chrome.tabs.create({ url: buildProfileNotificationUrl() });
   void chrome.notifications.clear(notificationId);
 });
 
