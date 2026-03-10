@@ -201,6 +201,50 @@ def test_validate_runtime_config_requires_openrouter_api_key() -> None:
         validate_runtime_config(config)
 
 
+def test_build_config_supports_gemini_provider() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "gemini",
+                "gemini": {
+                    "api_key": "test-key",
+                    "model": "gemini-2.5-flash",
+                },
+            }
+        }
+    )
+
+    assert config.llm.default_provider == "gemini"
+    assert config.llm.gemini.api_key == "test-key"
+    assert config.llm.gemini.model == "gemini-2.5-flash"
+
+
+def test_validate_runtime_config_allows_gemini_env_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+    config = Config(
+        llm=LLMConfig(
+            default_provider="gemini",
+            gemini=LLMProviderConfig(api_key="", model="gemini-2.5-flash"),
+        )
+    )
+
+    validate_runtime_config(config)
+
+
+def test_validate_runtime_config_requires_gemini_api_key() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="gemini",
+            gemini=LLMProviderConfig(api_key="", model="gemini-2.5-flash"),
+        )
+    )
+
+    with pytest.raises(ConfigError, match="llm.gemini.api_key"):
+        validate_runtime_config(config)
+
+
 def test_validate_runtime_config_rejects_invalid_auth_method() -> None:
     config = Config(bilibili=BilibiliConfig(auth_method="invalid"))
 

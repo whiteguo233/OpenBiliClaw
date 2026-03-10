@@ -11,6 +11,7 @@ from .base import (
     LLMTimeoutError,
 )
 from .claude_provider import ClaudeProvider
+from .gemini_provider import GeminiProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
@@ -30,6 +31,7 @@ from .service import (
 __all__ = [
     "ClaudeProvider",
     "DeepSeekProvider",
+    "GeminiProvider",
     "HealthCheckResult",
     "LLMFallbackError",
     "LLMProvider",

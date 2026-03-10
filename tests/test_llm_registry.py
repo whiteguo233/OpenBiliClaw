@@ -81,6 +81,40 @@ def test_build_llm_registry_registers_openrouter() -> None:
     assert "openrouter" in registry.available_providers
 
 
+def test_build_llm_registry_registers_gemini() -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="gemini",
+            gemini=LLMProviderConfig(
+                api_key="gemini-key",
+                model="gemini-2.5-flash",
+            ),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "gemini"
+    assert "gemini" in registry.available_providers
+
+
+def test_build_llm_registry_registers_gemini_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "env-gemini-key")
+    config = Config(
+        llm=LLMConfig(
+            default_provider="gemini",
+            gemini=LLMProviderConfig(api_key="", model="gemini-2.5-flash"),
+        )
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "gemini"
+    assert "gemini" in registry.available_providers
+
+
 def test_build_llm_registry_downgrades_default_provider() -> None:
     config = Config(
         llm=LLMConfig(

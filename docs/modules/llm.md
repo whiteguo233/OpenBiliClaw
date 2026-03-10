@@ -1,6 +1,6 @@
 # LLM 多模型支持
 
-> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / DeepSeek / Ollama / OpenRouter，带 fallback、retry 和健康检查。
+> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带 fallback、retry 和健康检查。
 
 ## 概述
 
@@ -16,7 +16,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 2.1 Provider 实现 | ✅ | OpenAI / Claude / DeepSeek / Ollama / OpenRouter，带 retry + 超时 |
+| 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带 retry + 超时 |
 | 2.2 Provider Registry | ✅ | 自动注册 + fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
@@ -30,6 +30,7 @@
 from openbiliclaw.llm import (
     ClaudeProvider,
     DeepSeekProvider,
+    GeminiProvider,
     OllamaProvider,
     OpenAIProvider,
     OpenRouterProvider,
@@ -51,6 +52,11 @@ provider = OpenRouterProvider(
     http_referer="https://example.com",
     x_title="OpenBiliClaw",
 )
+
+provider = GeminiProvider(
+    api_key="gemini-key",
+    model="gemini-2.5-flash",
+)
 ```
 
 ### Registry
@@ -60,7 +66,7 @@ from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.config import load_config
 
 registry = build_llm_registry(load_config())
-print(registry.available_providers)  # ["openai", "deepseek", "ollama", "openrouter"]
+print(registry.available_providers)  # ["openai", "gemini", "deepseek", "ollama", "openrouter"]
 print(registry.default_provider)     # "openai"
 
 # 带 fallback 的调用（默认 provider 失败时自动尝试下一个）
@@ -110,8 +116,7 @@ LLMServiceError           # Service 层基类
 
 ```toml
 [llm]
-default_provider = "openai"  # "openai" | "claude" | "deepseek" | "ollama"
-default_provider = "openrouter"  # 也支持 "openrouter"
+default_provider = "openai"  # "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter"
 
 [llm.openai]
 api_key = ""
@@ -121,6 +126,10 @@ base_url = ""  # 留空使用默认，或设置兼容 API 地址
 [llm.claude]
 api_key = ""
 model = "claude-sonnet-4-20250514"
+
+[llm.gemini]
+api_key = ""  # 也支持通过 GOOGLE_API_KEY / GEMINI_API_KEY 注入
+model = "gemini-2.5-flash"
 
 [llm.deepseek]
 api_key = ""
@@ -147,4 +156,5 @@ x_title = "OpenBiliClaw"
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
 5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 负责把核心记忆注入到所有 Soul 相关任务里
 6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头
-7. **Prompt 风格集中收口**：推荐、画像和聊天的“老B友”语气由共享 `ToneProfile` 驱动，不允许各模块各自发散成不同人格
+7. **Gemini 独立适配**：Gemini 走官方 `google-genai` SDK，不强行复用 OpenAI-compatible 抽象；provider 内部负责把统一 `messages` 渲染成 quickstart 风格的单文本 prompt
+8. **Prompt 风格集中收口**：推荐、画像和聊天的“老B友”语气由共享 `ToneProfile` 驱动，不允许各模块各自发散成不同人格

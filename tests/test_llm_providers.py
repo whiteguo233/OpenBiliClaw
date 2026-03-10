@@ -12,6 +12,7 @@ from openbiliclaw.llm.base import (
     LLMTimeoutError,
 )
 from openbiliclaw.llm.claude_provider import ClaudeProvider
+from openbiliclaw.llm.gemini_provider import GeminiProvider
 from openbiliclaw.llm.ollama_provider import OllamaProvider
 from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
 from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
@@ -177,6 +178,55 @@ def test_openrouter_provider_defaults_and_headers() -> None:
         "HTTP-Referer": "https://example.com",
         "X-Title": "OpenBiliClaw",
     }
+
+
+def test_gemini_provider_defaults() -> None:
+    provider = GeminiProvider(api_key="test-key")
+    assert provider.name == "gemini"
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_normalizes_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = GeminiProvider(api_key="test-key")
+    captured: dict[str, object] = {}
+
+    async def fake_generate_content(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            text="hello from gemini",
+            model_version="gemini-2.5-flash",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=8,
+                total_token_count=20,
+            ),
+        )
+
+    monkeypatch.setattr(provider._client.aio.models, "generate_content", fake_generate_content)
+
+    response = await provider.complete(
+        [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "hi"},
+        ],
+        json_mode=True,
+    )
+
+    assert response.content == "hello from gemini"
+    assert response.provider == "gemini"
+    assert response.model == "gemini-2.5-flash"
+    assert response.usage == {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "total_tokens": 20,
+    }
+    assert captured["model"] == "gemini-2.5-flash"
+    assert "[SYSTEM]" in str(captured["contents"])
+    assert "[USER]" in str(captured["contents"])
+    config = captured["config"]
+    assert config.response_mime_type == "application/json"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

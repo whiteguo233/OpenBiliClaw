@@ -19,6 +19,7 @@ _SUPPORTED_AUTH_METHODS = {"cookie", "qrcode", "none"}
 _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
     "claude": "llm.claude.api_key",
+    "gemini": "llm.gemini.api_key",
     "deepseek": "llm.deepseek.api_key",
     "openrouter": "llm.openrouter.api_key",
 }
@@ -64,9 +65,17 @@ class LLMConfig:
     default_provider: str = "openai"
     openai: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     claude: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+    gemini: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     deepseek: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     ollama: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     openrouter: LLMProviderConfig = field(default_factory=LLMProviderConfig)
+
+
+def _gemini_api_key_from_env() -> str:
+    """Return Gemini API key from official environment variables."""
+    google_api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    return google_api_key or gemini_api_key
 
 
 @dataclass
@@ -212,6 +221,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
         default_provider=llm_raw.get("default_provider", "openai"),
         openai=LLMProviderConfig(**llm_raw.get("openai", {})),
         claude=LLMProviderConfig(**llm_raw.get("claude", {})),
+        gemini=LLMProviderConfig(**llm_raw.get("gemini", {})),
         deepseek=LLMProviderConfig(**llm_raw.get("deepseek", {})),
         ollama=LLMProviderConfig(**llm_raw.get("ollama", {})),
         openrouter=LLMProviderConfig(**llm_raw.get("openrouter", {})),
@@ -253,6 +263,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     provider_configs: dict[str, LLMProviderConfig] = {
         "openai": config.llm.openai,
         "claude": config.llm.claude,
+        "gemini": config.llm.gemini,
         "deepseek": config.llm.deepseek,
         "ollama": config.llm.ollama,
         "openrouter": config.llm.openrouter,
@@ -269,7 +280,8 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         return issues
 
     required_field = _REMOTE_PROVIDER_FIELDS.get(provider_name)
-    if required_field and not provider_config.api_key.strip():
+    has_env_fallback = provider_name == "gemini" and bool(_gemini_api_key_from_env())
+    if required_field and not provider_config.api_key.strip() and not has_env_fallback:
         issues.append(
             ConfigIssue(
                 field=required_field,

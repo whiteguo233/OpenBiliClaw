@@ -22,7 +22,7 @@ cp config.example.toml config.toml
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `deepseek` / `ollama` / `openrouter` |
+| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` |
 
 ### `[llm.openai]`
 
@@ -38,6 +38,15 @@ cp config.example.toml config.toml
 |----|------|--------|------|
 | `api_key` | string | `""` | Anthropic API Key（default_provider=claude 时必填） |
 | `model` | string | `"claude-sonnet-4-20250514"` | 模型名称 |
+
+### `[llm.gemini]`
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `api_key` | string | `""` | Gemini API Key（default_provider=gemini 时，若未填写则回退读取 `GOOGLE_API_KEY` / `GEMINI_API_KEY`） |
+| `model` | string | `"gemini-2.5-flash"` | Gemini 模型名称 |
+
+> Gemini provider 按官方 quickstart 走 `google-genai` SDK 的 Gemini Developer API，不是 Vertex AI。
 
 ### `[llm.deepseek]`
 
@@ -113,3 +122,5 @@ cp config.example.toml config.toml
 | 变量 | 说明 |
 |------|------|
 | `OPENBILICLAW_BILIBILI_COOKIE` | 集成测试用 B 站 Cookie |
+| `GOOGLE_API_KEY` | Gemini 官方推荐 API Key 环境变量，优先级高于 `GEMINI_API_KEY` |
+| `GEMINI_API_KEY` | Gemini 官方兼容环境变量，`default_provider=gemini` 时可替代 `llm.gemini.api_key` |

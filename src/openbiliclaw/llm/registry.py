@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .base import LLMProvider, LLMProviderError, LLMRegistry
 from .claude_provider import ClaudeProvider
+from .gemini_provider import GeminiProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
@@ -41,6 +43,7 @@ def build_llm_registry(
     provider_specs = [
         ("openai", _maybe_openai_provider(config, overrides)),
         ("claude", _maybe_claude_provider(config, overrides)),
+        ("gemini", _maybe_gemini_provider(config, overrides)),
         ("deepseek", _maybe_deepseek_provider(config, overrides)),
         ("ollama", _maybe_ollama_provider(config, overrides)),
         ("openrouter", _maybe_openrouter_provider(config, overrides)),
@@ -119,6 +122,26 @@ def _maybe_deepseek_provider(
     return DeepSeekProvider(
         api_key=config.llm.deepseek.api_key,
         model=config.llm.deepseek.model or "deepseek-chat",
+    )
+
+
+def _gemini_env_api_key() -> str:
+    return os.environ.get("GOOGLE_API_KEY", "").strip() or os.environ.get(
+        "GEMINI_API_KEY", ""
+    ).strip()
+
+
+def _maybe_gemini_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "gemini" in overrides:
+        return overrides["gemini"]
+    api_key = config.llm.gemini.api_key.strip() or _gemini_env_api_key()
+    if not api_key:
+        return None
+    return GeminiProvider(
+        api_key=api_key,
+        model=config.llm.gemini.model or "gemini-2.5-flash",
     )
 
 
