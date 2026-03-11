@@ -195,6 +195,7 @@ class SoulEngine:
             extracted,
         )
         self._memory.save_insight_candidates(merged_candidates)
+        self._record_immediate_dialogue_cognition(merged_candidates)
         eligible_candidates = [
             item for item in merged_candidates if self._candidate_ready_for_learning(item)
         ]
@@ -392,6 +393,41 @@ class SoulEngine:
         )
         self._memory.save_cognition_updates(updates)
 
+    def _record_immediate_dialogue_cognition(
+        self,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        """Record one lightweight cognition update from a single strong chat signal."""
+        updates = self._memory.load_cognition_updates()
+        changed = False
+        for candidate in candidates:
+            if not self._candidate_ready_for_immediate_dialogue_cognition(candidate):
+                continue
+            summary, kind = self._build_immediate_dialogue_cognition(candidate)
+            if not summary:
+                continue
+            if any(
+                str(item.get("summary", "")).strip() == summary
+                for item in updates
+                if isinstance(item, dict)
+            ):
+                continue
+            updates.insert(
+                0,
+                {
+                    "id": f"cognition-{uuid4()}",
+                    "kind": kind,
+                    "summary": summary,
+                    "confidence": round(self._to_float(candidate.get("confidence", 0.0)), 4),
+                    "created_at": datetime.now().isoformat(),
+                    "source": "chat",
+                    "notified": False,
+                },
+            )
+            changed = True
+        if changed:
+            self._memory.save_cognition_updates(updates)
+
     async def generate_awareness_note(self) -> str:
         """Generate a daily awareness note.
 
@@ -517,10 +553,37 @@ class SoulEngine:
             return False
         confidence = self._to_float(candidate.get("confidence", 0.0))
         occurrences = self._to_int(candidate.get("occurrences", 0))
-        kind = str(candidate.get("kind", "")).strip()
-        if confidence >= 0.9 and kind in {"dislike", "goal"}:
-            return True
         return confidence >= 0.8 and occurrences >= 2
+
+    def _candidate_ready_for_immediate_dialogue_cognition(
+        self,
+        candidate: dict[str, object],
+    ) -> bool:
+        kind = str(candidate.get("kind", "")).strip()
+        confidence = self._to_float(candidate.get("confidence", 0.0))
+        if kind in {"goal", "dislike"}:
+            return confidence >= 0.9
+        if kind in {"interest", "value"}:
+            return confidence >= 0.92
+        return False
+
+    def _build_immediate_dialogue_cognition(
+        self,
+        candidate: dict[str, object],
+    ) -> tuple[str, str]:
+        kind = str(candidate.get("kind", "")).strip()
+        content = str(candidate.get("content", "")).strip()
+        if not content:
+            return "", ""
+        if kind == "goal":
+            return f"阿B 刚记下了：你最近在意的是“{content}”。", "profile_shift"
+        if kind == "dislike":
+            return f"阿B 刚听出来：像“{content}”这种你现在大概率不太想看。", "dislike_added"
+        if kind == "interest":
+            return f"阿B 刚摸到一点：你最近可能开始吃“{content}”这一口。", "interest_added"
+        if kind == "value":
+            return f"阿B 刚摸到一点：你其实挺看重“{content}”。", "profile_shift"
+        return "", ""
 
     def _record_cognition_updates(
         self,

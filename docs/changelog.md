@@ -6,6 +6,11 @@
 
 ## M8: 插件后端 API（进行中）
 
+### 单条强聊天即时认知更新 — `runtime/m113-immediate-chat-cognition`
+
+- 单条高置信度聊天信号现在也可即时写入轻量 cognition update，供 popup「阿B 最近新记住了什么」优先展示
+- 大规模偏好重分析和画像重建仍保留原有候选累计阈值，不会因为一次聊天就重写整张画像
+
 ### popup 画像摘要即时刷新
 
 - side panel 在聊天、`多来点`、`少来点`、`说说原因` 成功后，会强制重拉 `/api/profile-summary`

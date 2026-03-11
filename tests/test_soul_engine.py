@@ -417,6 +417,84 @@ async def test_learn_from_dialogue_persists_event_and_candidate_below_threshold(
 
 
 @pytest.mark.asyncio
+async def test_learn_from_dialogue_records_immediate_cognition_for_strong_single_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": "goal",
+                "content": "想把国际新闻背后的因果链看明白",
+                "confidence": 0.91,
+                "evidence": user_message,
+            }
+        ]
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+
+    result = await engine.learn_from_dialogue(
+        user_message="我最近更想知道国际新闻到底是怎么一步步走成现在这样的。",
+        assistant_reply="听起来你不是只看结果，更想看清背后的因果链。",
+        session="popup",
+    )
+
+    assert result["preference_updated"] is False
+    cognition_updates = memory.load_cognition_updates()
+    assert len(cognition_updates) == 1
+    assert cognition_updates[0]["kind"] == "profile_shift"
+    assert "因果链" in str(cognition_updates[0]["summary"])
+
+
+@pytest.mark.asyncio
+async def test_learn_from_dialogue_does_not_duplicate_same_immediate_cognition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": "dislike",
+                "content": "太浅的热点复读",
+                "confidence": 0.93,
+                "evidence": user_message,
+            }
+        ]
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+
+    await engine.learn_from_dialogue(
+        user_message="那种太浅的热点复读我现在真有点看不下去。",
+        assistant_reply="你现在明显更在意内容有没有真正往下挖。",
+        session="popup",
+    )
+    await engine.learn_from_dialogue(
+        user_message="那种太浅的热点复读我现在真有点看不下去。",
+        assistant_reply="你现在明显更在意内容有没有真正往下挖。",
+        session="popup",
+    )
+
+    cognition_updates = memory.load_cognition_updates()
+    assert len(cognition_updates) == 1
+
+
+@pytest.mark.asyncio
 async def test_learn_from_dialogue_rebuilds_profile_after_candidate_reaches_threshold(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
