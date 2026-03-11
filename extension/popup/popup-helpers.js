@@ -95,6 +95,16 @@ export function normalizeProfileSummary(summary) {
   };
 }
 
+export function shouldFetchProfileSummary({ online, profileLoaded, force = false }) {
+  if (!online) {
+    return false;
+  }
+  if (force) {
+    return true;
+  }
+  return !profileLoaded;
+}
+
 export function normalizeRuntimeStatus(status) {
   return {
     initialized: Boolean(status?.initialized),

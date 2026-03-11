@@ -10,6 +10,7 @@ import {
   mergeRuntimeStatusEvent,
   normalizeProfileSummary,
   validateCommentInput,
+  shouldFetchProfileSummary,
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
@@ -311,6 +312,7 @@ function createCommentComposer(item, statusLine) {
       setFeedbackStatus(statusLine, "记下了，这句会影响后面的推荐。");
       wrapper.hidden = true;
       input.value = "";
+      void refreshProfileSummaryAfterInteraction();
     } catch {
       setHint("这句没发出去，先看看本地后端是不是开着。", "error");
     }
@@ -403,6 +405,7 @@ function renderRecommendations(items) {
           await submitFeedback(buildFeedbackPayload(item.id, "like"));
           setHint("记下了，这类可以多来点。", "success");
           setFeedbackStatus(feedbackStatus, "记下了，这类内容会多给你一点。");
+          void refreshProfileSummaryAfterInteraction();
         } catch {
           setHint("这条反馈没记上，先看看本地后端是不是开着。", "error");
         }
@@ -412,6 +415,7 @@ function renderRecommendations(items) {
           await submitFeedback(buildFeedbackPayload(item.id, "dislike"));
           setHint("记下了，这路子先少来点。", "success");
           setFeedbackStatus(feedbackStatus, "记下了，这个方向先往后放。");
+          void refreshProfileSummaryAfterInteraction();
         } catch {
           setHint("这条反馈没记上，先看看本地后端是不是开着。", "error");
         }
@@ -474,10 +478,12 @@ function renderRecommendationState(stateShape) {
   setHint("先跑 init、discover 或 recommend，再回来瞅瞅。");
 }
 
-async function loadProfileSummary() {
-  if (!state.online || state.profileLoaded) {
+async function loadProfileSummary({ force = false } = {}) {
+  if (!shouldFetchProfileSummary({ online: state.online, profileLoaded: state.profileLoaded, force })) {
     if (!state.online) {
       renderProfileSummary(normalizeProfileSummary({ initialized: false }));
+    } else if (state.profile) {
+      renderProfileSummary(state.profile);
     }
     return;
   }
@@ -490,6 +496,16 @@ async function loadProfileSummary() {
   }
   state.profileLoaded = true;
   renderProfileSummary(state.profile);
+}
+
+async function refreshProfileSummaryAfterInteraction() {
+  if (!state.online) {
+    return;
+  }
+  if (!state.profileLoaded && state.activeTab !== "profile") {
+    return;
+  }
+  await loadProfileSummary({ force: true });
 }
 
 async function initializeRecommendations() {
@@ -621,6 +637,7 @@ function bindChat() {
       const payload = await sendChatMessage(message);
       appendChatMessage("助手", payload.reply);
       setHint("收到，这句记下了。", "success");
+      void refreshProfileSummaryAfterInteraction();
     } catch {
       appendChatMessage("助手", "刚刚没发出去，换个说法再试试。");
       setHint("聊天接口这会儿没接上，先看看本地后端是不是开着。", "error");

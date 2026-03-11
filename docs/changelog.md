@@ -6,6 +6,11 @@
 
 ## M8: 插件后端 API（进行中）
 
+### popup 画像摘要即时刷新
+
+- side panel 在聊天、`多来点`、`少来点`、`说说原因` 成功后，会强制重拉 `/api/profile-summary`
+- 修复“阿B 最近新记住了什么”只在首次打开画像 tab 时加载，之后不跟着新反馈/新聊天更新的问题
+
 ### 强反馈即时认知更新 — `runtime/m112-immediate-cognition-feedback`
 
 - 单条 `dislike` / `comment` 反馈现在会即时写入轻量 cognition update，供 popup「阿B 最近新记住了什么」立刻展示

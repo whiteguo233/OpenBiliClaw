@@ -14,6 +14,7 @@ import {
   normalizeRecommendation,
   normalizeProfileSummary,
   normalizeRuntimeStatus,
+  shouldFetchProfileSummary,
   validateCommentInput,
 } from "../popup/popup-helpers.js";
 
@@ -171,6 +172,21 @@ test("normalizeRuntimeStatus fills stable fallback fields", () => {
     manual_refresh_state: "idle",
     manual_refresh_message: "",
   });
+});
+
+test("shouldFetchProfileSummary allows force refresh after profile is cached", () => {
+  assert.equal(
+    shouldFetchProfileSummary({ online: true, profileLoaded: true, force: false }),
+    false,
+  );
+  assert.equal(
+    shouldFetchProfileSummary({ online: true, profileLoaded: true, force: true }),
+    true,
+  );
+  assert.equal(
+    shouldFetchProfileSummary({ online: false, profileLoaded: false, force: true }),
+    false,
+  );
 });
 
 test("getPoolStatusSummary builds pool inventory copy", () => {
