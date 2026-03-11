@@ -16,9 +16,20 @@ test("popup header keeps compact status inline with brand row", () => {
 
 test("popup page is structured for side panel browsing", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const htmlBlock = popupHtml.match(/html\s*\{[\s\S]*?\}/)?.[0] ?? "";
   const bodyBlock = popupHtml.match(/body\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const shellBlock = popupHtml.match(/\.shell\s*\{[\s\S]*?\}/)?.[0] ?? "";
 
   assert.match(popupHtml, /class="shell side-panel-shell"/);
+  assert.match(htmlBlock, /width:\s*100%;/);
+  assert.match(htmlBlock, /height:\s*100%;/);
+  assert.match(bodyBlock, /width:\s*100%;/);
+  assert.match(bodyBlock, /height:\s*100%;/);
+  assert.match(bodyBlock, /display:\s*flex;/);
+  assert.match(bodyBlock, /overflow:\s*hidden;/);
+  assert.match(shellBlock, /flex:\s*1\s+1\s+auto;/);
+  assert.match(shellBlock, /width:\s*100%;/);
+  assert.match(shellBlock, /min-width:\s*0;/);
   assert.doesNotMatch(bodyBlock, /width:\s*392px;/);
   assert.doesNotMatch(bodyBlock, /height:\s*560px;/);
 });
