@@ -52,6 +52,7 @@ const state = {
 };
 
 const elements = {
+  content: document.querySelector(".content"),
   statusBadge: document.getElementById("statusBadge"),
   statusDot: document.getElementById("statusDot"),
   statusLabel: document.getElementById("statusLabel"),
@@ -822,7 +823,7 @@ async function loadMoreCognitionHistory() {
 function maybeLoadMoreCognitionHistory() {
   if (
     state.activeTab !== "profile" ||
-    !(elements.viewProfile instanceof HTMLElement) ||
+    !(elements.content instanceof HTMLElement) ||
     elements.viewProfile.hidden ||
     !state.profileCognitionHistory.hasMore ||
     state.profileCognitionHistory.loadingMore
@@ -830,7 +831,7 @@ function maybeLoadMoreCognitionHistory() {
     return;
   }
 
-  const remaining = elements.viewProfile.scrollHeight - elements.viewProfile.scrollTop - elements.viewProfile.clientHeight;
+  const remaining = elements.content.scrollHeight - elements.content.scrollTop - elements.content.clientHeight;
   if (remaining <= 96) {
     void loadMoreCognitionHistory();
   }
@@ -940,8 +941,8 @@ function bindTabs() {
 }
 
 function bindProfileHistoryLoading() {
-  if (elements.viewProfile instanceof HTMLElement) {
-    elements.viewProfile.addEventListener("scroll", () => {
+  if (elements.content instanceof HTMLElement) {
+    elements.content.addEventListener("scroll", () => {
       maybeLoadMoreCognitionHistory();
     });
   }
