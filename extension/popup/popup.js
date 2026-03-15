@@ -89,6 +89,7 @@ const elements = {
   profileTraits: document.getElementById("profileTraits"),
   profileNeeds: document.getElementById("profileNeeds"),
   profileInterests: document.getElementById("profileInterests"),
+  profileDislikes: document.getElementById("profileDislikes"),
   profileRecentMemory: document.getElementById("profileRecentMemory"),
   profileRecentMemoryStatus: document.getElementById("profileRecentMemoryStatus"),
   profileRecentMemoryMore: document.getElementById("profileRecentMemoryMore"),
@@ -483,6 +484,7 @@ function renderProfileSummary(summary) {
   renderChipList(elements.profileTraits, summary.core_traits, "这部分还在慢慢补");
   renderChipList(elements.profileNeeds, summary.deep_needs, "这块还要再多看一点");
   renderChipList(elements.profileInterests, summary.top_interests, "再刷一阵，这里会更准");
+  renderChipList(elements.profileDislikes, summary.disliked_topics, "这块还在继续确认，先别急着下死结论");
   renderCognitionCards(
     elements.profileRecentMemory,
     getProfileCognitionItems(summary),

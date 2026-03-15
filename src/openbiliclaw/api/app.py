@@ -261,7 +261,12 @@ def create_app(
         except Exception:
             return ProfileSummaryResponse(initialized=False)
 
-        top_interests = [item.name for item in profile.preferences.interests[:5] if item.name]
+        top_interests = [item.name for item in profile.preferences.interests[:8] if item.name]
+        disliked_topics = [
+            str(item).strip()
+            for item in getattr(profile.preferences, "disliked_topics", [])[:5]
+            if str(item).strip()
+        ]
         cognition_updates = []
         has_more_cognition_updates = False
         next_cognition_cursor = ""
@@ -290,9 +295,10 @@ def create_app(
         return ProfileSummaryResponse(
             initialized=True,
             personality_portrait=profile.personality_portrait,
-            core_traits=profile.core_traits[:5],
+            core_traits=profile.core_traits[:6],
             deep_needs=profile.deep_needs[:5],
             top_interests=top_interests,
+            disliked_topics=disliked_topics,
             recent_cognition_updates=cognition_updates,
             has_more_cognition_updates=has_more_cognition_updates,
             next_cognition_cursor=next_cognition_cursor,

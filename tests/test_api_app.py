@@ -783,8 +783,8 @@ class TestBackendAPI:
 
         class FakeProfile:
             personality_portrait = "这是一个喜欢把问题想透、信息密度偏高的用户。"
-            core_traits = ["理性", "好奇"]
-            deep_needs = ["理解世界", "持续成长"]
+            core_traits = ["理性", "好奇", "克制", "耐心", "敏感", "深究", "自驱"]
+            deep_needs = ["理解世界", "持续成长", "高质量独处", "智性共鸣", "掌控感", "审美沉浸"]
             preferences = type(
                 "Preferences",
                 (),
@@ -792,7 +792,16 @@ class TestBackendAPI:
                     "interests": [
                         type("Interest", (), {"name": "国际新闻"})(),
                         type("Interest", (), {"name": "深度分析"})(),
+                        type("Interest", (), {"name": "工业设计"})(),
+                        type("Interest", (), {"name": "城市观察"})(),
+                        type("Interest", (), {"name": "纪录片"})(),
+                        type("Interest", (), {"name": "商业案例"})(),
+                        type("Interest", (), {"name": "复杂系统"})(),
+                        type("Interest", (), {"name": "技术史"})(),
+                        type("Interest", (), {"name": "冷知识考据"})(),
                     ]
+                    ,
+                    "disliked_topics": ["标题党", "浅层热点复读", "尬笑段子", "纯情绪输出", "过度说教", "工业糖精"]
                 },
             )()
 
@@ -813,9 +822,10 @@ class TestBackendAPI:
         assert response.json() == {
             "initialized": True,
             "personality_portrait": "这是一个喜欢把问题想透、信息密度偏高的用户。",
-            "core_traits": ["理性", "好奇"],
-            "deep_needs": ["理解世界", "持续成长"],
-            "top_interests": ["国际新闻", "深度分析"],
+            "core_traits": ["理性", "好奇", "克制", "耐心", "敏感", "深究"],
+            "deep_needs": ["理解世界", "持续成长", "高质量独处", "智性共鸣", "掌控感"],
+            "top_interests": ["国际新闻", "深度分析", "工业设计", "城市观察", "纪录片", "商业案例", "复杂系统", "技术史"],
+            "disliked_topics": ["标题党", "浅层热点复读", "尬笑段子", "纯情绪输出", "过度说教"],
             "recent_cognition_updates": [
                 {
                     "summary": "阿B 现在更确定你会吃国际时事深拆这一口。",

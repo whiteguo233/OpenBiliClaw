@@ -82,6 +82,14 @@ test("profile cognition cards reserve separate rows for context and explicit sta
   assert.match(markup, /id="profileRecentMemory"/);
 });
 
+test("profile summary includes an explicit dislike chip group", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const markup = popupHtml.match(/<div id="profileCard"[\s\S]*?<\/div>\s*<\/section>/)?.[0] ?? "";
+
+  assert.match(markup, /<h3>最近明显会避开<\/h3>/);
+  assert.match(markup, /id="profileDislikes"/);
+});
+
 test("profile cognition details stay hidden until a card is expanded", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const hiddenDetailsBlock =

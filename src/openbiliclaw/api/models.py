@@ -178,6 +178,7 @@ class ProfileSummaryResponse(BaseModel):
     core_traits: list[str] = Field(default_factory=list)
     deep_needs: list[str] = Field(default_factory=list)
     top_interests: list[str] = Field(default_factory=list)
+    disliked_topics: list[str] = Field(default_factory=list)
     recent_cognition_updates: list[CognitionUpdateSummary] = Field(default_factory=list)
     has_more_cognition_updates: bool = False
     next_cognition_cursor: str = ""

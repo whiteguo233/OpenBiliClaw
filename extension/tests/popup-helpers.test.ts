@@ -493,6 +493,7 @@ test("normalizeProfileSummary fills stable fallback fields", () => {
       core_traits: ["理性", "好奇"],
       deep_needs: ["理解世界"],
       top_interests: ["国际新闻", "商业案例"],
+      disliked_topics: ["标题党", "太浅了"],
       recent_cognition_updates: [
         {
           summary: "  阿B 记住了你会吃深拆这一路。  ",
@@ -515,6 +516,7 @@ test("normalizeProfileSummary fills stable fallback fields", () => {
       core_traits: ["理性", "好奇"],
       deep_needs: ["理解世界"],
       top_interests: ["国际新闻", "商业案例"],
+      disliked_topics: ["标题党", "太浅了"],
       recent_cognition_updates: [
         {
           summary: "阿B 记住了你会吃深拆这一路。",
@@ -598,6 +600,7 @@ test("normalizeProfileSummary keeps the newer low-roleplay fallback copy", () =>
       core_traits: [],
       deep_needs: [],
       top_interests: [],
+      disliked_topics: [],
       recent_cognition_updates: [],
       has_more_cognition_updates: false,
       next_cognition_cursor: "",

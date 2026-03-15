@@ -133,7 +133,7 @@ def build_soul_profile_prompt(
 1. 只能根据给定材料推断，不要做医学化、病理化、断言式结论。
 2. 输出必须是严格 JSON，不要附带解释。
 3. 人格描述至少 200 个中文字符。
-4. core_traits 控制在 3 到 5 条，deep_needs 和 values 保持简洁。
+4. core_traits 控制在 3 到 6 条，deep_needs 和 values 保持简洁。
 5. 不要写成心理报告、咨询记录或说明书，要像熟人总结这个人的气质和状态。
 </rules>
 

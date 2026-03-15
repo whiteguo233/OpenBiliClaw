@@ -100,3 +100,4 @@ def test_build_soul_profile_prompt_avoids_report_tone() -> None:
 
     assert "老朋友" in messages[0]["content"]
     assert "不要写成心理报告" in messages[0]["content"]
+    assert "3 到 6 条" in messages[0]["content"]
