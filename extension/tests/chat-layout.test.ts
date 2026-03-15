@@ -9,3 +9,23 @@ test("chat tab layout keeps chat shell and message list from collapsing", () => 
   assert.match(popupHtml, /\.chat-shell\s*\{[\s\S]*?flex-shrink:\s*0;/);
   assert.match(popupHtml, /\.chat-messages\s*\{[\s\S]*?min-height:\s*72px;/);
 });
+
+test("chat textarea keeps inner spacing and readable line height", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const chatInputBlocks = [...popupHtml.matchAll(/\.chat-input\s*\{[\s\S]*?\}/g)].map((match) => match[0]);
+  const chatInputBlock = chatInputBlocks.at(-1) ?? "";
+
+  assert.match(chatInputBlock, /padding:\s*10px\s+12px;/);
+  assert.match(chatInputBlock, /line-height:\s*1\.6;/);
+  assert.match(chatInputBlock, /border-radius:\s*14px;/);
+});
+
+test("chat form reserves a dedicated status line for staged progress", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const chatStatusBlock = popupHtml.match(/\.chat-status\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const chatMarkup = popupHtml.match(/<form id="chatForm"[\s\S]*?<\/form>/)?.[0] ?? "";
+
+  assert.match(chatStatusBlock, /min-height:\s*16px;/);
+  assert.match(chatStatusBlock, /font-size:\s*11px;/);
+  assert.match(chatMarkup, /id="chatStatus"/);
+});

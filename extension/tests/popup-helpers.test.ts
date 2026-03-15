@@ -11,10 +11,13 @@ import {
   getConnectionBadgeState,
   getHintBannerState,
   getNextExpandedCognitionIndex,
+  getRuntimeRefreshSubmissionState,
+  getSubmissionProgressMessage,
   normalizeCognitionUpdateCard,
   getRealtimePoolStatusSummary,
   getPoolStatusSummary,
   getPopupState,
+  shouldSubmitChatOnEnter,
   getTabButtonState,
   mergeRuntimeStatusEvent,
   normalizeActivityFeed,
@@ -389,6 +392,80 @@ test("getCommentSubmitUiState exposes idle submitting success and error states",
     disabled: false,
     statusMessage: "这句还没发出去，可以再试一次。",
   });
+});
+
+test("getSubmissionProgressMessage describes chat and feedback stages", () => {
+  assert.equal(
+    getSubmissionProgressMessage("chat", "waiting_reply"),
+    "消息已发出，正在等阿B回复。",
+  );
+  assert.equal(
+    getSubmissionProgressMessage("chat", "waiting_slow"),
+    "阿B 还在整理这句，可能在调用模型。",
+  );
+  assert.equal(
+    getSubmissionProgressMessage("feedback", "accepted"),
+    "反馈已记下，后台正在更新画像和推荐。",
+  );
+  assert.equal(
+    getSubmissionProgressMessage("feedback", "refreshing_activity"),
+    "画像已同步，正在刷新最近动态。",
+  );
+});
+
+test("getRuntimeRefreshSubmissionState maps runtime events to feedback progress", () => {
+  assert.deepEqual(
+    getRuntimeRefreshSubmissionState({
+      type: "refresh.strategy",
+      message: "先从你刚刚的口味里搜一轮",
+    }),
+    {
+      done: false,
+      message: "后台正在处理：先从你刚刚的口味里搜一轮",
+      tone: "info",
+    },
+  );
+  assert.deepEqual(
+    getRuntimeRefreshSubmissionState({
+      type: "refresh.pool_updated",
+      message: "刚补进 6 条新的",
+    }),
+    {
+      done: true,
+      message: "推荐池已同步：刚补进 6 条新的",
+      tone: "success",
+    },
+  );
+  assert.deepEqual(
+    getRuntimeRefreshSubmissionState({
+      type: "refresh.failed",
+      message: "这次补货没跑通",
+    }),
+    {
+      done: true,
+      message: "反馈已记下，但后台补货这次没跑通。",
+      tone: "error",
+    },
+  );
+});
+
+test("shouldSubmitChatOnEnter only submits on plain Enter", () => {
+  assert.equal(
+    shouldSubmitChatOnEnter({ key: "Enter", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, isComposing: false }),
+    true,
+  );
+  assert.equal(
+    shouldSubmitChatOnEnter({ key: "Enter", shiftKey: true, ctrlKey: false, metaKey: false, altKey: false, isComposing: false }),
+    false,
+  );
+  assert.equal(
+    shouldSubmitChatOnEnter({ key: "Enter", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, isComposing: true }),
+    false,
+  );
+  assert.equal(
+    shouldSubmitChatOnEnter({ key: "a", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, isComposing: false }),
+    false,
+  );
 });
 
 test("normalizeProfileSummary fills stable fallback fields", () => {

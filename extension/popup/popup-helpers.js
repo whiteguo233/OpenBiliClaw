@@ -346,6 +346,98 @@ export function getCommentSubmitUiState(state) {
   };
 }
 
+export function shouldSubmitChatOnEnter(event) {
+  return (
+    event?.key === "Enter" &&
+    !event?.shiftKey &&
+    !event?.ctrlKey &&
+    !event?.metaKey &&
+    !event?.altKey &&
+    !event?.isComposing
+  );
+}
+
+export function getSubmissionProgressMessage(scope, stage) {
+  const normalizedScope = normalizeText(scope);
+  const normalizedStage = normalizeText(stage);
+
+  if (normalizedScope === "chat") {
+    if (normalizedStage === "waiting_reply") {
+      return "消息已发出，正在等阿B回复。";
+    }
+    if (normalizedStage === "waiting_slow") {
+      return "阿B 还在整理这句，可能在调用模型。";
+    }
+    if (normalizedStage === "refreshing_profile") {
+      return "回复到了，正在同步画像。";
+    }
+    if (normalizedStage === "refreshing_activity") {
+      return "画像已同步，正在刷新最近动态。";
+    }
+    if (normalizedStage === "success") {
+      return "这句已经记下，界面也同步好了。";
+    }
+    if (normalizedStage === "error") {
+      return "这句还没发出去，可以再试一次。";
+    }
+    return "";
+  }
+
+  if (normalizedScope === "feedback") {
+    if (normalizedStage === "submitting") {
+      return "正在提交反馈。";
+    }
+    if (normalizedStage === "accepted") {
+      return "反馈已记下，后台正在更新画像和推荐。";
+    }
+    if (normalizedStage === "refreshing_profile") {
+      return "反馈已记下，正在同步画像。";
+    }
+    if (normalizedStage === "refreshing_activity") {
+      return "画像已同步，正在刷新最近动态。";
+    }
+    if (normalizedStage === "success") {
+      return "这次反馈和界面都同步好了。";
+    }
+    if (normalizedStage === "error") {
+      return "这条反馈没记上，可以再试一次。";
+    }
+  }
+
+  return "";
+}
+
+export function getRuntimeRefreshSubmissionState(event) {
+  const type = normalizeText(event?.type);
+  const message = normalizeText(event?.message);
+
+  if (type === "refresh.started" || type === "refresh.strategy") {
+    return {
+      done: false,
+      message: message ? `后台正在处理：${message}` : "后台正在处理这次刷新。",
+      tone: "info",
+    };
+  }
+
+  if (type === "refresh.pool_updated") {
+    return {
+      done: true,
+      message: message ? `推荐池已同步：${message}` : "推荐池已经同步好了。",
+      tone: "success",
+    };
+  }
+
+  if (type === "refresh.failed") {
+    return {
+      done: true,
+      message: "反馈已记下，但后台补货这次没跑通。",
+      tone: "error",
+    };
+  }
+
+  return null;
+}
+
 export function normalizeActivityFeed(payload) {
   const items = Array.isArray(payload?.items)
     ? payload.items

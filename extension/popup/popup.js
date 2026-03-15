@@ -8,15 +8,18 @@ import {
   getConnectionBadgeState,
   getNextExpandedCognitionIndex,
   getHintBannerState,
+  getRuntimeRefreshSubmissionState,
   getRealtimePoolStatusSummary,
   getPoolStatusSummary,
   getPopupState,
+  getSubmissionProgressMessage,
   getTabButtonState,
   mergeRuntimeStatusEvent,
   normalizeActivityFeed,
   normalizeProfileSummary,
-  validateCommentInput,
   shouldFetchProfileSummary,
+  shouldSubmitChatOnEnter,
+  validateCommentInput,
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
@@ -49,6 +52,7 @@ const state = {
   runtimeEvent: null,
   activityFeed: null,
   activityExpanded: false,
+  activeFeedbackProgress: null,
 };
 
 const elements = {
@@ -92,6 +96,7 @@ const elements = {
   chatForm: document.getElementById("chatForm"),
   chatInput: document.getElementById("chatInput"),
   chatSendButton: document.getElementById("chatSendButton"),
+  chatStatus: document.getElementById("chatStatus"),
 };
 
 function setRefreshButtonState(loading, message = "") {
@@ -218,6 +223,7 @@ function connectRuntimeStream() {
       state.runtimeEvent = event;
       state.runtimeStatus = mergeRuntimeStatusEvent(state.runtimeStatus, event);
       renderPoolStatus(state.runtimeStatus);
+      state.activeFeedbackProgress?.handle?.(event);
       if (elements.footer instanceof HTMLElement) {
         elements.footer.dataset.tone = getHintBannerState(getRuntimeEventTone(event)).tone;
       }
@@ -508,6 +514,50 @@ function appendChatMessage(role, content) {
 function setFeedbackStatus(statusLine, message) {
   statusLine.textContent = message;
   statusLine.hidden = !message;
+  statusLine.dataset.tone = "info";
+}
+
+function setFeedbackStatusWithTone(statusLine, message, tone = "info") {
+  statusLine.textContent = message;
+  statusLine.hidden = !message;
+  statusLine.dataset.tone = tone;
+}
+
+function setChatStatus(message, tone = "info") {
+  if (!(elements.chatStatus instanceof HTMLElement)) {
+    return;
+  }
+  elements.chatStatus.textContent = message;
+  elements.chatStatus.dataset.tone = tone;
+}
+
+function clearActiveFeedbackProgress() {
+  if (state.activeFeedbackProgress?.timeoutId != null) {
+    window.clearTimeout(state.activeFeedbackProgress.timeoutId);
+  }
+  state.activeFeedbackProgress = null;
+}
+
+function attachFeedbackRuntimeProgress(statusLine) {
+  clearActiveFeedbackProgress();
+  const activeFeedbackProgress = {
+    timeoutId: window.setTimeout(() => {
+      if (state.activeFeedbackProgress === activeFeedbackProgress) {
+        state.activeFeedbackProgress = null;
+      }
+    }, 12000),
+    handle(event) {
+      const runtimeState = getRuntimeRefreshSubmissionState(event);
+      if (runtimeState == null) {
+        return;
+      }
+      setFeedbackStatusWithTone(statusLine, runtimeState.message, runtimeState.tone);
+      if (runtimeState.done) {
+        clearActiveFeedbackProgress();
+      }
+    },
+  };
+  state.activeFeedbackProgress = activeFeedbackProgress;
 }
 
 async function openRecommendation(bvid) {
@@ -575,19 +625,60 @@ function createCommentComposer(item, statusLine) {
     }
     resetComposerUi();
     applySubmitUiState("submitting");
+    setFeedbackStatusWithTone(
+      statusLine,
+      getSubmissionProgressMessage("feedback", "submitting"),
+      "info",
+    );
     try {
       await submitFeedback(buildFeedbackPayload(item.id, "comment", input.value));
       applySubmitUiState("success");
       setHint("这句记下了。", "success");
+      setFeedbackStatusWithTone(
+        statusLine,
+        getSubmissionProgressMessage("feedback", "accepted"),
+        "info",
+      );
+      attachFeedbackRuntimeProgress(statusLine);
       input.value = "";
       clearHideTimer();
       hideTimer = window.setTimeout(() => {
         wrapper.hidden = true;
         resetComposerUi();
       }, 600);
-      void refreshProfileSummaryAfterInteraction();
+      await refreshProfileSummaryAfterInteraction({
+        onProfileStart() {
+          setFeedbackStatusWithTone(
+            statusLine,
+            getSubmissionProgressMessage("feedback", "refreshing_profile"),
+            "info",
+          );
+        },
+        onActivityStart() {
+          setFeedbackStatusWithTone(
+            statusLine,
+            getSubmissionProgressMessage("feedback", "refreshing_activity"),
+            "info",
+          );
+        },
+        onDone() {
+          if (state.activeFeedbackProgress == null) {
+            setFeedbackStatusWithTone(
+              statusLine,
+              getSubmissionProgressMessage("feedback", "success"),
+              "success",
+            );
+          }
+        },
+      });
     } catch {
       applySubmitUiState("error");
+      clearActiveFeedbackProgress();
+      setFeedbackStatusWithTone(
+        statusLine,
+        getSubmissionProgressMessage("feedback", "error"),
+        "error",
+      );
       setHint("这句没发出去，先看看本地后端是不是开着。", "error");
     }
   });
@@ -677,21 +768,101 @@ function renderRecommendations(items) {
       }),
       createActionButton("多来点", "action-button action-secondary", async () => {
         try {
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "submitting"),
+            "info",
+          );
           await submitFeedback(buildFeedbackPayload(item.id, "like"));
           setHint("记下了，这类可以多来点。", "success");
-          setFeedbackStatus(feedbackStatus, "记下了，这类内容会多给你一点。");
-          void refreshProfileSummaryAfterInteraction();
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "accepted"),
+            "info",
+          );
+          attachFeedbackRuntimeProgress(feedbackStatus);
+          await refreshProfileSummaryAfterInteraction({
+            onProfileStart() {
+              setFeedbackStatusWithTone(
+                feedbackStatus,
+                getSubmissionProgressMessage("feedback", "refreshing_profile"),
+                "info",
+              );
+            },
+            onActivityStart() {
+              setFeedbackStatusWithTone(
+                feedbackStatus,
+                getSubmissionProgressMessage("feedback", "refreshing_activity"),
+                "info",
+              );
+            },
+            onDone() {
+              if (state.activeFeedbackProgress == null) {
+                setFeedbackStatusWithTone(
+                  feedbackStatus,
+                  getSubmissionProgressMessage("feedback", "success"),
+                  "success",
+                );
+              }
+            },
+          });
         } catch {
+          clearActiveFeedbackProgress();
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "error"),
+            "error",
+          );
           setHint("这条反馈没记上，先看看本地后端是不是开着。", "error");
         }
       }),
       createActionButton("少来点", "action-button action-secondary", async () => {
         try {
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "submitting"),
+            "info",
+          );
           await submitFeedback(buildFeedbackPayload(item.id, "dislike"));
           setHint("记下了，这路子先少来点。", "success");
-          setFeedbackStatus(feedbackStatus, "记下了，这个方向先往后放。");
-          void refreshProfileSummaryAfterInteraction();
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "accepted"),
+            "info",
+          );
+          attachFeedbackRuntimeProgress(feedbackStatus);
+          await refreshProfileSummaryAfterInteraction({
+            onProfileStart() {
+              setFeedbackStatusWithTone(
+                feedbackStatus,
+                getSubmissionProgressMessage("feedback", "refreshing_profile"),
+                "info",
+              );
+            },
+            onActivityStart() {
+              setFeedbackStatusWithTone(
+                feedbackStatus,
+                getSubmissionProgressMessage("feedback", "refreshing_activity"),
+                "info",
+              );
+            },
+            onDone() {
+              if (state.activeFeedbackProgress == null) {
+                setFeedbackStatusWithTone(
+                  feedbackStatus,
+                  getSubmissionProgressMessage("feedback", "success"),
+                  "success",
+                );
+              }
+            },
+          });
         } catch {
+          clearActiveFeedbackProgress();
+          setFeedbackStatusWithTone(
+            feedbackStatus,
+            getSubmissionProgressMessage("feedback", "error"),
+            "error",
+          );
           setHint("这条反馈没记上，先看看本地后端是不是开着。", "error");
         }
       }),
@@ -852,16 +1023,35 @@ function maybeLoadMoreCognitionHistory() {
   }
 }
 
-async function refreshProfileSummaryAfterInteraction() {
+async function refreshProfileSummaryAfterInteraction({
+  onProfileStart = null,
+  onActivityStart = null,
+  onDone = null,
+} = {}) {
   if (!state.online) {
     return;
   }
   if (!state.profileLoaded && state.activeTab !== "profile") {
+    if (typeof onActivityStart === "function") {
+      onActivityStart();
+    }
     await loadActivityFeed();
+    if (typeof onDone === "function") {
+      onDone();
+    }
     return;
   }
+  if (typeof onProfileStart === "function") {
+    onProfileStart();
+  }
   await loadProfileSummary({ force: true });
+  if (typeof onActivityStart === "function") {
+    onActivityStart();
+  }
   await loadActivityFeed();
+  if (typeof onDone === "function") {
+    onDone();
+  }
 }
 
 async function initializeRecommendations() {
@@ -997,6 +1187,29 @@ function bindChat() {
     return;
   }
 
+  let slowStatusTimer = null;
+
+  function clearSlowStatusTimer() {
+    if (slowStatusTimer !== null) {
+      window.clearTimeout(slowStatusTimer);
+      slowStatusTimer = null;
+    }
+  }
+
+  elements.chatInput.addEventListener("input", () => {
+    if (!elements.chatSendButton.disabled) {
+      setChatStatus("");
+    }
+  });
+
+  elements.chatInput.addEventListener("keydown", (event) => {
+    if (!shouldSubmitChatOnEnter(event)) {
+      return;
+    }
+    event.preventDefault();
+    elements.chatForm.requestSubmit();
+  });
+
   elements.chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = elements.chatInput.value.trim();
@@ -1014,16 +1227,37 @@ function bindChat() {
     elements.chatInput.value = "";
     elements.chatSendButton.disabled = true;
     elements.chatSendButton.textContent = "发送中...";
+    setChatStatus(getSubmissionProgressMessage("chat", "waiting_reply"), "info");
+    clearSlowStatusTimer();
+    slowStatusTimer = window.setTimeout(() => {
+      if (elements.chatSendButton.disabled) {
+        setChatStatus(getSubmissionProgressMessage("chat", "waiting_slow"), "info");
+      }
+    }, 2500);
 
     try {
       const payload = await sendChatMessage(message);
+      clearSlowStatusTimer();
       appendChatMessage("助手", payload.reply);
       setHint("收到，这句记下了。", "success");
-      void refreshProfileSummaryAfterInteraction();
+      await refreshProfileSummaryAfterInteraction({
+        onProfileStart() {
+          setChatStatus(getSubmissionProgressMessage("chat", "refreshing_profile"), "info");
+        },
+        onActivityStart() {
+          setChatStatus(getSubmissionProgressMessage("chat", "refreshing_activity"), "info");
+        },
+        onDone() {
+          setChatStatus(getSubmissionProgressMessage("chat", "success"), "success");
+        },
+      });
     } catch {
+      clearSlowStatusTimer();
       appendChatMessage("助手", "刚刚没发出去，换个说法再试试。");
+      setChatStatus(getSubmissionProgressMessage("chat", "error"), "error");
       setHint("聊天接口这会儿没接上，先看看本地后端是不是开着。", "error");
     } finally {
+      clearSlowStatusTimer();
       elements.chatSendButton.disabled = false;
       elements.chatSendButton.textContent = "发出去";
     }

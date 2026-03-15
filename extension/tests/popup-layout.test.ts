@@ -81,3 +81,11 @@ test("profile cognition cards reserve separate rows for context and explicit sta
   assert.match(metaBlock, /font-size:\s*11px;/);
   assert.match(markup, /id="profileRecentMemory"/);
 });
+
+test("profile cognition details stay hidden until a card is expanded", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const hiddenDetailsBlock =
+    popupHtml.match(/\.cognition-details\[hidden\]\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  assert.match(hiddenDetailsBlock, /display:\s*none;/);
+});

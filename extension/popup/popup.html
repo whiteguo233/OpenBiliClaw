@@ -645,6 +645,16 @@
       min-height: 16px;
     }
 
+    .feedback-status[data-tone="success"],
+    .chat-status[data-tone="success"] {
+      color: var(--success);
+    }
+
+    .feedback-status[data-tone="error"],
+    .chat-status[data-tone="error"] {
+      color: var(--danger);
+    }
+
     .profile-card {
       display: flex;
       flex-direction: column;
@@ -814,6 +824,10 @@
       gap: 10px;
       padding: 0 14px 14px;
       border-top: 1px solid rgba(236, 226, 240, 0.96);
+    }
+
+    .cognition-details[hidden] {
+      display: none;
     }
 
     .cognition-detail {
@@ -995,8 +1009,18 @@
     .chat-input {
       min-height: 88px;
       border: 0;
-      padding: 0;
+      padding: 10px 12px;
+      border-radius: 14px;
       background: transparent;
+      line-height: 1.6;
+      resize: none;
+    }
+
+    .chat-status {
+      min-height: 16px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
     }
 
     .footer {
@@ -1313,6 +1337,7 @@
               <textarea id="chatInput" class="chat-input" placeholder="比如：我最近老点开国际新闻和商业分析，想知道自己到底在找什么。"></textarea>
             </label>
             <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
+            <p id="chatStatus" class="chat-status" aria-live="polite"></p>
           </form>
         </div>
       </section>
