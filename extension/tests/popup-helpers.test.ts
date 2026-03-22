@@ -37,7 +37,7 @@ test("buildVideoUrl builds bilibili video url from bvid", () => {
   );
 });
 
-test("normalizeRecommendation fills stable fallback fields", () => {
+test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy empty", () => {
   const item = normalizeRecommendation({
     id: 7,
     bvid: "BV1popup",
@@ -52,7 +52,7 @@ test("normalizeRecommendation fills stable fallback fields", () => {
   assert.equal(item.title, "这条标题还没对上号");
   assert.equal(item.up_name, "这位 UP 还没认出来");
   assert.equal(item.cover_url, "https://i0.hdslb.com/bfs/archive/popup-cover.jpg");
-  assert.equal(item.expression, "这条已经进了你的推荐区，点开看看。");
+  assert.equal(item.expression, "");
   assert.equal(item.topic_label, "");
   assert.equal(item.presented, false);
 });
@@ -94,7 +94,7 @@ test("normalizeRecommendation upgrades protocol-relative and http covers to http
   );
 });
 
-test("normalizeRecommendation falls back to relevance_reason before generic expression", () => {
+test("normalizeRecommendation does not fall back to relevance_reason when expression is missing", () => {
   const item = normalizeRecommendation({
     id: 8,
     bvid: "BV1reason",
@@ -106,7 +106,7 @@ test("normalizeRecommendation falls back to relevance_reason before generic expr
     presented: 0,
   });
 
-  assert.equal(item.expression, "这条会对上你最近那股想把事情一步步理顺的劲头。");
+  assert.equal(item.expression, "");
 });
 
 test("getPopupState distinguishes offline uninitialized refreshing empty and ready states", () => {
@@ -179,6 +179,7 @@ test("normalizeRuntimeStatus fills stable fallback fields", () => {
     unread_count: 2,
     pool_available_count: 0,
     pool_target_count: 0,
+    last_discovered_count: 0,
     last_replenished_count: 0,
     recent_pool_topics: [],
     manual_refresh_state: "idle",
@@ -231,6 +232,44 @@ test("getPoolStatusSummary shows enough-stock copy when pool is already full", (
       available: "还有 155 条可换",
       replenished: "这会儿先不补货",
       topics: "先把这一池给你慢慢换开",
+    },
+  );
+});
+
+test("getPoolStatusSummary prefers running copy over stale zero-replenishment copy", () => {
+  assert.deepEqual(
+    getPoolStatusSummary({
+      initialized: true,
+      pool_available_count: 0,
+      pool_target_count: 300,
+      last_discovered_count: 0,
+      last_replenished_count: 0,
+      recent_pool_topics: [],
+      manual_refresh_state: "running",
+    }),
+    {
+      available: "还有 0 条可换",
+      replenished: "正在补货",
+      topics: "后台还在继续给你找新的",
+    },
+  );
+});
+
+test("getPoolStatusSummary explains discovered-but-not-added refresh result", () => {
+  assert.deepEqual(
+    getPoolStatusSummary({
+      initialized: true,
+      pool_available_count: 0,
+      pool_target_count: 300,
+      last_discovered_count: 12,
+      last_replenished_count: 0,
+      recent_pool_topics: [],
+      manual_refresh_state: "success",
+    }),
+    {
+      available: "还有 0 条可换",
+      replenished: "这轮找到了内容",
+      topics: "但可立即换的库存还没变",
     },
   );
 });

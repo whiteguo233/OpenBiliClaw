@@ -213,6 +213,9 @@ def test_discovery_runtime_state_defaults_when_missing(tmp_path: Path) -> None:
         "last_explore_refresh_at": "",
         "last_processed_event_id": 0,
         "last_notification_at": "",
+        "last_discovered_count": 0,
+        "last_replenished_count": 0,
+        "recent_pool_topics": [],
     }
 
 
@@ -227,6 +230,9 @@ def test_discovery_runtime_state_round_trips_to_json(tmp_path: Path) -> None:
             "last_explore_refresh_at": "2026-03-10T00:00:00",
             "last_processed_event_id": 42,
             "last_notification_at": "2026-03-10T10:30:00",
+            "last_discovered_count": 18,
+            "last_replenished_count": 12,
+            "recent_pool_topics": ["国际时事", "宏观经济", "纪录片"],
         }
     )
 
@@ -237,6 +243,9 @@ def test_discovery_runtime_state_round_trips_to_json(tmp_path: Path) -> None:
     assert state["last_explore_refresh_at"] == "2026-03-10T00:00:00"
     assert state["last_processed_event_id"] == 42
     assert state["last_notification_at"] == "2026-03-10T10:30:00"
+    assert state["last_discovered_count"] == 18
+    assert state["last_replenished_count"] == 12
+    assert state["recent_pool_topics"] == ["国际时事", "宏观经济", "纪录片"]
 
 
 def test_account_sync_state_defaults_when_missing(tmp_path: Path) -> None:

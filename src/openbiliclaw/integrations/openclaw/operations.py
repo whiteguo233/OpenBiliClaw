@@ -257,6 +257,7 @@ class OpenClawAdapter:
             unread_count=self._to_int(runtime_status.get("unread_count", 0)),
             pool_available_count=self._to_int(runtime_status.get("pool_available_count", 0)),
             pool_target_count=self._to_int(runtime_status.get("pool_target_count", 0)),
+            last_discovered_count=self._to_int(runtime_status.get("last_discovered_count", 0)),
             last_refresh_at=str(runtime_status.get("last_refresh_at", "")),
             last_account_sync_at=str(runtime_status.get("last_account_sync_at", "")),
             last_account_sync_error=str(runtime_status.get("last_account_sync_error", "")),

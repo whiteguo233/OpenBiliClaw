@@ -35,6 +35,7 @@ class SupportsEventDatabase(Protocol):
     def count_unread_recommendations(self) -> int: ...
     def count_pool_candidates(self) -> int: ...
     def count_pool_candidates_by_source(self) -> dict[str, int]: ...
+    def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int: ...
     def get_notification_candidate(
         self,
         *,
@@ -63,6 +64,13 @@ class SupportsRecommendationEngine(Protocol):
         profile: Any,
         limit: int = 10,
     ) -> list[Any]: ...
+
+    async def precompute_pool_copy(
+        self,
+        *,
+        profile: Any,
+        limit: int,
+    ) -> int: ...
 
 
 @dataclass
@@ -124,6 +132,7 @@ class ContinuousRefreshController:
             "unread_count": self.database.count_unread_recommendations(),
             "pool_available_count": self.database.count_pool_candidates(),
             "pool_target_count": self.pool_target_count,
+            "last_discovered_count": self._int_state_value(state, "last_discovered_count"),
             "last_replenished_count": self._int_state_value(
                 state, "last_replenished_count"
             ),
@@ -133,7 +142,7 @@ class ContinuousRefreshController:
         }
 
     async def refresh_if_needed(self) -> dict[str, object]:
-        """Refresh candidates and recommendations when thresholds are met."""
+        """Refresh discovery candidates when thresholds are met."""
         state = self.memory_manager.load_discovery_runtime_state()
         if not self._is_initialized():
             return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
@@ -287,7 +296,18 @@ class ContinuousRefreshController:
             )
             return
         self._manual_refresh_state = "success"
-        self._manual_refresh_message = "刚给你补了一批新的。"
+        runtime_state = self.memory_manager.load_discovery_runtime_state()
+        last_discovered = self._int_state_value(runtime_state, "last_discovered_count")
+        last_replenished = self._int_state_value(runtime_state, "last_replenished_count")
+        self._manual_refresh_message = (
+            "刚给你补了一批新的。"
+            if last_replenished > 0
+            else (
+                "这轮找到了内容，但可立即换的库存没变。"
+                if last_discovered > 0
+                else "这轮没补进新的候选。"
+            )
+        )
         self._manual_refresh_finished_at = self._now().isoformat()
         await self._publish_event(
             {
@@ -351,11 +371,12 @@ class ContinuousRefreshController:
             if discovered:
                 replenished_topics.extend(self._extract_topics(discovered))
 
-        recommendations = await self.recommendation_engine.generate_recommendations(
-            all_discovered or None,
-            profile,
-            limit=10,
-        )
+        if flattened_strategies:
+            self.database.trim_explore_cluster_overflow(max_per_cluster=3)
+            await self.recommendation_engine.precompute_pool_copy(
+                profile=profile,
+                limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
+            )
 
         now = self._now().isoformat()
         latest_event_id = self.database.get_latest_event_id()
@@ -367,17 +388,29 @@ class ContinuousRefreshController:
         if "explore" in flattened_strategies:
             state["last_explore_refresh_at"] = now
         after_pool_count = self.database.count_pool_candidates()
+        state["last_discovered_count"] = len(all_discovered)
         state["last_replenished_count"] = max(0, after_pool_count - before_pool_count)
         if replenished_topics:
             state["recent_pool_topics"] = self._dedupe_topics(replenished_topics)[:3]
         self.memory_manager.save_discovery_runtime_state(state)
+        discovered_count = self._int_state_value(state, "last_discovered_count")
+        replenished_count = self._int_state_value(state, "last_replenished_count")
         await self._publish_event(
             {
                 "type": "refresh.pool_updated",
                 "phase": "done",
-                "message": f"刚补进 {state['last_replenished_count']} 条新的",
+                "message": (
+                    f"刚补进 {replenished_count} 条新的"
+                    if replenished_count > 0
+                    else (
+                        "这轮找到了内容，但可立即换的库存没变"
+                        if discovered_count > 0
+                        else "这轮没补进新的候选"
+                    )
+                ),
                 "pool_available_count": after_pool_count,
-                "last_replenished_count": state["last_replenished_count"],
+                "last_discovered_count": discovered_count,
+                "last_replenished_count": replenished_count,
                 "recent_pool_topics": self._list_state_value(state, "recent_pool_topics"),
             }
         )
@@ -385,7 +418,7 @@ class ContinuousRefreshController:
             "refreshed": bool(flattened_strategies),
             "strategies": flattened_strategies,
             "reason": reason,
-            "recommendation_count": len(recommendations),
+            "recommendation_count": 0,
         }
 
     async def _publish_event(self, event: dict[str, object]) -> None:

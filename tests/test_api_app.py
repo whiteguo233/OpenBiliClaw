@@ -192,6 +192,7 @@ class TestBackendAPI:
                     "unread_count": 2,
                     "pool_available_count": 28,
                     "pool_target_count": 30,
+                    "last_discovered_count": 14,
                     "last_replenished_count": 6,
                     "recent_pool_topics": ["国际时事", "宏观经济", "纪录片"],
                 }
@@ -224,6 +225,7 @@ class TestBackendAPI:
             "unread_count": 2,
             "pool_available_count": 28,
             "pool_target_count": 30,
+            "last_discovered_count": 14,
             "last_replenished_count": 6,
             "recent_pool_topics": ["国际时事", "宏观经济", "纪录片"],
             "manual_refresh_state": "idle",

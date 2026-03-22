@@ -1,6 +1,5 @@
 const DEFAULT_TITLE = "这条标题还没对上号";
 const DEFAULT_UP_NAME = "这位 UP 还没认出来";
-const DEFAULT_EXPRESSION = "这条已经进了你的推荐区，点开看看。";
 const DEFAULT_PORTRAIT = "画像还在慢慢攒，先多看一阵。";
 
 function normalizeText(value) {
@@ -55,14 +54,13 @@ export function getHintBannerState(tone) {
 }
 
 export function normalizeRecommendation(item) {
-  const relevanceReason = normalizeText(item?.relevance_reason);
   return {
     id: Number(item?.id ?? 0),
     bvid: normalizeText(item?.bvid),
     title: normalizeText(item?.title) || DEFAULT_TITLE,
     up_name: normalizeText(item?.up_name) || DEFAULT_UP_NAME,
     cover_url: normalizeCoverUrl(item?.cover_url),
-    expression: normalizeText(item?.expression) || relevanceReason || DEFAULT_EXPRESSION,
+    expression: normalizeText(item?.expression),
     topic_label: normalizeText(item?.topic_label),
     presented: Boolean(item?.presented),
   };
@@ -254,6 +252,7 @@ export function normalizeRuntimeStatus(status) {
     unread_count: Number(status?.unread_count ?? 0),
     pool_available_count: Number(status?.pool_available_count ?? 0),
     pool_target_count: Number(status?.pool_target_count ?? 0),
+    last_discovered_count: Number(status?.last_discovered_count ?? 0),
     last_replenished_count: Number(status?.last_replenished_count ?? 0),
     recent_pool_topics: Array.isArray(status?.recent_pool_topics)
       ? status.recent_pool_topics.map(normalizeText).filter(Boolean)
@@ -274,6 +273,9 @@ export function mergeRuntimeStatusEvent(status, event) {
   if (typeof event?.last_replenished_count === "number") {
     next.last_replenished_count = Number(event.last_replenished_count);
   }
+  if (typeof event?.last_discovered_count === "number") {
+    next.last_discovered_count = Number(event.last_discovered_count);
+  }
   if (Array.isArray(event?.recent_pool_topics)) {
     next.recent_pool_topics = event.recent_pool_topics.map(normalizeText).filter(Boolean);
   }
@@ -287,17 +289,28 @@ export function getPoolStatusSummary(status) {
   }
   const poolIsSufficient =
     runtime.pool_target_count > 0 && runtime.pool_available_count >= runtime.pool_target_count;
+  if (runtime.manual_refresh_state === "running") {
+    return {
+      available: `还有 ${runtime.pool_available_count} 条可换`,
+      replenished: "正在补货",
+      topics: "后台还在继续给你找新的",
+    };
+  }
   return {
     available: `还有 ${runtime.pool_available_count} 条可换`,
     replenished:
       runtime.last_replenished_count > 0
         ? `刚补进 ${runtime.last_replenished_count} 条`
+        : runtime.last_discovered_count > 0
+          ? "这轮找到了内容"
         : poolIsSufficient
           ? "这会儿先不补货"
           : "这轮还没补进",
     topics:
       runtime.recent_pool_topics.length > 0
         ? runtime.recent_pool_topics.join(" / ")
+        : runtime.last_discovered_count > 0
+          ? "但可立即换的库存还没变"
         : poolIsSufficient
           ? "先把这一池给你慢慢换开"
           : "还在继续摸你的口味",

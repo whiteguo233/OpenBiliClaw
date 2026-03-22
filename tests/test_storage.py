@@ -122,6 +122,27 @@ class TestDatabase:
 
             db.close()
 
+    def test_cache_content_persists_pool_copy_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1COPY",
+                title="池子里的预生成文案",
+                up_name="文案实验室",
+                source="search",
+                pool_expression="这条会接住你最近想把问题拆开的状态。",
+                pool_topic_label="你最近那股想拆问题的劲头",
+            )
+
+            row = db.get_cached_content(limit=1)[0]
+
+            assert row["pool_expression"] == "这条会接住你最近想把问题拆开的状态。"
+            assert row["pool_topic_label"] == "你最近那股想拆问题的劲头"
+
+            db.close()
+
     def test_get_cached_content_returns_cached_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -146,6 +167,44 @@ class TestDatabase:
 
             assert [item["bvid"] for item in cached] == ["BV1B", "BV1A"]
             assert cached[0]["source"] == "trending"
+
+            db.close()
+
+    def test_trim_explore_cluster_overflow_suppresses_excess_manufacturing_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for index, score in enumerate((0.91, 0.89, 0.87, 0.83), start=1):
+                db.cache_content(
+                    f"BV1MFG{index}",
+                    title=f"超级工厂制造纪录片 {index}",
+                    up_name="工业观察",
+                    source="explore",
+                    topic_key="精密制造纪录片",
+                    relevance_score=score,
+                )
+            db.cache_content(
+                "BV1OTHER",
+                title="科幻小说设定解析",
+                up_name="科幻电台",
+                source="explore",
+                topic_key="科幻小说深度解析",
+                relevance_score=0.8,
+            )
+
+            suppressed = db.trim_explore_cluster_overflow(max_per_cluster=2)
+
+            assert suppressed == 2
+            rows = db.get_cached_content(limit=10)
+            fresh_manufacturing = [
+                row
+                for row in rows
+                if row["source"] == "explore"
+                and row["topic_key"] == "精密制造纪录片"
+                and row["pool_status"] == "fresh"
+            ]
+            assert [row["bvid"] for row in fresh_manufacturing] == ["BV1MFG1", "BV1MFG2"]
 
             db.close()
 
@@ -384,6 +443,28 @@ class TestDatabase:
             items = db.get_pool_candidates(limit=10)
 
             assert items[0]["style_key"] == "visual_showcase"
+
+            db.close()
+
+    def test_get_pool_candidates_returns_precomputed_copy_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1PRE",
+                title="预生成测试",
+                up_name="实验频道",
+                source="explore",
+                relevance_score=0.84,
+                pool_expression="这条先给你备好了推荐理由。",
+                pool_topic_label="先备好的那股味儿",
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert items[0]["pool_expression"] == "这条先给你备好了推荐理由。"
+            assert items[0]["pool_topic_label"] == "先备好的那股味儿"
 
             db.close()
 

@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 _LOCK_RETRY_ATTEMPTS = 5
 _LOCK_RETRY_SLEEP_SECONDS = 0.1
 _BVID_PATTERN = re.compile(r"(BV[0-9A-Za-z]+)")
+_EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "manufacturing",
+        ("制造", "工艺", "工厂", "工业", "材料", "金属", "芯片", "显微", "纳米", "疲劳"),
+    ),
+    (
+        "game_theory",
+        ("博弈", "桌游", "纳什", "机制", "策略模型", "平衡性"),
+    ),
+)
 
 # Schema version for migrations
 _SCHEMA_VERSION = 2
@@ -54,6 +64,8 @@ CREATE TABLE IF NOT EXISTS content_cache (
     like_count  INTEGER DEFAULT 0,
     relevance_score REAL DEFAULT 0.0,
     relevance_reason TEXT DEFAULT '',
+    pool_expression TEXT DEFAULT '',
+    pool_topic_label TEXT DEFAULT '',
     candidate_tier TEXT DEFAULT 'primary',
     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -112,6 +124,7 @@ class Database:
         self._ensure_content_cache_runtime_columns()
         self._ensure_content_cache_relevance_columns()
         self._ensure_content_cache_topic_columns()
+        self._ensure_content_cache_pool_copy_columns()
 
         # Set schema version
         self._conn.execute(
@@ -281,11 +294,13 @@ class Database:
                 like_count,
                 relevance_score,
                 relevance_reason,
+                pool_expression,
+                pool_topic_label,
                 candidate_tier,
                 last_scored_at,
                 source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
                 up_name = excluded.up_name,
@@ -300,6 +315,16 @@ class Database:
                 like_count = excluded.like_count,
                 relevance_score = excluded.relevance_score,
                 relevance_reason = excluded.relevance_reason,
+                pool_expression = COALESCE(
+                    NULLIF(excluded.pool_expression, ''),
+                    content_cache.pool_expression,
+                    ''
+                ),
+                pool_topic_label = COALESCE(
+                    NULLIF(excluded.pool_topic_label, ''),
+                    content_cache.pool_topic_label,
+                    ''
+                ),
                 candidate_tier = excluded.candidate_tier,
                 last_scored_at = CURRENT_TIMESTAMP,
                 source = excluded.source
@@ -319,6 +344,8 @@ class Database:
                 kwargs.get("like_count", 0),
                 kwargs.get("relevance_score", 0.0),
                 kwargs.get("relevance_reason", ""),
+                kwargs.get("pool_expression", ""),
+                kwargs.get("pool_topic_label", ""),
                 kwargs.get("candidate_tier", "primary"),
                 kwargs.get("source", ""),
             ),
@@ -441,6 +468,54 @@ class Database:
             counts[source] += 1
         return dict(counts)
 
+    def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
+        """Suppress excess fresh explore items from high-risk topic clusters."""
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, title, topic_key, relevance_score, last_scored_at
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(source, '') = 'explore'
+            """
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            cluster = self._explore_risk_cluster(row)
+            if not cluster:
+                continue
+            grouped[cluster].append(row)
+
+        overflow_bvids: list[str] = []
+        for items in grouped.values():
+            ranked = sorted(
+                items,
+                key=lambda row: (
+                    -float(row.get("relevance_score", 0.0) or 0.0),
+                    -self._sort_timestamp_score(str(row.get("last_scored_at", ""))),
+                    str(row.get("bvid", "")),
+                ),
+            )
+            overflow_bvids.extend(
+                str(row.get("bvid", "")).strip() for row in ranked[max(0, max_per_cluster) :]
+            )
+
+        clean_bvids = [bvid for bvid in overflow_bvids if bvid]
+        if not clean_bvids:
+            return 0
+
+        placeholders = ", ".join("?" for _ in clean_bvids)
+        self._execute_write(
+            f"""
+            UPDATE content_cache
+            SET pool_status = 'suppressed'
+            WHERE bvid IN ({placeholders})
+            """,
+            clean_bvids,
+        )
+        return len(clean_bvids)
+
     @staticmethod
     def _balance_pool_rows(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
         if limit <= 0 or len(rows) <= limit:
@@ -492,6 +567,34 @@ class Database:
                 viewed_bvids.add(bvid)
         return viewed_bvids
 
+    @staticmethod
+    def _explore_risk_cluster(row: dict[str, Any]) -> str:
+        haystack = " ".join(
+            [
+                str(row.get("topic_key", "") or ""),
+                str(row.get("title", "") or ""),
+            ]
+        ).lower()
+        if not haystack.strip():
+            return ""
+        compact = re.sub(r"\s+", "", haystack)
+        for cluster, keywords in _EXPLORE_HIGH_RISK_CLUSTERS:
+            if any(keyword in compact for keyword in keywords):
+                return cluster
+        return ""
+
+    @staticmethod
+    def _sort_timestamp_score(value: str) -> float:
+        if not value:
+            return 0.0
+        normalized = value.replace(" ", "T")
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(normalized).timestamp()
+        except ValueError:
+            return 0.0
+
     def mark_pool_items_shown(self, bvids: list[str]) -> None:
         """Mark discovery-pool items as already shown in recommendations."""
         clean_bvids = [item for item in bvids if item]
@@ -506,6 +609,55 @@ class Database:
             WHERE bvid IN ({placeholders})
             """,
             clean_bvids,
+        )
+
+    def get_pool_candidates_needing_copy(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return fresh pool candidates missing precomputed popup copy."""
+        cursor = self.conn.execute(
+            """
+            SELECT *
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND (
+                COALESCE(pool_expression, '') = ''
+                OR COALESCE(pool_topic_label, '') = ''
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM recommendations AS r
+                WHERE r.bvid = content_cache.bvid
+              )
+            ORDER BY
+                CASE candidate_tier WHEN 'primary' THEN 0 ELSE 1 END ASC,
+                relevance_score DESC,
+                last_scored_at DESC,
+                view_count DESC,
+                bvid ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        rows = self._exclude_viewed_rows(rows, self.get_recent_viewed_bvids(), limit=len(rows))
+        return rows[:limit]
+
+    def update_pool_copy(
+        self,
+        bvid: str,
+        *,
+        expression: str,
+        topic_label: str,
+    ) -> None:
+        """Persist precomputed popup copy for one pooled candidate."""
+        self._execute_write(
+            """
+            UPDATE content_cache
+            SET pool_expression = ?,
+                pool_topic_label = ?
+            WHERE bvid = ?
+            """,
+            (expression, topic_label, bvid),
         )
 
     def get_latest_event_id(self) -> int:
@@ -788,6 +940,23 @@ class Database:
         if "style_key" not in existing_columns:
             self.conn.execute(
                 "ALTER TABLE content_cache ADD COLUMN style_key TEXT DEFAULT ''"
+            )
+
+    def _ensure_content_cache_pool_copy_columns(self) -> None:
+        """Backfill precomputed pool-copy fields for existing databases."""
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        required_columns = {
+            "pool_expression": "TEXT DEFAULT ''",
+            "pool_topic_label": "TEXT DEFAULT ''",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            self.conn.execute(
+                f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}"
             )
 
     @staticmethod

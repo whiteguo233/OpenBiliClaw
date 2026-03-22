@@ -200,6 +200,9 @@ class MemoryManager:
             "last_explore_refresh_at": "",
             "last_processed_event_id": 0,
             "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
         }
         if not self._discovery_runtime_state_path.exists():
             return default_state
@@ -213,6 +216,9 @@ class MemoryManager:
             "last_explore_refresh_at": str(loaded.get("last_explore_refresh_at", "")),
             "last_processed_event_id": self._to_int(loaded.get("last_processed_event_id", 0)),
             "last_notification_at": str(loaded.get("last_notification_at", "")),
+            "last_discovered_count": self._to_int(loaded.get("last_discovered_count", 0)),
+            "last_replenished_count": self._to_int(loaded.get("last_replenished_count", 0)),
+            "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
         }
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
@@ -224,6 +230,9 @@ class MemoryManager:
             "last_explore_refresh_at": str(state.get("last_explore_refresh_at", "")),
             "last_processed_event_id": self._to_int(state.get("last_processed_event_id", 0)),
             "last_notification_at": str(state.get("last_notification_at", "")),
+            "last_discovered_count": self._to_int(state.get("last_discovered_count", 0)),
+            "last_replenished_count": self._to_int(state.get("last_replenished_count", 0)),
+            "recent_pool_topics": self._as_str_list(state.get("recent_pool_topics", [])),
         }
         with open(self._discovery_runtime_state_path, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)

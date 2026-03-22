@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from openbiliclaw.llm.prompts import (
+    build_explore_domains_prompt,
     build_recommendation_expression_prompt,
     build_socratic_dialogue_prompt,
     build_soul_profile_prompt,
@@ -101,3 +102,19 @@ def test_build_soul_profile_prompt_avoids_report_tone() -> None:
     assert "老朋友" in messages[0]["content"]
     assert "不要写成心理报告" in messages[0]["content"]
     assert "3 到 6 条" in messages[0]["content"]
+
+
+def test_build_explore_domains_prompt_requires_directional_diversity() -> None:
+    messages = build_explore_domains_prompt(
+        profile_summary={
+            "personality_portrait": "偏好把复杂问题讲透，也愿意接受有陌生感的新内容。",
+            "interests": ["策略游戏", "深度讲解"],
+            "deep_needs": ["建立判断确定性"],
+        }
+    )
+
+    system_prompt = messages[0]["content"]
+
+    assert "至少覆盖 3 类不同内容方向" in system_prompt
+    assert "同一母题的换皮变体最多只能保留 1 个" in system_prompt
+    assert "先说明它对应用户的哪种认知需求" in system_prompt

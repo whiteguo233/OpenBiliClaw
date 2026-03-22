@@ -33,6 +33,7 @@
 | M122 来源优先补齐 | ✅ | 推荐选片时会先补齐不同 `source`，再限制重复 `style`，避免 `explore` 把 `search/trending` 挤出同一批结果 |
 | M123 上游来源配额补货 | ✅ | discovery pool 低于目标值时，runtime 会先补足来源缺口，减少推荐层长期面对“explore 过满、trending 过少”的偏池子 |
 | M124 generate 路径丰富度修正 | ✅ | `generate_recommendations()` 现在也会先对缓存候选做来源均衡，再分阶段放宽 `topic/style/source` 约束，避免高分 `related_chain` 长时间吃掉整批名额 |
+| M125 pool 预生成推荐文案 | ✅ | discovery pool 现在会异步批量预生成 `expression/topic_label`，`reshuffle/append` 只消费预生成结果，缺失时返回空而不是写统一兜底 |
 
 ## 公开 API
 
@@ -82,9 +83,11 @@ items = await engine.reshuffle_recommendations(
 - 当还没有补齐不同来源时，新的 `search / trending / related_chain` 候选会优先入选，不会先被重复 `style_key` 卡掉
 - 如果高分候选前排被同一 `style_key` 占满，回填阶段会放宽风格限流，优先保证整批数量尽量补到请求上限
 - 如果候选缺少 `topic_key`，才退回 `tags` 和标题/来源兜底做软限流
-- 如果候选还没有朋友式 `expression`，会优先使用按 `style_key` 润色过的快速 fallback 文案，而不是直接裸用 `relevance_reason`
+- 快路径现在不会现场调用 LLM，也不会再给整批卡片写同一个 fallback topic；只消费 pool 里已经预生成好的 `expression/topic_label`
+- 如果某条候选暂时还没预生成好推荐文案，这两个字段会保持为空，交给前端直接隐藏
 - 命中候选后会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
 - runtime 会把 discovery pool 持续补到 `pool_target_count` 附近，默认目标现在是 `300`，保证 popup 连续“换一批”和自动续页时尽量随时有货
+- refresh 结束后还会顺手压一轮 `explore` 的高风险相邻子簇，避免制造 / 工艺 / 材料、博弈 / 桌游 / 机制这类方向把剩余可换窗口挤成单一口味
 
 ### RecommendationEngine.append_recommendations
 
@@ -101,8 +104,25 @@ items = await engine.append_recommendations(
 - 用于 popup 推荐流的续页，不会清空当前列表
 - 会先排除前端已经展示过的 `excluded_bvids`
 - 仍然走 discovery pool 快路径，不等待新一轮 discover 完成
-- 同样复用 `topic_key + style_key + source` 的多样性选择逻辑
+- 同样复用 `topic_key + style_key + source` 的多样性选择逻辑，并只读取 pool 内已预生成好的推荐文案
 - 追加命中的内容也会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
+
+### RecommendationEngine.precompute_pool_copy
+
+```python
+count = await engine.precompute_pool_copy(
+    profile=profile,
+    limit=60,
+)
+```
+
+行为说明：
+
+- 从 discovery pool 中筛出还缺 `pool_expression / pool_topic_label` 的 fresh 候选
+- 低并发批量调用 `generate_expression()` 的 LLM 主链生成朋友式推荐文案
+- 成功后把结果回写到 `content_cache.pool_expression / content_cache.pool_topic_label`
+- 生成失败时不会写 profile 级统一 fallback，而是保留空值，交给 popup 隐藏
+- runtime refresh 会在补货后自动触发这一步，避免 popup 的“换一批 / 继续追加”现场等待 LLM
 
 ### Recommendation
 

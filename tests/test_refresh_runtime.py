@@ -14,6 +14,9 @@ class _FakeMemoryManager:
             "last_explore_refresh_at": "",
             "last_processed_event_id": 0,
             "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
         }
         self.layers = {"soul": type("Layer", (), {"data": {"personality_portrait": "ready"}})()}
 
@@ -72,6 +75,8 @@ class _FakeDatabase:
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         return dict(self.source_counts)
 
+    def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
+        return 0
 
 class _FakeSoulEngine:
     async def get_profile(self) -> dict[str, object]:
@@ -95,6 +100,7 @@ class _FakeDiscoveryEngine:
 class _FakeRecommendationEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, object]], dict[str, object], int]] = []
+        self.pool_copy_calls: list[tuple[dict[str, object], int]] = []
 
     async def generate_recommendations(
         self,
@@ -104,6 +110,15 @@ class _FakeRecommendationEngine:
     ) -> list[dict[str, object]]:
         self.calls.append((discovered or [], profile, limit))
         return [{"recommendation_id": 1}]
+
+    async def precompute_pool_copy(
+        self,
+        *,
+        profile: dict[str, object],
+        limit: int,
+    ) -> int:
+        self.pool_copy_calls.append((profile, limit))
+        return limit
 
 
 class _FakeEventHub:
@@ -183,6 +198,98 @@ async def test_refresh_controller_publishes_refresh_lifecycle_events() -> None:
     assert "refresh.pool_updated" in event_types
 
 
+async def test_refresh_controller_backfills_pool_copy_after_replenishment() -> None:
+    database = _FakeDatabase(
+        [
+            {"id": 1, "event_type": "view"},
+            {"id": 2, "event_type": "search"},
+            {"id": 3, "event_type": "favorite"},
+            {"id": 4, "event_type": "comment"},
+            {"id": 5, "event_type": "feedback"},
+            {"id": 6, "event_type": "view"},
+        ],
+        pool_count=20,
+    )
+    recommendations = _FakeRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    await controller.refresh_if_needed()
+
+    assert recommendations.pool_copy_calls == [({"profile": "ok"}, 60)]
+
+
+async def test_refresh_controller_reports_zero_replenishment_without_false_positive_copy() -> None:
+    event_hub = _FakeEventHub()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [
+                {"id": 1, "event_type": "view"},
+                {"id": 2, "event_type": "search"},
+                {"id": 3, "event_type": "favorite"},
+                {"id": 4, "event_type": "comment"},
+                {"id": 5, "event_type": "feedback"},
+                {"id": 6, "event_type": "view"},
+            ],
+            pool_count=30,
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    await controller.force_refresh()
+
+    pool_updated = next(
+        event for event in event_hub.events if event["type"] == "refresh.pool_updated"
+    )
+    assert pool_updated["last_discovered_count"] == 3
+    assert pool_updated["last_replenished_count"] == 0
+    assert pool_updated["message"] == "这轮找到了内容，但可立即换的库存没变"
+
+
+async def test_refresh_controller_tracks_discovered_count_when_net_pool_does_not_grow() -> None:
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(
+            [
+                {"id": 1, "event_type": "view"},
+                {"id": 2, "event_type": "search"},
+                {"id": 3, "event_type": "favorite"},
+                {"id": 4, "event_type": "comment"},
+                {"id": 5, "event_type": "feedback"},
+                {"id": 6, "event_type": "view"},
+            ],
+            pool_count=30,
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    await controller.force_refresh()
+
+    assert memory.state["last_discovered_count"] == 3
+    assert memory.state["last_replenished_count"] == 0
+
+
 async def test_refresh_controller_skips_when_threshold_not_met() -> None:
     discovery = _FakeDiscoveryEngine()
     recommendations = _FakeRecommendationEngine()
@@ -253,7 +360,8 @@ async def test_force_refresh_runs_even_when_threshold_not_met() -> None:
     assert result["refreshed"] is True
     assert result["strategies"] == ["search", "related_chain", "trending", "explore"]
     assert len(discovery.calls) == 3
-    assert len(recommendations.calls) == 1
+    assert recommendations.calls == []
+    assert result["recommendation_count"] == 0
 
 
 async def test_refresh_controller_requests_discovery_with_backfill_limit() -> None:
@@ -389,8 +497,10 @@ async def test_refresh_controller_replenishes_until_pool_reaches_target() -> Non
     status = controller.get_runtime_status()
     assert status["pool_available_count"] == 32
     assert status["pool_target_count"] == 30
+    assert status["last_discovered_count"] == 3
     assert status["last_replenished_count"] == 12
     assert status["recent_pool_topics"] == ["相关推荐", "站内热榜", "跨圈探索"]
+    assert result["recommendation_count"] == 0
 
 
 async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
