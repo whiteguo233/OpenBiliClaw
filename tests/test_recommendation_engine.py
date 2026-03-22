@@ -524,10 +524,11 @@ async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expres
         assert len(recommendations) == 1
         assert recommendations[0].content.bvid == "BV1POOL"
         assert recommendations[0].expression == "这条会对上你最近那股想把来龙去脉搞明白的劲头。"
-        assert recommendations[0].topic_label == ""
+        assert recommendations[0].topic_label == "你最近那股偏理性的状态"
 
         history = db.get_recommendations(limit=10)
         assert history[0]["expression"] == "这条会对上你最近那股想把来龙去脉搞明白的劲头。"
+        assert history[0]["topic"] == "你最近那股偏理性的状态"
 
 
 @pytest.mark.asyncio
@@ -568,6 +569,10 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
         )
 
         assert [item.content.bvid for item in recommendations] == ["BV1C"]
+        assert recommendations[0].topic_label == "你最近那股偏理性的状态"
+
+        history = db.get_recommendations(limit=10)
+        assert history[0]["topic"] == "你最近那股偏理性的状态"
 
 
 @pytest.mark.asyncio

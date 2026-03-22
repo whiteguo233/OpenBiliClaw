@@ -162,6 +162,7 @@ class RecommendationEngine:
         )
         recommendations: list[Recommendation] = []
         shown_bvids: list[str] = []
+        topic_label = self._fallback_topic_label(profile)
 
         for item in ranked:
             expression = item.relevance_reason.strip() or self._fallback_expression(item)
@@ -170,7 +171,7 @@ class RecommendationEngine:
                 confidence=item.relevance_score,
                 presented=False,
                 expression=expression,
-                topic_label="",
+                topic_label=topic_label,
             )
             recommendation.recommendation_id = self._database.insert_recommendation(
                 item.bvid,
@@ -209,6 +210,7 @@ class RecommendationEngine:
 
         recommendations: list[Recommendation] = []
         shown_bvids: list[str] = []
+        topic_label = self._fallback_topic_label(profile)
         for item in ranked:
             expression = item.relevance_reason.strip() or self._fallback_expression(item)
             recommendation = Recommendation(
@@ -216,7 +218,7 @@ class RecommendationEngine:
                 confidence=item.relevance_score,
                 presented=False,
                 expression=expression,
-                topic_label="",
+                topic_label=topic_label,
             )
             recommendation.recommendation_id = self._database.insert_recommendation(
                 item.bvid,
