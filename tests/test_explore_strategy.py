@@ -259,7 +259,8 @@ async def test_explore_strategy_applies_exploration_bonus() -> None:
     results = await strategy.discover(_build_profile(), limit=20)
 
     assert len(results) == 1
-    assert results[0].relevance_score > 0.80
+    # New blending: score * 0.60 + bonus * 0.40, gentler than old 0.75/0.25
+    assert results[0].relevance_score > 0.70
     assert results[0].source_strategy == "explore"
 
 

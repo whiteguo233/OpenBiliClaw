@@ -40,7 +40,7 @@ class ExploreStrategy(DiscoveryStrategy):
     bilibili_client: SupportsSearchClient
     concurrency: DiscoveryConcurrencyController | None = None
     score_threshold: float = 0.65
-    queries_per_domain: int = 2
+    queries_per_domain: int = 3
     max_domains: int = 5
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
@@ -152,12 +152,18 @@ class ExploreStrategy(DiscoveryStrategy):
                 novelty_level=novelty_level,
                 openness=profile.preferences.exploration_openness,
             )
-            distance_penalty = 0.08 if not interest_anchored else 0.0
+            # Explore uses a gentler blending formula than before:
+            # - Raw LLM score weighted at 0.60 (was 0.75) to leave room for bonus
+            # - Bonus weighted at 0.40 (was 0.25) so novelty/openness matter more
+            # - No distance_penalty: non-anchored is the point of explore
             content.relevance_score = max(
                 0.0,
-                min(1.0, round(score * 0.75 + bonus * 0.25 - distance_penalty, 4)),
+                min(1.0, round(score * 0.60 + bonus * 0.40, 4)),
             )
-            if content.relevance_score < self.score_threshold:
+            # Lower threshold for explore: cross-domain content is intentionally
+            # less "relevant" in the narrow sense, so we accept more of it
+            explore_threshold = self.score_threshold - 0.15 if self.score_threshold > 0.45 else self.score_threshold
+            if content.relevance_score < explore_threshold:
                 continue
             results.append(content)
             if len(results) >= limit:
