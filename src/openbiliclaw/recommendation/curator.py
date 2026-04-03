@@ -233,3 +233,89 @@ class PoolCurator:
         if topic and topic in feedback.liked_topic_keys:
             adj += _FEEDBACK_LIKE_TOPIC_BONUS
         return adj
+
+    async def score_candidates_async(
+        self,
+        candidates: list[DiscoveredContent],
+        context: ScoringContext,
+        *,
+        embedding_service: object | None = None,
+    ) -> dict[str, float]:
+        """Async version of score_candidates with embedding-based fatigue/feedback.
+
+        Uses embedding cosine similarity instead of exact string match for
+        topic_fatigue and feedback_adjustment when embedding_service is available.
+        """
+        w = self._weights
+        scores: dict[str, float] = {}
+
+        # Pre-embed recent topics and feedback topics for reuse
+        _recent_vecs: dict[str, list[float]] = {}
+        _disliked_vecs: dict[str, list[float]] = {}
+        _liked_vecs: dict[str, list[float]] = {}
+        if embedding_service is not None:
+            for t in set(context.recent_topic_keys):
+                if t.strip():
+                    vec = await embedding_service.embed(t)
+                    if vec:
+                        _recent_vecs[t] = vec
+            for t in context.feedback.disliked_topic_keys:
+                vec = await embedding_service.embed(t)
+                if vec:
+                    _disliked_vecs[t] = vec
+            for t in context.feedback.liked_topic_keys:
+                vec = await embedding_service.embed(t)
+                if vec:
+                    _liked_vecs[t] = vec
+
+        from openbiliclaw.llm.embedding import cosine_similarity
+
+        for item in candidates:
+            base = item.relevance_score * w.relevance
+            fresh = self._freshness_score(
+                item.discovered_at or item.last_scored_at, context.now,
+            ) * w.freshness
+            monotony = self._source_monotony(
+                item.source_strategy, context.recent_sources,
+            ) * w.source_monotony
+            bonus = self._serendipity_bonus(item.source_strategy) * w.serendipity
+
+            # Embedding-based topic fatigue
+            topic = (item.topic_group or item.topic_key).strip()
+            if embedding_service is not None and topic:
+                topic_vec = await embedding_service.embed(topic)
+                if topic_vec and _recent_vecs:
+                    sim_count = sum(
+                        1 for rv in _recent_vecs.values()
+                        if cosine_similarity(topic_vec, rv) >= embedding_service.similarity_threshold
+                    )
+                    fatigue = min(1.0, sim_count / max(1, len(context.recent_topic_keys)) * 3.0)
+                else:
+                    fatigue = self._topic_fatigue(topic, context.recent_topic_keys)
+            else:
+                fatigue = self._topic_fatigue(topic, context.recent_topic_keys)
+            fatigue *= w.topic_fatigue
+
+            score = base + fresh - fatigue - monotony + bonus
+
+            # Embedding-based feedback adjustment
+            if embedding_service is not None and topic:
+                topic_vec = await embedding_service.embed(topic)
+                adj = 0.0
+                if item.up_mid and item.up_mid in context.feedback.disliked_up_mids:
+                    adj -= _FEEDBACK_DISLIKE_UP_PENALTY
+                if topic_vec:
+                    for dv in _disliked_vecs.values():
+                        if cosine_similarity(topic_vec, dv) >= embedding_service.similarity_threshold:
+                            adj -= _FEEDBACK_DISLIKE_TOPIC_PENALTY
+                            break
+                    for lv in _liked_vecs.values():
+                        if cosine_similarity(topic_vec, lv) >= embedding_service.similarity_threshold:
+                            adj += _FEEDBACK_LIKE_TOPIC_BONUS
+                            break
+                score += adj
+            else:
+                score += self._feedback_adjustment(item, context.feedback)
+
+            scores[item.bvid] = max(0.0, score)
+        return scores

@@ -83,10 +83,12 @@ class RecommendationEngine:
         database: Database,
         *,
         curator: PoolCurator | None = None,
+        embedding_service: object | None = None,
     ) -> None:
         self._llm = llm
         self._database = database
         self._curator = curator
+        self._embedding_service = embedding_service
 
     async def serve(
         self,
@@ -125,11 +127,18 @@ class RecommendationEngine:
             json.dumps(self._build_debug_summary(candidates), ensure_ascii=False),
         )
 
+        # Semantic topic normalization: unify "AI"/"人工智能"/"机器学习" into one bucket
+        await self._normalize_topic_groups(candidates)
+
+
         # Curator-based scoring (recommendation-side, independent of Discovery)
         score_override: dict[str, float] | None = None
         if self._curator is not None:
             context = self._curator.build_context()
-            score_override = self._curator.score_candidates(candidates, context)
+            # Pass embedding service to curator for semantic fatigue/feedback
+            score_override = await self._curator.score_candidates_async(
+                candidates, context, embedding_service=self._embedding_service,
+            ) if self._embedding_service else self._curator.score_candidates(candidates, context)
 
         ranked = self._select_diversified_batch(
             candidates, limit=limit, score_override=score_override,
@@ -172,6 +181,56 @@ class RecommendationEngine:
 
         self._database.mark_pool_items_shown(shown_bvids)
         return recommendations
+
+    async def _normalize_topic_groups(
+        self,
+        candidates: list[DiscoveredContent],
+    ) -> None:
+        """Use embedding similarity to unify semantically identical topic_groups.
+
+        E.g. "强化学习" and "RL算法" get merged to the same canonical label
+        so downstream dedup treats them as the same topic bucket.
+        No-op when embedding service is unavailable.
+        """
+        if self._embedding_service is None or not candidates:
+            return
+
+        from openbiliclaw.llm.embedding import cosine_similarity
+
+        clusters: dict[str, list[float]] = {}
+        remap: dict[str, str] = {}
+
+        for item in candidates:
+            topic = (item.topic_group or item.topic_key or "").strip().lower()
+            if not topic or topic in remap:
+                continue
+
+            vec = await self._embedding_service.embed(topic)
+            if not vec:
+                remap[topic] = topic
+                continue
+
+            best_label: str | None = None
+            best_sim = 0.0
+            for label, centroid in clusters.items():
+                sim = cosine_similarity(vec, centroid)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_label = label
+
+            threshold = self._embedding_service.similarity_threshold
+            if best_label is not None and best_sim >= threshold:
+                remap[topic] = best_label
+                logger.debug("Rec topic merged: %r → %r (sim=%.3f)", topic, best_label, best_sim)
+            else:
+                clusters[topic] = vec
+                remap[topic] = topic
+
+        for item in candidates:
+            topic = (item.topic_group or item.topic_key or "").strip().lower()
+            canonical = remap.get(topic)
+            if canonical and canonical != topic and item.topic_group:
+                item.topic_group = canonical
 
     async def precompute_pool_copy(
         self,

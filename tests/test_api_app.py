@@ -155,7 +155,7 @@ class TestBackendAPI:
                 self.memory = memory
 
         class FakeRecommendationEngine:
-            def __init__(self, *, llm: object, database: object, curator: object = None) -> None:
+            def __init__(self, *, llm: object, database: object, curator: object = None, embedding_service: object = None) -> None:
                 self.llm = llm
                 self.database = database
 

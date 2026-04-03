@@ -135,8 +135,19 @@ def create_app(
             from openbiliclaw.recommendation.curator import PoolCurator
 
             curator = PoolCurator(database)
+            # Build embedding service for semantic dedup (optional, reused below)
+            _rec_embedding = None
+            try:
+                from openbiliclaw.llm.embedding import EmbeddingService
+                from openbiliclaw.llm.gemini_provider import GeminiProvider
+                _g = registry.get("gemini")
+                if isinstance(_g, GeminiProvider):
+                    _rec_embedding = EmbeddingService(_g)
+            except Exception:
+                pass
             recommendation_engine = RecommendationEngine(
                 llm=llm_service, database=database, curator=curator,
+                embedding_service=_rec_embedding,
             )
         bilibili_client = BilibiliAPIClient(
             cookie=resolve_runtime_cookie(

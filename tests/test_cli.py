@@ -508,7 +508,7 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             self.memory = memory
 
     class FakeRecommendationEngine:
-        def __init__(self, *, llm: object, database: object) -> None:
+        def __init__(self, *, llm: object, database: object, embedding_service: object = None) -> None:
             self.llm = llm
             self.database = database
 

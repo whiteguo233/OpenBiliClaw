@@ -207,8 +207,19 @@ def _build_recommendation_engine() -> Any:
 
     memory = _build_memory_manager()
     database = _get_runtime_database()
-    llm_service = LLMService(registry=_build_registry(), memory=memory)
-    return RecommendationEngine(llm=llm_service, database=database)
+    registry = _build_registry()
+    llm_service = LLMService(registry=registry, memory=memory)
+    # Build embedding service for semantic dedup (optional)
+    _emb = None
+    try:
+        from openbiliclaw.llm.embedding import EmbeddingService
+        from openbiliclaw.llm.gemini_provider import GeminiProvider
+        _g = registry.get("gemini")
+        if isinstance(_g, GeminiProvider):
+            _emb = EmbeddingService(_g)
+    except Exception:
+        pass
+    return RecommendationEngine(llm=llm_service, database=database, embedding_service=_emb)
 
 
 def _build_dialogue(soul_engine: Any) -> Any:
