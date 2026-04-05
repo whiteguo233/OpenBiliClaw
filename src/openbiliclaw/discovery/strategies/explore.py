@@ -241,9 +241,12 @@ class ExploreStrategy(DiscoveryStrategy):
             if domain in interest_val and len(interest_val) - len(domain) < 3:
                 return True
 
-        # Semantic check: catch "AI应用" vs "人工智能", "RL" vs "强化学习"
+        # Semantic check: catch near-synonyms like "AI应用" vs "人工智能"
+        # Threshold 0.85 = only reject very close synonyms, not loosely related topics
+        # (0.75 was too strict — rejected most domains when user has broad interests)
         if self.embedding_service is not None:
             from openbiliclaw.llm.embedding import cosine_similarity
+            _SIMILARITY_REJECT_THRESHOLD = 0.85
             try:
                 domain_vec = await self.embedding_service.embed(domain)
                 if domain_vec:
@@ -251,7 +254,7 @@ class ExploreStrategy(DiscoveryStrategy):
                         if not interest_val:
                             continue
                         interest_vec = await self.embedding_service.embed(interest_val)
-                        if interest_vec and cosine_similarity(domain_vec, interest_vec) >= 0.75:
+                        if interest_vec and cosine_similarity(domain_vec, interest_vec) >= _SIMILARITY_REJECT_THRESHOLD:
                             logger.debug(
                                 "Explore domain rejected (semantic): %r ≈ %r", domain, interest_val,
                             )
