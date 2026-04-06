@@ -28,8 +28,32 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class SpeculativeSpecific:
+    """A narrow interest topic within a speculative domain."""
+
+    name: str = ""
+    confirmation_count: int = 0
+    confirming_events: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "confirmation_count": self.confirmation_count,
+            "confirming_events": list(self.confirming_events),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SpeculativeSpecific:
+        return cls(
+            name=str(data.get("name", "")),
+            confirmation_count=int(data.get("confirmation_count", 0)),
+            confirming_events=list(data.get("confirming_events") or []),
+        )
+
+
+@dataclass
 class SpeculativeInterest:
-    """A speculated interest direction awaiting confirmation."""
+    """A speculated interest direction (domain) with optional specifics."""
 
     domain: str = ""
     category: str = ""
@@ -42,6 +66,7 @@ class SpeculativeInterest:
     confirmation_threshold: int = 3
     status: str = "active"  # "active" | "promoted" | "rejected"
     confirming_events: list[str] = field(default_factory=list)
+    specifics: list[SpeculativeSpecific] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +81,7 @@ class SpeculativeInterest:
             "confirmation_threshold": self.confirmation_threshold,
             "status": self.status,
             "confirming_events": list(self.confirming_events),
+            "specifics": [s.to_dict() for s in self.specifics],
         }
 
     @classmethod
@@ -72,6 +98,11 @@ class SpeculativeInterest:
             confirmation_threshold=int(data.get("confirmation_threshold", 3)),
             status=str(data.get("status", "active")),
             confirming_events=list(data.get("confirming_events") or []),
+            specifics=[
+                SpeculativeSpecific.from_dict(s)
+                for s in (data.get("specifics") or [])
+                if isinstance(s, dict)
+            ],
         )
 
 
@@ -175,53 +206,81 @@ def _split_chinese_keywords(text: str) -> list[str]:
     return [p.strip() for p in parts if len(p.strip()) >= 2]
 
 
+def _build_event_text(event: dict[str, Any]) -> str:
+    """Extract searchable text from an event."""
+    title = str(event.get("title", "")).lower()
+    tags = str(event.get("tags", "")).lower()
+    category = str(event.get("category", "")).lower()
+    return f"{title} {tags} {category}"
+
+
+def _text_matches_keywords(event_text: str, name: str, category: str = "") -> bool:
+    """Check if event_text matches a name/category via substring or token overlap."""
+    name_lower = name.lower()
+    cat_lower = category.lower()
+
+    if name_lower and name_lower in event_text:
+        return True
+    if cat_lower and len(cat_lower) >= 2 and cat_lower in event_text:
+        return True
+
+    for keyword in _split_chinese_keywords(name):
+        if keyword.lower() in event_text:
+            return True
+
+    spec_tokens = _tokenize(name) | _tokenize(category)
+    if not spec_tokens:
+        return False
+    event_tokens = _tokenize(event_text)
+    return len(spec_tokens & event_tokens) >= 2
+
+
 def _event_matches_speculation(
     event: dict[str, Any],
     spec: SpeculativeInterest,
 ) -> bool:
-    """Check if an event is related to a speculative interest via keyword overlap."""
-    title = str(event.get("title", "")).lower()
-    tags = str(event.get("tags", "")).lower()
-    category = str(event.get("category", "")).lower()
-    event_text = f"{title} {tags} {category}"
+    """Check if an event matches a speculative interest at domain level."""
+    event_text = _build_event_text(event)
+    return _text_matches_keywords(event_text, spec.domain, spec.category)
 
-    # Check domain name and category as substrings
-    domain_lower = spec.domain.lower()
-    category_lower = spec.category.lower()
 
-    if domain_lower and domain_lower in event_text:
-        return True
-    if category_lower and len(category_lower) >= 2 and category_lower in event_text:
-        return True
-
-    # Check sub-keywords of domain (split on 与/和/· etc.) as substrings
-    for keyword in _split_chinese_keywords(spec.domain):
-        if keyword.lower() in event_text:
-            return True
-
-    # Token overlap: domain/category tokens vs event text
-    spec_tokens = _tokenize(spec.domain) | _tokenize(spec.category)
-    if not spec_tokens:
-        return False
-    event_tokens = _tokenize(event_text)
-    overlap = spec_tokens & event_tokens
-    return len(overlap) >= 2
+def _event_matches_specific(
+    event_text: str,
+    specific: SpeculativeSpecific,
+) -> bool:
+    """Check if event text matches a specific topic."""
+    return _text_matches_keywords(event_text, specific.name)
 
 
 def observe_events(
     events: list[dict[str, Any]],
     state: SpeculativeState,
 ) -> tuple[SpeculativeState, int]:
-    """Check events against active speculations. Returns updated state and match count."""
+    """Check events against active speculations at both domain and specific levels.
+
+    Matching works bottom-up: if a specific matches, the domain also gets
+    credited. A direct domain match (without specific) still counts.
+    """
     match_count = 0
     for spec in state.active:
         if spec.status != "active":
             continue
         for event in events:
-            if _event_matches_speculation(event, spec):
+            event_text = _build_event_text(event)
+            title_short = str(event.get("title", ""))[:50]
+
+            # Check specifics first (more granular)
+            specific_matched = False
+            for specific in spec.specifics:
+                if _event_matches_specific(event_text, specific):
+                    specific.confirmation_count += 1
+                    specific.confirming_events.append(title_short)
+                    specific_matched = True
+
+            # Domain-level confirmation: either a specific matched or domain directly matches
+            if specific_matched or _text_matches_keywords(event_text, spec.domain, spec.category):
                 spec.confirmation_count += 1
-                title = str(event.get("title", ""))[:50]
-                spec.confirming_events.append(title)
+                spec.confirming_events.append(title_short)
                 match_count += 1
     return state, match_count
 
@@ -602,6 +661,13 @@ class InterestSpeculator:
             if len(state.active) >= self._max_active:
                 break
 
+            raw_specifics = item.get("specifics") or []
+            specifics = [
+                SpeculativeSpecific(name=str(s).strip())
+                for s in raw_specifics
+                if isinstance(s, str) and str(s).strip()
+            ]
+
             state.active.append(SpeculativeInterest(
                 domain=domain,
                 category=str(item.get("category", "")),
@@ -611,6 +677,7 @@ class InterestSpeculator:
                 created_at=now.isoformat(),
                 ttl_days=self._default_ttl_days,
                 confirmation_threshold=self._confirmation_threshold,
+                specifics=specifics,
             ))
             existing_domains.add(domain.lower())
 

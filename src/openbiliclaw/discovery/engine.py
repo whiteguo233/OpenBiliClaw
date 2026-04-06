@@ -149,8 +149,8 @@ class ContentDiscoveryEngine:
         *,
         concurrency: DiscoveryConcurrencyController | None = None,
         embedding_service: Any | None = None,
-        target_primary_count: int = 12,
-        backfill_target_count: int = 18,
+        target_primary_count: int = 20,
+        backfill_target_count: int = 40,
     ) -> None:
         self._strategies: list[DiscoveryStrategy] = []
         self._llm_service = llm_service
@@ -198,6 +198,7 @@ class ContentDiscoveryEngine:
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
         await self._normalize_topic_groups(merged_primary)
+        await self._normalize_topic_keys(merged_primary)
         final_results = self._compress_topic_repeats(
             merged_primary,
             limit=effective_limit,
@@ -213,6 +214,7 @@ class ContentDiscoveryEngine:
             )
             all_results = self._merge_and_rank([*final_results, *backfill_results])
             await self._normalize_topic_groups(all_results)
+            await self._normalize_topic_keys(all_results)
             final_results = self._compress_topic_repeats(
                 all_results,
                 limit=effective_limit,
@@ -225,31 +227,48 @@ class ContentDiscoveryEngine:
         self,
         results: list[DiscoveredContent],
     ) -> None:
-        """Use embedding similarity to unify semantically identical topic_groups.
+        """Assign topic_group to items that lack one via embedding similarity.
 
-        If embedding service is not available, this is a no-op and the existing
-        exact-string dedup in _compress_topic_repeats handles everything.
+        Items that already have a topic_group are trusted as-is — they were
+        set by LLM evaluation or strategy-level inference and are already
+        coarse labels.  Re-merging short Chinese labels via embedding produces
+        false positives (e.g. "国际史实" → "人工智能" at threshold 0.82)
+        because short text embeddings are deceptively close in cosine space.
+
+        This method only operates on items WITHOUT a topic_group, attempting
+        to assign them to an existing cluster from items that do have one.
         """
         if self._embedding_service is None or not results:
             return
 
         from openbiliclaw.llm.embedding import cosine_similarity
 
-        # Build cluster centroids from unique topic_groups
-        clusters: dict[str, list[float]] = {}  # canonical_label → centroid
-        remap: dict[str, str] = {}  # original_label → canonical_label
-
+        # Build cluster centroids from items that already have a topic_group
+        clusters: dict[str, list[float]] = {}
         for item in results:
-            topic = self._topic_bucket(item)
-            if not topic or topic in remap:
+            group = (item.topic_group or "").strip().lower()
+            if not group or group in clusters:
                 continue
+            vec = await self._embedding_service.embed(group)
+            if vec:
+                clusters[group] = vec
 
+        if not clusters:
+            return
+
+        # Only try to assign topic_group to items that don't have one
+        # Use a stricter threshold for short-label merging
+        threshold = min(0.92, self._embedding_service.similarity_threshold + 0.10)
+        for item in results:
+            if (item.topic_group or "").strip():
+                continue
+            topic = (item.topic_key or "").strip().lower()
+            if not topic:
+                continue
             vec = await self._embedding_service.embed(topic)
             if not vec:
-                remap[topic] = topic
                 continue
 
-            # Find most similar existing cluster
             best_label: str | None = None
             best_sim = 0.0
             for label, centroid in clusters.items():
@@ -258,22 +277,122 @@ class ContentDiscoveryEngine:
                     best_sim = sim
                     best_label = label
 
-            threshold = self._embedding_service.similarity_threshold
             if best_label is not None and best_sim >= threshold:
-                remap[topic] = best_label
+                item.topic_group = best_label
                 logger.debug(
-                    "Topic merged: %r → %r (sim=%.3f)", topic, best_label, best_sim,
+                    "Topic assigned: %r → %r (sim=%.3f)", topic, best_label, best_sim,
                 )
-            else:
-                clusters[topic] = vec
-                remap[topic] = topic
 
-        # Apply remapping
+    async def _normalize_topic_keys(
+        self,
+        results: list[DiscoveredContent],
+    ) -> None:
+        """Normalize topic_keys across strategies via embedding-based clustering.
+
+        Different strategies produce topic_keys at different granularities:
+        - search: fine-grained LLM phrases ("moba经济曲线动态博弈")
+        - trending/related_chain: B站 tname categories ("网络游戏")
+        - explore: domain labels ("精密机械钟表修复与微观结构")
+
+        This method clusters semantically similar keys and reassigns them
+        to a canonical representative, so downstream diversity logic in
+        _compress_topic_repeats correctly recognizes same-topic items.
+        """
+        if self._embedding_service is None or not results:
+            return
+
+        from openbiliclaw.llm.embedding import cosine_similarity
+
+        # Step 1: Collect unique topic_keys and embed them
+        unique_keys: list[str] = []
+        seen: set[str] = set()
         for item in results:
-            topic = self._topic_bucket(item)
-            canonical = remap.get(topic)
-            if canonical and canonical != topic and item.topic_group:
-                item.topic_group = canonical
+            key = (item.topic_key or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                unique_keys.append(key)
+
+        if len(unique_keys) <= 1:
+            return
+
+        # Embed all unique keys
+        key_vectors: dict[str, list[float]] = {}
+        for key in unique_keys:
+            vec = await self._embedding_service.embed(key)
+            if vec:
+                key_vectors[key] = vec
+
+        if len(key_vectors) <= 1:
+            return
+
+        # Step 2: Greedy agglomerative clustering
+        threshold = self._embedding_service.similarity_threshold  # ~0.82
+        clusters: list[tuple[str, list[str]]] = []
+
+        for key, vec in key_vectors.items():
+            best_cluster_idx: int | None = None
+            best_sim = 0.0
+            for idx, (canonical, _members) in enumerate(clusters):
+                centroid = key_vectors.get(canonical)
+                if centroid is None:
+                    continue
+                sim = cosine_similarity(vec, centroid)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_cluster_idx = idx
+
+            if best_cluster_idx is not None and best_sim >= threshold:
+                clusters[best_cluster_idx][1].append(key)
+            else:
+                clusters.append((key, [key]))
+
+        # Step 3: For each cluster, pick canonical label (medium-length preferred)
+        canonical_map: dict[str, str] = {}  # original_key → canonical_key
+        for _canonical, members in clusters:
+            if len(members) <= 1:
+                continue
+            best_label = members[0]
+            best_score = self._label_quality_score(members[0])
+            for member in members[1:]:
+                score = self._label_quality_score(member)
+                if score > best_score:
+                    best_score = score
+                    best_label = member
+            for member in members:
+                if member != best_label:
+                    canonical_map[member] = best_label
+
+        if not canonical_map:
+            return
+
+        # Step 4: Reassign topic_key on items
+        for item in results:
+            key = (item.topic_key or "").strip().lower()
+            canonical = canonical_map.get(key)
+            if canonical:
+                logger.debug(
+                    "Topic key normalized: %r → %r (strategy=%s)",
+                    item.topic_key, canonical, item.source_strategy,
+                )
+                item.topic_key = canonical
+
+    @staticmethod
+    def _label_quality_score(label: str) -> float:
+        """Score a topic label for use as canonical representative.
+
+        Prefers medium-length labels (4-8 chars) that are descriptive
+        but not overly specific.
+        """
+        length = len(label)
+        if length <= 2:
+            return 0.2
+        if length <= 4:
+            return 0.6
+        if length <= 8:
+            return 1.0
+        if length <= 12:
+            return 0.7
+        return 0.4
 
     async def evaluate_content(
         self,
@@ -399,6 +518,152 @@ class ContentDiscoveryEngine:
         self._eval_cache[cache_key] = (score, reason, topic_group, style_key)
         return score
 
+    async def evaluate_content_batch(
+        self,
+        contents: list[DiscoveredContent],
+        profile: SoulProfile,
+        *,
+        source_context: str = "",
+        batch_size: int = 10,
+    ) -> list[float]:
+        """Evaluate multiple content items with batched LLM calls.
+
+        Groups items into batches of ``batch_size`` and sends one LLM
+        call per batch instead of one per item.  Falls back to single
+        evaluation for items that fail in a batch.
+
+        Returns scores in the same order as ``contents``.
+        """
+        if self._llm_service is None or not contents:
+            return [0.0] * len(contents)
+
+        # Split into cached vs uncached
+        uncached_indices: list[int] = []
+        scores: list[float] = [0.0] * len(contents)
+        for i, content in enumerate(contents):
+            cache_key = f"{content.bvid}:{id(profile)}"
+            cached = self._eval_cache.get(cache_key)
+            if cached is not None:
+                score, reason, topic_group, style_key = cached
+                content.relevance_score = score
+                content.relevance_reason = reason
+                if topic_group:
+                    content.topic_group = topic_group
+                if style_key:
+                    content.style_key = style_key
+                scores[i] = score
+            else:
+                uncached_indices.append(i)
+
+        if not uncached_indices:
+            return scores
+
+        # Process uncached items in batches
+        for batch_start in range(0, len(uncached_indices), batch_size):
+            batch_indices = uncached_indices[batch_start:batch_start + batch_size]
+            batch_contents = [contents[i] for i in batch_indices]
+            batch_scores = await self._evaluate_batch(
+                batch_contents, profile, source_context=source_context,
+            )
+            for idx, batch_score in zip(batch_indices, batch_scores):
+                scores[idx] = batch_score
+
+        return scores
+
+    async def _evaluate_batch(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+        *,
+        source_context: str = "",
+    ) -> list[float]:
+        """Send one LLM call for a batch of items."""
+        from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
+
+        profile_data = {
+            "personality_portrait": profile.personality_portrait,
+            "core_traits": profile.core_traits[:5],
+            "deep_needs": profile.deep_needs[:5],
+            "interests": [
+                {"name": item.name, "category": item.category, "weight": item.weight}
+                for item in profile.preferences.interests[:10]
+            ],
+        }
+        content_items = [
+            {
+                "title": c.title,
+                "up_name": c.up_name,
+                "description": (c.description or "")[:200],
+                "duration": c.duration,
+                "view_count": c.view_count,
+                "source_strategy": c.source_strategy,
+            }
+            for c in batch
+        ]
+        messages = build_batch_content_evaluation_prompt(
+            profile_summary=profile_data,
+            content_items=content_items,
+            source_context=source_context or (batch[0].source_strategy if batch else ""),
+        )
+
+        _VALID_STYLES = {
+            "game_strategy", "news_brief", "practical_guide", "story_doc",
+            "visual_showcase", "tech_analysis", "philosophy_culture",
+            "deep_dive", "light_chat",
+        }
+
+        try:
+            llm_call = self._llm_service.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+                max_tokens=8192,
+            )
+            if self._concurrency is not None:
+                response = await self._concurrency.run_llm(llm_call)
+            else:
+                response = await llm_call
+            raw = str(getattr(response, "content", "")).strip()
+            payload = json.loads(raw)
+            # LLM may return a single dict instead of array for 1-item batches
+            if isinstance(payload, dict):
+                payload = [payload]
+            if not isinstance(payload, list):
+                raise ValueError(f"Expected JSON array, got {type(payload).__name__}")
+        except Exception:
+            logger.warning(
+                "Batch evaluation failed for %d items, falling back to single eval",
+                len(batch),
+            )
+            # Fallback: evaluate individually
+            return [
+                await self.evaluate_content(c, profile, source_context=source_context)
+                for c in batch
+            ]
+
+        results: list[float] = []
+        for i, content in enumerate(batch):
+            if i >= len(payload) or not isinstance(payload[i], dict):
+                results.append(0.0)
+                continue
+            item_result = payload[i]
+            score = self._clamp_score(item_result.get("score", 0.0))
+            reason = str(item_result.get("reason", "")).strip()
+            topic_group = str(item_result.get("topic_group", "")).strip()
+            style_key = str(item_result.get("style_key", "")).strip().lower()
+
+            content.relevance_score = score
+            content.relevance_reason = reason
+            if topic_group:
+                content.topic_group = topic_group
+            if style_key in _VALID_STYLES:
+                content.style_key = style_key
+
+            cache_key = f"{content.bvid}:{id(profile)}"
+            self._eval_cache[cache_key] = (score, reason, topic_group, style_key)
+            results.append(score)
+
+        return results
+
     @staticmethod
     def _clamp_score(raw_value: object) -> float:
         if isinstance(raw_value, bool | int | float):
@@ -428,13 +693,49 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         limit: int,
     ) -> list[DiscoveredContent]:
-        tasks = [strategy.discover(profile, limit=limit) for strategy in strategies]
-        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+        # Split strategies into two phases to avoid B站 search rate-limiting.
+        # Search uses WBI-signed requests that get v_voucher challenges when
+        # run concurrently with heavy API traffic from other strategies.
+        search_strategies = [s for s in strategies if s.name == "search"]
+        other_strategies = [s for s in strategies if s.name != "search"]
 
+        results: list[DiscoveredContent] = []
+
+        # Phase 1: run non-search strategies concurrently
+        if other_strategies:
+            tasks = [s.discover(profile, limit=limit) for s in other_strategies]
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(self._collect_strategy_results(other_strategies, gathered))
+
+        # Phase 2: run search strategies after other API traffic settles
+        if search_strategies:
+            tasks = [s.discover(profile, limit=limit) for s in search_strategies]
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(self._collect_strategy_results(search_strategies, gathered))
+
+        logger.info(
+            "Discovery gather returned %d results for %d strategies: %s",
+            len(results),
+            len(strategies),
+            [s.name for s in strategies],
+        )
+        return results
+
+    @staticmethod
+    def _collect_strategy_results(
+        strategies: list[DiscoveryStrategy],
+        gathered: list[object],
+    ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
         for strategy, outcome in zip(strategies, gathered, strict=True):
             if isinstance(outcome, BaseException):
-                logger.exception("Strategy '%s' failed.", strategy.name, exc_info=outcome)
+                logger.exception(
+                    "Strategy '%s' failed: %s: %s",
+                    strategy.name,
+                    type(outcome).__name__,
+                    outcome,
+                    exc_info=outcome,
+                )
                 continue
             if not isinstance(outcome, list):
                 logger.error(
@@ -445,7 +746,12 @@ class ContentDiscoveryEngine:
                 continue
             items: list[DiscoveredContent] = outcome
             results.extend(items)
-            logger.info("Strategy '%s' found %d items.", strategy.name, len(items))
+            logger.info(
+                "Strategy '%s' found %d items.%s",
+                strategy.name,
+                len(items),
+                "" if items else " (empty — all candidates filtered or generation failed)",
+            )
         return results
 
     async def _run_backfill(

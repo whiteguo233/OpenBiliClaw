@@ -132,11 +132,9 @@ class RelatedChainStrategy(DiscoveryStrategy):
                     seen_bvids.add(content.bvid)
                     batch_candidates.append((content, depth, seed_index, seed_topic_key))
 
-            # Evaluate all candidates concurrently
+            # Evaluate all candidates in batched LLM calls
             contents = [c for c, _, _, _ in batch_candidates]
-            scores = await asyncio.gather(
-                *(evaluator.evaluate_content(content, profile) for content in contents)
-            )
+            scores = await evaluator.evaluate_content_batch(contents, profile)
 
             next_layer: list[tuple[str, int, int, str]] = []
             for (content, depth, seed_index, seed_topic_key), score in zip(
@@ -166,11 +164,11 @@ class RelatedChainStrategy(DiscoveryStrategy):
         interest_slots = self.max_seeds - cross_domain_slots
 
         # Phase 1: fill interest-based seeds (events + preferences)
-        for bvid in self._event_seed_bvids():
+        for bvid, title in self._event_seed_bvids_with_title():
             if bvid in seen:
                 continue
             seen.add(bvid)
-            seeds.append((bvid, self._topic_key_from_seed_bvid(bvid)))
+            seeds.append((bvid, self._topic_key_from_title(title)))
             if len(seeds) >= interest_slots:
                 break
 
@@ -202,32 +200,33 @@ class RelatedChainStrategy(DiscoveryStrategy):
                 if item.bvid in seen or not item.bvid:
                     continue
                 seen.add(item.bvid)
-                seeds.append((item.bvid, self._topic_key_from_seed_bvid(item.bvid)))
+                seeds.append((item.bvid, self._topic_key_from_title(item.title)))
                 if len(seeds) >= self.max_seeds:
                     return seeds
 
         return seeds
 
-    def _event_seed_bvids(self) -> list[str]:
+    def _event_seed_bvids_with_title(self) -> list[tuple[str, str]]:
         events = self.memory_manager.query_events(
             event_types=["view", "favorite", "like"],
             limit=max(self.max_seeds * 5, 20),
         )
         # Diversify seeds: pick from different titles/topics to avoid echo chamber
-        seed_bvids: list[str] = []
+        seed_pairs: list[tuple[str, str]] = []
         seen_title_prefixes: set[str] = set()
         for event in events:
             bvid = self._extract_bvid_from_event(event)
             if not bvid:
                 continue
+            full_title = str(event.get("title", "")).strip()
             # Use first 4 chars of title as a rough topic dedup key
-            title = str(event.get("title", "")).strip()[:4]
-            if title and title in seen_title_prefixes:
+            prefix = full_title[:4]
+            if prefix and prefix in seen_title_prefixes:
                 continue
-            if title:
-                seen_title_prefixes.add(title)
-            seed_bvids.append(bvid)
-        return seed_bvids
+            if prefix:
+                seen_title_prefixes.add(prefix)
+            seed_pairs.append((bvid, full_title))
+        return seed_pairs
 
     async def _preference_seed_bvids(self, profile: SoulProfile) -> list[str]:
         queries: list[str] = []
@@ -301,6 +300,12 @@ class RelatedChainStrategy(DiscoveryStrategy):
             like_count = to_int(stat.get("like", 0))
 
         title_text = clean_text(str(item.get("title", "")))
+        # Prefer B站分区名 (tname) for topic_key, fall back to seed's key
+        tname = str(item.get("tname", "")).strip()
+        if tname:
+            item_topic_key = re.sub(r"\s+", "", tname).lower()[:16]
+        else:
+            item_topic_key = seed_topic_key
         return DiscoveredContent(
             bvid=bvid,
             title=title_text,
@@ -310,7 +315,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
             duration=parse_duration(item.get("duration", 0)),
             view_count=view_count,
             like_count=like_count,
-            topic_key=seed_topic_key,
+            topic_key=item_topic_key,
             topic_group=self._topic_group_from_title(title_text),
             description=clean_text(
                 str(item.get("desc", item.get("description", "")))
@@ -327,7 +332,37 @@ class RelatedChainStrategy(DiscoveryStrategy):
 
     @staticmethod
     def _topic_key_from_seed_bvid(seed_bvid: str) -> str:
+        """Fallback when no title is available — kept for preference seeds."""
         return f"related:{seed_bvid.strip().lower()}"
+
+    @staticmethod
+    def _topic_key_from_title(title: str) -> str:
+        """Derive a semantic topic_key from a video title.
+
+        Strategy:
+        1. Extract bracket-wrapped label if present (e.g. 【科技】→ 科技)
+        2. Otherwise split on punctuation/filler and keep core noun phrase
+        3. Cap at 8 chars to stay at category granularity, not video level
+        """
+        if not title:
+            return ""
+        # Try extracting bracket-wrapped label first: 【xxx】, [xxx], 《xxx》
+        bracket_match = re.search(r"[【\[《「]([^】\]》」]{2,8})[】\]》」]", title)
+        if bracket_match:
+            return re.sub(r"\s+", "", bracket_match.group(1)).lower()[:8]
+        # Strip all brackets, punctuation, emojis, numbers-heavy prefixes
+        cleaned = re.sub(
+            r"[【】\[\]《》「」（）()！!？?：:，,。.·\-—|／/～~\d]+", " ", title,
+        ).strip()
+        # Split on whitespace and common Chinese filler/connective patterns
+        parts = re.split(r"[\s,，、]+", cleaned)
+        # Filter: keep segments 2-8 chars (too short = noise, too long = sentence)
+        meaningful = [p for p in parts if 2 <= len(p) <= 8]
+        if meaningful:
+            return re.sub(r"\s+", "", meaningful[0]).lower()[:8]
+        # Fallback: first 6 chars of cleaned title
+        fallback = re.sub(r"\s+", "", cleaned).lower()
+        return fallback[:6] if fallback else ""
 
     @staticmethod
     def _topic_group_from_title(title: str) -> str:

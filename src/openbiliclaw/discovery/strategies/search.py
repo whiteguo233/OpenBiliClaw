@@ -70,6 +70,11 @@ class SearchStrategy(DiscoveryStrategy):
         """
         queries = await self._generate_queries(profile)
         self.last_intermediates = {"queries": list(queries)}
+        # Force-refresh WBI keys before starting search requests.
+        # When running concurrently with other strategies the shared client
+        # may have stale keys that cause v_voucher challenges.
+        if hasattr(self.bilibili_client, "_cached_wbi_keys"):
+            self.bilibili_client._cached_wbi_keys = None  # type: ignore[attr-defined]
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
         seen_bvids: set[str] = set()
@@ -78,25 +83,32 @@ class SearchStrategy(DiscoveryStrategy):
             for query_index, query in enumerate(queries)
             for page in range(1, self.max_pages + 1)
         ]
-        runner = self.concurrency.run_bilibili if self.concurrency is not None else None
-        gathered = await _gather_bounded(
-            [
-                self.bilibili_client.search(
+        # Run search queries sequentially with delay to avoid B站 search
+        # rate-limiting.  The search endpoint is aggressively rate-limited
+        # and returns v_voucher challenges under concurrent pressure.
+        gathered: list[object] = []
+        for i, (_, query, page) in enumerate(request_plan):
+            if i > 0:
+                await asyncio.sleep(0.5)
+            try:
+                result = await self.bilibili_client.search(
                     query,
                     page=page,
                     page_size=self.page_size,
                 )
-                for _, query, page in request_plan
-            ],
-            runner=runner,
-        )
+                gathered.append(result)
+            except Exception as exc:
+                gathered.append(exc)
 
+        api_result_count = 0
         for (query_index, query, page), outcome in zip(request_plan, gathered, strict=True):
             if isinstance(outcome, BaseException):
                 logger.exception("Search query failed: %s", query, exc_info=outcome)
                 continue
             if not isinstance(outcome, list):
+                logger.warning("Search query '%s' returned non-list: %s", query, type(outcome).__name__)
                 continue
+            api_result_count += len(outcome)
             search_results = outcome
             for item_index, item in enumerate(search_results):
                 content = self._map_search_result(
@@ -111,6 +123,11 @@ class SearchStrategy(DiscoveryStrategy):
                 seen_bvids.add(content.bvid)
                 candidates.append(content)
 
+        logger.info(
+            "Search: %d queries, %d API results, %d unique candidates",
+            len(queries), api_result_count, len(candidates),
+        )
+
         if not self.llm_evaluation:
             return candidates[:limit]
 
@@ -118,9 +135,7 @@ class SearchStrategy(DiscoveryStrategy):
             llm_service=self.llm_service,
             concurrency=self.concurrency,
         )
-        scores = await asyncio.gather(
-            *(evaluator.evaluate_content(content, profile) for content in candidates)
-        )
+        scores = await evaluator.evaluate_content_batch(candidates, profile)
         results: list[DiscoveredContent] = []
         for content, score in zip(candidates, scores, strict=True):
             if score < self.score_threshold:
@@ -128,6 +143,16 @@ class SearchStrategy(DiscoveryStrategy):
             results.append(content)
             if len(results) >= limit:
                 break
+
+        if not results and candidates:
+            score_vals = sorted(scores, reverse=True)
+            logger.warning(
+                "Search: %d candidates all below threshold %.2f. "
+                "Top-5 scores: %s",
+                len(candidates),
+                self.score_threshold,
+                score_vals[:5],
+            )
         return results
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:

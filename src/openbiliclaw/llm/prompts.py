@@ -712,6 +712,69 @@ def build_content_evaluation_prompt(
     ]
 
 
+def build_batch_content_evaluation_prompt(
+    *,
+    profile_summary: dict[str, object],
+    content_items: list[dict[str, object]],
+    source_context: str = "",
+) -> list[dict[str, str]]:
+    """Build a prompt that evaluates multiple content items in one LLM call.
+
+    Same rules as single evaluation, but processes a batch and returns
+    a JSON array of results keyed by item index.
+    """
+    source_hint = ""
+    if source_context:
+        source_hint = (
+            "\n<discovery_context>\n"
+            f"{source_context}\n"
+            "</discovery_context>\n\n"
+        )
+
+    system_prompt = (
+        "<task>\n"
+        + source_hint
+        + "你要批量评估多个 B 站内容与这个用户画像的匹配度。\n"
+        "</task>\n\n"
+        "<rules>\n"
+        "1. 输出必须是严格 JSON 数组，不要附带解释。\n"
+        "2. 数组长度必须与输入内容数量一致，顺序一一对应。\n"
+        "3. 每项包含 score(0-1)、reason(一句中文)、topic_group(2-4词粗分类)、"
+        "style_key(9选1)。\n"
+        "4. 根据发现路径调整评判宽容度：search 要求高度匹配；"
+        "trending 基础分 >= 0.6；related_chain 允许适度偏移；"
+        "explore 只要心理需求说得通就给较高分。\n"
+        "5. topic_group 规则：2-4 个中文词的粗分类，同主题不同切面统一。"
+        "语义相同必须用同一词（AI/人工智能/机器学习 统一为 人工智能）。\n"
+        "6. style_key 从 9 个选项中选：game_strategy / news_brief / "
+        "practical_guide / story_doc / visual_showcase / tech_analysis / "
+        "philosophy_culture / deep_dive / light_chat\n"
+        "</rules>\n\n"
+        "<output_schema>\n"
+        "[\n"
+        '  {"score": 0.78, "reason": "...", "topic_group": "认知科学", '
+        '"style_key": "deep_dive"},\n'
+        '  {"score": 0.45, "reason": "...", "topic_group": "美食", '
+        '"style_key": "light_chat"}\n'
+        "]\n"
+        "</output_schema>"
+    )
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2),
+            "</profile_summary>",
+            "<content_batch>",
+            json.dumps(content_items, ensure_ascii=False, indent=2),
+            "</content_batch>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def build_recommendation_expression_prompt(
     *,
     profile_summary: dict[str, object],
@@ -755,6 +818,50 @@ def build_recommendation_expression_prompt(
             "<content_summary>",
             json.dumps(content_summary, ensure_ascii=False, indent=2),
             "</content_summary>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_batch_expression_prompt(
+    *,
+    profile_summary: dict[str, object],
+    content_items: list[dict[str, object]],
+    tone_profile: ToneProfile | None,
+) -> list[dict[str, str]]:
+    """Build a prompt that generates expressions for multiple items in one call."""
+    system_prompt = (
+        "<task>\n"
+        "你要像一个真正懂这个人的老B友一样，为多条 B 站内容各写一段推荐话。\n"
+        "</task>\n\n"
+        "<rules>\n"
+        "1. 输出必须是严格 JSON 数组，数组长度与输入内容数量一致，顺序一一对应。\n"
+        "2. 每项包含 expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
+        "3. expression 像朋友私聊，必须引用至少一个具体内容细节"
+        "（标题关键词、UP主特点、独特切入角度），不要说空话。\n"
+        "4. 避免：算法套话、信息密度、高质量、深度好文、值得一看、强烈推荐。\n"
+        "5. explore 来源的内容要解释陌生领域和用户认知偏好的关联。\n"
+        "6. 每条 expression 的开头措辞必须不同，禁止重复同一句式。\n"
+        "</rules>\n\n"
+        "<output_schema>\n"
+        "[\n"
+        '  {"expression": "这条...", "topic_label": "xxx"},\n'
+        '  {"expression": "这个UP主...", "topic_label": "yyy"}\n'
+        "]\n"
+        "</output_schema>"
+    )
+    system_prompt = "\n\n".join([system_prompt, _render_tone_profile(tone_profile)])
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2),
+            "</profile_summary>",
+            "<content_batch>",
+            json.dumps(content_items, ensure_ascii=False, indent=2),
+            "</content_batch>",
         ]
     )
     return [
@@ -876,15 +983,24 @@ def build_speculation_generation_prompt(
         "{\n"
         '  "speculations": [\n'
         "    {\n"
-        '      "domain": "具体的兴趣方向名称",\n'
+        '      "domain": "一级方向名称（宽泛领域）",\n'
         '      "category": "所属大类（必须两两不同）",\n'
         '      "reason": "心理学桥接推理：从X兴趣+Y特质->可能喜欢此方向",\n'
         '      "bridge_type": "near|far|novel",\n'
-        '      "confidence": 0.45\n'
+        '      "confidence": 0.45,\n'
+        '      "specifics": [\n'
+        '        "可搜索的具体话题1",\n'
+        '        "可搜索的具体话题2"\n'
+        "      ]\n"
         "    }\n"
         "  ]\n"
         "}\n"
-        "</output_schema>"
+        "</output_schema>\n\n"
+        "<specifics_rules>\n"
+        "每个 domain 必须附带 2-4 个 specifics，代表该方向下可搜索到内容的具体话题。\n"
+        "specifics 不是 domain 的同义词，而是更窄的切入点。\n"
+        "例如 domain=\"建筑美学\" → specifics=[\"现代主义建筑纪录片\", \"中式园林设计\", \"包豪斯风格解读\"]\n"
+        "</specifics_rules>"
     )
 
     exclude_list = sorted(set(existing_speculations + cooldown_domains + confirmed_domains))

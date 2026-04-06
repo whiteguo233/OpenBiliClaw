@@ -177,8 +177,15 @@ class CognitionUpdateSummary(BaseModel):
     created_at: str = ""
 
 
+class SpeculativeSpecificOut(BaseModel):
+    """A narrow topic within a speculative domain."""
+
+    name: str = ""
+    confirmation_count: int = 0
+
+
 class SpeculativeInterestOut(BaseModel):
-    """A speculated interest direction awaiting confirmation."""
+    """A speculated interest direction with two-level structure."""
 
     domain: str = ""
     reason: str = ""
@@ -186,6 +193,7 @@ class SpeculativeInterestOut(BaseModel):
     confirmation_count: int = 0
     confirmation_threshold: int = 3
     status: str = "active"
+    specifics: list[SpeculativeSpecificOut] = Field(default_factory=list)
 
 
 class MBTIDimensionOut(BaseModel):

@@ -1103,12 +1103,18 @@
     }
     .speculative-item {
       display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
       border-radius: 14px;
       background: rgba(255, 248, 240, 0.96);
       border: 1px solid rgba(245, 228, 210, 0.96);
+    }
+    .speculative-item .spec-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
     }
     .speculative-item .spec-domain {
       font-size: 12px;
@@ -1118,12 +1124,41 @@
     .speculative-item .spec-reason {
       font-size: 11px;
       color: var(--text-secondary);
-      flex: 1;
+      margin: 0;
     }
     .speculative-item .spec-progress {
       font-size: 10px;
       color: var(--text-muted);
       white-space: nowrap;
+    }
+    .speculative-item .spec-specifics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+    .spec-specific-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      color: #9a6420;
+      background: rgba(255, 240, 220, 0.96);
+      border: 1px solid rgba(235, 210, 180, 0.8);
+    }
+    .spec-specific-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      font-size: 9px;
+      font-weight: 600;
+      color: #fff;
+      background: #c57b2e;
     }
     .speculative-list .is-fallback {
       font-size: 11px;

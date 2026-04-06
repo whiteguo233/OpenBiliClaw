@@ -207,6 +207,14 @@ export function normalizeProfileSummary(summary) {
             confirmation_count: Number(item.confirmation_count ?? 0),
             confirmation_threshold: Number(item.confirmation_threshold ?? 3),
             status: normalizeText(item.status) || "active",
+            specifics: Array.isArray(item.specifics)
+              ? item.specifics
+                  .filter((s) => s?.name)
+                  .map((s) => ({
+                    name: normalizeText(s.name),
+                    confirmation_count: Number(s.confirmation_count ?? 0),
+                  }))
+              : [],
           }))
       : [],
     recent_cognition_updates: Array.isArray(summary?.recent_cognition_updates)

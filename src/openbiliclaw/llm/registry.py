@@ -86,17 +86,28 @@ def build_embedding_service(
     Falls back to the Gemini provider from the registry.
     """
     try:
-        from openbiliclaw.llm.embedding import EmbeddingService
+        from openbiliclaw.llm.embedding import EmbeddingCache, EmbeddingService
 
         emb_cfg = config.llm.embedding
         provider_name = emb_cfg.provider.strip() or config.llm.default_provider
         provider = registry.get(provider_name)
         if not hasattr(provider, "embed"):
             return None
+
+        # Persistent L2 cache: store embeddings in SQLite alongside main DB
+        l2_cache: EmbeddingCache | None = None
+        try:
+            cache_path = config.data_path / "embedding_cache.db"
+            l2_cache = EmbeddingCache(cache_path)
+            l2_cache.initialize()
+        except Exception:
+            logger.debug("Failed to init embedding L2 cache", exc_info=True)
+
         return EmbeddingService(
             provider,
             model=emb_cfg.model or "gemini-embedding-001",
             similarity_threshold=emb_cfg.similarity_threshold,
+            persistent_cache=l2_cache,
         )
     except Exception:
         return None

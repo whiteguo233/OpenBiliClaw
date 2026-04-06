@@ -601,7 +601,7 @@ test("normalizeProfileSummary fills stable fallback fields", () => {
       context: { weekday_patterns: "  晚上深度阅读  ", weekend_patterns: "", time_of_day_patterns: "", session_type: "deep_dive" },
       exploration_openness: 0.72,
       speculative_interests: [
-        { domain: "  建筑美学  ", reason: "  你最近的审美倾向  ", confidence: 0.4, confirmation_count: 1, confirmation_threshold: 3, status: "active" },
+        { domain: "  建筑美学  ", reason: "  你最近的审美倾向  ", confidence: 0.4, confirmation_count: 1, confirmation_threshold: 3, status: "active", specifics: [{ name: "  现代主义建筑  ", confirmation_count: 1 }] },
       ],
       recent_cognition_updates: [
         {
@@ -637,7 +637,7 @@ test("normalizeProfileSummary fills stable fallback fields", () => {
       context: { weekday_patterns: "晚上深度阅读", weekend_patterns: "", time_of_day_patterns: "", session_type: "deep_dive" },
       exploration_openness: 0.72,
       speculative_interests: [
-        { domain: "建筑美学", reason: "你最近的审美倾向", confidence: 0.4, confirmation_count: 1, confirmation_threshold: 3, status: "active" },
+        { domain: "建筑美学", reason: "你最近的审美倾向", confidence: 0.4, confirmation_count: 1, confirmation_threshold: 3, status: "active", specifics: [{ name: "现代主义建筑", confirmation_count: 1 }] },
       ],
       recent_cognition_updates: [
         {

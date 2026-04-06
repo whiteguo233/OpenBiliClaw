@@ -862,7 +862,7 @@ async def test_discovery_engine_skips_backfill_when_primary_results_enough() -> 
             candidate_tier="primary",
             source_strategy="search",
         )
-        for index in range(12)
+        for index in range(25)
     ]
     engine.register_strategy(
         _BackfillAwareStrategy(
@@ -882,11 +882,11 @@ async def test_discovery_engine_skips_backfill_when_primary_results_enough() -> 
         )
     )
 
-    results = await engine.discover(_build_profile(), limit=18)
+    results = await engine.discover(_build_profile(), limit=40)
 
     assert started == ["search"]
     assert backfill_started == []
-    assert len(results) == 12
+    assert len(results) == 25
     assert all(item.candidate_tier == "primary" for item in results)
 
 

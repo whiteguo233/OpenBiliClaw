@@ -132,16 +132,15 @@ class ExploreStrategy(DiscoveryStrategy):
                 seen_bvids.add(content.bvid)
                 content.source_strategy = self.name
                 if domain_label:
-                    normalized_domain = re.sub(r"\s+", "", domain_label).lower()[:8]
+                    normalized_domain = re.sub(r"\s+", "", domain_label).lower()[:16]
                     content.topic_group = normalized_domain
-                    # Use query-level granularity for topic_key so both diversity
-                    # and no_echo_chamber scoring see distinct entries per query
-                    normalized_query = re.sub(r"\s+", "", query).lower()[:16]
-                    content.topic_key = f"explore:{normalized_domain}:{normalized_query}"
+                    # Use domain-level granularity for topic_key so content from
+                    # the same exploration domain groups together properly
+                    content.topic_key = normalized_domain
                 candidates.append((content, novelty_level, interest_anchored))
 
-        scores = await asyncio.gather(
-            *(evaluator.evaluate_content(content, profile) for content, _, _ in candidates)
+        scores = await evaluator.evaluate_content_batch(
+            [content for content, _, _ in candidates], profile,
         )
         results: list[DiscoveredContent] = []
         for (

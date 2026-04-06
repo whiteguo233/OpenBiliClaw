@@ -90,7 +90,7 @@ class ContinuousRefreshController:
     explore_refresh_hours: int = 12
     notification_cooldown_hours: int = 2
     check_interval_seconds: int = 60
-    discovery_limit: int = 18
+    discovery_limit: int = 30
     pool_target_count: int = 300
     _manual_refresh_task: asyncio.Task[None] | None = None
     _manual_refresh_state: str = "idle"
@@ -161,16 +161,19 @@ class ContinuousRefreshController:
         )
 
     async def force_refresh(self) -> dict[str, object]:
-        """Run a full refresh immediately, bypassing runtime thresholds."""
+        """Run a full refresh immediately, bypassing runtime thresholds.
+
+        Runs all 4 strategies in a single discover() call so they execute
+        concurrently via asyncio.gather, maximizing pool diversity.
+        """
         state = self.memory_manager.load_discovery_runtime_state()
         if not self._is_initialized():
             return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
 
         profile = await self.soul_engine.get_profile()
         plan = [
-            (["search", "related_chain"], self.discovery_limit),
-            (["trending"], self.discovery_limit),
-            (["explore"], self.discovery_limit),
+            (["search", "trending"], self.discovery_limit),
+            (["related_chain", "explore"], self.discovery_limit),
         ]
         return await self._run_refresh_plan(
             state=state,
@@ -248,9 +251,8 @@ class ContinuousRefreshController:
             if source_plan:
                 return source_plan
             return [
-                (["search", "related_chain"], self.discovery_limit),
-                (["trending"], self.discovery_limit),
-                (["explore"], self.discovery_limit),
+                (["search", "trending"], self.discovery_limit),
+                (["related_chain", "explore"], self.discovery_limit),
             ]
 
         plan: list[tuple[list[str], int]] = []

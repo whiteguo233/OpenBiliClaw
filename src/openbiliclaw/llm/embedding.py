@@ -1,14 +1,18 @@
-"""Embedding service with caching for semantic similarity.
+"""Embedding service with two-layer caching for semantic similarity.
 
-Provides text embedding via Gemini's text-embedding-004 model,
-with in-memory caching to avoid redundant API calls within a session.
-Used by the discovery engine for semantic topic deduplication.
+Provides text embedding via configurable models (default: Gemini),
+with L1 in-memory cache and L2 SQLite persistent cache.
+Discovery writes embeddings to L2; recommendation reads from L2
+with zero API calls on the hot path.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+import sqlite3
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -33,13 +37,71 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+class EmbeddingCache:
+    """SQLite-backed persistent embedding cache (L2).
+
+    Stores text → vector mappings in a dedicated table so embeddings
+    computed during discovery survive process restarts and are reusable
+    during recommendation serving without any API calls.
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        self._db_path = Path(db_path)
+        self._conn: sqlite3.Connection | None = None
+
+    def initialize(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._db_path), timeout=10.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS embedding_cache (
+                text_key TEXT PRIMARY KEY,
+                vector   TEXT NOT NULL,
+                model    TEXT DEFAULT ''
+            )"""
+        )
+        self._conn.commit()
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            raise RuntimeError("EmbeddingCache not initialized")
+        return self._conn
+
+    def get(self, key: str) -> list[float] | None:
+        row = self.conn.execute(
+            "SELECT vector FROM embedding_cache WHERE text_key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def put(self, key: str, vector: list[float], model: str = "") -> None:
+        self.conn.execute(
+            """INSERT OR REPLACE INTO embedding_cache (text_key, vector, model)
+               VALUES (?, ?, ?)""",
+            (key, json.dumps(vector), model),
+        )
+        self.conn.commit()
+
+    def count(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()
+        return row[0] if row else 0
+
+
 class EmbeddingService:
     """Cached embedding service for semantic similarity operations.
 
-    Wraps a provider that supports ``embed()`` and adds:
-    - In-memory LRU-style cache (keyed by normalized text)
-    - Batch embedding with concurrency control
-    - Semantic similarity comparison with configurable threshold
+    Two-layer cache:
+    - L1: in-memory dict (fastest, session-scoped)
+    - L2: SQLite persistent cache (survives restarts)
+
+    Discovery writes to both layers; recommendation reads hit L1 first,
+    then L2, and only calls the API as a last resort.
 
     All parameters (model, threshold, cache_size) can be configured
     via ``[llm.embedding]`` in config.toml.
@@ -52,31 +114,52 @@ class EmbeddingService:
         model: str = "gemini-embedding-001",
         cache_size: int = 500,
         similarity_threshold: float = 0.82,
+        persistent_cache: EmbeddingCache | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
-        self._cache: dict[str, list[float]] = {}
+        self._l1_cache: dict[str, list[float]] = {}
         self._cache_size = cache_size
         self.similarity_threshold = similarity_threshold
+        self._l2_cache = persistent_cache
 
     async def embed(self, text: str) -> list[float]:
-        """Get embedding for text, using cache when available."""
+        """Get embedding for text. Checks L1 → L2 → API."""
         key = text.strip().lower()[:200]
         if not key:
             return []
-        cached = self._cache.get(key)
+
+        # L1: in-memory
+        cached = self._l1_cache.get(key)
         if cached is not None:
             return cached
+
+        # L2: SQLite persistent
+        if self._l2_cache is not None:
+            persisted = self._l2_cache.get(key)
+            if persisted is not None:
+                self._l1_cache[key] = persisted
+                return persisted
+
+        # L3: API call
         try:
             vector = await self._provider.embed(key, model=self._model)
         except Exception:
             logger.warning("Embedding failed for: %s", key[:50], exc_info=True)
             return []
-        # Evict oldest if cache full
-        if len(self._cache) >= self._cache_size:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-        self._cache[key] = vector
+
+        # Store in both caches
+        if len(self._l1_cache) >= self._cache_size:
+            oldest_key = next(iter(self._l1_cache))
+            del self._l1_cache[oldest_key]
+        self._l1_cache[key] = vector
+
+        if self._l2_cache is not None:
+            try:
+                self._l2_cache.put(key, vector, model=self._model)
+            except Exception:
+                logger.debug("L2 cache write failed", exc_info=True)
+
         return vector
 
     async def are_similar(self, text_a: str, text_b: str) -> bool:

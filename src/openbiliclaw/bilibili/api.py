@@ -30,7 +30,13 @@ def _json_object(value: Any) -> dict[str, Any]:
 
 
 def _json_list(value: Any) -> list[dict[str, Any]]:
-    """Coerce a JSON value into a list of objects for strict typing."""
+    """Coerce a JSON value into a list of objects for strict typing.
+
+    Returns an empty list when *value* is ``None`` (common when B站
+    returns ``"result": null`` under rate-limiting).
+    """
+    if value is None:
+        return []
     return cast("list[dict[str, Any]]", value)
 
 
@@ -178,11 +184,14 @@ class BilibiliAPIClient:
         52,
     ]
 
+    _WBI_KEY_TTL: float = 300.0  # Refresh WBI keys every 5 minutes
+
     def __init__(self, cookie: str = "", *, min_request_interval: float = 0.2) -> None:
         self._cookie = cookie
         self._min_request_interval = min_request_interval
         self._last_request_at = 0.0
         self._cached_wbi_keys: tuple[str, str] | None = None
+        self._wbi_keys_fetched_at: float = 0.0
         self._client = httpx.AsyncClient(
             headers={
                 "User-Agent": (
@@ -237,8 +246,16 @@ class BilibiliAPIClient:
         return _json_object(payload.get("data", {}))
 
     async def _get_wbi_keys(self) -> tuple[str, str]:
-        """Fetch and cache the WBI image/sub keys used for signed search requests."""
-        if self._cached_wbi_keys is not None:
+        """Fetch and cache the WBI image/sub keys used for signed search requests.
+
+        Keys are refreshed after :attr:`_WBI_KEY_TTL` seconds because B站
+        rotates them periodically — stale keys cause search to return an
+        empty ``v_voucher`` response instead of actual results.
+        """
+        if (
+            self._cached_wbi_keys is not None
+            and (time.monotonic() - self._wbi_keys_fetched_at) < self._WBI_KEY_TTL
+        ):
             return self._cached_wbi_keys
 
         await self._respect_rate_limit()
@@ -256,6 +273,7 @@ class BilibiliAPIClient:
         if not img_key or not sub_key:
             raise BilibiliAPIError("Missing wbi keys in nav response")
         self._cached_wbi_keys = (img_key, sub_key)
+        self._wbi_keys_fetched_at = time.monotonic()
         return self._cached_wbi_keys
 
     @staticmethod
@@ -354,40 +372,53 @@ class BilibiliAPIClient:
         Returns:
             List of search result dicts.
         """
-        try:
-            img_key, sub_key = await self._get_wbi_keys()
-            data = await self._get_json(
-                "/x/web-interface/wbi/search/type",
-                params=self._sign_wbi_params(
-                    {
-                        "keyword": keyword,
-                        "search_type": "video",
-                        "page": page,
-                        "page_size": page_size,
-                        "order": order,
-                        "web_location": self._SEARCH_WEB_LOCATION,
-                    },
-                    img_key=img_key,
-                    sub_key=sub_key,
-                ),
-                headers={
-                    "Referer": (
-                        "https://search.bilibili.com/all"
-                        f"?keyword={quote(keyword, safe='')}"
+        for attempt in range(2):
+            try:
+                img_key, sub_key = await self._get_wbi_keys()
+                data = await self._get_json(
+                    "/x/web-interface/wbi/search/type",
+                    params=self._sign_wbi_params(
+                        {
+                            "keyword": keyword,
+                            "search_type": "video",
+                            "page": page,
+                            "page_size": page_size,
+                            "order": order,
+                            "web_location": self._SEARCH_WEB_LOCATION,
+                        },
+                        img_key=img_key,
+                        sub_key=sub_key,
                     ),
-                    "Origin": "https://search.bilibili.com",
-                },
-            )
-        except BilibiliAPIError as exc:
-            cause = exc.__cause__
-            if (
-                isinstance(cause, httpx.HTTPStatusError)
-                and cause.response.status_code == 412
-            ):
-                logger.warning("Bilibili search blocked with 412 for query=%r", keyword)
-                return []
-            raise
-        return _json_list(data.get("result", []))
+                    headers={
+                        "Referer": (
+                            "https://search.bilibili.com/all"
+                            f"?keyword={quote(keyword, safe='')}"
+                        ),
+                        "Origin": "https://search.bilibili.com",
+                    },
+                )
+            except BilibiliAPIError as exc:
+                cause = exc.__cause__
+                if (
+                    isinstance(cause, httpx.HTTPStatusError)
+                    and cause.response.status_code == 412
+                ):
+                    logger.warning("Bilibili search blocked with 412 for query=%r", keyword)
+                    return []
+                raise
+
+            # Detect v_voucher-only response (stale WBI keys or rate limit)
+            if "v_voucher" in data and data.get("result") is None and attempt == 0:
+                logger.info("Search got v_voucher challenge, refreshing WBI keys for query=%r", keyword)
+                self._cached_wbi_keys = None
+                await asyncio.sleep(1.5)  # Cool down before retry
+                continue
+
+            results = _json_list(data.get("result", []))
+            if not results:
+                logger.debug("Search returned empty result for query=%r", keyword)
+            return results
+        return []
 
     async def get_user_history(self, max_items: int = 100) -> list[dict[str, Any]]:
         """Get the authenticated user's watch history.

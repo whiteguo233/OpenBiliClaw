@@ -268,5 +268,6 @@ async def test_search_strategy_uses_bounded_request_concurrency_and_keeps_limit(
 
     results = await strategy.discover(_build_profile(), limit=2)
 
-    assert bilibili_client.max_active_calls == 2
+    # Search runs sequentially to avoid B站 rate-limiting, so max_active == 1
+    assert bilibili_client.max_active_calls == 1
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]

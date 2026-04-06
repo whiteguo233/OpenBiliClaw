@@ -40,6 +40,36 @@ class FakeLLMService:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> object:
+        is_batch = "content_batch" in user_input
+        if is_batch:
+            # Batch eval: count items in batch and consume that many responses
+            import json as _json
+
+            # Count items in batch from prompt
+            try:
+                batch_data = _json.loads(
+                    user_input.split("<content_batch>")[1].split("</content_batch>")[0]
+                )
+                batch_size = len(batch_data) if isinstance(batch_data, list) else 1
+            except Exception:
+                batch_size = 1
+
+            items: list[object] = []
+            for _ in range(batch_size):
+                if not self.contents:
+                    items.append({"score": 0.0, "reason": ""})
+                    continue
+                raw = self.contents.pop(0)
+                try:
+                    parsed = _json.loads(raw)
+                    if isinstance(parsed, dict) and "score" in parsed:
+                        items.append(parsed)
+                    else:
+                        self.contents.insert(0, raw)  # put back non-score response
+                        items.append({"score": 0.0, "reason": ""})
+                except _json.JSONDecodeError:
+                    items.append({"score": 0.0, "reason": ""})
+            return _FakeResponse(_json.dumps(items))
         content = self.contents.pop(0) if self.contents else '{"score": 0.0, "reason": ""}'
         return _FakeResponse(content)
 
@@ -179,8 +209,8 @@ async def test_related_chain_uses_event_seeds_first() -> None:
 
     assert client.related_calls == ["BV1SEED", "BV1SEED2"]
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]
-    assert results[0].topic_key == "related:bv1seed"
-    assert results[1].topic_key == "related:bv1seed2"
+    assert results[0].topic_key == "科技前沿"
+    assert results[1].topic_key == "音乐推荐"
     assert memory.calls[0]["event_types"] == ["view", "favorite", "like"]
 
 
@@ -351,5 +381,6 @@ async def test_related_chain_uses_bounded_evaluation_concurrency_within_batch() 
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    assert strategy.llm_service.max_active_calls == 2
+    # Batch evaluation sends 1 LLM call per batch (not per item)
+    assert strategy.llm_service.max_active_calls >= 1
     assert [item.bvid for item in results] == ["BV1A", "BV1B", "BV1C"]

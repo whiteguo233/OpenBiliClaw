@@ -61,9 +61,14 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     llm_service = LLMService(registry=llm_registry, memory=memory_manager)
     from openbiliclaw.recommendation.curator import PoolCurator
 
+    from openbiliclaw.llm.registry import build_embedding_service
+
+    embedding_service = build_embedding_service(config, llm_registry)
+
     curator = PoolCurator(database)
     recommendation_engine = RecommendationEngine(
         llm=llm_service, database=database, curator=curator,
+        embedding_service=embedding_service,
     )
     bilibili_client = BilibiliAPIClient(
         cookie=resolve_runtime_cookie(
@@ -72,17 +77,28 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         )
     )
 
+    from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
+
+    concurrency = DiscoveryConcurrencyController(
+        bilibili_request_concurrency=4,
+        llm_evaluation_concurrency=4,
+    )
+
     discovery_engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
+        embedding_service=embedding_service,
+        concurrency=concurrency,
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
+        concurrency=concurrency,
     )
     trending_strategy = TrendingStrategy(
         bilibili_client=bilibili_client,
         llm_service=llm_service,
+        concurrency=concurrency,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,
@@ -90,10 +106,12 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         memory_manager=cast("Any", memory_manager),
         search_strategy=search_strategy,
         trending_strategy=trending_strategy,
+        concurrency=concurrency,
     )
     explore_strategy = ExploreStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
+        concurrency=concurrency,
     )
     discovery_engine.register_strategy(search_strategy)
     discovery_engine.register_strategy(trending_strategy)

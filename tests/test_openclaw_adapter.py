@@ -494,7 +494,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.memory = memory
 
     class FakeRecommendationEngine:
-        def __init__(self, *, llm: object, database: object, curator: object = None) -> None:
+        def __init__(self, *, llm: object, database: object, curator: object = None, embedding_service: object = None) -> None:
             self.llm = llm
             self.database = database
 
@@ -503,7 +503,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.cookie = cookie
 
     class FakeDiscoveryEngine:
-        def __init__(self, *, llm_service: object, database: object) -> None:
+        def __init__(self, *, llm_service: object, database: object, embedding_service: object = None, concurrency: object = None) -> None:
             self.llm_service = llm_service
             self.database = database
 

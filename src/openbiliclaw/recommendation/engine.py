@@ -127,18 +127,13 @@ class RecommendationEngine:
             json.dumps(self._build_debug_summary(candidates), ensure_ascii=False),
         )
 
-        # Semantic topic normalization: unify "AI"/"人工智能"/"机器学习" into one bucket
-        await self._normalize_topic_groups(candidates)
-
-
-        # Curator-based scoring (recommendation-side, independent of Discovery)
+        # No embedding API calls on the serve() hot path.
+        # topic_group normalization and semantic scoring happen during
+        # background discovery/precompute. serve() is pure DB + CPU.
         score_override: dict[str, float] | None = None
         if self._curator is not None:
             context = self._curator.build_context()
-            # Pass embedding service to curator for semantic fatigue/feedback
-            score_override = await self._curator.score_candidates_async(
-                candidates, context, embedding_service=self._embedding_service,
-            ) if self._embedding_service else self._curator.score_candidates(candidates, context)
+            score_override = self._curator.score_candidates(candidates, context)
 
         ranked = self._select_diversified_batch(
             candidates, limit=limit, score_override=score_override,
@@ -160,6 +155,11 @@ class RecommendationEngine:
             if expression_mode == "precomputed":
                 rec.expression = item.pool_expression.strip()
                 rec.topic_label = item.pool_topic_label.strip()
+                # Fallback when precomputed copy is missing
+                if not rec.expression:
+                    rec.expression = self._fallback_expression(item)
+                if not rec.topic_label:
+                    rec.topic_label = self._fallback_topic_label(profile)
             rec.recommendation_id = self._database.insert_recommendation(
                 item.bvid,
                 confidence=rec.confidence,
@@ -186,30 +186,47 @@ class RecommendationEngine:
         self,
         candidates: list[DiscoveredContent],
     ) -> None:
-        """Use embedding similarity to unify semantically identical topic_groups.
+        """Use embedding similarity to unify semantically identical topic_keys
+        that lack a topic_group, assigning them to an existing group.
 
-        E.g. "强化学习" and "RL算法" get merged to the same canonical label
-        so downstream dedup treats them as the same topic bucket.
-        No-op when embedding service is unavailable.
+        topic_group is already a coarse human-readable category set by Discovery.
+        Re-merging these via embedding produces false positives (e.g. "人工智能"
+        and "国际史实" landing in the same bucket at threshold 0.82) because short
+        Chinese labels are deceptively close in embedding space.
+
+        This method therefore only operates on items WITHOUT a topic_group,
+        attempting to assign them to a group from items that already have one.
         """
         if self._embedding_service is None or not candidates:
             return
 
         from openbiliclaw.llm.embedding import cosine_similarity
 
+        # Build cluster centroids from items that already have a topic_group
         clusters: dict[str, list[float]] = {}
-        remap: dict[str, str] = {}
-
         for item in candidates:
-            topic = (item.topic_group or item.topic_key or "").strip().lower()
-            if not topic or topic in remap:
+            group = (item.topic_group or "").strip().lower()
+            if not group or group in clusters:
                 continue
+            vec = await self._embedding_service.embed(group)
+            if vec:
+                clusters[group] = vec
 
+        if not clusters:
+            return
+
+        # Only try to assign topic_group to items that don't have one
+        # Use stricter threshold for short Chinese labels (default 0.82 is too low)
+        threshold = min(0.92, self._embedding_service.similarity_threshold + 0.10)
+        for item in candidates:
+            if (item.topic_group or "").strip():
+                continue
+            topic = (item.topic_key or "").strip().lower()
+            if not topic:
+                continue
             vec = await self._embedding_service.embed(topic)
             if not vec:
-                remap[topic] = topic
                 continue
-
             best_label: str | None = None
             best_sim = 0.0
             for label, centroid in clusters.items():
@@ -217,20 +234,12 @@ class RecommendationEngine:
                 if sim > best_sim:
                     best_sim = sim
                     best_label = label
-
-            threshold = self._embedding_service.similarity_threshold
             if best_label is not None and best_sim >= threshold:
-                remap[topic] = best_label
-                logger.debug("Rec topic merged: %r → %r (sim=%.3f)", topic, best_label, best_sim)
-            else:
-                clusters[topic] = vec
-                remap[topic] = topic
-
-        for item in candidates:
-            topic = (item.topic_group or item.topic_key or "").strip().lower()
-            canonical = remap.get(topic)
-            if canonical and canonical != topic and item.topic_group:
-                item.topic_group = canonical
+                item.topic_group = best_label
+                logger.debug(
+                    "Rec topic assigned: %r → group %r (sim=%.3f)",
+                    topic, best_label, best_sim,
+                )
 
     async def _select_relevant_interests(
         self,
@@ -278,19 +287,114 @@ class RecommendationEngine:
         *,
         profile: SoulProfile,
         limit: int = 20,
+        batch_size: int = 8,
     ) -> int:
-        """Precompute fast-path popup copy for fresh pool candidates."""
+        """Precompute fast-path popup copy for fresh pool candidates.
+
+        Uses batched LLM calls: one call generates expressions for up to
+        ``batch_size`` items, reducing API calls by ~8x.
+        """
         candidates = self._load_pool_candidates_needing_copy(limit=max(0, limit))
         if not candidates:
             return 0
 
-        semaphore = asyncio.Semaphore(4)
+        completed = 0
+        for batch_start in range(0, len(candidates), batch_size):
+            batch = candidates[batch_start:batch_start + batch_size]
+            count = await self._precompute_batch(batch, profile)
+            completed += count
+        return completed
 
-        async def generate_and_store(item: DiscoveredContent) -> int:
-            async with semaphore:
-                generated = await self._try_generate_expression(item, profile)
+    async def _precompute_batch(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+    ) -> int:
+        """Generate expressions for a batch via one LLM call."""
+        from openbiliclaw.llm.prompts import build_batch_expression_prompt
+
+        tone_profile = build_tone_profile(
+            profile=profile,
+            preference_summary={
+                "exploration_openness": profile.preferences.exploration_openness,
+            },
+            recent_feedback=[],
+        )
+        content_items = [
+            {
+                "title": item.title,
+                "up_name": item.up_name,
+                "description": (item.description or "")[:200],
+                "source_strategy": item.source_strategy,
+                "relevance_score": item.relevance_score,
+            }
+            for item in batch
+        ]
+        messages = build_batch_expression_prompt(
+            profile_summary={
+                "personality_portrait": profile.personality_portrait,
+                "core_traits": profile.core_traits[:5],
+                "deep_needs": profile.deep_needs[:5],
+                "interests": [
+                    {
+                        "name": item.name,
+                        "category": item.category,
+                        "weight": item.weight,
+                    }
+                    for item in profile.preferences.interests[:10]
+                ],
+            },
+            content_items=content_items,
+            tone_profile=tone_profile,
+        )
+
+        try:
+            response = await self._llm.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+                max_tokens=8192,
+            )
+            payload = json.loads(response.content.strip())
+            if isinstance(payload, dict):
+                payload = [payload]
+            if not isinstance(payload, list):
+                raise ValueError(f"Expected JSON array, got {type(payload).__name__}")
+        except Exception:
+            logger.warning(
+                "Batch expression generation failed for %d items, falling back to single",
+                len(batch),
+            )
+            return await self._precompute_single_fallback(batch, profile)
+
+        completed = 0
+        for i, item in enumerate(batch):
+            if i >= len(payload) or not isinstance(payload[i], dict):
+                continue
+            expression = str(payload[i].get("expression", "")).strip()
+            topic_label = str(payload[i].get("topic_label", "")).strip()
+            if not expression or not topic_label:
+                continue
+            self._database.update_pool_copy(
+                item.bvid,
+                expression=expression,
+                topic_label=topic_label,
+            )
+            item.pool_expression = expression
+            item.pool_topic_label = topic_label
+            completed += 1
+        return completed
+
+    async def _precompute_single_fallback(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+    ) -> int:
+        """Fallback: generate expressions one by one."""
+        completed = 0
+        for item in batch:
+            generated = await self._try_generate_expression(item, profile)
             if generated is None:
-                return 0
+                continue
             expression, topic_label = generated
             self._database.update_pool_copy(
                 item.bvid,
@@ -299,18 +403,7 @@ class RecommendationEngine:
             )
             item.pool_expression = expression
             item.pool_topic_label = topic_label
-            return 1
-
-        results = await asyncio.gather(
-            *(generate_and_store(item) for item in candidates),
-            return_exceptions=True,
-        )
-        completed = 0
-        for item, result in zip(candidates, results, strict=False):
-            if isinstance(result, BaseException):
-                logger.exception("Failed to precompute pool copy: %s", item.bvid, exc_info=result)
-                continue
-            completed += result
+            completed += 1
         return completed
 
     async def generate_recommendations(
@@ -710,10 +803,26 @@ class RecommendationEngine:
                 enforce_broad_cap=True,  # Never relax broad_cap
             )
         if len(selected) < limit:
+            # Final fallback: still enforce a relaxed broad-topic ceiling
+            # (2x broad_cap) to prevent a single mega-topic from flooding.
+            fallback_broad_cap = broad_cap * 2
             for item in remaining:
+                bt = cls._broad_topic_token(item)
+                if bt and broad_topic_counts.get(bt, 0) >= fallback_broad_cap:
+                    continue
                 selected.append(item)
+                if bt:
+                    broad_topic_counts[bt] = broad_topic_counts.get(bt, 0) + 1
                 if len(selected) >= limit:
                     break
+        # If STILL not enough (all topics exhausted caps), fill unconditionally
+        if len(selected) < limit:
+            filled = {item.bvid for item in selected}
+            for item in remaining:
+                if item.bvid not in filled:
+                    selected.append(item)
+                    if len(selected) >= limit:
+                        break
         return cls._interleave_by_topic(selected[:limit])
 
     @staticmethod

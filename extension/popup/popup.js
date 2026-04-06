@@ -391,20 +391,45 @@ function renderSpeculativeInterests(container, items) {
     const row = document.createElement("div");
     row.className = "speculative-item";
 
+    const header = document.createElement("div");
+    header.className = "spec-header";
+
     const domain = document.createElement("span");
     domain.className = "spec-domain";
     domain.textContent = item.domain;
-    row.append(domain);
-
-    const reason = document.createElement("span");
-    reason.className = "spec-reason";
-    reason.textContent = item.reason;
-    row.append(reason);
+    header.append(domain);
 
     const progress = document.createElement("span");
     progress.className = "spec-progress";
     progress.textContent = `${item.confirmation_count}/${item.confirmation_threshold} 次确认`;
-    row.append(progress);
+    header.append(progress);
+
+    row.append(header);
+
+    if (item.reason) {
+      const reason = document.createElement("p");
+      reason.className = "spec-reason";
+      reason.textContent = item.reason;
+      row.append(reason);
+    }
+
+    if (item.specifics && item.specifics.length > 0) {
+      const specs = document.createElement("div");
+      specs.className = "spec-specifics";
+      for (const spec of item.specifics) {
+        const chip = document.createElement("span");
+        chip.className = "spec-specific-chip";
+        chip.textContent = spec.name;
+        if (spec.confirmation_count > 0) {
+          const badge = document.createElement("span");
+          badge.className = "spec-specific-count";
+          badge.textContent = `${spec.confirmation_count}`;
+          chip.append(badge);
+        }
+        specs.append(chip);
+      }
+      row.append(specs);
+    }
 
     container.append(row);
   }

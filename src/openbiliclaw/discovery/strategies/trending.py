@@ -43,6 +43,15 @@ class TrendingStrategy(DiscoveryStrategy):
     # Broader default RIDs covering more top-level categories:
     # 36=科技, 188=资讯, 181=影视, 119=纪录片, 3=音乐, 129=舞蹈, 4=游戏, 160=生活
     default_rids: tuple[int, ...] = (36, 188, 181, 119, 3, 129, 4, 160)
+    # Mapping from Bilibili ranking rid to semantic topic category
+    RID_TO_TOPIC: dict[int, str] = field(default_factory=lambda: {
+        0: "综合热门", 1: "动画", 3: "音乐", 4: "游戏",
+        5: "娱乐", 11: "电视剧", 13: "番剧", 17: "单机游戏",
+        23: "电影", 36: "科技", 119: "纪录片", 129: "舞蹈",
+        155: "时尚", 160: "生活", 167: "国创", 177: "纪录片",
+        181: "影视", 188: "资讯", 211: "美食", 217: "动物",
+        218: "运动", 223: "汽车", 234: "运动",
+    })
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -89,15 +98,13 @@ class TrendingStrategy(DiscoveryStrategy):
             if not isinstance(outcome, list):
                 continue
             for item in outcome:
-                content = self._map_ranking_item(item)
+                content = self._map_ranking_item(item, rid=rid)
                 if content is None or content.bvid in seen_bvids:
                     continue
                 seen_bvids.add(content.bvid)
                 candidates.append(content)
 
-        scores = await asyncio.gather(
-            *(evaluator.evaluate_content(content, profile) for content in candidates)
-        )
+        scores = await evaluator.evaluate_content_batch(candidates, profile)
         results: list[DiscoveredContent] = []
         for content, score in zip(candidates, scores, strict=True):
             if score < self.score_threshold:
@@ -132,7 +139,7 @@ class TrendingStrategy(DiscoveryStrategy):
             logger.exception("Trending rid selection failed; using defaults.")
         return [0, *list(self.default_rids[: self.max_related_rids])]
 
-    def _map_ranking_item(self, item: dict[str, object]) -> DiscoveredContent | None:
+    def _map_ranking_item(self, item: dict[str, object], *, rid: int = 0) -> DiscoveredContent | None:
         bvid = str(item.get("bvid", "")).strip()
         if not bvid:
             return None
@@ -151,7 +158,14 @@ class TrendingStrategy(DiscoveryStrategy):
 
         title = clean_text(str(item.get("title", "")))
         description = clean_text(str(item.get("description", item.get("desc", ""))))
-        topic_key = self._infer_topic_key(item, title)
+        # Prefer item's tname (B站分区名), then RID mapping, then tag/title fallback
+        tname = str(item.get("tname", "")).strip()
+        if tname:
+            topic_key = re.sub(r"\s+", "", tname).lower()[:16]
+        elif rid in self.RID_TO_TOPIC:
+            topic_key = re.sub(r"\s+", "", self.RID_TO_TOPIC[rid]).lower()[:16]
+        else:
+            topic_key = self._infer_topic_key(item, title)
 
         return DiscoveredContent(
             bvid=bvid,

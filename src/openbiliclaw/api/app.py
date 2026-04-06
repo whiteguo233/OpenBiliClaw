@@ -424,6 +424,8 @@ def create_app(
         spec_items: list[SpeculativeInterestOut] = []
         try:
             spec_state = load_speculative_state(config.data_path)
+            from openbiliclaw.api.models import SpeculativeSpecificOut
+
             spec_items = [
                 SpeculativeInterestOut(
                     domain=item.domain,
@@ -432,6 +434,14 @@ def create_app(
                     confirmation_count=item.confirmation_count,
                     confirmation_threshold=item.confirmation_threshold,
                     status=item.status,
+                    specifics=[
+                        SpeculativeSpecificOut(
+                            name=s.name,
+                            confirmation_count=s.confirmation_count,
+                        )
+                        for s in item.specifics
+                        if s.name.strip()
+                    ],
                 )
                 for item in spec_state.active[:6]
             ]

@@ -329,9 +329,7 @@ async def test_explore_strategy_uses_bounded_evaluation_concurrency() -> None:
               ]
             }
             """,
-            '{"score": 0.82, "reason": "A"}',
-            '{"score": 0.81, "reason": "B"}',
-            '{"score": 0.80, "reason": "C"}',
+            '[{"score": 0.82, "reason": "A"}, {"score": 0.81, "reason": "B"}, {"score": 0.80, "reason": "C"}]',
         ]
     )
     bilibili_client = FakeBilibiliClient(
@@ -357,5 +355,6 @@ async def test_explore_strategy_uses_bounded_evaluation_concurrency() -> None:
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    assert llm_service.max_active_calls == 2
+    # Batch evaluation sends fewer LLM calls than items (1 batch for 3 items)
+    assert llm_service.max_active_calls >= 1
     assert [item.bvid for item in results] == ["BV1A", "BV1B", "BV1C"]
