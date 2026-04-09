@@ -15,6 +15,17 @@ English | [中文](README.md)
 
 OpenBiliClaw is an open-source AI Agent for personalized content recommendation on [Bilibili](https://www.bilibili.com). It's not a cold recommendation algorithm — it's like a friend who truly understands you: who you are, why you enjoy certain content, and proactively discovers things on Bilibili that you'd love but could never find on your own.
 
+> 🔐 **Strictly single-user · fully local · yours and yours alone**
+>
+> OpenBiliClaw is not a SaaS and not a multi-tenant platform. Each user installs a private instance that builds an understanding of one person — you — and never mixes your profile, memories, or recommendation signals with anyone else's.
+>
+> - **Your data stays on your disk** — The soul profile, five-layer memory, dialogue history, and Bilibili behaviour logs all live in a local SQLite file (`data/openbiliclaw.db`). No cloud accounts, no server-side aggregation, no third-party brokers.
+> - **Your keys, your call** — LLM calls use your own API key, Bilibili auth uses your own cookie, and you can revoke both at any moment.
+> - **A profile that can't be duplicated** — Each Agent's MBTI, cognitive style, deep needs, and speculative interests are generated from your behaviour alone, with zero overlap with any other OpenBiliClaw user, and cannot be copied or transferred.
+> - **Fully controllable** — Open the `data/` directory to inspect every piece of raw data, and export, modify, or wipe it whenever you want. No remote switch can change your instance.
+>
+> Every recommendation comes from an AI that knows exactly one person: you.
+
 ## ✨ Key Features
 
 - 🧠 **Deep User Understanding** — Five-layer memory architecture (Event → Preference → Awareness → Insight → Soul) that understands you from a psychological perspective, inferring MBTI, cognitive style, and deep needs
@@ -24,7 +35,7 @@ OpenBiliClaw is an open-source AI Agent for personalized content recommendation 
 - 🎯 **Smart Diversity** — Source balancing, topic deduplication, cross-domain coverage — every recommendation batch brings surprises
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis, constantly deepening its understanding of you
 - 🔧 **Skill System** — Extensible skill architecture supporting custom discovery strategies
-- 🔒 **Privacy First** — All data and computation stays local
+- 🔒 **Fully private · single-user by design** — All profiles, memories, and data stay on your machine; LLM calls use your own key; each install is a unique instance built for one person
 
 ## 🏛️ Architecture Overview
 
