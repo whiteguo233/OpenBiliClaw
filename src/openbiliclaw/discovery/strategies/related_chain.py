@@ -241,6 +241,11 @@ class RelatedChainStrategy(DiscoveryStrategy):
             if up_name.strip()
         )
 
+        # Respect per-strategy search budget.
+        if self.concurrency is not None:
+            budget = self.concurrency.search_budget_per_strategy
+            queries = queries[:budget]
+
         seeds: list[str] = []
         seen: set[str] = set()
         for query in queries:

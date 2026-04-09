@@ -73,9 +73,22 @@ class SearchStrategy(DiscoveryStrategy):
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
         seen_bvids: set[str] = set()
+        # Respect per-strategy search budget to avoid exhausting IP-level quota.
+        effective_queries = queries
+        if self.concurrency is not None:
+            budget = self.concurrency.search_budget_per_strategy
+            max_queries = budget // max(1, self.max_pages)
+            if len(effective_queries) > max_queries:
+                logger.debug(
+                    "Search: trimming queries from %d to %d (search budget)",
+                    len(effective_queries),
+                    max_queries,
+                )
+                effective_queries = effective_queries[:max_queries]
+
         request_plan = [
             (query_index, query, page)
-            for query_index, query in enumerate(queries)
+            for query_index, query in enumerate(effective_queries)
             for page in range(1, self.max_pages + 1)
         ]
         # Use a dedicated API client for search to avoid session-level
@@ -159,15 +172,19 @@ class SearchStrategy(DiscoveryStrategy):
         )
 
     def _create_search_client(self) -> SupportsSearchClient:
-        """Create a fresh API client for search to avoid session pollution.
+        """Create a fresh API client for search without cookie.
 
-        Falls back to the shared client if we can't create a dedicated one.
+        B站 rate-limits search per cookie/session.  Other strategies
+        (especially explore) exhaust the shared client's search quota,
+        so we use a cookie-free client here — search doesn't require auth.
+        Falls back to the shared client if creation fails or if the
+        bilibili_client is not the real API client (e.g. in tests).
         """
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        if not isinstance(self.bilibili_client, BilibiliAPIClient):
+            return self.bilibili_client
         try:
-            from openbiliclaw.bilibili.api import BilibiliAPIClient
-            cookie = getattr(self.bilibili_client, "_cookie", "")
-            if cookie:
-                return BilibiliAPIClient(cookie=cookie, min_request_interval=0.5)
+            return BilibiliAPIClient(cookie="", min_request_interval=0.8)
         except Exception:
             logger.debug("Could not create dedicated search client, using shared")
         return self.bilibili_client

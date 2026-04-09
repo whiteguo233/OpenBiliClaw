@@ -30,11 +30,24 @@ class DiscoveryConcurrencyController:
 
     bilibili_request_concurrency: int = 2
     llm_evaluation_concurrency: int = 2
+    search_budget_total: int = 30
+    """Total bilibili search API calls allowed per discovery run.
+
+    The budget is split evenly among strategies that use search
+    (search, explore, related_chain) to prevent any single strategy
+    from exhausting the IP-level rate limit.
+    """
+    _search_strategy_count: int = field(init=False, default=3, repr=False)
     _loop: asyncio.AbstractEventLoop | None = field(init=False, default=None, repr=False)
     _bilibili_semaphore: asyncio.Semaphore | None = field(
         init=False, default=None, repr=False
     )
     _llm_semaphore: asyncio.Semaphore | None = field(init=False, default=None, repr=False)
+
+    @property
+    def search_budget_per_strategy(self) -> int:
+        """Per-strategy share of the search API budget."""
+        return max(1, self.search_budget_total // max(1, self._search_strategy_count))
 
     def _ensure_loop_bound(self) -> None:
         """Recreate semaphores when the controller is used from a new event loop."""
@@ -693,25 +706,32 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         limit: int,
     ) -> list[DiscoveredContent]:
-        # Split strategies into two phases to avoid B站 search rate-limiting.
-        # Search uses WBI-signed requests that get v_voucher challenges when
-        # run concurrently with heavy API traffic from other strategies.
+        # Split strategies into two phases to avoid B站 IP-level search
+        # rate-limiting.  Search strategy runs first (Phase 1) with a
+        # dedicated cookie-free client so it gets clean quota.  Other
+        # strategies (explore, related_chain) also call the search API,
+        # so each strategy's calls are capped by the per-strategy search
+        # budget in DiscoveryConcurrencyController.
         search_strategies = [s for s in strategies if s.name == "search"]
         other_strategies = [s for s in strategies if s.name != "search"]
 
         results: list[DiscoveredContent] = []
 
-        # Phase 1: run non-search strategies concurrently
-        if other_strategies:
-            tasks = [s.discover(profile, limit=limit) for s in other_strategies]
-            gathered = await asyncio.gather(*tasks, return_exceptions=True)
-            results.extend(self._collect_strategy_results(other_strategies, gathered))
-
-        # Phase 2: run search strategies after other API traffic settles
+        # Phase 1: run search strategy first to get clean IP quota
         if search_strategies:
             tasks = [s.discover(profile, limit=limit) for s in search_strategies]
             gathered = await asyncio.gather(*tasks, return_exceptions=True)
             results.extend(self._collect_strategy_results(search_strategies, gathered))
+
+        # Brief cooldown between phases to let IP-level rate limit recover
+        if search_strategies and other_strategies:
+            await asyncio.sleep(2.0)
+
+        # Phase 2: run remaining strategies concurrently
+        if other_strategies:
+            tasks = [s.discover(profile, limit=limit) for s in other_strategies]
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(self._collect_strategy_results(other_strategies, gathered))
 
         logger.info(
             "Discovery gather returned %d results for %d strategies: %s",
@@ -862,36 +882,114 @@ class ContentDiscoveryEngine:
 
         per_style_cap = ContentDiscoveryEngine._style_cap(limit)
         per_source_cap = ContentDiscoveryEngine._source_cap(limit)
-        unique_source_target = min(
-            limit,
-            len(
-                {
-                    ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
-                    for item in results
-                    if ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
-                }
-            ),
+        unique_sources = {
+            ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
+            for item in results
+            if ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
+        }
+        unique_source_target = min(limit, len(unique_sources))
+
+        # Step 0: reserve minimum slots per source strategy.
+        # Without a floor, high-scoring sources (related_chain) monopolize all
+        # slots via the score-sorted selection, leaving low-scoring but novel
+        # sources (search, explore) with zero representation.
+        n_sources = max(1, len(unique_sources))
+        per_source_floor = max(1, limit // n_sources) if unique_sources else 0
+        # Hard ceiling: no single source takes more than ~35% of results,
+        # even if it has unlimited topic diversity (e.g. trending).
+        per_source_ceiling = max(per_source_floor + 1, limit * 35 // 100)
+        reserved, unreserved = ContentDiscoveryEngine._reserve_per_source(
+            results,
+            per_source_floor=per_source_floor,
+            unique_sources=unique_sources,
         )
 
-        # Step 1: select diverse subset — prioritize unique topics, balanced styles/sources
+        # Step 1: select diverse subset from unreserved pool.
+        # Pass reserved items' topics/sources so _select_diverse knows what
+        # has already been committed.
+        remaining_limit = limit - len(reserved)
+        reserved_topics = {
+            ContentDiscoveryEngine._topic_bucket(i) for i in reserved
+        } - {""}
+        reserved_sources = {
+            ContentDiscoveryEngine._normalize_topic_token(i.source_strategy)
+            for i in reserved
+        } - {""}
         selected, overflow = ContentDiscoveryEngine._select_diverse(
-            results,
-            limit=limit,
+            unreserved,
+            limit=remaining_limit,
             per_style_cap=per_style_cap,
-            per_source_cap=per_source_cap,
+            per_source_cap=max(1, per_source_cap - per_source_floor),
             unique_source_target=unique_source_target,
+            initial_seen_topics=reserved_topics,
+            initial_seen_sources=reserved_sources,
         )
-        if len(selected) >= limit:
-            return selected[:limit]
+
+        # Combine reserved + selected
+        combined = list(reserved)
+        reserved_bvids = {item.bvid for item in reserved}
+        for item in selected:
+            if item.bvid not in reserved_bvids:
+                combined.append(item)
+        if len(combined) >= limit:
+            return combined[:limit]
 
         # Step 2: backfill from overflow with relaxed constraints
-        selected = ContentDiscoveryEngine._backfill_from_overflow(
-            selected, overflow,
+        combined = ContentDiscoveryEngine._backfill_from_overflow(
+            combined, overflow,
             limit=limit,
             per_style_cap=per_style_cap,
             per_source_cap=per_source_cap,
+            per_source_ceiling=per_source_ceiling,
         )
-        return selected[:limit]
+        return combined[:limit]
+
+    @staticmethod
+    def _reserve_per_source(
+        results: list[DiscoveredContent],
+        *,
+        per_source_floor: int,
+        unique_sources: set[str],
+    ) -> tuple[list[DiscoveredContent], list[DiscoveredContent]]:
+        """Reserve the best items from each source to guarantee representation.
+
+        Returns (reserved, unreserved) where reserved contains at most
+        *per_source_floor* items per source (the highest-scored ones),
+        and unreserved contains everything else.
+        """
+        if per_source_floor <= 0:
+            return [], list(results)
+
+        source_buckets: dict[str, list[DiscoveredContent]] = {s: [] for s in unique_sources}
+        for item in results:
+            source = ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
+            if source in source_buckets:
+                source_buckets[source].append(item)
+
+        reserved: list[DiscoveredContent] = []
+        reserved_bvids: set[str] = set()
+        # Track topics across ALL sources to avoid reserving duplicate topics
+        global_seen_topics: set[str] = set()
+        source_counts: dict[str, int] = {s: 0 for s in unique_sources}
+
+        # Round-robin: iterate by score across all sources, reserving items
+        # until each source reaches its floor.  Skip items whose topic is
+        # already reserved (from any source) to maximise topic diversity.
+        for item in results:
+            source = ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
+            if source not in source_counts or source_counts[source] >= per_source_floor:
+                continue
+            topic = ContentDiscoveryEngine._topic_bucket(item)
+            if topic and topic in global_seen_topics:
+                continue
+            reserved.append(item)
+            reserved_bvids.add(item.bvid)
+            source_counts[source] += 1
+            if topic:
+                global_seen_topics.add(topic)
+
+        unreserved = [item for item in results if item.bvid not in reserved_bvids]
+        return reserved, unreserved
 
     @staticmethod
     def _select_diverse(
@@ -901,12 +999,14 @@ class ContentDiscoveryEngine:
         per_style_cap: int,
         per_source_cap: int,
         unique_source_target: int,
+        initial_seen_topics: set[str] | None = None,
+        initial_seen_sources: set[str] | None = None,
     ) -> tuple[list[DiscoveredContent], list[DiscoveredContent]]:
         """Select a diverse subset, deferring duplicates to overflow."""
         selected: list[DiscoveredContent] = []
         overflow: list[DiscoveredContent] = []
-        seen_topics: set[str] = set()
-        seen_sources: set[str] = set()
+        seen_topics: set[str] = set(initial_seen_topics or ())
+        seen_sources: set[str] = set(initial_seen_sources or ())
         style_counts: dict[str, int] = {}
         source_counts: dict[str, int] = {}
 
@@ -928,7 +1028,14 @@ class ContentDiscoveryEngine:
             if source and source_counts.get(source, 0) >= per_source_cap:
                 overflow.append(item)
                 continue
-            if not is_new_source and source and source in seen_sources:
+            # Prioritize source representation: defer items from already-seen
+            # sources until all unique sources have at least one entry.
+            if (
+                not is_new_source
+                and source
+                and source in seen_sources
+                and len(seen_sources) < unique_source_target
+            ):
                 overflow.append(item)
                 continue
 
@@ -953,20 +1060,36 @@ class ContentDiscoveryEngine:
         limit: int,
         per_style_cap: int,
         per_source_cap: int,
+        per_source_ceiling: int = 0,
     ) -> list[DiscoveredContent]:
-        """Fill remaining slots from overflow with relaxed topic constraint."""
-        seen_topics = {ContentDiscoveryEngine._topic_bucket(i) for i in selected} - {""}
+        """Fill remaining slots from overflow with relaxed topic constraint.
+
+        Enforces a per-topic-group cap so that no single topic_group
+        dominates the final result set (max ~20% of limit), and a
+        per-source ceiling so that no single source exceeds ~35%.
+        """
+        # Per-topic cap: no single topic_group takes more than ~20% of results.
+        # For small limits (≤5) this is 1, preserving strict topic dedup.
+        per_topic_cap = max(1, limit // 5)
+        # Hard source ceiling: even with infinite topic diversity, a single
+        # source cannot take more than this many slots in total.
+        source_ceiling = per_source_ceiling if per_source_ceiling > 0 else max(per_source_cap + 1, limit * 35 // 100)
+
+        topic_counts: dict[str, int] = {}
         style_counts: dict[str, int] = {}
         source_counts: dict[str, int] = {}
         for item in selected:
+            topic = ContentDiscoveryEngine._topic_bucket(item)
             style = ContentDiscoveryEngine._style_bucket(item)
             source = ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
+            if topic:
+                topic_counts[topic] = topic_counts.get(topic, 0) + 1
             if style:
                 style_counts[style] = style_counts.get(style, 0) + 1
             if source:
                 source_counts[source] = source_counts.get(source, 0) + 1
 
-        # Pass 1: allow new topics from overflow
+        # Pass 1: allow new or under-cap topics from overflow
         remaining: list[DiscoveredContent] = []
         for item in overflow:
             if len(selected) >= limit:
@@ -974,34 +1097,40 @@ class ContentDiscoveryEngine:
             topic = ContentDiscoveryEngine._topic_bucket(item)
             style = ContentDiscoveryEngine._style_bucket(item)
             source = ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
-            if topic and topic in seen_topics:
+            if topic and topic_counts.get(topic, 0) >= per_topic_cap:
                 remaining.append(item)
                 continue
             if style and style_counts.get(style, 0) >= per_style_cap:
                 remaining.append(item)
                 continue
-            if source and source_counts.get(source, 0) >= per_source_cap:
+            if source and source_counts.get(source, 0) >= source_ceiling:
                 remaining.append(item)
                 continue
             selected.append(item)
             if topic:
-                seen_topics.add(topic)
+                topic_counts[topic] = topic_counts.get(topic, 0) + 1
             if style:
                 style_counts[style] = style_counts.get(style, 0) + 1
             if source:
                 source_counts[source] = source_counts.get(source, 0) + 1
 
-        # Pass 2: fill remaining slots with soft source cap (no single source > 40%)
-        max_per_source = max(per_source_cap + 1, limit * 2 // 5)
+        # Pass 2: fill remaining with soft caps (topic ≤30%, source ≤ ceiling)
+        max_per_topic = max(per_topic_cap + 1, limit * 3 // 10)
         leftover: list[DiscoveredContent] = []
         for item in remaining:
             if len(selected) >= limit:
                 break
+            topic = ContentDiscoveryEngine._topic_bucket(item)
             source = ContentDiscoveryEngine._normalize_topic_token(item.source_strategy)
-            if source and source_counts.get(source, 0) >= max_per_source:
+            if source and source_counts.get(source, 0) >= source_ceiling:
+                leftover.append(item)
+                continue
+            if topic and topic_counts.get(topic, 0) >= max_per_topic:
                 leftover.append(item)
                 continue
             selected.append(item)
+            if topic:
+                topic_counts[topic] = topic_counts.get(topic, 0) + 1
             if source:
                 source_counts[source] = source_counts.get(source, 0) + 1
 

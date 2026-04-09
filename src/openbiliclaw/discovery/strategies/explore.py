@@ -97,17 +97,29 @@ class ExploreStrategy(DiscoveryStrategy):
             for query in self._clean_queries(domain.get("queries", [])):
                 request_plan.append((query, novelty_level, interest_anchored, domain_name))
 
-        search_outcomes = await _gather_bounded(
-            [
-                self.bilibili_client.search(
-                    query,
-                    page=1,
-                    page_size=10,
+        # Respect per-strategy search budget to avoid exhausting IP-level quota.
+        if self.concurrency is not None:
+            budget = self.concurrency.search_budget_per_strategy
+            if len(request_plan) > budget:
+                logger.debug(
+                    "Explore: trimming request_plan from %d to %d (search budget)",
+                    len(request_plan),
+                    budget,
                 )
-                for query, _, _, _ in request_plan
-            ],
-            runner=runner,
-        )
+                request_plan = request_plan[:budget]
+
+        # Use a dedicated cookie-free client and execute sequentially with
+        # delay to avoid triggering IP-level v_voucher rate-limiting.
+        search_client = self._create_search_client()
+        try:
+            search_outcomes = await self._execute_search_sequential(
+                search_client, request_plan,
+            )
+        finally:
+            if search_client is not self.bilibili_client:
+                close = getattr(search_client, "close", None)
+                if callable(close):
+                    await close()
 
         candidates: list[tuple[DiscoveredContent, float, bool]] = []
         seen_bvids: set[str] = set()
@@ -170,6 +182,40 @@ class ExploreStrategy(DiscoveryStrategy):
                 return self._sort_results(results)
 
         return self._sort_results(results)
+
+    def _create_search_client(self) -> SupportsSearchClient:
+        """Create a cookie-free API client for explore searches.
+
+        Avoids sharing the authenticated client's session/cookie with other
+        strategies, which would cause IP-level v_voucher rate-limiting.
+        Falls back to the shared client for non-API clients (e.g. in tests).
+        """
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+
+        if not isinstance(self.bilibili_client, BilibiliAPIClient):
+            return self.bilibili_client
+        try:
+            return BilibiliAPIClient(cookie="", min_request_interval=0.8)
+        except Exception:
+            logger.debug("Could not create dedicated explore search client, using shared")
+        return self.bilibili_client
+
+    async def _execute_search_sequential(
+        self,
+        client: SupportsSearchClient,
+        request_plan: list[tuple[str, float, bool, str]],
+    ) -> list[object]:
+        """Execute search queries sequentially with delay to avoid rate-limiting."""
+        results: list[object] = []
+        for i, (query, _, _, _) in enumerate(request_plan):
+            if i > 0:
+                await asyncio.sleep(0.6)
+            try:
+                result = await client.search(query, page=1, page_size=10)
+                results.append(result)
+            except Exception as exc:
+                results.append(exc)
+        return results
 
     async def _generate_domains(self, profile: SoulProfile) -> list[dict[str, object]]:
         messages = build_explore_domains_prompt(
