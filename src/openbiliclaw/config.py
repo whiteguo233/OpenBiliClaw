@@ -129,6 +129,8 @@ class SchedulerConfig:
     speculation_max_active: int = 5
     speculation_max_primary_interests: int = 15
     speculation_max_secondary_interests: int = 60
+    auto_update_enabled: bool = True
+    auto_update_check_interval_hours: int = 6
 
 
 @dataclass

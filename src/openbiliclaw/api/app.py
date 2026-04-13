@@ -85,6 +85,7 @@ def create_app(
     recommendation_engine: Any | None = None,
     runtime_event_hub: Any | None = None,
     account_sync_service: Any | None = None,
+    auto_update_service: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
     app = FastAPI(title="OpenBiliClaw API")
@@ -225,6 +226,19 @@ def create_app(
                 session="popup",
             )
 
+    if auto_update_service is None:
+        from openbiliclaw.runtime.updater import AutoUpdateService
+
+        try:
+            from openbiliclaw.config import load_config as _load_cfg
+            _cfg = _load_cfg()
+            auto_update_service = AutoUpdateService(
+                enabled=_cfg.scheduler.auto_update_enabled,
+                check_interval_hours=_cfg.scheduler.auto_update_check_interval_hours,
+            )
+        except Exception:
+            auto_update_service = AutoUpdateService(enabled=True)
+
     if dialogue is None:
         from openbiliclaw.soul.dialogue import SocraticDialogue
 
@@ -291,6 +305,12 @@ def create_app(
             app.state.account_sync_task = None
             return
         app.state.account_sync_task = asyncio.create_task(sync_forever())
+        # Auto-update background task
+        update_forever = getattr(auto_update_service, "run_forever", None)
+        if auto_update_service is not None and callable(update_forever):
+            app.state.auto_update_task = asyncio.create_task(update_forever())
+        else:
+            app.state.auto_update_task = None
         # Trigger speculator on startup to ensure speculations exist
         if soul_engine is not None:
             try:
@@ -313,6 +333,11 @@ def create_app(
             account_sync_task.cancel()
             with suppress(asyncio.CancelledError):
                 await account_sync_task
+        auto_update_task = getattr(app.state, "auto_update_task", None)
+        if auto_update_task is not None:
+            auto_update_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await auto_update_task
 
     @app.get("/api/profile-summary", response_model=ProfileSummaryResponse)
     async def profile_summary(
@@ -674,6 +699,9 @@ def create_app(
         get_account_sync_status = getattr(account_sync_service, "get_runtime_status", None)
         if callable(get_account_sync_status):
             payload.update(get_account_sync_status())
+        get_update_status = getattr(auto_update_service, "get_runtime_status", None)
+        if callable(get_update_status):
+            payload.update(get_update_status())
         return RuntimeStatusResponse(**payload)
 
     @app.get("/api/notifications/pending", response_model=PendingNotificationResponse)

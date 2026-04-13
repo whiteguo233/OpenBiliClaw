@@ -115,6 +115,9 @@ account_sync_interval_hours = 6
 # speculation_max_active = 5          # 最多同时活跃的猜测兴趣
 # speculation_max_primary_interests = 15  # 主要兴趣域上限
 # speculation_max_secondary_interests = 60  # 次要兴趣域上限
+# --- 自动更新 ---
+auto_update_enabled = true         # 是否自动检查并应用新版本（git pull + uv sync）
+auto_update_check_interval_hours = 6  # 检查间隔（小时）
 
 [storage]
 # SQLite database path
