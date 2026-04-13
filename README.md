@@ -264,7 +264,7 @@ OpenBiliClaw/
 |------|------|
 | 后端 | Python 3.11+ |
 | 浏览器插件 | TypeScript + Chrome Extension (Manifest V3) |
-| LLM | 多模型支持 (Gemini / DeepSeek / OpenAI / Claude / 本地模型) |
+| LLM | 内置 Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama；支持任何兼容 OpenAI 协议的服务（自定义 base_url 即可接入） |
 | B 站交互 | 自研 API 客户端 (WBI 签名 · v_voucher 自动恢复 · 速率控制) |
 | 存储 | SQLite + Embedding 向量索引 |
 | Agent 框架 | 自研轻量框架 |

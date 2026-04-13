@@ -210,7 +210,7 @@ OpenBiliClaw/
 |--------|-----------|
 | Backend | Python 3.11+ |
 | Browser Extension | TypeScript + Chrome Extension (Manifest V3) |
-| LLM | Multi-model support (Gemini / DeepSeek / OpenAI / Claude / Local models) |
+| LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Storage | SQLite + Embedding vector index |
 | Agent Framework | Lightweight custom framework |
