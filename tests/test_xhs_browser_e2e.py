@@ -45,7 +45,7 @@ CDP = "http://[::1]:9222"
 
 
 def cdp_get_pages() -> list[dict[str, Any]]:
-    resp = httpx.get(f"{CDP}/json/list", timeout=5)
+    resp = httpx.get(f"{CDP}/json/list", timeout=5, trust_env=False)
     return resp.json()
 
 
@@ -56,7 +56,7 @@ def _fix_ws_url(ws_url: str) -> str:
 
 def cdp_new_tab(url: str) -> dict[str, Any]:
     """Open a new tab via CDP HTTP endpoint (Chrome 147+ requires PUT)."""
-    resp = httpx.put(f"{CDP}/json/new?{url}", timeout=10)
+    resp = httpx.put(f"{CDP}/json/new?{url}", timeout=10, trust_env=False)
     tab = resp.json()
     if "webSocketDebuggerUrl" in tab:
         tab["webSocketDebuggerUrl"] = _fix_ws_url(tab["webSocketDebuggerUrl"])
@@ -64,7 +64,7 @@ def cdp_new_tab(url: str) -> dict[str, Any]:
 
 
 def cdp_close_tab(tab_id: str) -> None:
-    httpx.get(f"{CDP}/json/close/{tab_id}", timeout=5)
+    httpx.get(f"{CDP}/json/close/{tab_id}", timeout=5, trust_env=False)
 
 
 def cdp_navigate_and_wait(tab_ws_url: str, url: str, wait_secs: float = 6.0) -> dict[str, Any]:
@@ -122,9 +122,10 @@ def cdp_evaluate(tab_ws_url: str, expression: str) -> Any:
 # ── Fixtures ─────────────────────────────────────────────────────
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def backend() -> httpx.Client:
-    client = httpx.Client(base_url=BACKEND, timeout=10)
+    # Per-test client to avoid keep-alive connection resets between tests
+    client = httpx.Client(base_url=BACKEND, timeout=10, trust_env=False)
     resp = client.get("/api/health")
     assert resp.status_code == 200, f"Backend not healthy: {resp.text}"
     return client
