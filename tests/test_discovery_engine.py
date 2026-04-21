@@ -131,6 +131,33 @@ async def test_discovery_engine_runs_registered_search_strategy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_content_passes_style_preferences_to_prompt() -> None:
+    llm_service = FakeLLMService(
+        '{"score": 0.82, "reason": "匹配", "topic_group": "摄影", "style_key": "light_chat"}'
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    profile = _build_profile()
+    profile.preferences.style.preferred_duration = "short"
+    profile.preferences.style.humor_preference = 0.8
+    profile.preferences.style.depth_preference = 0.25
+
+    await engine.evaluate_content(
+        DiscoveredContent(
+            bvid="BV1STYLE",
+            title="摄影散步 vlog",
+            description="轻松聊拍照",
+            source_strategy="search",
+        ),
+        profile,
+    )
+
+    user_input = str(llm_service.calls[0]["user_input"])
+    assert '"preferred_duration": "short"' in user_input
+    assert '"humor_preference": 0.8' in user_input
+    assert '"depth_preference": 0.25' in user_input
+
+
+@pytest.mark.asyncio
 async def test_discovery_engine_handles_empty_strategy_results() -> None:
     from openbiliclaw.discovery.strategies.strategies import SearchStrategy
 

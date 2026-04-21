@@ -12,7 +12,9 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+
+from openbiliclaw.discovery.strategies._utils import build_profile_summary
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -67,12 +69,34 @@ class DiscoveryConcurrencyController:
         async with self._bilibili_semaphore:
             return await awaitable
 
+    chat_active: bool = False
+    llm_throttle_seconds: float = 2.0
+    """Minimum delay between consecutive discovery LLM calls.
+
+    Prevents discovery from saturating the LLM provider's RPM quota
+    (e.g. Gemini Flash free tier = 15 RPM).  With throttle=2s, discovery
+    uses at most 30 RPM of its own, leaving headroom for interactive
+    chat requests.
+    """
+
     async def run_llm(self, awaitable: Awaitable[_T]) -> _T:
-        """Run one LLM-facing awaitable within the evaluation limit."""
+        """Run one LLM-facing awaitable within the evaluation limit.
+
+        When ``chat_active`` is True (a user dialogue is in progress),
+        discovery LLM calls yield until the dialogue finishes.  This
+        prevents discovery from saturating the LLM API's RPM quota and
+        starving interactive chat requests.
+        """
+        while self.chat_active:
+            await asyncio.sleep(0.5)
         self._ensure_loop_bound()
         assert self._llm_semaphore is not None
         async with self._llm_semaphore:
-            return await awaitable
+            result = await awaitable
+            # Throttle: space out discovery LLM calls to avoid RPM exhaustion
+            if self.llm_throttle_seconds > 0:
+                await asyncio.sleep(self.llm_throttle_seconds)
+            return result
 
 
 class SupportsStructuredTask(Protocol):
@@ -550,19 +574,7 @@ class ContentDiscoveryEngine:
         from openbiliclaw.llm.prompts import build_content_evaluation_prompt
 
         messages = build_content_evaluation_prompt(
-            profile_summary={
-                "personality_portrait": profile.personality_portrait,
-                "core_traits": profile.core_traits[:5],
-                "deep_needs": profile.deep_needs[:5],
-                "interests": [
-                    {
-                        "name": item.name,
-                        "category": item.category,
-                        "weight": item.weight,
-                    }
-                    for item in profile.preferences.interests[:10]
-                ],
-            },
+            profile_summary=build_profile_summary(profile),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
@@ -595,13 +607,13 @@ class ContentDiscoveryEngine:
             return 0.0
 
         # Validate LLM-returned style_key against allowed values
-        _VALID_STYLES = VALID_STYLE_KEYS
+        valid_styles = VALID_STYLE_KEYS
 
         content.relevance_score = score
         content.relevance_reason = reason
         if topic_group:
             content.topic_group = topic_group
-        if style_key in _VALID_STYLES:
+        if style_key in valid_styles:
             content.style_key = style_key
         self._eval_cache[cache_key] = (score, reason, topic_group, style_key)
         return score
@@ -653,7 +665,7 @@ class ContentDiscoveryEngine:
             batch_scores = await self._evaluate_batch(
                 batch_contents, profile, source_context=source_context,
             )
-            for idx, batch_score in zip(batch_indices, batch_scores):
+            for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
                 scores[idx] = batch_score
 
         return scores
@@ -668,15 +680,7 @@ class ContentDiscoveryEngine:
         """Send one LLM call for a batch of items."""
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
-        profile_data = {
-            "personality_portrait": profile.personality_portrait,
-            "core_traits": profile.core_traits[:5],
-            "deep_needs": profile.deep_needs[:5],
-            "interests": [
-                {"name": item.name, "category": item.category, "weight": item.weight}
-                for item in profile.preferences.interests[:10]
-            ],
-        }
+        profile_data = build_profile_summary(profile)
         content_items = [
             {
                 "title": c.title,
@@ -695,7 +699,7 @@ class ContentDiscoveryEngine:
             source_platform=(batch[0].source_platform or "bilibili") if batch else "bilibili",
         )
 
-        _VALID_STYLES = {
+        valid_styles = {
             "game_strategy", "news_brief", "practical_guide", "story_doc",
             "visual_showcase", "tech_analysis",
             "deep_dive", "fun_variety", "lifestyle", "review_roundup",
@@ -745,7 +749,7 @@ class ContentDiscoveryEngine:
             content.relevance_reason = reason
             if topic_group:
                 content.topic_group = topic_group
-            if style_key in _VALID_STYLES:
+            if style_key in valid_styles:
                 content.style_key = style_key
 
             cache_key = f"{content.bvid}:{id(profile)}"
@@ -1153,7 +1157,11 @@ class ContentDiscoveryEngine:
         per_topic_cap = max(1, limit // 5)
         # Hard source ceiling: even with infinite topic diversity, a single
         # source cannot take more than this many slots in total.
-        source_ceiling = per_source_ceiling if per_source_ceiling > 0 else max(per_source_cap + 1, limit * 35 // 100)
+        source_ceiling = (
+            per_source_ceiling
+            if per_source_ceiling > 0
+            else max(per_source_cap + 1, limit * 35 // 100)
+        )
 
         topic_counts: dict[str, int] = {}
         style_counts: dict[str, int] = {}

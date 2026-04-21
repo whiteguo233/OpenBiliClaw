@@ -83,6 +83,116 @@ def _seed_pool(db: Database, items: list[DiscoveredContent]) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "style_key",
+    ["light_chat", "fun_variety", "lifestyle", "review_roundup"],
+)
+def test_fallback_expression_avoids_deep_bias_for_non_deep_styles(
+    style_key: str,
+) -> None:
+    expression = RecommendationEngine._fallback_expression(
+        DiscoveredContent(
+            bvid="BV1LIGHT",
+            title="轻松一点的内容",
+            style_key=style_key,
+        )
+    )
+
+    assert "往深处看" not in expression
+    assert "想继续往深处" not in expression
+
+
+def test_select_diversified_batch_keeps_one_accessible_entry_when_available() -> None:
+    candidates = [
+        DiscoveredContent(
+            bvid="BVHARD1",
+            title="统计学纪录片",
+            source_strategy="related_chain",
+            topic_group="统计学",
+            style_key="deep_dive",
+            relevance_score=0.99,
+        ),
+        DiscoveredContent(
+            bvid="BVHARD2",
+            title="AI 架构拆解",
+            source_strategy="search",
+            topic_group="人工智能",
+            style_key="tech_analysis",
+            relevance_score=0.98,
+        ),
+        DiscoveredContent(
+            bvid="BVHARD3",
+            title="地缘政治快评",
+            source_strategy="trending",
+            topic_group="地缘政治",
+            style_key="news_brief",
+            relevance_score=0.97,
+        ),
+        DiscoveredContent(
+            bvid="BVHARD4",
+            title="本地部署避坑",
+            source_strategy="xhs-extension-task",
+            topic_group="知识库部署",
+            style_key="practical_guide",
+            relevance_score=0.96,
+        ),
+        DiscoveredContent(
+            bvid="BVHARD5",
+            title="认知偏差原理",
+            source_strategy="xhs-extension-search",
+            topic_group="心理学",
+            style_key="deep_dive",
+            relevance_score=0.95,
+        ),
+        DiscoveredContent(
+            bvid="BVLIGHT1",
+            title="工地摆摊",
+            source_strategy="related_chain",
+            topic_group="社会纪实",
+            style_key="story_doc",
+            relevance_score=0.91,
+        ),
+        DiscoveredContent(
+            bvid="BVLIGHT2",
+            title="年度科技盘点",
+            source_strategy="search",
+            topic_group="前沿科技",
+            style_key="review_roundup",
+            relevance_score=0.9,
+        ),
+    ]
+
+    batch = RecommendationEngine._select_diversified_batch(candidates, limit=5)
+
+    assert any(
+        item.style_key in {
+            "story_doc",
+            "review_roundup",
+            "lifestyle",
+            "light_chat",
+            "fun_variety",
+            "visual_showcase",
+        }
+        for item in batch
+    )
+
+
+def test_expression_tone_profile_softens_dense_profile_for_lifestyle_content() -> None:
+    profile = _build_profile()
+    profile.preferences.style.depth_preference = 0.95
+
+    tone = RecommendationEngine._expression_tone_profile(
+        profile,
+        DiscoveredContent(
+            bvid="BVLIFE",
+            title="工地摆摊",
+            style_key="lifestyle",
+        ),
+    )
+
+    assert tone["density"] in {"light", "balanced"}
+
+
 @pytest.mark.asyncio
 async def test_generate_recommendations_ranks_discovered_and_records_history() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -471,6 +581,32 @@ async def test_generate_expression_uses_old_friend_tone_prompt() -> None:
         )
 
         assert "老B友" in str(llm.calls[0]["system_instruction"])
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_passes_style_key_to_prompt() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV1STYLE",
+                title="工地摆摊",
+                up_name="小马盒饭",
+                description="街边摆摊和工地盒饭的日常观察。",
+                style_key="lifestyle",
+                topic_group="社会民生",
+                relevance_score=0.86,
+            ),
+            _build_profile(),
+        )
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert '"style_key": "lifestyle"' in user_input
+        assert '"topic_group": "社会民生"' in user_input
 
 
 @pytest.mark.asyncio
@@ -962,7 +1098,10 @@ async def test_reshuffle_recommendations_hides_missing_copy_instead_of_style_fal
         )
 
         # Fallback expression based on style_key when precomputed copy missing
-        assert "game_strategy" in recommendations[0].content.style_key or recommendations[0].expression != ""
+        assert (
+            "game_strategy" in recommendations[0].content.style_key
+            or recommendations[0].expression != ""
+        )
         assert recommendations[0].topic_label != ""
 
 

@@ -166,7 +166,11 @@ def _extract_interest_domains(profile: SoulProfile) -> list[dict[str, object]]:
             if isinstance(specs, list) and len(specs) < 5:
                 specs.append(tag.name)
         existing_weight = existing.get("weight", 0)
-        if tag.weight > (float(existing_weight) if isinstance(existing_weight, (int, float)) else 0):
+        if tag.weight > (
+            float(existing_weight)
+            if isinstance(existing_weight, (int, float))
+            else 0
+        ):
             existing["weight"] = tag.weight
     return list(domain_map.values())[:8]
 
@@ -192,6 +196,19 @@ def build_profile_summary(profile: SoulProfile) -> dict[str, object]:
         ],
         "favorite_up_users": profile.preferences.favorite_up_users[:5],
         "deep_needs": profile.deep_needs[:5],
+        "style": {
+            "preferred_duration": profile.preferences.style.preferred_duration,
+            "preferred_pace": profile.preferences.style.preferred_pace,
+            "humor_preference": profile.preferences.style.humor_preference,
+            "depth_preference": profile.preferences.style.depth_preference,
+        },
+        "context": {
+            "weekday_patterns": profile.preferences.context.weekday_patterns,
+            "weekend_patterns": profile.preferences.context.weekend_patterns,
+            "time_of_day_patterns": profile.preferences.context.time_of_day_patterns,
+            "session_type": profile.preferences.context.session_type,
+        },
+        "exploration_openness": profile.preferences.exploration_openness,
     }
     # Include active speculative interests if available
     speculations = getattr(profile, "_active_speculations", None)

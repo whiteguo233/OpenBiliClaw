@@ -598,6 +598,9 @@ def build_search_queries_prompt(
 7. query 的内容风格必须多样化，不要全部偏向"深度/学术/原理"。
    应该混合使用不同风格词，如 盘点/推荐/日常/吐槽/测评/入门/体验/挑战/合集 等，
    整组 query 中带"深度/原理/解析/机制"等学术向关键词的不得超过 2 个。
+8. 如果 profile_summary.style 里 depth_preference 偏低、preferred_duration 偏短，
+   或 humor_preference 偏高，就进一步减少"原理/解析/机制"这类硬入口，
+   优先使用更轻、更好点开的形式词；不要把"理解力强"误翻译成"必须更学术"。
 6. 所有 query 的核心主题词（第一个实词）必须两两不同，
    禁止同一概念换皮出现多次。
 </rules>
@@ -862,6 +865,9 @@ def build_batch_content_evaluation_prompt(
         "6. style_key 从 11 个选项中选：game_strategy / news_brief / "
         "practical_guide / story_doc / visual_showcase / tech_analysis / "
         "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
+        "7. 如果 profile_summary.style 显示 depth_preference 不高、preferred_duration 偏短，"
+        "或 humor_preference 偏高，不要把学术艰深、入口很高的内容误判成高匹配；"
+        "讲法轻松但不空的内容同样可以高分。\n"
         "</rules>\n\n"
         "<output_schema>\n"
         "[\n"
@@ -914,6 +920,12 @@ def build_recommendation_expression_prompt(
    用具体描述代替泛泛评价。
 7. 如果内容来自 explore（跨域发现），expression 要解释这个陌生领域和用户的哪种
    认知偏好/深层需求产生了关联，让用户觉得”虽然没想过但确实想看”。
+8. 如果 profile_summary.style 里 depth_preference 不高、preferred_duration 偏短，
+   或 humor_preference 偏高，expression 要更轻、更顺口，少用“认知偏好 / 底层结构 /
+   深层需求”这类抽象词，不要把推荐说得比内容本身还硬。
+9. 如果 content_summary.style_key 是 lifestyle / light_chat / fun_variety /
+   review_roundup / story_doc / visual_showcase，优先从人物、场景、信息点或情绪切口来推荐，
+   不要硬写成“系统闭环 / 底层逻辑 / 认知防御”。
 </rules>
 
 <output_schema>
@@ -966,6 +978,11 @@ def build_batch_expression_prompt(
         "4. 避免：算法套话、信息密度、高质量、深度好文、值得一看、强烈推荐。\n"
         "5. explore 来源的内容要解释陌生领域和用户认知偏好的关联。\n"
         "6. 每条 expression 的开头措辞必须不同，禁止重复同一句式。\n"
+        "7. 如果 profile_summary.style 显示 depth_preference 不高、preferred_duration 偏短，"
+        "或 humor_preference 偏高，整体措辞要更轻、更顺口，不要把轻内容硬写成分析报告。\n"
+        "8. 如果某条 content.style_key 是 lifestyle / light_chat / fun_variety / "
+        "review_roundup / story_doc / visual_showcase，就优先从人物、场景、信息点或情绪切口下笔，"
+        "不要把它写成心理机制拆解。\n"
         "</rules>\n\n"
         "<output_schema>\n"
         "[\n"

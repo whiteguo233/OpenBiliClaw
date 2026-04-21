@@ -1,6 +1,6 @@
 """Tests for adaptive bilibili tone profile building."""
 
-from openbiliclaw.soul.profile import PreferenceLayer, SoulProfile
+from openbiliclaw.soul.profile import PreferenceLayer, SoulProfile, StylePreference
 from openbiliclaw.soul.tone import build_tone_profile
 
 
@@ -36,3 +36,30 @@ def test_build_tone_profile_increases_playfulness_for_open_explorer() -> None:
     )
 
     assert tone["playfulness"] in {"medium", "high"}
+
+
+def test_build_tone_profile_does_not_force_dense_when_depth_preference_is_low() -> None:
+    profile = SoulProfile(
+        personality_portrait="会主动把复杂问题想透，但并不喜欢每次都被塞进很硬的表达里。",
+        preferences=PreferenceLayer(
+            style=StylePreference(
+                preferred_duration="short",
+                humor_preference=0.75,
+                depth_preference=0.25,
+            )
+        ),
+    )
+
+    tone = build_tone_profile(
+        profile=profile,
+        preference_summary={
+            "style": {
+                "preferred_duration": "short",
+                "humor_preference": 0.75,
+                "depth_preference": 0.25,
+            }
+        },
+        recent_feedback=[],
+    )
+
+    assert tone["density"] in {"light", "balanced"}

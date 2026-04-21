@@ -15,16 +15,71 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from openbiliclaw.recommendation.curator import PoolCurator
 from openbiliclaw.soul.tone import build_tone_profile
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
+    from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+def _profile_style_summary(profile: SoulProfile) -> dict[str, object]:
+    style = profile.preferences.style
+    return {
+        "preferred_duration": style.preferred_duration,
+        "preferred_pace": style.preferred_pace,
+        "humor_preference": style.humor_preference,
+        "depth_preference": style.depth_preference,
+    }
+
+
+def _profile_context_summary(profile: SoulProfile) -> dict[str, object]:
+    context = profile.preferences.context
+    return {
+        "weekday_patterns": context.weekday_patterns,
+        "weekend_patterns": context.weekend_patterns,
+        "time_of_day_patterns": context.time_of_day_patterns,
+        "session_type": context.session_type,
+    }
+
+
+def _recommendation_profile_summary(
+    profile: SoulProfile,
+    *,
+    interests: list[dict[str, object]] | None = None,
+    include_active_insights: bool = False,
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "personality_portrait": profile.personality_portrait,
+        "core_traits": profile.core_traits[:5],
+        "deep_needs": profile.deep_needs[:5],
+        "interests": interests
+        if interests is not None
+        else [
+            {
+                "name": item.name,
+                "category": item.category,
+                "weight": item.weight,
+            }
+            for item in profile.preferences.interests[:10]
+        ],
+        "style": _profile_style_summary(profile),
+        "context": _profile_context_summary(profile),
+        "exploration_openness": profile.preferences.exploration_openness,
+    }
+    if include_active_insights:
+        summary["active_insights"] = [
+            {
+                "hypothesis": str(getattr(ins, "hypothesis", "")),
+                "confidence": float(getattr(ins, "confidence", 0.5)),
+            }
+            for ins in getattr(profile, "active_insights", [])[:5]
+        ]
+    return summary
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -451,15 +506,7 @@ class RecommendationEngine:
         from openbiliclaw.discovery.engine import VALID_STYLE_KEYS
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
-        profile_data = {
-            "personality_portrait": profile.personality_portrait,
-            "core_traits": profile.core_traits[:5],
-            "deep_needs": profile.deep_needs[:5],
-            "interests": [
-                {"name": item.name, "category": item.category, "weight": item.weight}
-                for item in profile.preferences.interests[:10]
-            ],
-        }
+        profile_data = _recommendation_profile_summary(profile)
         content_items = [
             {
                 "title": c.title,
@@ -608,33 +655,20 @@ class RecommendationEngine:
             (delight_reason, delight_hook) tuple.
         """
         from openbiliclaw.llm.prompts import build_delight_reason_prompt
-        from openbiliclaw.soul.tone import build_tone_profile
 
-        tone_profile = build_tone_profile(
-            profile=profile,
-            preference_summary={
-                "exploration_openness": profile.preferences.exploration_openness,
-            },
-            recent_feedback=[],
-        )
+        tone_profile = self._expression_tone_profile(profile, content)
         messages = build_delight_reason_prompt(
-            profile_summary={
-                "personality_portrait": profile.personality_portrait,
-                "core_traits": profile.core_traits[:5],
-                "deep_needs": profile.deep_needs[:5],
-                "active_insights": [
-                    {
-                        "hypothesis": str(getattr(ins, "hypothesis", "")),
-                        "confidence": float(getattr(ins, "confidence", 0.5)),
-                    }
-                    for ins in getattr(profile, "active_insights", [])[:5]
-                ],
-            },
+            profile_summary=_recommendation_profile_summary(
+                profile,
+                include_active_insights=True,
+            ),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
                 "description": (content.description or "")[:300],
                 "source_strategy": content.source_strategy,
+                "style_key": content.style_key,
+                "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
             },
             reason_stub=reason_stub,
@@ -681,24 +715,14 @@ class RecommendationEngine:
                 "up_name": item.up_name,
                 "description": (item.description or "")[:200],
                 "source_strategy": item.source_strategy,
+                "style_key": item.style_key,
+                "topic_group": item.topic_group,
                 "relevance_score": item.relevance_score,
             }
             for item in batch
         ]
         messages = build_batch_expression_prompt(
-            profile_summary={
-                "personality_portrait": profile.personality_portrait,
-                "core_traits": profile.core_traits[:5],
-                "deep_needs": profile.deep_needs[:5],
-                "interests": [
-                    {
-                        "name": item.name,
-                        "category": item.category,
-                        "weight": item.weight,
-                    }
-                    for item in profile.preferences.interests[:10]
-                ],
-            },
+            profile_summary=_recommendation_profile_summary(profile),
             content_items=content_items,
             tone_profile=tone_profile,
             source_platform=batch[0].source_platform if batch else "bilibili",
@@ -858,28 +882,22 @@ class RecommendationEngine:
         """Try to generate personalized copy without applying a generic fallback."""
         from openbiliclaw.llm.prompts import build_recommendation_expression_prompt
 
-        tone_profile = build_tone_profile(
-            profile=profile,
-            preference_summary={
-                "exploration_openness": profile.preferences.exploration_openness,
-            },
-            recent_feedback=[],
-        )
+        tone_profile = self._expression_tone_profile(profile, content)
         # Select most relevant interests for this content via embedding similarity
         interests_for_prompt = await self._select_relevant_interests(content, profile)
 
         messages = build_recommendation_expression_prompt(
-            profile_summary={
-                "personality_portrait": profile.personality_portrait,
-                "core_traits": profile.core_traits[:5],
-                "deep_needs": profile.deep_needs[:5],
-                "interests": interests_for_prompt,
-            },
+            profile_summary=_recommendation_profile_summary(
+                profile,
+                interests=interests_for_prompt,
+            ),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
                 "description": content.description,
                 "source_strategy": content.source_strategy,
+                "style_key": content.style_key,
+                "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
             },
             tone_profile=tone_profile,
@@ -900,6 +918,33 @@ class RecommendationEngine:
         except Exception:
             logger.exception("Failed to generate recommendation expression: %s", content.bvid)
         return None
+
+    @staticmethod
+    def _expression_tone_profile(
+        profile: SoulProfile,
+        content: DiscoveredContent,
+    ) -> dict[str, str]:
+        tone = build_tone_profile(
+            profile=profile,
+            preference_summary={
+                "style": _profile_style_summary(profile),
+                "exploration_openness": profile.preferences.exploration_openness,
+            },
+            recent_feedback=[],
+        )
+        style_key = RecommendationEngine._style_token(content)
+        if style_key in {"lifestyle", "fun_variety", "light_chat"}:
+            tone = dict(tone)
+            tone["density"] = "light"
+            if tone["playfulness"] == "low":
+                tone["playfulness"] = "medium"
+            return tone
+        if style_key in {"story_doc", "review_roundup", "visual_showcase"}:
+            tone = dict(tone)
+            if tone["density"] == "dense":
+                tone["density"] = "balanced"
+            return tone
+        return tone
 
     def mark_presented(self, recommendation_ids: list[int]) -> None:
         """Mark recommendation rows as presented."""
@@ -959,11 +1004,21 @@ class RecommendationEngine:
             return f"《{title}》这条没那么硬，但会把故事和信息一起带出来，适合你换口气的时候看。"
         if style_key == "visual_showcase":
             return f"《{title}》更偏轻一点，适合你换换脑子，但内容不空。"
+        if style_key == "tech_analysis":
+            return f"《{title}》这条偏技术拆解，但入口不算高，适合你先抓重点再决定要不要细看。"
         if style_key == "deep_dive":
             return f"《{title}》还是你常吃那一路，偏讲透来龙去脉，不会只给结论。"
+        if style_key == "fun_variety":
+            return f"《{title}》这条更偏轻松整活，拿来换个脑子刚好，也不是纯吵闹。"
+        if style_key == "lifestyle":
+            return f"《{title}》这条是轻一点的生活向，顺手点开不累，氛围和信息都还在线。"
+        if style_key == "review_roundup":
+            return f"《{title}》这种盘点/测评向比较省力，先快速过一遍重点会很顺。"
+        if style_key == "light_chat":
+            return f"《{title}》这条不是硬讲解那路，胜在讲得顺、看着不累，适合随手点开。"
         return (
-            f"《{title}》这条大概率还是对你胃口，重点是它不空，"
-            "能接住你最近那股想继续往深处看的状态。"
+            f"《{title}》这条切口挺顺的，先丢给你看看，"
+            "说不定正好能对上你当下的兴趣。"
         )
 
     @staticmethod
@@ -989,6 +1044,15 @@ class RecommendationEngine:
             ranked = sorted(candidates, key=cls._ranking_key)
         if limit <= 1 or len(ranked) <= 1:
             return ranked[:limit]
+
+        def _finalize(items: list[DiscoveredContent]) -> list[DiscoveredContent]:
+            items = cls._ensure_accessible_entry(
+                ranked=ranked,
+                selected=items[:limit],
+                limit=limit,
+                score_override=score_override,
+            )
+            return cls._interleave_by_topic(items[:limit])
 
         per_topic_cap = cls._topic_cap(limit)
         soft_topic_cap = cls._soft_topic_cap(limit)
@@ -1079,7 +1143,7 @@ class RecommendationEngine:
                 seen_sources.add(source_token)
                 source_counts[source_token] = source_counts.get(source_token, 0) + 1
             if len(selected) >= limit:
-                return cls._interleave_by_topic(selected)
+                return _finalize(selected)
 
         def try_fill(
             pool: list[DiscoveredContent],
@@ -1174,7 +1238,100 @@ class RecommendationEngine:
                 style_counts[style_token] = style_counts.get(style_token, 0) + 1
                 if len(selected) >= limit:
                     break
-        return cls._interleave_by_topic(selected[:limit])
+        return _finalize(selected)
+
+    @classmethod
+    def _ensure_accessible_entry(
+        cls,
+        *,
+        ranked: list[DiscoveredContent],
+        selected: list[DiscoveredContent],
+        limit: int,
+        score_override: dict[str, float] | None,
+    ) -> list[DiscoveredContent]:
+        """Inject one easier-entry item when a full batch is uniformly hard.
+
+        This only activates for full batches of 5+ items, and only when the
+        pool already contains a reasonably competitive lighter-style option.
+        """
+        if limit < 5 or len(selected) < limit:
+            return selected
+        if any(cls._accessible_style_priority(item) > 0 for item in selected):
+            return selected
+
+        selected_ids = {item.bvid for item in selected}
+        selected_topic_counts: Counter[str] = Counter()
+        for item in selected:
+            selected_topic_counts.update(cls._diversity_tokens(item))
+
+        weakest_score = min(
+            cls._effective_score(item, score_override) for item in selected
+        )
+        min_candidate_score = max(0.0, weakest_score - 0.10)
+
+        candidates = [
+            item
+            for item in ranked
+            if item.bvid not in selected_ids
+            and cls._accessible_style_priority(item) > 0
+            and cls._effective_score(item, score_override) >= min_candidate_score
+        ]
+        candidates.sort(
+            key=lambda item: (
+                -cls._accessible_style_priority(item),
+                -cls._effective_score(item, score_override),
+                cls._ranking_key(item),
+            ),
+        )
+
+        topic_cap = cls._topic_cap(limit)
+        for candidate in candidates:
+            candidate_tokens = cls._diversity_tokens(candidate)
+            replacement_idx: int | None = None
+            for idx in range(len(selected) - 1, -1, -1):
+                current = selected[idx]
+                if cls._accessible_style_priority(current) > 0:
+                    continue
+                remaining_topics = Counter(selected_topic_counts)
+                remaining_topics.subtract(cls._diversity_tokens(current))
+                if candidate_tokens and any(
+                    remaining_topics.get(token, 0) >= topic_cap
+                    for token in candidate_tokens
+                ):
+                    continue
+                replacement_idx = idx
+                break
+            if replacement_idx is not None:
+                swapped = list(selected)
+                swapped[replacement_idx] = candidate
+                return swapped
+        return selected
+
+    @staticmethod
+    def _effective_score(
+        item: DiscoveredContent,
+        score_override: dict[str, float] | None,
+    ) -> float:
+        if score_override is None:
+            return item.relevance_score
+        return score_override.get(item.bvid, item.relevance_score)
+
+    @staticmethod
+    def _accessible_style_priority(item: DiscoveredContent) -> int:
+        style_key = RecommendationEngine._style_token(item)
+        if style_key == "lifestyle":
+            return 6
+        if style_key == "fun_variety":
+            return 5
+        if style_key == "light_chat":
+            return 4
+        if style_key == "review_roundup":
+            return 3
+        if style_key == "story_doc":
+            return 2
+        if style_key == "visual_showcase":
+            return 1
+        return 0
 
     @staticmethod
     def _diversity_tokens(item: DiscoveredContent) -> set[str]:

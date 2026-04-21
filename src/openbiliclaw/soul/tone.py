@@ -38,6 +38,30 @@ def build_tone_profile(
     if profile is None:
         return tone
 
+    style_summary = (
+        preference_summary.get("style")
+        if preference_summary and isinstance(preference_summary.get("style"), dict)
+        else {}
+    )
+    profile_style = profile.preferences.style
+
+    raw_depth = style_summary.get("depth_preference", profile_style.depth_preference)
+    depth_preference = (
+        float(raw_depth)
+        if isinstance(raw_depth, (int, float))
+        else profile_style.depth_preference
+    )
+    raw_humor = style_summary.get("humor_preference", profile_style.humor_preference)
+    humor_preference = (
+        float(raw_humor)
+        if isinstance(raw_humor, (int, float))
+        else profile_style.humor_preference
+    )
+    raw_duration = style_summary.get(
+        "preferred_duration", profile_style.preferred_duration
+    )
+    preferred_duration = str(raw_duration).strip().lower()
+
     portrait_text = " ".join(
         [
             profile.personality_portrait,
@@ -45,10 +69,14 @@ def build_tone_profile(
             " ".join(profile.deep_needs),
         ]
     )
-    if any(
-        keyword in portrait_text
+    dense_keyword_hits = sum(
+        1
         for keyword in ("高信息密度", "想透", "复杂问题", "深度内容", "结构")
-    ):
+        if keyword in portrait_text
+    )
+    if depth_preference <= 0.35 or preferred_duration == "short":
+        tone["density"] = "light"
+    elif depth_preference >= 0.72 or dense_keyword_hits >= 2:
         tone["density"] = "dense"
 
     openness = 0.5
@@ -61,9 +89,10 @@ def build_tone_profile(
         openness = float(raw_openness)
     else:
         openness = profile.preferences.exploration_openness
-    if openness >= 0.8:
+    playfulness_signal = max(openness, min(1.0, humor_preference))
+    if playfulness_signal >= 0.8:
         tone["playfulness"] = "high"
-    elif openness >= 0.65:
+    elif playfulness_signal >= 0.65:
         tone["playfulness"] = "medium"
     else:
         tone["playfulness"] = "low"
