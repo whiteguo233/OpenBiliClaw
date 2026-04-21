@@ -13,7 +13,7 @@ Example: user says "不喜欢鬼畜", pool has a video titled "恶搞鬼畜区�
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from openbiliclaw.storage.database import Database

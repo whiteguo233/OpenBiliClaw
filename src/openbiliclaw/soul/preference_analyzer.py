@@ -272,10 +272,10 @@ class PreferenceAnalyzer:
             raise PreferenceAnalysisError(
                 f"LLM returned invalid JSON for preference analysis "
                 f"(raw_len={len(content.strip())})"
-            )
+        )
         if not isinstance(parsed, dict):
             raise PreferenceAnalysisError("LLM preference response must be a JSON object.")
-        return parsed
+        return {key: value for key, value in parsed.items()}
 
     def _normalize_preference(self, raw_preference: dict[str, object]) -> dict[str, object]:
         normalized = self._default_preference()

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from openbiliclaw.llm.embedding import SupportsEmbeddingService
+if TYPE_CHECKING:
+    from openbiliclaw.llm.embedding import SupportsEmbeddingService
 
 logger = logging.getLogger(__name__)
 

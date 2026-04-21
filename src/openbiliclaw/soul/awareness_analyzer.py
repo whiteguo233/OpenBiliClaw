@@ -100,10 +100,10 @@ class AwarenessAnalyzer:
             raise AwarenessGenerationError(
                 f"LLM returned invalid JSON for awareness generation "
                 f"(raw_len={len(content.strip())})"
-            )
+        )
         if not isinstance(parsed, list):
             raise AwarenessGenerationError("LLM awareness response must be a JSON array.")
-        return parsed
+        return list(parsed)
 
     @staticmethod
     def _build_note(raw_item: dict[str, object]) -> AwarenessNote:

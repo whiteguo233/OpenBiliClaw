@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -317,10 +316,9 @@ class RelatedChainStrategy(DiscoveryStrategy):
         title_text = clean_text(str(item.get("title", "")))
         # Prefer B站分区名 (tname) for topic_key, fall back to seed's key
         tname = str(item.get("tname", "")).strip()
-        if tname:
-            item_topic_key = re.sub(r"\s+", "", tname).lower()[:16]
-        else:
-            item_topic_key = seed_topic_key
+        item_topic_key = (
+            re.sub(r"\s+", "", tname).lower()[:16] if tname else seed_topic_key
+        )
         return DiscoveredContent(
             bvid=bvid,
             title=title_text,

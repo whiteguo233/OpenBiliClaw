@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -97,7 +96,11 @@ class TrendingStrategy(DiscoveryStrategy):
                     "Trending ranking request failed: rid=%s",
                     rid,
                     exc_info=outcome,
-                    extra={"strategy": "trending", "rid": rid, "error_type": type(outcome).__name__},
+                    extra={
+                        "strategy": "trending",
+                        "rid": rid,
+                        "error_type": type(outcome).__name__,
+                    },
                 )
                 continue
             if not isinstance(outcome, list):
@@ -144,7 +147,12 @@ class TrendingStrategy(DiscoveryStrategy):
             logger.exception("Trending rid selection failed; using defaults.")
         return [0, *list(self.default_rids[: self.max_related_rids])]
 
-    def _map_ranking_item(self, item: dict[str, object], *, rid: int = 0) -> DiscoveredContent | None:
+    def _map_ranking_item(
+        self,
+        item: dict[str, object],
+        *,
+        rid: int = 0,
+    ) -> DiscoveredContent | None:
         bvid = str(item.get("bvid", "")).strip()
         if not bvid:
             return None

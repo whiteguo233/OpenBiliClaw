@@ -16,6 +16,7 @@ from .openrouter_provider import OpenRouterProvider
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
+    from openbiliclaw.llm.embedding import SupportsEmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def build_llm_registry(
 def build_embedding_service(
     config: Config,
     registry: LLMRegistry,
-) -> object | None:
+) -> SupportsEmbeddingService | None:
     """Build an EmbeddingService from config, or None if unavailable.
 
     Uses ``[llm.embedding]`` config section for model and threshold.

@@ -110,10 +110,10 @@ class InsightAnalyzer:
             raise InsightGenerationError(
                 f"LLM returned invalid JSON for insight generation "
                 f"(raw_len={len(content.strip())})"
-            )
+        )
         if not isinstance(parsed, list):
             raise InsightGenerationError("LLM insight response must be a JSON array.")
-        return parsed
+        return list(parsed)
 
     @staticmethod
     def _build_hypothesis(raw_item: dict[str, object]) -> InsightHypothesis:

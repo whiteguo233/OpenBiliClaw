@@ -18,7 +18,6 @@ from openbiliclaw.discovery.engine import (
 )
 from openbiliclaw.discovery.strategies._utils import (
     SupportsSearchClient,
-    _gather_bounded,
     build_profile_summary,
     clean_text,
     interest_anchors,
@@ -122,7 +121,11 @@ class SearchStrategy(DiscoveryStrategy):
                 )
                 continue
             if not isinstance(outcome, list):
-                logger.warning("Search query '%s' returned non-list: %s", query, type(outcome).__name__)
+                logger.warning(
+                    "Search query '%s' returned non-list: %s",
+                    query,
+                    type(outcome).__name__,
+                )
                 continue
             api_result_count += len(outcome)
             search_results = outcome

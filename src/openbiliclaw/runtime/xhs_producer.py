@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.sources.xhs_keyword_gen import generate_xhs_keywords
@@ -105,11 +105,11 @@ class XhsTaskProducer:
         ).fetchone()
         if row is None:
             return True
-        created_at_str = str(row["created_at"] if "created_at" in row.keys() else row[0])
+        created_at_str = str(row["created_at"] if "created_at" in row else row[0])
         last = _parse_sqlite_timestamp(created_at_str)
         if last is None:
             return True
-        return datetime.now(timezone.utc) - last >= timedelta(
+        return datetime.now(UTC) - last >= timedelta(
             hours=self.min_interval_hours
         )
 
@@ -130,5 +130,5 @@ def _parse_sqlite_timestamp(value: str) -> datetime | None:
         except ValueError:
             return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt

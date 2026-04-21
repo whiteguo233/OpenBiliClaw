@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
@@ -106,13 +109,14 @@ class ProfileBuilder:
             raise SoulProfileBuildError(
                 f"LLM returned invalid JSON for soul profile "
                 f"(raw_len={len(content.strip())})"
-            )
+        )
         if not isinstance(parsed, dict):
             raise SoulProfileBuildError("LLM soul profile response must be a JSON object.")
-        self._validate_payload(parsed)
-        return parsed
+        payload: dict[str, object] = {key: value for key, value in parsed.items()}
+        self._validate_payload(payload)
+        return payload
 
-    def _validate_payload(self, payload: dict[str, object]) -> None:
+    def _validate_payload(self, payload: Mapping[str, object]) -> None:
         required_fields = (
             "personality_portrait",
             "core_traits",
@@ -202,7 +206,9 @@ class ProfileBuilder:
         }
         if recent_titles:
             summary["recent_titles"] = recent_titles[:50]
-            summary["recent_hint"] = f"最近观看的 {len(recent_titles)} 个视频（前30%）代表当前活跃兴趣"
+            summary["recent_hint"] = (
+                f"最近观看的 {len(recent_titles)} 个视频（前30%）代表当前活跃兴趣"
+            )
         if older_titles:
             summary["older_titles"] = older_titles[:50]
         if favorites_summary:

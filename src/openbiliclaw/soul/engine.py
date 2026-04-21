@@ -13,15 +13,23 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMProvider
-    from openbiliclaw.llm.service import LLMService
     from openbiliclaw.memory.manager import MemoryManager
 
+from openbiliclaw.llm.service import LLMService
+
 from .awareness_analyzer import AwarenessAnalyzer
+from .cognition_cycle import (
+    DEFAULT_MIN_INTERVAL_SECONDS as _DEFAULT_COG_INTERVAL,
+)
+from .cognition_cycle import (
+    CognitionCycle,
+)
 from .dialogue_insight_analyzer import (
     DialogueInsightAnalysisError,
     DialogueInsightAnalyzer,
 )
 from .insight_analyzer import InsightAnalyzer
+from .pipeline import ProfileUpdatePipeline
 from .preference_analyzer import PreferenceAnalyzer
 from .profile import (
     AwarenessNote,
@@ -33,6 +41,7 @@ from .profile import (
     insight_hypothesis_to_dict,
 )
 from .profile_builder import ProfileBuilder
+from .speculator import InterestSpeculator
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +79,6 @@ class SoulEngine:
         embedding_service: Any | None = None,
         cognition_cycle_interval_seconds: int | None = None,
     ) -> None:
-        from openbiliclaw.llm.service import LLMService
-
-        from .cognition_cycle import (
-            DEFAULT_MIN_INTERVAL_SECONDS as _DEFAULT_COG_INTERVAL,
-            CognitionCycle,
-        )
-        from .pipeline import ProfileUpdatePipeline
-        from .speculator import InterestSpeculator
-
         self._llm = llm
         self._memory = memory
         self._llm_service: LLMService = LLMService(registry=llm, memory=memory)
