@@ -13,10 +13,7 @@ import logging
 import math
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
-
-if TYPE_CHECKING:
-    pass
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +26,7 @@ class SupportsEmbed(Protocol):
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors (pure Python)."""
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
@@ -76,7 +73,7 @@ class EmbeddingCache:
         if row is None:
             return None
         try:
-            return json.loads(row[0])
+            return _coerce_embedding_vector(json.loads(row[0]))
         except (json.JSONDecodeError, TypeError):
             return None
 
@@ -201,3 +198,14 @@ class EmbeddingService:
     def clear_cache(self) -> None:
         """Clear the embedding cache."""
         self._l1_cache.clear()
+
+
+def _coerce_embedding_vector(value: object) -> list[float] | None:
+    if not isinstance(value, list):
+        return None
+    vector: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return None
+        vector.append(float(item))
+    return vector

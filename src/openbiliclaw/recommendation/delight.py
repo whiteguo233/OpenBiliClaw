@@ -14,11 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from openbiliclaw.discovery.engine import DiscoveredContent
-    from openbiliclaw.storage.database import Database
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +25,22 @@ class SupportsEmbedding(Protocol):
     similarity_threshold: float
 
     async def embed(self, text: str) -> list[float]: ...
+
+
+class SupportsDelightCandidate(Protocol):
+    bvid: str
+    title: str
+    description: str | None
+    view_count: int
+    like_count: int
+    topic_key: str
+    topic_group: str
+    source_strategy: str
+    relevance_score: float
+
+
+class SupportsRecommendationSignalStore(Protocol):
+    def get_recent_recommendation_signals(self, *, limit: int = ...) -> list[dict[str, Any]]: ...
 
 
 @dataclass(frozen=True)
@@ -60,6 +72,7 @@ class DelightWeights:
 _DEFAULT_THRESHOLD: float = 0.80
 _CONSERVATIVE_THRESHOLD: float = 0.90
 _LOW_EXPLORATION_OPENNESS: float = 0.3
+_DEFAULT_WEIGHTS = DelightWeights()
 
 
 class DelightScorer:
@@ -72,9 +85,9 @@ class DelightScorer:
     def __init__(
         self,
         embedding_service: SupportsEmbedding | None,
-        database: Database,
+        database: SupportsRecommendationSignalStore,
         *,
-        weights: DelightWeights = DelightWeights(),
+        weights: DelightWeights = _DEFAULT_WEIGHTS,
         threshold: float = _DEFAULT_THRESHOLD,
     ) -> None:
         self._embedding = embedding_service
@@ -94,7 +107,7 @@ class DelightScorer:
 
     async def score(
         self,
-        candidate: DiscoveredContent,
+        candidate: SupportsDelightCandidate,
         profile: Any,
     ) -> tuple[float, DelightSignals, str]:
         """Compute a delight score for a candidate given the soul profile.
@@ -120,7 +133,7 @@ class DelightScorer:
 
     async def _compute_signals(
         self,
-        candidate: DiscoveredContent,
+        candidate: SupportsDelightCandidate,
         profile: Any,
     ) -> DelightSignals:
         """Compute individual delight signal components."""
@@ -208,7 +221,7 @@ class DelightScorer:
 
         return max(0.0, min(1.0, (max_sim - 0.4) * 2.5))
 
-    def _novelty_factor(self, candidate: DiscoveredContent) -> float:
+    def _novelty_factor(self, candidate: SupportsDelightCandidate) -> float:
         """Score novelty based on discovery strategy and topic freshness."""
         # Explore strategy inherently carries more novelty
         strategy_novelty = {
@@ -224,8 +237,7 @@ class DelightScorer:
         topic = (candidate.topic_group or candidate.topic_key).strip().lower()
         if topic and signals:
             topic_count = sum(
-                1 for s in signals
-                if str(s.get("topic_key", "")).strip().lower() == topic
+                1 for s in signals if str(s.get("topic_key", "")).strip().lower() == topic
             )
             # Penalize if topic has been seen often
             repetition_penalty = min(1.0, topic_count / 5.0)
@@ -234,7 +246,7 @@ class DelightScorer:
         return max(0.0, min(1.0, base_novelty))
 
     @staticmethod
-    def _quality_indicator(candidate: DiscoveredContent) -> float:
+    def _quality_indicator(candidate: SupportsDelightCandidate) -> float:
         """Score content quality from engagement signals."""
         view_count = max(1, candidate.view_count)
         like_count = candidate.like_count
@@ -251,7 +263,7 @@ class DelightScorer:
 
     @staticmethod
     def _exploration_match(
-        candidate: DiscoveredContent,
+        candidate: SupportsDelightCandidate,
         profile: Any,
         novelty: float,
     ) -> float:
@@ -271,7 +283,7 @@ class DelightScorer:
     @staticmethod
     def _build_reason_stub(
         signals: DelightSignals,
-        candidate: DiscoveredContent,
+        candidate: SupportsDelightCandidate,
         profile: Any,
     ) -> str:
         """Build a structured reason stub for LLM expansion."""

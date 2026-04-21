@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TypeAlias
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,12 @@ logger = logging.getLogger(__name__)
 # routinely exceed 4096 tokens. Using 16384 leaves plenty of headroom while
 # staying well under provider ceilings.
 DEFAULT_STRUCTURED_MAX_TOKENS = 16384
+
+JSONPrimitive: TypeAlias = None | bool | int | float | str
+JSONValue: TypeAlias = JSONPrimitive | dict[str, "JSONValue"] | list["JSONValue"]
+JSONObject: TypeAlias = dict[str, JSONValue]
+JSONArray: TypeAlias = list[JSONValue]
+JSONContainer: TypeAlias = JSONObject | JSONArray
 
 
 def strip_json_fences(text: str) -> str:
@@ -44,7 +51,7 @@ def strip_json_fences(text: str) -> str:
     return s
 
 
-def parse_llm_json_tolerant(text: str) -> dict | list | None:
+def parse_llm_json_tolerant(text: str) -> JSONContainer | None:
     """Parse LLM JSON output tolerantly.
 
     Strategy:
@@ -59,7 +66,7 @@ def parse_llm_json_tolerant(text: str) -> dict | list | None:
     """
     cleaned = strip_json_fences(text)
     try:
-        return json.loads(cleaned)
+        return _coerce_json_container(json.loads(cleaned))
     except json.JSONDecodeError:
         pass
 
@@ -70,10 +77,7 @@ def parse_llm_json_tolerant(text: str) -> dict | list | None:
         return _salvage_container(cleaned, open_ch="[")
 
     # Unknown root — try both
-    return (
-        _salvage_container(cleaned, open_ch="{")
-        or _salvage_container(cleaned, open_ch="[")
-    )
+    return _salvage_container(cleaned, open_ch="{") or _salvage_container(cleaned, open_ch="[")
 
 
 def format_parse_failure(content: str, exc: Exception, *, label: str) -> str:
@@ -92,7 +96,7 @@ def format_parse_failure(content: str, exc: Exception, *, label: str) -> str:
     )
 
 
-def _salvage_container(text: str, *, open_ch: str) -> dict | list | None:
+def _salvage_container(text: str, *, open_ch: str) -> JSONContainer | None:
     """Best-effort recovery of a JSON object or array cut off mid-value.
 
     Walks ``text`` tracking brace/bracket depth and string state; records
@@ -153,13 +157,44 @@ def _salvage_container(text: str, *, open_ch: str) -> dict | list | None:
         if not candidate:
             continue
         try:
-            parsed = json.loads(candidate)
+            parsed = _coerce_json_container(json.loads(candidate))
         except json.JSONDecodeError:
             continue
         if open_ch == "{" and isinstance(parsed, dict):
             return parsed
         if open_ch == "[" and isinstance(parsed, list):
             return parsed
+    return None
+
+
+def _coerce_json_container(value: object) -> JSONContainer | None:
+    coerced = _coerce_json_value(value)
+    if isinstance(coerced, (dict, list)):
+        return coerced
+    return None
+
+
+def _coerce_json_value(value: object) -> JSONValue | None:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        coerced_dict: JSONObject = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return None
+            coerced_item = _coerce_json_value(item)
+            if coerced_item is None and item is not None:
+                return None
+            coerced_dict[key] = coerced_item
+        return coerced_dict
+    if isinstance(value, list):
+        coerced_list: JSONArray = []
+        for item in value:
+            coerced_item = _coerce_json_value(item)
+            if coerced_item is None and item is not None:
+                return None
+            coerced_list.append(coerced_item)
+        return coerced_list
     return None
 
 
