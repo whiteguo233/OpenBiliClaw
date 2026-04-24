@@ -45,6 +45,14 @@ class RelatedChainStrategy(DiscoveryStrategy):
     max_seeds: int = 5
     related_per_seed: int = 8
     max_depth: int = 2
+    # Cap candidates passed to the LLM evaluator per depth round.
+    # Without this, depth-2 fanout (up to ``max_seeds * related_per_seed`` ×
+    # next-layer-size) can send hundreds of items to ``evaluate_content_batch``
+    # — an order of magnitude more than other strategies produce — which
+    # dominates discover wall time. 40 keeps a round's eval work roughly
+    # balanced with search/trending/explore while still letting depth-2
+    # exploration happen.
+    max_eval_candidates_per_round: int = 40
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -117,7 +125,9 @@ class RelatedChainStrategy(DiscoveryStrategy):
             # Collect candidates from all results
             batch_candidates: list[tuple[DiscoveredContent, int, int, str]] = []
             for (seed_bvid, depth, seed_index, seed_topic_key), outcome in zip(
-                layer_items, related_outcomes, strict=True,
+                layer_items,
+                related_outcomes,
+                strict=True,
             ):
                 if isinstance(outcome, BaseException):
                     logger.error(
@@ -141,13 +151,49 @@ class RelatedChainStrategy(DiscoveryStrategy):
                     seen_bvids.add(content.bvid)
                     batch_candidates.append((content, depth, seed_index, seed_topic_key))
 
+            # Cap per-round candidate count so depth-2 fanout doesn't
+            # dump hundreds of items into evaluate_content_batch. We
+            # prioritise retaining one slot per distinct seed_index so
+            # each seed lineage still contributes before the cap kicks
+            # in.
+            if (
+                self.max_eval_candidates_per_round > 0
+                and len(batch_candidates) > self.max_eval_candidates_per_round
+            ):
+                original_count = len(batch_candidates)
+                by_seed: dict[int, list[tuple[DiscoveredContent, int, int, str]]] = {}
+                for entry in batch_candidates:
+                    by_seed.setdefault(entry[2], []).append(entry)
+                trimmed: list[tuple[DiscoveredContent, int, int, str]] = []
+                index = 0
+                while len(trimmed) < self.max_eval_candidates_per_round:
+                    appended = False
+                    for seed_index in sorted(by_seed):
+                        bucket = by_seed[seed_index]
+                        if index < len(bucket):
+                            trimmed.append(bucket[index])
+                            appended = True
+                            if len(trimmed) >= self.max_eval_candidates_per_round:
+                                break
+                    if not appended:
+                        break
+                    index += 1
+                logger.info(
+                    "related_chain: trimming depth-round candidates from %d to %d",
+                    original_count,
+                    len(trimmed),
+                )
+                batch_candidates = trimmed
+
             # Evaluate all candidates in batched LLM calls
             contents = [c for c, _, _, _ in batch_candidates]
             scores = await evaluator.evaluate_content_batch(contents, profile)
 
             next_layer: list[tuple[str, int, int, str]] = []
             for (content, depth, seed_index, seed_topic_key), score in zip(
-                batch_candidates, scores, strict=True,
+                batch_candidates,
+                scores,
+                strict=True,
             ):
                 bonus = self._seed_bonus(seed_index) + self._depth_bonus(depth)
                 content.relevance_score = min(1.0, round(score + bonus, 4))
@@ -316,9 +362,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
         title_text = clean_text(str(item.get("title", "")))
         # Prefer B站分区名 (tname) for topic_key, fall back to seed's key
         tname = str(item.get("tname", "")).strip()
-        item_topic_key = (
-            re.sub(r"\s+", "", tname).lower()[:16] if tname else seed_topic_key
-        )
+        item_topic_key = re.sub(r"\s+", "", tname).lower()[:16] if tname else seed_topic_key
         return DiscoveredContent(
             bvid=bvid,
             title=title_text,
@@ -330,14 +374,10 @@ class RelatedChainStrategy(DiscoveryStrategy):
             like_count=like_count,
             topic_key=item_topic_key,
             topic_group=self._topic_group_from_title(title_text),
-            description=clean_text(
-                str(item.get("desc", item.get("description", "")))
-            ),
+            description=clean_text(str(item.get("desc", item.get("description", "")))),
             style_key=ContentDiscoveryEngine.infer_style_key(
                 title=title_text,
-                description=clean_text(
-                    str(item.get("desc", item.get("description", "")))
-                ),
+                description=clean_text(str(item.get("desc", item.get("description", "")))),
                 source_strategy=self.name,
             ),
             source_strategy=self.name,
@@ -365,7 +405,9 @@ class RelatedChainStrategy(DiscoveryStrategy):
             return re.sub(r"\s+", "", bracket_match.group(1)).lower()[:8]
         # Strip all brackets, punctuation, emojis, numbers-heavy prefixes
         cleaned = re.sub(
-            r"[【】\[\]《》「」（）()！!？?：:，,。.·\-—|／/～~\d]+", " ", title,
+            r"[【】\[\]《》「」（）()！!？?：:，,。.·\-—|／/～~\d]+",
+            " ",
+            title,
         ).strip()
         # Split on whitespace and common Chinese filler/connective patterns
         parts = re.split(r"[\s,，、]+", cleaned)
