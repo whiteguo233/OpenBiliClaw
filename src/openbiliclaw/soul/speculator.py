@@ -337,12 +337,14 @@ def expire_stale(
             spec.status = "rejected"
             rejected.append(spec)
             state.total_rejected += 1
-            state.cooldown.append(CooldownEntry(
-                domain=spec.domain,
-                category=spec.category,
-                rejected_at=now.isoformat(),
-                cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
-            ))
+            state.cooldown.append(
+                CooldownEntry(
+                    domain=spec.domain,
+                    category=spec.category,
+                    rejected_at=now.isoformat(),
+                    cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+                )
+            )
         else:
             remaining.append(spec)
     state.active = remaining
@@ -495,20 +497,32 @@ class InterestSpeculator:
         promoted, state = promote_ready(state)
         result.promoted = promoted
 
-        # Generate regardless of interval (but respect caps)
+        # Generate regardless of interval (but respect caps).
+        # The "primary interests" cap historically gated on
+        # ``confirmed_domains + active_count``, which deadlocks the
+        # whole probe pipeline once the user has more confirmed
+        # interests than the cap (e.g. profile with 21 confirmed
+        # likes vs cap=15 → no probe ever fires). The cap is meant
+        # to bound *speculative* fanout, not punish well-mapped
+        # users. Gate only on ``active_count`` so probes can still
+        # flow regardless of how many interests are already
+        # confirmed.
         active_count = sum(1 for s in state.active if s.status == "active")
-        can_generate = active_count < self._max_active
-        if can_generate and self._llm_service is not None:
-            # Check tier caps
-            confirmed_domains = len(profile.interest.likes)
-            if confirmed_domains + active_count < self._max_primary_interests:
-                state = await self._generate(profile, state, now)
-                result.generated = [s for s in state.active if s.status == "active"]
+        can_generate = (
+            active_count < self._max_active
+            and active_count < self._max_primary_interests
+            and self._llm_service is not None
+        )
+        if can_generate:
+            state = await self._generate(profile, state, now)
+            result.generated = [s for s in state.active if s.status == "active"]
 
         self._save_state(state)
         logger.info(
             "Speculator force_tick: generated=%d, promoted=%d, rejected=%d",
-            len(result.generated), len(result.promoted), len(result.rejected),
+            len(result.generated),
+            len(result.promoted),
+            len(result.rejected),
         )
         return result
 
@@ -551,16 +565,18 @@ class InterestSpeculator:
             if len(state.active) >= self._max_active:
                 break
 
-            state.active.append(SpeculativeInterest(
-                domain=domain,
-                category=str(seed.get("category", "")),
-                reason=str(seed.get("reason", "")),
-                confidence=float(seed.get("confidence") or seed.get("weight", 0.4)),
-                weight=float(seed.get("weight", 0.4)),
-                created_at=now.isoformat(),
-                ttl_days=self._default_ttl_days,
-                confirmation_threshold=self._confirmation_threshold,
-            ))
+            state.active.append(
+                SpeculativeInterest(
+                    domain=domain,
+                    category=str(seed.get("category", "")),
+                    reason=str(seed.get("reason", "")),
+                    confidence=float(seed.get("confidence") or seed.get("weight", 0.4)),
+                    weight=float(seed.get("weight", 0.4)),
+                    created_at=now.isoformat(),
+                    ttl_days=self._default_ttl_days,
+                    confirmation_threshold=self._confirmation_threshold,
+                )
+            )
             existing_domains.add(domain.lower())
             added += 1
 
@@ -595,12 +611,14 @@ class InterestSpeculator:
             if spec.domain.lower() == domain.lower() and spec.status == "active":
                 spec.status = "rejected"
                 state.total_rejected += 1
-                state.cooldown.append(CooldownEntry(
-                    domain=spec.domain,
-                    category=spec.category,
-                    rejected_at=now.isoformat(),
-                    cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
-                ))
+                state.cooldown.append(
+                    CooldownEntry(
+                        domain=spec.domain,
+                        category=spec.category,
+                        rejected_at=now.isoformat(),
+                        cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+                    )
+                )
                 found = True
             else:
                 remaining.append(spec)
@@ -629,25 +647,28 @@ class InterestSpeculator:
         if active_count >= self._max_active:
             return False
 
-        # Check interest tier caps against profile
+        # Check active speculation tier cap. We gate solely on
+        # ``active_count`` here, not ``confirmed + active`` — see the
+        # comment in ``force_tick``: a well-mapped user with many
+        # confirmed interests was permanently deadlocked under the
+        # old gate.
         if profile is not None:
-            confirmed_domains = len(profile.interest.likes)
-            total_primary = confirmed_domains + active_count
-            if total_primary >= self._max_primary_interests:
+            if active_count >= self._max_primary_interests:
                 logger.debug(
-                    "Speculation skipped: primary interests at cap (%d/%d)",
-                    total_primary, self._max_primary_interests,
+                    "Speculation skipped: active speculations at primary cap (%d/%d)",
+                    active_count,
+                    self._max_primary_interests,
                 )
                 return False
 
-            confirmed_specifics = sum(
-                len(d.specifics) for d in profile.interest.likes
-            )
-            total_secondary = confirmed_specifics + active_count
-            if total_secondary >= self._max_secondary_interests:
+            # Same fix for secondary cap — gate on active speculation
+            # count alone, not ``confirmed_specifics + active``, so a
+            # rich profile doesn't permanently silence the probe loop.
+            if active_count >= self._max_secondary_interests:
                 logger.debug(
-                    "Speculation skipped: secondary interests at cap (%d/%d)",
-                    total_secondary, self._max_secondary_interests,
+                    "Speculation skipped: active speculations at secondary cap (%d/%d)",
+                    active_count,
+                    self._max_secondary_interests,
                 )
                 return False
 
@@ -714,19 +735,21 @@ class InterestSpeculator:
                 if isinstance(s, str) and str(s).strip()
             ]
             confidence = float(item.get("confidence", 0.4))
-            candidates.append(SpeculativeInterest(
-                domain=domain,
-                category=str(item.get("category", "")),
-                reason=str(item.get("reason", "")),
-                experience_mode=_normalize_experience_mode(item.get("experience_mode")),
-                entry_load=_normalize_entry_load(item.get("entry_load")),
-                confidence=confidence,
-                weight=confidence,
-                created_at=now.isoformat(),
-                ttl_days=self._default_ttl_days,
-                confirmation_threshold=self._confirmation_threshold,
-                specifics=specifics,
-            ))
+            candidates.append(
+                SpeculativeInterest(
+                    domain=domain,
+                    category=str(item.get("category", "")),
+                    reason=str(item.get("reason", "")),
+                    experience_mode=_normalize_experience_mode(item.get("experience_mode")),
+                    entry_load=_normalize_entry_load(item.get("entry_load")),
+                    confidence=confidence,
+                    weight=confidence,
+                    created_at=now.isoformat(),
+                    ttl_days=self._default_ttl_days,
+                    confirmation_threshold=self._confirmation_threshold,
+                    specifics=specifics,
+                )
+            )
 
         for candidate in _select_diverse_candidates(candidates, limit=slots):
             if len(state.active) >= self._max_active:
@@ -796,9 +819,7 @@ def _pick_best_candidate(
     predicate: Any,
 ) -> SpeculativeInterest | None:
     matching = [
-        candidate
-        for candidate in candidates
-        if candidate not in selected and predicate(candidate)
+        candidate for candidate in candidates if candidate not in selected and predicate(candidate)
     ]
     if not matching:
         return None
@@ -875,8 +896,7 @@ def choose_next_probe_candidate(
         return None
 
     min_confirmation = min(
-        int(getattr(candidate, "confirmation_count", 0) or 0)
-        for candidate in candidates
+        int(getattr(candidate, "confirmation_count", 0) or 0) for candidate in candidates
     )
     same_pressure = [
         candidate
@@ -891,7 +911,8 @@ def choose_next_probe_candidate(
                 experience_mode=getattr(candidate, "experience_mode", ""),
                 entry_load=getattr(candidate, "entry_load", ""),
             )
-        ) and axis not in recent_axes
+        )
+        and axis not in recent_axes
     ]
     pool = fresh_axis or same_pressure
     return max(
