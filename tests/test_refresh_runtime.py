@@ -85,6 +85,9 @@ class _FakeDatabase:
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
         return 0
 
+    def trim_topic_group_overflow(self, *, max_per_group: int) -> int:
+        return 0
+
     def trim_pool_to_target_count(self, *, target: int) -> int:
         if self.pool_count <= target:
             return 0
@@ -102,6 +105,17 @@ class _FakeDatabase:
     ) -> dict[str, object] | None:
         self.get_delight_thresholds.append(min_delight_score)
         return self.delight_candidate
+
+    def get_delight_candidates(
+        self,
+        *,
+        min_delight_score: float = 0.85,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        self.get_delight_thresholds.append(min_delight_score)
+        if self.delight_candidate is None:
+            return []
+        return [self.delight_candidate]
 
     def mark_delight_notified(self, bvid: str) -> None:
         pass

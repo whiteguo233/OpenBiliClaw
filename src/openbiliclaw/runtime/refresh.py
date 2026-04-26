@@ -42,6 +42,7 @@ class SupportsEventDatabase(Protocol):
     def count_pool_candidates(self) -> int: ...
     def count_pool_candidates_by_source(self) -> dict[str, int]: ...
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int: ...
+    def trim_topic_group_overflow(self, *, max_per_group: int) -> int: ...
     def trim_pool_to_target_count(self, *, target: int) -> int: ...
     def evict_stale_pool_items(self, *, max_age_days: int = 14) -> int: ...
     def get_notification_candidate(
@@ -624,6 +625,13 @@ class ContinuousRefreshController:
 
         if flattened_strategies:
             self.database.trim_explore_cluster_overflow(max_per_cluster=3)
+            # Cap each topic_group at ~10% of pool target so a single hot
+            # topic (e.g. 人工智能 from related_chain) can't accumulate
+            # hundreds of fresh candidates across rounds and starve other
+            # sources/topics. Floor at 3 to keep small pools usable.
+            self.database.trim_topic_group_overflow(
+                max_per_group=max(3, self.pool_target_count // 10),
+            )
             self.database.evict_stale_pool_items(max_age_days=14)
             await self.recommendation_engine.precompute_pool_copy(
                 profile=profile,

@@ -591,6 +591,79 @@ class Database:
         )
         return len(clean_bvids)
 
+    def trim_topic_group_overflow(self, *, max_per_group: int) -> int:
+        """Suppress fresh items where any single ``topic_group`` exceeds *max_per_group*.
+
+        Generalises the source-and-keyword-specific
+        :meth:`trim_explore_cluster_overflow` to a cross-source, dynamic cap on
+        every populated ``topic_group`` value. Without this, a single topic
+        (e.g. ``人工智能``) can accumulate hundreds of fresh candidates as
+        related_chain/search/explore each keep returning the same coarse group
+        across rounds — m118's per-call ``_compress_topic_repeats`` doesn't
+        compose across rounds, and the explore-only cluster cap doesn't see
+        related_chain or search.
+
+        Items with empty ``topic_group`` are ignored. Within an over-cap
+        group, the highest-scored / most-recently-scored items are kept;
+        the rest get ``pool_status='suppressed'``.
+        """
+        if max_per_group <= 0:
+            return 0
+
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, topic_group, relevance_score, last_scored_at
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(topic_group, '') != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+              )
+            """
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        if not rows:
+            return 0
+
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            group = str(row.get("topic_group", "") or "").strip().lower()
+            if not group:
+                continue
+            grouped[group].append(row)
+
+        overflow_bvids: list[str] = []
+        for items in grouped.values():
+            if len(items) <= max_per_group:
+                continue
+            ranked = sorted(
+                items,
+                key=lambda row: (
+                    -float(row.get("relevance_score", 0.0) or 0.0),
+                    -self._sort_timestamp_score(str(row.get("last_scored_at", ""))),
+                    str(row.get("bvid", "")),
+                ),
+            )
+            overflow_bvids.extend(
+                str(row.get("bvid", "")).strip() for row in ranked[max_per_group:]
+            )
+
+        clean_bvids = [bvid for bvid in overflow_bvids if bvid]
+        if not clean_bvids:
+            return 0
+
+        placeholders = ", ".join("?" for _ in clean_bvids)
+        self._execute_write(
+            f"""
+            UPDATE content_cache
+            SET pool_status = 'suppressed'
+            WHERE bvid IN ({placeholders})
+            """,
+            clean_bvids,
+        )
+        return len(clean_bvids)
+
     def trim_pool_to_target_count(self, *, target: int) -> int:
         """Suppress overflow fresh items so the pool does not exceed *target*.
 

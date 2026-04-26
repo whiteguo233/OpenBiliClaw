@@ -208,6 +208,90 @@ class TestDatabase:
 
             db.close()
 
+    def test_trim_topic_group_overflow_suppresses_cross_source_excess(self) -> None:
+        """A hot topic_group accumulated from multiple sources gets capped down
+        to max_per_group, keeping the highest-scored items regardless of
+        source."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            # 5 items in 人工智能 group across 3 sources, varying scores
+            for i, (score, source) in enumerate(
+                [
+                    (0.95, "related_chain"),
+                    (0.92, "related_chain"),
+                    (0.88, "search"),
+                    (0.85, "explore"),
+                    (0.80, "related_chain"),
+                ]
+            ):
+                db.cache_content(
+                    f"BV1AI{i}",
+                    title=f"AI 内容 {i}",
+                    up_name="UP",
+                    source=source,
+                    topic_key="人工智能",
+                    topic_group="人工智能",
+                    relevance_score=score,
+                )
+            # 1 item in a different group — must remain untouched
+            db.cache_content(
+                "BV1MUSIC",
+                title="古典音乐讲解",
+                up_name="UP",
+                source="trending",
+                topic_key="音乐",
+                topic_group="音乐",
+                relevance_score=0.7,
+            )
+            # 1 item with empty topic_group — must remain untouched
+            db.cache_content(
+                "BV1NOGROUP",
+                title="未分组",
+                up_name="UP",
+                source="search",
+                topic_key="random",
+                topic_group="",
+                relevance_score=0.6,
+            )
+
+            suppressed = db.trim_topic_group_overflow(max_per_group=2)
+
+            assert suppressed == 3  # 5 AI items - 2 kept = 3 suppressed
+            rows = db.get_cached_content(limit=20)
+            by_bvid = {row["bvid"]: row for row in rows}
+            # Top 2 AI items by score survive (cross-source)
+            assert by_bvid["BV1AI0"]["pool_status"] == "fresh"
+            assert by_bvid["BV1AI1"]["pool_status"] == "fresh"
+            assert by_bvid["BV1AI2"]["pool_status"] == "suppressed"
+            assert by_bvid["BV1AI3"]["pool_status"] == "suppressed"
+            assert by_bvid["BV1AI4"]["pool_status"] == "suppressed"
+            # Unrelated topic + empty-group items untouched
+            assert by_bvid["BV1MUSIC"]["pool_status"] == "fresh"
+            assert by_bvid["BV1NOGROUP"]["pool_status"] == "fresh"
+
+            db.close()
+
+    def test_trim_topic_group_overflow_noop_when_under_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for i in range(3):
+                db.cache_content(
+                    f"BV1X{i}",
+                    title=f"AI {i}",
+                    up_name="UP",
+                    source="search",
+                    topic_group="人工智能",
+                    relevance_score=0.8,
+                )
+
+            suppressed = db.trim_topic_group_overflow(max_per_group=5)
+            assert suppressed == 0
+            db.close()
+
     def test_purge_pool_by_disliked_topics_matches_topic_key_exact(self) -> None:
         """An exact topic_key match should flip pool_status to purged_by_dislike."""
         with tempfile.TemporaryDirectory() as tmpdir:
