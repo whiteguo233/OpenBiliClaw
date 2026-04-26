@@ -1595,12 +1595,19 @@ def create_app(
     def xhs_next_task(response: Any = None) -> Any:
         """Return the oldest pending xhs task, or 204 if none."""
         from fastapi.responses import JSONResponse
+        from starlette.responses import Response
 
+        # 204 No Content responses MUST NOT carry a body (RFC 7230).
+        # JSONResponse(204, None) serialises None to "null" (4 bytes),
+        # then GZipMiddleware (minimum_size=0) wraps it into ~20 bytes
+        # of gzip stream while Content-Length stays at 4, which trips
+        # h11's strict "Too much data for declared Content-Length"
+        # check on every poll. Use a body-less Response instead.
         if _xhs_task_queue is None:
-            return JSONResponse(status_code=204, content=None)
+            return Response(status_code=204)
         task = _xhs_task_queue.next_pending()
         if task is None:
-            return JSONResponse(status_code=204, content=None)
+            return Response(status_code=204)
 
         import json as _json
 
