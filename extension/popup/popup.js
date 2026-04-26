@@ -1903,201 +1903,215 @@ function renderDelightSlot() {
 
   const delight = state.activeDelight;
   const isHandled = uiState.handled;
+  const isExpanded = Boolean(delight.expanded);
 
-  const card = document.createElement("article");
-  card.className = `delight-card${uiState.highlighted ? " is-highlighted" : ""}`;
-  card.dataset.state = delight.state || "pending";
+  // Compact banner — collapsed state shows hook + truncated title in a
+  // single row so the recommendation feed below isn't pushed down. Click
+  // the banner row to expand; click × to dismiss without affecting the
+  // pool ("稍后看" semantics).
+  const banner = document.createElement("article");
+  banner.className =
+    `delight-banner${isExpanded ? " is-expanded" : ""}` +
+    `${uiState.highlighted ? " is-highlighted" : ""}`;
+  banner.dataset.state = delight.state || "pending";
 
-  const header = document.createElement("div");
-  header.className = "delight-header";
+  // ── Row (always visible) ────────────────────────────────────────
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "delight-banner-row";
+  row.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+  row.addEventListener("click", () => {
+    state.activeDelight = {
+      ...(state.activeDelight ?? delight),
+      expanded: !isExpanded,
+    };
+    renderDelightSlot();
+  });
 
   const kicker = document.createElement("span");
-  kicker.className = "delight-kicker";
-  kicker.textContent = "惊喜推荐";
+  kicker.className = "delight-banner-kicker";
+  kicker.textContent = `✨ ${delight.delight_hook || "惊喜推荐"}`;
 
-  const score = document.createElement("span");
-  score.className = "delight-score";
-  score.textContent = uiState.score_label;
+  const titleText = document.createElement("span");
+  titleText.className = "delight-banner-title";
+  titleText.textContent = delight.title || "";
 
-  header.append(kicker, score);
+  const chevron = document.createElement("span");
+  chevron.className = "delight-banner-chevron";
+  chevron.textContent = isExpanded ? "▾" : "▸";  // ▾ vs ▸
 
-  const hero = document.createElement("button");
-  hero.type = "button";
-  hero.className = "delight-hero";
-  hero.addEventListener("click", async () => {
-    await openRecommendation(delight.bvid, delight);
-    state.activeDelight = {
-      ...(state.activeDelight ?? delight),
-      state: "viewed",
-      response_message: "已打开，阿B 会把这次点击当成强信号。",
-      composer_open: false,
-    };
-    renderDelightSlot();
-  });
+  row.append(kicker, titleText, chevron);
 
-  const cover = document.createElement("div");
-  cover.className = "delight-cover";
-  if (delight.cover_url) {
-    const image = document.createElement("img");
-    image.src = delight.cover_url;
-    image.alt = `${delight.title} 的封面`;
-    image.referrerPolicy = "no-referrer";
-    image.addEventListener("error", () => {
-      image.remove();
-      cover.textContent = "这条先看标题就行";
-    });
-    cover.append(image);
-  } else {
-    cover.textContent = "这条先看标题就行";
-  }
-
-  const copy = document.createElement("div");
-  copy.className = "delight-copy";
-
-  if (delight.delight_hook) {
-    const hook = document.createElement("span");
-    hook.className = "delight-hook";
-    hook.textContent = delight.delight_hook;
-    copy.append(hook);
-  }
-
-  const title = document.createElement("h3");
-  title.className = "delight-title";
-  title.textContent = delight.title;
-
-  const reason = document.createElement("p");
-  reason.className = "delight-reason";
-  reason.textContent = delight.delight_reason;
-
-  copy.append(title, reason);
-  hero.append(cover, copy);
-
-  const response = document.createElement("p");
-  response.className = "delight-response";
-  response.dataset.tone = uiState.response_tone;
-  response.textContent = uiState.response_message;
-  response.hidden = !uiState.response_message;
-
-  const actions = document.createElement("div");
-  actions.className = "delight-actions";
-
-  const openButton = createActionButton("看看", "action-button action-primary", async () => {
-    await openRecommendation(delight.bvid, delight);
-    state.activeDelight = {
-      ...(state.activeDelight ?? delight),
-      state: "viewed",
-      response_message: "已打开，阿B 会把这次点击当成强信号。",
-      composer_open: false,
-    };
-    renderDelightSlot();
-  });
-
-  const rejectButton = createActionButton("不感兴趣", "action-button action-secondary", () => {
-    state.activeDelight = {
-      ...(state.activeDelight ?? delight),
-      state: "rejected",
-      response_message: "记下了，这类惊喜先少来点。",
-      composer_open: false,
-    };
-    setHint("记下了，这类惊喜先少来点。", "success");
-    renderDelightSlot();
-  });
-
-  const chatButton = createActionButton("聊一聊", "action-button action-secondary", () => {
-    state.activeDelight = {
-      ...(state.activeDelight ?? delight),
-      composer_open: !(state.activeDelight ?? delight)?.composer_open,
-    };
-    renderDelightSlot();
-  });
-
-  const laterButton = createActionButton("稍后看", "action-button action-secondary", () => {
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "delight-banner-dismiss";
+  dismiss.title = "稍后看";
+  dismiss.setAttribute("aria-label", "关闭这条惊喜推荐");
+  dismiss.textContent = "×";
+  dismiss.addEventListener("click", (event) => {
+    event.stopPropagation();
     rememberDismissedDelight(delight.bvid);
     state.activeDelight = null;
     setHint("先给你收起来，回头想看再翻。", "info");
     renderDelightSlot();
   });
 
-  if (isHandled) {
-    rejectButton.disabled = true;
-    laterButton.disabled = true;
-  }
+  banner.append(row, dismiss);
 
-  actions.append(openButton, rejectButton, chatButton, laterButton);
-  card.append(header, hero, response, actions);
+  // ── Expanded body ───────────────────────────────────────────────
+  if (isExpanded) {
+    const body = document.createElement("div");
+    body.className = "delight-banner-body";
 
-  if (delight.chat_reply) {
-    const reply = document.createElement("p");
-    reply.className = "delight-chat-reply";
-    reply.textContent = delight.chat_reply;
-    card.append(reply);
-  }
+    if (delight.delight_reason) {
+      const reason = document.createElement("p");
+      reason.className = "delight-banner-reason";
+      reason.textContent = delight.delight_reason;
+      body.append(reason);
+    }
 
-  if (delight.composer_open) {
-    const composer = document.createElement("div");
-    composer.className = "delight-chat-composer";
+    if (uiState.response_message) {
+      const response = document.createElement("p");
+      response.className = "delight-banner-response";
+      response.dataset.tone = uiState.response_tone;
+      response.textContent = uiState.response_message;
+      body.append(response);
+    }
 
-    const input = document.createElement("textarea");
-    input.className = "chat-input";
-    input.rows = 3;
-    input.placeholder = "说说你为什么想点开，或者哪里还拿不准";
-    input.value = delight.chat_draft || "";
-    input.addEventListener("input", () => {
-      if (state.activeDelight?.bvid === delight.bvid) {
-        state.activeDelight = {
-          ...state.activeDelight,
-          chat_draft: input.value,
-        };
-      }
-    });
+    if (delight.chat_reply) {
+      const reply = document.createElement("p");
+      reply.className = "delight-banner-chat-reply";
+      reply.textContent = delight.chat_reply;
+      body.append(reply);
+    }
 
-    const status = document.createElement("p");
-    status.className = "delight-chat-status";
+    const actions = document.createElement("div");
+    actions.className = "delight-banner-actions";
 
-    const submit = createActionButton("发出去", "action-button action-primary", async () => {
-      const draft = input.value.trim();
-      if (!draft) {
-        status.textContent = "先写一句你的想法。";
-        input.focus();
-        return;
-      }
-
-      submit.disabled = true;
-      status.textContent = "正在整理这条惊喜推荐给阿B。";
-      try {
-        const payload = await sendChatMessage(
-          `我想聊聊一条惊喜推荐。\n标题：${delight.title}\n理由：${delight.delight_reason}\n我的想法：${draft}`,
-        );
+    const openButton = createActionButton(
+      "看看",
+      "action-button action-primary delight-banner-action",
+      async () => {
+        await openRecommendation(delight.bvid, delight);
         state.activeDelight = {
           ...(state.activeDelight ?? delight),
-          state: "chatted",
-          response_message: "这句已经记下，后面会更会试探。",
-          chat_reply: payload.reply,
-          chat_draft: "",
+          state: "viewed",
+          response_message: "已打开，阿B 会把这次点击当成强信号。",
           composer_open: false,
+          expanded: true,
         };
-        setHint("这句记下了，后面的惊喜推荐会继续学。", "success");
         renderDelightSlot();
-        await refreshProfileSummaryAfterInteraction({
-          onProfileStart() {
-            setHint("正在同步画像。", "info");
-          },
-          onActivityStart() {
-            setHint("画像已同步，正在刷新最近动态。", "info");
-          },
-        });
-      } catch {
-        submit.disabled = false;
-        status.textContent = "这句还没发出去，稍后再试。";
-      }
-    });
+      },
+    );
 
-    composer.append(input, submit, status);
-    card.append(composer);
+    const rejectButton = createActionButton(
+      "不感兴趣",
+      "action-button action-secondary delight-banner-action",
+      () => {
+        state.activeDelight = {
+          ...(state.activeDelight ?? delight),
+          state: "rejected",
+          response_message: "记下了，这类惊喜先少来点。",
+          composer_open: false,
+          expanded: true,
+        };
+        setHint("记下了，这类惊喜先少来点。", "success");
+        renderDelightSlot();
+      },
+    );
+
+    const chatButton = createActionButton(
+      "聊一聊",
+      "action-button action-secondary delight-banner-action",
+      () => {
+        state.activeDelight = {
+          ...(state.activeDelight ?? delight),
+          composer_open: !(state.activeDelight ?? delight)?.composer_open,
+          expanded: true,
+        };
+        renderDelightSlot();
+      },
+    );
+
+    if (isHandled) {
+      rejectButton.disabled = true;
+    }
+
+    actions.append(openButton, rejectButton, chatButton);
+    body.append(actions);
+
+    if (delight.composer_open) {
+      const composer = document.createElement("div");
+      composer.className = "delight-chat-composer";
+
+      const input = document.createElement("textarea");
+      input.className = "chat-input";
+      input.rows = 3;
+      input.placeholder = "说说你为什么想点开，或者哪里还拿不准";
+      input.value = delight.chat_draft || "";
+      input.addEventListener("input", () => {
+        if (state.activeDelight?.bvid === delight.bvid) {
+          state.activeDelight = {
+            ...state.activeDelight,
+            chat_draft: input.value,
+          };
+        }
+      });
+
+      const status = document.createElement("p");
+      status.className = "delight-chat-status";
+
+      const submit = createActionButton(
+        "发出去",
+        "action-button action-primary",
+        async () => {
+          const draft = input.value.trim();
+          if (!draft) {
+            status.textContent = "先写一句你的想法。";
+            input.focus();
+            return;
+          }
+          submit.disabled = true;
+          status.textContent = "正在整理这条惊喜推荐给阿B。";
+          try {
+            const payload = await sendChatMessage(
+              `我想聊聊一条惊喜推荐。\n标题：${delight.title}\n理由：${delight.delight_reason}\n我的想法：${draft}`,
+            );
+            state.activeDelight = {
+              ...(state.activeDelight ?? delight),
+              state: "chatted",
+              response_message: "这句已经记下，后面会更会试探。",
+              chat_reply: payload.reply,
+              chat_draft: "",
+              composer_open: false,
+              expanded: true,
+            };
+            setHint("这句记下了，后面的惊喜推荐会继续学。", "success");
+            renderDelightSlot();
+            await refreshProfileSummaryAfterInteraction({
+              onProfileStart() {
+                setHint("正在同步画像。", "info");
+              },
+              onActivityStart() {
+                setHint("画像已同步，正在刷新最近动态。", "info");
+              },
+            });
+          } catch {
+            submit.disabled = false;
+            status.textContent = "这句还没发出去，稍后再试。";
+          }
+        },
+      );
+
+      composer.append(input, submit, status);
+      body.append(composer);
+    }
+
+    banner.append(body);
   }
 
   elements.delightSlot.hidden = false;
-  elements.delightSlot.replaceChildren(card);
+  elements.delightSlot.replaceChildren(banner);
 }
 
 function createCommentComposer(item, statusLine) {

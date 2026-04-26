@@ -517,6 +517,143 @@
       display: none;
     }
 
+    /* Compact banner version of the delight card.
+       Collapsed state is a single ~36px row that doesn't push the
+       recommendation feed down; click the row to expand. */
+    .delight-banner {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: stretch;
+      border-radius: 14px;
+      border: 1px solid rgba(237, 219, 233, 0.96);
+      background:
+        radial-gradient(circle at top right, rgba(251, 114, 153, 0.12), transparent 40%),
+        linear-gradient(180deg, rgba(255, 252, 254, 0.98), rgba(252, 250, 255, 0.98));
+      box-shadow: 0 4px 12px rgba(251, 114, 153, 0.08);
+      overflow: hidden;
+      transition: box-shadow 0.2s ease;
+    }
+    .delight-banner.is-highlighted {
+      border-color: rgba(251, 114, 153, 0.42);
+      box-shadow: 0 8px 18px rgba(251, 114, 153, 0.16);
+    }
+    .delight-banner.is-expanded {
+      grid-template-rows: auto auto;
+      grid-template-columns: 1fr auto;
+    }
+
+    .delight-banner-row {
+      grid-column: 1;
+      grid-row: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      min-width: 0;
+    }
+    .delight-banner-row:hover {
+      background: rgba(251, 114, 153, 0.04);
+    }
+
+    .delight-banner-kicker {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--brand-strong);
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(251, 114, 153, 0.1);
+      letter-spacing: 0.02em;
+    }
+
+    .delight-banner-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .delight-banner-chevron {
+      flex-shrink: 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+      transition: transform 0.2s ease;
+    }
+
+    .delight-banner-dismiss {
+      grid-column: 2;
+      grid-row: 1;
+      width: 28px;
+      border: 0;
+      border-left: 1px solid rgba(237, 219, 233, 0.7);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .delight-banner-dismiss:hover {
+      background: rgba(0, 0, 0, 0.04);
+      color: var(--text-main);
+    }
+
+    .delight-banner-body {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      padding: 4px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-top: 1px solid rgba(237, 219, 233, 0.6);
+    }
+
+    .delight-banner-reason {
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      margin: 4px 0 0;
+    }
+
+    .delight-banner-response {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+    .delight-banner-response[data-tone="success"] { color: #1a7f37; }
+    .delight-banner-response[data-tone="error"] { color: #cf222e; }
+
+    .delight-banner-chat-reply {
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-main);
+      margin: 0;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.7);
+      border-radius: 10px;
+      border: 1px solid rgba(237, 219, 233, 0.6);
+    }
+
+    .delight-banner-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .delight-banner-action {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
     .delight-card {
       border-radius: 20px;
       border: 1px solid rgba(237, 219, 233, 0.96);
