@@ -32,6 +32,7 @@ import {
   fetchActivityFeed,
   fetchConfig,
   fetchPendingDelight,
+  fetchPendingDelightBatch,
   fetchProfileSummary,
   fetchRecommendations,
   fetchRuntimeStatus,
@@ -2928,13 +2929,16 @@ async function initializeRecommendations() {
   const [runtimeResult, recommendationResult, delightResult] = await Promise.allSettled([
     fetchRuntimeStatus(),
     fetchRecommendations(),
-    fetchPendingDelight(),
+    fetchPendingDelightBatch(20),
   ]);
 
   state.runtimeStatus = runtimeResult.status === "fulfilled" ? runtimeResult.value : null;
-  if (delightResult.status === "fulfilled") {
-    if (delightResult.value != null) {
-      pushDelightCandidate(delightResult.value);
+  if (delightResult.status === "fulfilled" && Array.isArray(delightResult.value)) {
+    // Reset queue then re-push all from server so dismissed items in
+    // memory are still respected (pushDelightCandidate filters them).
+    clearDelightQueue();
+    for (const item of delightResult.value) {
+      pushDelightCandidate(item);
     }
   }
   renderPoolStatus(state.runtimeStatus);

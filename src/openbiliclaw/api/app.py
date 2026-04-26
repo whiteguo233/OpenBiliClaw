@@ -801,6 +801,51 @@ def create_app(
             return PendingDelightResponse(item=None)
         return PendingDelightResponse(item=PendingDelightOut(**item))
 
+    @app.get("/api/delight/pending-batch")
+    async def pending_delight_batch(limit: int = 20) -> dict[str, Any]:
+        """Return up to ``limit`` un-notified delight candidates.
+
+        Unlike ``/api/delight/pending`` this ignores the 4-hour
+        notification cooldown — it's intended for the popup to
+        re-hydrate the full queue on init, not for active push gating.
+        Honors ``disliked_topics`` substring filter same as the singular
+        endpoint.
+        """
+        from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+
+        rows = ctx.database.get_delight_candidates(
+            min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
+            limit=max(1, min(50, int(limit))),
+        )
+        # Reuse the same disliked-topic filter as get_pending_delight by
+        # going through the runtime controller's loader if possible.
+        controller = ctx.runtime_controller
+        load_phrases = getattr(controller, "_load_disliked_topic_phrases", None)
+        disliked_phrases = load_phrases() if callable(load_phrases) else []
+
+        def passes_filter(row: dict[str, Any]) -> bool:
+            haystack = (
+                f"{str(row.get('title', '')).lower()} "
+                f"{str(row.get('tags', '')).lower()}"
+            )
+            return not any(p and p in haystack for p in disliked_phrases)
+
+        items = [
+            {
+                "bvid": str(row.get("bvid", "")),
+                "title": str(row.get("title", "")),
+                "delight_reason": str(row.get("delight_reason", "")),
+                "delight_score": float(row.get("delight_score", 0.0) or 0.0),
+                "delight_hook": str(row.get("delight_hook", "")),
+                "cover_url": str(row.get("cover_url", "")),
+                "content_url": str(row.get("content_url", "")),
+                "source_platform": str(row.get("source_platform", "bilibili")),
+            }
+            for row in rows
+            if passes_filter(row)
+        ]
+        return {"items": items}
+
     @app.post("/api/delight/sent", response_model=DelightAckResponse)
     async def mark_delight_sent(payload: DelightAckIn) -> DelightAckResponse:
         bvid = payload.bvid.strip()

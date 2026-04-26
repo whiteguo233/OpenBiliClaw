@@ -67,6 +67,14 @@ export async function fetchPendingDelight() {
   return payload?.item ?? null;
 }
 
+export async function fetchPendingDelightBatch(limit = 20) {
+  const payload = await requestJson(
+    `/delight/pending-batch?limit=${limit}`,
+    { method: "GET" },
+  );
+  return Array.isArray(payload?.items) ? payload.items : [];
+}
+
 export async function acknowledgeNotificationSent(bvid) {
   return requestJson("/notifications/sent", {
     method: "POST",
