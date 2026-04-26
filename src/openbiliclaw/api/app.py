@@ -1061,17 +1061,25 @@ def create_app(
         if response_type == "confirm":
             ok = speculator.user_confirm_speculation(domain)
             if ok:
-                # Trigger promotion cycle
+                # Force_tick generates 5 new probes via LLM (~30-60s).
+                # Running it inline blocks the response past the
+                # browser fetch timeout (35s) — the user gives up,
+                # AbortError fires, and the next click hits a stale UI.
+                # Schedule it as a background task so the API returns
+                # immediately; the new probes will be visible on the
+                # next profile-summary refresh.
                 tick_fn = getattr(speculator, "force_tick", None)
                 if callable(tick_fn):
-                    try:
-                        profile = await ctx.soul_engine.get_profile()
-                        if asyncio.iscoroutinefunction(tick_fn):
-                            await tick_fn(profile)
-                        else:
-                            tick_fn(profile)
-                    except Exception:
-                        pass
+                    async def _bg_force_tick() -> None:
+                        try:
+                            profile = await ctx.soul_engine.get_profile()
+                            if asyncio.iscoroutinefunction(tick_fn):
+                                await tick_fn(profile)
+                            else:
+                                tick_fn(profile)
+                        except Exception:
+                            logger.exception("Background force_tick after confirm failed")
+                    asyncio.create_task(_bg_force_tick())
                 # Record cognition update so it shows in "阿b最近记住了什么"
                 _record_probe_cognition(
                     f"你确认了对「{domain}」的兴趣，已加入画像。",
