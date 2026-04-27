@@ -147,6 +147,10 @@ curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scrip
 
 > 💡 **Windows 用户？** 如果你已经装了 Docker Desktop，推荐直接用上面的 Docker 方式部署，开箱即用。否则请先安装 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 再用终端命令安装。
 
+> 🧠 **可选：本地 embedding 兜底（无需 API Key）** —— 装一次 Ollama 就能跑：
+> Mac `brew install ollama && ollama serve &`，Windows 从 [ollama.com/download](https://ollama.com/download) 下载，Linux `curl -fsSL https://ollama.com/install.sh \| sh && ollama serve &`。
+> 然后 `uv run openbiliclaw setup-embedding`，向导自动拉取 `bge-m3`（~568MB，CPU 即可）并写入配置。适合 embedding 配额不够、断网，或不想再多一份 API Key 的用户。
+
 <details>
 <summary>手动安装 / 手动配置 / 浏览器插件</summary>
 

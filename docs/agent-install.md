@@ -56,6 +56,22 @@ When `Missing` is non-empty, do exactly what `Next action` says:
 3. Curl the `Health URL` from the block to confirm the backend is still healthy (HTTP 200).
 4. Report the final state to the user.
 
+## Optional: local Ollama as the embedding fallback
+
+This is a **post-install opt-in**, not part of the install contract. Mention
+it to the user only if they ask about offline operation, embedding-quota
+errors, or a no-API-key setup. Steps:
+
+1. User installs Ollama: Mac `brew install ollama && ollama serve &`,
+   Windows from `https://ollama.com/download`, Linux
+   `curl -fsSL https://ollama.com/install.sh | sh && ollama serve &`.
+2. User runs `cd <INSTALL_DIR> && uv run openbiliclaw setup-embedding`.
+3. The wizard probes `localhost:11434`, pulls `bge-m3` if missing, and
+   writes `[llm.embedding]` to `config.toml`.
+
+Do NOT run these steps for the user automatically — Ollama install is a
+system-level package the user must consent to.
+
 ## Hard rules
 
 1. **Never edit `config.toml` by hand.** Every credential write goes through `scripts/agent_bootstrap.py`.

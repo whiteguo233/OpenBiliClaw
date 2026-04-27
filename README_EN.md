@@ -90,6 +90,10 @@ The desktop package is the easiest path for macOS and Windows users. `install.sh
 
 > 💡 **On Windows?** If you already have Docker Desktop, use the Docker method above — it works out of the box. Otherwise, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) first, then use the terminal command.
 
+> 🧠 **Optional: local embedding fallback (no API key required)** — install Ollama once:
+> Mac `brew install ollama && ollama serve &`, Windows from [ollama.com/download](https://ollama.com/download), Linux `curl -fsSL https://ollama.com/install.sh \| sh && ollama serve &`.
+> Then run `uv run openbiliclaw setup-embedding` — the wizard pulls `bge-m3` (~568MB, CPU only) and writes the config. Useful when your remote embedding quota is exhausted, you're offline, or you just don't want to add another API key.
+
 <details>
 <summary>Manual installation / configuration / browser extension</summary>
 

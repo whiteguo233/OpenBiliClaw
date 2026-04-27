@@ -169,6 +169,28 @@ model = "llama3"
 base_url = "http://host.docker.internal:11434"
 ```
 
+### 本地 embedding 兜底（Ollama + bge-m3）
+
+不想再多一份 embedding API Key、或想让系统在断网时仍能跑相似度计算，可以让 Ollama 同时承担 embedding 服务：
+
+```bash
+# 1. 在宿主机拉取 bge-m3（首次 ~568MB，CPU 即可跑）
+ollama pull bge-m3
+
+# 2. 在容器里写入 embedding 配置（推荐用 setup-embedding 命令）
+docker exec -it openbiliclaw-backend uv run openbiliclaw setup-embedding
+```
+
+或直接编辑 `config.toml` 的 `[llm.embedding]` 段：
+
+```toml
+[llm.embedding]
+provider = "ollama"
+model = "bge-m3"
+```
+
+注意：容器需要能访问宿主机的 Ollama，确认 `[llm.ollama] base_url` 已经设到 `http://host.docker.internal:11434`，embedding 会自动复用同一连接。
+
 ## 常见问题
 
 **Q: 容器启动后如何确认服务正常？**
