@@ -4,6 +4,24 @@
 
 ---
 
+## v0.3.2: supergroup 合并迁离 serve 热路径（2026-04-29）
+
+### 推荐 serve 路径零 API 调用
+
+- `RecommendationEngine` 新增 `_supergroup_canonical_map`，由 `prewarm_supergroup_embeddings` 在每次 refresh tick 后台填充；serve()` `_merge_topic_supergroups` 退化为纯 dict lookup（零 embedding API 调用，零 pairwise 比较）
+- prewarm 时重新启用 `"label | top-5 sample titles"` 的语义消歧路径——titles 用来区分 embedding 空间里看似相似的短中文 label（赛博朋克 ≈ 动漫 在裸 label 下能到 sim ≥ 0.90），但只在后台付代价
+- `Database.get_topic_group_samples` 给 prewarmer 提供带 sample title 的池子摘要
+- 修复早期"label-only embedding 可能误合并短 label"的质量隐患，同时不影响 popup 0.6s 响应延迟
+
+### 工程
+
+- `refresh.py` 把 prewarm 的 `with suppress(Exception)` 换成 `try/except + logger.exception(...)`，失败现在会进日志而不是被吞掉
+- `uv.lock` 跟进 0.3.1 → 0.3.2 版本号
+
+> 仅后端发版（backend-v0.3.2）。Extension 自 v0.3.1 零改动，沿用 extension-v0.3.1。
+
+---
+
 ## v0.3.1: 推荐丰富度收尾 + 装机/CI 修复（2026-04-29）
 
 ### 推荐丰富度二轮治理
