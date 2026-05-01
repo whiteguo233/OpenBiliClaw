@@ -575,6 +575,8 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
     assert created_memories[0].database is created_databases[0]
     assert recommendation_engine.database is created_databases[0]
     assert discovery_engine.database is created_databases[0]
+
+
 def test_start_accepts_explicit_host_and_port(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
@@ -636,9 +638,7 @@ def test_discover_prints_init_guidance_when_profile_missing(
     assert "openbiliclaw init" in result.stdout
 
 
-def test_discover_reports_empty_results(
-    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
-) -> None:
+def test_discover_reports_empty_results(monkeypatch: pytest.MonkeyPatch, runner: CliRunner) -> None:
     class FakeSoulEngine:
         async def get_profile(self) -> SoulProfile:
             return SoulProfile(personality_portrait="稳定用户画像" * 30)
@@ -669,9 +669,7 @@ def test_discover_reports_empty_results(
     assert "没有发现到新内容" in result.stdout
 
 
-def test_discover_displays_preview_rows(
-    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
-) -> None:
+def test_discover_displays_preview_rows(monkeypatch: pytest.MonkeyPatch, runner: CliRunner) -> None:
     class FakeSoulEngine:
         async def get_profile(self) -> SoulProfile:
             return SoulProfile(personality_portrait="稳定用户画像" * 30)
@@ -799,8 +797,7 @@ def test_profile_command_shows_saved_profile(
         async def get_profile(self) -> OnionProfile:
             return OnionProfile(
                 personality_portrait=(
-                    "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。"
-                    * 6
+                    "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。" * 6
                 ),
                 core=CoreLayer(
                     core_traits=["理性", "谨慎", "自驱"],
@@ -1248,15 +1245,18 @@ def test_init_guides_missing_runtime_config_interactively(
     #   3. model (accept default by Enter)
     #   4. embedding choice "1" (follow primary)
     #   5. "n" — skip module overrides
-    wizard_input = "\n".join(
-        [
-            "gemini",  # menu — by canonical name
-            "gemini-key",  # API key
-            "",  # accept default model
-            "1",  # embedding: follow primary
-            "n",  # skip module overrides
-        ]
-    ) + "\n"
+    wizard_input = (
+        "\n".join(
+            [
+                "gemini",  # menu — by canonical name
+                "gemini-key",  # API key
+                "",  # accept default model
+                "1",  # embedding: follow primary
+                "n",  # skip module overrides
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(app, ["init"], input=wizard_input)
 
     assert result.exit_code == 1
@@ -1405,12 +1405,16 @@ def test_init_runs_history_preference_profile_and_discovery(
             ]
 
         async def get_all_favorites(
-            self, max_folders: int = 20, max_items_per_folder: int = 200,
+            self,
+            max_folders: int = 20,
+            max_items_per_folder: int = 200,
         ) -> list[object]:
             return []
 
         async def get_following(
-            self, page: int = 1, page_size: int = 50,
+            self,
+            page: int = 1,
+            page_size: int = 50,
         ) -> list[object]:
             return []
 
@@ -1618,6 +1622,25 @@ def test_init_includes_xhs_bootstrap_events(
         lambda memory: SoulProfile(preferences=PreferenceLayer()),
     )
     monkeypatch.setattr(cli_module, "_notify_running_server_init_completed", lambda: None)
+    # v0.3.21+: init now uses split enqueue/collect APIs so the
+    # XHS task can run in parallel with B站 fetches. The test fakes
+    # both halves: enqueue returns a fake task id (so the "skipped"
+    # branch isn't taken) and collect returns the synthetic event
+    # plus the "ok" status.
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_xhs_bootstrap_task",
+        lambda: "fake-xhs-task-id",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_xhs_bootstrap_events",
+        lambda task_id, **_: ([xhs_event], {"saved": 1, "liked": 0, "xhs_history": 0}, "ok"),
+        raising=False,
+    )
+    # Keep the legacy single-shot wrapper monkeypatched too in case
+    # any old test fixture still calls it indirectly.
     monkeypatch.setattr(
         cli_module,
         "_import_xhs_bootstrap_events",
@@ -1638,6 +1661,127 @@ def test_init_includes_xhs_bootstrap_events(
     assert fake_soul.built_history
     built_history = fake_soul.built_history[0]
     assert any(item.get("title") == "小红书收藏咖啡" for item in built_history)
+
+
+def test_collect_xhs_bootstrap_events_status_branches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """v0.3.21+: _collect_xhs_bootstrap_events must return one of
+    five status labels (ok / empty / timeout / failed / skipped) so
+    init can print the right user-facing message. Before this split,
+    ``timeout`` and ``empty`` and ``failed`` all degraded to "未导入"
+    silently — users had no way to tell whether the extension was
+    offline, the page was empty, or the backend errored.
+    """
+    import json
+
+    from openbiliclaw.cli import _collect_xhs_bootstrap_events
+
+    class FakeQueue:
+        def __init__(self, status_seq, result_payload=None):
+            self._status_seq = list(status_seq)
+            self._payload = result_payload or {}
+
+        def get(self, _task_id):
+            if not self._status_seq:
+                return {"status": "completed", "result_json": json.dumps(self._payload)}
+            status = self._status_seq.pop(0)
+            return {"status": status, "result_json": json.dumps(self._payload)}
+
+    class FakeDatabase:
+        conn = object()
+
+    # Status: ok — task completes with notes
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr(
+        "openbiliclaw.sources.xhs_tasks.XhsTaskQueue",
+        lambda _db: FakeQueue(
+            ["pending", "completed"],
+            {
+                "notes": [
+                    {
+                        "scope": "saved",
+                        "title": "示例笔记",
+                        "url": "https://www.xiaohongshu.com/explore/x1",
+                    }
+                ],
+                "scope_counts": {"saved": 1, "liked": 0, "xhs_history": 0},
+            },
+        ),
+    )
+    events, counts, status = _collect_xhs_bootstrap_events("task-1", max_wait_seconds=2)
+    assert status == "ok"
+    assert events
+    assert counts["saved"] == 1
+
+    # Status: empty — task completes but 0 notes
+    monkeypatch.setattr(
+        "openbiliclaw.sources.xhs_tasks.XhsTaskQueue",
+        lambda _db: FakeQueue(
+            ["completed"],
+            {"notes": [], "scope_counts": {"saved": 0, "liked": 0, "xhs_history": 0}},
+        ),
+    )
+    events, counts, status = _collect_xhs_bootstrap_events("task-2", max_wait_seconds=2)
+    assert status == "empty"
+    assert events == []
+
+    # Status: failed — backend marks task as failed
+    monkeypatch.setattr(
+        "openbiliclaw.sources.xhs_tasks.XhsTaskQueue",
+        lambda _db: FakeQueue(["failed"]),
+    )
+    events, counts, status = _collect_xhs_bootstrap_events("task-3", max_wait_seconds=2)
+    assert status == "failed"
+
+    # Status: timeout — wait deadline expires, task still pending
+    monkeypatch.setattr(
+        "openbiliclaw.sources.xhs_tasks.XhsTaskQueue",
+        lambda _db: FakeQueue(["pending", "pending", "pending", "pending", "pending", "pending"]),
+    )
+    events, counts, status = _collect_xhs_bootstrap_events("task-4", max_wait_seconds=0.1)
+    assert status == "timeout"
+
+    # Status: skipped — no task_id (DB unavailable / budget exhausted)
+    events, counts, status = _collect_xhs_bootstrap_events(None, max_wait_seconds=2)
+    assert status == "skipped"
+    assert events == []
+    assert counts == {}
+
+
+def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v0.3.21+: scroll rounds and item caps are env-tunable.
+    Verifies the env vars actually flow through to the queue payload."""
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            captured["task_type"] = task_type
+            captured["payload"] = payload
+            captured["daily_budget"] = daily_budget
+            return "task-xyz"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+    monkeypatch.setenv("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "5")
+    monkeypatch.setenv("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "100")
+
+    task_id = _enqueue_xhs_bootstrap_task()
+    assert task_id == "task-xyz"
+    assert captured["task_type"] == "bootstrap_profile"
+    assert captured["payload"]["max_scroll_rounds"] == 5
+    assert captured["payload"]["max_items_per_scope"] == 100
+    assert captured["payload"]["scopes"] == ["saved", "liked", "xhs_history"]
 
 
 def test_init_backfills_pool_in_stages_until_target_is_reached(

@@ -1496,8 +1496,72 @@ def _build_draft_profile_for_discover(memory: Any) -> Any:
     return draft
 
 
-def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Best-effort import of extension-collected Xiaohongshu init signals."""
+def _enqueue_xhs_bootstrap_task() -> str | None:
+    """Fire-and-forget enqueue of the bootstrap_profile task.
+
+    Returns the task_id if enqueue succeeded, ``None`` otherwise (DB
+    unavailable, daily budget exhausted, etc.). Doesn't wait — the
+    extension picks the task off the queue and runs it in parallel
+    with the rest of init.
+
+    Defaults (v0.3.21+): ``max_scroll_rounds=3`` so the profile actually
+    pulls more than the first virtual-list window;
+    ``max_items_per_scope=50`` so users with hundreds of saves don't
+    only get the first 20. Both can be overridden via env vars
+    ``OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS`` and
+    ``OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS``.
+    """
+    from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]小红书初始化信号未导入: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    scroll_rounds = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "3"))
+    max_items = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "50"))
+
+    try:
+        queue = XhsTaskQueue(database)
+        task_id = queue.enqueue_with_id(
+            "bootstrap_profile",
+            {
+                "scopes": ["saved", "liked", "xhs_history"],
+                "max_items_per_scope": max(1, max_items),
+                "max_scroll_rounds": max(0, scroll_rounds),
+            },
+            daily_budget=10,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]小红书初始化信号未导入: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]小红书初始化信号未导入: 今日任务预算已用完。[/yellow]")
+        return None
+    return task_id
+
+
+def _collect_xhs_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and harvest a previously-enqueued bootstrap_profile task.
+
+    Returns ``(events, scope_counts, status_label)`` where
+    ``status_label`` is one of:
+      - ``"ok"``         — task completed with notes
+      - ``"empty"``      — task completed but extension returned 0 notes
+      - ``"timeout"``    — wait window expired, task still pending
+      - ``"failed"``     — extension or backend reported error
+      - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
+
+    The wait deadline starts NOW; callers that enqueued the task earlier
+    in the init flow benefit from the parallel-execution head start.
+    """
     import json
     import time
 
@@ -1506,34 +1570,21 @@ def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]
         xhs_bootstrap_notes_to_events,
     )
 
+    if not task_id:
+        return [], {}, "skipped"
+
+    if max_wait_seconds is None:
+        max_wait_seconds = float(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS", "30"))
+
     try:
         database = _get_runtime_database()
-    except Exception as exc:
-        console.print(f"  [yellow]小红书初始化信号未导入: 数据库不可用: {exc}[/yellow]")
-        return [], {}
+    except Exception:
+        return [], {}, "skipped"
     if not hasattr(database, "conn"):
-        return [], {}
+        return [], {}, "skipped"
 
-    try:
-        queue = XhsTaskQueue(database)
-        task_id = queue.enqueue_with_id(
-            "bootstrap_profile",
-            {
-                "scopes": ["saved", "liked", "xhs_history"],
-                "max_items_per_scope": 20,
-                "max_scroll_rounds": 0,
-            },
-            daily_budget=10,
-        )
-    except Exception as exc:
-        console.print(f"  [yellow]小红书初始化信号未导入: {exc}[/yellow]")
-        return [], {}
-    if not task_id:
-        console.print("  [yellow]小红书初始化信号未导入: 今日任务预算已用完。[/yellow]")
-        return [], {}
-
-    wait_seconds = float(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS", "8"))
-    deadline = time.monotonic() + max(0.0, wait_seconds)
+    queue = XhsTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
     poll_interval = 0.5
     task: dict[str, Any] | None = None
     while True:
@@ -1545,22 +1596,21 @@ def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]
             break
         time.sleep(poll_interval)
 
-    if not task or task.get("status") != "completed":
-        console.print("  [dim]小红书初始化信号未导入：插件未连接、未登录或页面未返回。[/dim]")
-        return [], {}
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        return [], {}, "timeout"
 
     try:
         result = json.loads(str(task.get("result_json") or "{}"))
     except json.JSONDecodeError:
-        return [], {}
+        return [], {}, "failed"
     notes = [note for note in result.get("notes", []) if isinstance(note, dict)]
     events = xhs_bootstrap_notes_to_events(notes)
     raw_counts = result.get("scope_counts", {})
-    scope_counts = {
-        "saved": 0,
-        "liked": 0,
-        "xhs_history": 0,
-    }
+    scope_counts = {"saved": 0, "liked": 0, "xhs_history": 0}
     if isinstance(raw_counts, dict):
         for key in scope_counts:
             with suppress(Exception):
@@ -1574,7 +1624,21 @@ def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]
             for key in scope_counts:
                 if source == f"xhs_bootstrap_{key}":
                     scope_counts[key] += 1
-    return events, scope_counts
+    status_label = "ok" if events else "empty"
+    return events, scope_counts, status_label
+
+
+def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Backwards-compatible single-shot wrapper used by tests.
+
+    For the live ``init`` flow we use the split enqueue/collect API
+    above so xhs data collection runs in parallel with B站 fetches
+    instead of serialising for a fixed wait. This wrapper preserves
+    the old test contract.
+    """
+    task_id = _enqueue_xhs_bootstrap_task()
+    events, counts, _status = _collect_xhs_bootstrap_events(task_id)
+    return events, counts
 
 
 def _xhs_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1736,6 +1800,17 @@ def init() -> None:
 
         return hist, favs, follows
 
+    # Enqueue the XHS bootstrap task FIRST so the browser extension
+    # can run it in parallel with the slow B站 history/favs/follows
+    # fetches below (~10–30s). When _collect_xhs_bootstrap_events()
+    # is called after fetches finish, the task is usually already
+    # done — no extra wall-clock overhead in the happy path. v0.3.21
+    # changed this from a serial 8-second blocking poll to this
+    # parallel pattern.
+    xhs_task_id = _enqueue_xhs_bootstrap_task()
+    if xhs_task_id:
+        console.print("  [dim]已请求扩展拉小红书收藏 / 点赞（后台并行,不阻塞 B 站拉取）。[/dim]")
+
     _print_section_title("1/4 拉取数据")
     history, favorites_data, following_data = asyncio.run(_fetch_all_data())
     if not history:
@@ -1746,14 +1821,33 @@ def init() -> None:
         f" / 收藏 [green]{len(favorites_data)}[/green] 个"
         f" / 关注 [green]{len(following_data)}[/green] 人"
     )
-    xhs_events, xhs_scope_counts = _import_xhs_bootstrap_events()
-    if xhs_events:
+
+    # Now collect the XHS task. By this point the extension has had
+    # the duration of B站 fetches to run; max_wait_seconds is the
+    # *additional* wait on top of that. 30s default covers the
+    # tail-end of normal completions on slow networks.
+    xhs_events, xhs_scope_counts, xhs_status = _collect_xhs_bootstrap_events(xhs_task_id)
+    if xhs_status == "ok":
         console.print(
             "  小红书 "
             f"收藏 [green]{xhs_scope_counts.get('saved', 0)}[/green] 个"
             f" / 点赞 [green]{xhs_scope_counts.get('liked', 0)}[/green] 个"
             f" / 浏览记录 [green]{xhs_scope_counts.get('xhs_history', 0)}[/green] 个"
         )
+    elif xhs_status == "empty":
+        console.print(
+            "  [yellow]小红书任务跑通但 0 条 notes —— "
+            "可能未登录小红书 / 个人主页没有公开收藏 / 页面 state 漂移。[/yellow]"
+        )
+    elif xhs_status == "timeout":
+        console.print(
+            "  [dim]小红书初始化信号未导入：扩展未连接或任务仍在后台跑。"
+            "可设 OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS=60 延长等待。[/dim]"
+        )
+    elif xhs_status == "failed":
+        console.print("  [yellow]小红书任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
+    # status == "skipped" is silent (DB unavailable / budget exhausted —
+    # already printed by _enqueue_xhs_bootstrap_task)
 
     # Build events from all data sources
     events = [_history_item_to_event(item) for item in history]
