@@ -83,6 +83,7 @@ class RuntimeContext:
         from openbiliclaw.llm import build_llm_registry
         from openbiliclaw.llm.registry import build_embedding_service
         from openbiliclaw.llm.service import LLMService
+        from openbiliclaw.llm.usage_recorder import UsageRecorder
         from openbiliclaw.recommendation.engine import RecommendationEngine
         from openbiliclaw.runtime.account_sync import AccountSyncService
         from openbiliclaw.runtime.refresh import ContinuousRefreshController
@@ -90,9 +91,14 @@ class RuntimeContext:
         from openbiliclaw.soul.dialogue import SocraticDialogue
         from openbiliclaw.soul.engine import SoulEngine
 
-        # 1. LLM layer
+        # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
         new_registry = build_llm_registry(new_config)
-        new_llm_service = LLMService(registry=new_registry, memory=self.memory_manager)
+        new_usage_recorder = UsageRecorder(sink=self.database)
+        new_llm_service = LLMService(
+            registry=new_registry,
+            memory=self.memory_manager,
+            usage_recorder=new_usage_recorder,
+        )
 
         # 2. Bilibili client
         new_bilibili_client = BilibiliAPIClient(

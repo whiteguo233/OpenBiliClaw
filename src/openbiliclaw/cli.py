@@ -1695,6 +1695,85 @@ def setup_embedding() -> None:
 
 
 @app.command()
+def cost(
+    days: int = typer.Option(7, "--days", min=1, max=90, help="统计窗口(天)"),
+) -> None:
+    """显示本机 LLM 调用花费(按天 + 按 provider/model)。
+
+    数据来源:每次成功的 LLM 调用都会写一条到 ``llm_usage`` 表(v0.3.26+)。
+    费用按 ``llm.pricing`` 里的官方单价估算,允许 ±20% 误差。本地 Ollama
+    调用单价 0,只统计调用次数。
+    """
+    _print_page_title("LLM 调用花费", f"最近 {days} 天")
+    _ensure_runtime_database_healthy()
+    db = _get_runtime_database()
+
+    daily = db.query_llm_usage_by_day(days=days)
+    by_provider = db.query_llm_usage_by_provider(days=days)
+    total = db.query_llm_usage_total(days=days)
+
+    if total["calls"] == 0:
+        _print_status_panel(
+            "info",
+            "暂无数据",
+            "这台机器最近没记录到 LLM 调用。\n"
+            "如果你刚升级到 v0.3.26+,旧数据不会回填——继续运行一段时间后再来查。",
+        )
+        return
+
+    daily_table = Table(show_header=True, header_style="bold cyan")
+    daily_table.add_column("日期", no_wrap=True)
+    daily_table.add_column("调用数", justify="right")
+    daily_table.add_column("input tokens", justify="right")
+    daily_table.add_column("output tokens", justify="right")
+    daily_table.add_column("¥ 估算", justify="right", style="bold yellow")
+    for row in daily:
+        daily_table.add_row(
+            str(row["day"]),
+            f"{row['calls']:,}",
+            f"{row['prompt_tokens']:,}",
+            f"{row['completion_tokens']:,}",
+            f"¥{row['cost_cny']:.4f}",
+        )
+    console.print(daily_table)
+    console.print()
+
+    provider_table = Table(show_header=True, header_style="bold magenta")
+    provider_table.add_column("Provider", no_wrap=True)
+    provider_table.add_column("Model")
+    provider_table.add_column("调用数", justify="right")
+    provider_table.add_column("input", justify="right")
+    provider_table.add_column("output", justify="right")
+    provider_table.add_column("¥ 占比", justify="right", style="bold yellow")
+    total_cost = total["cost_cny"] or 1e-9
+    for row in by_provider:
+        share = row["cost_cny"] / total_cost * 100
+        provider_table.add_row(
+            row["provider"] or "?",
+            row["model"] or "(default)",
+            f"{row['calls']:,}",
+            f"{row['prompt_tokens']:,}",
+            f"{row['completion_tokens']:,}",
+            f"¥{row['cost_cny']:.4f} ({share:.0f}%)",
+        )
+    console.print(provider_table)
+    console.print()
+
+    avg_per_day = total["cost_cny"] / max(1, len(daily))
+    _print_status_panel(
+        "info",
+        f"近 {days} 天合计",
+        f"总调用 [bold]{total['calls']:,}[/bold] 次, "
+        f"总 token [bold]{total['total_tokens']:,}[/bold] "
+        f"(input {total['prompt_tokens']:,} + output {total['completion_tokens']:,}), "
+        f"估算消耗 [bold yellow]¥{total['cost_cny']:.4f}[/bold yellow]\n"
+        f"按记录到的天数平均 ≈ ¥{avg_per_day:.4f}/天 ≈ "
+        f"¥{avg_per_day * 30:.2f}/月\n"
+        "[dim]（费率为公开渠道估算,与 provider 实际账单可能差 ±20%。）[/dim]",
+    )
+
+
+@app.command()
 def start(
     host: str = typer.Option("127.0.0.1", "--host", help="API 监听地址"),
     port: int = typer.Option(8420, "--port", min=1, max=65535, help="API 监听端口"),

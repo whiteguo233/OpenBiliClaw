@@ -100,6 +100,24 @@ CREATE TABLE IF NOT EXISTS recommendations (
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
+
+-- Per-call LLM usage ledger. Populated by ``UsageRecorder`` after every
+-- successful provider response. Used by ``openbiliclaw cost`` to print
+-- daily spend summaries and by future per-module attribution work.
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    caller TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_cny REAL NOT NULL DEFAULT 0.0,
+    success INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider, model);
 """
 
 
@@ -235,6 +253,119 @@ class Database:
             "SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------------
+    # LLM usage ledger
+    # ------------------------------------------------------------------
+
+    def insert_llm_usage(
+        self,
+        *,
+        provider: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        estimated_cost_cny: float,
+        caller: str = "",
+        success: bool = True,
+    ) -> int:
+        """Append one LLM-call usage record."""
+        total = max(0, prompt_tokens) + max(0, completion_tokens)
+        cursor = self._execute_write(
+            """INSERT INTO llm_usage
+               (provider, model, caller, prompt_tokens, completion_tokens,
+                total_tokens, estimated_cost_cny, success)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                provider or "",
+                model or "",
+                caller or "",
+                int(max(0, prompt_tokens)),
+                int(max(0, completion_tokens)),
+                int(total),
+                float(estimated_cost_cny),
+                1 if success else 0,
+            ),
+        )
+        return cursor.lastrowid or 0
+
+    def query_llm_usage_by_day(
+        self,
+        *,
+        days: int = 7,
+    ) -> list[dict[str, Any]]:
+        """Return per-day aggregates for the last ``days`` days.
+
+        Each row: {day, calls, prompt_tokens, completion_tokens,
+        total_tokens, cost_cny}. Days with zero usage are omitted —
+        the CLI fills gaps for display.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT date(timestamp, 'localtime') AS day,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
+            FROM llm_usage
+            WHERE timestamp >= datetime('now', '-' || ? || ' day', 'localtime')
+            GROUP BY day
+            ORDER BY day DESC
+            """,
+            (max(1, int(days)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def query_llm_usage_by_provider(
+        self,
+        *,
+        days: int = 7,
+    ) -> list[dict[str, Any]]:
+        """Return per-(provider, model) totals over the last ``days`` days."""
+        cursor = self.conn.execute(
+            """
+            SELECT provider,
+                   model,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
+            FROM llm_usage
+            WHERE timestamp >= datetime('now', '-' || ? || ' day', 'localtime')
+            GROUP BY provider, model
+            ORDER BY cost_cny DESC
+            """,
+            (max(1, int(days)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def query_llm_usage_total(self, *, days: int = 7) -> dict[str, Any]:
+        """Return a single-row total for the last ``days`` days."""
+        cursor = self.conn.execute(
+            """
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
+            FROM llm_usage
+            WHERE timestamp >= datetime('now', '-' || ? || ' day', 'localtime')
+            """,
+            (max(1, int(days)),),
+        )
+        row = cursor.fetchone()
+        return (
+            dict(row)
+            if row
+            else {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_cny": 0.0,
+            }
+        )
 
     def query_events(
         self,

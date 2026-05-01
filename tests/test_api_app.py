@@ -50,9 +50,16 @@ class TestBackendAPI:
                 self.initialized += 1
 
         class FakeLLMService:
-            def __init__(self, *, registry: object, memory: object) -> None:
+            def __init__(
+                self,
+                *,
+                registry: object,
+                memory: object,
+                usage_recorder: object | None = None,
+            ) -> None:
                 self.registry = registry
                 self.memory = memory
+                self.usage_recorder = usage_recorder
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -155,9 +162,16 @@ class TestBackendAPI:
                 return None
 
         class FakeLLMService:
-            def __init__(self, *, registry: object, memory: object) -> None:
+            def __init__(
+                self,
+                *,
+                registry: object,
+                memory: object,
+                usage_recorder: object | None = None,
+            ) -> None:
                 self.registry = registry
                 self.memory = memory
+                self.usage_recorder = usage_recorder
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:

@@ -48,6 +48,12 @@ class LLMService:
 
     registry: SupportsComplete
     memory: MemoryManager
+    # v0.3.26+: optional usage ledger sink. When supplied, every
+    # successful LLM response is written to the ``llm_usage`` table so
+    # ``openbiliclaw cost`` can report daily spend. Default None
+    # preserves prior behaviour for tests / standalone callers that
+    # don't care about cost tracking.
+    usage_recorder: object | None = None
 
     async def complete_with_core_memory(
         self,
@@ -58,8 +64,14 @@ class LLMService:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         json_mode: bool = False,
+        caller: str = "",
     ) -> LLMResponse:
-        """Execute a task with automatically injected core memory context."""
+        """Execute a task with automatically injected core memory context.
+
+        ``caller`` is an optional free-form tag (e.g. ``"soul.preference"``,
+        ``"discovery.eval"``) attached to the usage row so the ``cost``
+        report can break spend down by module.
+        """
         core_memory_block = ""
         if self.memory is not None:
             try:
@@ -86,6 +98,17 @@ class LLMService:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
             raise LLMResponseContentError("LLM returned an empty response.")
+        # Best-effort usage ledger write. The recorder swallows its own
+        # exceptions so a billing-table hiccup never affects the LLM
+        # response that just succeeded.
+        recorder = self.usage_recorder
+        if recorder is not None:
+            record_fn = getattr(recorder, "record", None)
+            if callable(record_fn):
+                try:
+                    record_fn(response, caller=caller)
+                except Exception:
+                    pass
         return response
 
     async def complete_structured_task(
@@ -96,6 +119,7 @@ class LLMService:
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
     ) -> LLMResponse:
         """Execute a JSON-mode task with core memory injection."""
         return await self.complete_with_core_memory(
@@ -105,6 +129,7 @@ class LLMService:
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=True,
+            caller=caller,
         )
 
     async def complete_with_tools(
@@ -127,15 +152,11 @@ class LLMService:
         into the system prompt and the model is asked to return a JSON
         wrapper with either ``reply`` or ``tool_call`` keys.
         """
-        tools_desc = "\n".join(
-            f"- {t['name']}: {t.get('description', '')}"
-            for t in tools
-        )
+        tools_desc = "\n".join(f"- {t['name']}: {t.get('description', '')}" for t in tools)
         tool_names = [t["name"] for t in tools]
         augmented_system = (
             system_instruction + "\n\n"
-            "<available_tools>\n"
-            + tools_desc + "\n"
+            "<available_tools>\n" + tools_desc + "\n"
             "</available_tools>\n\n"
             "<tool_call_format>\n"
             "如果你需要调用工具，请返回如下 JSON（不要附带任何其他文字）：\n"
