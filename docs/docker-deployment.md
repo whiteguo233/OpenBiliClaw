@@ -62,12 +62,18 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 docker compose ps
 ```
 
-`init` 是 v0.3.5+ 的 4 阶段交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导：
+`init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
 
-1. **Phase 1 — 选 LLM 服务**：菜单首选「本地 Ollama」（免费 / 离线 / 无需 API Key，推荐新手）。如果你已有 OpenAI / Claude / Gemini / DeepSeek 等 Key 也可以直接选。「OpenAI 协议兼容自建网关」（Azure / vLLM / LMStudio / OneAPI 等）是单独的菜单项，不要和「OpenAI 官方」混淆。
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 只问模型名；云厂商只问 API Key；OpenAI 协议兼容自建网关问 Base URL + API Key + 模型名。
-3. **Phase 3 — Embedding（独立提问）**：跟随主 LLM / 本地 Ollama bge-m3 / 自定义 OpenAI 兼容 / 指定其他 provider，4 选 1。
+1. **Phase 1 — 选 LLM 服务**：默认推荐 **DeepSeek**（¥0.001/千 token，几乎免费）；已有 OpenAI / Gemini / Claude / OpenRouter Key 的可以直接选；想完全离线选 **Ollama**（注意 16GB+ 内存 / CPU 推理首次响应慢）。**OpenAI 协议兼容自建网关**（Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关）保留在菜单末尾的"高级"位置——不要和"OpenAI 官方"混淆。
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；自建网关问 Base URL + API Key + 模型名。
+3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
+   - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）
+   - **2) 云端 Gemini embedding**（质量略高 / 跨语言更稳 / 免费档每天 1500 次够用）
+   - **3) 跟随主 LLM**（最省事；主 LLM 是 Claude / DeepSeek / OpenRouter 时自动回退到选项 1）
+   - 高级：自定义 OpenAI 兼容服务 / 指定其他 provider（默认折叠）
 4. **Phase 4 — Per-module 覆盖（高级，默认跳过）**：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
+
+> 💡 **v0.3.20+ Embedding 自动 fallback**（无需用户操心）：当主 LLM 是 Claude / DeepSeek / OpenRouter（这三家后端没 embedding 接口），bootstrap 会自动写 `[llm.embedding] provider="ollama" model="bge-m3"` 并预拉模型；运行时 registry 也有 `ollama → gemini → openai` 的 fallback 链兜底，不会再静默返回 None 让推荐管线坏掉。
 
 接着 B 站登录态有 **2 种方式**（v0.3.12+）：
 
@@ -110,14 +116,17 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 
 | Provider | 是否要 Key | 适合谁 | 备注 |
 |---|---|---|---|
-| `ollama` | ❌ | 不想花钱 / 想离线用 / 刚接触本项目 | Docker 里要把 `[llm.ollama] base_url` 设成 `http://host.docker.internal:11434/v1` 才能从容器访问宿主机的 Ollama |
-| `openai` | ✅ | 已有 OpenAI 账户 | base_url 留空 = `https://api.openai.com/v1`；填了就是 OpenAI 协议兼容服务（Azure / vLLM / LMStudio / OneAPI / 自建网关），写到同一段 |
-| `claude` | ✅ | Anthropic 账户 | — |
-| `gemini` | ✅ | Google AI Studio 账户 | 部分免费额度可用 |
-| `deepseek` | ✅ | 国内可直连 | OpenAI 兼容协议 |
-| `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费 |
+| `deepseek` ★默认 | ✅ | 默认推荐 / 几乎免费 / 国内可直连 | ¥0.001/千 token，月费通常 ¥0.5-2，OpenAI 兼容协议。无 embedding 接口（v0.3.20+ 自动 fallback 到本地 Ollama bge-m3） |
+| `gemini` | ✅ | Google AI Studio 账户 | 免费档每天 1500 次够日常用；自带 embedding endpoint |
+| `openai` | ✅ | 已有 OpenAI 账户 | base_url 留空 = `https://api.openai.com/v1`；自带 embedding endpoint |
+| `claude` | ✅ | Anthropic 账户 | 高质量推理；无 embedding 接口（v0.3.20+ 自动 fallback） |
+| `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；embedding 不可靠（v0.3.20+ 自动 fallback） |
+| `ollama` | ❌ | 完全离线 / 不要 Key / 16GB+ 内存 | CPU 推理首次响应慢（10-60s）。Docker 里 `[llm.ollama] base_url` 必须设成 `http://host.docker.internal:11434/v1` 才能从容器访问宿主机的 Ollama |
+| OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 写到 `[llm.openai]` 同段，关键是显式 `base_url` 字段。**普通用户不要选这个** |
 
-> 「OpenAI 官方」 ≠ 「OpenAI 协议兼容自建网关」：v0.3.6+ 向导把这两个拆成独立菜单项，避免心智混淆。后端写到同一个 `[llm.openai]` 段，区分点是 `base_url` 字段。
+> 「OpenAI 官方」 ≠ 「OpenAI 协议兼容自建网关」：v0.3.6+ 向导把这两个拆成独立菜单项，v0.3.20+ 把"自建网关"挪到菜单末尾的"高级"位置（避免普通用户误选）。后端写到同一个 `[llm.openai]` 段，区分点是 `base_url` 字段。
+>
+> v0.3.20+：当 `--provider openai` 显式给出但 `--llm-base-url` 未给（或选了官方），bootstrap 会自动清空 `[llm.openai] base_url`，让 SDK 回到 `https://api.openai.com/v1`——之前从自建网关切回 OpenAI 官方时 base_url 残留导致继续打老网关的 bug 已修。
 
 **Per-module 覆盖（可选）**：在 `[llm.soul]` / `[llm.discovery]` / `[llm.recommendation]` / `[llm.evaluation]` 段单独指定 `provider` + `model`。典型用法：发现 / 评估走便宜模型，灵魂画像走高质量模型。详见 [docs/modules/config.md](modules/config.md)。
 

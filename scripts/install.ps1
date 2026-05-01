@@ -317,36 +317,77 @@ print(f"MISSING={','.join(missing)}")
         elseif ($line -like 'MISSING=*')    { $missing   = $line.Substring(8) }
     }
 
+    # v0.3.20: distinguish "only B站 cookie missing" (the expected state for
+    # users on the recommended browser-extension auto-sync path) from
+    # "still need an LLM key". The yellow + "partial / credentials still
+    # missing" wording on the cookie-only case used to read like an
+    # install failure to users.
+    $missingOnlyCookie = ($missing -eq 'bilibili.cookie')
+
     Write-Host ''
     Write-Host '================================================================'
-    Write-Host ' OpenBiliClaw install ' -NoNewline
-    if ($missing) { Write-Host 'partial (credentials missing)' -ForegroundColor Yellow }
-    elseif ($status -eq 'complete') { Write-Host 'complete' -ForegroundColor Green }
-    else { Write-Host $status }
+    Write-Host ' OpenBiliClaw ' -NoNewline
+    if ($status -eq 'complete') {
+        Write-Host 'install complete' -ForegroundColor Green
+    } elseif ($missingOnlyCookie) {
+        Write-Host 'backend ready - waiting for browser extension to sync B站 Cookie' -ForegroundColor Green
+    } elseif ($missing) {
+        Write-Host 'install partial (credentials still missing)' -ForegroundColor Yellow
+    } else {
+        Write-Host "install status: $status" -ForegroundColor Yellow
+    }
     Write-Host '================================================================'
     Write-Host "Status:      $status"
     Write-Host "Checkout:    $InstallDir"
-    if ($ReuseFrom) { Write-Host "Reused from: $ReuseFrom" }
+    if ($ReuseFrom) {
+        Write-Host "Reused from: $ReuseFrom"
+        Write-Host '             [i] Reused API keys are NOT validated. If the backend'
+        Write-Host '                 returns 401 / auth errors after start-up, the old'
+        Write-Host '                 key is probably expired - re-run install.ps1 with'
+        Write-Host '                 -ReuseFrom "" to skip auto-reuse and supply fresh'
+        Write-Host '                 credentials.'
+    }
     Write-Host "Health URL:  $healthUrl"
     if ($missing) { Write-Host "Missing:     $missing" }
     else { Write-Host 'Missing:     (none)' }
     Write-Host ''
 
-    if ($missing) {
+    if ($missingOnlyCookie) {
+        Write-Host 'Next step - get your B站 Cookie to the backend (pick ONE):'
+        Write-Host ''
+        Write-Host '  (A) [recommended, zero config]'
+        Write-Host '      Install the browser extension and log in to bilibili.com.'
+        Write-Host '      It auto-syncs your cookie to this backend within seconds.'
+        Write-Host '        Extension: https://github.com/whiteguo233/OpenBiliClaw/releases'
+        Write-Host "      Once the cookie arrives, the backend automatically runs"
+        Write-Host "      'openbiliclaw init' (pulls history, builds soul profile,"
+        Write-Host '      runs first discovery - 2-5 min).'
+        Write-Host ''
+        Write-Host '  (B) [manual fallback]'
+        Write-Host "      F12 -> Network -> copy the 'Cookie' header from any"
+        Write-Host '      bilibili.com request, then run:'
+        Write-Host "        python $InstallDir\scripts\agent_bootstrap.py ``"
+        Write-Host "            --project-dir $InstallDir ``"
+        Write-Host "            --bilibili-cookie '<YOUR_COOKIE>' ``"
+        Write-Host "            --port $Port --host $ApiHost"
+        Write-Host ''
+        Write-Host '  Verify the backend is healthy any time:'
+        Write-Host "      Invoke-RestMethod $healthUrl"
+    } elseif ($missing) {
         Write-Host 'Next steps (credentials are missing):'
         Write-Host ''
-        Write-Host '  1. Choose your LLM provider (default: openai):'
-        Write-Host '     Supported: openai | gemini | claude | deepseek | openrouter | ollama'
+        Write-Host '  1. Choose your LLM provider (default: deepseek):'
+        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | ollama'
         Write-Host ''
         if ($missing -match 'bilibili.cookie') {
             Write-Host '     For the Bilibili cookie you have TWO options (pick ONE):'
             Write-Host ''
             Write-Host '     (A) [recommended] Install the browser extension and let it'
-            Write-Host '         auto-sync — no F12, no copy/paste.'
+            Write-Host '         auto-sync - no F12, no copy/paste.'
             Write-Host '         Download: https://github.com/whiteguo233/OpenBiliClaw/releases'
             Write-Host '         Log in to bilibili.com if you are not already; the extension'
             Write-Host '         pushes the cookie to this backend within seconds. You can then'
-            Write-Host '         SKIP step 2 below for the cookie part — just install the'
+            Write-Host '         SKIP step 2 below for the cookie part - just install the'
             Write-Host '         extension and run "openbiliclaw init" once it syncs.'
             Write-Host ''
             Write-Host '     (B) Paste the cookie manually via --bilibili-cookie below.'

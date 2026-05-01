@@ -787,8 +787,7 @@ def _ollama_install_if_missing() -> bool:
         console.print("[green]Ollama 安装成功。[/green]")
         return True
     console.print(
-        "[red]安装似乎没成功。请从 https://ollama.com/download 手动装一下，"
-        "再重新跑本命令。[/red]"
+        "[red]安装似乎没成功。请从 https://ollama.com/download 手动装一下，再重新跑本命令。[/red]"
     )
     return False
 
@@ -810,9 +809,8 @@ def _ollama_start_serve_background() -> bool:
 
     try:
         if os.name == "nt":
-            creationflags = (
-                getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
             )
             subprocess.Popen(
                 [ollama, "serve"],
@@ -911,31 +909,35 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
 )
 
 
-# Numbered menu shown in Phase 1. Order matters: Ollama first because it's
-# the only zero-friction option (free, local, no API Key); the official
-# vendors come next; and "OpenAI 协议兼容自建网关" is split into its own
-# entry so the user doesn't conflate `[llm.openai]` "the company" with
-# `[llm.openai]` "the protocol family".
+# Numbered menu shown in Phase 1. Order matters (v0.3.20+):
+# DeepSeek first as the default zero-friction recommendation
+# (¥0.001/千 token); OpenAI / Gemini / Claude / OpenRouter for users who
+# already have those keys; Ollama as the offline-only fallback (slow CPU
+# inference, real hardware floor); "OpenAI 协议兼容自建网关" demoted to
+# the final "(高级)" entry so 普通用户 don't pick it by mistake — most
+# people who think they want it actually want option 2 (OpenAI 官方).
 _LLM_MENU: tuple[tuple[str, str, str], ...] = (
-    ("ollama", "本地 Ollama", "免费 / 离线 / 无需 API Key（推荐新手）"),
+    ("deepseek", "DeepSeek 官方 ★默认推荐", "¥0.001/千 token，几乎免费，国内可直连"),
     ("openai", "OpenAI 官方", "api.openai.com，需要 sk- 开头的 Key"),
-    ("claude", "Claude 官方", "Anthropic console，按 token 付费"),
-    ("gemini", "Gemini 官方", "Google AI Studio 申请 Key，部分免费额度"),
-    ("deepseek", "DeepSeek 官方", "OpenAI 兼容协议 + 国内可直连"),
+    ("gemini", "Gemini 官方", "Google AI Studio 申请 Key，免费档每天 1500 次够日常用"),
+    ("claude", "Claude 官方", "Anthropic console，按 token 付费，质量高"),
     ("openrouter", "OpenRouter 聚合", "一个 Key 跑多家模型，按调用计费"),
     (
+        "ollama",
+        "本地 Ollama（完全离线）",
+        "不要 Key / 完全免费，但需 16GB+ 内存，CPU 推理首次响应 10-60s",
+    ),
+    (
         "openai-compat",
-        "OpenAI 协议兼容（自建网关 / 第三方）",
-        "Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关。需自填 Base URL",
+        "（高级）OpenAI 协议兼容自建网关",
+        "Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关。需自填 Base URL —— 普通用户请勿选",
     ),
 )
 
 
 def _print_provider_table() -> None:
-    """Render the provider menu — Ollama-first, with OpenAI-compat split out."""
-    console.print(
-        "[bold]OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。[/bold]"
-    )
+    """Render the provider menu — DeepSeek-default, gateway demoted to advanced (v0.3.20+)."""
+    console.print("[bold]OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。[/bold]")
     console.print("请选一个 LLM 服务：\n")
     table = Table(show_lines=False, show_header=True)
     table.add_column("#", style="cyan", no_wrap=True)
@@ -945,9 +947,9 @@ def _print_provider_table() -> None:
         table.add_row(str(index), label, hint)
     console.print(table)
     console.print(
-        "[dim]Tip：如果你刚接触本项目、又不想花钱，直接选 1（Ollama）。"
-        "Mac 装 Ollama: brew install ollama && ollama serve，"
-        "Windows: https://ollama.com/download。[/dim]"
+        "[dim]Tip：不确定就选 1（DeepSeek），¥0.001/千 token 几乎免费，"
+        "月度通常 ¥0.5-2。想完全离线选 6（Ollama），但 CPU 推理首次响应慢。"
+        "选项 7（自建网关）是高级选项，普通用户用不到。[/dim]"
     )
 
 
@@ -991,9 +993,7 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
             "协议去打你给的 Base URL。如果你后来想切回 OpenAI 官方，把 base_url "
             "改回 https://api.openai.com/v1 就行。[/dim]"
         )
-        base_url = typer.prompt(
-            "你的网关 Base URL（必填，例 http://localhost:8000/v1）"
-        ).strip()
+        base_url = typer.prompt("你的网关 Base URL（必填，例 http://localhost:8000/v1）").strip()
         if not base_url:
             base_url = "https://api.openai.com/v1"
         api_key = typer.prompt(
@@ -1025,16 +1025,17 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
 
         # Phase 2: ensure daemon is up.
         if not _ollama_start_serve_background():
-            console.print(
-                "[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]"
-            )
+            console.print("[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]")
             return provider, default_base_url, "", default_model
 
         # Phase 3: ask which model and pull if missing.
-        model = typer.prompt(
-            "选个 Ollama 模型（默认 llama3，按回车接受）",
-            default=default_model,
-        ).strip() or default_model
+        model = (
+            typer.prompt(
+                "选个 Ollama 模型（默认 llama3，按回车接受）",
+                default=default_model,
+            ).strip()
+            or default_model
+        )
         if not _ollama_has_model(model):
             console.print(f"开始拉取 {model}（首次下载耗时几分钟）…")
             if not _ollama_pull_model(model):
@@ -1055,73 +1056,144 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
         default="",
         show_default=False,
     ).strip()
-    model = typer.prompt(
-        "模型名（默认即可，按回车跳过）",
-        default=default_model,
-        show_default=bool(default_model),
-    ).strip() or default_model
+    model = (
+        typer.prompt(
+            "模型名（默认即可，按回车跳过）",
+            default=default_model,
+            show_default=bool(default_model),
+        ).strip()
+        or default_model
+    )
     return provider, default_base_url, api_key, model
 
 
 def _interactive_embedding_setup(default_provider: str) -> None:
-    """Phase 3 — choose how embeddings are served (4-way branch).
+    """Phase 3 — embedding service (v0.3.20+ "有默认值的取舍提问").
 
-    1) 跟随主 provider（什么都不写，让 default_provider 兜底）
-    2) 本地 Ollama + bge-m3
-    3) 自定义 OpenAI 兼容服务（自填 base_url / api_key / model）
-    4) 指定其他已知 provider（同样可改 base_url / api_key / model）
+    Default = 1 (本地 Ollama bge-m3). Mirrors the question shape used by
+    docs/agent-install.md: each option carries a tradeoff explanation,
+    "不确定就回 1". Two advanced branches (custom OpenAI-compatible
+    endpoint / pin a different provider) are kept but de-emphasized so
+    普通用户 don't get derailed.
     """
-    options = (
-        ("1", "跟随你刚才选的 LLM（最省事，默认）"),
-        ("2", "本地 Ollama + bge-m3（推荐：免费 + 离线 + 省 Key）"),
-        ("3", "自定义 OpenAI 兼容服务（vLLM / OneAPI / 自建网关）"),
-        ("4", "指定其他 provider（claude / gemini / deepseek / openrouter）"),
-        ("5", "跳过（暂不配置，等同于选 1）"),
+    console.print(
+        "\n[bold]Embedding(向量化)服务[/bold]\n"
+        "[dim]把视频标题/简介压成向量,跨视频做相似度对比 —— 决定"
+        '"这条和你之前喜欢的那条是不是同一类"。和聊天 LLM 是分开的。[/dim]\n'
     )
-    for label, desc in options:
-        console.print(f"  [cyan]{label}[/cyan]) {desc}")
+    options = (
+        (
+            "1",
+            "本地 Ollama bge-m3 ★默认推荐",
+            "免费 / 离线 / 不消耗主 LLM 配额(自动装 Ollama + 拉 568MB 模型)",
+        ),
+        (
+            "2",
+            "云端 Gemini embedding",
+            "质量略高 / 跨语言更稳;免费档每天 1500 次,日常够用,需 Gemini Key",
+        ),
+        (
+            "3",
+            "跟随你刚才选的 LLM",
+            "OpenAI/Gemini 用自家 endpoint;Claude/DeepSeek/OpenRouter 自动回退到选项 1",
+        ),
+        ("4", "(高级)自定义 OpenAI 兼容服务", "vLLM / OneAPI / 自建网关 —— 自填 base_url"),
+        ("5", "(高级)指定其他 provider", "手动选 provider + 模型 + 可选 base_url"),
+        ("0", "跳过(等同于 3 跟随主 LLM)", ""),
+    )
+    table = Table(show_lines=False, show_header=True)
+    table.add_column("#", style="cyan", no_wrap=True)
+    table.add_column("方案", no_wrap=True)
+    table.add_column("说明")
+    for label, name, desc in options:
+        table.add_row(label, name, desc)
+    console.print(table)
+    console.print(
+        "[dim]Tip:不确定就选 1。日常推荐质量已经够用且不消耗主 LLM 配额。"
+        "想再准一点选 2(Gemini),需要去 https://aistudio.google.com/apikey 拿 Key。[/dim]"
+    )
 
     choice = typer.prompt("请选择 embedding 方案", default="1").strip()
 
-    if choice in {"5", "skip", "跳过"}:
-        console.print("[dim]已跳过 embedding 配置，将沿用默认（跟随主 provider）。[/dim]")
+    if choice in {"0", "skip", "跳过"}:
+        console.print("[dim]已跳过 embedding 配置,将沿用默认(跟随主 provider)。[/dim]")
         return
 
-    if choice in {"1", "follow", ""}:
-        _save_embedding_config(provider="", model="")
-        console.print("[green]已设置为跟随主 provider。[/green]")
-        return
-
-    if choice == "2":
+    if choice in {"1", "ollama", ""}:
         # Auto-install + start + pull. Same flow as Phase 1's Ollama
         # branch — share the helpers so the user doesn't have to learn
         # different setups for chat vs embedding.
         if not _ollama_install_if_missing():
+            console.print("[yellow]Ollama 装机失败,降级为'跟随主 LLM'(选项 3)。[/yellow]")
+            _save_embedding_config(provider="", model="")
             return
         if not _ollama_start_serve_background():
-            console.print(
-                "[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]"
-            )
+            console.print("[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]")
             return
 
-        model = typer.prompt("Ollama embedding 模型", default="bge-m3").strip() or "bge-m3"
+        model = "bge-m3"
         if _ollama_has_model(model):
             console.print(f"[green]已检测到本地模型 {model}[/green]")
         else:
-            console.print(f"开始拉取 {model}（首次下载耗时几分钟）…")
+            console.print(f"开始拉取 {model}(首次下载约 568MB,几分钟)…")
             if not _ollama_pull_model(model):
-                console.print(f"[red]{model} 拉取失败，未启用本地 embedding[/red]")
+                console.print(f"[red]{model} 拉取失败,未启用本地 embedding[/red]")
                 return
         _save_embedding_config(provider="ollama", model=model)
-        console.print(f"[bold green]已启用本地 Ollama embedding（{model}）[/bold green]")
+        console.print(f"[bold green]已启用本地 Ollama embedding({model})[/bold green]")
         return
 
-    if choice == "3":
+    if choice in {"2", "gemini"}:
+        from openbiliclaw.config import load_config
+
+        existing_key = ""
+        try:
+            existing_cfg = load_config()
+            existing_key = (existing_cfg.llm.gemini.api_key or "").strip()
+        except Exception:
+            pass
+
+        if existing_key:
+            console.print("[green]复用 [llm.gemini] 段已配置的 API Key,无需再填。[/green]")
+            api_key = existing_key
+        else:
+            console.print(
+                "[dim]去 https://aistudio.google.com/apikey 拿一个 Gemini API Key,"
+                "复制粘贴到下面(免费档每天 1500 次,日常用足够)。[/dim]"
+            )
+            api_key = typer.prompt(
+                "Gemini API Key",
+                hide_input=True,
+                default="",
+                show_default=False,
+            ).strip()
+            if not api_key:
+                console.print("[yellow]Key 为空,降级为'跟随主 LLM'(选项 3)。[/yellow]")
+                _save_embedding_config(provider="", model="")
+                return
+
+        _save_embedding_config(
+            provider="gemini",
+            model="gemini-embedding-001",
+            api_key=api_key,
+        )
+        console.print("[bold green]已启用 Gemini embedding(gemini-embedding-001)[/bold green]")
+        return
+
+    if choice in {"3", "follow"}:
+        _save_embedding_config(provider="", model="")
+        console.print(
+            "[green]已设置为跟随主 LLM。"
+            "若主 LLM 是 Claude/DeepSeek/OpenRouter,运行时会自动回退到 Ollama bge-m3。[/green]"
+        )
+        return
+
+    if choice == "4":
         base_url = typer.prompt(
-            "Embedding Base URL（OpenAI 兼容，例如 http://localhost:8000/v1）"
+            "Embedding Base URL(OpenAI 兼容,例如 http://localhost:8000/v1)"
         ).strip()
         api_key = typer.prompt(
-            "Embedding API Key（如服务无鉴权可留空）",
+            "Embedding API Key(如服务无鉴权可留空)",
             hide_input=True,
             default="",
             show_default=False,
@@ -1135,21 +1207,25 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         )
         console.print(
             "[bold green]已配置自定义 OpenAI 兼容 embedding 服务"
-            r"（写入 \[llm.openai] 段）。[/bold green]"
+            r"(写入 \[llm.openai] 段)。[/bold green]"
         )
         return
 
-    if choice == "4":
-        target = typer.prompt(
-            "选择 provider（claude / gemini / deepseek / openrouter / ollama）",
-            default="gemini",
-        ).strip().lower()
+    if choice == "5":
+        target = (
+            typer.prompt(
+                "选择 provider(claude / gemini / deepseek / openrouter / ollama)",
+                default="gemini",
+            )
+            .strip()
+            .lower()
+        )
         if target not in _SUPPORTED_PROVIDERS:
-            console.print("[red]未知 provider，跳过 embedding 配置。[/red]")
+            console.print("[red]未知 provider,跳过 embedding 配置。[/red]")
             return
         defaults = _PROVIDER_DEFAULTS.get(target, {})
         base_url = typer.prompt(
-            f"{target} Base URL（留空走默认）",
+            f"{target} Base URL(留空走默认)",
             default=defaults.get("base_url", ""),
             show_default=bool(defaults.get("base_url")),
         ).strip()
@@ -1167,7 +1243,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
             show_default=False,
         ).strip()
         if not model:
-            console.print("[red]模型名为空，跳过 embedding 配置。[/red]")
+            console.print("[red]模型名为空,跳过 embedding 配置。[/red]")
             return
         _save_embedding_config(
             provider=target,
@@ -1178,7 +1254,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         console.print(f"[bold green]已配置 {target} 作为 embedding provider。[/bold green]")
         return
 
-    console.print("[red]未识别的选项，跳过 embedding 配置。[/red]")
+    console.print("[red]未识别的选项,跳过 embedding 配置。[/red]")
 
 
 def _interactive_module_overrides(default_provider: str) -> None:
@@ -1200,11 +1276,15 @@ def _interactive_module_overrides(default_provider: str) -> None:
     for module, desc in modules:
         if not typer.confirm(f"为 [{module}] {desc} 配置覆盖？", default=False):
             continue
-        provider = typer.prompt(
-            f"  {module} provider（留空 = 跟随默认 {default_provider}）",
-            default="",
-            show_default=False,
-        ).strip().lower()
+        provider = (
+            typer.prompt(
+                f"  {module} provider（留空 = 跟随默认 {default_provider}）",
+                default="",
+                show_default=False,
+            )
+            .strip()
+            .lower()
+        )
         if provider and provider not in _SUPPORTED_PROVIDERS:
             console.print(f"  [red]未知 provider「{provider}」，跳过该模块。[/red]")
             continue
