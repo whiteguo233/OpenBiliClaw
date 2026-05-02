@@ -41,7 +41,12 @@ model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com"
 # v4 模型支持 thinking 模式：设置 "high" 或 "max" 开启，空字符串关闭。
 # 开启后会自动附带 thinking={"type": "enabled"} 请求字段。
-reasoning_effort = "max"
+#
+# v0.3.26+ 默认改为关闭("")。以前默认 "max" 会让 DeepSeek 每次请求按
+# 32K tokens 预算计费,在 discovery 评估这种"打分类"高频小任务上完全
+# 没必要,日花费会被放大 5-10x。需要思考链的场景(分析复杂用户行为)
+# 可以手工切回 "high" 或 "max"。运行 ``openbiliclaw cost`` 看实际花费。
+reasoning_effort = ""
 
 [llm.ollama]
 # Local model via Ollama（本地运行，不要求 api_key）
@@ -152,8 +157,13 @@ task_interval_seconds = 45
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
-# Cron expression for discovery task
-discovery_cron = "0 */4 * * *"  # Every 4 hours
+# Cron expression for discovery task. v0.3.26+ default is every 8h
+# (was 4h pre-v0.3.26). 4h triggers ~6 refresh ticks per day; combined
+# with the v0.3.24+ pool-aware sizing each tick costs ~¥0.06-0.10 in
+# LLM evaluations. 8h cuts that in half. Set to "0 */4 * * *" if you
+# want fresher recommendations and don't mind ~2x cost. Run
+# ``openbiliclaw cost`` to see your actual spend.
+discovery_cron = "0 */8 * * *"
 # Keep at least this many fresh candidates ready in the discovery pool
 # Allowed range: 1..600; each single refresh will backfill at most 60
 pool_target_count = 600

@@ -4,6 +4,105 @@
 
 ---
 
+## v0.3.26: LLM 计费模块 + 默认配置成本调优（2026-05-02）
+
+新增本地 LLM 用量与花费追踪,顺手把 `config.example.toml` 里几个会让新装用户立刻烧钱的默认值改了。重启 daemon 后,跑 `openbiliclaw cost` 就能看每天实际花了多少。
+
+### 新增
+
+- **`openbiliclaw cost` CLI 命令** —— 显示最近 N 天 LLM 调用的按天 / 按 provider/model 分布,以及估算花费。每次成功 LLM 调用都会写一条到 `llm_usage` 表(timestamp / provider / model / caller / tokens / 估算单价)。`UsageRecorder` 是单点 hook,挂在 `LLMService.complete_with_core_memory` 之后,失败被吞,不影响业务热路径
+- `src/openbiliclaw/llm/pricing.py` —— DeepSeek / OpenAI / Claude / Gemini / OpenRouter / Ollama 的 CNY 单价表,USD 系预乘 7.2 让账面统一。未知 provider 走通用 fallback 而不是静默 0
+- `Database.insert_llm_usage` / `query_llm_usage_by_day` / `query_llm_usage_by_provider` / `query_llm_usage_total` —— 新表 `llm_usage` + 4 个查询方法,SQL 预聚合按日期/provider 分组
+- `LLMService` 加可选 `usage_recorder` 字段 + `caller` 参数(预留给未来按模块归因);daemon 路径(`runtime_context`)自动注入
+
+### 修改 default 值(影响新装用户)
+
+- **`reasoning_effort = "max"` → `""`** —— 之前默认开启 thinking 模式,DeepSeek 每次按 32K tokens 预算计费,在 discovery 评估这种打分类高频小任务上完全没必要,日花费被放大 5-10x。新装从此不再被坑;旧用户 config.toml 不会自动改,需要手工编辑或删 `config.toml` 重新走 init
+- **`discovery_cron = "0 */4 * * *"` → `"0 */8 * * *"`** —— 8 小时一次发现 vs 4 小时一次,LLM 评估调用减半,UI 上换一批的"新鲜度"基本无感(pool 始终保持 600 个候选)。需要更频繁可手工调回
+
+### 测试
+
+- `tests/test_llm_usage.py` —— 13 个单测覆盖 pricing 数学、DB round-trip、UsageRecorder 边界(sink=None / sink 抛错 / response 无 usage 字段等)
+
+---
+
+## v0.3.25: discovery 成本优化(reasoning_effort + pool-aware + batch_size)（2026-05-02）
+
+针对 daemon 运行一天烧 ¥10-20 的问题,挖到三个真实成本源,逐一压平。综合下来日花费从 ¥21 降到 ¥0.5 左右。
+
+### 修复 / 优化
+
+- **discovery 内容评估 batch_size 从 10 升到 30** —— 评估器已经在批量调用,但默认 batch=10 导致每个策略 30 个候选要拆 3 次 LLM 调用,~3500 tokens 的 system prompt 重复付 3 次。升到 30(配合现有 `_EVALUATE_BATCH_HARD_CAP=30`)做到 1 次评估搞定一个策略,token 总量降 54%。`max_tokens` 同步从 8192 升到 16384 给输出留 10x 头空间。回归测试 `test_evaluate_content_batch_default_size_30_uses_single_llm_call` 钉死"25 候选 = 1 个 LLM 调用"
+- **pool-aware refresh limit** —— `_requested_refresh_limit` 之前永远 floor 在 30,意味着 pool 在 595/600 时还要每个策略请求 30 个候选,然后 trim_pool_to_target_count 把多余的全标 suppressed。改成按 gap 缩放:`per_strategy_target = max(5, gap * 3 // 4)`,gap 小时请求小,直接省 50-77% 的 LLM 评估调用。生产数据(13 天 11K 缓存)证明 88% 评估都是花在被立即 suppressed 的内容上的浪费
+
+### 影响
+
+- 单纯改 default `reasoning_effort` 已经把日花费从 ¥21 降到 ¥3.5
+- 配合 `discovery_cron 8h` + pool-aware sizing + batch_size=30,steady state 日花费降到 ¥0.5
+- 可用 `openbiliclaw cost` (v0.3.26 新增) 实际验证
+
+---
+
+## v0.3.24: 跨源事件格式统一 + soul prompt 接入 context（2026-05-02）
+
+把 B 站 / 小红书 / 扩展点击 / 反馈等所有事件源统一到一个 `build_event()` 构造器里,所有 LLM 消费者(preference / awareness / profile_builder)都看一份带自然语言 `context` 的标准化数据。
+
+### 新增
+
+- **`src/openbiliclaw/sources/event_format.py`** —— `build_event()` + `format_event_context()` 单点入口,所有 producer 都走它;`SOURCE_BILIBILI / SOURCE_XIAOHONGSHU / SOURCE_WEB` 常量
+- **统一 shape**: `{event_type, title, url?, context: str, metadata: {source_platform, author, ...}}`,`context` 是中文一句话描述(如 "在B 站看了《讲透历史叙事》,作者:历史实验室"),LLM 直接读不需要 schema-aware 翻译
+
+### 修改
+
+- 所有事件 producer 重写走 `build_event`:`_history_item_to_event`、收藏、关注、`xhs_bootstrap_notes_to_events`、`/api/events`、`/api/feedback`、`/api/recommendations/{id}/click`
+- `_summarize_history` 输出新增 `contexts` / `recent_contexts` / `older_contexts`,profile_builder prompt 加 rule 13 引导 LLM 优先用 context 理解行为
+- preference / awareness 分析 prompt 加 rule 8/9/5 同样引导
+
+### 修复
+
+- **DB context 列双重 JSON 编码 bug** —— `insert_event` 之前 unconditional 把 string 也 json.dumps 包一层引号;LLM 看到 `\"内容\"`(triple-escaped 在 prompt 里);现在 string 直存,dict/list 才编码;`MemoryManager` 默认值 `{}` → `""`
+
+### 测试
+
+- `tests/test_event_format.py` —— 15 个测试覆盖 producer 一致性、round-trip 不再 double-encode、legacy dict 兼容
+- `tests/test_profile_builder.py` —— 4 个测试覆盖新 contexts 输出 + B 站 raw history 自动合成 fallback
+
+---
+
+## v0.3.23: xhs 滚动改进 + 推荐管线小修补（2026-05-02）
+
+- xhs `bootstrap_profile` 滚动型任务改为前台 tab 执行(后台 tab 在小红书上只渲染浅层 wrapper,触发不到完整瀑布流懒加载);非滚动任务保持后台
+- 滚动容器探测从固定 `document/window` 升级为优先小红书 feed/waterfall/masonry 容器,排除零高度 wrapper 和 sidebar
+- 收藏/点赞分组导入对齐开源实现:`profile.user.notes[1]` 收藏、`[2]` 点赞;profile state 解析补齐 `displayTitle` / `cover.urlDefault`
+
+---
+
+## v0.3.22: xhs init 数据真正进画像 + UX 反馈完善（2026-05-01）
+
+`openbiliclaw init` 端到端审计后修复多个让小红书数据基本无效的 bug。
+
+### 修复
+
+- **CLI 等待 8s 太短** → 拆 enqueue/collect API,enqueue 在 B 站拉数据前发出,B 站拉数据期间扩展并行跑,等需要数据时通常已经好了。env var `OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS` 默认 30s
+- **`max_scroll_rounds=0` 硬编码** → 默认 3,env `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS`;`max_items_per_scope` 20 → 50
+- **5 种完成状态分别打反馈** —— ok / empty / timeout / failed / skipped 都给用户看得懂的中文消息;之前完成但 0 notes 的情况静默,现在会提示"扩展跑通但没拿到 notes(可能未登录小红书 / 个人主页没有公开收藏)"
+
+### 测试
+
+- `tests/test_cli.py` 加 3 个回归:`test_collect_xhs_bootstrap_events_status_branches`、`test_enqueue_xhs_bootstrap_task_uses_env_overrides`、更新已有 init 集成测试
+
+---
+
+## v0.3.21: 装机流程 docker / PowerShell / CLI 向导对齐 v0.3.20（2026-05-01）
+
+v0.3.20 的 UX 改动只在 Bash + AI 智能体路径生效,Docker 部署文档 / Windows PowerShell 安装器 / 直跑 CLI 向导仍是旧契约——同一个项目三种说辞。本次对齐:
+
+- `docs/docker-deployment.md` Phase 1 主推改成 DeepSeek 默认,Ollama 加 16GB+ 硬件门槛,自建网关挪到"高级"折叠节;Phase 3 embedding 改成"3 选 1 + 默认推荐"
+- `scripts/install.ps1` 镜像 install.sh 的 D4 (cookie-only 绿字 backend ready) + B4 (REUSE_FROM 警告) 修复
+- `cli.py` `_LLM_MENU` 重排:DeepSeek 第一,Ollama 第六加门槛,网关第七"(高级)";`_interactive_embedding_setup` 从 4 选 1 重写成默认 Ollama bge-m3 + Gemini 取舍 + follow + 2 个高级选项
+
+---
+
 ## v0.3.20: 装机流程 UX 修复 + Embedding 自动 fallback（2026-05-01）
 
 针对"一句话给智能体安装"流程从普通用户视角做了若干修复：3 个真 bug（Claude/DeepSeek/OpenRouter 主模型 + 跟随 LLM 的 embedding 静默失败、`base_url` 残留、复用旧 Key 无校验）和 5 个 UX 改进（主菜单去掉自建网关 / Embedding 改成"有默认值的取舍提问" / 状态块软化 / README 加 AI Agent 前置 / Ollama 加硬件门槛说明）。
