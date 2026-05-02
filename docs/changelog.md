@@ -4,26 +4,9 @@
 
 ---
 
-## v0.3.29 (cont): Claude 显式 cache_control 标记 (Layer 2)（2026-05-02）
+## v0.3.29: prompt-cache 通用化改造 + 命中率观测 + Claude 显式 marker（2026-05-02）
 
-### 新增
-
-- **`ClaudeProvider` 自动给 system message 打 ephemeral cache_control 标记** —— Anthropic prompt cache 是显式机制,纯字符串 `system="..."` 永远不缓存,必须用 list-of-blocks 形式 + `cache_control: {"type": "ephemeral"}` 才会激活。新增 `_render_system_param()` 把 system 文本包成单 block 列表 + cache marker,5min TTL,90% off on cache reads,首次写 +25% 加价。系统 prompt 短于 per-model 阈值时(Sonnet 1024 / Opus-Haiku 2048 token)Anthropic 静默忽略 marker,所以这个改动对短 prompt 也安全
-- 2 个新单测 covering: marker 正确插入到 system list-of-blocks 形式,以及 `cache_read_input_tokens` / `cache_creation_input_tokens` 通过 `LLMResponse.usage` 正确流转
-
-### 仍未做(deferred)
-
-- **Gemini 显式 Context Caching API** —— Gemini 的 prompt cache 不是 in-line marker,而是另起一个 `cachedContents.create()` API 提前上传 stable 部分得到 `cache_id`,然后调 `complete()` 时引用 cache_id。需要 cache_id LRU 池 + TTL 管理,改动量比 Claude 大得多。先观察 Layer 3 数据 —— 如果用 Gemini 的人多且命中率确实低,再投资
-
-### 测试
-
-- 全套 940 通过 / 16 失败(基线) / 15 跳过 — 0 新回归
-
----
-
-## v0.3.29: prompt-cache 通用化改造 + 命中率观测 (Layer 1 + Layer 3)（2026-05-02）
-
-为 daemon 长跑成本拉低 50-80% 做架构性铺垫。挖到 v0.3.26 计费台账没有 cache 字段(provider 报但没归一化),v0.3.27 prompt builders 多个把 per-call 变量塞进 system 消息(让 provider-side 自动缓存命中率永远是 0)。两者一起改。
+为 daemon 长跑成本拉低 50-80% 做架构性铺垫。挖到 v0.3.26 计费台账没有 cache 字段(provider 报但没归一化),v0.3.27 prompt builders 多个把 per-call 变量塞进 system 消息(让 provider-side 自动缓存命中率永远是 0),Claude 这种"显式 marker 才激活" 的 provider 完全没接入。三个层一起改。
 
 ### 新增 (Layer 3 — 跨 provider 的命中率观测基础)
 
@@ -52,22 +35,31 @@
 - **`CLAUDE.md` 新增 "LLM Prompt-Cache Convention" 段** —— 给未来贡献者立规则:任何新 prompt builder MUST 满足 system 100% 静态,JSON 序列化必须 deterministic,所有变量入 user_prompt
 - **`test_llm_prompts.py::test_prompt_builder_system_messages_are_call_invariant`** —— 自动化兜底:遍历所有 prompt builder,两组不同 input → assert system msg byte-identical,违反则报错并指明 cache-poisoning builder
 
+### Layer 2 — Claude 显式 cache marker
+
+- **`ClaudeProvider` 自动给 system message 打 ephemeral cache_control 标记** —— Anthropic prompt cache 是显式机制,纯字符串 `system="..."` 永远不缓存,必须用 list-of-blocks 形式 + `cache_control: {"type": "ephemeral"}` 才会激活。新增 `_render_system_param()` 把 system 文本包成单 block 列表 + cache marker,5min TTL,90% off on cache reads,首次写 +25% 加价。系统 prompt 短于 per-model 阈值时(Sonnet 1024 / Opus-Haiku 2048 token)Anthropic 静默忽略 marker,所以这个改动对短 prompt 也安全
+- 2 个新单测 covering: marker 正确插入到 system list-of-blocks 形式,以及 `cache_read_input_tokens` / `cache_creation_input_tokens` 通过 `LLMResponse.usage` 正确流转
+
+### 仍未做(deferred)
+
+- **Gemini 显式 Context Caching API** —— Gemini 的 prompt cache 不是 in-line marker,而是另起一个 `cachedContents.create()` API 提前上传 stable 部分得到 `cache_id`,然后调 `complete()` 时引用 cache_id。需要 cache_id LRU 池 + TTL 管理,改动量比 Claude 大得多。先观察 Layer 3 数据 —— 如果用 Gemini 的人多且命中率确实低,再投资
+
 ### 测试
 
-- 6 个新单测覆盖 cache 折扣计算 / per-caller 持久化 / 跨 provider 命中字段 round-trip
+- 8 个新单测覆盖 cache 折扣计算 / per-caller 持久化 / 跨 provider 命中字段 round-trip / Claude cache_control marker 注入 / Claude cache_read+creation token 提取
 - audit invariant 测试覆盖 6 个 cache-friendly builder
-- 全套 938 通过 / 16 失败(基线) / 15 跳过 — 0 新回归
+- 全套 940 通过 / 16 失败(基线) / 15 跳过 — 0 新回归
 
 ### 预期效果
 
 - DeepSeek 默认场景:`discovery.evaluate_batch` 5 次 strategy 评估,从原本 5 次 cold(~17500 input tokens 全收钱)→ 第 1 次 cold + 后 4 次命中 ~3500 token system,**该 caller 总成本立即砍 60-70%**
 - 同效果适用于 `recommendation.evaluate_batch` / `_expression` / `_delight_reason` / `_content_evaluation`
-- OpenAI / Claude / Gemini 用户也能拿到对应的 50% / 90% / 75% cache 折扣,不用改 SDK 调用方式
+- OpenAI 50% / Claude 90% / Gemini 75% cache 折扣,自动派(DeepSeek/OpenAI/中转站)无需改 SDK 调用,显式派(Claude)由 ClaudeProvider 内部自动注入 marker
 - 跑一段时间后 `openbiliclaw cost --by caller --days 7` 应该能看到顶层 caller 的命中率从 0 跳到 60-80%
 
 ### 下一步
 
-- Layer 2(显式 cache marker for Claude / Gemini)等观测有数据后再决定 — 如果用 Claude/Gemini 的人多,值得做;如果绝大多数都走 DeepSeek/OpenAI 自动 cache 已经够了
+- Gemini 显式 Context Caching 等数据驱动决策(见上 deferred 段)
 - 数据驱动的优化:看 `--by caller` 命中率 < 60% 的 caller,逐个 audit 是不是新加的 builder 没遵守 cache 公约
 
 ---
