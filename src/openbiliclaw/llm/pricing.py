@@ -16,9 +16,37 @@ Source notes (last refreshed 2026-05):
 - OpenRouter: variable per-route; the ``default`` rate is a midrange
   placeholder. For accurate per-route tracking, override at call site.
 - Ollama: local inference, treated as free.
+
+**Prompt-cache discount** (v0.3.28+): when a portion of input tokens is
+served from provider-side prompt cache, the cached portion is billed at
+a deep discount. ``CACHE_HIT_DISCOUNT`` per provider expresses the
+**multiplier** applied to the cached-portion's input rate:
+
+- DeepSeek: 0.10 (90% off — official)
+- OpenAI: 0.50 (~50% off, family-wide as of 2026; some models 0.25)
+- Claude: 0.10 (90% off reads — Anthropic prompt-caching)
+- Gemini: 0.25 (~75% off cached_content_token_count via Context Caching API)
+- Others: assume 0.50 conservatively when an unknown provider reports
+  cached tokens
+
+``estimate_cost(..., cached_tokens=N)`` applies it: the cached portion
+of ``prompt_tokens`` is billed at ``input_rate * discount``, the
+non-cached portion at the full ``input_rate``, output unchanged.
 """
 
 from __future__ import annotations
+
+# Per-provider cache-hit discount multipliers. 0.1 means cached tokens
+# are billed at 10% of the full input rate (i.e. 90% off). When a
+# provider isn't in this map we use 0.5 (conservative — half off).
+CACHE_HIT_DISCOUNT: dict[str, float] = {
+    "deepseek": 0.10,
+    "openai": 0.50,
+    "claude": 0.10,
+    "gemini": 0.25,
+    "openrouter": 0.50,
+    "ollama": 0.0,  # local; cached or not, cost is 0
+}
 
 # (input_rate, output_rate) — CNY per 1,000 tokens.
 PRICING: dict[str, dict[str, tuple[float, float]]] = {
@@ -105,6 +133,7 @@ def estimate_cost(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
+    cached_tokens: int = 0,
 ) -> float:
     """Estimate the CNY cost of a single LLM call.
 
@@ -113,8 +142,15 @@ def estimate_cost(
     provider itself is unknown — so unknown models still produce a
     nonzero number rather than a silent zero.
 
+    ``cached_tokens`` (v0.3.28+) is the portion of ``prompt_tokens``
+    served from provider-side prompt cache; that portion is billed at
+    ``input_rate * CACHE_HIT_DISCOUNT[provider]`` (typically 10-50% of
+    the full rate). Pass 0 (default) for cache-miss / unknown.
+
     >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
     0.011
+    >>> estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
+    0.0074
     >>> estimate_cost("ollama", "llama3", 10000, 5000)
     0.0
     """
@@ -128,8 +164,15 @@ def estimate_cost(
         rates = (0.001, 0.003)
 
     input_rate, output_rate = rates
+    prompt_tokens = max(0, prompt_tokens)
+    completion_tokens = max(0, completion_tokens)
+    cached_tokens = max(0, min(cached_tokens, prompt_tokens))
+    non_cached = prompt_tokens - cached_tokens
+
+    discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
     return round(
-        (max(0, prompt_tokens) / 1000.0) * input_rate
-        + (max(0, completion_tokens) / 1000.0) * output_rate,
+        (non_cached / 1000.0) * input_rate
+        + (cached_tokens / 1000.0) * input_rate * discount
+        + (completion_tokens / 1000.0) * output_rate,
         6,
     )

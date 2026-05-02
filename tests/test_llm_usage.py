@@ -56,6 +56,54 @@ def test_estimate_cost_handles_negative_token_counts() -> None:
     assert estimate_cost("deepseek", "deepseek-chat", -10, -5) == 0.0
 
 
+def test_estimate_cost_applies_deepseek_cache_discount() -> None:
+    """v0.3.28+: cached portion of input is billed at 10% (DeepSeek).
+
+    5K prompt, 3K completion, 4K of those prompt tokens cached.
+    - Non-cached input: 1K × ¥0.001 = ¥0.001
+    - Cached input: 4K × ¥0.001 × 0.1 = ¥0.0004
+    - Output: 3K × ¥0.002 = ¥0.006
+    Total: ¥0.0074 (vs ¥0.011 without cache discount = 33% saved)
+    """
+    cost_no_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
+    cost_with_cache = estimate_cost(
+        "deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000
+    )
+    assert cost_no_cache == pytest.approx(0.011, rel=1e-9)
+    assert cost_with_cache == pytest.approx(0.0074, rel=1e-9)
+    # Save ratio sanity check
+    assert cost_with_cache < cost_no_cache * 0.7
+
+
+def test_estimate_cost_applies_openai_cache_discount() -> None:
+    """OpenAI cache is 50% off (vs DeepSeek's 90%)."""
+    cost = estimate_cost("openai", "gpt-5-nano", 10000, 1000, cached_tokens=8000)
+    # Non-cached: 2K × $0.05/M × 7.2 = 2K × ¥0.00036 = ¥0.00072
+    # Cached: 8K × $0.05/M × 7.2 × 0.5 = 8K × ¥0.00018 = ¥0.00144
+    # Output: 1K × $0.4/M × 7.2 = 1K × ¥0.00288 = ¥0.00288
+    expected = 0.00072 + 0.00144 + 0.00288
+    assert cost == pytest.approx(expected, rel=1e-3)
+
+
+def test_estimate_cost_clamps_cached_to_prompt_tokens() -> None:
+    """Defensive: if cached_tokens > prompt_tokens (provider bug), clamp.
+
+    Without clamping, the math goes negative on the non-cached portion.
+    """
+    cost = estimate_cost("deepseek", "deepseek-v4-flash", 1000, 0, cached_tokens=9999)
+    # Should equal: full 1K cached at 10% rate = 1K × ¥0.001 × 0.1 = ¥0.0001
+    assert cost == pytest.approx(0.0001, rel=1e-9)
+    assert cost > 0  # not negative
+
+
+def test_estimate_cost_unknown_provider_cache_uses_50pct_default() -> None:
+    """Unknown provider with cached tokens → 50% conservative discount."""
+    no_cache = estimate_cost("mystery-co", "model-x", 1000, 0)
+    with_cache = estimate_cost("mystery-co", "model-x", 1000, 0, cached_tokens=1000)
+    # All 1000 tokens cached → cost = 1000 × rate × 0.5 = no_cache × 0.5
+    assert with_cache == pytest.approx(no_cache * 0.5, rel=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # Database round-trip
 
@@ -257,3 +305,78 @@ def test_usage_recorder_handles_response_without_usage(tmp_path: Path) -> None:
     assert rows[0]["calls"] == 1
     assert rows[0]["prompt_tokens"] == 0
     assert rows[0]["cost_cny"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# v0.3.28+: cache field extraction & by-caller cache hit rate
+
+
+def test_usage_recorder_persists_cached_input_tokens(tmp_path: Path) -> None:
+    """When the response carries cached_input_tokens, it must flow
+    into the DB row + apply the cache discount in the cost estimate."""
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    recorder = UsageRecorder(sink=db)
+
+    class _CachedResponse:
+        provider = "deepseek"
+        model = "deepseek-v4-flash"
+        usage = {
+            "prompt_tokens": 5000,
+            "completion_tokens": 1000,
+            "cached_input_tokens": 4000,
+        }
+
+    recorder.record(_CachedResponse(), caller="discovery.evaluate_batch")
+
+    # Cost should reflect 90% off on the 4000 cached tokens.
+    # Manual:
+    #   non-cached input: 1000 × 0.001 = 0.001
+    #   cached input:     4000 × 0.001 × 0.1 = 0.0004
+    #   output:           1000 × 0.002 = 0.002
+    #   total: 0.0034 (vs 0.007 without cache discount)
+    by_caller = db.query_llm_usage_by_caller(days=7)
+    assert len(by_caller) == 1
+    row = by_caller[0]
+    assert row["caller"] == "discovery.evaluate_batch"
+    assert row["prompt_tokens"] == 5000
+    assert row["cached_input_tokens"] == 4000
+    assert row["cost_cny"] == pytest.approx(0.0034, rel=1e-6)
+
+
+def test_query_llm_usage_by_caller_returns_cache_field(tmp_path: Path) -> None:
+    """Schema migration backfills cached_input_tokens; query exposes it."""
+    db = Database(tmp_path / "usage.db")
+    db.initialize()
+    db.insert_llm_usage(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=2000,
+        completion_tokens=500,
+        cached_input_tokens=1500,
+        estimated_cost_cny=0.0015,
+        caller="discovery.evaluate_batch",
+    )
+    db.insert_llm_usage(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        prompt_tokens=1000,
+        completion_tokens=300,
+        cached_input_tokens=0,  # cache miss
+        estimated_cost_cny=0.0016,
+        caller="recommendation.write_expression",
+    )
+
+    rows = db.query_llm_usage_by_caller(days=7)
+    by_caller = {r["caller"]: r for r in rows}
+
+    assert by_caller["discovery.evaluate_batch"]["cached_input_tokens"] == 1500
+    assert by_caller["discovery.evaluate_batch"]["prompt_tokens"] == 2000
+    # 75% hit rate on discovery.evaluate_batch
+    hit_rate = (
+        by_caller["discovery.evaluate_batch"]["cached_input_tokens"]
+        / by_caller["discovery.evaluate_batch"]["prompt_tokens"]
+    )
+    assert hit_rate == pytest.approx(0.75, rel=1e-9)
+    # 0% on recommendation
+    assert by_caller["recommendation.write_expression"]["cached_input_tokens"] == 0

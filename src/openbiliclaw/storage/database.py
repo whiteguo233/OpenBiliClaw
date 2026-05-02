@@ -113,6 +113,10 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
+    -- v0.3.28+: portion of prompt_tokens served from provider-side
+    -- prompt cache. Always <= prompt_tokens. 0 means cache miss / no
+    -- caching. Used to compute cache hit rate per caller.
+    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
     estimated_cost_cny REAL NOT NULL DEFAULT 0.0,
     success INTEGER NOT NULL DEFAULT 1
 );
@@ -148,6 +152,7 @@ class Database:
         self._ensure_content_cache_multisource_columns()
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
+        self._ensure_llm_usage_cache_columns()
 
         # Set schema version
         self._conn.execute(
@@ -268,14 +273,23 @@ class Database:
         estimated_cost_cny: float,
         caller: str = "",
         success: bool = True,
+        cached_input_tokens: int = 0,
     ) -> int:
-        """Append one LLM-call usage record."""
+        """Append one LLM-call usage record.
+
+        ``cached_input_tokens`` (v0.3.28+) is the portion of
+        ``prompt_tokens`` served from provider-side prompt cache —
+        always ``<= prompt_tokens``. 0 means no cache use. Used by
+        ``cost --by caller`` to compute hit rates and by
+        ``estimate_cost`` to discount cached tokens correctly.
+        """
         total = max(0, prompt_tokens) + max(0, completion_tokens)
         cursor = self._execute_write(
             """INSERT INTO llm_usage
                (provider, model, caller, prompt_tokens, completion_tokens,
-                total_tokens, estimated_cost_cny, success)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                total_tokens, cached_input_tokens, estimated_cost_cny,
+                success)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 provider or "",
                 model or "",
@@ -283,6 +297,7 @@ class Database:
                 int(max(0, prompt_tokens)),
                 int(max(0, completion_tokens)),
                 int(total),
+                int(max(0, cached_input_tokens)),
                 float(estimated_cost_cny),
                 1 if success else 0,
             ),
@@ -352,6 +367,10 @@ class Database:
         ``soul.profile``). Untagged calls land under ``""`` which the
         CLI renders as ``(untagged)``. Result is sorted by cost so the
         first row is the most expensive caller.
+
+        v0.3.28+ also returns ``cached_input_tokens`` so the CLI can
+        compute and surface per-caller cache hit rates — a low rate
+        (< 30%) signals prompt-prefix instability worth investigating.
         """
         cursor = self.conn.execute(
             """
@@ -359,6 +378,7 @@ class Database:
                    COUNT(*) AS calls,
                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
                    COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
             FROM llm_usage
             WHERE timestamp >= datetime('now', '-' || ? || ' day', 'localtime')
@@ -377,6 +397,7 @@ class Database:
                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                   COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
                    COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
             FROM llm_usage
             WHERE timestamp >= datetime('now', '-' || ? || ' day', 'localtime')
@@ -392,6 +413,7 @@ class Database:
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
+                "cached_input_tokens": 0,
                 "cost_cny": 0.0,
             }
         )
@@ -421,6 +443,7 @@ class Database:
             SELECT COUNT(*) AS calls,
                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
                    COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
             FROM llm_usage
             WHERE id > ?
@@ -431,7 +454,13 @@ class Database:
         total = (
             dict(total_row)
             if total_row
-            else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_cny": 0.0}
+            else {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cached_input_tokens": 0,
+                "cost_cny": 0.0,
+            }
         )
 
         caller_cursor = self.conn.execute(
@@ -440,6 +469,7 @@ class Database:
                    COUNT(*) AS calls,
                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                   COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
                    COALESCE(SUM(estimated_cost_cny), 0) AS cost_cny
             FROM llm_usage
             WHERE id > ?
@@ -1787,6 +1817,22 @@ class Database:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def _ensure_llm_usage_cache_columns(self) -> None:
+        """Backfill v0.3.28+ prompt-cache columns on existing llm_usage tables."""
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(llm_usage)").fetchall()
+        }
+        required_columns = {
+            "cached_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            self.conn.execute(
+                f"ALTER TABLE llm_usage ADD COLUMN {column_name} {column_type}"
+            )
 
     def _ensure_recommendation_feedback_columns(self) -> None:
         """Backfill recommendation feedback columns for existing databases."""

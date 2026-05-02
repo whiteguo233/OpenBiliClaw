@@ -72,15 +72,27 @@ class ClaudeProvider(LLMProvider):
         if not content.strip():
             raise LLMResponseError("claude returned empty content")
 
+        # Claude exposes cache fields when prompt-cache is in use:
+        # cache_read_input_tokens (90% off) + cache_creation_input_tokens
+        # (+25% surcharge). We surface them under the universal
+        # ``cached_input_tokens`` / ``cache_creation_input_tokens`` keys
+        # so downstream pricing / observability is provider-agnostic.
+        cache_read = int(getattr(response.usage, "cache_read_input_tokens", 0) or 0)
+        cache_create = int(getattr(response.usage, "cache_creation_input_tokens", 0) or 0)
+        usage_dict = {
+            "prompt_tokens": response.usage.input_tokens,
+            "completion_tokens": response.usage.output_tokens,
+            "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+        }
+        if cache_read:
+            usage_dict["cached_input_tokens"] = cache_read
+        if cache_create:
+            usage_dict["cache_creation_input_tokens"] = cache_create
         return LLMResponse(
             content=content,
             model=response.model,
             provider="claude",
-            usage={
-                "prompt_tokens": response.usage.input_tokens,
-                "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
-            },
+            usage=usage_dict,
             raw=response,
         )
 

@@ -57,6 +57,7 @@ class _UsageSink(Protocol):
         estimated_cost_cny: float,
         caller: str = "",
         success: bool = True,
+        cached_input_tokens: int = 0,
     ) -> int: ...
 
 
@@ -97,24 +98,42 @@ class UsageRecorder:
 
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        # Normalized cache field — providers populate when their backend
+        # served some input tokens from prompt cache. ``cached_input_tokens``
+        # is always <= prompt_tokens. See provider docs in
+        # openai_provider.py / claude_provider.py / gemini_provider.py.
+        cached_tokens = int(usage.get("cached_input_tokens", 0) or 0)
 
         try:
-            cost = estimate_cost(provider, model, prompt_tokens, completion_tokens)
+            cost = estimate_cost(
+                provider,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                cached_tokens=cached_tokens,
+            )
         except Exception:
             logger.debug("estimate_cost failed", exc_info=True)
             return
 
         # Real-time INFO log so `journalctl -fu openbiliclaw` /
         # `docker logs -f` shows cost as it accrues. Caller defaults
-        # to "?" when untagged so the log reads consistently.
+        # to "?" when untagged so the log reads consistently. Cache hit
+        # ratio annotated when present so you can spot a builder that
+        # poisoned its prompt prefix.
         caller_tag = caller or "?"
+        cache_note = ""
+        if cached_tokens > 0 and prompt_tokens > 0:
+            hit = cached_tokens / prompt_tokens * 100
+            cache_note = f" cache_hit={cached_tokens}/{prompt_tokens} ({hit:.0f}%)"
         logger.info(
-            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f",
+            "[llm-cost] caller=%s model=%s tokens=%d→%d ≈ ¥%.4f%s",
             caller_tag,
             model or "(unknown)",
             prompt_tokens,
             completion_tokens,
             cost,
+            cache_note,
         )
 
         # Anomaly WARN — single call over threshold is almost always a
@@ -143,6 +162,7 @@ class UsageRecorder:
                 model=model or "",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_input_tokens=cached_tokens,
                 estimated_cost_cny=cost,
                 caller=caller,
                 success=True,

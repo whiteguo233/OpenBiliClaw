@@ -91,6 +91,23 @@ class OpenAIProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
+            # Normalize cache fields across the OpenAI-protocol family.
+            # OpenAI exposes `prompt_tokens_details.cached_tokens` since
+            # GPT-4o; DeepSeek injects `prompt_cache_hit_tokens` /
+            # `prompt_cache_miss_tokens` on the same usage object;
+            # Kimi / 通义 / 中转站 vary. We probe known fields and
+            # surface whichever the backend sent under the universal
+            # ``cached_input_tokens`` key. Downstream pricing /
+            # observability code reads only this normalized field.
+            cached = 0
+            details = getattr(response.usage, "prompt_tokens_details", None)
+            if details is not None:
+                cached = int(getattr(details, "cached_tokens", 0) or 0)
+            if not cached:
+                # DeepSeek explicit fields
+                cached = int(getattr(response.usage, "prompt_cache_hit_tokens", 0) or 0)
+            if cached:
+                usage["cached_input_tokens"] = cached
 
         return LLMResponse(
             content=content,

@@ -2186,37 +2186,70 @@ def cost(
         caller_table = Table(
             show_header=True,
             header_style="bold green",
-            title="按模块 (cost by caller — 钱花在哪一层)",
+            title="按模块 (cost by caller — 钱花在哪一层 / cache 命中率)",
         )
         caller_table.add_column("Caller (模块.动作)", no_wrap=True)
         caller_table.add_column("调用数", justify="right")
         caller_table.add_column("input", justify="right")
         caller_table.add_column("output", justify="right")
+        # v0.3.28+: cache hit rate per caller. Low hit rate (red) on a
+        # high-cost caller is the smoking gun for prompt-prefix
+        # instability — that's where to focus prompt-builder audits.
+        caller_table.add_column("cache 命中", justify="right")
         caller_table.add_column("¥ 占比", justify="right", style="bold yellow")
         for row in by_caller:
             share = row["cost_cny"] / total_cost * 100
+            prompt_tok = int(row["prompt_tokens"])
+            cached_tok = int(row.get("cached_input_tokens", 0) or 0)
+            if prompt_tok > 0 and cached_tok > 0:
+                hit_pct = cached_tok / prompt_tok * 100
+                if hit_pct < 30:
+                    cache_cell = f"[red]{hit_pct:.0f}%[/red]"
+                elif hit_pct < 60:
+                    cache_cell = f"[yellow]{hit_pct:.0f}%[/yellow]"
+                else:
+                    cache_cell = f"[green]{hit_pct:.0f}%[/green]"
+                cache_cell += f" ({cached_tok:,}/{prompt_tok:,})"
+            else:
+                cache_cell = "[dim]—[/dim]"
             caller_table.add_row(
                 row["caller"] or "[dim](untagged)[/dim]",
                 f"{row['calls']:,}",
                 f"{row['prompt_tokens']:,}",
                 f"{row['completion_tokens']:,}",
+                cache_cell,
                 f"¥{row['cost_cny']:.4f} ({share:.0f}%)",
             )
         console.print(caller_table)
         console.print()
 
     avg_per_day = total["cost_cny"] / max(1, len(daily))
+    total_prompt = int(total["prompt_tokens"])
+    total_cached = int(total.get("cached_input_tokens", 0) or 0)
+    cache_summary = ""
+    if total_prompt > 0 and total_cached > 0:
+        overall_hit = total_cached / total_prompt * 100
+        cache_summary = (
+            f"\ncache 命中: [bold green]{overall_hit:.1f}%[/bold green] "
+            f"({total_cached:,}/{total_prompt:,} input tokens served from cache)"
+        )
+    elif total_prompt > 0:
+        cache_summary = (
+            "\ncache 命中: [dim]0%(还没命中或 provider 不上报 cache 字段)[/dim]"
+        )
     _print_status_panel(
         "info",
         f"近 {days} 天合计",
         f"总调用 [bold]{total['calls']:,}[/bold] 次, "
         f"总 token [bold]{total['total_tokens']:,}[/bold] "
         f"(input {total['prompt_tokens']:,} + output {total['completion_tokens']:,}), "
-        f"估算消耗 [bold yellow]¥{total['cost_cny']:.4f}[/bold yellow]\n"
+        f"估算消耗 [bold yellow]¥{total['cost_cny']:.4f}[/bold yellow]"
+        f"{cache_summary}\n"
         f"按记录到的天数平均 ≈ ¥{avg_per_day:.4f}/天 ≈ "
         f"¥{avg_per_day * 30:.2f}/月\n"
         "[dim]（费率为公开渠道估算,与 provider 实际账单可能差 ±20%。"
-        "tail daemon 日志可以看每次调用的实时 [llm-cost] INFO 行。）[/dim]",
+        "tail daemon 日志可以看每次调用的实时 [llm-cost] INFO 行,"
+        "cache 命中率 < 30% 的 caller 在 by-caller 表里会标红。）[/dim]",
     )
 
 
@@ -2714,27 +2747,55 @@ def _print_init_cost_summary(since_id: int) -> None:
     by_caller = snapshot.get("by_caller", [])
     total_cost = float(total.get("cost_cny", 0.0)) or 1e-9
 
+    total_prompt = int(total.get("prompt_tokens", 0))
+    total_cached = int(total.get("cached_input_tokens", 0) or 0)
+    cache_blurb = ""
+    if total_prompt > 0 and total_cached > 0:
+        overall_hit = total_cached / total_prompt * 100
+        cache_blurb = f" / cache 命中 {overall_hit:.0f}%"
+
     summary_table = Table(
         show_header=True,
         header_style="bold green",
-        title=f"本次 init LLM 花费 — 总 {total['calls']:,} 次调用 ≈ ¥{total['cost_cny']:.4f}",
+        title=(
+            f"本次 init LLM 花费 — 总 {total['calls']:,} 次调用 "
+            f"≈ ¥{total['cost_cny']:.4f}{cache_blurb}"
+        ),
     )
     summary_table.add_column("Caller (模块.动作)", no_wrap=True)
     summary_table.add_column("调用数", justify="right")
     summary_table.add_column("token in→out", justify="right")
+    summary_table.add_column("cache", justify="right")
     summary_table.add_column("¥ 占比", justify="right", style="bold yellow")
     for row in by_caller:
         share = float(row["cost_cny"]) / total_cost * 100
+        prompt_tok = int(row["prompt_tokens"])
+        cached_tok = int(row.get("cached_input_tokens", 0) or 0)
+        if prompt_tok > 0 and cached_tok > 0:
+            hit_pct = cached_tok / prompt_tok * 100
+            cache_cell = (
+                f"[green]{hit_pct:.0f}%[/green]"
+                if hit_pct >= 60
+                else (
+                    f"[yellow]{hit_pct:.0f}%[/yellow]"
+                    if hit_pct >= 30
+                    else f"[red]{hit_pct:.0f}%[/red]"
+                )
+            )
+        else:
+            cache_cell = "[dim]—[/dim]"
         summary_table.add_row(
             row["caller"] or "[dim](untagged)[/dim]",
             f"{row['calls']:,}",
             f"{row['prompt_tokens']:,}→{row['completion_tokens']:,}",
+            cache_cell,
             f"¥{row['cost_cny']:.4f} ({share:.0f}%)",
         )
     console.print(summary_table)
     console.print(
         "[dim]💡 想看历史累积花费跑 `openbiliclaw cost` (默认 7 天) / "
-        "`openbiliclaw cost --by caller --days 30` 看 30 天按模块拆分。[/dim]"
+        "`openbiliclaw cost --by caller --days 30` 看 30 天按模块拆分。"
+        "cache 列里红色 (<30%) 的 caller 说明 prompt 前缀不稳,可以 audit 一下。[/dim]"
     )
 
 
