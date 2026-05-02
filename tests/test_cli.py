@@ -1234,25 +1234,23 @@ def test_init_guides_missing_runtime_config_interactively(
         raising=False,
     )
 
-    # 4-phase wizard inputs:
-    #   Phase 1: provider
-    #   Phase 2: base_url (accept default), api_key, model (accept default)
-    #   Phase 3: embedding choice "1" (follow primary)
-    #   Phase 4: "n" to skip module overrides
-    # New menu-driven wizard inputs:
-    #   1. menu choice: "gemini" (or its index 4)
+    # Wizard + xhs-prompt inputs (v0.3.27+):
+    #   1. menu choice: "gemini"
     #   2. API key
-    #   3. model (accept default by Enter)
+    #   3. model (accept default)
     #   4. embedding choice "1" (follow primary)
     #   5. "n" — skip module overrides
+    #   6. "n" — skip xhs inclusion (v0.3.27 added a y/n prompt before
+    #      data fetch)
     wizard_input = (
         "\n".join(
             [
-                "gemini",  # menu — by canonical name
-                "gemini-key",  # API key
-                "",  # accept default model
-                "1",  # embedding: follow primary
-                "n",  # skip module overrides
+                "gemini",
+                "gemini-key",
+                "",
+                "1",
+                "n",
+                "n",
             ]
         )
         + "\n"
@@ -1263,7 +1261,7 @@ def test_init_guides_missing_runtime_config_interactively(
     assert captured["provider"] == "gemini"
     assert captured["api_key"] == "gemini-key"
     assert "初始化前配置引导" in result.stdout
-    assert "本地 Ollama" in result.stdout  # menu now leads with Ollama
+    assert "DeepSeek" in result.stdout  # menu now leads with DeepSeek (v0.3.20+)
     assert "历史为空" in result.stdout
 
 
@@ -1319,7 +1317,9 @@ def test_init_guides_missing_auth_interactively(
     # v0.3.13: auth wizard now opens with a 2-choice prompt
     # (1=install extension and skip / 2=paste cookie now). To keep this
     # test exercising the manual-paste path, send "2" first.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\n")
+    # v0.3.27+: a y/n xhs prompt fires before data fetch. Send "n" so
+    # the test stays focused on the cookie-prompt path.
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"
@@ -1430,7 +1430,9 @@ def test_init_runs_history_preference_profile_and_discovery(
             self.analyzed_events: list[list[dict[str, object]]] = []
             self.built_history: list[list[dict[str, object]]] = []
 
-        async def analyze_events(self, events: list[dict[str, object]]) -> None:
+        async def analyze_events(
+            self, events: list[dict[str, object]], event_chunk_size: int = 0
+        ) -> None:
             self.analyzed_events.append(events)
 
         async def build_initial_profile(self, history: list[dict[str, object]]) -> SoulProfile:
@@ -1956,7 +1958,9 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
             return None
 
     class FakeSoulEngine:
-        async def analyze_events(self, events: list[dict[str, object]]) -> None:
+        async def analyze_events(
+            self, events: list[dict[str, object]], event_chunk_size: int = 0
+        ) -> None:
             return None
 
         async def build_initial_profile(self, history: list[dict[str, object]]) -> SoulProfile:
@@ -2071,7 +2075,9 @@ def test_init_stops_backfill_early_when_first_stage_reaches_pool_target(
             return None
 
     class FakeSoulEngine:
-        async def analyze_events(self, events: list[dict[str, object]]) -> None:
+        async def analyze_events(
+            self, events: list[dict[str, object]], event_chunk_size: int = 0
+        ) -> None:
             return None
 
         async def build_initial_profile(self, history: list[dict[str, object]]) -> SoulProfile:
@@ -2171,7 +2177,9 @@ def test_init_reports_partial_success_when_discovery_fails(
             return None
 
     class FakeSoulEngine:
-        async def analyze_events(self, events: list[dict[str, object]]) -> None:
+        async def analyze_events(
+            self, events: list[dict[str, object]], event_chunk_size: int = 0
+        ) -> None:
             return None
 
         async def build_initial_profile(self, history: list[dict[str, object]]) -> SoulProfile:

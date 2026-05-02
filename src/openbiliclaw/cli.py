@@ -925,20 +925,36 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
 # the final "(高级)" entry so 普通用户 don't pick it by mistake — most
 # people who think they want it actually want option 2 (OpenAI 官方).
 _LLM_MENU: tuple[tuple[str, str, str], ...] = (
-    ("deepseek", "DeepSeek 官方 ★默认推荐", "¥0.001/千 token，几乎免费，国内可直连"),
-    ("openai", "OpenAI 官方", "api.openai.com，需要 sk- 开头的 Key"),
-    ("gemini", "Gemini 官方", "Google AI Studio 申请 Key，免费档每天 1500 次够日常用"),
-    ("claude", "Claude 官方", "Anthropic console，按 token 付费，质量高"),
-    ("openrouter", "OpenRouter 聚合", "一个 Key 跑多家模型，按调用计费"),
+    (
+        "deepseek",
+        "DeepSeek 官方 ★默认推荐",
+        "默认模型 deepseek-chat（V3 系列）。¥0.001/千 token 几乎免费，国内可直连",
+    ),
+    ("openai", "OpenAI 官方", "默认模型 gpt-4o-mini。api.openai.com，需要 sk- 开头的 Key"),
+    (
+        "gemini",
+        "Gemini 官方",
+        "默认模型 gemini-2.0-flash-exp。Google AI Studio 申请 Key，免费档每天 1500 次够用",
+    ),
+    (
+        "claude",
+        "Claude 官方",
+        "默认模型 claude-sonnet-4-5。Anthropic console，按 token 付费，质量高",
+    ),
+    (
+        "openrouter",
+        "OpenRouter 聚合",
+        "默认模型 openai/gpt-4o-mini。一个 Key 跑多家模型，按调用计费",
+    ),
     (
         "ollama",
         "本地 Ollama（完全离线）",
-        "不要 Key / 完全免费，但需 16GB+ 内存，CPU 推理首次响应 10-60s",
+        "默认模型 llama3。不要 Key / 完全免费，但需 16GB+ 内存，CPU 推理首次响应 10-60s",
     ),
     (
         "openai-compat",
         "（高级）OpenAI 协议兼容自建网关",
-        "Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关。需自填 Base URL —— 普通用户请勿选",
+        "Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关。需自填 Base URL + 模型名",
     ),
 )
 

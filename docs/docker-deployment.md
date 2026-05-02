@@ -64,7 +64,7 @@ docker compose ps
 
 `init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
 
-1. **Phase 1 — 选 LLM 服务**：默认推荐 **DeepSeek**（¥0.001/千 token，几乎免费）；已有 OpenAI / Gemini / Claude / OpenRouter Key 的可以直接选；想完全离线选 **Ollama**（注意 16GB+ 内存 / CPU 推理首次响应慢）。**OpenAI 协议兼容自建网关**（Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关）保留在菜单末尾的"高级"位置——不要和"OpenAI 官方"混淆。
+1. **Phase 1 — 选 LLM 服务（7 项菜单）**：默认推荐 **DeepSeek**(默认模型 `deepseek-chat` / ¥0.001/千 token,几乎免费)。其它选项也都标了默认模型: OpenAI(`gpt-4o-mini`) / Gemini(`gemini-2.0-flash-exp`) / Claude(`claude-sonnet-4-5`) / OpenRouter(`openai/gpt-4o-mini`) / Ollama(`llama3`,16GB+ 内存,CPU 推理首次响应慢)。**OpenAI 协议兼容自建网关**（Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关）保留在菜单第 7 项的"高级"位置,需自填 Base URL + 模型名——**不要和选项 2 (OpenAI 官方) 混淆**。
 2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；自建网关问 Base URL + API Key + 模型名。
 3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
    - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）

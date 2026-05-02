@@ -94,11 +94,17 @@ Present **three top-level options** (the OpenAI-compatible gateway path
 is folded into "Advanced" further down — do **not** put it in the
 user's main menu unless they explicitly mention having a gateway):
 
-| 选项 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
-|---|---|---|---|
-| 1. **DeepSeek**（默认推荐 / 极便宜） | 想几毛钱体验完整功能、不想自建 | ✅ 需要 | ¥0.001 / 千 token，几乎免费 |
-| 2. **OpenAI 官方** / **Gemini** / **Claude** / **OpenRouter** | 已有对应账户 | ✅ 需要 | 按 token 计费 |
-| 3. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | 16GB+ 内存，能接受 1–3 分钟首次响应，想完全离线 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
+| 选项 | 默认模型 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
+|---|---|---|---|---|
+| 1. **DeepSeek**（默认推荐 / 极便宜） | `deepseek-chat`（V3 系列） | 想几毛钱体验完整功能、不想自建 | ✅ 需要 | ¥0.001 / 千 token，几乎免费 |
+| 2. **OpenAI 官方** | `gpt-4o-mini` | 已有 sk- 开头的 Key | ✅ 需要 | 按 token 计费 |
+| 3. **Gemini** | `gemini-2.0-flash-exp` | Google AI Studio 申请 Key | ✅ 需要 | 免费档每天 1500 次 |
+| 4. **Claude** | `claude-sonnet-4-5` | Anthropic console | ✅ 需要 | 按 token,质量高 |
+| 5. **OpenRouter** | `openai/gpt-4o-mini` | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
+| 6. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | `llama3` | 16GB+ 内存，能接受 1–3 分钟首次响应，想完全离线 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
+| 7. **(高级) OpenAI 协议兼容自建网关** | 用户自填 | Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关 | 看网关 | 看网关 |
+
+> ⚠️ **不要把选项 2 (OpenAI 官方) 和选项 7 (自建网关) 混淆**:走 OpenAI API 官方端点选 2;有自己跑的兼容服务(Azure / 公司团队 LLM 网关 / 本地 vLLM/LMStudio)选 7,选 7 必须自填 Base URL + 模型名。
 
 **Why DeepSeek default, not Ollama**: previous versions called Ollama
 "推荐新手 / 白嫖" but in practice CPU inference on a 16 GB Mac is slow

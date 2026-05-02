@@ -68,8 +68,15 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 
 `init` 是 v0.3.27+ 的交互式向导，自动检测 `config.toml` 缺哪些字段并按需补齐。每一步都有"不确定就回 1"的默认值：
 
-1. **Phase 1 — LLM 服务选择（3 选 1 + 高级）**：默认推荐 **DeepSeek**（性价比高、效果好），其次 OpenAI、Gemini，第 4 项「高级」里包含本地 Ollama 与 OpenAI 协议兼容自建网关。
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段（DeepSeek/OpenAI/Gemini 问 Key + 模型；Ollama 只问模型名；自建网关问 Base URL + Key + 模型）。
+1. **Phase 1 — LLM 服务选择（7 项菜单，"不确定就回 1"）**：菜单实际显示 7 项,每项都标注了默认模型:
+   - **1) DeepSeek 官方 ★默认推荐** —— 默认 `deepseek-chat`（V3 系列）/ ¥0.001/千 token / 国内可直连
+   - **2) OpenAI 官方** —— 默认 `gpt-4o-mini` / 需 sk- Key
+   - **3) Gemini 官方** —— 默认 `gemini-2.0-flash-exp` / 免费档每天 1500 次
+   - **4) Claude 官方** —— 默认 `claude-sonnet-4-5` / 按 token 付费,质量高
+   - **5) OpenRouter 聚合** —— 默认 `openai/gpt-4o-mini` / 一个 Key 跑多家
+   - **6) 本地 Ollama（完全离线）** —— 默认 `llama3` / 无 Key / 16GB+ 内存
+   - **7) （高级）OpenAI 协议兼容自建网关** —— Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关,需自填 Base URL + 模型。**不要和选项 2 (OpenAI 官方) 混淆**
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段（云厂商问 Key + 模型,Phase 2 默认值就是上面列的模型；Ollama 只问模型名,自动装 + 拉模型；自建网关问 Base URL + Key + 模型）。
 3. **Phase 3 — Embedding（向量化，3 选 1 + 高级）**：默认推荐 **本地 Ollama bge-m3**（免费、离线、效果够用），其次 Gemini（云端、效果最好但要 Key），再次「跟随主 LLM」（仅当主 LLM 提供 embedding 接口时可用，否则自动 fallback 到 Ollama）。高级选项里有"自定义 OpenAI 兼容 endpoint"。
 4. **Phase 4 — Per-module 覆盖**（高级，默认跳过）：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
 
