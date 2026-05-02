@@ -64,7 +64,7 @@ docker compose ps
 
 `init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
 
-1. **Phase 1 — 选 LLM 服务（7 项菜单）**：**第一推荐 DeepSeek**(`deepseek-v4-flash` / ¥0.001/千 token,几乎免费,国内可直连);**第二推荐 #2 "中转站 / OpenAI 协议兼容服务"**——买了中转站 / OneAPI Key 的国内用户走这个(国内付人民币跑海外或国产模型最常见),进子菜单后默认就是中转站 preset。其它选项: #3 OpenAI 官方(`gpt-5-nano`,国内访问受限) / #4 Gemini(`gemini-2.5-flash`,需翻墙) / #5 Claude(`claude-sonnet-4-6`,需翻墙) / #6 OpenRouter(`openai/gpt-5-nano`) / #7 本地 Ollama(`qwen2.5:7b`)。Phase 2 会再次显示模型可选项让你确认。
+1. **Phase 1 — 选 LLM 服务（7 项菜单）**：**第一推荐 DeepSeek**(`deepseek-v4-flash` / ¥0.001/千 token,几乎免费,国内可直连);**第二推荐 #2 "中转站 / OpenAI 协议兼容服务"**——买了中转站 / OneAPI Key 的人走这个,也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM,进子菜单后默认就是中转站 preset。其它选项: #3 OpenAI 官方(`gpt-5-nano`) / #4 Gemini(`gemini-2.5-flash`) / #5 Claude(`claude-sonnet-4-6`) / #6 OpenRouter(`openai/gpt-5-nano`) / #7 本地 Ollama(`qwen2.5:7b`)。Phase 2 会再次显示模型可选项让你确认。
 2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；选 #2(协议兼容)进子菜单后,Base URL + 默认模型自动填好,只用填 API Key 和确认模型。
 3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
    - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）

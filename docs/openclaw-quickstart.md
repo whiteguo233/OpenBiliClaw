@@ -80,9 +80,9 @@ docker exec -it openbiliclaw-backend openbiliclaw init
      - **g) Azure OpenAI** —— `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEP`
      - **h) 自建 vLLM / LMStudio / Ollama 网关** —— `http://localhost:8000/v1` / 模型 HuggingFace 路径,强制手填
      - **i) 其它(完全手填)** —— escape hatch
-   - **3) OpenAI 官方** —— 默认 `gpt-5-nano`(最便宜);api.openai.com 国内访问受限,**大多数中国用户用 #2 中转站会更顺**。可选 gpt-5.4-nano / gpt-5.4-mini / gpt-5.5(旗舰) / gpt-5.5-pro
-   - **4) Gemini 官方** —— 默认 `gemini-2.5-flash`(稳定);免费档每天 1500 次,但**国内需翻墙**。可选 gemini-3-flash-preview / gemini-3.1-pro(旗舰) / gemini-3.1-flash-lite-preview(最便宜)
-   - **5) Claude 官方** —— 默认 `claude-sonnet-4-6`(1M ctx),按 token 付费,质量高,**国内需翻墙**。可选 claude-haiku-4-5(便宜) / claude-opus-4-7(旗舰)
+   - **3) OpenAI 官方** —— 默认 `gpt-5-nano`(最便宜的 GPT-5);可选 gpt-5.4-nano / gpt-5.4-mini / gpt-5.5(旗舰) / gpt-5.5-pro
+   - **4) Gemini 官方** —— 默认 `gemini-2.5-flash`(稳定);免费档每天 1500 次。可选 gemini-3-flash-preview / gemini-3.1-pro(旗舰) / gemini-3.1-flash-lite-preview(最便宜)
+   - **5) Claude 官方** —— 默认 `claude-sonnet-4-6`(1M ctx),按 token 付费,质量高。可选 claude-haiku-4-5(便宜) / claude-opus-4-7(旗舰)
    - **6) OpenRouter 聚合** —— 默认 `openai/gpt-5-nano`;格式 `<vendor>/<model>`(如 anthropic/claude-sonnet-4-6 / google/gemini-2.5-flash)
    - **7) 本地 Ollama（完全离线）** —— 默认 `qwen2.5:7b`(中文好);可选 llama3.2 / gemma2 / mistral / deepseek-r1。无 Key / 16GB+ 内存
 2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,OpenAI 协议兼容子菜单见上 9 个 preset),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关 / 其它路径强制手填模型名(写错会 404)。

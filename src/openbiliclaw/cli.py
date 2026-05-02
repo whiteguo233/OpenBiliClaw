@@ -1204,22 +1204,22 @@ _LLM_MENU: tuple[tuple[str, str, str], ...] = (
     (
         "openai-compat",
         "★ 第二推荐 — 中转站 / OpenAI 协议兼容服务",
-        "买了中转站 Key 选这个 (国内最常见)。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM",
+        "买了中转站 Key 选这个。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM",
     ),
     (
         "openai",
         "OpenAI 官方",
-        "默认 gpt-5-nano。api.openai.com 国内访问受限,大多数人用上面 #2 的中转站会更顺",
+        "默认 gpt-5-nano (最便宜的 GPT-5)。api.openai.com,需要 sk- 开头的 Key",
     ),
     (
         "gemini",
         "Gemini 官方",
-        "默认 gemini-2.5-flash。Google AI Studio 申请 Key,免费档每天 1500 次,国内需翻墙",
+        "默认 gemini-2.5-flash (稳定 / 便宜)。Google AI Studio 申请 Key,免费档每天 1500 次够用",
     ),
     (
         "claude",
         "Claude 官方",
-        "默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高,国内需翻墙",
+        "默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高",
     ),
     (
         "openrouter",
