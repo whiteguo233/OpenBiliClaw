@@ -155,7 +155,16 @@ class ContinuousRefreshController:
     # set has been delivered, the only reason to push again is when a
     # slot rotates (user feedback / TTL).  10 min is enough to surface
     # newly generated probes without hammering the user.
-    proactive_push_interval_seconds: int = 600
+    # Pre-2026-05-04 default was 600s (10 min). At that cadence new
+    # delights took up to 10 minutes to surface in the popup, plus the
+    # proactive_push only emits ONE candidate per tick. 120s is a much
+    # tighter fallback while keeping chrome-notification cooldowns
+    # intact (those have their own dedup window). The primary push path
+    # is still the immediate ``delight.refreshed`` event emitted at the
+    # end of ``_run_refresh_plan`` once new candidates are scored — this
+    # interval is a safety net for the case where a refresh-less window
+    # produces delights via some other path (manual rescore, init).
+    proactive_push_interval_seconds: int = 120
     # Soul pipeline tick runs every minute to drain buffers, but the
     # speculator inside the pipeline doesn't need that cadence — its
     # gating happens upstream now in pipeline.tick().  Kept explicit so
@@ -172,6 +181,10 @@ class ContinuousRefreshController:
     # to DEBUG when nothing actually changed since the previous tick.
     # INFO fires only when the count or top-group rotates.
     _last_pool_maintenance_fingerprint: tuple[int, int, str] = (-1, -1, "")
+    # Last pool_available count emitted via the runtime event stream so
+    # popup-side ``mergeRuntimeStatusEvent`` only re-renders when the
+    # number actually changes — see ``_publish_pool_status_if_changed``.
+    _last_published_pool_count: int = -1
 
     _signal_event_types = [
         "view",
@@ -226,7 +239,9 @@ class ContinuousRefreshController:
         if not self._is_initialized():
             return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
 
-        if self._enforce_pool_cap():
+        pool_at_cap = self._enforce_pool_cap()
+        await self._publish_pool_status_if_changed()
+        if pool_at_cap:
             return {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
 
         profile = await self.soul_engine.get_profile()
@@ -253,7 +268,9 @@ class ContinuousRefreshController:
         if not self._is_initialized():
             return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
 
-        if self._enforce_pool_cap():
+        pool_at_cap = self._enforce_pool_cap()
+        await self._publish_pool_status_if_changed()
+        if pool_at_cap:
             return {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
 
         profile = await self.soul_engine.get_profile()
@@ -712,6 +729,11 @@ class ContinuousRefreshController:
                 max_per_group=max(3, self.pool_target_count // 10),
             )
             self.database.evict_stale_pool_items(max_age_days=14)
+            # Snapshot delight count BEFORE precompute so we can detect
+            # net new above-threshold delights and push a refresh event
+            # to the popup (no per-item chrome notification — popup
+            # re-fetches /api/delight/pending-batch when this fires).
+            delight_count_before = self._safe_count_delight_candidates()
             await self.recommendation_engine.precompute_pool_copy(
                 profile=profile,
                 limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
@@ -723,6 +745,22 @@ class ContinuousRefreshController:
                 await self.recommendation_engine.prewarm_supergroup_embeddings()
             except Exception:
                 logger.exception("prewarm_supergroup_embeddings failed")
+            delight_count_after = self._safe_count_delight_candidates()
+            net_new_delights = max(0, delight_count_after - delight_count_before)
+            if net_new_delights > 0:
+                await self._publish_event(
+                    {
+                        "type": "delight.refreshed",
+                        "phase": "ready",
+                        "count": net_new_delights,
+                        "total_pending": delight_count_after,
+                        "message": (
+                            f"刚发现 {net_new_delights} 条新的惊喜推荐"
+                            if net_new_delights > 1
+                            else "刚发现一条新的惊喜推荐"
+                        ),
+                    }
+                )
             await self._publish_delight_if_available()
             await self._publish_interest_probe_if_available()
 
@@ -768,6 +806,47 @@ class ContinuousRefreshController:
             "reason": reason,
             "recommendation_count": 0,
         }
+
+    async def _publish_pool_status_if_changed(self) -> None:
+        """Emit a ``pool_status`` runtime event when the pool count rotates.
+
+        Pool count changes most often via ``enforce_pool_cap`` reactivating
+        suppressed items or trimming overflow — a path that doesn't go
+        through the end-of-refresh ``refresh.pool_updated`` event. Without
+        this hook, the popup's pool-count UI only refreshes when a full
+        refresh tick completes (every 8h cron); now it stays in sync
+        within seconds of any pool-state change.
+
+        Only emits when the count is different from the last emit, so
+        steady-state ticks don't spam the WebSocket stream.
+        """
+        try:
+            current = int(self.database.count_pool_candidates())
+        except Exception:
+            return
+        if current == self._last_published_pool_count:
+            return
+        self._last_published_pool_count = current
+        await self._publish_event(
+            {
+                "type": "pool_status",
+                "pool_available_count": current,
+                "pool_target_count": int(self.pool_target_count),
+            }
+        )
+
+    def _safe_count_delight_candidates(self) -> int:
+        """Best-effort count of pending delight candidates (returns 0 on any
+        error so the caller can do delta-based comparison without crashing
+        the refresh tick)."""
+        from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+
+        try:
+            return int(
+                self.database.count_delight_candidates(min_delight_score=DEFAULT_DELIGHT_THRESHOLD)
+            )
+        except Exception:
+            return 0
 
     async def _publish_event(self, event: dict[str, object]) -> None:
         publish = getattr(self.event_hub, "publish", None)

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "OpenBiliClaw",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "description": "你的 B 站专属 AI 朋友 — 行为采集与智能推荐",
     "permissions": [
         "activeTab",

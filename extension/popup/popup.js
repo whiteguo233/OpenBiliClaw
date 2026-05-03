@@ -451,6 +451,25 @@ function connectRuntimeStream() {
           updateMessageBadge();
         }
       }
+      // Delight refreshed: backend computed N new above-threshold delights
+      // — re-fetch the full queue (no per-item chrome notification, no
+      // banner pop). Just keeps popup in sync with backend without forcing
+      // the user to reload the extension.
+      if (event.type === "delight.refreshed") {
+        void (async () => {
+          try {
+            const items = await fetchPendingDelightBatch(20);
+            if (!Array.isArray(items)) return;
+            clearDelightQueue();
+            for (const item of items) {
+              pushDelightCandidate(item);
+            }
+            renderDelightSlot();
+          } catch {
+            // Silently ignore — next reload or proactive push will heal
+          }
+        })();
+      }
       // Delight feedback: show hint
       if (
         event.type === "delight.disliked" ||

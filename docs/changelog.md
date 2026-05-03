@@ -4,6 +4,31 @@
 
 ---
 
+## v0.3.37 / extension v0.3.5: popup 与后端实时同步修复（2026-05-04）
+
+### 改动
+
+- **`delight.refreshed` 实时事件**: refresh tick 末尾比较 precompute 前后 delight 候选数,新增 ≥1 时通过 WebSocket 发 `{type: "delight.refreshed", count, total_pending}` 事件。**不带 per-item payload、不触发 chrome 通知**——纯粹是触发 popup 重拉 `/api/delight/pending-batch`。修复用户痛点「惊喜推荐只有重新加载插件才出来」。
+- **`pool_status` 实时事件**: `_enforce_pool_cap` 后(每分钟跑一次)如果 pool_count 跟上次发布的不同,推 `{type: "pool_status", pool_available_count, pool_target_count}`。popup `mergeRuntimeStatusEvent` 已经有 handler,会自动重渲染。修复用户痛点「滚动列表时候选池数量不变」。
+- **proactive_push_interval_seconds 600→120**: 把后台兜底推送 cadence 从 10 分钟收紧到 2 分钟。主路径已经是即时 `delight.refreshed`,这里只是安全网,降低延迟尾巴。
+- **popup `onEvent` 加 `delight.refreshed` 分支**: 收到事件后调 `fetchPendingDelightBatch(20)` 重拉队列,`clearDelightQueue` + `pushDelightCandidate(item)` 串接 + `renderDelightSlot()`。出错静默,下一轮 proactive 推送会自愈。
+
+### 影响
+
+- 新 delight 在 backend 跑完 `precompute_delight_scores` 几秒内就出现在已打开的 popup 里,无需手动重新加载扩展。
+- 候选池数量在 trim/reactivate 过的 60s 内同步到 popup UI。
+- `proactive_push_interval_seconds` 默认值改了,如果你的 config.toml 显式设过 600 仍会沿用,新装/默认值是 120。
+
+---
+
+## v0.3.36: Delight LLM JSON 解析容错（2026-05-04）
+
+### 修复
+
+- **`LLMDelightScorer` 不再因 provider 输出形态崩溃**: DeepSeek 严格按 prompt 返 `[...]`,但 mimo-v2.5-pro 等模型在 JSON 模式下倾向返 `{"results": [...]}` / `{"items": [...]}` / 或多个 root 对象 newline 分隔(触发 `JSONDecodeError: Extra data`)。新增 `_extract_delight_entries` 兜底:tolerant parse → 已知 wrapper 键解包(results/items/delights/data/scores/candidates/output/list/array)→ JSONL 行级回退 → single-dict-with-bvid 包装。用户切到 mimo 后 12/12 失败 → 现在全 shape 都能吞下。
+
+---
+
 ## v0.3.35: 惊喜推荐改两段式检索（粗召 + 精排）（2026-05-04）
 
 ### 改动
