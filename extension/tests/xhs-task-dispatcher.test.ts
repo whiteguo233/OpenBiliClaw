@@ -279,6 +279,39 @@ test("executeTask sends XHS_TASK_EXECUTE once the tab finishes loading", async (
   await flush();
 });
 
+test("executeTask opens bootstrap_profile in a foreground tab regardless of scroll rounds", async () => {
+  const state = installChromeMock();
+
+  // No max_scroll_rounds — earlier behaviour put this in the
+  // background tab, but init-time bootstrap should always be visible.
+  const task: XhsTask = { id: "t-bootstrap-no-scroll", type: "bootstrap_profile" };
+  await executeTask(task);
+
+  assert.deepEqual(state.createdTabs, [
+    { url: "https://www.xiaohongshu.com/explore", active: true },
+  ]);
+
+  await handleTaskResult({ task_id: "t-bootstrap-no-scroll", urls: [], status: "ok" });
+  await flush();
+});
+
+test("executeTask opens search tasks in a background tab", async () => {
+  const state = installChromeMock();
+
+  const task: XhsTask = { id: "t-search-bg", type: "search", keyword: "demo" };
+  await executeTask(task);
+
+  assert.deepEqual(state.createdTabs, [
+    {
+      url: "https://www.xiaohongshu.com/search_result?keyword=demo",
+      active: false,
+    },
+  ]);
+
+  await handleTaskResult({ task_id: "t-search-bg", urls: [], status: "ok" });
+  await flush();
+});
+
 test("executeTask opens explore active and waits after clicked profile navigation", async () => {
   const state = installChromeMock();
   const chrome = (globalThis as unknown as { chrome: ChromeMock }).chrome;

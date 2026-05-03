@@ -111,9 +111,13 @@ export function computeTaskTimeoutMs(task: XhsTask): number {
 }
 
 function shouldActivateBeforeExecute(task: XhsTask): boolean {
+  // Init-time bootstrap runs in a foreground tab so the user can see
+  // their profile being pulled (transparency) and so XHS's lazy-load
+  // / scroll virtualization actually fires (it pauses for inactive
+  // tabs). Discovery tasks (search / creator) stay in background to
+  // avoid disrupting active browsing.
   if (task.type !== "bootstrap_profile") return false;
-  if (bootstrapNavigationCount <= 0) return false;
-  return isScrollableBootstrapTask(task);
+  return bootstrapNavigationCount > 0;
 }
 
 function buildExecuteMessageData(task: XhsTask): Record<string, unknown> {
@@ -311,7 +315,15 @@ export async function executeTask(task: XhsTask): Promise<void> {
   }
 
   try {
-    const tab = await chrome.tabs.create({ url, active: isScrollableBootstrapTask(task) });
+    // Foreground for init-time bootstrap (user is running ``openbiliclaw
+    // init`` and expects to see XHS profile pull happen — also XHS's
+    // virtualised lists only paginate properly in an active tab).
+    // Background for discovery (search / creator) so ongoing scraping
+    // doesn't interrupt active browsing.
+    const tab = await chrome.tabs.create({
+      url,
+      active: task.type === "bootstrap_profile",
+    });
     taskTabId = tab.id ?? null;
     ownsTaskTab = taskTabId !== null;
   } catch {

@@ -20,7 +20,7 @@ The backend owns orchestration and profile building. The extension owns Xiaohong
 
 1. `openbiliclaw init` runs the current Bilibili history/favorites/following collection.
 2. The backend enqueues an `xhs_tasks` row of type `bootstrap_profile`.
-3. The extension task dispatcher opens an inactive Xiaohongshu tab with the user's existing browser login state.
+3. The extension task dispatcher opens an **active** Xiaohongshu tab with the user's existing browser login state. Init-time bootstrap is foreground for two reasons: (a) the user is running `openbiliclaw init` and explicitly expects to see the profile pull happen — transparency over silent automation; (b) Xiaohongshu's virtualised list paginates only when the tab is active, so headless background tabs return only the first window of items even when scrolling. Discovery tasks (search / creator) stay in background tabs because they run continuously and shouldn't disrupt active browsing.
 4. The content script finds the current user's profile URL from the logged-in nav or `__INITIAL_STATE__.userInfo`, then the dispatcher navigates the same tab to that profile page.
 5. The content script extracts notes from Xiaohongshu-rendered profile state. It may click the saved / liked profile tabs so the page loads its own state, but it does not call Xiaohongshu APIs directly.
 6. The extension posts task results to the backend.
