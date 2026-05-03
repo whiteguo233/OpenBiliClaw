@@ -49,11 +49,15 @@ base_url = "https://api.deepseek.com"
 # v4 模型支持 thinking 模式：设置 "high" 或 "max" 开启，空字符串关闭。
 # 开启后会自动附带 thinking={"type": "enabled"} 请求字段。
 #
-# v0.3.26+ 默认改为关闭("")。以前默认 "max" 会让 DeepSeek 每次请求按
-# 32K tokens 预算计费,在 discovery 评估这种"打分类"高频小任务上完全
-# 没必要,日花费会被放大 5-10x。需要思考链的场景(分析复杂用户行为)
-# 可以手工切回 "high" 或 "max"。运行 ``openbiliclaw cost`` 看实际花费。
-reasoning_effort = ""
+# v0.3.26 默认改成空(关闭),因为当时 prompt 没 cache,每次按 32K tokens
+# 预算计费,日花费被放大 5-10x。
+# v0.3.31 改回 "max":配合 prompt-cache 改造(系统 prompt 100% 静态,
+# DeepSeek 自动 cache 90% off 输入)+ caller 标签 + cost 观测台账,
+# reasoning 带来的 LLM 标签质量提升(franchise_key / topic_group 标得更
+# 准、score 更稳)抵消掉了 thinking 阶段的 token 消耗,综合下来比关闭
+# 时还便宜。运行 ``openbiliclaw cost --by caller`` 看实际花费。需要再
+# 关回去就改成 "" 即可。
+reasoning_effort = "max"
 
 [llm.ollama]
 # Local model via Ollama（本地运行，不要求 api_key）

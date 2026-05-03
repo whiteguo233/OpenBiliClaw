@@ -59,11 +59,15 @@ class LLMProviderConfig:
     base_url: str = ""
     http_referer: str = ""
     x_title: str = ""
-    # DeepSeek v4 thinking-mode control. Empty string disables; otherwise
-    # pass "high" or "max" to request that reasoning intensity. Ignored by
-    # providers that do not accept the ``thinking`` / ``reasoning_effort``
-    # request fields.
-    reasoning_effort: str = ""
+    # DeepSeek v4 thinking-mode control. "" disables; "high" / "max" enable
+    # reasoning. v0.3.31 default = "max" — combined with v0.3.29's prompt-cache
+    # refactor (system 100% static, DeepSeek auto-cache 90% off) the
+    # reasoning-token cost becomes affordable, and the LLM produces noticeably
+    # better tags (franchise_key consistent across batch, score_threshold=0.70
+    # still gives healthy pool throughput). Set to "" if the per-day spend
+    # creeps too high and you want to trade off label quality for budget.
+    # Ignored by providers that don't accept ``thinking`` / ``reasoning_effort``.
+    reasoning_effort: str = "max"
 
 
 @dataclass
