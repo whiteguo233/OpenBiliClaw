@@ -78,10 +78,22 @@ class SoulEngine:
         *,
         embedding_service: Any | None = None,
         cognition_cycle_interval_seconds: int | None = None,
+        usage_recorder: Any | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
-        self._llm_service: LLMService = LLMService(registry=llm, memory=memory)
+        # Pass usage_recorder through so internal LLM calls
+        # (preference / awareness / insight / profile_builder / speculator
+        # / dialogue_insight) appear in the cost ledger with their caller
+        # tags. Without this, the entire ``soul.*`` namespace was
+        # invisible in `openbiliclaw cost --by caller` and bypassed the
+        # empty-content guard in LLMService — speculator failures showed
+        # up as silent "0 new generations" instead of explicit WARNs.
+        self._llm_service: LLMService = LLMService(
+            registry=llm,
+            memory=memory,
+            usage_recorder=usage_recorder,
+        )
         self._awareness_analyzer = AwarenessAnalyzer(self._llm_service)
         self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)
         self._insight_analyzer = InsightAnalyzer(self._llm_service)

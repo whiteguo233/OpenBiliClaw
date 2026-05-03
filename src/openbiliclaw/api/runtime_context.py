@@ -109,9 +109,16 @@ class RuntimeContext:
         )
 
         # 3. Soul engine (reuses stable memory_manager)
+        # usage_recorder is forwarded so the internal LLMService SoulEngine
+        # builds (used by preference / awareness / insight / profile_builder
+        # / speculator) writes to the cost ledger with caller tags. Before
+        # this was wired, ``soul.*`` callers were entirely missing from
+        # ``openbiliclaw cost --by caller`` and speculator failures
+        # surfaced as silent "0 new" instead of explicit WARNs.
         new_soul_engine = SoulEngine(
             llm=new_registry,  # type: ignore[arg-type]
             memory=self.memory_manager,
+            usage_recorder=new_usage_recorder,
         )
 
         # 4. Embedding service

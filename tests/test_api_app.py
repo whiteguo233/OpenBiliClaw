@@ -178,9 +178,16 @@ class TestBackendAPI:
                 self.cookie = cookie
 
         class FakeSoulEngine:
-            def __init__(self, *, llm: object, memory: object) -> None:
+            def __init__(
+                self,
+                *,
+                llm: object,
+                memory: object,
+                usage_recorder: object = None,
+            ) -> None:
                 self.llm = llm
                 self.memory = memory
+                self.usage_recorder = usage_recorder
 
         class FakeRecommendationEngine:
             def __init__(
