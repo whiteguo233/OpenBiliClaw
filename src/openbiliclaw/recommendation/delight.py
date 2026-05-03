@@ -85,22 +85,25 @@ class DelightWeights:
 # amplifier yields ~0.70 contribution; combined with the 0.30 weight
 # that's a 0.21 ceiling on the likes signal alone.
 #
-# Empirical score distribution on this codebase's pool top-100 by
-# relevance (2026-05-03, after the embedding/dislike fixes landed):
-#     max = 0.485, p95 = 0.440, p90 = 0.428, p75 = 0.408, median = 0.181
-# A 0.65 threshold (the original Gemini-era constant) is unreachable
-# under bge-m3 — no content ever surfaces as delight, defeating the
-# feature. 0.45 lands at ~p95, catching 4-5 items per 100 (the
-# targeted "exceptional" rarity tier). 0.40 is too generous (32%
-# pass, dilutes the signal). CONSERVATIVE bar drops proportionally
-# from 0.75 to 0.55.
+# Empirical score distribution on a 200-by-relevance sample of this
+# codebase's pool (2026-05-03, after the embedding/dislike fixes):
+#     max = 0.485, p95 = 0.440, p90 = 0.428, median = 0.181
+# Pass-rate at candidate thresholds (extrapolated to a 613-item pool):
+#     threshold 0.43:  5.5% sample →  ~22-33 in pool (too noisy)
+#     threshold 0.44:  3.0% sample →  ~12-18 in pool ← target tier
+#     threshold 0.45:  2.0% sample →   ~8-12 in pool (slightly thin)
+#     threshold 0.46:  1.5% sample →    ~6-9 in pool (rare)
+# Goal is ~15 candidates in a 600-item pool — exceptional but not
+# starving the popup queue. 0.44 lands closest. CONSERVATIVE bar
+# drops proportionally to 0.54 (same ratio gap as 0.44 ↔ default).
 #
-# If discovery quality changes (different pool, different embedding
-# model, profile shift), recheck the empirical distribution and
-# re-tune. ``openbiliclaw cost`` and ad-hoc pool stats SQL queries
-# make this trivial to verify.
-DEFAULT_DELIGHT_THRESHOLD: float = 0.45
-CONSERVATIVE_DELIGHT_THRESHOLD: float = 0.55
+# A 0.65 threshold (the original Gemini-era constant) was unreachable
+# under bge-m3 — no content ever surfaced as delight, defeating the
+# feature. If discovery quality changes (different pool, different
+# embedding model, profile shift), recheck the empirical distribution
+# and re-tune.
+DEFAULT_DELIGHT_THRESHOLD: float = 0.44
+CONSERVATIVE_DELIGHT_THRESHOLD: float = 0.54
 _LOW_EXPLORATION_OPENNESS: float = 0.3
 _DEFAULT_WEIGHTS = DelightWeights()
 
