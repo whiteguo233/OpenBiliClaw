@@ -4,6 +4,41 @@
 
 ---
 
+## v0.3.48 / extension v0.3.9: 拦截"自己发的小红书笔记被推回给自己"（2026-05-05）
+
+### 背景
+
+用户反馈："我看到 popup 里推了好多我自己发的笔记（屎屎/三花/猫主题）"。日志确认 XHS 推荐池里大量出现用户自己发布的内容，三个来路都会污染：
+
+- `xhs-extension-task` (XHS 关键词搜索) — xhs_producer 用用户兴趣画像生成 keyword，搜索结果**自然命中用户自己发的同主题笔记**
+- `xhs-extension-explore` (XHS 推荐流) — XHS 自己的 feed 算法**会把用户自己的内容推给用户**
+- `xhs-extension-profile` (bootstrap 收藏/赞过) — 偶发，自互动场景
+
+后端 `_cache_xhs_notes` 没有任何"是否是自己"的过滤，author 字段直接落库。
+
+### 改动
+
+**扩展**（`extension/src/content/xhs/`，bumped 0.3.8 → 0.3.9）：
+- 新 `extractSelfInfoFromState(state)` 从 XHS profile 页 state 抓 `userId` + `nickname`（已有 `extractOwnProfileUrlFromState` 提供路径模板）
+- `XhsBootstrapDebugStep.self_info?: {user_id, nickname}` 字段
+- `executeBootstrapTaskInPage` 在 partial / final 两个返回路径都注入 `selfInfo`，跟 task-result POST 一起回到后端。late-bound：第一阶段在 /explore 时拿不到，第二阶段进入 profile 页后立即拿到
+
+**后端**（`api/app.py`，bumped 0.3.47 → 0.3.48）：
+- `_extract_self_info_from_debug` / `_persist_xhs_self_info` / `_load_xhs_self_info` / `_is_self_authored_note` 四个 helper
+- self_info 持久到 `discovery_runtime_state["xhs_self_info"]`（key-value，无 schema 变更）
+- `xhs_task_result` 收到时立即 persist，并把**本次请求**的 self_info 直接传给下游过滤路径（避免 round-trip 通过 state，对 in-process test stub 友好）
+- `_cache_xhs_notes` 加 `self_info: dict | None` 参数，匹配（按 nickname 或 user_id 双向匹配，case-insensitive）的 note 在入 `content_cache` 之前被丢弃，丢弃数走 INFO 日志
+- bootstrap event propagation 同样 gate：自发笔记不会被当成 favorite / like 信号污染画像
+
+### 影响
+
+- XHS 搜索 / explore / 收藏路径回来的笔记里，author 跟登录用户匹配的**全部被拦在 content_cache 之外**——popup 不会再推用户自己的笔记
+- 自发笔记也不会再以 favorite / like 的形式进入 events 表喂 soul profile（之前会让 LLM 学到"用户喜欢自己"的循环信号）
+- 日志可见性：`xhs ingest filter: dropped N self-authored note(s)` / `xhs bootstrap propagate: dropped N self-authored note(s)`
+- 测试：新增 `test_xhs_self_authored_notes_are_filtered`（bootstrap 带 self_info → 自发笔记不进 cache、不进 events，他人笔记照常通过）。108/108 通过
+
+---
+
 ## v0.3.47: 推荐文案精排提前出货 — 与 discovery 各 strategy 并行（2026-05-05）
 
 ### 背景

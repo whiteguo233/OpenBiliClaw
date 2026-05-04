@@ -31,6 +31,7 @@ import {
   extractBootstrapStateFromDocument,
   extractOwnProfileUrlFromDocument,
   extractOwnProfileUrlFromState,
+  extractSelfInfoFromState,
   findBootstrapScrollContainer,
   hasDifferentProfileDocumentNotes,
   hasBootstrapProfileContent,
@@ -685,6 +686,9 @@ export async function executeBootstrapTaskInPage(
   const initialStateCounts = state
     ? countBootstrapStateNotesByScope(state, scopes, { baseUrl, maxItemsPerScope })
     : buildEmptyStateCounts(scopes);
+  // v0.3.48+: capture self user_id + nickname so backend can filter
+  // self-authored notes from XHS search / explore / saved-author paths.
+  const selfInfo = state ? extractSelfInfoFromState(state) : null;
 
   if (!is_profile_page && (scopes.includes("saved") || scopes.includes("liked"))) {
     const profileUrlFromDocument = extractOwnProfileUrlFromDocument(doc, baseUrl);
@@ -712,6 +716,7 @@ export async function executeBootstrapTaskInPage(
           profile_url_source: profileUrlFromDocument ? "document" : "state",
           next_url_requested: true,
           next_url_clicked: clickedProfileLink,
+          self_info: selfInfo ?? undefined,
         }) as unknown as Record<string, unknown>,
       };
     }
@@ -751,6 +756,11 @@ export async function executeBootstrapTaskInPage(
     ? countBootstrapStateNotesByScope(state, scopes, { baseUrl, maxItemsPerScope })
     : buildEmptyStateCounts(scopes);
 
+  // Self info may be late-bound: on the initial /explore landing it
+  // is not in state, but after navigating to the user's profile we
+  // re-read state above and can capture it now.
+  const finalSelfInfo = selfInfo ?? (state ? extractSelfInfoFromState(state) : null);
+
   return {
     task_id: msg.task_id,
     urls,
@@ -772,6 +782,7 @@ export async function executeBootstrapTaskInPage(
       profile_url_source: is_profile_page ? undefined : "",
       next_url_requested: false,
       tab_candidates: is_profile_page ? buildTabCandidateDebug(doc) : undefined,
+      self_info: finalSelfInfo ?? undefined,
     }) as unknown as Record<string, unknown>,
   };
 }

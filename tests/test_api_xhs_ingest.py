@@ -543,6 +543,87 @@ class TestXhsTaskResults:
         assert cache_row["source"] == "xhs-extension-task"
         assert cache_row["source_platform"] == "xiaohongshu"
 
+    def test_xhs_self_authored_notes_are_filtered(
+        self,
+        xhs_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        """Notes whose author matches the logged-in user must NOT enter the pool.
+
+        Reproduces 2026-05-05 user complaint: "屎屎/三花/etc. 都是我自己发
+        布的，怎么进推荐里了". XHS search / explore / saved-author paths
+        all readily return self-authored content; the bootstrap task
+        carries self_info in the debug payload so backend can filter.
+        """
+        from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
+
+        app_client, db, memory = xhs_task_client
+        queue = XhsTaskQueue(db)
+        assert queue.enqueue(
+            "bootstrap_profile",
+            {"scopes": ["saved", "liked", "xhs_history"]},
+        )
+        task = queue.next_pending()
+        assert task is not None
+
+        # 1st request — bootstrap brings self_info AND a self-authored note.
+        # The self-authored one should be dropped from cache + event flow.
+        own_url = "https://www.xiaohongshu.com/explore/own-note-001"
+        other_url = "https://www.xiaohongshu.com/explore/other-note-001"
+        response = app_client.post(
+            "/api/sources/xhs/task-result",
+            json={
+                "task_id": task["id"],
+                "status": "ok",
+                "urls": [own_url, other_url],
+                "notes": [
+                    {
+                        "scope": "saved",
+                        "title": "屎屎美貌精华版",
+                        "url": own_url,
+                        "note_id": "own-note-001",
+                        "author": "猫主自己",
+                    },
+                    {
+                        "scope": "saved",
+                        "title": "手冲咖啡入门",
+                        "url": other_url,
+                        "note_id": "other-note-001",
+                        "author": "豆子老师",
+                    },
+                ],
+                "debug": {
+                    "xhs_bootstrap": {
+                        "steps": [
+                            {
+                                "self_info": {
+                                    "user_id": "self-uid-123",
+                                    "nickname": "猫主自己",
+                                }
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+        assert response.status_code == 200
+
+        # Self-authored note dropped from event propagation —
+        # only "豆子老师" → favorite makes it through.
+        assert len(memory.events) == 1
+        assert memory.events[0]["title"] == "手冲咖啡入门"
+
+        # Self-authored note dropped from content_cache too.
+        own_row = db.conn.execute(
+            "SELECT bvid FROM content_cache WHERE bvid=?",
+            ("own-note-001",),
+        ).fetchone()
+        assert own_row is None
+        other_row = db.conn.execute(
+            "SELECT bvid FROM content_cache WHERE bvid=?",
+            ("other-note-001",),
+        ).fetchone()
+        assert other_row is not None
+
 
 class TestXhsTokens:
     """Regression tests for POST /api/sources/xhs/tokens.

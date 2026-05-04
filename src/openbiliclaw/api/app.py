@@ -1889,12 +1889,120 @@ def create_app(
                 database.conn.commit()
         return updated
 
-    def _cache_xhs_notes(database: Any, notes: list[dict[str, Any]], page_type: str) -> int:
-        """Store xhs note metadata from the extension directly into content_cache."""
+    # ── XHS self-author filter (v0.3.48+) ────────────────────────────
+    #
+    # XHS search / explore / saved-author paths all happily return the
+    # logged-in user's own published notes. Without filtering, the
+    # recommendation pool fills with content the user posted themselves
+    # ("自己发的笔记被推回给自己" — observed in 2026-05-05 logs as
+    # 屎屎/三花/etc. cat photos polluting the popup). The extension
+    # bootstrap captures self user_id + nickname from XHS state and
+    # sends it back via ``debug.xhs_bootstrap.steps[*].self_info``.
+    # Backend persists in ``discovery_runtime_state["xhs_self_info"]``
+    # and consults it on every ingest path.
+
+    def _extract_self_info_from_debug(debug: Any) -> dict[str, str] | None:
+        """Pull self_info from the bootstrap-debug payload, if present."""
+        if not isinstance(debug, dict):
+            return None
+        bootstrap = debug.get("xhs_bootstrap")
+        if not isinstance(bootstrap, dict):
+            return None
+        steps = bootstrap.get("steps")
+        if not isinstance(steps, list):
+            return None
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            self_info = step.get("self_info")
+            if isinstance(self_info, dict):
+                user_id = str(self_info.get("user_id", "") or "").strip()
+                nickname = str(self_info.get("nickname", "") or "").strip()
+                if user_id or nickname:
+                    return {"user_id": user_id, "nickname": nickname}
+        return None
+
+    def _persist_xhs_self_info(self_info: dict[str, str]) -> None:
+        """Save self info into discovery_runtime_state if not already there."""
+        memory_manager = getattr(ctx.runtime_controller, "memory_manager", None)
+        if memory_manager is None:
+            return
+        try:
+            state = memory_manager.load_discovery_runtime_state()
+            existing = state.get("xhs_self_info")
+            # Idempotent: only write when content changes (avoid sqlite churn).
+            if isinstance(existing, dict) and existing == self_info:
+                return
+            state["xhs_self_info"] = self_info
+            memory_manager.save_discovery_runtime_state(state)
+            logger.info(
+                "xhs self_info persisted: user_id=%s nickname=%r",
+                self_info.get("user_id", ""),
+                self_info.get("nickname", ""),
+            )
+        except Exception:
+            logger.exception("Failed to persist xhs self_info")
+
+    def _load_xhs_self_info() -> dict[str, str]:
+        """Load self info from runtime state (returns empty dict on miss)."""
+        memory_manager = getattr(ctx.runtime_controller, "memory_manager", None)
+        if memory_manager is None:
+            return {}
+        try:
+            state = memory_manager.load_discovery_runtime_state()
+            existing = state.get("xhs_self_info")
+            if isinstance(existing, dict):
+                return {
+                    "user_id": str(existing.get("user_id", "") or ""),
+                    "nickname": str(existing.get("nickname", "") or ""),
+                }
+        except Exception:
+            logger.exception("Failed to load xhs self_info")
+        return {}
+
+    def _is_self_authored_note(note: dict[str, Any], self_info: dict[str, str]) -> bool:
+        """Check whether a note's author matches the logged-in user.
+
+        Both user_id and nickname can match — XHS sometimes only ships
+        nickname in note metadata (no author user_id), other times both.
+        Treat the match as case-insensitive on the trimmed values.
+        """
+        if not self_info:
+            return False
+        nickname = self_info.get("nickname", "").strip().lower()
+        user_id = self_info.get("user_id", "").strip().lower()
+        author = str(note.get("author", "") or "").strip().lower()
+        if author and nickname and author == nickname:
+            return True
+        author_id = str(note.get("author_id", "") or "").strip().lower()
+        if author_id and user_id and author_id == user_id:
+            return True
+        return False
+
+    def _cache_xhs_notes(
+        database: Any,
+        notes: list[dict[str, Any]],
+        page_type: str,
+        self_info: dict[str, str] | None = None,
+    ) -> int:
+        """Store xhs note metadata from the extension directly into content_cache.
+
+        ``self_info`` (v0.3.48+) lets the caller pass the just-extracted
+        login fingerprint from the same request — avoids a round-trip
+        through ``discovery_runtime_state`` and works against test
+        stubs that haven't implemented the runtime-state API.  When
+        ``None``, falls back to the persisted state.
+        """
         from urllib.parse import urlparse
 
+        if self_info is None:
+            self_info = _load_xhs_self_info()
         cached = 0
+        skipped_self = 0
         for note in notes:
+            if _is_self_authored_note(note, self_info):
+                skipped_self += 1
+                continue
             url = note.get("url", "")
             if not isinstance(url, str) or not url.startswith(xhs_url_prefix):
                 continue
@@ -1930,6 +2038,12 @@ def create_app(
                 author_name=author,
             )
             cached += 1
+        if skipped_self > 0:
+            logger.info(
+                "xhs ingest filter: dropped %d self-authored note(s) (%s)",
+                skipped_self,
+                page_type,
+            )
         return cached
 
     @app.post("/api/sources/xhs/observed-urls")
@@ -2091,16 +2205,42 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
+            # v0.3.48+: piggyback self_info from bootstrap debug payload.
+            # Persist immediately so future requests can also consult it,
+            # AND use the just-extracted value in this request's
+            # downstream filters (skip a state round-trip that some
+            # in-process test stubs don't implement).
+            self_info_from_request = _extract_self_info_from_debug(debug)
+            if self_info_from_request:
+                _persist_xhs_self_info(self_info_from_request)
+            self_info_now = self_info_from_request or _load_xhs_self_info()
             # Store discovered URLs + metadata
             valid_urls = [u for u in urls if isinstance(u, str) and u.startswith(xhs_url_prefix)]
             if valid_urls:
                 ctx.database.save_xhs_observed_urls(valid_urls, "task")
                 _backfill_xhs_tokens(ctx.database, valid_urls)
             if added_notes:
-                _cache_xhs_notes(ctx.database, added_notes, "task")
+                _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
             if task_type == "bootstrap_profile" and added_notes:
-                for event in xhs_bootstrap_notes_to_events(added_notes):
-                    await ctx.memory_manager.propagate_event(event)
+                # Filter self-authored notes from event propagation —
+                # otherwise the user's own posts get treated as their
+                # own "favorite/like" signals and warp the soul profile.
+                propagated = 0
+                skipped_self = 0
+                for note in added_notes:
+                    if _is_self_authored_note(note, self_info_now):
+                        skipped_self += 1
+                        continue
+                    for event in xhs_bootstrap_notes_to_events([note]):
+                        await ctx.memory_manager.propagate_event(event)
+                        propagated += 1
+                if skipped_self > 0:
+                    logger.info(
+                        "xhs bootstrap propagate: dropped %d self-authored note(s) "
+                        "(%d propagated)",
+                        skipped_self,
+                        propagated,
+                    )
         else:
             _xhs_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
 

@@ -39,6 +39,10 @@ export interface XhsBootstrapDebugStep {
   tab_candidate_texts?: string[];
   scroll_candidates?: BootstrapScrollCandidateDebug[];
   tab_load_results?: Record<string, unknown>;
+  // v0.3.48+: piggyback self user_id + nickname back to backend so the
+  // ingest paths (xhs_task_result, _cache_xhs_notes) can filter out
+  // the user's own notes from search / explore / saved-author content.
+  self_info?: { user_id: string; nickname: string };
 }
 
 export interface BootstrapScrollDecision {
@@ -444,6 +448,45 @@ export function extractOwnProfileUrlFromState(
   ]);
   if (!userId) return "";
   return normalizeProfileUrl(`/user/profile/${userId}`, baseUrl);
+}
+
+export interface XhsSelfInfo {
+  user_id: string;
+  nickname: string;
+}
+
+/**
+ * Extract self user_id + nickname from XHS profile-page state.
+ *
+ * Used to fingerprint the logged-in user so the backend can filter
+ * out the user's own notes from XHS search / explore / saved-author
+ * paths — they leak into the recommendation pool otherwise (XHS's
+ * own search / explore feed both readily return self-authored notes).
+ *
+ * Returns ``null`` when the page hasn't exposed user state yet, or
+ * when neither id nor nickname can be read (no value vs partial is
+ * safer — the backend treats absent self-info as "don't filter").
+ */
+export function extractSelfInfoFromState(state: unknown): XhsSelfInfo | null {
+  const loggedIn = firstBoolean(getPath(state, ["user", "loggedIn"]));
+  if (loggedIn !== true) return null;
+  const userId = firstPathString(state, [
+    ["user", "userInfo", "userId"],
+    ["user", "userInfo", "user_id"],
+    ["user", "userInfo", "id"],
+    ["user", "userPageData", "basicInfo", "userId"],
+    ["user", "userPageData", "basicInfo", "user_id"],
+  ]);
+  const nickname = firstPathString(state, [
+    ["user", "userInfo", "nickname"],
+    ["user", "userInfo", "nickName"],
+    ["user", "userInfo", "nick_name"],
+    ["user", "userInfo", "name"],
+    ["user", "userPageData", "basicInfo", "nickname"],
+    ["user", "userPageData", "basicInfo", "nickName"],
+  ]);
+  if (!userId && !nickname) return null;
+  return { user_id: userId, nickname };
 }
 
 export function extractOwnProfileUrlFromDocument(doc: Document, baseUrl: string): string {
