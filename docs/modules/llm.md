@@ -103,6 +103,24 @@ response = await service.complete_structured_task(
 # 自动注入 core memory，并以 json_mode 调用 provider
 ```
 
+#### 全局优先级队列(v0.3.63+)
+
+`LLMService` 内部用 `PrioritySemaphore`(capacity=1, heapq + monotonic
+counter) 串行化所有 `await registry.complete(...)` 调用,按 `caller`
+tag 解析优先级,longest-prefix 命中:
+
+| caller 前缀 | priority | 说明 |
+|---|---|---|
+| `recommendation.write_expression` | 1 | popup 可见的池子表达式回填 |
+| `discovery.evaluate_batch` | 1 | 当前 discovery 批次评估 |
+| `recommendation.delight_score` | 2 | 后台批量打分 |
+| `soul.*` / `xhs.*` | 2 | 灵魂分析 / 小红书分类 |
+| 其他 / 空 | 3 | 默认 |
+
+数字越小越先服务。无竞争时 free passthrough 不增加开销。维护者新增
+caller tag 时无需在意优先级——默认 priority=3 不会插队挤掉已知的
+priority≤2 任务。
+
 ### 异常体系
 
 ```

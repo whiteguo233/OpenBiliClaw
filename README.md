@@ -423,6 +423,8 @@ OpenBiliClaw/
 
 | 版本 | 日期 | 主要变更 |
 |---|---|---|
+| **v0.3.63** | 2026-05-06 | LLM 全局优先级队列:popup 急需的 `write_expression` (priority=1) 不再被后台 `delight_score` 批量打分 (priority=2) FIFO 卡在队尾,池子表达式回填即看即出 · `BackgroundTaskRegistry`:运行时改 config 重载,旧 detached 任务(per-strategy precompute / prewarm / per-event trigger)在 1.5s 内全部 cancel,不再和新 runtime 抢 SQLite 写和 LLM token |
+| **v0.3.62** | 2026-05-05 | 三处架构性 lock 拆分(`_precompute_lock` 拆 expression / delight 两把,popup 可见的 expression 不再等 delight)· 全局 `_refresh_lock` skip-if-busy 防多入口刷新堆叠 · DB 写重试从 5×0.1s 收紧到 8×0.02s(最坏 sync 阻塞 500ms → 160ms) |
 | **v0.3.57** | 2026-05-05 | popup 推荐文案不再有占位模板("这条切口挺顺的…")· XHS 自己发布的笔记不再混入推荐池(所有 ingest 路径统一抽 `self_info` + 启动 purge)· daemon cookie 就绪后立即拉 history(从 7 min 空窗 → ≤30s)。**配套 extension v0.3.10 必须一起更新** |
 | **[v0.3.26](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.26)** | 2026-05-02 | LLM 计费模块:每次调用写一条到 `llm_usage` 表;`openbiliclaw cost` CLI 显示按天/按 provider 的花费分布。`config.example.toml` 默认值改成成本友好版(`reasoning_effort=""` 关思考链,`discovery_cron 8h`),新装用户日花费 ≈ ¥0.5 |
 | [v0.3.25](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.25) | 2026-05-02 | discovery 评估 batch_size 10→30(摊薄 3500 token 系统提示 → -54% input),max_tokens 8192→16384;refresh `_requested_refresh_limit` 按 pool gap 缩放,gap=20 时每策略只请求 15 个候选(原 30) → -50-77% LLM 评估调用 |

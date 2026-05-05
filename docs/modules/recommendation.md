@@ -55,6 +55,10 @@
 from openbiliclaw.recommendation.engine import RecommendationEngine
 
 engine = RecommendationEngine(llm=llm, database=db)
+# v0.3.63+: 可选注入 BackgroundTaskRegistry,让 detached 协程
+# (precompute_pool_copy 派生的 classify / delight 任务) 在
+# config 热重载时被 cancel_all 统一回收。
+# engine = RecommendationEngine(llm=llm, database=db, task_registry=ctx.task_registry)
 items = await engine.generate_recommendations(
     discovered=None,
     profile=profile,
