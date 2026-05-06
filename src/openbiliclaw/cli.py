@@ -1932,11 +1932,14 @@ def _enqueue_xhs_bootstrap_task() -> str | None:
     extension picks the task off the queue and runs it in parallel
     with the rest of init.
 
-    Defaults (v0.3.21+): ``max_scroll_rounds=3`` so the profile actually
-    pulls more than the first virtual-list window;
-    ``max_items_per_scope=50`` so users with hundreds of saves don't
-    only get the first 20. Both can be overridden via env vars
-    ``OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS`` and
+    Defaults (v0.3.64+): ``max_scroll_rounds=15`` and
+    ``max_items_per_scope=300`` so users with hundreds of saves get
+    a deep enough pull to actually reflect their taste — earlier 50 /
+    3 rounds left users with serious save histories getting only the
+    most-recent ~60 items (the executor early-exits per scope when
+    further scrolls stop yielding new items, so the 15-round budget
+    is a ceiling, not a hard time cost). Both can be overridden via env
+    vars ``OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS`` and
     ``OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS``.
     """
     from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
@@ -1949,8 +1952,8 @@ def _enqueue_xhs_bootstrap_task() -> str | None:
     if not hasattr(database, "conn"):
         return None
 
-    scroll_rounds = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "3"))
-    max_items = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "50"))
+    scroll_rounds = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "15"))
+    max_items = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "300"))
 
     try:
         queue = XhsTaskQueue(database)

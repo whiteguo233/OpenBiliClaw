@@ -4,6 +4,47 @@
 
 ---
 
+## v0.3.64: 小红书 bootstrap 拉取上限 50 → 300 (2026-05-06)
+
+### 背景
+
+XHS bootstrap 的 `max_items_per_scope` 默认 50 / `max_scroll_rounds`
+默认 3,对收藏多的用户(几百条)等于"只把最近 60 条最新 save 当作
+画像输入",很难真实反映长期口味。用户提出把上限改到 300。
+
+### 改动
+
+`src/openbiliclaw/cli.py:_enqueue_xhs_bootstrap_task`:
+
+| 参数 | 旧默认 | 新默认 | 控制 env var |
+|---|---|---|---|
+| `max_items_per_scope` | 50 | **300** | `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` |
+| `max_scroll_rounds` | 3 | **15** | `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` |
+
+`scroll_rounds` 也得跟着调,否则虚拟列表每轮 ~20-30 条 × 3 轮上限 ~80,
+300 是空头支票。15 轮是上限不是固定开销:executor 用
+`bootstrapScrollShouldContinue` 跟踪 `stagnantRounds`,默认连续 5 轮
+没出新 note 就早退,所以收藏少的用户不会跑满 15 轮。
+
+extension 侧 `MAX_BOOTSTRAP_SCROLL_ROUNDS = 30` 是 hard ceiling,15
+完全在范围内,**插件无需重新发版**。
+
+### 不影响的
+
+- 设过 env var 的用户继续按自定义值跑
+- 已经跑过 init 的用户不会重复 bootstrap
+- discovery / continuous 路径用的是不同入口(`xhs.search` /
+  `xhs.creator`),和 bootstrap 无关
+- xhs_history scope 在小红书 profile 页根本不暴露,这次依然 0 条
+  (与上限多大无关)
+
+### 测试
+
+`tests/test_cli.py::test_enqueue_xhs_bootstrap_task_uses_env_overrides`
+是 env-override 测试(用 5 / 100),逻辑不变,继续 green。
+
+---
+
 ## v0.3.63: LLM 全局优先级队列 + detached task registry (2026-05-05)
 
 ### 背景

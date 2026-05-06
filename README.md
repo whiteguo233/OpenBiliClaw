@@ -423,6 +423,7 @@ OpenBiliClaw/
 
 | 版本 | 日期 | 主要变更 |
 |---|---|---|
+| **v0.3.64** | 2026-05-06 | 小红书 bootstrap 拉取上限 50→**300** / scroll rounds 3→15:`openbiliclaw init` 时收藏 / 点赞每个 scope 最多拉 300 条(原 50),scroll executor 在连续 5 轮没拉到新 note 时早退,所以收藏少的用户实际开销不变,收藏多的用户画像质量一次性补齐。env var `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` / `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` 可继续覆盖默认值。**插件无需重新打包** |
 | **v0.3.63** | 2026-05-06 | LLM 全局优先级队列:popup 急需的 `write_expression` (priority=1) 不再被后台 `delight_score` 批量打分 (priority=2) FIFO 卡在队尾,池子表达式回填即看即出 · `BackgroundTaskRegistry`:运行时改 config 重载,旧 detached 任务(per-strategy precompute / prewarm / per-event trigger)在 1.5s 内全部 cancel,不再和新 runtime 抢 SQLite 写和 LLM token |
 | **v0.3.62** | 2026-05-05 | 三处架构性 lock 拆分(`_precompute_lock` 拆 expression / delight 两把,popup 可见的 expression 不再等 delight)· 全局 `_refresh_lock` skip-if-busy 防多入口刷新堆叠 · DB 写重试从 5×0.1s 收紧到 8×0.02s(最坏 sync 阻塞 500ms → 160ms) |
 | **v0.3.57** | 2026-05-05 | popup 推荐文案不再有占位模板("这条切口挺顺的…")· XHS 自己发布的笔记不再混入推荐池(所有 ingest 路径统一抽 `self_info` + 启动 purge)· daemon cookie 就绪后立即拉 history(从 7 min 空窗 → ≤30s)。**配套 extension v0.3.10 必须一起更新** |

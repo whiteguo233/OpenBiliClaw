@@ -646,10 +646,14 @@ hung. The bootstrap streams init's stdout so progress is visible.
   `--yes-xhs` / `--no-xhs` 二选一。没传就返回
   `status=needs_decisions`,不会运行 init。
 
-**关键:接入会前台抢焦点**。`max_scroll_rounds=3`(v0.3.22+ CLI 默认)
-触发滚动模式,扩展会在用户浏览器里 `chrome.tabs.create({active: true})`
-打开一个前台 tab(URL: https://www.xiaohongshu.com/explore),自动跳到
-用户 profile 页向下滚动加载收藏 / 点赞,10-30s 完成后自动关闭。
+**关键:接入会前台抢焦点**。`max_scroll_rounds=15`(v0.3.64+ CLI 默认,
+v0.3.22 ~ v0.3.63 是 3)触发滚动模式,扩展会在用户浏览器里
+`chrome.tabs.create({active: true})` 打开一个前台 tab(URL:
+https://www.xiaohongshu.com/explore),自动跳到用户 profile 页向下滚动
+加载收藏 / 点赞,完成后自动关闭。
+执行时长视用户实际收藏量决定 — 收藏少的用户在连续 5 轮 stagnant
+(滚不出新 note)后 executor 自动早退,不会跑满 15 轮;收藏多的用户
+最多 15 轮才能拉满每 scope 300 条上限。
 **这不是隐藏 tab**——背景 tab 在小红书上只渲染浅层 wrapper,触发不到
 瀑布流懒加载,所以必须前台。告诉用户:
   - 装机过程中会被切走一次焦点,正常,完成后焦点还回来
