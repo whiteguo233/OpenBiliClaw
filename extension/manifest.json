@@ -8,6 +8,7 @@
         "alarms",
         "cookies",
         "notifications",
+        "scripting",
         "sidePanel",
         "storage",
         "tabs"
@@ -60,16 +61,16 @@
                 "dist/content/douyin.js"
             ],
             "run_at": "document_start"
-        },
+        }
+    ],
+    "web_accessible_resources": [
         {
-            "matches": [
-                "*://*.douyin.com/*"
-            ],
-            "js": [
+            "resources": [
                 "dist/main/dy-fetch-tap.js"
             ],
-            "run_at": "document_start",
-            "world": "MAIN"
+            "matches": [
+                "*://*.douyin.com/*"
+            ]
         }
     ],
     "action": {

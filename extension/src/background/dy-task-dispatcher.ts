@@ -281,21 +281,22 @@ async function navigateToCurrentScope(): Promise<void> {
   // Douyin redirects /user/self to the logged-in user's own profile.
   const buildScopeUrl = await loadBuildScopeUrl();
   const url = buildScopeUrl(scope, "");
-
-  // Critical: chrome.tabs.update with a same-origin same-path URL
-  // (only ?showTab=… changing) is treated as an SPA route on Douyin's
-  // React app — page bundle stays mounted, content_scripts MAIN-world
-  // entries do NOT re-run, so dy-fetch-tap.js never reinstalls. Real
-  // e2e probe 2026-05-08 caught this with install_messages_received=0
-  // on scopes 3 and 4. Force a fresh document commit by routing
-  // through about:blank between scopes (every nav becomes a true
-  // cross-origin transition, every nav re-injects MAIN + isolated
-  // content_scripts in lockstep).
   const tabId = taskTabId;
+
+  // chrome.tabs.update changes the URL but on Douyin's SPA-routed
+  // React app a same-origin same-path nav (only ?showTab=… changing)
+  // doesn't trigger a fresh document commit — content_scripts don't
+  // re-inject. To guarantee fetch-tap runs in every scope, we drop
+  // the manifest-based MAIN-world content_script and instead
+  // explicitly chrome.scripting.executeScript-inject dy-fetch-tap.js
+  // after every onTabReady fires. Real e2e probe 2026-05-08 v1
+  // (about:blank intermediate) made this worse — sometimes the
+  // about:blank commit raced with the next URL change and Chrome
+  // skipped the second navigation's content_scripts injection
+  // entirely. Explicit scripting is more reliable.
   try {
-    await chrome.tabs.update(tabId, { url: "about:blank", active: true });
+    await chrome.tabs.update(tabId, { url, active: true });
   } catch {
-    // Tab may have been closed by the user; treat as task failure.
     void postTaskResult({
       task_id: progress.task_id,
       status: "failed",
@@ -304,26 +305,28 @@ async function navigateToCurrentScope(): Promise<void> {
     cleanupTask();
     return;
   }
-
-  // Wait for about:blank commit, then push the real URL. The two-step
-  // dance is what guarantees Chrome treats the second update as a
-  // fresh document commit even when the second URL is same-path-as-
-  // previous-scope.
   onTabReady(tabId, () => {
-    void chrome.tabs
-      .update(tabId, { url, active: true })
-      .then(() => {
-        onTabReady(tabId, sendScopeExecuteMessage);
-      })
-      .catch(() => {
-        void postTaskResult({
-          task_id: progress!.task_id,
-          status: "failed",
-          error: "tab_update_failed",
-        });
-        cleanupTask();
-      });
+    void injectFetchTapInto(tabId).then(sendScopeExecuteMessage);
   });
+}
+
+async function injectFetchTapInto(tabId: number): Promise<void> {
+  // Inject dy-fetch-tap.js into the MAIN world of the current tab.
+  // This bypasses the manifest content_scripts injection logic so
+  // SPA-route navs and any other Chrome-version-specific edge cases
+  // don't matter — every scope gets a guaranteed fresh hook.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      files: ["dist/main/dy-fetch-tap.js"],
+      world: "MAIN",
+    });
+  } catch {
+    // Inject failed — could be a chrome:// page, captcha intermediate,
+    // or scripting permission missing. The content script will still
+    // report empty for this scope; user-visible behaviour matches the
+    // existing graceful-degrade path.
+  }
 }
 
 export async function executeTask(task: DyTask): Promise<void> {
@@ -372,7 +375,9 @@ export async function executeTask(task: DyTask): Promise<void> {
     cleanupTask();
     return;
   }
-  onTabReady(taskTabId, sendScopeExecuteMessage);
+  onTabReady(taskTabId, () => {
+    void injectFetchTapInto(taskTabId!).then(sendScopeExecuteMessage);
+  });
 }
 
 /**
