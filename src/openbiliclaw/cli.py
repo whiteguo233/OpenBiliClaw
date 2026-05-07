@@ -2985,19 +2985,19 @@ def init(
 
     # Enqueue the XHS bootstrap task FIRST so the browser extension
     # can run it in parallel with the slow B站 history/favs/follows
-    # fetches below (~10–30s). When _collect_xhs_bootstrap_events()
-    # is called after fetches finish, the task is usually already
-    # done — no extra wall-clock overhead in the happy path. v0.3.21
-    # changed this from a serial 8-second blocking poll to this
-    # parallel pattern.
+    # fetches below (~10–30s). XHS is HTTP-only on B站's side so
+    # there's no browser-tab focus conflict; XHS extension WILL grab
+    # focus but that's fine because nothing else fights it.
+    #
+    # Douyin is enqueued LATER, AFTER XHS finishes, to avoid two
+    # active-tab grabs racing each other (each platform's dispatcher
+    # opens its own foreground tab; running both at once means tabs
+    # interrupt each other's scrolling and Douyin's risk control sees
+    # rapid focus changes as automation). v0.3.66+: serialised XHS→DY
+    # to fix the focus war user reported.
     xhs_task_id = _enqueue_xhs_bootstrap_task() if include_xhs else None
     if xhs_task_id:
         console.print("  [dim]已请求扩展拉小红书收藏 / 点赞（后台并行,不阻塞 B 站拉取）。[/dim]")
-    dy_task_id = _enqueue_dy_bootstrap_task() if include_dy else None
-    if dy_task_id:
-        console.print(
-            "  [dim]已请求扩展拉抖音发布 / 收藏 / 点赞 / 关注(后台并行,不阻塞 B 站拉取)。[/dim]"
-        )
 
     _print_section_title("1/4 拉取数据")
     history, favorites_data, following_data = asyncio.run(_fetch_all_data())
@@ -3037,8 +3037,13 @@ def init(
     # status == "skipped" is silent (DB unavailable / budget exhausted —
     # already printed by _enqueue_xhs_bootstrap_task)
 
-    # Collect Douyin task — independent timeline from XHS, both ran
-    # in parallel with the B站 fetches.
+    # Now (XHS done) enqueue Douyin. Serialised so the two browser-
+    # focus-grabbing dispatchers don't race for the same active tab.
+    dy_task_id = _enqueue_dy_bootstrap_task() if include_dy else None
+    if dy_task_id:
+        console.print(
+            "  [dim]已请求扩展拉抖音发布 / 收藏 / 点赞 / 关注(开始抢一次浏览器焦点,~60-90 秒)。[/dim]"
+        )
     dy_events, dy_scope_counts, dy_status = _collect_dy_bootstrap_events(dy_task_id)
     if dy_status == "ok":
         console.print(

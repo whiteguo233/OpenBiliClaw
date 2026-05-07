@@ -261,14 +261,44 @@ export function installFetchTap(
 // any real installation. Mirrors the xhs-state-bridge.ts pattern.
 
 const FETCH_TAP_MESSAGE_TYPE = "OPENBILICLAW_DOUYIN_AWEME_PAGE";
+// Install-status sentinel: MAIN world emits one of these on install
+// resolve so the isolated-world content script can tell whether the
+// fetch-tap successfully wrapped page-bundle fetch (status="installed")
+// or whether SDK detection timed out (status="skipped_no_sdk"). Used
+// for diagnosing scope_status=empty results — without this we can't
+// tell "captured 0 because SDK never loaded" from "captured 0 because
+// risk-control empty-200'd everything".
+const FETCH_TAP_INSTALL_TYPE = "OPENBILICLAW_DOUYIN_FETCH_TAP_INSTALL";
+
+/**
+ * Replay an install-status ping a few times, spaced apart, so an
+ * isolated-world content script that registered its listener slightly
+ * after MAIN-world install resolved still catches one. Defensive
+ * against the race we observed in the 2026-05-08 e2e probe.
+ *
+ * Three pings × 500ms apart covers:
+ *   - content script at document_start (catches first ping at T+0)
+ *   - content script at document_idle (catches third ping at T+1000ms)
+ *   - any unexpected delay short of 1.5s
+ */
+function replayInstallStatusPing(status: "installed" | "skipped_no_sdk"): void {
+  const fire = (): void => {
+    window.postMessage({ type: FETCH_TAP_INSTALL_TYPE, status }, window.location.origin);
+  };
+  fire();
+  setTimeout(fire, 500);
+  setTimeout(fire, 1_000);
+}
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
-  void waitForDouyinSdk(window, 8_000).then((ready) => {
+  // Generous timeout: real e2e probe (2026-05-08) showed
+  // skipped_no_sdk on slow page-bundle loads even when the user was
+  // logged in. Bumped 8s → 15s so first navs after a chrome.tabs.create
+  // have headroom; subsequent SPA-route reloads in the same tab usually
+  // resolve in <500ms.
+  void waitForDouyinSdk(window, 15_000).then((ready) => {
     if (!ready) {
-      // SDK never loaded — page might not be Douyin (extension was
-      // injected somewhere unexpected) or Douyin shipped a non-SDK
-      // build. Fail open: don't install, let the content-script
-      // executor's per-scope timeout fire and report empty.
+      replayInstallStatusPing("skipped_no_sdk");
       // eslint-disable-next-line no-console
       console.debug("[OpenBiliClaw] dy fetch-tap skipped: SDK not detected");
       return;
@@ -279,6 +309,7 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
         window.location.origin,
       );
     });
+    replayInstallStatusPing("installed");
     // eslint-disable-next-line no-console
     console.debug("[OpenBiliClaw] dy fetch-tap installed (MAIN world)");
   });

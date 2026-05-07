@@ -2417,6 +2417,14 @@ def create_app(
         task_id = payload.get("task_id", "")
         status = payload.get("status", "")
         videos = [v for v in payload.get("videos", []) if isinstance(v, dict)]
+        # TEMP DEBUG: surface incoming partial debug field for the dy
+        # bootstrap e2e probe (will be reverted before release).
+        logger.info(
+            "[dy-debug] task_result IN: status=%s videos=%d debug=%s",
+            status,
+            len(videos),
+            payload.get("debug"),
+        )
         scope_counts = payload.get("scope_counts")
         if not isinstance(scope_counts, dict):
             scope_counts = None

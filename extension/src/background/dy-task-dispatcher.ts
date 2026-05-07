@@ -281,16 +281,49 @@ async function navigateToCurrentScope(): Promise<void> {
   // Douyin redirects /user/self to the logged-in user's own profile.
   const buildScopeUrl = await loadBuildScopeUrl();
   const url = buildScopeUrl(scope, "");
-  void chrome.tabs.update(taskTabId, { url, active: true }).catch(() => {
+
+  // Critical: chrome.tabs.update with a same-origin same-path URL
+  // (only ?showTab=… changing) is treated as an SPA route on Douyin's
+  // React app — page bundle stays mounted, content_scripts MAIN-world
+  // entries do NOT re-run, so dy-fetch-tap.js never reinstalls. Real
+  // e2e probe 2026-05-08 caught this with install_messages_received=0
+  // on scopes 3 and 4. Force a fresh document commit by routing
+  // through about:blank between scopes (every nav becomes a true
+  // cross-origin transition, every nav re-injects MAIN + isolated
+  // content_scripts in lockstep).
+  const tabId = taskTabId;
+  try {
+    await chrome.tabs.update(tabId, { url: "about:blank", active: true });
+  } catch {
     // Tab may have been closed by the user; treat as task failure.
     void postTaskResult({
-      task_id: progress!.task_id,
+      task_id: progress.task_id,
       status: "failed",
       error: "tab_update_failed",
     });
     cleanupTask();
+    return;
+  }
+
+  // Wait for about:blank commit, then push the real URL. The two-step
+  // dance is what guarantees Chrome treats the second update as a
+  // fresh document commit even when the second URL is same-path-as-
+  // previous-scope.
+  onTabReady(tabId, () => {
+    void chrome.tabs
+      .update(tabId, { url, active: true })
+      .then(() => {
+        onTabReady(tabId, sendScopeExecuteMessage);
+      })
+      .catch(() => {
+        void postTaskResult({
+          task_id: progress!.task_id,
+          status: "failed",
+          error: "tab_update_failed",
+        });
+        cleanupTask();
+      });
   });
-  onTabReady(taskTabId, sendScopeExecuteMessage);
 }
 
 export async function executeTask(task: DyTask): Promise<void> {
@@ -366,7 +399,11 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
     status: "partial",
     videos: result.items,
     scope_counts: { ...progress.accumulated_counts },
-    debug: { scope: result.scope, scope_status: result.status },
+    debug: {
+      scope: result.scope,
+      scope_status: result.status,
+      ...(result.debug ?? {}),
+    },
   });
 
   progress.current_scope_idx += 1;
@@ -407,6 +444,7 @@ export interface DyScopeResult {
   scope_count: number;
   status: "ok" | "empty" | "failed";
   error?: string;
+  debug?: Record<string, unknown>;
 }
 
 async function pollNextTask(): Promise<void> {

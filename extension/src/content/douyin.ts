@@ -50,10 +50,45 @@ interface ScopeResultPayload {
   scope_count: number;
   status: "ok" | "empty" | "failed";
   error?: string;
+  /**
+   * Diagnostic counters surfaced through the dispatcher into the
+   * /api/sources/dy/task-result partial debug field. Lets us
+   * disambiguate "scope returned empty because fetch-tap never
+   * installed" from "fetch-tap installed but Douyin returned empty
+   * 200s (risk control)" without needing the user's browser console.
+   */
+  debug?: {
+    fetch_tap_install_status: "unknown" | "installed" | "skipped_no_sdk";
+    aweme_messages_received: number;
+    install_messages_received: number;
+  };
 }
 
 const SCROLL_DELAY_MS = 1_500;
 const POST_INSTALL_SETTLE_MS = 800;
+
+// Module-level: track the last fetch-tap install ping. The MAIN-world
+// dy-fetch-tap.js posts one of:
+//   { type: "OPENBILICLAW_DOUYIN_FETCH_TAP_INSTALL", status: "installed" }
+//   { type: "OPENBILICLAW_DOUYIN_FETCH_TAP_INSTALL", status: "skipped_no_sdk" }
+// at install resolve. We capture it here so runScope can include the
+// status in the result payload's debug field — that's how dispatcher
+// diagnostic logs see whether the MAIN-world script actually wrapped
+// fetch in this tab.
+let _lastFetchTapInstallStatus: "unknown" | "installed" | "skipped_no_sdk" = "unknown";
+let _installMessagesReceived = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data = event?.data as { type?: unknown; status?: unknown } | null;
+    if (!data || typeof data !== "object") return;
+    if (data.type !== "OPENBILICLAW_DOUYIN_FETCH_TAP_INSTALL") return;
+    _installMessagesReceived += 1;
+    const s = String(data.status ?? "");
+    if (s === "installed" || s === "skipped_no_sdk") {
+      _lastFetchTapInstallStatus = s;
+    }
+  });
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,12 +99,18 @@ async function runScope(msg: ScopeExecuteMessage): Promise<ScopeResultPayload> {
     await loadTaskExecutorHelpers();
   const sink = new BootstrapItemSink({ maxItemsPerScope: msg.max_items_per_scope });
   const allItems: DouyinBootstrapItem[] = [];
+  // Per-scope counter: how many OPENBILICLAW_DOUYIN_AWEME_PAGE messages
+  // the MAIN-world fetch-tap pushed into this scope's listener window.
+  // Distinguished from items count: a message can carry items the sink
+  // dedups away or items for the wrong scope, so a non-zero
+  // aweme_messages_received with zero items is its own signature.
+  let awemeMessagesReceived = 0;
 
-  // Listen for fetch-tap captures only while this scope is active.
-  // We filter by scope on the listener side so cross-scope contamination
-  // doesn't happen if a stray /aweme/.../{post,like,...}/ request fires
-  // (e.g. preloads from Douyin's own UI).
   const onMessage = (event: MessageEvent): void => {
+    const data = event?.data as { type?: unknown } | null;
+    if (data && typeof data === "object" && data.type === "OPENBILICLAW_DOUYIN_AWEME_PAGE") {
+      awemeMessagesReceived += 1;
+    }
     const newOnes = ingestMainWorldFetchMessage(event, sink);
     for (const item of newOnes) {
       if (item.scope === msg.scope) allItems.push(item);
@@ -116,6 +157,11 @@ async function runScope(msg: ScopeExecuteMessage): Promise<ScopeResultPayload> {
       items: allItems,
       scope_count: sink.scopeCounts()[msg.scope],
       status: allItems.length > 0 ? "ok" : "empty",
+      debug: {
+        fetch_tap_install_status: _lastFetchTapInstallStatus,
+        aweme_messages_received: awemeMessagesReceived,
+        install_messages_received: _installMessagesReceived,
+      },
     };
   } catch (err) {
     return {
@@ -125,6 +171,11 @@ async function runScope(msg: ScopeExecuteMessage): Promise<ScopeResultPayload> {
       scope_count: sink.scopeCounts()[msg.scope],
       status: "failed",
       error: String(err),
+      debug: {
+        fetch_tap_install_status: _lastFetchTapInstallStatus,
+        aweme_messages_received: awemeMessagesReceived,
+        install_messages_received: _installMessagesReceived,
+      },
     };
   } finally {
     window.removeEventListener("message", onMessage);
