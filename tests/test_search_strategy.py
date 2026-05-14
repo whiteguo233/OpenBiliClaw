@@ -228,6 +228,32 @@ async def test_search_strategy_drops_bad_pool_hints_and_uses_llm_queries() -> No
 
 
 @pytest.mark.asyncio
+async def test_search_strategy_drops_unserializable_pool_hints_and_uses_llm_queries() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    class UnserializablePoolSnapshot:
+        def to_prompt_hints(self) -> dict[str, object]:
+            return {"avoid_topics": [object()]}
+
+    llm_service = FakeLLMService('{"queries": ["城市纪录片 日常"]}')
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=FakeBilibiliClient({}),
+        queries_per_run=2,
+        llm_evaluation=False,
+    )
+
+    queries = await strategy._generate_queries(
+        _build_profile(),
+        pool_snapshot=UnserializablePoolSnapshot(),
+    )
+
+    assert queries == ["城市纪录片 日常"]
+    assert len(llm_service.calls) == 1
+    assert "pool_distribution_hints" not in str(llm_service.calls[0]["user_input"])
+
+
+@pytest.mark.asyncio
 async def test_search_strategy_deduplicates_results_by_bvid() -> None:
     from openbiliclaw.discovery.strategies.strategies import SearchStrategy
 

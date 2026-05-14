@@ -687,7 +687,7 @@ def build_search_queries_prompt(
 8. 所有 query 的核心主题词（第一个实词）必须两两不同，
    禁止同一概念换皮出现多次。
 9. 如果 user 消息包含 <pool_distribution_hints>，这些是当前推荐池已经拥挤或欠覆盖的方向。
-   avoid_topics / avoid_styles 是软避让信号；prefer_axes 是优先补货方向。
+   avoid_topics / avoid_styles / avoid_franchises 是软避让信号；prefer_axes 是优先补货方向。
    source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
    不要为了避让而生成与用户画像无关的 query。
 </rules>

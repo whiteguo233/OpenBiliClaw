@@ -116,11 +116,14 @@ def test_search_prompt_includes_pool_distribution_hints() -> None:
             "avoid_topics": ["AI 编程", "原神"],
             "prefer_axes": ["人物纪录", "审美体验"],
             "avoid_styles": ["deep_dive"],
+            "avoid_franchises": ["原神"],
         },
     )
 
+    system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
 
+    assert "avoid_franchises" in system_prompt
     assert "<pool_distribution_hints>" in user_prompt
     assert "AI 编程" in user_prompt
     assert "人物纪录" in user_prompt
