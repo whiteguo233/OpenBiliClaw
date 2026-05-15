@@ -17,6 +17,15 @@
 
 ---
 
+## 📌 v0.3.70 Highlights (2026-05-16)
+
+- **🧩 Chrome extension offline-backend fix** — `extension-v0.3.22` probes `GET /api/health` before connecting to `/api/runtime-stream`; installing the extension before running `openbiliclaw start` no longer lets browser-level WebSocket connection failures count toward the `chrome://extensions` error badge.
+- **⚪ Backend status is visible** — when the backend is unreachable, the extension toolbar icon shows a subtle gray `!` badge and clears it after the runtime WebSocket first connects; the popup still keeps the backend startup hint.
+
+Full changelog: [docs/changelog.md](docs/changelog.md).
+
+---
+
 ## 📌 v0.3.69 Highlights (2026-05-12)
 
 - **🎵 Douyin init-profile signals** — `openbiliclaw init --yes-douyin` can pull post / favorite / like / follow signals through the browser extension and feed them into preference analysis and the first soul profile.

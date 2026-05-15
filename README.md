@@ -19,6 +19,15 @@
 
 ---
 
+## 📌 v0.3.70 重要更新（2026-05-16）
+
+- **🧩 Chrome 插件离线后端体验修复** —— `extension-v0.3.22` 在连接 `/api/runtime-stream` 之前会先做 `GET /api/health` 健康探针；只安装插件、尚未运行 `openbiliclaw start` 时，不再把浏览器层 WebSocket 连接失败计入 `chrome://extensions` 的「错误」徽标。
+- **⚪ 后端状态可见** —— 后端不可达时扩展工具栏图标会显示浅灰 `!` badge，WebSocket 首次连上后自动清除；popup 内仍保留启动后端提示。
+
+完整变更详见 [docs/changelog.md](docs/changelog.md)。
+
+---
+
 ## 📌 v0.3.69 重要更新（2026-05-12）
 
 - **🎵 抖音初始化画像信号** —— `openbiliclaw init --yes-douyin` 可通过浏览器扩展拉取发布 / 收藏 / 点赞 / 关注，并混入偏好分析与初始画像。
