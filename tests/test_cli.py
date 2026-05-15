@@ -2569,6 +2569,60 @@ def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
     assert captured["payload"]["scopes"] == ["saved", "liked", "xhs_history"]
 
 
+def test_enqueue_xhs_bootstrap_task_reuses_recent_task_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def find_recent_task(self, task_type, *, recent_hours, statuses=None):
+            assert task_type == "bootstrap_profile"
+            assert recent_hours > 0
+            return {"id": "recent-task-id", "status": "completed"}
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            raise AssertionError("recent bootstrap task should be reused")
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+
+    assert _enqueue_xhs_bootstrap_task() == "recent-task-id"
+
+
+def test_enqueue_xhs_bootstrap_task_force_bypasses_recent_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def find_recent_task(self, task_type, *, recent_hours, statuses=None):
+            raise AssertionError("force should not consult recent bootstrap tasks")
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            captured["task_type"] = task_type
+            return "fresh-task-id"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+
+    assert _enqueue_xhs_bootstrap_task(force=True) == "fresh-task-id"
+    assert captured["task_type"] == "bootstrap_profile"
+
+
 def test_ask_xhs_inclusion_non_interactive_terminal_defaults_yes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2675,6 +2729,94 @@ def test_init_youtube_env_skip_overrides_yes_flag(
     assert result.exit_code == 0, result.stdout
     assert enqueue_calls == []
     assert "OPENBILICLAW_NO_YOUTUBE=1" in result.stdout
+
+
+def test_persist_init_source_enabled_flags_updates_optional_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _persist_init_source_enabled_flags
+    from openbiliclaw.config import Config
+
+    config = Config()
+    saved: list[Config] = []
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: config)
+    monkeypatch.setattr("openbiliclaw.config.save_config", lambda cfg: saved.append(cfg))
+
+    _persist_init_source_enabled_flags(include_xhs=False, include_dy=True, include_yt=True)
+
+    assert config.sources.xiaohongshu.enabled is False
+    assert config.sources.douyin.enabled is True
+    assert config.sources.youtube.enabled is True
+    assert saved == [config]
+
+
+def test_select_init_source_shares_accepts_suggested_ratios(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _select_init_source_shares
+
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda *args, **kwargs: True)
+
+    selected = _select_init_source_shares(
+        {"bilibili": 900, "xiaohongshu": 100, "douyin": 9, "youtube": 400},
+        enabled_sources={
+            "bilibili": True,
+            "xiaohongshu": True,
+            "douyin": True,
+            "youtube": True,
+        },
+        configured_shares={
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        },
+    )
+
+    assert selected == {
+        "bilibili": 8,
+        "xiaohongshu": 3,
+        "douyin": 1,
+        "youtube": 5,
+    }
+
+
+def test_select_init_source_shares_accepts_manual_ratios(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _select_init_source_shares
+
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        cli_module.typer,
+        "prompt",
+        lambda *args, **kwargs: "bilibili=6,xiaohongshu=2,youtube=3",
+    )
+
+    selected = _select_init_source_shares(
+        {"bilibili": 10, "xiaohongshu": 10, "youtube": 10},
+        enabled_sources={
+            "bilibili": True,
+            "xiaohongshu": True,
+            "douyin": False,
+            "youtube": True,
+        },
+        configured_shares={
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        },
+    )
+
+    assert selected == {
+        "bilibili": 6,
+        "xiaohongshu": 2,
+        "douyin": 1,
+        "youtube": 3,
+    }
 
 
 def test_init_no_xhs_flag_skips_enqueue(

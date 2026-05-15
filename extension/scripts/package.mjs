@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
@@ -44,10 +44,11 @@ const outPath = resolve(root, outName);
 const includes = ["manifest.json", "dist", "icons", "popup"];
 
 console.log(`\nPackaging ${outName}...`);
-execSync(
-  `cd "${root}" && zip -r -9 "${outPath}" ${includes.join(" ")}`,
-  { stdio: "inherit" },
-);
+await rm(outPath, { force: true });
+execSync(`zip -r -9 "${outPath}" ${includes.join(" ")}`, {
+  cwd: root,
+  stdio: "inherit",
+});
 
 // --- 4. Report --------------------------------------------------------
 const stats = await stat(outPath);

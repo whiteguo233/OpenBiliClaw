@@ -7,8 +7,10 @@
  * lifecycle so divergence is allowed.
  *
  * Polls `GET /api/sources/dy/next-task` at intervals. When the backend
- * hands out a bootstrap task, the dispatcher:
- *   1. Opens a foreground tab at https://www.douyin.com/.
+ * hands out a task, the dispatcher:
+ *   1. Opens a Douyin tab. Discovery tasks stay in the background;
+ *      bootstrap_profile remains foreground because it imports the
+ *      user's own account signals.
  *   2. Listens for `DY_TASK_RESULT` messages from the content script
  *      (partial + final).
  *   3. POSTs each result back to `/api/sources/dy/task-result`.
@@ -302,6 +304,10 @@ export function shouldFinalizeHotTask({
   hotItemCount: number;
 }): boolean {
   return accumulatedCount >= maxItemsTotal || currentHotIndex + 1 >= hotItemCount;
+}
+
+export function shouldOpenDyTaskActive(task: DyTask): boolean {
+  return task.type === "bootstrap_profile";
 }
 
 // ---------------------------------------------------------------------------
@@ -661,11 +667,10 @@ export async function executeTask(task: DyTask): Promise<void> {
     debugLog("executeTask:already_in_flight");
     return;
   }
-  // Cross-source mutex — bail if XHS dispatcher is currently
-  // holding the foreground-tab slot. The next alarm fires in 60s
-  // and we'll retry then. Without this guard, daemon's continuous
-  // _loop_xhs_producer can race with a user's manual fetch-douyin
-  // and both dispatchers fight for browser focus.
+  // Cross-source mutex — bail if another dispatcher is currently
+  // holding the task slot. The next alarm fires in 60s and we'll
+  // retry then. Without this guard, daemon producers can race with
+  // a user's manual fetch and both dispatchers may fight over tabs.
   const mutexAcquired = tryAcquireDispatcherMutex("dy");
   debugLog("executeTask:mutex", { acquired: mutexAcquired });
   if (!mutexAcquired) return;
@@ -686,7 +691,10 @@ export async function executeTask(task: DyTask): Promise<void> {
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      tab = await chrome.tabs.create({
+        url: "https://www.douyin.com/",
+        active: shouldOpenDyTaskActive(task),
+      });
       debugLog("executeSearchTask:tab_created", { tabId: tab.id, keywords: keywords.length });
     } catch (err) {
       await postTaskResult({
@@ -732,7 +740,10 @@ export async function executeTask(task: DyTask): Promise<void> {
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      tab = await chrome.tabs.create({
+        url: "https://www.douyin.com/",
+        active: shouldOpenDyTaskActive(task),
+      });
       debugLog("executeHotTask:tab_created", { tabId: tab.id, hot_count: hotItems.length });
     } catch (err) {
       await postTaskResult({
@@ -770,7 +781,10 @@ export async function executeTask(task: DyTask): Promise<void> {
 
     let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      tab = await chrome.tabs.create({
+        url: "https://www.douyin.com/",
+        active: shouldOpenDyTaskActive(task),
+      });
       debugLog("executeFeedTask:tab_created", { tabId: tab.id });
     } catch (err) {
       await postTaskResult({
@@ -823,7 +837,10 @@ export async function executeTask(task: DyTask): Promise<void> {
   // profile, not empty tab → /user/self).
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+    tab = await chrome.tabs.create({
+      url: "https://www.douyin.com/",
+      active: shouldOpenDyTaskActive(task),
+    });
     debugLog("executeTask:tab_created", { tabId: tab.id });
   } catch (err) {
     debugLog("executeTask:tab_create_failed", { error: String(err) });

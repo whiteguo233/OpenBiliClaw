@@ -240,6 +240,7 @@ model    = "deepseek-v4-flash"
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
+| `enabled` | bool | `true` | 是否启用小红书 discovery 和 init bootstrap；`init` 选 No、`--no-xhs` 或 `OPENBILICLAW_NO_XHS=1` 会写回 `false` |
 | `daily_search_budget` | int | `30` | 每天后端允许入队的 Soul 驱动搜索任务数上限。由 `XhsTaskProducer`（`runtime/xhs_producer.py`）在持续刷新循环里使用，搭配内部 4h 最小间隔避免反复抢配额 |
 | `daily_creator_budget` | int | `10` | 每天每位订阅创作者的抓取任务上限 |
 | `task_interval_seconds` | int | `45` | 扩展分发器两次任务之间的最小间隔（秒） |
@@ -261,6 +262,14 @@ model    = "deepseek-v4-flash"
 | `request_interval_seconds` | int | `2` | direct 请求的建议最小间隔；当前插件签名链路主要由任务预算和 runtime producer 节流保护 |
 
 当前 `search` 子来源优先使用浏览器插件的 logged-in page + acrawler 签名桥，并以 `dy-plugin-search` 进入 discovery；`hot` 子来源优先使用插件 hot-related 链路，并以 `dy-plugin-hot-related` 进入 discovery；`feed` 子来源使用同一插件签名桥请求 `/aweme/v1/web/tab/feed/`，并以 `dy-plugin-feed` 进入 discovery。插件任务空 / 失败时 search / hot 会分别回退 direct-cookie search / hot，feed 也保留 direct-cookie 诊断 fallback；因 daemon 重启或插件未及时消费而被清理的 `failed/stale_pending` 任务不消耗每日预算。runtime 大缺口补池会优先 search / hot，feed 只用于小缺口补零散名额。`msToken` 如果存在会随 Cookie 一起使用，但扩展同步不再硬依赖它。若 Cookie 过期、签名被拒绝或插件未在线，命令可能返回 0 条并提示检查登录态。
+
+### `[sources.youtube]`
+
+YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 走 `yt_search` / `yt_trending` / `yt_channel` 三个策略。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否让 YouTube 参与候选池配比和后台 discovery；`init --yes-youtube` 会写回 `true`，`--no-youtube` 或 `OPENBILICLAW_NO_YOUTUBE=1` 会写回 `false` |
 
 ### `[scheduler]`
 
@@ -285,15 +294,18 @@ model    = "deepseek-v4-flash"
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin = 8:1:1`。当 `pool_target_count = 600` 时，对应目标是 B 站 `480`、小红书 `60`、抖音 `60`。
+候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin:youtube = 8:1:1:1`。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里 YouTube / Douyin 关闭，所以不会因为默认 share 留空池子。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `bilibili` | int | `8` | B 站平台族占比；`search` / `related_chain` / `trending` / `explore` 四个策略统一计入该族 |
 | `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
+| `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
 
-运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池。
+运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，runtime 会调度 `yt_search` / `yt_trending` / `yt_channel` 补池。
+
+`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube 写回对应 `enabled`；交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关平台、编辑四个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
 
 ### `[storage]`
 
@@ -323,8 +335,8 @@ model    = "deepseek-v4-flash"
 
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：默认 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
-- B 站与多源：`bilibili.browser.*`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`
-- 调度：`scheduler.enabled`、`discovery_cron`、`pool_target_count`、`account_sync_interval_hours`、`pool_source_shares`、猜测兴趣参数、自动更新参数
+- B 站与多源：`bilibili.browser.*`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.enabled`
+- 调度：`scheduler.enabled`、`discovery_cron`、`pool_target_count`、`account_sync_interval_hours`、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 日志：控制台 / 文件级别、日志目录和文件名、轮转与非托管日志清理参数
 
 保留但不单独暴露的字段主要是目前只有一个有效值的内部兼容项，例如 `[sources.douyin].mode = "direct"`；保存时插件会继续按当前支持值写回，不会删除其他高级字段。
@@ -344,6 +356,7 @@ model    = "deepseek-v4-flash"
 | `OPENBILICLAW_NO_DOUYIN` | 设为 `1` 时永久跳过 `init` 的抖音接入，即使脚本传了 `--yes-douyin` |
 | `OPENBILICLAW_NO_YOUTUBE` | 设为 `1` 时永久跳过 `init` 的 YouTube 接入，即使脚本传了 `--yes-youtube` |
 | `OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS` | `init --yes-xhs` 收集小红书扩展任务结果的最大等待秒数，默认 `180`；`fetch-xhs --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS` | 小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用，`fetch-xhs --force` 可绕过单次复用 |
 | `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-xhs` 的小红书每个 scope 最大滚动轮数，默认 `15` |
 | `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` | `init --yes-xhs` 的小红书每个 scope 最多采集条目数，默认 `300` |
 | `OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS` | `init --yes-douyin` 收集抖音扩展任务结果的最大等待秒数，默认 `180`；`fetch-douyin --wait-seconds` 可覆盖单次 smoke 命令 |

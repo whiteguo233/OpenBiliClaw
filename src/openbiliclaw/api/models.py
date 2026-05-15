@@ -456,6 +456,44 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class ChatTurnIn(BaseModel):
+    """Durable popup chat turn request.
+
+    The popup uses this endpoint for lifecycle-safe chat.  The POST
+    returns quickly with a pending turn; the backend completes it in the
+    background and the popup polls by ``turn_id`` after reloads.
+    """
+
+    message: str
+    turn_id: str = ""
+    session: str = "popup"
+    scope: str = "chat"
+    subject_id: str = ""
+    subject_title: str = ""
+
+
+class ChatTurnOut(BaseModel):
+    """One durable popup chat turn."""
+
+    turn_id: str
+    session: str = "popup"
+    scope: str = "chat"
+    subject_id: str = ""
+    subject_title: str = ""
+    message: str = ""
+    reply: str = ""
+    status: str = "pending"
+    error: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ChatTurnListResponse(BaseModel):
+    """Durable popup chat history."""
+
+    items: list[ChatTurnOut]
+
+
 # --- Configuration API models ---
 
 
@@ -514,6 +552,7 @@ class SourcesBrowserConfigOut(BaseModel):
 
 
 class XiaohongshuSourceConfigOut(BaseModel):
+    enabled: bool = True
     daily_search_budget: int = 30
     daily_creator_budget: int = 10
     task_interval_seconds: int = 45
@@ -529,12 +568,17 @@ class DouyinSourceConfigOut(BaseModel):
     request_interval_seconds: int = 2
 
 
+class YoutubeSourceConfigOut(BaseModel):
+    enabled: bool = False
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     xiaohongshu: XiaohongshuSourceConfigOut = Field(
         default_factory=XiaohongshuSourceConfigOut
     )
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
+    youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
@@ -602,6 +646,13 @@ class ConfigUpdateIn(BaseModel):
     logging: dict[str, object] | None = None
 
 
+class SourceShareSuggestionIn(BaseModel):
+    """Optional overrides from a settings form that has not been saved yet."""
+
+    enabled_sources: dict[str, bool] | None = None
+    configured_shares: dict[str, int] | None = None
+
+
 class ConfigUpdateResponse(BaseModel):
     """Response after config save."""
 
@@ -609,3 +660,11 @@ class ConfigUpdateResponse(BaseModel):
     config: ConfigResponse
     message: str = ""
     reloaded: bool = False
+
+
+class SourceShareSuggestionResponse(BaseModel):
+    """Suggested source shares based on observed source event counts."""
+
+    event_counts: dict[str, int] = Field(default_factory=dict)
+    enabled_sources: dict[str, bool] = Field(default_factory=dict)
+    suggested_shares: dict[str, int] = Field(default_factory=dict)

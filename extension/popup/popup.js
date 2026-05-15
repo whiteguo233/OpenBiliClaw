@@ -30,19 +30,22 @@ import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
+  fetchChatTurn,
+  fetchChatTurns,
   fetchConfig,
   fetchPendingDelight,
   fetchPendingDelightBatch,
   fetchProfileSummary,
   fetchRecommendations,
   fetchRuntimeStatus,
+  fetchSourceShareSuggestion,
   markDelightSent,
   reportRecommendationClick,
   reshuffleRecommendations,
   refreshRecommendations,
   respondToDelight,
   respondToInterestProbe,
-  sendChatMessage,
+  startChatTurn,
   submitFeedback,
   updateConfig,
 } from "./popup-api.js";
@@ -149,6 +152,10 @@ const elements = {
 };
 
 let recommendationLoadCheckTimer = null;
+const CHAT_SESSION = "popup";
+const CHAT_POLL_INTERVAL_MS = 1200;
+const CHAT_POLL_DEADLINE_MS = 180_000;
+const activeChatPolls = new Map();
 
 function setRefreshButtonState(loading, message = "") {
   state.refreshStatusMessage = message;
@@ -387,6 +394,8 @@ function updateDelightHead(updates) {
   if (state.activeDelights.length === 0) return;
   state.activeDelights[idx] = { ...state.activeDelights[idx], ...updates };
   syncDelightHead();
+  const bvid = state.activeDelights[idx]?.bvid;
+  if (bvid) persistDelightLocalState(bvid, updates);
 }
 
 function clearDelightQueue() {
@@ -1050,6 +1059,15 @@ function buildMessageCard(probe) {
     item.append(chips);
   }
 
+  if (probe.chat_status === "pending") {
+    item.append(createChatThinkingPlaceholder("阿B 正在思考这个方向"));
+  } else if (probe.chat_reply) {
+    const reply = document.createElement("div");
+    reply.className = "message-chat-reply";
+    reply.textContent = probe.chat_reply;
+    item.append(reply);
+  }
+
   const actions = document.createElement("div");
   actions.className = "message-actions";
 
@@ -1067,6 +1085,12 @@ function buildMessageCard(probe) {
   chatBtn.className = "probe-btn is-chat";
   chatBtn.textContent = "\u591A\u804A\u804A";
   chatBtn.addEventListener("click", () => expandInlineChat(item, probe.domain));
+
+  if (probe.chat_status === "pending") {
+    confirmBtn.disabled = true;
+    rejectBtn.disabled = true;
+    chatBtn.disabled = true;
+  }
 
   actions.append(confirmBtn, rejectBtn, chatBtn);
   item.append(actions);
@@ -1137,6 +1161,15 @@ function buildDelightCard(delight) {
     item.append(reason);
   }
 
+  if (delight.chat_status === "pending") {
+    item.append(createChatThinkingPlaceholder("阿B 正在品你这句话"));
+  } else if (delight.chat_reply) {
+    const reply = document.createElement("div");
+    reply.className = "message-chat-reply";
+    reply.textContent = delight.chat_reply;
+    item.append(reply);
+  }
+
   // Action buttons
   const actions = document.createElement("div");
   actions.className = "message-actions";
@@ -1165,6 +1198,13 @@ function buildDelightCard(delight) {
   chatBtn.className = "probe-btn is-chat";
   chatBtn.textContent = "\u804A\u4E00\u804A";
   chatBtn.addEventListener("click", () => expandDelightChat(item, delight));
+
+  if (delight.chat_status === "pending") {
+    viewBtn.disabled = true;
+    likeBtn.disabled = true;
+    dislikeBtn.disabled = true;
+    chatBtn.disabled = true;
+  }
 
   actions.append(viewBtn, likeBtn, dislikeBtn, chatBtn);
   item.append(actions);
@@ -1212,19 +1252,43 @@ function expandDelightChat(itemEl, delight) {
     const message = input.value.trim();
     if (!message) return;
     sendBtn.disabled = true;
+    const turnId = createClientTurnId("delight");
     const thinking = createChatThinkingPlaceholder("\u963fB \u6b63\u5728\u54c1\u4f60\u8fd9\u53e5\u8bdd");
     itemEl.append(thinking);
     try {
-      const result = await respondToDelight(delight.bvid, "chat", delight.title, message);
-      const reply = result?.reply || "\u6536\u5230\u4E86\uFF0C\u6211\u4F1A\u7EE7\u7EED\u89C2\u5BDF\u3002";
-      thinking.remove();
-      const replyEl = document.createElement("div");
-      replyEl.className = "message-chat-reply";
-      replyEl.textContent = reply;
-      itemEl.append(replyEl);
+      const turn = await startChatTurn({
+        turnId,
+        session: CHAT_SESSION,
+        scope: "delight",
+        subjectId: delight.bvid,
+        subjectTitle: delight.title || "",
+        message,
+      });
       const ca = itemEl.querySelector(".message-chat-area");
       if (ca) ca.remove();
-      setTimeout(() => { dismissMessageByBvid(delight.bvid); itemEl.remove(); renderMessagesEmptyIfNeeded(); }, 4000);
+      const showReply = (nextTurn) => {
+        thinking.remove();
+        const replyEl = document.createElement("div");
+        replyEl.className = "message-chat-reply";
+        replyEl.textContent =
+          nextTurn.reply || "\u6536\u5230\u4E86\uFF0C\u6211\u4F1A\u7EE7\u7EED\u89C2\u5BDF\u3002";
+        itemEl.append(replyEl);
+        applyTurnToMessage(nextTurn);
+        applyTurnToDelight(nextTurn);
+        setTimeout(() => { dismissMessageByBvid(delight.bvid); itemEl.remove(); renderMessagesEmptyIfNeeded(); }, 4000);
+      };
+      if (turn.status === "completed" || turn.status === "failed") {
+        showReply(turn);
+      } else {
+        applyTurnToMessage(turn);
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate(nextTurn) {
+            if (nextTurn.status === "completed" || nextTurn.status === "failed") {
+              showReply(nextTurn);
+            }
+          },
+        });
+      }
     } catch (err) {
       console.error("Delight chat failed:", err);
       thinking.remove();
@@ -1320,6 +1384,7 @@ async function sendInlineChat(itemEl, domain, input, sendBtn) {
   if (!message) return;
 
   sendBtn.disabled = true;
+  const turnId = createClientTurnId("probe");
 
   // Show a thinking placeholder so the user knows we\u2019re waiting
   // on the LLM. The composer\u2019s send button alone going gray
@@ -1329,27 +1394,46 @@ async function sendInlineChat(itemEl, domain, input, sendBtn) {
   itemEl.append(thinking);
 
   try {
-    const result = await respondToInterestProbe(domain, "chat", message);
-    const reply = result?.reply || result?.message || "\u6536\u5230\u4E86\uFF0C\u6211\u4F1A\u7ED3\u5408\u8FD9\u4E2A\u65B9\u5411\u7EE7\u7EED\u89C2\u5BDF\u3002";
-
-    thinking.remove();
-
-    // Show reply
-    const replyEl = document.createElement("div");
-    replyEl.className = "message-chat-reply";
-    replyEl.textContent = reply;
-    itemEl.append(replyEl);
+    const turn = await startChatTurn({
+      turnId,
+      session: CHAT_SESSION,
+      scope: "probe",
+      subjectId: domain,
+      subjectTitle: domain,
+      message,
+    });
 
     // Remove chat area, show result, then remove card after delay
     const chatArea = itemEl.querySelector(".message-chat-area");
     if (chatArea) chatArea.remove();
 
-    // Remove from messages after showing reply
-    setTimeout(() => {
-      removeMessageFromState(domain);
-      itemEl.remove();
-      renderMessagesEmptyIfNeeded();
-    }, 4000);
+    const showReply = (nextTurn) => {
+      thinking.remove();
+      const replyEl = document.createElement("div");
+      replyEl.className = "message-chat-reply";
+      replyEl.textContent =
+        nextTurn.reply || "\u6536\u5230\u4E86\uFF0C\u6211\u4F1A\u7ED3\u5408\u8FD9\u4E2A\u65B9\u5411\u7EE7\u7EED\u89C2\u5BDF\u3002";
+      itemEl.append(replyEl);
+      applyTurnToMessage(nextTurn);
+      setTimeout(() => {
+        removeMessageFromState(domain);
+        itemEl.remove();
+        renderMessagesEmptyIfNeeded();
+      }, 4000);
+    };
+
+    if (turn.status === "completed" || turn.status === "failed") {
+      showReply(turn);
+    } else {
+      applyTurnToMessage(turn);
+      pollChatTurnUntilSettled(turn.turn_id, {
+        onUpdate(nextTurn) {
+          if (nextTurn.status === "completed" || nextTurn.status === "failed") {
+            showReply(nextTurn);
+          }
+        },
+      });
+    }
   } catch (err) {
     console.error("Inline chat failed:", err);
     thinking.remove();
@@ -2046,12 +2130,14 @@ function renderProfileSummary(summary) {
   renderRecentAwareness(elements.profileRecentAwareness, summary.recent_awareness);
 }
 
-function appendChatMessage(role, content) {
+function appendChatMessage(role, content, { turnId = "", part = "" } = {}) {
   if (!(elements.chatMessages instanceof HTMLElement)) {
     return null;
   }
   const item = document.createElement("div");
   item.className = `chat-message${role === "你" ? " user" : ""}`;
+  if (turnId) item.dataset.turnId = turnId;
+  if (part) item.dataset.part = part;
 
   const label = document.createElement("span");
   label.className = "chat-role";
@@ -2071,12 +2157,16 @@ function appendChatMessage(role, content) {
 // wait for the dialogue endpoint. Returns the bubble element so the
 // submit handler can swap it for the real reply (or an error) once
 // the request resolves.
-function appendChatThinkingPlaceholder() {
+function appendChatThinkingPlaceholder(turnId = "") {
   if (!(elements.chatMessages instanceof HTMLElement)) {
     return null;
   }
   const item = document.createElement("div");
   item.className = "chat-message chat-thinking";
+  if (turnId) {
+    item.dataset.turnId = turnId;
+    item.dataset.part = "assistant";
+  }
 
   const label = document.createElement("span");
   label.className = "chat-role";
@@ -2112,6 +2202,245 @@ function replaceChatThinkingPlaceholder(placeholder, content) {
   }
   if (elements.chatMessages instanceof HTMLElement) {
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  }
+}
+
+const DELIGHT_LOCAL_STATE_KEY = "openbiliclaw_delight_local";
+// Fields added locally (not from backend) that must survive a panel reload.
+const DELIGHT_PERSIST_FIELDS = [
+  "chat_draft",
+  "chat_reply",
+  "chat_turn_id",
+  "state",
+  "response_message",
+  "expanded",
+  "composer_open",
+];
+
+function persistDelightLocalState(bvid, updates) {
+  const relevant = Object.fromEntries(
+    Object.entries(updates).filter(([k]) => DELIGHT_PERSIST_FIELDS.includes(k)),
+  );
+  if (Object.keys(relevant).length === 0) return;
+  try {
+    const raw =
+      localStorage.getItem(DELIGHT_LOCAL_STATE_KEY) ||
+      sessionStorage.getItem(DELIGHT_LOCAL_STATE_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[bvid] = { ...(all[bvid] ?? {}), ...relevant };
+    localStorage.setItem(DELIGHT_LOCAL_STATE_KEY, JSON.stringify(all));
+  } catch {
+    // silent fallback
+  }
+}
+
+function createClientTurnId(prefix = "turn") {
+  const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  return `${prefix}-${String(random).replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+function findChatTurnElement(turnId, part) {
+  if (!(elements.chatMessages instanceof HTMLElement) || !turnId) {
+    return null;
+  }
+  return elements.chatMessages.querySelector(
+    `[data-turn-id="${CSS.escape(turnId)}"][data-part="${CSS.escape(part)}"]`,
+  );
+}
+
+function renderChatTurn(turn) {
+  if (!turn?.turn_id || !(elements.chatMessages instanceof HTMLElement)) {
+    return;
+  }
+  const userPart = findChatTurnElement(turn.turn_id, "user");
+  if (!userPart) {
+    appendChatMessage("你", turn.message || "", {
+      turnId: turn.turn_id,
+      part: "user",
+    });
+  }
+
+  const assistantPart = findChatTurnElement(turn.turn_id, "assistant");
+  const status = String(turn.status || "pending");
+  if (status === "completed") {
+    if (assistantPart instanceof HTMLElement) {
+      replaceChatThinkingPlaceholder(assistantPart, turn.reply || "");
+    } else {
+      appendChatMessage("助手", turn.reply || "", {
+        turnId: turn.turn_id,
+        part: "assistant",
+      });
+    }
+    return;
+  }
+  if (status === "failed") {
+    const message = turn.reply || "刚刚没发出去，换个说法再试试。";
+    if (assistantPart instanceof HTMLElement) {
+      replaceChatThinkingPlaceholder(assistantPart, message);
+    } else {
+      appendChatMessage("助手", message, {
+        turnId: turn.turn_id,
+        part: "assistant",
+      });
+    }
+    return;
+  }
+  if (!assistantPart) {
+    appendChatThinkingPlaceholder(turn.turn_id);
+  }
+}
+
+function applyTurnToDelight(turn) {
+  if (!turn || turn.scope !== "delight" || !turn.subject_id) return;
+  const idx = state.activeDelights.findIndex((item) => item?.bvid === turn.subject_id);
+  if (idx < 0) return;
+  const updates = {
+    chat_turn_id: turn.turn_id,
+    expanded: true,
+  };
+  if (turn.status === "completed") {
+    Object.assign(updates, {
+      state: "chatted",
+      response_message: "这句已经记下，后面会更会试探。",
+      chat_reply: turn.reply || "",
+      chat_draft: "",
+      composer_open: false,
+    });
+  } else if (turn.status === "failed") {
+    Object.assign(updates, {
+      state: "pending",
+      response_message: "这句还没发出去，稍后再试。",
+      composer_open: true,
+    });
+  } else {
+    Object.assign(updates, {
+      state: "chatting",
+      response_message: "阿B 正在品你这句话。",
+      composer_open: false,
+    });
+  }
+  state.activeDelights[idx] = { ...state.activeDelights[idx], ...updates };
+  persistDelightLocalState(turn.subject_id, updates);
+  syncDelightHead();
+}
+
+function applyTurnToMessage(turn) {
+  if (!turn || !turn.subject_id) return;
+  const type = turn.scope === "delight" ? "delight" : "interest.probe";
+  const idx = state.messages.findIndex((item) => {
+    const itemType = item?.type || "interest.probe";
+    return (
+      itemType === type &&
+      (type === "delight" ? item.bvid === turn.subject_id : item.domain === turn.subject_id)
+    );
+  });
+  if (idx < 0) return;
+  state.messages[idx] = {
+    ...state.messages[idx],
+    chat_turn_id: turn.turn_id,
+    chat_status: turn.status,
+    chat_reply: turn.status === "completed" ? turn.reply || "" : state.messages[idx].chat_reply || "",
+  };
+}
+
+function pollChatTurnUntilSettled(turnId, { onUpdate, onDone } = {}) {
+  if (!turnId || activeChatPolls.has(turnId)) return;
+  const startedAt = Date.now();
+
+  async function tick() {
+    try {
+      const turn = await fetchChatTurn(turnId);
+      onUpdate?.(turn);
+      if (turn.status === "completed" || turn.status === "failed") {
+        activeChatPolls.delete(turnId);
+        await onDone?.(turn);
+        return;
+      }
+    } catch {
+      // Keep polling until the deadline; reload recovery is best-effort
+      // while the backend or network is temporarily unavailable.
+    }
+    if (Date.now() - startedAt > CHAT_POLL_DEADLINE_MS) {
+      activeChatPolls.delete(turnId);
+      return;
+    }
+    const timeoutId = window.setTimeout(tick, CHAT_POLL_INTERVAL_MS);
+    activeChatPolls.set(turnId, timeoutId);
+  }
+
+  activeChatPolls.set(turnId, 0);
+  void tick();
+}
+
+async function refreshAfterChatTurn() {
+  await refreshProfileSummaryAfterInteraction({
+    onProfileStart() {
+      setChatStatus(getSubmissionProgressMessage("chat", "refreshing_profile"), "info");
+    },
+    onActivityStart() {
+      setChatStatus(getSubmissionProgressMessage("chat", "refreshing_activity"), "info");
+    },
+    onDone() {
+      setChatStatus(getSubmissionProgressMessage("chat", "success"), "success");
+    },
+  });
+}
+
+async function hydrateChatHistory() {
+  if (!(elements.chatMessages instanceof HTMLElement) || !state.online) {
+    return;
+  }
+  try {
+    const payload = await fetchChatTurns({ session: CHAT_SESSION, scope: "chat", limit: 50 });
+    elements.chatMessages.replaceChildren();
+    for (const turn of payload.items || []) {
+      renderChatTurn(turn);
+      if (turn.status === "pending") {
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate: renderChatTurn,
+          onDone: refreshAfterChatTurn,
+        });
+      }
+    }
+  } catch {
+    // History is opportunistic; core panel loading should continue offline.
+  }
+}
+
+async function syncScopedChatTurns() {
+  if (!state.online) return;
+  try {
+    const [delightTurns, probeTurns] = await Promise.all([
+      fetchChatTurns({ session: CHAT_SESSION, scope: "delight", limit: 80 }),
+      fetchChatTurns({ session: CHAT_SESSION, scope: "probe", limit: 80 }),
+    ]);
+    for (const turn of delightTurns.items || []) {
+      applyTurnToDelight(turn);
+      applyTurnToMessage(turn);
+      if (turn.status === "pending") {
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate(nextTurn) {
+            applyTurnToDelight(nextTurn);
+            applyTurnToMessage(nextTurn);
+            renderDelightSlot();
+            renderMessagesList();
+          },
+        });
+      }
+    }
+    for (const turn of probeTurns.items || []) {
+      applyTurnToMessage(turn);
+      if (turn.status === "pending") {
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate(nextTurn) {
+            applyTurnToMessage(nextTurn);
+            renderMessagesList();
+          },
+        });
+      }
+    }
+  } catch {
+    // Scoped turn hydration is best-effort; backend fetches on init heal it.
   }
 }
 
@@ -2228,6 +2557,7 @@ function renderDelightSlot() {
 
   const delight = head;
   const isHandled = uiState.handled;
+  const isChatting = delight.state === "chatting";
   const isExpanded = Boolean(delight.expanded);
 
   // Banner with thumbnail. Collapsed = ~64px row showing thumbnail +
@@ -2389,7 +2719,7 @@ function renderDelightSlot() {
         });
         renderDelightSlot();
         setTimeout(() => {
-          if (state.activeDelights[0]?.bvid === delight.bvid) {
+          if (state.activeDelights[state.delightCurrentIndex]?.bvid === delight.bvid) {
             shiftDelightQueue();
             renderDelightSlot();
           }
@@ -2441,7 +2771,7 @@ function renderDelightSlot() {
       },
     );
 
-    if (isHandled) {
+    if (isHandled || isChatting) {
       rejectButton.disabled = true;
       likeButton.disabled = true;
     }
@@ -2459,7 +2789,7 @@ function renderDelightSlot() {
       input.placeholder = "说说你为什么想点开，或者哪里还拿不准";
       input.value = delight.chat_draft || "";
       input.addEventListener("input", () => {
-        if (state.activeDelights[0]?.bvid === delight.bvid) {
+        if (state.activeDelights[state.delightCurrentIndex]?.bvid === delight.bvid) {
           updateDelightHead({ chat_draft: input.value });
         }
       });
@@ -2478,38 +2808,75 @@ function renderDelightSlot() {
             return;
           }
           submit.disabled = true;
-          // Show animated thinking dots so the user knows the LLM
-          // is working — a static "正在整理…" line wasn't enough
-          // signal during the 5-30s delight chat round-trip.
+          const turnId = createClientTurnId("delight");
+          updateDelightHead({
+            state: "chatting",
+            response_message: "阿B 正在品你这句话。",
+            chat_turn_id: turnId,
+            chat_draft: draft,
+            composer_open: false,
+            expanded: true,
+          });
+          renderDelightSlot();
           status.replaceChildren();
           status.append(
             createChatThinkingPlaceholder("阿B 正在品你这句话"),
           );
           try {
-            const payload = await sendChatMessage(
-              `我想聊聊一条惊喜推荐。\n标题：${delight.title}\n理由：${delight.delight_reason}\n我的想法：${draft}`,
-            );
-            updateDelightHead({
-              state: "chatted",
-              response_message: "这句已经记下，后面会更会试探。",
-              chat_reply: payload.reply,
-              chat_draft: "",
-              composer_open: false,
-              expanded: true,
+            const turn = await startChatTurn({
+              turnId,
+              session: CHAT_SESSION,
+              scope: "delight",
+              subjectId: delight.bvid,
+              subjectTitle: delight.title || "",
+              message: draft,
             });
-            setHint("这句记下了，后面的惊喜推荐会继续学。", "success");
+            applyTurnToDelight(turn);
+            applyTurnToMessage(turn);
             renderDelightSlot();
-            await refreshProfileSummaryAfterInteraction({
-              onProfileStart() {
-                setHint("正在同步画像。", "info");
-              },
-              onActivityStart() {
-                setHint("画像已同步，正在刷新最近动态。", "info");
-              },
-            });
+            if (turn.status === "completed") {
+              setHint("这句记下了，后面的惊喜推荐会继续学。", "success");
+            } else if (turn.status === "pending") {
+              pollChatTurnUntilSettled(turn.turn_id, {
+                onUpdate(nextTurn) {
+                  applyTurnToDelight(nextTurn);
+                  applyTurnToMessage(nextTurn);
+                  renderDelightSlot();
+                },
+                async onDone(doneTurn) {
+                  if (doneTurn.status === "completed") {
+                    setHint("这句记下了，后面的惊喜推荐会继续学。", "success");
+                  }
+                  await refreshProfileSummaryAfterInteraction({
+                    onProfileStart() {
+                      setHint("正在同步画像。", "info");
+                    },
+                    onActivityStart() {
+                      setHint("画像已同步，正在刷新最近动态。", "info");
+                    },
+                  });
+                },
+              });
+            }
+            if (turn.status === "completed" || turn.status === "failed") {
+              await refreshProfileSummaryAfterInteraction({
+                onProfileStart() {
+                  setHint("正在同步画像。", "info");
+                },
+                onActivityStart() {
+                  setHint("画像已同步，正在刷新最近动态。", "info");
+                },
+              });
+            }
           } catch {
             submit.disabled = false;
-            status.textContent = "这句还没发出去，稍后再试。";
+            updateDelightHead({
+              state: "pending",
+              response_message: "这句还没发出去，稍后再试。",
+              composer_open: true,
+              expanded: true,
+            });
+            renderDelightSlot();
           }
         },
       );
@@ -2996,6 +3363,7 @@ async function loadProfileSummary({ force = false } = {}) {
   // its WebSocket pushes via ``probed_domains``, so already-pushed
   // probes won't re-arrive on reconnect).
   hydrateInboxFromSpeculations(state.profile?.speculative_interests);
+  void syncScopedChatTurns();
   state.profileLoaded = true;
   renderProfileSummary(state.profile);
   maybeLoadMoreCognitionHistory();
@@ -3172,10 +3540,34 @@ async function initializeRecommendations() {
     clearDelightQueue();
     for (const item of delightResult.value) {
       pushDelightCandidate(item);
+      if (!state.messages.some((m) => m.type === "delight" && m.bvid === item.bvid)) {
+        state.messages.push({ ...item, type: "delight" });
+      }
+    }
+    // Restore local-only delight state (chat_reply, draft, composer, etc.)
+    // that survives a Chrome side-panel reload.
+    try {
+      const raw =
+        localStorage.getItem(DELIGHT_LOCAL_STATE_KEY) ||
+        sessionStorage.getItem(DELIGHT_LOCAL_STATE_KEY);
+      if (raw) {
+        const localState = JSON.parse(raw);
+        for (let i = 0; i < state.activeDelights.length; i++) {
+          const bvid = state.activeDelights[i]?.bvid;
+          if (bvid && localState[bvid]) {
+            state.activeDelights[i] = { ...state.activeDelights[i], ...localState[bvid] };
+          }
+        }
+        syncDelightHead();
+      }
+    } catch {
+      // Ignore corrupt or inaccessible sessionStorage.
     }
   }
   renderPoolStatus(state.runtimeStatus);
   renderDelightSlot();
+  updateMessageBadge();
+  await syncScopedChatTurns();
   await loadActivityFeed();
 
   if (recommendationResult.status === "fulfilled") {
@@ -3334,8 +3726,9 @@ function bindChat() {
       return;
     }
 
-    appendChatMessage("你", message);
-    const thinkingPlaceholder = appendChatThinkingPlaceholder();
+    const turnId = createClientTurnId("chat");
+    appendChatMessage("你", message, { turnId, part: "user" });
+    const thinkingPlaceholder = appendChatThinkingPlaceholder(turnId);
     elements.chatInput.value = "";
     elements.chatSendButton.disabled = true;
     elements.chatSendButton.textContent = "发送中...";
@@ -3348,31 +3741,38 @@ function bindChat() {
     }, 2500);
 
     try {
-      const payload = await sendChatMessage(message);
-      clearSlowStatusTimer();
-      if (thinkingPlaceholder) {
-        replaceChatThinkingPlaceholder(thinkingPlaceholder, payload.reply);
-      } else {
-        appendChatMessage("助手", payload.reply);
-      }
-      setHint("收到，这句记下了。", "success");
-      await refreshProfileSummaryAfterInteraction({
-        onProfileStart() {
-          setChatStatus(getSubmissionProgressMessage("chat", "refreshing_profile"), "info");
-        },
-        onActivityStart() {
-          setChatStatus(getSubmissionProgressMessage("chat", "refreshing_activity"), "info");
-        },
-        onDone() {
-          setChatStatus(getSubmissionProgressMessage("chat", "success"), "success");
-        },
+      const turn = await startChatTurn({
+        turnId,
+        session: CHAT_SESSION,
+        scope: "chat",
+        message,
       });
+      clearSlowStatusTimer();
+      renderChatTurn(turn);
+      setHint("收到，阿B 正在整理。", "success");
+      if (turn.status === "completed" || turn.status === "failed") {
+        await refreshAfterChatTurn();
+      } else {
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate: renderChatTurn,
+          async onDone(doneTurn) {
+            if (doneTurn.status === "completed") {
+              setHint("这句记下了。", "success");
+            }
+            await refreshAfterChatTurn();
+          },
+        });
+        setChatStatus(getSubmissionProgressMessage("chat", "waiting_reply"), "info");
+      }
     } catch {
       clearSlowStatusTimer();
       if (thinkingPlaceholder) {
         replaceChatThinkingPlaceholder(thinkingPlaceholder, "刚刚没发出去，换个说法再试试。");
       } else {
-        appendChatMessage("助手", "刚刚没发出去，换个说法再试试。");
+        appendChatMessage("助手", "刚刚没发出去，换个说法再试试。", {
+          turnId,
+          part: "assistant",
+        });
       }
       setChatStatus(getSubmissionProgressMessage("chat", "error"), "error");
       setHint("聊天接口这会儿没接上，先看看本地后端是不是开着。", "error");
@@ -3476,16 +3876,39 @@ function bindSettings() {
     }
   }
 
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? "";
+  };
+
+  const getVal = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : "";
+  };
+
+  const getInt = (id, fallback) => {
+    const raw = getVal(id);
+    if (raw === "") return fallback;
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const getFloat = (id, fallback) => {
+    const raw = getVal(id);
+    if (raw === "") return fallback;
+    const parsed = parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const checked = (id, fallback = false) => {
+    const el = document.getElementById(id);
+    return el ? el.checked : fallback;
+  };
+
   function populateForm(cfg) {
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
-
-    // Provider fields
-    const setVal = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.value = val || "";
-    };
 
     setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
     setVal("cfgOpenaiModel", cfg.llm?.openai?.model);
@@ -3542,6 +3965,8 @@ function bindSettings() {
     if (sourcesBrowserHeaded) {
       sourcesBrowserHeaded.checked = cfg.sources?.browser?.headed === true;
     }
+    const xhsEnabled = document.getElementById("cfgXhsEnabled");
+    if (xhsEnabled) xhsEnabled.checked = cfg.sources?.xiaohongshu?.enabled !== false;
     setVal("cfgXhsDailySearchBudget", cfg.sources?.xiaohongshu?.daily_search_budget);
     setVal("cfgXhsDailyCreatorBudget", cfg.sources?.xiaohongshu?.daily_creator_budget);
     setVal("cfgXhsTaskInterval", cfg.sources?.xiaohongshu?.task_interval_seconds);
@@ -3552,6 +3977,8 @@ function bindSettings() {
     setVal("cfgDouyinDailyHotBudget", cfg.sources?.douyin?.daily_hot_budget);
     setVal("cfgDouyinDailyFeedBudget", cfg.sources?.douyin?.daily_feed_budget);
     setVal("cfgDouyinRequestInterval", cfg.sources?.douyin?.request_interval_seconds);
+    const youtubeEnabled = document.getElementById("cfgYoutubeEnabled");
+    if (youtubeEnabled) youtubeEnabled.checked = cfg.sources?.youtube?.enabled === true;
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -3571,6 +3998,7 @@ function bindSettings() {
     setVal("cfgPoolShareBilibili", cfg.scheduler?.pool_source_shares?.bilibili);
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
+    setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -3596,27 +4024,6 @@ function bindSettings() {
   }
 
   function collectForm() {
-    const getVal = (id) => {
-      const el = document.getElementById(id);
-      return el ? el.value : "";
-    };
-    const getInt = (id, fallback) => {
-      const raw = getVal(id);
-      if (raw === "") return fallback;
-      const parsed = parseInt(raw, 10);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    };
-    const getFloat = (id, fallback) => {
-      const raw = getVal(id);
-      if (raw === "") return fallback;
-      const parsed = parseFloat(raw);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    };
-    const checked = (id, fallback = false) => {
-      const el = document.getElementById(id);
-      return el ? el.checked : fallback;
-    };
-
     return {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
@@ -3693,6 +4100,7 @@ function bindSettings() {
           headed: checked("cfgSourcesBrowserHeaded"),
         },
         xiaohongshu: {
+          enabled: checked("cfgXhsEnabled", true),
           daily_search_budget: getInt("cfgXhsDailySearchBudget", 30),
           daily_creator_budget: getInt("cfgXhsDailyCreatorBudget", 10),
           task_interval_seconds: getInt("cfgXhsTaskInterval", 45),
@@ -3706,6 +4114,9 @@ function bindSettings() {
           daily_feed_budget: getInt("cfgDouyinDailyFeedBudget", 30),
           request_interval_seconds: getInt("cfgDouyinRequestInterval", 2),
         },
+        youtube: {
+          enabled: checked("cfgYoutubeEnabled"),
+        },
       },
       scheduler: {
         enabled: checked("cfgSchedulerEnabled", true),
@@ -3716,6 +4127,7 @@ function bindSettings() {
           bilibili: getInt("cfgPoolShareBilibili", 8),
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
+          youtube: getInt("cfgPoolShareYoutube", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -3760,6 +4172,40 @@ function bindSettings() {
     overlay.hidden = true;
   });
 
+  const suggestBtn = document.getElementById("cfgSuggestPoolShares");
+  if (suggestBtn) {
+    suggestBtn.addEventListener("click", async () => {
+      suggestBtn.disabled = true;
+      toast.hidden = true;
+      try {
+        const suggestion = await fetchSourceShareSuggestion({
+          enabled_sources: {
+            bilibili: true,
+            xiaohongshu: checked("cfgXhsEnabled", true),
+            douyin: checked("cfgDouyinEnabled"),
+            youtube: checked("cfgYoutubeEnabled"),
+          },
+          configured_shares: {
+            bilibili: getInt("cfgPoolShareBilibili", 8),
+            xiaohongshu: getInt("cfgPoolShareXhs", 1),
+            douyin: getInt("cfgPoolShareDouyin", 1),
+            youtube: getInt("cfgPoolShareYoutube", 1),
+          },
+        });
+        const shares = suggestion?.suggested_shares || {};
+        if (shares.bilibili !== undefined) setVal("cfgPoolShareBilibili", shares.bilibili);
+        if (shares.xiaohongshu !== undefined) setVal("cfgPoolShareXhs", shares.xiaohongshu);
+        if (shares.douyin !== undefined) setVal("cfgPoolShareDouyin", shares.douyin);
+        if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
+        showToast("已按已有信号填入建议比例，保存后生效。", "success");
+      } catch (err) {
+        showToast(`生成建议失败: ${err.message}`, "error");
+      } finally {
+        suggestBtn.disabled = false;
+      }
+    });
+  }
+
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
     saveBtn.textContent = "保存中...";
@@ -3799,6 +4245,7 @@ async function initializePopup() {
   );
   setHint("先看看本地后端连上没。");
   await initializeRecommendations();
+  await hydrateChatHistory();
   // Always fetch profile-summary on startup so the messages inbox is
   // populated regardless of which tab the user lands on.  Without this
   // the inbox stays empty until the user manually opens the profile

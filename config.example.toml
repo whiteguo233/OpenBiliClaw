@@ -198,6 +198,10 @@ headed = false
 # 被动收集（用户浏览时自动提取）+ 后台标签页搜索 + 创作者订阅。
 # 后端不做主动爬取，避免触发风控。
 [sources.xiaohongshu]
+# 设为 false 后：跳过 init 的 XHS bootstrap，后端不再生成 XHS 搜索任务，
+# pool_source_shares 中的 xiaohongshu 配额会被丢弃（不会让池子卡在低于目标）。
+# init 交互式提示选 No、--no-xhs 或 OPENBILICLAW_NO_XHS=1 都会写回 false。
+enabled = true
 # 每天后端允许入队的 Soul 驱动搜索任务数上限
 daily_search_budget = 30
 # 每天每位订阅创作者的抓取任务上限
@@ -217,6 +221,13 @@ daily_search_budget = 30
 daily_hot_budget = 5
 daily_feed_budget = 30
 request_interval_seconds = 2
+
+# ── YouTube 专用配置 ──
+# 当前仅用于 pool-share 归属：enabled=false 时 pool_source_shares 中的 youtube
+# 配额会被丢弃（避免池子卡在低于目标）。YouTube discovery 走 B 站侧的策略管线
+# （YoutubeSearchStrategy），不存在独立 producer loop。
+[sources.youtube]
+enabled = false
 
 [scheduler]
 # Enable scheduled content discovery
@@ -246,11 +257,15 @@ auto_update_enabled = false        # 是否自动检查并应用新版本（git 
 auto_update_check_interval_hours = 6  # 检查间隔（小时）
 
 [scheduler.pool_source_shares]
-# Candidate-pool source mix by platform family. Default 8:1:1 keeps B 站
-# as the main source while reserving pool capacity for 小红书 and 抖音.
+# Candidate-pool source mix by platform family. Default 8:1:1:1 keeps B 站
+# as the main source while reserving pool capacity for 小红书、抖音、YouTube.
+# 关掉的源（[sources.<name>].enabled = false）的配额会被自动剔除，剩余
+# 源按比例重新归一化吃满 pool_target_count——所以这里写多少不重要，重要的
+# 是源本身的 enabled 开关。
 bilibili = 8
 xiaohongshu = 1
 douyin = 1
+youtube = 1
 
 [storage]
 # SQLite database path

@@ -1034,6 +1034,38 @@ class TestDatabase:
 
             db.close()
 
+    def test_list_chat_turns_returns_recent_turns_in_display_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for idx in range(5):
+                db.create_chat_turn(
+                    turn_id=f"turn-{idx}",
+                    session="popup",
+                    scope="chat",
+                    message=f"message-{idx}",
+                )
+                db.conn.execute(
+                    """
+                    UPDATE chat_turns
+                    SET created_at = datetime('now', ?)
+                    WHERE turn_id = ?
+                    """,
+                    (f"+{idx} minutes", f"turn-{idx}"),
+                )
+                db.conn.commit()
+
+            turns = db.list_chat_turns(session="popup", scope="chat", limit=3)
+
+            assert [turn["turn_id"] for turn in turns] == [
+                "turn-2",
+                "turn-3",
+                "turn-4",
+            ]
+
+            db.close()
+
     def test_get_unrecommended_content_excludes_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

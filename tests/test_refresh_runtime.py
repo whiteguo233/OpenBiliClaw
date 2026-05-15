@@ -1198,6 +1198,29 @@ def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
     assert controller._build_source_replenishment_plan() == []
 
 
+def test_source_replenishment_plan_maps_youtube_deficit_to_youtube_strategies() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=80,
+            source_counts={
+                "bilibili": 80,
+                "youtube": 0,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=100,
+        pool_source_shares={"bilibili": 8, "youtube": 2},
+    )
+
+    assert controller._build_source_replenishment_plan() == [
+        (["yt_search", "yt_trending", "yt_channel"], 20)
+    ]
+
+
 async def test_xhs_producer_receives_source_deficit_limit() -> None:
     producer = _FakeXhsProducer()
     controller = ContinuousRefreshController(

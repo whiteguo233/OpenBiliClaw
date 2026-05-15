@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
@@ -51,6 +51,7 @@ const outPath = resolve(root, outName);
 // already laid out manifest.json, popup/, icons/, and the bundled scripts
 // inside dist-firefox/.
 console.log(`\nPackaging ${outName}...`);
+await rm(outPath, { force: true });
 execSync(`zip -r -9 "${outPath}" .`, { cwd: distDir, stdio: "inherit" });
 
 // --- 4. Report --------------------------------------------------------

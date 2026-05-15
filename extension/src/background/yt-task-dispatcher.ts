@@ -20,7 +20,7 @@ import type { YtBootstrapItem, YtScope, YtScopeResult } from "../content/yt/task
 import { YT_SCOPE_URLS } from "../content/yt/task-executor.js";
 
 // Cross-source mutex — same field as xhs/dy dispatchers so all three
-// cooperate on a single foreground-tab slot.
+// cooperate on a single long-running task slot.
 const _MUTEX_STALE_MS = 6 * 60 * 1000;
 function tryAcquireDispatcherMutex(label: string): boolean {
   const g = globalThis as unknown as {

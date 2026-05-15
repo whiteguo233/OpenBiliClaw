@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from openbiliclaw.soul import speculator as speculator_module
 from openbiliclaw.soul.speculator import (
     CooldownEntry,
     InterestSpeculator,
@@ -15,6 +16,7 @@ from openbiliclaw.soul.speculator import (
     SpeculativeState,
     _event_matches_speculation,
     _tokenize,
+    choose_next_probe_candidate,
     expire_stale,
     load_speculative_state,
     observe_events,
@@ -39,6 +41,264 @@ def test_tokenize_filters_short():
     assert "a" not in tokens
     assert "好" not in tokens
     assert "hello" in tokens
+
+
+def test_probe_novelty_guard_matches_profile_specifics():
+    from openbiliclaw.soul.profile import (
+        InterestDomain,
+        InterestLayer,
+        InterestSpecific,
+        OnionProfile,
+    )
+
+    profile = OnionProfile(
+        interest=InterestLayer(
+            likes=[
+                InterestDomain(
+                    domain="AI",
+                    specifics=[
+                        InterestSpecific(name="ComfyUI工作流"),
+                        InterestSpecific(name="图像生成实战"),
+                    ],
+                )
+            ]
+        )
+    )
+    guard = speculator_module.ProbeNoveltyGuard.from_profile_and_state(
+        profile,
+        SpeculativeState(),
+    )
+
+    assert guard.is_duplicate_domain("AI") is True
+    assert guard.is_duplicate_domain("ComfyUI工作流拆解") is True
+    assert guard.filter_specifics(["ComfyUI工作流", "Stable Diffusion LoRA"]) == [
+        "Stable Diffusion LoRA"
+    ]
+
+
+def test_probe_novelty_guard_matches_recent_probe_history():
+    guard = speculator_module.ProbeNoveltyGuard.from_profile_and_state(
+        None,
+        SpeculativeState(),
+        probed_domains={"城市漫游"},
+    )
+
+    assert guard.is_duplicate_domain("城市漫游路线") is True
+
+
+def test_probe_novelty_guard_matches_negative_feedback_history():
+    guard = speculator_module.ProbeNoveltyGuard.from_profile_and_state(
+        None,
+        SpeculativeState(),
+        feedback_history=[
+            {
+                "domain": "城市漫游路线",
+                "response": "reject",
+                "specifics": ["老街路线"],
+            },
+            {
+                "domain": "手作模型",
+                "response": "chat_neutral",
+                "specifics": ["拼装过程"],
+            },
+        ],
+    )
+
+    assert guard.is_duplicate_domain("城市漫游隐藏路线") is True
+    assert guard.filter_specifics(["老街路线", "城市声音采样"]) == [
+        "城市声音采样"
+    ]
+    assert guard.is_duplicate_domain("手作模型制作") is False
+
+
+def test_choose_next_probe_skips_negative_feedback_domain():
+    chosen = choose_next_probe_candidate(
+        [
+            SimpleNamespace(
+                domain="城市漫游隐藏路线",
+                confirmation_count=0,
+                weight=0.9,
+                confidence=0.9,
+                experience_mode="wander_observe",
+                entry_load="light",
+            ),
+            SimpleNamespace(
+                domain="手工模型制作",
+                confirmation_count=0,
+                weight=0.2,
+                confidence=0.2,
+                experience_mode="hands_on",
+                entry_load="light",
+            ),
+        ],
+        feedback_history=[
+            {
+                "domain": "城市漫游路线",
+                "response": "reject",
+                "axis": "wander_observe|light",
+            }
+        ],
+    )
+
+    assert chosen is not None
+    assert chosen.domain == "手工模型制作"
+
+
+def test_choose_next_probe_prefers_axis_without_negative_feedback():
+    chosen = choose_next_probe_candidate(
+        [
+            SimpleNamespace(
+                domain="城市夜景摄影",
+                confirmation_count=0,
+                weight=0.9,
+                confidence=0.9,
+                experience_mode="aesthetic",
+                entry_load="light",
+            ),
+            SimpleNamespace(
+                domain="手作模型制作",
+                confirmation_count=0,
+                weight=0.2,
+                confidence=0.2,
+                experience_mode="hands_on",
+                entry_load="light",
+            ),
+        ],
+        feedback_history=[
+            {
+                "domain": "完全不同的旧方向",
+                "response": "chat_negative",
+                "axis": "aesthetic|light",
+            }
+        ],
+    )
+
+    assert chosen is not None
+    assert chosen.domain == "手作模型制作"
+
+
+def test_select_diverse_candidates_avoids_negative_feedback_axis():
+    candidates = [
+        SpeculativeInterest(
+            domain="建筑旅行 vlog",
+            confidence=0.9,
+            weight=0.9,
+            experience_mode="wander_observe",
+            entry_load="light",
+        ),
+        SpeculativeInterest(
+            domain="咖啡馆空间设计",
+            confidence=0.4,
+            weight=0.4,
+            experience_mode="aesthetic",
+            entry_load="light",
+        ),
+        SpeculativeInterest(
+            domain="本地 Stable Diffusion 工作台",
+            confidence=0.35,
+            weight=0.35,
+            experience_mode="hands_on",
+            entry_load="heavy",
+        ),
+    ]
+
+    selected = speculator_module._select_diverse_candidates(
+        candidates,
+        limit=2,
+        existing=[
+            SpeculativeInterest(
+                domain="结构化知识讲解",
+                experience_mode="knowledge",
+                entry_load="heavy",
+            )
+        ],
+        feedback_history=[
+            {
+                "domain": "城市漫游路线",
+                "response": "reject",
+                "axis": "wander_observe|light",
+            }
+        ],
+    )
+
+    assert [item.domain for item in selected] == [
+        "咖啡馆空间设计",
+        "本地 Stable Diffusion 工作台",
+    ]
+
+
+def _profile_with_ai_specifics():
+    from openbiliclaw.soul.profile import (
+        InterestDomain,
+        InterestLayer,
+        InterestSpecific,
+        OnionProfile,
+    )
+
+    return OnionProfile(
+        interest=InterestLayer(
+            likes=[
+                InterestDomain(
+                    domain="AI",
+                    specifics=[
+                        InterestSpecific(name="ComfyUI工作流"),
+                        InterestSpecific(name="图像生成实战"),
+                    ],
+                )
+            ]
+        )
+    )
+
+
+async def test_speculator_generate_drops_duplicate_profile_interest():
+    class _FakeLLMService:
+        async def complete_structured_task(self, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "speculations": [
+                            {
+                                "domain": "ComfyUI工作流拆解",
+                                "category": "AI",
+                                "reason": (
+                                    "你已经在图像生成方向有持续观看，这个方向只是更具体的工作流拆解。"
+                                ),
+                                "confidence": 0.5,
+                                "experience_mode": "knowledge",
+                                "entry_load": "heavy",
+                                "specifics": ["ComfyUI工作流", "节点搭建技巧"],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        speculator = InterestSpeculator(
+            llm_service=_FakeLLMService(),
+            data_dir=Path(tmpdir),
+        )
+
+        result = await speculator.force_tick(_profile_with_ai_specifics())
+
+        assert result.generated == []
+
+
+def test_speculator_ingest_seed_skips_existing_profile_interest():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        speculator = InterestSpeculator(
+            llm_service=None,
+            data_dir=Path(tmpdir),
+        )
+
+        added = speculator.ingest_seeds(
+            [{"name": "ComfyUI工作流拆解", "category": "AI", "weight": 0.5}],
+            profile=_profile_with_ai_specifics(),
+        )
+
+        assert added == 0
 
 
 # ---------------------------------------------------------------------------
@@ -612,14 +872,15 @@ def test_speculator_max_active_limit():
 
 
 def test_should_generate_respects_primary_cap():
-    """Skip generation when confirmed domains + active speculations >= cap."""
+    """Skip generation when active speculations reach the primary cap."""
     from openbiliclaw.soul.profile import InterestDomain, InterestLayer, OnionProfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         data_dir = Path(tmpdir)
-        # 12 confirmed domains + 2 active = 14, cap is 15 → should generate
+        # Many confirmed domains should not deadlock the probe loop; only active
+        # speculative fanout is capped.
         profile = OnionProfile(
-            interest=InterestLayer(likes=[InterestDomain(domain=f"域{i}") for i in range(12)])
+            interest=InterestLayer(likes=[InterestDomain(domain=f"域{i}") for i in range(30)])
         )
         state = SpeculativeState(
             active=[
@@ -634,15 +895,17 @@ def test_should_generate_respects_primary_cap():
         )
         assert speculator._should_generate(state, datetime.now(), profile) is True
 
-        # 14 confirmed + 2 active = 16 >= 15 → should NOT generate
-        profile2 = OnionProfile(
-            interest=InterestLayer(likes=[InterestDomain(domain=f"域{i}") for i in range(14)])
+        capped_state = SpeculativeState(
+            active=[
+                SpeculativeInterest(domain=f"猜{i}", status="active")
+                for i in range(15)
+            ]
         )
-        assert speculator._should_generate(state, datetime.now(), profile2) is False
+        assert speculator._should_generate(capped_state, datetime.now(), profile) is False
 
 
 def test_should_generate_respects_secondary_cap():
-    """Skip generation when confirmed specifics + active speculations >= cap."""
+    """Skip generation when active speculations reach the secondary cap."""
     from openbiliclaw.soul.profile import (
         InterestDomain,
         InterestLayer,
@@ -652,7 +915,8 @@ def test_should_generate_respects_secondary_cap():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         data_dir = Path(tmpdir)
-        # 3 domains with 20 specifics each = 60, cap is 60 → should NOT generate
+        # Rich confirmed specifics should not deadlock the probe loop; only
+        # active speculative fanout is capped.
         profile = OnionProfile(
             interest=InterestLayer(
                 likes=[
@@ -674,7 +938,15 @@ def test_should_generate_respects_secondary_cap():
             data_dir=data_dir,
             max_secondary_interests=60,
         )
-        assert speculator._should_generate(state, datetime.now(), profile) is False
+        assert speculator._should_generate(state, datetime.now(), profile) is True
+
+        capped_state = SpeculativeState(
+            active=[
+                SpeculativeInterest(domain=f"猜{i}", status="active")
+                for i in range(60)
+            ]
+        )
+        assert speculator._should_generate(capped_state, datetime.now(), profile) is False
 
 
 async def test_force_tick_ignores_interval():
@@ -713,52 +985,67 @@ async def test_speculator_generate_keeps_visible_experience_mix():
                             {
                                 "domain": "博弈论科普",
                                 "category": "知识解释",
-                                "reason": "系统性思维延伸。",
+                                "reason": (
+                                    "你一直在看结构化推演内容，"
+                                    "这个方向能继续提供可验证的思考乐趣。"
+                                ),
                                 "bridge_type": "near",
                                 "confidence": 0.59,
                                 "experience_mode": "knowledge",
                                 "entry_load": "heavy",
-                                "specifics": ["纳什均衡"],
+                                "specifics": ["纳什均衡", "机制设计入门"],
                             },
                             {
                                 "domain": "AI治理",
                                 "category": "社会文化",
-                                "reason": "延续因果链兴趣。",
+                                "reason": (
+                                    "你对技术影响现实社会的链条敏感，"
+                                    "这个方向能接住这种关注。"
+                                ),
                                 "bridge_type": "far",
                                 "confidence": 0.57,
                                 "experience_mode": "knowledge",
                                 "entry_load": "heavy",
-                                "specifics": ["监管辩论"],
+                                "specifics": ["监管辩论", "模型风险案例"],
                             },
                             {
                                 "domain": "建筑叙事",
                                 "category": "审美体验",
-                                "reason": "偏好结构和空间逻辑。",
+                                "reason": (
+                                    "你会被空间里的结构和叙事吸引，"
+                                    "这个方向能把抽象秩序落到具体场景。"
+                                ),
                                 "bridge_type": "novel",
                                 "confidence": 0.55,
                                 "experience_mode": "knowledge",
                                 "entry_load": "heavy",
-                                "specifics": ["城市更新"],
+                                "specifics": ["城市更新", "公共空间改造"],
                             },
                             {
                                 "domain": "城市漫游",
                                 "category": "现实观察",
-                                "reason": "想从具体空间感受城市。",
+                                "reason": (
+                                    "你有从具体场景观察系统的习惯，"
+                                    "这个方向入口轻但仍有结构感。"
+                                ),
                                 "bridge_type": "near",
                                 "confidence": 0.49,
                                 "experience_mode": "wander_observe",
                                 "entry_load": "light",
-                                "specifics": ["街区vlog"],
+                                "specifics": ["街区vlog", "城市步行路线"],
                             },
                             {
                                 "domain": "器物修复",
                                 "category": "实操动手",
-                                "reason": "对结构拆解有兴趣。",
+                                "reason": (
+                                    "你喜欢看结构怎么被拆开再复原，"
+                                    "这个方向能给到更直接的动手反馈。"
+                                ),
                                 "bridge_type": "near",
                                 "confidence": 0.48,
                                 "experience_mode": "hands_on",
                                 "entry_load": "light",
-                                "specifics": ["旧物翻新"],
+                                "specifics": ["旧物翻新", "工具修复过程"],
                             },
                         ]
                     },
@@ -781,6 +1068,78 @@ async def test_speculator_generate_keeps_visible_experience_mix():
         assert len(result.generated) == 3
         assert any(item.entry_load == "light" for item in result.generated)
         assert any(item.experience_mode != "knowledge" for item in result.generated)
+
+
+async def test_speculator_generate_prefers_axis_missing_from_active_pool():
+    class _FakeLLMService:
+        async def complete_structured_task(self, **kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "speculations": [
+                            {
+                                "domain": "城市夜游",
+                                "category": "现实观察",
+                                "reason": (
+                                    "你已经会从街区场景里找结构，"
+                                    "这个方向继续沿着同一种轻入口观察走。"
+                                ),
+                                "confidence": 0.59,
+                                "experience_mode": "wander_observe",
+                                "entry_load": "light",
+                                "specifics": ["夜间街区vlog", "城市灯光观察"],
+                            },
+                            {
+                                "domain": "旧物修复",
+                                "category": "实操动手",
+                                "reason": (
+                                    "你喜欢看结构怎么被拆开再复原，"
+                                    "这个方向能补上更直接的动手反馈。"
+                                ),
+                                "confidence": 0.48,
+                                "experience_mode": "hands_on",
+                                "entry_load": "heavy",
+                                "specifics": ["工具修复过程", "旧物翻新记录"],
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from openbiliclaw.soul.profile import OnionProfile
+
+        data_dir = Path(tmpdir)
+        save_speculative_state(
+            data_dir,
+            SpeculativeState(
+                active=[
+                    SpeculativeInterest(
+                        domain="城市漫游",
+                        status="active",
+                        experience_mode="wander_observe",
+                        entry_load="light",
+                    ),
+                    SpeculativeInterest(
+                        domain="街区观察",
+                        status="active",
+                        experience_mode="wander_observe",
+                        entry_load="light",
+                    ),
+                ]
+            ),
+        )
+        speculator = InterestSpeculator(
+            llm_service=_FakeLLMService(),
+            data_dir=data_dir,
+            max_active=3,
+        )
+
+        result = await speculator.force_tick(OnionProfile())
+
+        assert [item.domain for item in result.generated] == ["旧物修复"]
 
 
 def test_interval_uses_minutes():

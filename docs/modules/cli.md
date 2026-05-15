@@ -30,7 +30,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `serve-api` | 启动容器友好的 API 服务 | ✅ |
 | `init` | 首次初始化 | ✅ |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像） | ✅ |
-| `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像） | ✅ |
+| `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像） | ✅ |
 | `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为 embedding 兜底服务（可选） | ✅ |
@@ -299,6 +299,7 @@ YouTube 导入依赖浏览器插件在用户已登录的 `https://www.youtube.co
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
 - `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1`：永久跳过对应源。
+- `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 
 如果当前终端是交互式，且缺少 provider API Key 或 B 站 Cookie，`init` 会直接进入用户友好的引导（v0.3.5+）：
 
@@ -496,7 +497,7 @@ $ openbiliclaw fetch-xhs
   小红书 收藏 20 个 / 点赞 20 个 / 浏览记录 0 个
 ```
 
-默认最多等待扩展回传 `180s`，与 `init --yes-xhs --yes-douyin` 的单源 collect 窗口保持一致，降低两源连续初始化时小红书未结束就启动抖音的概率。
+默认最多等待扩展回传 `180s`，与 `init --yes-xhs --yes-douyin` 的单源 collect 窗口保持一致，降低两源连续初始化时小红书未结束就启动抖音的概率。命令默认复用 6 小时内已有的 pending / in-progress / completed / failed `bootstrap_profile` 任务，避免重复打开前台小红书 tab 抓收藏 / 点赞；排查时需要强制重拉可加 `--force`，或用 `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS=0` 关闭复用窗口。
 
 ### `openbiliclaw fetch-youtube`
 

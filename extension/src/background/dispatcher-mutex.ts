@@ -1,14 +1,15 @@
 /**
  * Cross-source dispatcher mutex.
  *
- * Both the XHS and Douyin task dispatchers can open foreground tabs
- * (XHS bootstrap_profile / search; DY bootstrap_profile). Without
- * coordination, daemon's continuous `_loop_xhs_producer` can fire
- * a search task at the same moment the user runs `fetch-douyin`,
- * resulting in two foreground tabs racing for browser focus.
+ * Bootstrap import tasks can open foreground tabs. Discovery tasks
+ * should run in background tabs, but all task bridges still share
+ * the same service-worker lifecycle and long-running browser slots.
+ * Without coordination, daemon's continuous producers can start at
+ * the same moment the user runs a manual fetch, resulting in task
+ * tabs racing each other and occasionally grabbing browser focus.
  *
  * This module owns the single source of truth: at any moment, **at
- * most one** dispatcher's task may hold the tab-grabbing slot.
+ * most one** dispatcher's task may hold the shared task slot.
  * Each dispatcher acquires before opening its tab and releases when
  * the task completes / fails / times out. If acquire fails (someone
  * else holds the slot), the dispatcher should bail early —

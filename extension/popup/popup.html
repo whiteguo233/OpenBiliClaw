@@ -3803,6 +3803,10 @@
           <input id="cfgSourcesBrowserHeaded" type="checkbox">
           <label for="cfgSourcesBrowserHeaded">通用网页回退浏览器显示窗口</label>
         </div>
+        <div class="settings-field-row">
+          <input id="cfgXhsEnabled" type="checkbox">
+          <label for="cfgXhsEnabled">启用小红书 discovery</label>
+        </div>
         <div class="settings-field">
           <label for="cfgXhsDailySearchBudget">小红书每日搜索任务</label>
           <input id="cfgXhsDailySearchBudget" type="number" min="0" step="1" placeholder="30">
@@ -3838,6 +3842,10 @@
         <div class="settings-field">
           <label for="cfgDouyinRequestInterval">抖音 direct 请求间隔秒数</label>
           <input id="cfgDouyinRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgYoutubeEnabled" type="checkbox">
+          <label for="cfgYoutubeEnabled">启用 YouTube discovery</label>
         </div>
       </div>
 
@@ -3899,6 +3907,13 @@
         <div class="settings-field">
           <label for="cfgPoolShareDouyin">候选池抖音占比</label>
           <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
+          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-actions">
+          <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
         </div>
         <div class="settings-field">
           <label for="cfgSpeculationInterval">猜测兴趣间隔分钟</label>

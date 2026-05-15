@@ -23,6 +23,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 8,
     "xiaohongshu": 1,
     "douyin": 1,
+    "youtube": 1,
 }
 _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
@@ -182,6 +183,12 @@ class XiaohongshuSourceConfig:
     background-tab tasks). No sidecar or backend crawling needed.
     """
 
+    # Set to False to skip XHS init bootstrap, suppress backend XHS task
+    # generation and drop xiaohongshu from pool_source_shares.  Init's
+    # interactive prompt and ``OPENBILICLAW_NO_XHS=1`` env var write this
+    # back so the runtime stops burning daily_search_budget on an
+    # un-installed / un-logged-in xhs extension.
+    enabled: bool = True
     # Max Soul-driven search tasks the backend may enqueue per day.
     daily_search_budget: int = 30
     # Max creator-subscription fetch tasks per day.
@@ -209,6 +216,20 @@ class DouyinSourceConfig:
 
 
 @dataclass
+class YoutubeSourceConfig:
+    """YouTube source-specific configuration.
+
+    Discovery runs as a regular B 站-side strategy (``YoutubeSearchStrategy``)
+    rather than a per-source producer loop, so ``enabled`` controls only
+    whether YouTube participates in pool-share accounting: when ``False``,
+    the ``youtube`` entry is dropped from ``pool_source_shares`` so its
+    slice doesn't get stranded.
+    """
+
+    enabled: bool = False
+
+
+@dataclass
 class SourcesConfig:
     """Multi-source content adapters configuration.
 
@@ -227,6 +248,7 @@ class SourcesConfig:
     browser_headed: bool = False
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
+    youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
 
 
 @dataclass
@@ -439,10 +461,12 @@ def _build_config(raw: dict[str, Any]) -> Config:
     sources_browser_raw = sources_raw.get("browser", {})
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
+    youtube_raw = sources_raw.get("youtube", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
         xiaohongshu=XiaohongshuSourceConfig(
+            enabled=bool(xhs_raw.get("enabled", True)),
             daily_search_budget=int(xhs_raw.get("daily_search_budget", 30)),
             daily_creator_budget=int(xhs_raw.get("daily_creator_budget", 10)),
             task_interval_seconds=int(xhs_raw.get("task_interval_seconds", 45)),
@@ -455,6 +479,9 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_hot_budget=int(douyin_raw.get("daily_hot_budget", 5)),
             daily_feed_budget=int(douyin_raw.get("daily_feed_budget", 30)),
             request_interval_seconds=int(douyin_raw.get("request_interval_seconds", 2)),
+        ),
+        youtube=YoutubeSourceConfig(
+            enabled=bool(youtube_raw.get("enabled", False)),
         ),
     )
 
@@ -695,6 +722,7 @@ def _render_config_toml(config: Config) -> str:
             f"headed = {_toml_bool(config.sources.browser_headed)}",
             "",
             "[sources.xiaohongshu]",
+            f"enabled = {_toml_bool(config.sources.xiaohongshu.enabled)}",
             f"daily_search_budget = {config.sources.xiaohongshu.daily_search_budget}",
             f"daily_creator_budget = {config.sources.xiaohongshu.daily_creator_budget}",
             f"task_interval_seconds = {config.sources.xiaohongshu.task_interval_seconds}",
@@ -707,6 +735,9 @@ def _render_config_toml(config: Config) -> str:
             f"daily_hot_budget = {config.sources.douyin.daily_hot_budget}",
             f"daily_feed_budget = {config.sources.douyin.daily_feed_budget}",
             f"request_interval_seconds = {config.sources.douyin.request_interval_seconds}",
+            "",
+            "[sources.youtube]",
+            f"enabled = {_toml_bool(config.sources.youtube.enabled)}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
@@ -731,6 +762,7 @@ def _render_config_toml(config: Config) -> str:
             f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 8))}",
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
+            f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
             "",
             "[storage]",
             f"db_path = {_toml_string(config.storage.db_path)}",

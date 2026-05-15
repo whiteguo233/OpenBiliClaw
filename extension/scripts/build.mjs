@@ -5,7 +5,7 @@ import { build } from "esbuild";
 const root = resolve(import.meta.dirname, "..");
 
 const isFirefox = process.env.TARGET === "firefox";
-const buildTarget = isFirefox ? "firefox128" : "chrome120";
+const buildTarget = isFirefox ? "firefox140" : "chrome120";
 const outDir = isFirefox ? "dist-firefox" : "dist";
 
 console.log(`\n🔨 Building for ${isFirefox ? "Firefox" : "Chrome/Edge"} (target: ${buildTarget})\n`);

@@ -690,6 +690,11 @@ def build_search_queries_prompt(
    avoid_topics / avoid_styles / avoid_franchises 是软避让信号；prefer_axes 是优先补货方向。
    source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
    不要为了避让而生成与用户画像无关的 query。
+10. favorite_up_users 是用户常看的 B 站 UP 主名单，仅供背景参考。
+    严禁从创作者名字推断其内容类型或专长领域，进而生成该类型的 query。
+    "关注/常看某创作者" ≠ "对该创作者的内容类型感兴趣"。
+    用户的内容兴趣已完整体现在 interest_domains / interests / speculative_interests 中，
+    不要从 favorite_up_users 另行推导兴趣方向。
 </rules>
 
 <output_schema>

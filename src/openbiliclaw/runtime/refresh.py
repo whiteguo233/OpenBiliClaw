@@ -25,8 +25,9 @@ _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "xiaohongshu": 1,
     "douyin": 1,
 }
-_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin")
+_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
+_YOUTUBE_DISCOVERY_SOURCES = ("yt_search", "yt_trending", "yt_channel")
 
 
 def _call_accepts_limit(fn: Any) -> bool:
@@ -676,6 +677,7 @@ class ContinuousRefreshController:
         """
         with suppress(Exception):
             await self.prepare_delight_candidates()
+        self._warn_on_stranded_source_shares()
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
@@ -1328,6 +1330,7 @@ class ContinuousRefreshController:
             specs,
             probed_domains=set(probed),
             probed_axes=set(probed_axes),
+            feedback_history=state.get("probe_feedback_history", []),
         )
         if top is None:
             return  # All active specs were probed recently
@@ -1391,17 +1394,22 @@ class ContinuousRefreshController:
     def _build_source_replenishment_plan(self) -> list[tuple[list[str], int]]:
         source_counts = self.database.count_pool_candidates_by_source()
         target_counts = self._source_target_counts()
-        bilibili_deficit = max(
-            0,
-            int(target_counts.get("bilibili", 0))
-            - self._platform_source_count(source_counts, "bilibili"),
-        )
-        if bilibili_deficit <= 0:
-            return []
-
-        # Bilibili is a platform quota now, but its implementation still
-        # fans out through four established strategy names.
-        return [(list(_BILIBILI_DISCOVERY_SOURCES), bilibili_deficit)]
+        plan: list[tuple[list[str], int]] = []
+        for source in _PLATFORM_SOURCE_ORDER:
+            deficit = max(
+                0,
+                int(target_counts.get(source, 0))
+                - self._platform_source_count(source_counts, source),
+            )
+            if deficit <= 0:
+                continue
+            if source == "bilibili":
+                # Bilibili is a platform quota now, but its implementation
+                # still fans out through four established strategy names.
+                plan.append((list(_BILIBILI_DISCOVERY_SOURCES), deficit))
+            elif source == "youtube":
+                plan.append((list(_YOUTUBE_DISCOVERY_SOURCES), deficit))
+        return plan
 
     def _source_target_counts(self) -> dict[str, int]:
         shares = self._normalized_pool_source_shares()
@@ -1432,6 +1440,51 @@ class ContinuousRefreshController:
                 return int(source_counts.get("bilibili", 0))
             return sum(int(source_counts.get(source, 0)) for source in _BILIBILI_DISCOVERY_SOURCES)
         return int(source_counts.get(source_family, 0))
+
+    def _warn_on_stranded_source_shares(self) -> None:
+        """Warn once at startup if any configured share has no producer.
+
+        ``runtime.source_policy.effective_pool_source_shares`` already strips
+        sources whose ``enabled`` flag is False, so a stranded share here
+        means the user kept the source on but the matching producer is
+        not wired (missing build_*_producer, scheduler.enabled=False, …).
+        Without this warning the pool sits below ``pool_target_count``
+        forever and the missing slack is invisible.
+        """
+        shares = self._normalized_pool_source_shares()
+        targets = self._source_target_counts()
+        stranded: list[str] = []
+        for source, target in targets.items():
+            if target <= 0:
+                continue
+            if source == "bilibili":
+                continue  # always served by the four discovery strategies
+            if source == "xiaohongshu" and self.xhs_producer is None:
+                stranded.append("xiaohongshu")
+            elif source == "douyin" and self.douyin_producer is None:
+                stranded.append("douyin")
+            elif source == "youtube" and not self._has_registered_discovery_sources(
+                _YOUTUBE_DISCOVERY_SOURCES
+            ):
+                stranded.append("youtube")
+            elif source not in {"bilibili", "xiaohongshu", "douyin", "youtube"}:
+                # Unknown source family with an explicit share.
+                stranded.append(source)
+        if stranded:
+            logger.warning(
+                "pool_source_shares allocate quota to sources without an "
+                "active producer (will leave pool under target): sources=%s "
+                "shares=%s",
+                stranded,
+                {s: shares.get(s) for s in stranded},
+            )
+
+    def _has_registered_discovery_sources(self, names: tuple[str, ...]) -> bool:
+        strategies = getattr(self.discovery_engine, "_strategies", None)
+        if strategies is None:
+            return True
+        registered = {str(getattr(strategy, "name", "")) for strategy in strategies}
+        return any(name in registered for name in names)
 
     def _normalized_pool_source_shares(self) -> dict[str, int]:
         raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES

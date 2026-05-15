@@ -2,7 +2,7 @@
 
 ## 模块范围
 
-`extension/` 是 Chrome 插件子项目，负责：
+`extension/` 是浏览器插件子项目（Chrome / Edge / Brave 主构建，Firefox 独立构建），负责：
 
 - 在 B 站 / 小红书 / 抖音 / YouTube 等支持的站点采集行为事件（平台无关内核 + 平台适配器）
 - 通过 background service worker 缓冲并上报到本地后端
@@ -14,8 +14,10 @@
 |------|------|------|
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
-| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab |
+| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复 |
+| Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
+| 设置页源策略控制 | ✅ | side panel 设置页可开关小红书 / 抖音 / YouTube discovery，编辑 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |
@@ -24,11 +26,11 @@
 | 画像多层认知展示 | ✅ | 画像 tab 现已把“你怎么处理信息 / 你在内容里长期在找什么 / 这阵子更像在经历什么”单独拆开，不再只显示一段画像 prose 加兴趣 chips |
 | 多源行为采集（MVP） | ✅ | content script 拆成「平台无关 kernel + 平台适配器」，新增小红书适配器。manifest 覆盖 `*.xiaohongshu.com`，事件携带 `source_platform` 字段；MVP 仅采 snapshot / click / scroll / search，like/collect 延后 |
 | xhs token 嗅探（MAIN world） | ✅ | `src/main/xhs-token-sniffer.ts` 以 `world: "MAIN"`、`run_at: "document_start"` 注入 xhs 页面，劫持 `window.fetch` / `XMLHttpRequest` 扫描 xhs 自家 API 响应里的 `(note_id, xsec_token)` 对子，通过 `postMessage` 桥接到 isolated world 再 `/api/sources/xhs/tokens` 回填——解决搜索页永不带 token 导致点击命中 300031 登录墙的问题 |
-| xhs 初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件先打开小红书 `/explore`，滚动任务会以前台 tab 点击页面“我”入口进入 profile，再从 profile 页 state / DOM 解析收藏、点赞和小红书页面内显式浏览记录信号；显式启用 `max_scroll_rounds` 时会有限滚动，并用 `status="partial"` 分批回传给 `/api/sources/xhs/task-result` |
+| xhs 初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；`/api/sources/xhs/next-task` 会先把任务原子标记为 `in_progress` 再返回给扩展，避免多个浏览器实例重复领取同一个前台拉取任务；插件先打开小红书 `/explore`，滚动任务会以前台 tab 点击页面“我”入口进入 profile，再从 profile 页 state / DOM 解析收藏、点赞和小红书页面内显式浏览记录信号；显式启用 `max_scroll_rounds` 时会有限滚动，并用 `status="partial"` 分批回传给 `/api/sources/xhs/task-result` |
 | 抖音初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件依次访问抖音发布 / 收藏 / 喜欢 / 关注 scope，content script 结合 DOM、MAIN-world fetch tap 与 API harvester 采集条目，并用 `partial` 分批回传给 `/api/sources/dy/task-result` |
-| 抖音搜索任务 | ✅ | 后端可派发 `search` 任务；插件在已登录抖音会话中执行关键词搜索，MAIN-world search bridge 调用页面 `byted_acrawler.frontierSign()` 签名搜索 API，回传 `dy_search` 候选供 CLI smoke 和正式 `dy-plugin-search` discovery 使用；单关键词任务 timeout 为 180 秒 |
-| 抖音热点任务 | ✅ | 后端可派发 `hot` 任务；插件打开 `/hot/{sentence_id}`，从跳转后的 `/video/{aweme_id}` 取 seed aweme，并通过 MAIN-world related bridge 签名 `/aweme/v1/web/aweme/related/`，回传 `dy_hot` 候选供 `dy-plugin-hot-related` discovery 使用 |
-| 抖音首页推荐流任务 | ✅ | 后端可派发 `feed` 任务；插件在已登录抖音首页通过 MAIN-world feed bridge 签名 `/aweme/v1/web/tab/feed/`，回传 `dy_feed` 候选供 `dy-plugin-feed` discovery 使用 |
+| 抖音搜索任务 | ✅ | 后端可派发 `search` 任务；插件用后台 tab 在已登录抖音会话中执行关键词搜索，MAIN-world search bridge 调用页面 `byted_acrawler.frontierSign()` 签名搜索 API，回传 `dy_search` 候选供 CLI smoke 和正式 `dy-plugin-search` discovery 使用；单关键词任务 timeout 为 180 秒 |
+| 抖音热点任务 | ✅ | 后端可派发 `hot` 任务；插件用后台 tab 打开 `/hot/{sentence_id}`，从跳转后的 `/video/{aweme_id}` 取 seed aweme，并通过 MAIN-world related bridge 签名 `/aweme/v1/web/aweme/related/`，回传 `dy_hot` 候选供 `dy-plugin-hot-related` discovery 使用 |
+| 抖音首页推荐流任务 | ✅ | 后端可派发 `feed` 任务；插件用后台 tab 在已登录抖音首页通过 MAIN-world feed bridge 签名 `/aweme/v1/web/tab/feed/`，回传 `dy_feed` 候选供 `dy-plugin-feed` discovery 使用 |
 | YouTube 初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件依次访问 `/feed/history`、`/feed/channels`、`/playlist?list=LL`，从 DOM 读取观看历史 / 订阅 / 点赞并用 `partial` 分批回传给 `/api/sources/yt/task-result` |
 
 ## 目录结构
@@ -36,7 +38,12 @@
 ```text
 extension/
 ├── manifest.json
+├── manifest.firefox.json
 ├── package.json
+├── scripts/
+│   ├── build.mjs
+│   ├── package.mjs
+│   └── package-firefox.mjs
 ├── popup/
 │   ├── popup.html
 │   ├── popup.js
@@ -107,15 +114,19 @@ extension/
 - 缓冲为空时也会周期轮询高置信通知
 - 每次 service worker 冷启动都会启动 B 站和抖音 Cookie 同步；如果 localhost 后端暂时不可用，会通过 `chrome.alarms` 以 1 分钟间隔重试，成功同步后恢复为 60 分钟刷新
 - 以 `client=background` 连接 `/api/runtime-stream` 后，如果后端发现本地缺少 B 站 Cookie，会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`。扩展收到后会立即执行对应 Cookie POST
+- 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/health`（2 秒超时）做一次健康探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；健康探针失败仍走原有的 5s → 60s 指数退避兜底重连
+- 后端不可达时会在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内仍会显示「后端还没开张，先运行 `openbiliclaw start`」
 - Cookie 监听器幂等注册，避免 onInstalled / onStartup / 冷启动重复挂载导致同一次登录触发多次 POST
-- 点击扩展图标时优先打开 side panel
-- 通知和认知提醒也会优先把用户带回插件 side panel 上下文
+- 点击扩展图标时优先打开 Chrome side panel；Firefox 构建会改用 `sidebar_action` 打开同一套 `popup/popup.html`
+- 通知和认知提醒也会优先把用户带回插件 side panel / sidebar 上下文
 - 在推荐通知之外，认知变化通知会打开带 `?tab=profile` 的插件页面，直接落到画像视图
 - 惊喜推荐通知现在会打开带 `?tab=recommend&delight=<bvid>` 的插件页面，落到对应的首屏惊喜卡，而不是只把人丢回通用推荐页
 
 ### 小红书任务桥
 
-`src/background/xhs-task-dispatcher.ts` 会轮询后端 `/api/sources/xhs/next-task`。当收到 `bootstrap_profile` 时，它会先打开 `https://www.xiaohongshu.com/explore`；默认用非激活 tab，若任务显式启用了 `max_scroll_rounds > 0` 则打开前台 tab，方便页面自己处理 profile 点击和后续滚动。dispatcher 会向 content script 发送：
+`src/background/xhs-task-dispatcher.ts` 会轮询后端 `/api/sources/xhs/next-task`。后端返回任务前会把 `xhs_tasks.status` 从 `pending` 原子切到 `in_progress` 并写入 `claimed_at`；partial 回写会保留 `in_progress`，最终 `ok / empty / failed` 才进入终态，15 分钟无回写的领取会重新变为可领取。这个领取态用于挡住多个扩展实例、service worker 重启或多次手动命令造成的同一 `bootstrap_profile` 前台 tab 重复打开。
+
+当收到 `bootstrap_profile` 时，它会先打开 `https://www.xiaohongshu.com/explore`；默认用非激活 tab，若任务显式启用了 `max_scroll_rounds > 0` 则打开前台 tab，方便页面自己处理 profile 点击和后续滚动。dispatcher 会向 content script 发送：
 
 ```json
 {
@@ -160,7 +171,7 @@ dispatcher 会把这两个字段透传给 content script；如果 `scroll_wait_m
 
 ### 抖音任务桥
 
-`src/background/dy-task-dispatcher.ts` 会轮询后端 `/api/sources/dy/next-task`。当收到 `bootstrap_profile` 时，dispatcher 会打开抖音页面，并按任务 payload 依次执行：
+`src/background/dy-task-dispatcher.ts` 会轮询后端 `/api/sources/dy/next-task`。抖音 `bootstrap_profile` 属于显式账号信号导入，会打开前台抖音页面；`search` / `hot` / `feed` discovery 属于后台补池任务，统一用 `chrome.tabs.create({active:false})`，不抢用户焦点。当收到 `bootstrap_profile` 时，dispatcher 会按任务 payload 依次执行：
 
 ```json
 {
@@ -200,7 +211,7 @@ CLI 侧分两层使用这条链路：
 - `openbiliclaw init --yes-youtube` 会在抖音 collect 完成后才入队 YouTube，避免两个前台 tab 任务同时抢浏览器焦点，并把结果加入 `analyze_events()` 和 `build_initial_profile()`。
 - `openbiliclaw fetch-youtube` 只做单源 smoke / 补拉，不隐式触发画像重建。
 
-抖音 dispatcher 收到 `search` 时，会先打开抖音首页，再为每个关键词打开抖音搜索页并发送 `DY_SEARCH_EXECUTE`：
+抖音 dispatcher 收到 `search` 时，会先在后台打开抖音首页，再为每个关键词打开抖音搜索页并发送 `DY_SEARCH_EXECUTE`：
 
 ```json
 {
@@ -211,7 +222,7 @@ CLI 侧分两层使用这条链路：
 }
 ```
 
-dispatcher 等待首页、搜索页和热点页 ready 时会同时处理两种情况：正常的 `chrome.tabs.onUpdated(status="complete")`，以及抖音 SPA 已经跳到目标页但没有再发完整 `complete` 事件的 fallback timer，避免任务卡住直到 `task_timeout`。search 任务按关键词数计算超时窗口，单关键词至少 180 秒，覆盖首页打开、搜索页跳转、MAIN-world acrawler 签名 API 和 DOM 兜底解析的真实耗时；后端 `DouyinPluginSearchClient` 默认也等 180 秒，避免插件刚开始执行 search bridge 就被后端清成 stale。`src/content/douyin.ts` 会尝试触发页面搜索 UI、监听页面自身搜索响应，并通过 `src/main/dy-fetch-tap.ts` 的 MAIN-world search API bridge 兜底拉取 `/aweme/v1/web/general/search/single/`。这个 bridge 会补齐浏览器参数，并调用页面 `byted_acrawler.frontierSign()` 生成 `X-Bogus` 后用 `credentials: "include"` 请求，避免简化直连接口命中 `antispam_check / hit_shark` 软空。热点任务复用同一 MAIN-world 签名能力：后台打开 `/hot/{sentence_id}` 后，content script 从当前 `/video/{aweme_id}` 解析 seed aweme，再请求 `/aweme/v1/web/aweme/related/` 拉相关视频；dispatcher 会按任务总目标数累计，达到目标后不再继续打开后续 hot seed。feed 任务同样复用 MAIN-world 签名能力，在首页请求 `/aweme/v1/web/tab/feed/` 拉推荐流。搜索结果以 `scope="dy_search"`、热点结果以 `scope="dy_hot"`、首页推荐结果以 `scope="dy_feed"` 回写到 `dy_tasks.result_json`，不会转成初始化画像事件；`DouyinPluginSearchClient` 会把这些候选映射成 aweme-like JSON，分别以 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 进入 discovery。
+dispatcher 等待首页、搜索页和热点页 ready 时会同时处理两种情况：正常的 `chrome.tabs.onUpdated(status="complete")`，以及抖音 SPA 已经跳到目标页但没有再发完整 `complete` 事件的 fallback timer，避免任务卡住直到 `task_timeout`。search 任务按关键词数计算超时窗口，单关键词至少 180 秒，覆盖首页打开、搜索页跳转、MAIN-world acrawler 签名 API 和 DOM 兜底解析的真实耗时；后端 `DouyinPluginSearchClient` 默认也等 180 秒，避免插件刚开始执行 search bridge 就被后端清成 stale。`src/content/douyin.ts` 会尝试触发页面搜索 UI、监听页面自身搜索响应，并通过 `src/main/dy-fetch-tap.ts` 的 MAIN-world search API bridge 兜底拉取 `/aweme/v1/web/general/search/single/`。这个 bridge 会补齐浏览器参数，并调用页面 `byted_acrawler.frontierSign()` 生成 `X-Bogus` 后用 `credentials: "include"` 请求，避免简化直连接口命中 `antispam_check / hit_shark` 软空。热点任务复用同一 MAIN-world 签名能力：后台打开 `/hot/{sentence_id}` 后，content script 从当前 `/video/{aweme_id}` 解析 seed aweme，再请求 `/aweme/v1/web/aweme/related/` 拉相关视频；dispatcher 会按任务总目标数累计，达到目标后不再继续打开后续 hot seed。feed 任务同样复用 MAIN-world 签名能力，在后台首页请求 `/aweme/v1/web/tab/feed/` 拉推荐流。搜索结果以 `scope="dy_search"`、热点结果以 `scope="dy_hot"`、首页推荐结果以 `scope="dy_feed"` 回写到 `dy_tasks.result_json`，不会转成初始化画像事件；`DouyinPluginSearchClient` 会把这些候选映射成 aweme-like JSON，分别以 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 进入 discovery。
 
 CLI 入口：
 
@@ -226,7 +237,8 @@ CLI 入口：
 
 - 后端连接状态检查
 - 从 `/api/recommendations` 拉取推荐列表
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站浏览器、通用 source 浏览器、小红书 / 抖音 source 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、猜测兴趣参数和日志清理参数
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站浏览器、通用 source 浏览器、小红书 / 抖音 / YouTube source 开关、小红书 / 抖音 source 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、猜测兴趣参数和日志清理参数
+- 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
 - 设置页保存配置时会保留后端已有的高级字段：`save_config()` 会串行化 scheduler speculation / auto-update 和 logging unmanaged cleanup 字段，避免 UI 修改常用项时把隐藏高级项写回默认值
 - 推荐 tab 现已改成“换一批”，会调用 `/api/recommendations/reshuffle` 直接从 discovery pool 秒级换出一批新推荐
 - 推荐 tab 滚到底时会调用 `/api/recommendations/append` 继续往下续 10 条，不会把当前这一屏直接替换掉；首次渲染、切回推荐 tab 和追加完成后也会再检查一次底部距离，避免停在底部时没有新 scroll 事件导致续页卡住
@@ -274,7 +286,9 @@ CLI 入口：
 - popup 首屏先展示 3 条认知卡片；滚动到画像列表底部时会自动续页，底部也保留“加载更多 / 重试加载”按钮作为兜底
 - 推荐里提交 `dislike` 或 `说说原因` 后，这块会即时刷新，不再必须等到反馈批处理阈值满足
 - 聊天或推荐反馈成功后，如果 side panel 已经看过画像摘要，popup 会强制重拉 `/api/profile-summary`，让“阿B 最近新记住了什么”尽快同步到当前视图
-- 聊天 tab：调用 `/api/chat`，在 side panel 内和“阿B”进行轻量多轮对话；对话会记录为 `dialogue` 事件，并在高置信度重复出现时参与后续画像更新
+- 聊天 tab：调用 `/api/chat/turns` 创建 durable turn，后端先写入 `pending`，再后台生成回复；side panel reload 后会从 `/api/chat/turns?scope=chat` 重新 hydrate 用户消息、thinking 占位和已完成回复
+- 惊喜推荐和兴趣猜测卡片内的 `聊一聊` 也会用 `scope=delight/probe` 写入 durable turn，回复完成后同步刷新对应卡片状态、画像摘要和最近动态；旧的 `/api/chat` 仍保留给兼容入口
+- durable chat turn 写入 SQLite `chat_turns`，不再依赖 DOM、JS 内存或 `sessionStorage` 保留主聊天历史；惊喜推荐只保留少量 `localStorage` UI 草稿/展开态作为本地兜底，权威回复状态以后端为准
 - 推荐、画像和聊天文案共享后端的 `ToneProfile`，基础风格是“老B友”，但会根据画像和近期反馈在信息密度、温度和梗感上动态调整
 - 推荐、画像、聊天三个 tab 已统一为同一套浅色卡片语言，推荐内容被提升为侧边栏首屏视觉重心
 
@@ -302,7 +316,9 @@ npm run build
 - 缓冲去重与强信号 flush
 - B 站 / 抖音 Cookie 自动同步的重试闹钟和幂等监听器
 - manifest 图标资源存在性
+- Firefox manifest 的 version 注入、`sidebar_action` 降级路径、AMO 数据收集类别声明和 Firefox zip 打包清理
 - popup 设置页字段与 `/api/config` schema 的基础对齐
+- popup API durable chat turn：`startChatTurn()`、`fetchChatTurn()`、`fetchChatTurns()` 会分别调用 `/api/chat/turns`、`/api/chat/turns/{turn_id}` 和列表接口
 - `dist/` 运行时脚本可被 Chrome 直接加载
 
 ## Release 分发
@@ -312,6 +328,8 @@ npm run build
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：`openbiliclaw-extension-vX.Y.Z.zip`
 - 下载入口：GitHub Releases 页面中查找最新的 `extension-v*` release
+- Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
+- Firefox 140+ 当前走本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
 
 后端桌面包不再和插件共用同一个 release 语义；后端改由 `backend-v*` 通道单独发布。
 
@@ -343,6 +361,7 @@ npm run build
 - side panel 页面反馈按钮已能经 `/api/feedback` 写回推荐表和事件层
 - side panel 现已支持 `推荐 / 我的画像 / 和阿B聊聊` 三个 tab，并已接通画像摘要与聊天接口
 - side panel 聊天信号已进入后端学习链，但仍采用受控积累，不会因为单轮聊天立即重写画像
+- side panel 聊天已支持 durable turn 恢复：主聊天、惊喜推荐内聊和兴趣猜测内聊在页面 reload 后会按 `turn_id` 从后端恢复 pending / completed / failed 状态
 - side panel 推荐、画像和聊天回复现在共用“老B友”动态语气，不再固定成一套机械模板
 - side panel 能根据 `/api/runtime-status` 切换“先初始化 / 正在补货 / 推荐可用”三态
 - side panel 现在还能通过 websocket 看到“开始补候选 / 当前跑到哪个策略 / 刚补进几条新的 / 这批先换好了”这类实时运行状态
@@ -357,7 +376,7 @@ npm run build
 
 - 行为按钮识别基于 DOM 文本、类名和 `aria-label`，不是服务端最终结果确认
 - 采集范围优先覆盖首页、搜索页和视频页，未承诺所有 B 站模板完全一致
-- side panel chat 会话只保留在当前打开周期内，不做本地持久化
+- side panel 主聊天和内联聊天回复已由后端 `chat_turns` 持久化；仍不提供完整聊天管理界面、删除能力或跨设备同步
 - inline comment 采用轻量输入，不支持复杂反馈历史浏览
 - side panel 视觉验证当前以静态快照 + extension 构建回归为主，仍建议结合真实后端做一次手动联调
 - 浏览器通知当前只推送一条最高分未通知内容，不做通知中心或多条队列

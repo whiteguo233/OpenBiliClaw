@@ -52,7 +52,19 @@ class TestXhsTaskQueue:
         assert task["type"] == "search"
         payload = json.loads(task["payload_json"])
         assert payload["keyword"] == "机械键盘"
-        assert task["status"] == "pending"
+        assert task["status"] == "in_progress"
+
+    def test_next_pending_claims_task_until_terminal_status(self, queue: XhsTaskQueue) -> None:
+        queue.enqueue("bootstrap_profile", {"scopes": ["saved", "liked"]})
+
+        first = queue.next_pending()
+        assert first is not None
+        assert first["status"] == "in_progress"
+
+        assert queue.next_pending() is None
+
+        queue.complete(first["id"], urls=[])
+        assert queue.next_pending() is None
 
     def test_next_returns_none_when_empty(self, queue: XhsTaskQueue) -> None:
         assert queue.next_pending() is None

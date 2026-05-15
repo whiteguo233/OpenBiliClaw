@@ -42,3 +42,60 @@ test("manifest uses side panel instead of popup", () => {
   assert.equal(manifest.side_panel?.default_path, "popup/popup.html");
   assert.equal("default_popup" in (manifest.action ?? {}), false);
 });
+
+test("extension package version files stay aligned", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {
+    version?: string;
+  };
+  const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    version?: string;
+  };
+  const packageLock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as {
+    version?: string;
+    packages?: Record<string, { version?: string }>;
+  };
+
+  assert.equal(packageJson.version, manifest.version);
+  assert.equal(packageLock.version, manifest.version);
+  assert.equal(packageLock.packages?.[""]?.version, manifest.version);
+});
+
+test("Firefox manifest declares required data collection categories", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(
+    readFileSync(join(root, "manifest.firefox.json"), "utf8"),
+  ) as {
+    browser_specific_settings?: {
+      gecko?: {
+        strict_min_version?: string;
+        data_collection_permissions?: {
+          required?: string[];
+        };
+      };
+      gecko_android?: {
+        strict_min_version?: string;
+      };
+    };
+  };
+
+  assert.equal(
+    manifest.browser_specific_settings?.gecko?.strict_min_version,
+    "140.0",
+  );
+  assert.equal(
+    manifest.browser_specific_settings?.gecko_android?.strict_min_version,
+    "142.0",
+  );
+  assert.deepEqual(
+    manifest.browser_specific_settings?.gecko?.data_collection_permissions?.required,
+    [
+      "authenticationInfo",
+      "browsingActivity",
+      "personalCommunications",
+      "searchTerms",
+      "websiteActivity",
+      "websiteContent",
+    ],
+  );
+});

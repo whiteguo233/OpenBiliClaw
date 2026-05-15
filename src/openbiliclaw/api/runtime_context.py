@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -35,15 +36,8 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
-_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
-
-
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
-    scheduler = getattr(config, "scheduler", None)
-    shares = getattr(scheduler, "pool_source_shares", None)
-    if not isinstance(shares, dict):
-        return dict(_DEFAULT_POOL_SOURCE_SHARES)
-    return dict(shares)
+    return effective_pool_source_shares(config)
 
 
 @dataclass
@@ -292,11 +286,14 @@ class RuntimeContext:
 
             xhs_cfg = getattr(new_config.sources, "xiaohongshu", None)
             sched_cfg = getattr(new_config, "scheduler", None)
+            xhs_enabled = bool(getattr(xhs_cfg, "enabled", True)) and bool(
+                getattr(sched_cfg, "enabled", True)
+            )
             new_xhs_producer = XhsTaskProducer(
                 task_queue=XhsTaskQueue(self.database),
                 soul_engine=new_soul_engine,
                 llm_service=new_llm_service,
-                enabled=bool(getattr(sched_cfg, "enabled", True)),
+                enabled=xhs_enabled,
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 30)),
             )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
@@ -411,7 +408,26 @@ class RuntimeContext:
                 profile = await self.soul_engine.get_profile()
                 speculator = getattr(self.soul_engine, "_speculator", None)
                 if speculator is not None:
-                    await speculator.force_tick(profile)
+                    feedback_history: object = []
+                    load_runtime_state = getattr(
+                        self.memory_manager,
+                        "load_discovery_runtime_state",
+                        None,
+                    )
+                    if callable(load_runtime_state):
+                        runtime_state = load_runtime_state()
+                        if isinstance(runtime_state, dict):
+                            feedback_history = runtime_state.get(
+                                "probe_feedback_history",
+                                [],
+                            )
+                    try:
+                        await speculator.force_tick(
+                            profile,
+                            feedback_history=feedback_history,
+                        )
+                    except TypeError:
+                        await speculator.force_tick(profile)
             except Exception:
                 pass  # Profile not initialized yet — skip silently
 
