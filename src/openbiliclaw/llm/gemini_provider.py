@@ -58,6 +58,33 @@ class GeminiProvider(LLMProvider):
         self._model = model
         self._client = genai.Client(api_key=api_key)
 
+    @staticmethod
+    def _is_reasoning_first_model(model: str) -> bool:
+        """Whether the model belongs to the reasoning-first family that
+        REJECTS ``thinking_budget=0``.
+
+        Background: the ``thinking_budget=0`` hack is a 2.5-flash cost
+        optimisation — it tells Gemini "don't spend tokens thinking".
+        Gemini 3.x Pro / 3.x Flash and 2.5-pro are reasoning-first
+        models; Google rejects ``thinking_budget=0`` on them with
+        ``400 INVALID_ARGUMENT`` ("Thinking budget X is invalid for
+        model Y"). Symptom: the first call may sneak through, but
+        json_mode call sites (discovery / soul structured tasks) all
+        400 immediately.
+
+        The check is intentionally name-based (no SDK call): preview /
+        GA / dated revisions all share the same family prefix.
+        """
+        m = model.lower()
+        # Gemini 3.x: 3-pro / 3-flash / 3.1-pro / 3.1-flash-lite-preview / ...
+        if m.startswith("gemini-3"):
+            return True
+        # 2.5-pro is reasoning-first too; 2.5-flash is the only 2.5
+        # variant that legitimately accepts thinking_budget=0.
+        if m.startswith("gemini-2.5-pro"):
+            return True
+        return False
+
     @property
     def name(self) -> str:
         return "gemini"
@@ -77,11 +104,17 @@ class GeminiProvider(LLMProvider):
         del reasoning_effort
         if types is None:
             _raise_missing_sdk()
+        # ``thinking_budget=0`` is a 2.5-flash cost saver. Reasoning-first
+        # models (3.x family, 2.5-pro) reject it with 400 INVALID_ARGUMENT
+        # — see _is_reasoning_first_model. Skip the hack on those.
+        thinking_config = None
+        if json_mode and not self._is_reasoning_first_model(self._model):
+            thinking_config = types.ThinkingConfig(thinking_budget=0)
         config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
             response_mime_type="application/json" if json_mode else None,
-            thinking_config=(types.ThinkingConfig(thinking_budget=0) if json_mode else None),
+            thinking_config=thinking_config,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         response = await self._request_with_retry(

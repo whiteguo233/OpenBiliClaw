@@ -732,7 +732,8 @@ _PROVIDER_MODEL_HINT: dict[str, str] = {
     "gemini": (
         "可选模型: gemini-2.5-flash (默认 / 稳定) / "
         "gemini-3-flash-preview (新一代 / 推理强) / "
-        "gemini-3.1-pro (旗舰 / 4/2026) / gemini-3.1-flash-lite-preview (最便宜)"
+        "gemini-3.1-pro-preview (旗舰 / Public Preview, 需付费项目) / "
+        "gemini-3.1-flash-lite-preview (最便宜)"
     ),
     "claude": (
         "可选模型: claude-sonnet-4-6 (默认 / 1M 上下文) / "

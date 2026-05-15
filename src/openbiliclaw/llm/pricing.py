@@ -107,7 +107,12 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
     },
     "gemini": {
         # 2.5 series stable; 3.x preview-tier still in flux 2026-05.
+        # 3.1 Pro is currently Public Preview only — its real model id
+        # on the Google API is "gemini-3.1-pro-preview". We list both so
+        # estimate_cost matches whichever spelling lands in usage logs.
         "gemini-3.1-pro": (0.014, 0.056),
+        "gemini-3.1-pro-preview": (0.014, 0.056),
+        "gemini-3-pro-preview": (0.014, 0.056),
         "gemini-3-flash-preview": (0.0014, 0.0058),
         "gemini-3-flash": (0.0014, 0.0058),
         "gemini-3.1-flash-lite-preview": (0.00072, 0.0029),

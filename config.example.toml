@@ -35,7 +35,9 @@ model = "claude-sonnet-4-6"
 # 若 default_provider = "gemini"，推荐设置 GEMINI_API_KEY / GOOGLE_API_KEY；
 # 也可直接在这里填写 api_key。
 # 当前(2026-05)清单: gemini-2.5-flash (默认 / 稳定) / gemini-3-flash-preview (新) /
-#                 gemini-3.1-pro (旗舰) / gemini-3.1-flash-lite-preview (最便宜)
+#                 gemini-3.1-pro-preview (旗舰 / Public Preview) / gemini-3.1-flash-lite-preview (最便宜)
+# 注: 3.1 Pro 当前仍为 Public Preview, 真实模型 ID 带 "-preview" 后缀,
+#     需要绑定付费的 AI Studio / Vertex 项目, 免费档无法调用。
 api_key = ""
 model = "gemini-2.5-flash"
 

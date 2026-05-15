@@ -82,7 +82,7 @@ docker exec -it openbiliclaw-backend openbiliclaw init
      - **h) 自建 vLLM / LMStudio / Ollama 网关** —— `http://localhost:8000/v1` / 模型 HuggingFace 路径,强制手填
      - **i) 其它(完全手填)** —— escape hatch
    - **3) OpenAI 官方** —— 默认 `gpt-5-nano`(最便宜的 GPT-5);可选 gpt-5.4-nano / gpt-5.4-mini / gpt-5.5(旗舰) / gpt-5.5-pro
-   - **4) Gemini 官方** —— 默认 `gemini-2.5-flash`(稳定);免费档每天 1500 次。可选 gemini-3-flash-preview / gemini-3.1-pro(旗舰) / gemini-3.1-flash-lite-preview(最便宜)
+   - **4) Gemini 官方** —— 默认 `gemini-2.5-flash`(稳定);免费档每天 1500 次。可选 gemini-3-flash-preview / gemini-3.1-pro-preview(旗舰,Public Preview,需付费项目) / gemini-3.1-flash-lite-preview(最便宜)
    - **5) Claude 官方** —— 默认 `claude-sonnet-4-6`(1M ctx),按 token 付费,质量高。可选 claude-haiku-4-5(便宜) / claude-opus-4-7(旗舰)
    - **6) OpenRouter 聚合** —— 默认 `openai/gpt-5-nano`;格式 `<vendor>/<model>`(如 anthropic/claude-sonnet-4-6 / google/gemini-2.5-flash)
    - **7) 本地 Ollama（完全离线）** —— 默认 `qwen2.5:7b`(中文好);可选 llama3.2 / gemma2 / mistral / deepseek-r1。无 Key / 16GB+ 内存
