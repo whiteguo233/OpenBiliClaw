@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.70: 修复扩展未启动后端时 WebSocket 报错（2026-05-16）
+
+- 修复 [#7](https://github.com/whiteguo233/OpenBiliClaw/issues/7)：扩展 service worker 连接 `/api/runtime-stream` 之前先做一次 2 秒超时的 HTTP `GET /api/health` 健康探针，只有后端可达才 `new WebSocket(...)`。fresh-install 用户只装扩展、未启动 `openbiliclaw start` 时，`chrome://extensions` 不会再被浏览器层的 `WebSocket ... ERR_CONNECTION_REFUSED` 计入「错误」徽标；健康探针失败仍走 5s → 60s 指数退避兜底重连，后端起来后自动恢复。
+- 后端不可达时在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内继续显示「后端还没开张，先运行 `openbiliclaw start`」。
+- Chrome 插件版本提升到 v0.3.22 并准备发布该修复。
+
+---
+
 ## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
 
 - 兴趣探针新增本地 novelty guard：LLM 生成和 PreferenceAnalyzer seed 注入都会对照现有画像 domain / specifics、active/cooldown 猜测和近期 probe history 做规范化字符串 + 中文 bigram 去重，避免把已知画像细项换皮成新探针；active pool 多样性选择也会参考已有 active 体验轴。

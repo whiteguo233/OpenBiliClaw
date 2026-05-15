@@ -108,6 +108,8 @@ extension/
 - 缓冲为空时也会周期轮询高置信通知
 - 每次 service worker 冷启动都会启动 B 站和抖音 Cookie 同步；如果 localhost 后端暂时不可用，会通过 `chrome.alarms` 以 1 分钟间隔重试，成功同步后恢复为 60 分钟刷新
 - 以 `client=background` 连接 `/api/runtime-stream` 后，如果后端发现本地缺少 B 站 Cookie，会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`。扩展收到后会立即执行对应 Cookie POST
+- 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/health`（2 秒超时）做一次健康探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；健康探针失败仍走原有的 5s → 60s 指数退避兜底重连
+- 后端不可达时会在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内仍会显示「后端还没开张，先运行 `openbiliclaw start`」
 - Cookie 监听器幂等注册，避免 onInstalled / onStartup / 冷启动重复挂载导致同一次登录触发多次 POST
 - 点击扩展图标时优先打开 side panel
 - 通知和认知提醒也会优先把用户带回插件 side panel 上下文

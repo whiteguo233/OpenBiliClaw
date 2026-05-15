@@ -42,3 +42,21 @@ test("manifest uses side panel instead of popup", () => {
   assert.equal(manifest.side_panel?.default_path, "popup/popup.html");
   assert.equal("default_popup" in (manifest.action ?? {}), false);
 });
+
+test("extension package version files stay aligned", () => {
+  const root = process.cwd();
+  const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {
+    version?: string;
+  };
+  const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    version?: string;
+  };
+  const packageLock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")) as {
+    version?: string;
+    packages?: Record<string, { version?: string }>;
+  };
+
+  assert.equal(packageJson.version, manifest.version);
+  assert.equal(packageLock.version, manifest.version);
+  assert.equal(packageLock.packages?.[""]?.version, manifest.version);
+});
