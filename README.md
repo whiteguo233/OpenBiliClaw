@@ -21,13 +21,10 @@
 
 ## 📌 v0.3.69 重要更新（2026-05-12）
 
-- **🎵 抖音初始化画像信号** —— `openbiliclaw init --yes-douyin` 可通过浏览器扩展拉取发布 / 收藏 / 点赞 / 关注，并混入偏好分析与初始画像。
-- **▶ YouTube 初始化画像信号** —— `openbiliclaw init --yes-youtube` 可通过浏览器扩展拉取观看历史 / 订阅 / 点赞；`openbiliclaw import-youtube` 也支持 Google Takeout 离线导入。
-- **🎬 抖音内容发现** —— `openbiliclaw discover --source douyin` 的 search 走已登录浏览器插件签名桥，hot 走插件 `/hot/{sentence_id}` → related 链路，feed 走首页 `/aweme/v1/web/tab/feed/` 签名桥；`openbiliclaw discover-douyin` 可独立调试召回。
-- **⚖️ 可配置入池配比** —— `[scheduler.pool_source_shares]` 默认按 B 站 / 小红书 / 抖音 = 8 / 1 / 1 保留候选池容量，抖音低于配额时 runtime 会自动补 search / hot / feed。
-- **🔎 抖音插件搜索 smoke** —— `openbiliclaw search-douyin -k 猫 -w 180` 走同一页面签名桥，单独验证搜索候选召回但不写推荐池。
-- **🔎 独立 smoke 命令** —— `openbiliclaw fetch-douyin` 单独验证抖音拉取链路，事件由 daemon 入库，不隐式重建画像。
-- **🧪 E2E 覆盖补强** —— 扩展 MAIN-world API harvester、后端 partial 合并去重、CLI init 对接均已补回归测试。
+- **🎬 抖音内容发现** —— `discover --source douyin` 接入抖音 search / hot / feed 三条插件签名链路。
+- **▶ YouTube 初始化画像** —— `init --yes-youtube` 拉取观看 / 订阅 / 点赞作为画像信号，`import-youtube` 支持 Google Takeout 离线导入。
+- **🎵 抖音初始化信号** —— `init --yes-douyin` 把抖音发布 / 收藏 / 点赞 / 关注混入首次画像。
+- **⚖️ 可配置入池配比** —— `[scheduler.pool_source_shares]` 默认 B 站 / 小红书 / 抖音 = 8 / 1 / 1，运行时按平台缺口自动补量。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 

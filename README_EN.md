@@ -19,13 +19,10 @@
 
 ## 📌 v0.3.69 Highlights (2026-05-12)
 
-- **🎵 Douyin init-profile signals** — `openbiliclaw init --yes-douyin` can pull post / favorite / like / follow signals through the browser extension and feed them into preference analysis and the first soul profile.
-- **▶ YouTube init-profile signals** — `openbiliclaw init --yes-youtube` can pull watch history / subscriptions / likes through the browser extension; `openbiliclaw import-youtube` also supports Google Takeout offline imports.
-- **🎬 Douyin content discovery** — `openbiliclaw discover --source douyin` uses the logged-in browser plugin signing bridge for search, `/hot/{sentence_id}` → related for hot, and `/aweme/v1/web/tab/feed/` for the home feed; `openbiliclaw discover-douyin` debugs recall standalone.
-- **⚖️ Configurable pool mix** — `[scheduler.pool_source_shares]` defaults the candidate pool to Bilibili / Xiaohongshu / Douyin = 8 / 1 / 1; when Douyin is below quota, the runtime producer backfills search / hot / feed.
-- **🔎 Douyin plugin search smoke** — `openbiliclaw search-douyin -k cat -w 180` uses the same page signing bridge to validate search recall without writing the recommendation pool.
-- **🔎 Standalone smoke command** — `openbiliclaw fetch-douyin` verifies the Douyin pull path without implicitly rebuilding the profile.
-- **🧪 E2E coverage tightened** — extension MAIN-world API harvester, backend partial merge/dedup, and CLI init integration now have regression tests.
+- **🎬 Douyin discovery** — `discover --source douyin` plugs into Douyin search / hot / feed through the logged-in plugin signing bridge.
+- **▶ YouTube init signals** — `init --yes-youtube` pulls watch history / subscriptions / likes as profile signals; `import-youtube` also handles Google Takeout offline imports.
+- **🎵 Douyin init signals** — `init --yes-douyin` feeds Douyin post / favorite / like / follow into the first soul profile.
+- **⚖️ Configurable pool mix** — `[scheduler.pool_source_shares]` defaults to Bilibili / Xiaohongshu / Douyin = 8 / 1 / 1; the runtime auto-backfills per-platform deficits.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
