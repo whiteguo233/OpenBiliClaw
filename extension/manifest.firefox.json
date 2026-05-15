@@ -1,0 +1,114 @@
+{
+    "manifest_version": 3,
+    "name": "OpenBiliClaw",
+    "version": "0.3.20",
+    "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "openbiliclaw@whiteguo233.github.io",
+            "strict_min_version": "128.0"
+        }
+    },
+    "permissions": [
+        "activeTab",
+        "alarms",
+        "cookies",
+        "notifications",
+        "scripting",
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
+        "*://*.bilibili.com/*",
+        "*://*.xiaohongshu.com/*",
+        "*://*.douyin.com/*",
+        "*://*.youtube.com/*",
+        "http://127.0.0.1:8420/*",
+        "http://localhost:8420/*"
+    ],
+    "background": {
+        "scripts": [
+            "background/service-worker.js"
+        ]
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.bilibili.com/*"
+            ],
+            "js": [
+                "content/bilibili.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ],
+            "js": [
+                "content/xiaohongshu.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ],
+            "js": [
+                "main/xhs-token-sniffer.js",
+                "main/xhs-state-bridge.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
+        },
+        {
+            "matches": [
+                "*://*.douyin.com/*"
+            ],
+            "js": [
+                "content/douyin.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.youtube.com/*"
+            ],
+            "js": [
+                "content/youtube.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "main/dy-fetch-tap.js"
+            ],
+            "matches": [
+                "*://*.douyin.com/*"
+            ]
+        }
+    ],
+    "action": {
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "sidebar_action": {
+        "default_title": "OpenBiliClaw",
+        "default_panel": "popup/popup.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    }
+}

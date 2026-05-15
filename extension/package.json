@@ -7,11 +7,14 @@
     "build": "npm run clean && npm run build:types && npm run build:bundle",
     "build:bundle": "node scripts/build.mjs",
     "build:types": "tsc -p tsconfig.json --emitDeclarationOnly",
-    "clean": "rm -rf dist",
+    "build:firefox": "TARGET=firefox npm run clean && npm run build:types && TARGET=firefox npm run build:bundle",
+    "clean": "rm -rf dist dist-firefox",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "package": "node scripts/package.mjs",
-    "package:only": "node scripts/package.mjs --no-build"
+    "package:only": "node scripts/package.mjs --no-build",
+    "package:firefox": "node scripts/package-firefox.mjs",
+    "package:firefox:only": "node scripts/package-firefox.mjs --no-build"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.29",

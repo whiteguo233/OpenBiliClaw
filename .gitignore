@@ -69,3 +69,4 @@ output/
 # Logs
 *.log
 logs/
+extension/dist-firefox/
