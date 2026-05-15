@@ -2569,6 +2569,60 @@ def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
     assert captured["payload"]["scopes"] == ["saved", "liked", "xhs_history"]
 
 
+def test_enqueue_xhs_bootstrap_task_reuses_recent_task_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def find_recent_task(self, task_type, *, recent_hours, statuses=None):
+            assert task_type == "bootstrap_profile"
+            assert recent_hours > 0
+            return {"id": "recent-task-id", "status": "completed"}
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            raise AssertionError("recent bootstrap task should be reused")
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+
+    assert _enqueue_xhs_bootstrap_task() == "recent-task-id"
+
+
+def test_enqueue_xhs_bootstrap_task_force_bypasses_recent_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def find_recent_task(self, task_type, *, recent_hours, statuses=None):
+            raise AssertionError("force should not consult recent bootstrap tasks")
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            captured["task_type"] = task_type
+            return "fresh-task-id"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+
+    assert _enqueue_xhs_bootstrap_task(force=True) == "fresh-task-id"
+    assert captured["task_type"] == "bootstrap_profile"
+
+
 def test_ask_xhs_inclusion_non_interactive_terminal_defaults_yes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

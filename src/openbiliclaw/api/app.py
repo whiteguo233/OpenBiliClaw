@@ -2734,7 +2734,7 @@ def create_app(
 
     @app.get("/api/sources/xhs/next-task")
     def xhs_next_task(response: Any = None) -> Any:
-        """Return the oldest pending xhs task, or 204 if none."""
+        """Claim and return the oldest runnable xhs task, or 204 if none."""
         from starlette.responses import Response
 
         # 204 No Content responses MUST NOT carry a body (RFC 7230).
@@ -2751,13 +2751,6 @@ def create_app(
 
         import json as _json
 
-        # TEMP DEBUG: surface every served task type so we can see
-        # what the extension dispatcher is consuming.
-        logger.warning(
-            "[xhs-debug] /api/sources/xhs/next-task served: type=%s id=%s",
-            task.get("type"),
-            str(task.get("id", ""))[:8],
-        )
         payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
         return {
             "id": task["id"],

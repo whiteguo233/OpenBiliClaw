@@ -136,6 +136,7 @@ _INIT_POOL_TARGET_COUNT = 15
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
+_DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1958,7 +1959,18 @@ def _build_draft_profile_for_discover(memory: Any) -> Any:
     return draft
 
 
-def _enqueue_xhs_bootstrap_task() -> str | None:
+def _xhs_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS
+
+
+def _enqueue_xhs_bootstrap_task(*, force: bool = False) -> str | None:
     """Fire-and-forget enqueue of the bootstrap_profile task.
 
     Returns the task_id if enqueue succeeded, ``None`` otherwise (DB
@@ -1989,19 +2001,25 @@ def _enqueue_xhs_bootstrap_task() -> str | None:
     scroll_rounds = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "15"))
     max_items = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "300"))
 
-    # TEMP DEBUG (will be reverted after we trace the unexpected
-    # XHS bootstrap_profile enqueues): log the full call stack so
-    # we can see exactly which code path triggered this enqueue.
-    import logging
-    import traceback
-
-    logging.getLogger(__name__).warning(
-        "[xhs-debug] _enqueue_xhs_bootstrap_task called from:\n%s",
-        "".join(traceback.format_stack(limit=15)),
-    )
-
     try:
         queue = XhsTaskQueue(database)
+        dedupe_hours = _xhs_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if not force and dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_profile",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的小红书 bootstrap 任务"
+                        f"({status})；需要重新拉取可用 `openbiliclaw fetch-xhs --force`。[/dim]"
+                    )
+                    return task_id
         task_id = queue.enqueue_with_id(
             "bootstrap_profile",
             {
@@ -2059,7 +2077,7 @@ def _collect_xhs_bootstrap_events(
     ``status_label`` is one of:
       - ``"ok"``         — task completed with notes
       - ``"empty"``      — task completed but extension returned 0 notes
-      - ``"timeout"``    — wait window expired, task still pending
+      - ``"timeout"``    — wait window expired, task still pending / in-progress
       - ``"failed"``     — extension or backend reported error
       - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
 
@@ -4117,6 +4135,11 @@ def fetch_xhs(
         "-w",
         help="等扩展回结果的最大秒数(默认 180s)。",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="忽略近期小红书 bootstrap 任务，强制重新拉取收藏 / 点赞。",
+    ),
 ) -> None:
     """单独测试小红书 bootstrap(独立于 ``init``).
 
@@ -4148,7 +4171,9 @@ def fetch_xhs(
 
     _run_single_source_bootstrap(
         source_label="小红书",
-        enqueue=_enqueue_xhs_bootstrap_task,
+        enqueue=(lambda: _enqueue_xhs_bootstrap_task(force=True))
+        if force
+        else _enqueue_xhs_bootstrap_task,
         collect=lambda tid: _collect_xhs_bootstrap_events(tid, max_wait_seconds=wait_seconds),
         wait_seconds=wait_seconds,
         summary_renderer=_render,

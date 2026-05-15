@@ -618,7 +618,7 @@ class TestXhsTaskResults:
             "SELECT status, result_json, completed_at FROM xhs_tasks WHERE id=?",
             (task["id"],),
         ).fetchone()
-        assert row["status"] == "pending"
+        assert row["status"] == "in_progress"
         assert row["completed_at"] is None
         partial_result = json.loads(row["result_json"])
         assert partial_result["scope_counts"] == {

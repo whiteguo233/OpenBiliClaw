@@ -32,6 +32,7 @@
 - discovery LLM 评估增加池子容量感知：runtime 会按 B 站平台缺口而不是总池子缺口决定本轮 limit；`search` / `trending` / `related_chain` / `explore` / `douyin_direct` 在送 LLM 前会把候选窗口收缩到 `max(12, limit*4)`、上限 90，避免只缺少量候选时仍评估几十条并随后立刻 suppressed。
 - discovery batch 评估解析补强：兼容 provider 回显输入 JSON 后再输出结果、Markdown fenced JSON，以及一行一个 JSON object 的 NDJSON 结果，避免 batch 解析失败后退回 N 次单条 LLM 评估。
 - 小红书 / 抖音 bootstrap task-result 的新增事件现在不只落 memory：profile 已初始化后会转成 `ProfileSignal` 进入 `ProfileUpdatePipeline`，让后续拉到的收藏 / 点赞 / 关注事件参与增量画像更新；首次 init 仍由 `analyze_events()` + `build_initial_profile()` 统一处理，避免重复学习。
+- 小红书 `bootstrap_profile` 加入近期任务复用和领取态防重：`init --yes-xhs` / `fetch-xhs` 默认复用 6 小时内的 pending / in-progress / completed / failed bootstrap 任务，避免反复打开前台 tab 拉收藏 / 点赞；扩展通过 `/api/sources/xhs/next-task` 取任务时会把任务原子标记为 `in_progress`，15 分钟无回写才允许重新领取。需要强制重拉可用 `openbiliclaw fetch-xhs --force` 或把 `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS=0`。
 - 初始化偏好分析的并发分片增加容错：当某个分片被 LLM 风控拒绝或返回非 JSON 时，会递归拆小定位问题事件，最终只跳过仍失败的单条事件，避免一个标题导致整次 `init` 中断；provider / 网络错误仍会正常失败并暴露。
 - 初始化画像生成增加 compact retry：首轮 `history_summary` 触发模型风控或坏 JSON 时，会移除原始标题 / context 后用结构化偏好、来源分布、觉察和洞察重试一次，避免真实多源初始化在最后画像阶段被单个高风险标题中断。
 - `ProfileBuilder` 的画像长度校验上限从 320 放宽到 500 字：prompt 仍要求 150-260 字，但真实模型偶尔会返回 330 字左右的有效画像，不再因为轻微超长让完整 init 失败。
