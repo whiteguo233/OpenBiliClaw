@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import click
@@ -134,10 +135,11 @@ _INIT_DISCOVERY_PLAN = [
 _INIT_POOL_TARGET_COUNT = 15
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
+_DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
+_DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
+    from collections.abc import Callable, Mapping
 
 
 def _print_page_title(title: str, subtitle: str = "") -> None:
@@ -1958,7 +1960,18 @@ def _build_draft_profile_for_discover(memory: Any) -> Any:
     return draft
 
 
-def _enqueue_xhs_bootstrap_task() -> str | None:
+def _xhs_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS
+
+
+def _enqueue_xhs_bootstrap_task(*, force: bool = False) -> str | None:
     """Fire-and-forget enqueue of the bootstrap_profile task.
 
     Returns the task_id if enqueue succeeded, ``None`` otherwise (DB
@@ -1989,19 +2002,25 @@ def _enqueue_xhs_bootstrap_task() -> str | None:
     scroll_rounds = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS", "15"))
     max_items = int(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", "300"))
 
-    # TEMP DEBUG (will be reverted after we trace the unexpected
-    # XHS bootstrap_profile enqueues): log the full call stack so
-    # we can see exactly which code path triggered this enqueue.
-    import logging
-    import traceback
-
-    logging.getLogger(__name__).warning(
-        "[xhs-debug] _enqueue_xhs_bootstrap_task called from:\n%s",
-        "".join(traceback.format_stack(limit=15)),
-    )
-
     try:
         queue = XhsTaskQueue(database)
+        dedupe_hours = _xhs_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if not force and dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_profile",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的小红书 bootstrap 任务"
+                        f"({status})；需要重新拉取可用 `openbiliclaw fetch-xhs --force`。[/dim]"
+                    )
+                    return task_id
         task_id = queue.enqueue_with_id(
             "bootstrap_profile",
             {
@@ -2034,7 +2053,7 @@ def _kick_task_dispatcher(source: str) -> None:
     Failures are silent: if the daemon isn't running the existing
     chrome.alarms 60s poll fallback still picks the task up.
     """
-    if source not in {"xhs", "dy"}:
+    if source not in {"xhs", "dy", "yt"}:
         return
     import urllib.error
     import urllib.request
@@ -2059,7 +2078,7 @@ def _collect_xhs_bootstrap_events(
     ``status_label`` is one of:
       - ``"ok"``         — task completed with notes
       - ``"empty"``      — task completed but extension returned 0 notes
-      - ``"timeout"``    — wait window expired, task still pending
+      - ``"timeout"``    — wait window expired, task still pending / in-progress
       - ``"failed"``     — extension or backend reported error
       - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
 
@@ -2294,6 +2313,132 @@ def _collect_dy_bootstrap_events(
     return events, scope_counts, status_label
 
 
+def _enqueue_yt_bootstrap_task() -> str | None:
+    """Enqueue a YouTube bootstrap_profile task for the browser extension.
+
+    Defaults: ``max_scroll_rounds=10`` and ``max_items_per_scope=300``.
+    Both can be overridden via env vars
+    ``OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS`` and
+    ``OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS``.
+    """
+    from openbiliclaw.sources.yt_tasks import YtTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]YouTube 初始化信号未导入: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    scroll_rounds = int(os.environ.get("OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS", "10"))
+    max_items = int(os.environ.get("OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS", "300"))
+
+    try:
+        queue = YtTaskQueue(database)
+        task_id = queue.enqueue_with_id(
+            "bootstrap_profile",
+            {
+                "scopes": ["yt_history", "yt_subscriptions", "yt_likes"],
+                "max_items_per_scope": max(1, max_items),
+                "max_scroll_rounds": max(0, scroll_rounds),
+            },
+            daily_budget=10,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]YouTube 初始化信号未导入: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]YouTube 初始化信号未导入: 今日任务预算已用完。[/yellow]")
+        return None
+    _kick_task_dispatcher("yt")
+    return task_id
+
+
+def _collect_yt_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and harvest a previously-enqueued YouTube bootstrap task.
+
+    Returns ``(events, scope_counts, status_label)`` where
+    ``status_label`` is one of ``"ok"``, ``"empty"``, ``"timeout"``,
+    ``"failed"``, or ``"skipped"``.
+    """
+    import json
+    import time
+
+    from openbiliclaw.sources.yt_tasks import (
+        YtTaskQueue,
+        yt_bootstrap_items_to_events,
+    )
+
+    if not task_id:
+        return [], {}, "skipped"
+
+    if max_wait_seconds is None:
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_YT_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = YtTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    poll_interval = 0.5
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(poll_interval)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    events = yt_bootstrap_items_to_events(items)
+    raw_counts = result.get("scope_counts", {})
+    scope_counts: dict[str, int] = {"yt_history": 0, "yt_subscriptions": 0, "yt_likes": 0}
+    if isinstance(raw_counts, dict):
+        for key in scope_counts:
+            with suppress(Exception):
+                scope_counts[key] = int(raw_counts.get(key, 0) or 0)
+    if not any(scope_counts.values()):
+        for event in events:
+            metadata = event.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            source = str(metadata.get("import_source", ""))
+            for key in scope_counts:
+                short = key.removeprefix("yt_") if key.startswith("yt_") else key
+                if source == f"yt_bootstrap_{short}":
+                    scope_counts[key] += 1
+    status_label = "ok" if events else "empty"
+    return events, scope_counts, status_label
+
+
 def _enqueue_dy_search_task(
     keywords: tuple[str, ...],
     *,
@@ -2450,6 +2595,31 @@ def _xhs_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str,
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "xiaohongshu",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _yt_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert YouTube bootstrap events into profile-builder history rows.
+
+    Mirror of ``_xhs_events_to_history_items`` — preserves natural-language
+    ``context`` and tags ``source_platform=youtube`` for cross-source analysis.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "youtube",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -3002,6 +3172,244 @@ def _ask_dy_inclusion() -> bool:
     return True
 
 
+def _ask_yt_inclusion() -> bool:
+    """Decide whether to enqueue the YouTube bootstrap task on this init.
+
+    Resolution order (first match wins):
+      1. ``OPENBILICLAW_NO_YOUTUBE=1`` env var → False, silent
+      2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
+         Conservative default — YouTube requires browser login and focus.
+      3. Interactive terminal → ask the user with default Y, then
+         (if Y) walk them through a prep checklist.
+    """
+    if os.environ.get("OPENBILICLAW_NO_YOUTUBE", "").strip() == "1":
+        console.print("[dim]  跳过 YouTube 数据接入(OPENBILICLAW_NO_YOUTUBE=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]▶ YouTube 数据接入(可选)[/bold]")
+    console.print(
+        "把你的 YouTube[bold cyan]观看历史 / 订阅 / 点赞[/bold cyan]混进画像,"
+        "系统能读懂你跨平台的兴趣——\n"
+        "你在 YouTube 常看的领域(科技 / 历史 / 音乐…)也会反映到 B 站推荐里。"
+    )
+    console.print()
+    console.print("启用需要:")
+    console.print("  1. 装好 OpenBiliClaw 浏览器扩展")
+    console.print(
+        "     [link=https://github.com/whiteguo233/OpenBiliClaw/releases]"
+        "https://github.com/whiteguo233/OpenBiliClaw/releases[/link]"
+    )
+    console.print("  2. 浏览器登录 [link=https://www.youtube.com]https://www.youtube.com[/link]")
+    console.print()
+    console.print(
+        "[dim]说 N 也没关系,init 会用 B 站(+其他已启用平台)数据建画像;"
+        "以后想加随时再跑一次 init,或设 OPENBILICLAW_NO_YOUTUBE=1 永久跳过。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("加入 YouTube 数据?", default=True):
+        console.print("[dim]  已选择跳过,本次 init 不会请求 YouTube 数据。[/dim]")
+        return False
+
+    console.print()
+    console.print("[bold]准备 YouTube 接入[/bold]")
+    console.print("请确认以下三件事都做了:")
+    console.print("  [cyan]☐[/cyan] 装好了 OpenBiliClaw 浏览器扩展")
+    console.print(
+        "  [cyan]☐[/cyan] 浏览器目前是打开的且是当前 [bold]活跃窗口[/bold]"
+        "(扩展需要前台 tab 才能滚动加载 YouTube 历史/订阅/点赞列表)"
+    )
+    console.print("  [cyan]☐[/cyan] 已经登录了 https://www.youtube.com")
+    console.print()
+    console.print(
+        "[bold yellow]⚠[/bold yellow]  接下来扩展会[bold]在你的浏览器里自动打开"
+        "一个新 tab[/bold]并切到那个 tab(会抢一次焦点),依次访问 3 个页面"
+        "(观看历史 / 订阅频道 / 点赞列表)向下滚动加载。整个过程 30-90 秒。"
+    )
+    console.print(
+        "[dim]   — 期间不要关那个 tab、不要切走太久(可能影响滚动加载)。"
+        "完成后扩展会自动关闭它,焦点还回来。[/dim]"
+    )
+    console.print(
+        "[dim]   — 想跳过焦点抢占的话:Ctrl-C 退出,改用 "
+        "`OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS=0 openbiliclaw init` "
+        "拿浅层数据。[/dim]"
+    )
+    console.print()
+    if not typer.confirm("准备好了吗,可以开始吗?", default=True):
+        console.print(
+            "[dim]  已暂缓 YouTube 接入,本次 init 不会拉 YouTube 数据。装好扩展+登录"
+            "YouTube 后随时再跑一次 init 就能补上。[/dim]"
+        )
+        return False
+    return True
+
+
+def _persist_init_source_enabled_flags(
+    *,
+    include_xhs: bool,
+    include_dy: bool,
+    include_yt: bool,
+) -> None:
+    """Persist init source choices so background discovery obeys them."""
+
+    try:
+        from openbiliclaw.config import load_config, save_config
+
+        cfg = load_config()
+        changed = False
+        if bool(getattr(cfg.sources.xiaohongshu, "enabled", True)) != include_xhs:
+            cfg.sources.xiaohongshu.enabled = include_xhs
+            changed = True
+        if bool(getattr(cfg.sources.douyin, "enabled", False)) != include_dy:
+            cfg.sources.douyin.enabled = include_dy
+            changed = True
+        if bool(getattr(cfg.sources.youtube, "enabled", False)) != include_yt:
+            cfg.sources.youtube.enabled = include_yt
+            changed = True
+        if changed:
+            save_config(cfg)
+    except Exception:
+        # Persisting init choices is best-effort; init should continue.
+        return
+
+
+def _select_init_source_shares(
+    event_counts: Mapping[str, int],
+    *,
+    enabled_sources: Mapping[str, bool],
+    configured_shares: Mapping[str, int],
+) -> dict[str, int]:
+    """Return source shares selected during interactive init."""
+
+    from openbiliclaw.runtime.source_policy import (
+        SOURCE_ORDER,
+        suggest_pool_source_shares,
+    )
+
+    configured = _merge_source_shares(configured_shares, {})
+    suggestion = suggest_pool_source_shares(
+        event_counts,
+        enabled_sources=enabled_sources,
+        configured_shares=configured,
+    )
+    if not _is_interactive_terminal():
+        return configured
+
+    enabled_order = [source for source in SOURCE_ORDER if enabled_sources.get(source, False)]
+    console.print()
+    console.print("[bold]平台发现比例[/bold]")
+    console.print(
+        "[dim]根据本次初始化采集到的各平台事件量，推荐后台发现池比例："
+        f"{_format_source_shares(suggestion)}。[/dim]"
+    )
+    if typer.confirm("使用这个比例?", default=True):
+        return _merge_source_shares(configured, suggestion)
+
+    raw = typer.prompt(
+        "手动输入比例",
+        default=",".join(f"{source}={configured.get(source, 1)}" for source in enabled_order),
+    ).strip()
+    parsed = _parse_source_share_input(raw, enabled_order=enabled_order)
+    if not parsed:
+        console.print("[yellow]比例输入无效，保留原配置。[/yellow]")
+        return configured
+    return _merge_source_shares(configured, parsed)
+
+
+def _maybe_update_init_source_shares(event_counts: Mapping[str, int]) -> None:
+    """Ask the user to accept/update source shares after init event collection."""
+
+    try:
+        from openbiliclaw.config import load_config, save_config
+        from openbiliclaw.runtime.source_policy import source_enabled_map
+
+        cfg = load_config()
+        enabled_sources = source_enabled_map(cfg)
+        selected = _select_init_source_shares(
+            event_counts,
+            enabled_sources=enabled_sources,
+            configured_shares=cfg.scheduler.pool_source_shares,
+        )
+        if selected != cfg.scheduler.pool_source_shares:
+            cfg.scheduler.pool_source_shares = selected
+            save_config(cfg)
+    except Exception:
+        return
+
+
+def _merge_source_shares(
+    configured_shares: Mapping[str, int],
+    updates: Mapping[str, int],
+) -> dict[str, int]:
+    from openbiliclaw.runtime.source_policy import DEFAULT_POOL_SOURCE_SHARES, SOURCE_ORDER
+
+    merged = dict(DEFAULT_POOL_SOURCE_SHARES)
+    for source in SOURCE_ORDER:
+        if source in configured_shares:
+            try:
+                share = int(configured_shares[source])
+            except (TypeError, ValueError):
+                continue
+            if share > 0:
+                merged[source] = share
+    for source, raw_share in updates.items():
+        if source not in SOURCE_ORDER:
+            continue
+        try:
+            share = int(raw_share)
+        except (TypeError, ValueError):
+            continue
+        if share > 0:
+            merged[source] = share
+    return {source: merged[source] for source in SOURCE_ORDER if source in merged}
+
+
+def _parse_source_share_input(raw: str, *, enabled_order: list[str]) -> dict[str, int]:
+    if not raw.strip():
+        return {}
+
+    parsed: dict[str, int] = {}
+    if "=" in raw:
+        for part in re.split(r"[,，\s]+", raw.strip()):
+            if not part or "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            source = key.strip().lower()
+            if source not in enabled_order:
+                continue
+            try:
+                share = int(value)
+            except ValueError:
+                continue
+            if share > 0:
+                parsed[source] = share
+        return parsed
+
+    values = [item for item in re.split(r"[:：,，\s]+", raw.strip()) if item]
+    for source, value in zip(enabled_order, values, strict=False):
+        try:
+            share = int(value)
+        except ValueError:
+            continue
+        if share > 0:
+            parsed[source] = share
+    return parsed
+
+
+def _format_source_shares(shares: Mapping[str, int]) -> str:
+    labels = {
+        "bilibili": "B站",
+        "xiaohongshu": "小红书",
+        "douyin": "抖音",
+        "youtube": "YouTube",
+    }
+    return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
+
+
 @app.command()
 def init(
     no_xhs: bool = typer.Option(
@@ -3023,6 +3431,16 @@ def init(
         False,
         "--yes-douyin",
         help="跳过抖音的 y/n 提问,直接启用(适合脚本化场景)。",
+    ),
+    no_youtube: bool = typer.Option(
+        False,
+        "--no-youtube",
+        help="跳过 YouTube 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_yt_prompt: bool = typer.Option(
+        False,
+        "--yes-youtube",
+        help="跳过 YouTube 的 y/n 提问,直接启用(适合脚本化场景)。",
     ),
 ) -> None:
     """首次运行：拉取历史、生成画像并补足首轮发现池."""
@@ -3140,6 +3558,23 @@ def init(
     else:
         include_dy = _ask_dy_inclusion()
 
+    if no_youtube:
+        include_yt = False
+        console.print("[dim]  跳过 YouTube 数据接入(命令行 --no-youtube)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_YOUTUBE", "").strip() == "1":
+        include_yt = False
+        console.print("[dim]  跳过 YouTube 数据接入(OPENBILICLAW_NO_YOUTUBE=1)。[/dim]")
+    elif skip_yt_prompt:
+        include_yt = True
+    else:
+        include_yt = _ask_yt_inclusion()
+
+    _persist_init_source_enabled_flags(
+        include_xhs=include_xhs,
+        include_dy=include_dy,
+        include_yt=include_yt,
+    )
+
     # Enqueue the XHS bootstrap task FIRST so the browser extension
     # can run it in parallel with the slow B站 history/favs/follows
     # fetches below (~10–30s). XHS is HTTP-only on B站's side so
@@ -3224,6 +3659,37 @@ def init(
     elif dy_status == "failed":
         console.print("  [yellow]抖音任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
 
+    # YouTube is enqueued AFTER Douyin completes — same serialisation
+    # rationale as XHS→Douyin: each dispatcher opens a foreground tab
+    # and grabs focus; running two at once causes tab-focus races and
+    # confuses YouTube's lazy-loader.
+    yt_task_id = _enqueue_yt_bootstrap_task() if include_yt else None
+    if yt_task_id:
+        console.print(
+            "  [dim]已请求扩展拉 YouTube 观看历史 / 订阅 / 点赞"
+            "(开始抢一次浏览器焦点,~30-90 秒)。[/dim]"
+        )
+    yt_events, yt_scope_counts, yt_status = _collect_yt_bootstrap_events(yt_task_id)
+    if yt_status == "ok":
+        console.print(
+            "  YouTube "
+            f"观看历史 [green]{yt_scope_counts.get('yt_history', 0)}[/green] 条"
+            f" / 订阅 [green]{yt_scope_counts.get('yt_subscriptions', 0)}[/green] 个"
+            f" / 点赞 [green]{yt_scope_counts.get('yt_likes', 0)}[/green] 个"
+        )
+    elif yt_status == "empty":
+        console.print(
+            "  [yellow]YouTube 任务跑通但 0 条记录 —— "
+            "未登录 YouTube 或页面内容为空。[/yellow]"
+        )
+    elif yt_status == "timeout":
+        console.print(
+            "  [dim]YouTube 初始化信号未导入:扩展未连接或任务仍在后台跑。"
+            "可设 OPENBILICLAW_YT_BOOTSTRAP_WAIT_SECONDS=300 延长等待。[/dim]"
+        )
+    elif yt_status == "failed":
+        console.print("  [yellow]YouTube 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
+
     # Build events from all data sources via the unified event_format
     # builder (v0.3.22+) so B站 / 小红书 / future-source events all carry
     # the same shape — including a natural-language ``context`` the
@@ -3270,9 +3736,19 @@ def init(
                 },
             )
         )
+    bilibili_event_count = len(events)
     events_to_persist = list(events)
     events.extend(xhs_events)
     events.extend(dy_events)
+    events.extend(yt_events)
+    _maybe_update_init_source_shares(
+        {
+            "bilibili": bilibili_event_count,
+            "xiaohongshu": len(xhs_events),
+            "douyin": len(dy_events),
+            "youtube": len(yt_events),
+        }
+    )
     for event in events_to_persist:
         asyncio.run(memory.propagate_event(event))
 
@@ -3318,6 +3794,8 @@ def init(
         combined_history.extend(_xhs_events_to_history_items(xhs_events))
     if dy_events:
         combined_history.extend(_dy_events_to_history_items(dy_events))
+    if yt_events:
+        combined_history.extend(_yt_events_to_history_items(yt_events))
 
     # Parallel: build_initial_profile (P3) and discover (P4) overlap.
     # Discover starts with a preference-only draft profile so trending /
@@ -3397,7 +3875,7 @@ def init(
     # plus a total. xhs_scope_counts is set whether the task succeeded
     # or returned empty, so this also surfaces "0 / 0 / 0" cases that
     # suggest the user wasn't logged into XHS.
-    bilibili_events = len(events) - len(xhs_events) - len(dy_events)
+    bilibili_events = len(events) - len(xhs_events) - len(dy_events) - len(yt_events)
     xhs_saved = int(xhs_scope_counts.get("saved", 0))
     xhs_liked = int(xhs_scope_counts.get("liked", 0))
     xhs_history = int(xhs_scope_counts.get("xhs_history", 0))
@@ -3405,6 +3883,9 @@ def init(
     dy_collect = int(dy_scope_counts.get("dy_collect", 0))
     dy_like = int(dy_scope_counts.get("dy_like", 0))
     dy_follow = int(dy_scope_counts.get("dy_follow", 0))
+    yt_history_count = int(yt_scope_counts.get("yt_history", 0))
+    yt_subs_count = int(yt_scope_counts.get("yt_subscriptions", 0))
+    yt_likes_count = int(yt_scope_counts.get("yt_likes", 0))
     summary_rows: list[tuple[str, str]] = [
         ("📺 B 站观看历史", f"{len(history)} 条"),
         ("📺 B 站收藏夹", f"{len(favorites_data)} 条"),
@@ -3419,6 +3900,10 @@ def init(
         ("🎵 抖音 点赞", f"{dy_like} 个"),
         ("🎵 抖音 关注", f"{dy_follow} 人"),
         ("🌐 抖音 入库事件", f"{len(dy_events)} 条"),
+        ("▶ YouTube 观看历史", f"{yt_history_count} 条"),
+        ("▶ YouTube 订阅频道", f"{yt_subs_count} 个"),
+        ("▶ YouTube 点赞", f"{yt_likes_count} 个"),
+        ("🌐 YouTube 入库事件", f"{len(yt_events)} 条"),
         ("📊 画像建模总事件", f"{len(events)} 条"),
         ("✅ 灵魂画像", "已生成"),
         ("🔍 首轮发现内容", f"{discovered_count} 条"),
@@ -3433,12 +3918,20 @@ def init(
             "https://www.xiaohongshu.com / 任务仍在后台跑。装好扩展后重新跑 "
             "[cyan]openbiliclaw init --yes-xhs[/cyan] 可补齐。[/dim]"
         )
+    if (yt_history_count + yt_subs_count + yt_likes_count) == 0 and yt_status != "skipped":
+        console.print(
+            "[dim]ℹ️  YouTube 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
+            "https://www.youtube.com / 任务仍在后台跑。装好扩展后重新跑 "
+            "[cyan]openbiliclaw init --yes-youtube[/cyan] 可补齐。[/dim]"
+        )
 
     source_parts = [f"[green]{bilibili_events}[/green] 条 B 站信号"]
     if len(xhs_events) > 0:
         source_parts.append(f"[green]{len(xhs_events)}[/green] 条小红书信号")
     if len(dy_events) > 0:
         source_parts.append(f"[green]{len(dy_events)}[/green] 条抖音信号")
+    if len(yt_events) > 0:
+        source_parts.append(f"[green]{len(yt_events)}[/green] 条 YouTube 信号")
     if len(source_parts) > 1:
         console.print(
             "[dim]ℹ️  本次画像综合了 "
@@ -3540,6 +4033,122 @@ def _notify_running_server_init_completed(
     except Exception:
         # Server not running — nothing to notify, and that's fine.
         pass
+
+
+@app.command("rebuild-profile")
+def rebuild_profile(
+    limit: int = typer.Option(
+        5000,
+        "--limit",
+        help="从数据库加载的最大事件数（默认 5000）。",
+    ),
+    source: str = typer.Option(
+        "",
+        "--source",
+        help="只用指定来源：bilibili / xiaohongshu / douyin / youtube，留空=全部。",
+    ),
+    no_analyze: bool = typer.Option(
+        False,
+        "--no-analyze",
+        help="跳过 analyze_events，直接重跑 build_initial_profile。",
+    ),
+) -> None:
+    """从数据库重新生成灵魂画像（调试用）。
+
+    从已存储的行为事件重跑完整的偏好分析 + 画像生成流程，
+    无需重新从任何平台拉取数据。适合：
+
+    \\b
+      - 调整了 LLM prompt 后验证效果
+      - 新接入平台后补充旧数据重跑
+      - init 中途中断后只补跑画像阶段
+    """
+    import json as _json
+
+    _prepare_init_runtime()
+    memory = _build_memory_manager()
+    soul_engine = _build_soul_engine()
+
+    _print_page_title("重新生成灵魂画像", "rebuild-profile")
+
+    init_start_usage_id: int | None = None
+    with suppress(Exception):
+        init_start_usage_id = _get_runtime_database().max_llm_usage_id()
+
+    # ── 1. 从 DB 加载事件 ────────────────────────────────────────────
+    console.print(f"  [dim]从数据库加载最多 {limit} 条事件...[/dim]")
+    raw_rows = memory.query_events(limit=limit)
+
+    # metadata 在 DB 中以 JSON 文本存储；context 是纯文本（v0.3.23+）。
+    events: list[dict[str, Any]] = []
+    for row in raw_rows:
+        ev = dict(row)
+        meta_raw = ev.get("metadata")
+        if isinstance(meta_raw, str) and meta_raw:
+            try:
+                parsed = _json.loads(meta_raw)
+                ev["metadata"] = parsed if isinstance(parsed, dict) else {}
+            except _json.JSONDecodeError:
+                ev["metadata"] = {}
+        events.append(ev)
+
+    # 来源过滤
+    source = source.strip().lower()
+    if source:
+        events = [
+            e for e in events
+            if str((e.get("metadata") or {}).get("source_platform", "")).lower() == source
+        ]
+
+    if not events:
+        console.print(
+            "[yellow]  没有找到事件。"
+            + (f"来源 '{source}' 不存在，或" if source else "")
+            + "请先运行 [cyan]openbiliclaw init[/cyan] 拉取数据。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    # 按来源平台打印分布
+    from collections import Counter
+
+    platform_counts: Counter[str] = Counter()
+    for ev in events:
+        platform_counts[str((ev.get("metadata") or {}).get("source_platform", "unknown"))] += 1
+    console.print(f"  已加载 [green]{len(events)}[/green] 条事件：")
+    for platform, count in sorted(platform_counts.items(), key=lambda x: -x[1]):
+        console.print(f"    {platform}: [green]{count}[/green] 条")
+
+    # ── 2. 偏好分析 ──────────────────────────────────────────────────
+    if not no_analyze:
+        _print_section_title("1/2 分析偏好")
+        console.print(f"  总信号量: [green]{len(events)}[/green] 条")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.analyze_events(events, event_chunk_size=200),
+                label="分析偏好（分片并发）",
+                eta_seconds=180,
+            )
+        )
+    else:
+        console.print("  [dim]跳过 analyze_events（--no-analyze）。[/dim]")
+
+    # ── 3. 画像生成 ──────────────────────────────────────────────────
+    section_label = "2/2 生成画像" if not no_analyze else "1/1 生成画像"
+    _print_section_title(section_label)
+    asyncio.run(
+        _run_with_progress(
+            soul_engine.build_initial_profile(events),
+            label="生成灵魂画像（单次 LLM 综合分析）",
+            eta_seconds=70,
+        )
+    )
+
+    _print_status_panel("success", "完成", "灵魂画像已重新生成")
+
+    if init_start_usage_id is not None:
+        _print_init_cost_summary(init_start_usage_id)
+
+    _notify_running_server_init_completed()
 
 
 def _run_single_source_bootstrap(
@@ -3704,6 +4313,11 @@ def fetch_xhs(
         "-w",
         help="等扩展回结果的最大秒数(默认 180s)。",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="忽略近期小红书 bootstrap 任务，强制重新拉取收藏 / 点赞。",
+    ),
 ) -> None:
     """单独测试小红书 bootstrap(独立于 ``init``).
 
@@ -3735,10 +4349,149 @@ def fetch_xhs(
 
     _run_single_source_bootstrap(
         source_label="小红书",
-        enqueue=_enqueue_xhs_bootstrap_task,
+        enqueue=(lambda: _enqueue_xhs_bootstrap_task(force=True))
+        if force
+        else _enqueue_xhs_bootstrap_task,
         collect=lambda tid: _collect_xhs_bootstrap_events(tid, max_wait_seconds=wait_seconds),
         wait_seconds=wait_seconds,
         summary_renderer=_render,
+    )
+
+
+@app.command("fetch-youtube")
+def fetch_youtube(
+    wait_seconds: float = typer.Option(
+        _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回结果的最大秒数(默认 240s，YouTube 滚动比较慢)。",
+    ),
+) -> None:
+    """单独测试 YouTube bootstrap（独立于 ``init``）。
+
+    用于在不重新跑完整 init 的情况下验证 YouTube 端到端链路。
+    需要 daemon + 扩展 + 浏览器登录 https://www.youtube.com。
+
+    \b
+    采集范围：
+      yt_history      — /feed/history        观看历史 (弱信号)
+      yt_subscriptions — /feed/channels       订阅频道 (强信号)
+      yt_likes        — /playlist?list=LL    点赞视频 (强信号)
+    """
+
+    def _render(scope_counts: dict[str, int], status_label: str, event_count: int) -> None:
+        if status_label == "ok":
+            console.print(
+                "  YouTube "
+                f"观看历史 [green]{scope_counts.get('yt_history', 0)}[/green] 条"
+                f" / 订阅 [green]{scope_counts.get('yt_subscriptions', 0)}[/green] 个"
+                f" / 点赞 [green]{scope_counts.get('yt_likes', 0)}[/green] 个"
+            )
+            console.print(f"  共生成 [green]{event_count}[/green] 条事件。")
+        elif status_label == "empty":
+            console.print(
+                "  [yellow]YouTube 任务跑通但 0 条数据 —— "
+                "可能未登录 YouTube / 页面还未渲染完 / 选择器失效。[/yellow]"
+            )
+        elif status_label == "timeout":
+            console.print(
+                "  [dim]YouTube 任务超时：扩展未连接 / 任务还在跑。"
+                "可加 --wait-seconds 360 重试。[/dim]"
+            )
+        elif status_label == "failed":
+            console.print("  [yellow]YouTube 任务失败 —— 检查扩展日志。[/yellow]")
+
+    _run_single_source_bootstrap(
+        source_label="YouTube",
+        enqueue=_enqueue_yt_bootstrap_task,
+        collect=lambda tid: _collect_yt_bootstrap_events(tid, max_wait_seconds=wait_seconds),
+        wait_seconds=wait_seconds,
+        summary_renderer=_render,
+    )
+
+
+@app.command("import-youtube")
+def import_youtube(
+    path: str = typer.Argument(
+        ...,
+        help="Google Takeout 导出路径：.zip 文件或解压后的目录。",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="只解析打印统计，不写入数据库 / 不更新画像。",
+    ),
+) -> None:
+    """从 Google Takeout 导入 YouTube 观看历史、订阅和点赞数据。
+
+    使用步骤：
+
+    \b
+    1. 访问 https://takeout.google.com
+    2. 仅选择 "YouTube and YouTube Music"
+    3. 格式选 JSON（默认 HTML 也支持，但 JSON 更精确）
+    4. 下载后将 .zip 路径传给本命令，或先解压再传目录。
+    """
+    from openbiliclaw.youtube.takeout import parse_takeout
+
+    _print_page_title("导入 YouTube Takeout", "冷启动画像补充")
+
+    takeout_path = Path(path)
+    if not takeout_path.exists():
+        console.print(f"[red]路径不存在: {takeout_path}[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"  解析 [cyan]{takeout_path}[/cyan] …")
+    result = parse_takeout(takeout_path)
+
+    for warning in result.warnings:
+        console.print(f"  [yellow]⚠ {warning}[/yellow]")
+
+    stats = result.stats
+    console.print(
+        f"\n  解析完成：\n"
+        f"    观看历史  [green]{stats.watch_history}[/green] 条\n"
+        f"    订阅频道  [green]{stats.subscriptions}[/green] 个\n"
+        f"    点赞视频  [green]{stats.liked_videos}[/green] 个\n"
+        f"    合计      [green]{stats.total}[/green] 条事件"
+    )
+
+    if stats.total == 0:
+        console.print("[yellow]未找到任何 YouTube 信号，请检查 Takeout 目录结构。[/yellow]")
+        raise typer.Exit(code=0)
+
+    if dry_run:
+        console.print("\n[dim]--dry-run 模式，不写入数据库，结束。[/dim]")
+        raise typer.Exit(code=0)
+
+    _require_runtime_config()
+    memory = _build_memory_manager()
+    soul_engine = _build_soul_engine()
+
+    _print_section_title("1/2 写入记忆层")
+    console.print(f"  将 {stats.total} 条事件传播到记忆层 …")
+
+    async def _propagate() -> None:
+        for event in result.events:
+            await memory.propagate_event(event)
+
+    asyncio.run(_propagate())
+    console.print("  [green]✓ 记忆层写入完成[/green]")
+
+    _print_section_title("2/2 更新偏好画像")
+    console.print(f"  分析 {stats.total} 条 YouTube 信号（并发分片 200 条）…")
+    asyncio.run(
+        _run_with_progress(
+            soul_engine.analyze_events(result.events, event_chunk_size=200),
+            label="分析偏好（YouTube 信号）",
+            eta_seconds=90,
+        )
+    )
+    console.print("  [green]✓ 偏好画像已更新[/green]")
+
+    console.print(
+        "\n[bold green]✓ YouTube Takeout 导入完成。[/bold green]\n"
+        "  运行 [cyan]openbiliclaw profile[/cyan] 查看更新后的用户画像。"
     )
 
 

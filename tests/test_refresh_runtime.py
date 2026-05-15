@@ -54,6 +54,11 @@ class _FakeDatabase:
         self.trim_source_share_quotas: dict[str, int] | None = None
         self.trim_overflow_source_share_quotas: dict[str, int] | None = None
         self.reactivate_source_share_quotas: dict[str, int] | None = None
+        self.distribution_counts: dict[str, dict[str, int]] = {
+            "topic_group": {"科技": 3},
+            "style_key": {"deep_dive": 2},
+            "franchise_key": {},
+        }
         self.recommendations = [
             {"id": 1, "presented": 0},
             {"id": 2, "presented": 1},
@@ -87,6 +92,12 @@ class _FakeDatabase:
 
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         return dict(self.source_counts)
+
+    def get_pool_distribution_counts(self) -> dict[str, dict[str, int]]:
+        return {
+            axis: dict(counts)
+            for axis, counts in self.distribution_counts.items()
+        }
 
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
         return 0
@@ -168,6 +179,7 @@ class _FakeDiscoveryEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[dict[str, object], list[str] | None, int]] = []
         self.strategy_limit_calls: list[dict[str, int] | None] = []
+        self.pool_snapshot_calls: list[object | None] = []
 
     async def discover(
         self,
@@ -176,9 +188,11 @@ class _FakeDiscoveryEngine:
         limit: int = 30,
         *,
         strategy_limits: dict[str, int] | None = None,
+        pool_snapshot: object | None = None,
     ) -> list[dict[str, object]]:
         self.calls.append((profile, strategies, limit))
         self.strategy_limit_calls.append(dict(strategy_limits) if strategy_limits else None)
+        self.pool_snapshot_calls.append(pool_snapshot)
         return [{"bvid": "BV1X", "relevance_score": 0.9, "view_count": 100}]
 
 
@@ -666,6 +680,28 @@ async def test_refresh_controller_requests_discovery_with_backfill_limit() -> No
     # ~80% of LLM evaluation cost to land on candidates that were
     # immediately suppressed by trim_pool_to_target_count.
     assert discovery.calls[0][2] == 7
+
+
+async def test_run_refresh_plan_passes_pool_snapshot() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=20, source_counts={"bilibili": 12}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=_FakeMemoryManager().load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search"], 10)],
+        reason="test",
+    )
+
+    assert discovery.pool_snapshot_calls
+    assert discovery.pool_snapshot_calls[0] is not None
 
 
 async def test_refresh_controller_caps_single_discovery_backfill_request() -> None:
@@ -1160,6 +1196,29 @@ def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
     )
 
     assert controller._build_source_replenishment_plan() == []
+
+
+def test_source_replenishment_plan_maps_youtube_deficit_to_youtube_strategies() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=80,
+            source_counts={
+                "bilibili": 80,
+                "youtube": 0,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=100,
+        pool_source_shares={"bilibili": 8, "youtube": 2},
+    )
+
+    assert controller._build_source_replenishment_plan() == [
+        (["yt_search", "yt_trending", "yt_channel"], 20)
+    ]
 
 
 async def test_xhs_producer_receives_source_deficit_limit() -> None:

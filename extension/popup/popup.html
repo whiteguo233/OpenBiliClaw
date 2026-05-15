@@ -3551,7 +3551,7 @@
           </div>
           <div class="settings-field">
             <label for="cfgOpenaiModel">Model</label>
-            <input id="cfgOpenaiModel" type="text" placeholder="gpt-4o">
+            <input id="cfgOpenaiModel" type="text" placeholder="gpt-5-nano">
           </div>
           <div class="settings-field">
             <label for="cfgOpenaiBaseUrl">Base URL (可选)</label>
@@ -3566,7 +3566,7 @@
           </div>
           <div class="settings-field">
             <label for="cfgClaudeModel">Model</label>
-            <input id="cfgClaudeModel" type="text" placeholder="claude-sonnet-4-20250514">
+            <input id="cfgClaudeModel" type="text" placeholder="claude-sonnet-4-6">
           </div>
         </div>
         <!-- Gemini -->
@@ -3594,16 +3594,24 @@
             <label for="cfgDeepseekBaseUrl">Base URL</label>
             <input id="cfgDeepseekBaseUrl" type="text" placeholder="https://api.deepseek.com">
           </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekReasoning">Reasoning Effort</label>
+            <select id="cfgDeepseekReasoning">
+              <option value="">关闭</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </div>
         </div>
         <!-- Ollama -->
         <div class="settings-provider-fields" data-provider="ollama">
           <div class="settings-field">
             <label for="cfgOllamaModel">Model</label>
-            <input id="cfgOllamaModel" type="text" placeholder="llama3">
+            <input id="cfgOllamaModel" type="text" placeholder="qwen2.5:7b">
           </div>
           <div class="settings-field">
             <label for="cfgOllamaBaseUrl">Base URL</label>
-            <input id="cfgOllamaBaseUrl" type="text" placeholder="http://localhost:11434">
+            <input id="cfgOllamaBaseUrl" type="text" placeholder="http://localhost:11434/v1">
           </div>
         </div>
         <!-- OpenRouter -->
@@ -3614,11 +3622,19 @@
           </div>
           <div class="settings-field">
             <label for="cfgOpenrouterModel">Model</label>
-            <input id="cfgOpenrouterModel" type="text" placeholder="openai/gpt-4o-mini">
+            <input id="cfgOpenrouterModel" type="text" placeholder="openai/gpt-5-nano">
           </div>
           <div class="settings-field">
             <label for="cfgOpenrouterBaseUrl">Base URL</label>
             <input id="cfgOpenrouterBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterReferer">HTTP Referer</label>
+            <input id="cfgOpenrouterReferer" type="text" placeholder="https://example.com">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterTitle">X-Title</label>
+            <input id="cfgOpenrouterTitle" type="text" placeholder="OpenBiliClaw">
           </div>
         </div>
         <!-- OpenAI Compatible -->
@@ -3675,6 +3691,82 @@
         </div>
       </div>
 
+      <!-- Module LLM Overrides -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F9E0;</span> 模块模型覆盖</h3>
+        <p class="settings-hint">
+          留空时继承默认 Provider；只在需要给画像、发现、推荐表达或评估单独指定模型时填写。
+        </p>
+        <div class="settings-field">
+          <label for="cfgModuleSoulProvider">画像 Provider</label>
+          <select id="cfgModuleSoulProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleSoulModel">画像 Model</label>
+          <input id="cfgModuleSoulModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleDiscoveryProvider">发现 Provider</label>
+          <select id="cfgModuleDiscoveryProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleDiscoveryModel">发现 Model</label>
+          <input id="cfgModuleDiscoveryModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleRecommendationProvider">推荐表达 Provider</label>
+          <select id="cfgModuleRecommendationProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleRecommendationModel">推荐表达 Model</label>
+          <input id="cfgModuleRecommendationModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleEvaluationProvider">评估 Provider</label>
+          <select id="cfgModuleEvaluationProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleEvaluationModel">评估 Model</label>
+          <input id="cfgModuleEvaluationModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+      </div>
+
       <!-- Bilibili -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x1F4FA;</span> Bilibili</h3>
@@ -3690,6 +3782,71 @@
           <label for="cfgBiliCookie">Cookie</label>
           <textarea id="cfgBiliCookie" placeholder="从浏览器复制 Cookie 字符串"></textarea>
         </div>
+        <div class="settings-field">
+          <label for="cfgBiliBrowserExecutable">agent-browser 路径</label>
+          <input id="cfgBiliBrowserExecutable" type="text" placeholder="留空使用全局安装">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgBiliBrowserHeaded" type="checkbox">
+          <label for="cfgBiliBrowserHeaded">B 站登录浏览器显示窗口</label>
+        </div>
+      </div>
+
+      <!-- Sources -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F310;</span> 多平台源</h3>
+        <div class="settings-field">
+          <label for="cfgSourcesBrowserCdp">通用网页 CDP URL</label>
+          <input id="cfgSourcesBrowserCdp" type="text" placeholder="http://localhost:9222">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgSourcesBrowserHeaded" type="checkbox">
+          <label for="cfgSourcesBrowserHeaded">通用网页回退浏览器显示窗口</label>
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgXhsEnabled" type="checkbox">
+          <label for="cfgXhsEnabled">启用小红书 discovery</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsDailySearchBudget">小红书每日搜索任务</label>
+          <input id="cfgXhsDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsDailyCreatorBudget">小红书每日创作者任务</label>
+          <input id="cfgXhsDailyCreatorBudget" type="number" min="0" step="1" placeholder="10">
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsTaskInterval">小红书任务间隔秒数</label>
+          <input id="cfgXhsTaskInterval" type="number" min="0" step="1" placeholder="45">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgDouyinEnabled" type="checkbox">
+          <label for="cfgDouyinEnabled">启用抖音 discovery</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinCookieEnv">抖音 Cookie 环境变量</label>
+          <input id="cfgDouyinCookieEnv" type="text" placeholder="OPENBILICLAW_DOUYIN_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailySearchBudget">抖音每日搜索任务</label>
+          <input id="cfgDouyinDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailyHotBudget">抖音每日热点任务</label>
+          <input id="cfgDouyinDailyHotBudget" type="number" min="0" step="1" placeholder="5">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailyFeedBudget">抖音每日推荐流任务</label>
+          <input id="cfgDouyinDailyFeedBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinRequestInterval">抖音 direct 请求间隔秒数</label>
+          <input id="cfgDouyinRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgYoutubeEnabled" type="checkbox">
+          <label for="cfgYoutubeEnabled">启用 YouTube discovery</label>
+        </div>
       </div>
 
       <!-- General -->
@@ -3702,6 +3859,14 @@
             <option value="en">English</option>
           </select>
         </div>
+        <div class="settings-field">
+          <label for="cfgDataDir">数据目录</label>
+          <input id="cfgDataDir" type="text" placeholder="data">
+        </div>
+        <div class="settings-field">
+          <label for="cfgStorageDbPath">SQLite 数据库路径</label>
+          <input id="cfgStorageDbPath" type="text" placeholder="data/openbiliclaw.db">
+        </div>
       </div>
 
       <!-- Scheduler -->
@@ -3713,15 +3878,70 @@
         </div>
         <div class="settings-field">
           <label for="cfgDiscoveryCron">发现 Cron 表达式</label>
-          <input id="cfgDiscoveryCron" type="text" placeholder="0 */4 * * *">
+          <input id="cfgDiscoveryCron" type="text" placeholder="0 */8 * * *">
         </div>
         <div class="settings-field">
           <label for="cfgPoolTarget">候选池目标数量</label>
           <input id="cfgPoolTarget" type="number" min="1" max="600" placeholder="600">
         </div>
+        <div class="settings-field">
+          <label for="cfgAccountSyncInterval">账户同步间隔小时</label>
+          <input id="cfgAccountSyncInterval" type="number" min="1" step="1" placeholder="6">
+        </div>
         <div class="settings-field-row">
           <input id="cfgAutoUpdate" type="checkbox">
           <label for="cfgAutoUpdate">自动更新</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgAutoUpdateInterval">自动更新检查间隔小时</label>
+          <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
+          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareXhs">候选池小红书占比</label>
+          <input id="cfgPoolShareXhs" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareDouyin">候选池抖音占比</label>
+          <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
+          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-actions">
+          <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationInterval">猜测兴趣间隔分钟</label>
+          <input id="cfgSpeculationInterval" type="number" min="1" step="1" placeholder="10">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationTtl">猜测兴趣存活天数</label>
+          <input id="cfgSpeculationTtl" type="number" min="1" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationCooldown">猜测兴趣冷却天数</label>
+          <input id="cfgSpeculationCooldown" type="number" min="1" step="1" placeholder="7">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationThreshold">猜测确认阈值</label>
+          <input id="cfgSpeculationThreshold" type="number" min="1" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxActive">最大活跃猜测数</label>
+          <input id="cfgSpeculationMaxActive" type="number" min="1" step="1" placeholder="5">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxPrimary">主要兴趣域上限</label>
+          <input id="cfgSpeculationMaxPrimary" type="number" min="1" step="1" placeholder="15">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxSecondary">次要兴趣项上限</label>
+          <input id="cfgSpeculationMaxSecondary" type="number" min="1" step="1" placeholder="60">
         </div>
       </div>
 
@@ -3737,9 +3957,46 @@
             <option value="ERROR">ERROR</option>
           </select>
         </div>
+        <div class="settings-field">
+          <label for="cfgLogFileLevel">文件级别</label>
+          <select id="cfgLogFileLevel">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogDirectory">日志目录</label>
+          <input id="cfgLogDirectory" type="text" placeholder="logs">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogFilename">日志文件名</label>
+          <input id="cfgLogFilename" type="text" placeholder="openbiliclaw.log">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogMaxFileSize">单日志文件上限 MB</label>
+          <input id="cfgLogMaxFileSize" type="number" min="0" step="1" placeholder="100">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogBackupCount">日志备份份数</label>
+          <input id="cfgLogBackupCount" type="number" min="0" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogAggregateBudget">日志目录预算 MB</label>
+          <input id="cfgLogAggregateBudget" type="number" min="0" step="1" placeholder="500">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogUnmanagedTruncate">单个非托管日志截断 MB</label>
+          <input id="cfgLogUnmanagedTruncate" type="number" min="0" step="1" placeholder="200">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogUnmanagedMaxAge">非托管日志保留天数</label>
+          <input id="cfgLogUnmanagedMaxAge" type="number" min="0" step="1" placeholder="30">
+        </div>
       </div>
 
-      <p class="settings-note">保存后需重启后端才能生效。</p>
+      <p class="settings-note">保存后会尝试热重载；少数路径类设置仍建议重启后端确认。</p>
 
       <div class="settings-actions">
         <button id="settingsSave" class="settings-save" type="button">保存配置</button>

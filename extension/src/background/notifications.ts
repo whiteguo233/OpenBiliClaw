@@ -10,6 +10,14 @@ type ExtensionUiChrome = {
   tabs?: { create(options: { url: string }): Promise<unknown> | unknown };
 };
 
+// Firefox sidebarAction API (available when running in Firefox)
+type FirefoxSidebarAction = {
+  open(): Promise<void>;
+  close(): Promise<void>;
+  toggle(): Promise<void>;
+  isOpen(details: { windowId?: number }): Promise<boolean>;
+};
+
 export type PendingNotification = {
   recommendation_id: number;
   bvid: string;
@@ -151,11 +159,26 @@ export async function openExtensionUi(
     tab = "recommend",
     delightBvid = "",
   }: { windowId?: number; tab?: ExtensionUiTab; delightBvid?: string } = {},
-): Promise<"sidePanel" | "tab"> {
+): Promise<"sidePanel" | "sidebarPanel" | "tab"> {
+  // Chrome/Edge: sidePanel API
   if (typeof windowId === "number" && chromeApi.sidePanel?.open) {
     await chromeApi.sidePanel.open({ windowId });
     return "sidePanel";
   }
+  // Firefox: sidebarAction API — programmatically open the sidebar
+  try {
+    const globalObj = globalThis as Record<string, unknown>;
+    const browserApi = globalObj.browser as
+      | { sidebarAction?: FirefoxSidebarAction }
+      | undefined;
+    if (browserApi?.sidebarAction?.open) {
+      await browserApi.sidebarAction.open();
+      return "sidebarPanel";
+    }
+  } catch {
+    // Not Firefox or sidebarAction unavailable — fall through
+  }
+  // Fallback: open in a new tab
   await chromeApi.tabs?.create({ url: buildExtensionUiUrl(tab, { delightBvid }) });
   return "tab";
 }

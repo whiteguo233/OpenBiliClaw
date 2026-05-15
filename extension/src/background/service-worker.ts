@@ -32,6 +32,13 @@ import {
   type DyTaskResult,
 } from "./dy-task-dispatcher.js";
 import {
+  startYtTaskPolling,
+  handleYtTaskAlarm,
+  handleYtScopeResult,
+  pollYtTaskNow,
+} from "./yt-task-dispatcher.js";
+import type { YtScopeResult } from "../content/yt/task-executor.js";
+import {
   openExtensionUi,
   parseDelightBvid,
   parseNotificationBvid,
@@ -57,6 +64,13 @@ const DELIGHT_ACK_URL = "http://127.0.0.1:8420/api/delight/sent";
 const XHS_OBSERVED_URLS_URL = "http://127.0.0.1:8420/api/sources/xhs/observed-urls";
 const XHS_TOKENS_URL = "http://127.0.0.1:8420/api/sources/xhs/tokens";
 const RUNTIME_STREAM_URL = "ws://127.0.0.1:8420/api/runtime-stream?client=background";
+const HEALTH_URL = "http://127.0.0.1:8420/api/health";
+// v0.3.22+: health probe before WS prevents extension-only installs
+// from flooding chrome://extensions "Errors" with browser-level
+// WebSocket connection failures. A failed fetch caught here is just a
+// rejected promise; the WS path went through Chrome's network logger
+// at error severity and got counted toward the error badge.
+const HEALTH_PROBE_TIMEOUT_MS = 2_000;
 // v0.3.17+: exponential backoff capped at 60s. When the daemon is
 // down for minutes, the previous fixed-5s reconnect flooded console
 // with 12 ERR_CONNECTION_REFUSED per minute. Backoff doubles on each
@@ -163,6 +177,7 @@ async function checkPendingNotification(): Promise<void> {
 
 let runtimeSocket: WebSocket | null = null;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let runtimeConnectInFlight = false;
 
 function handleRuntimeEvent(event: Record<string, unknown>): void {
   if (handleCookieSyncRuntimeEvent(event)) return;
@@ -182,6 +197,10 @@ function handleRuntimeEvent(event: Record<string, unknown>): void {
   }
   if (eventType === "dy_task_available") {
     pollDyTaskNow();
+    return;
+  }
+  if (eventType === "yt_task_available") {
+    pollYtTaskNow();
     return;
   }
 
@@ -217,39 +236,87 @@ function handleRuntimeEvent(event: Record<string, unknown>): void {
   void acknowledgeDelightSent(bvid);
 }
 
-function connectRuntimeStream(): void {
-  if (runtimeSocket !== null) return;
+async function isBackendAlive(): Promise<boolean> {
+  // Gate the WS attempt on a cheap HTTP probe. A caught fetch rejection
+  // doesn't get logged at error severity, so chrome://extensions stays
+  // clean when the user installs the extension before starting the
+  // daemon. Once health passes, we open the WS as before.
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), HEALTH_PROBE_TIMEOUT_MS);
+    try {
+      const resp = await fetch(HEALTH_URL, { method: "GET", signal: ctrl.signal });
+      return resp.ok;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return false;
+  }
+}
+
+function setBackendBadge(reachable: boolean): void {
+  // Subtle "!" badge so a fresh-install user (or anyone whose daemon
+  // crashed) sees the toolbar icon flag the issue without opening the
+  // popup. The popup itself still shows the "openbiliclaw start" hint.
+  try {
+    if (reachable) {
+      void chrome.action.setBadgeText({ text: "" });
+    } else {
+      void chrome.action.setBadgeText({ text: "!" });
+      void chrome.action.setBadgeBackgroundColor({ color: "#9CA3AF" });
+    }
+  } catch {
+    // chrome.action is missing in some contexts (e.g. tests) — best-effort.
+  }
+}
+
+async function connectRuntimeStream(): Promise<void> {
+  if (runtimeSocket !== null || runtimeConnectInFlight) return;
+  runtimeConnectInFlight = true;
 
   try {
-    runtimeSocket = new WebSocket(RUNTIME_STREAM_URL);
-  } catch {
-    scheduleWsReconnect();
-    return;
-  }
-
-  runtimeSocket.onopen = () => {
-    // v0.3.17+: reset backoff on successful connect so a transient
-    // blip after a long outage still recovers immediately.
-    wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
-  };
-
-  runtimeSocket.onmessage = (msg) => {
-    try {
-      const payload = JSON.parse(String(msg.data)) as Record<string, unknown>;
-      handleRuntimeEvent(payload);
-    } catch {
-      // Ignore malformed payloads.
+    if (!(await isBackendAlive())) {
+      setBackendBadge(false);
+      scheduleWsReconnect();
+      return;
     }
-  };
 
-  runtimeSocket.onclose = () => {
-    runtimeSocket = null;
-    scheduleWsReconnect();
-  };
+    try {
+      runtimeSocket = new WebSocket(RUNTIME_STREAM_URL);
+    } catch {
+      setBackendBadge(false);
+      scheduleWsReconnect();
+      return;
+    }
 
-  runtimeSocket.onerror = () => {
-    runtimeSocket?.close();
-  };
+    runtimeSocket.onopen = () => {
+      // v0.3.17+: reset backoff on successful connect so a transient
+      // blip after a long outage still recovers immediately.
+      wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
+      setBackendBadge(true);
+    };
+
+    runtimeSocket.onmessage = (msg) => {
+      try {
+        const payload = JSON.parse(String(msg.data)) as Record<string, unknown>;
+        handleRuntimeEvent(payload);
+      } catch {
+        // Ignore malformed payloads.
+      }
+    };
+
+    runtimeSocket.onclose = () => {
+      runtimeSocket = null;
+      scheduleWsReconnect();
+    };
+
+    runtimeSocket.onerror = () => {
+      runtimeSocket?.close();
+    };
+  } finally {
+    runtimeConnectInFlight = false;
+  }
 }
 
 function scheduleWsReconnect(): void {
@@ -257,7 +324,7 @@ function scheduleWsReconnect(): void {
   const delay = wsReconnectDelay;
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
-    connectRuntimeStream();
+    void connectRuntimeStream();
   }, delay);
   // Double for next failure, capped. Resets in onopen above.
   wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_DELAY);
@@ -304,17 +371,19 @@ function ensureFlushAlarm(): void {
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureFlushAlarm();
-  connectRuntimeStream();
+  void connectRuntimeStream();
   startXhsTaskPolling();
   startDyTaskPolling();
+  startYtTaskPolling();
   startCookieSync();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureFlushAlarm();
-  connectRuntimeStream();
+  void connectRuntimeStream();
   startXhsTaskPolling();
   startDyTaskPolling();
+  startYtTaskPolling();
   startCookieSync();
 });
 
@@ -423,6 +492,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "YT_SCOPE_RESULT") {
+    void handleYtScopeResult(message.data as YtScopeResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
   if (message.action !== "BEHAVIOR_EVENT") return;
 
   eventBuffer = enqueueBufferedEvent(eventBuffer, message.data as BehaviorEvent, BUFFER_MAX_SIZE);
@@ -435,6 +514,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   handleXhsTaskAlarm(alarm.name);
   handleDyTaskAlarm(alarm.name);
+  handleYtTaskAlarm(alarm.name);
   if (handleCookieSyncAlarm(alarm.name)) {
     return;
   }
@@ -474,7 +554,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 });
 
 ensureFlushAlarm();
-connectRuntimeStream();
+void connectRuntimeStream();
 startCookieSync();
 
 console.log("[OpenBiliClaw] Service worker initialized");

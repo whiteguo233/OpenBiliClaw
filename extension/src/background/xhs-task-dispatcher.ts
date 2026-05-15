@@ -11,9 +11,9 @@
  *
  * Only one task is in flight at a time (mutex). A hard 30s timeout per
  * task protects against hung pages. Cross-source mutex (see
- * ``dispatcher-mutex.ts``) ensures we don't race the Douyin dispatcher
- * for browser focus when daemon's ``_loop_xhs_producer`` fires while
- * the user's running ``fetch-douyin``.
+ * ``dispatcher-mutex.ts``) ensures long-running task tabs do not race
+ * each other when daemon producers fire while the user runs a manual
+ * fetch command.
  */
 
 // Cross-source mutex via globalThis. Both XHS and DY dispatchers

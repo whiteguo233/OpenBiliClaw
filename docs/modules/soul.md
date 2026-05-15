@@ -48,7 +48,7 @@
 | ToneProfile | ✅ | 从 `OnionProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
-| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并在入池前做体验多样性筛选；通过事件确认后转正为正式兴趣，未确认则拒绝并冷却 |
+| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并在入池前做画像/历史去重和体验多样性筛选；通过事件确认后转正为正式兴趣，未确认则拒绝并冷却 |
 | ROLE/VALUES/CORE 增量更新器 | ✅ | `_update_role`（`build_role_delta_prompt`，基于信号证据 + LLM diff-protection）、`_update_values`（LLM delta，每周期最多 add/remove 1 条，注入完整画像上下文）、`_update_core`（`build_core_delta_prompt`，更新 traits/needs/MBTI，强 diff-protection）均已完整实现 |
 
 ## 猜测兴趣系统 (Speculative Interest Lifecycle)
@@ -59,7 +59,7 @@
 
 ```
 生成 (Generate) — LLM 根据画像猜测 3-5 个新方向（每 10min / init / 启动时）
-    ↓  受一级上限(15域)和二级上限(60细项)限制，到达上限则跳过
+    ↓  受活跃猜测数上限限制，到达上限则跳过
 活跃 (Active) — 每次事件 ingest 做关键词匹配观测
     ├→ confirmation_count >= threshold → 转正 (Promote)
     │    创建 InterestDomain(source="speculated", weight=0.3)
@@ -83,8 +83,15 @@
 ### Active Pool 多样性
 
 - generation 不再把 LLM 返回的前几条候选直接塞进 active pool，而是先过一层本地 balanced selector
-- selector 优先保证至少一条 `light` 入口、至少一条非 `knowledge` 体验轴，再按 confidence / weight 补齐剩余槽位
+- selector 会把既有 active pool 也作为选择上下文，优先补缺失的 `experience_mode` / `entry_load`，再按 confidence / weight 补齐剩余槽位
 - 当模型没有提供足够丰富的候选时，会自动降级回普通排序，不阻塞 speculative 生成
+
+### Probe Novelty Guard
+
+- LLM 生成候选和 `PreferenceAnalyzer` seed 注入都会经过 `ProbeNoveltyGuard`
+- guard 会收集画像 `interest.likes[*].domain`、画像 `specifics[*].name`、active speculation、cooldown speculation、近期 probe history 和显式负向 probe feedback
+- 第一版使用规范化字符串和中文 bigram overlap 做本地判重，不引入 embedding 成本
+- 与已有画像 domain / specific、active / cooldown、近期 `probed_domains`、`probe_feedback_history` 中 reject / chat_negative 记录明显重复的候选会被丢弃；候选 specifics 若部分重复，会先移除重复细项，剩余不足 2 条时丢弃候选
 
 ### 配置项
 
@@ -95,8 +102,8 @@
 | `scheduler.speculation_cooldown_days` | 7 | 拒绝后冷却期 |
 | `scheduler.speculation_confirmation_threshold` | 3 | 转正所需确认数 |
 | `scheduler.speculation_max_active` | 5 | 最大活跃猜测数 |
-| `scheduler.speculation_max_primary_interests` | 15 | 一级兴趣上限（确认域数 + 活跃猜测数） |
-| `scheduler.speculation_max_secondary_interests` | 60 | 二级兴趣上限（确认细项数 + 活跃猜测数） |
+| `scheduler.speculation_max_primary_interests` | 15 | 活跃猜测一级上限；不再把已确认兴趣计入，避免画像丰富后探针系统永久停摆 |
+| `scheduler.speculation_max_secondary_interests` | 60 | 活跃猜测二级上限；不再把已确认细项计入，避免画像丰富后探针系统永久停摆 |
 
 ### 触发时机
 
@@ -107,16 +114,16 @@
 | 进程启动 | `force_tick()` via `startup_refresh_loop()` | API 启动时确保有活跃猜测 |
 | 偏好分析 | `ingest_seeds()` via `_update_interest()` | PreferenceAnalyzer 附带的推测兴趣注入 |
 
-`force_tick()` 忽略间隔计时器，但仍尊重一级/二级兴趣上限和 `max_active`。
+`force_tick()` 忽略间隔计时器，但仍尊重活跃猜测上限和 `max_active`。
 
 ### 兴趣上限机制
 
-当确认兴趣 + 活跃猜测达到上限时，跳过生成：
+当活跃猜测达到上限时，跳过生成。已确认兴趣不再计入生成上限，否则画像越丰富越容易让探针系统永久停摆：
 
 | 级别 | 计算方式 | 上限 |
 |------|---------|------|
-| 一级 | `len(profile.interest.likes)` + 活跃猜测数 | 15 |
-| 二级 | `sum(len(d.specifics) for d in likes)` + 活跃猜测数 | 60 |
+| 一级 | 活跃猜测数 | 15 |
+| 二级 | 活跃猜测数 | 60 |
 
 ### Pipeline 集成
 
@@ -139,13 +146,15 @@
 
 - runtime push 和 OpenClaw `get_next_probe()` 共用同一套 probe selection 规则
 - `confirmation_count` 仍然是第一优先级；当验证压力相同，会优先选择最近没推过的 `experience_mode + entry_load` 组合
-- probe 去重状态写入 `discovery_runtime_state["probed_domains"]` 和 `discovery_runtime_state["probed_axes"]`
+- probe 去重状态写入并持久化到 `discovery_runtime_state["probed_domains"]` 和 `discovery_runtime_state["probed_axes"]`
+- `/api/interest-probes/respond` 会把 confirm / reject / chat sentiment 写入 `discovery_runtime_state["probe_feedback_history"]`；后续生成会降低 reject / chat_negative 体验轴的入池优先级，选择会跳过明显重复的 domain，并在同等压力下避开负向反馈过的体验轴
+- runtime push 与 OpenClaw `get_next_probe()` 成功选择后都会记录本次 domain / axis，连续调用不会重复返回同一条 active probe
 
 ### 关键文件
 
 - `src/openbiliclaw/soul/speculator.py` — 核心引擎（生成/观测/转正/过期/force_tick）
 - `src/openbiliclaw/llm/prompts.py` — `build_speculation_generation_prompt()`
-- `tests/test_speculator.py` — 27 个单元测试
+- `tests/test_speculator.py` — speculative lifecycle / novelty / probe selection 单元测试
 
 ## 画像更新逻辑详解
 

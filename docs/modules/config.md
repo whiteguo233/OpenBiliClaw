@@ -22,14 +22,14 @@ cp config.example.toml config.toml
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` |
+| `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `openai_compatible` |
 
 ### `[llm.openai]`
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `api_key` | string | `""` | API Key（default_provider=openai 时必填，OpenAI 兼容服务也填这里） |
-| `model` | string | `"gpt-4o"` | 模型名称（按 `base_url` 后端实际部署的模型填，例如 vLLM 上是 `meta-llama/Llama-3.1-70B-Instruct`） |
+| `model` | string | `"gpt-5-nano"` | 模型名称（按 `base_url` 后端实际部署的模型填，例如 vLLM 上是 `meta-llama/Llama-3.1-70B-Instruct`） |
 | `base_url` | string | `""` | 留空使用 OpenAI 官方 `https://api.openai.com/v1`；指向任何 OpenAI 兼容服务的 `/v1` 端点：Azure OpenAI / vLLM / LMStudio / OneAPI / Cloudflare AI Gateway / 自建 LLM 网关 |
 
 > **「openai」是协议家族，不是厂商。** v0.3.5 起 `init` 向导会显式说明这一点。任何兼容 `POST /v1/chat/completions` 的服务都填到这一段，区别只在 `base_url`。
@@ -43,7 +43,7 @@ cp config.example.toml config.toml
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `api_key` | string | `""` | Anthropic API Key（default_provider=claude 时必填） |
-| `model` | string | `"claude-sonnet-4-20250514"` | 模型名称 |
+| `model` | string | `"claude-sonnet-4-6"` | 模型名称 |
 
 ### `[llm.gemini]`
 
@@ -61,13 +61,14 @@ cp config.example.toml config.toml
 | `api_key` | string | `""` | DeepSeek API Key |
 | `model` | string | `"deepseek-v4-flash"` | 模型名称（可选 `deepseek-v4-pro`；旧 `deepseek-chat` / `deepseek-reasoner` 将于 2026/07/24 弃用） |
 | `base_url` | string | `"https://api.deepseek.com"` | API 地址 |
+| `reasoning_effort` | string | `"max"` | DeepSeek v4 thinking 模式：`""` 关闭，`"high"` / `"max"` 开启 |
 
 ### `[llm.ollama]`
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `model` | string | `"llama3"` | 本地模型名称 |
-| `base_url` | string | `"http://localhost:11434"` | Ollama 服务地址 |
+| `model` | string | `"qwen2.5:7b"` | 本地模型名称 |
+| `base_url` | string | `"http://localhost:11434/v1"` | Ollama OpenAI-compatible `/v1` 服务地址 |
 
 > Ollama 不需要 API Key，适合本地开发测试。
 
@@ -76,7 +77,7 @@ cp config.example.toml config.toml
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `api_key` | string | `""` | OpenRouter API Key（default_provider=openrouter 时必填） |
-| `model` | string | `"openai/gpt-4o-mini"` | OpenRouter 模型名称 |
+| `model` | string | `"openai/gpt-5-nano"` | OpenRouter 模型名称 |
 | `base_url` | string | `"https://openrouter.ai/api/v1"` | OpenRouter API 地址 |
 | `http_referer` | string | `""` | 可选的 `HTTP-Referer` 请求头 |
 | `x_title` | string | `"OpenBiliClaw"` | 可选的 `X-Title` 请求头 |
@@ -112,7 +113,7 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `provider` | string | `""` | 留空 = 跟随 `[llm].default_provider`；填 `"openai"` / `"gemini"` / `"ollama"`。Claude / DeepSeek / OpenRouter 没有 embedding 接口 |
+| `provider` | string | `""` | 留空 = 跟随 `[llm].default_provider`；填 `"openai"` / `"gemini"` / `"ollama"` / `"openai_compatible"`。Claude / DeepSeek / OpenRouter 没有 embedding 接口 |
 | `model` | string | `"gemini-embedding-001"` | embedding 模型名；按 provider 自动填合理默认：`gemini → gemini-embedding-001` / `openai → text-embedding-3-small` / `ollama → bge-m3` |
 | `api_key` | string | `""` | v0.3.32+ embedding 专属 API Key。留空走向后兼容路径（借用 `[llm.<provider>].api_key`，并打一条一次性 WARNING）。Ollama 不需要 |
 | `base_url` | string | `""` | v0.3.32+ embedding 专属 base URL。留空使用 provider 默认值（OpenAI → `api.openai.com/v1`、Ollama → `localhost:11434/v1`）。Gemini SDK 忽略此字段 |
@@ -153,7 +154,7 @@ CPU 即可跑（~100-200ms/次），跨 Mac / Win / Linux 一致。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `provider` | string | `""` | 留空跟随 `default_provider`；填 `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `openai` |
+| `provider` | string | `""` | 留空跟随 `default_provider`；填 `openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `openai_compatible` |
 | `model` | string | `""` | 留空跟随 `[llm.<provider>].model`；填具体模型名覆盖 |
 
 四个模块在管线里的位置：
@@ -235,11 +236,11 @@ model    = "deepseek-v4-flash"
 
 ### `[sources.xiaohongshu]`
 
-小红书专用配置。详情富化通过 GPL 隔离的 xhs-downloader sidecar 容器完成（`POST /xhs/detail`），主后端不导入任何 xhs 代码。内容发现交给扩展在真实登录态的浏览器中完成，后端不做主动爬取。
+小红书专用配置。内容发现和元数据提取都由浏览器扩展在真实登录态下完成：被动收集、后台标签页搜索和创作者订阅都会通过扩展任务桥回写后端。主后端不主动爬取小红书，也不再依赖 `sidecar_url`。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `sidecar_url` | string | `""` | xhs-downloader sidecar 的 HTTP 地址。留空禁用小红书源。Docker compose 自动注入 `OPENBILICLAW_XHS_SIDECAR_URL` 环境变量 |
+| `enabled` | bool | `true` | 是否启用小红书 discovery 和 init bootstrap；`init` 选 No、`--no-xhs` 或 `OPENBILICLAW_NO_XHS=1` 会写回 `false` |
 | `daily_search_budget` | int | `30` | 每天后端允许入队的 Soul 驱动搜索任务数上限。由 `XhsTaskProducer`（`runtime/xhs_producer.py`）在持续刷新循环里使用，搭配内部 4h 最小间隔避免反复抢配额 |
 | `daily_creator_budget` | int | `10` | 每天每位订阅创作者的抓取任务上限 |
 | `task_interval_seconds` | int | `45` | 扩展分发器两次任务之间的最小间隔（秒） |
@@ -262,12 +263,20 @@ model    = "deepseek-v4-flash"
 
 当前 `search` 子来源优先使用浏览器插件的 logged-in page + acrawler 签名桥，并以 `dy-plugin-search` 进入 discovery；`hot` 子来源优先使用插件 hot-related 链路，并以 `dy-plugin-hot-related` 进入 discovery；`feed` 子来源使用同一插件签名桥请求 `/aweme/v1/web/tab/feed/`，并以 `dy-plugin-feed` 进入 discovery。插件任务空 / 失败时 search / hot 会分别回退 direct-cookie search / hot，feed 也保留 direct-cookie 诊断 fallback；因 daemon 重启或插件未及时消费而被清理的 `failed/stale_pending` 任务不消耗每日预算。runtime 大缺口补池会优先 search / hot，feed 只用于小缺口补零散名额。`msToken` 如果存在会随 Cookie 一起使用，但扩展同步不再硬依赖它。若 Cookie 过期、签名被拒绝或插件未在线，命令可能返回 0 条并提示检查登录态。
 
+### `[sources.youtube]`
+
+YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 走 `yt_search` / `yt_trending` / `yt_channel` 三个策略。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否让 YouTube 参与候选池配比和后台 discovery；`init --yes-youtube` 会写回 `true`，`--no-youtube` 或 `OPENBILICLAW_NO_YOUTUBE=1` 会写回 `false` |
+
 ### `[scheduler]`
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `true` | 是否启用定时发现 |
-| `discovery_cron` | string | `"0 */4 * * *"` | 发现任务 cron 表达式 |
+| `discovery_cron` | string | `"0 */8 * * *"` | 发现任务 cron 表达式；想更频繁刷新可改回 `"0 */4 * * *"` |
 | `pool_target_count` | int | `600` | discovery pool 的硬上限，同时作为期望保有的可换候选数量；允许范围 `1..600`。pool < 目标时会持续补货；pool ≥ 目标时任何 refresh（含 `force_refresh`）都直接返回 `pool_at_cap` 不再 discover；pool > 目标时会先按 `relevance_score` / 时间 / `explore` 优先顺序把溢出部分降为 `suppressed` |
 | `account_sync_interval_hours` | int | `6` | 账户侧长期信号同步间隔；运行时会低频拉取 history / favorites / following |
 | `speculation_interval_minutes` | int | `10` | 猜测兴趣推测的运行间隔（分钟） |
@@ -277,21 +286,26 @@ model    = "deepseek-v4-flash"
 | `speculation_max_active` | int | `5` | 最多同时活跃的猜测兴趣数 |
 | `speculation_max_primary_interests` | int | `15` | 主要兴趣域的最大数量 |
 | `speculation_max_secondary_interests` | int | `60` | 次要兴趣域的最大数量 |
+| `auto_update_enabled` | bool | `false` | 是否启用自动检查并应用新版本；默认关闭，避免本地开发或 release 漂移时自动重启 |
+| `auto_update_check_interval_hours` | int | `6` | 自动更新检查间隔（小时） |
 
 > 运行时护栏：
 > 即使 `pool_target_count` 设得较高，单次 refresh 里的单轮 discover 补货请求也会封顶在 `60`，避免一次性把全部缺口都打满。
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin = 8:1:1`。当 `pool_target_count = 600` 时，对应目标是 B 站 `480`、小红书 `60`、抖音 `60`。
+候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin:youtube = 8:1:1:1`。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里 YouTube / Douyin 关闭，所以不会因为默认 share 留空池子。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `bilibili` | int | `8` | B 站平台族占比；`search` / `related_chain` / `trending` / `explore` 四个策略统一计入该族 |
 | `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
+| `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
 
-运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池。
+运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，runtime 会调度 `yt_search` / `yt_trending` / `yt_channel` 补池。
+
+`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube 写回对应 `enabled`；交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关平台、编辑四个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
 
 ### `[storage]`
 
@@ -307,10 +321,25 @@ model    = "deepseek-v4-flash"
 | `file_level` | string | `"DEBUG"` | 文件日志级别 |
 | `directory` | string | `"logs"` | 日志目录 |
 | `filename` | string | `"openbiliclaw.log"` | 日志文件名 |
-| `max_file_size_mb` | int | `1024` | 单个日志文件上限（MB），超过即轮转；`0` 禁用轮转 |
+| `max_file_size_mb` | int | `100` | 单个日志文件上限（MB），超过即轮转；`0` 禁用轮转 |
 | `backup_count` | int | `1` | 保留的历史日志份数；设为 `1` 时总占用封顶 `max_file_size_mb * 2` MB |
+| `aggregate_budget_mb` | int | `500` | `logs/` 目录里非托管日志文件的总预算；启动或手动清理时会从最老文件开始删除到预算内，`0` 关闭 |
+| `unmanaged_truncate_mb` | int | `200` | 单个非托管日志文件超过该大小时启动时截断到 0，`0` 关闭 |
+| `unmanaged_max_age_days` | int | `30` | 非托管日志文件超过该天数时启动时删除，`0` 关闭 |
 
 启动时如果现有日志文件已经超过 `max_file_size_mb`，会被重命名为 `<filename>.1`（覆盖旧的 `.1`）并重新开始写入——这样意外堆积的大日志不会在下次启动时继续增长。运行时到达上限则由 `RotatingFileHandler` 正常轮转：`app.log` → `app.log.1` → `app.log.2` → …，超出 `backup_count` 的旧份自动丢弃。
+
+## 插件设置页覆盖范围
+
+浏览器插件的设置页通过后端 `/api/config` 读取和保存配置。当前 UI 已覆盖常用和高风险易漏项：
+
+- 基础：`language`、`data_dir`、`storage.db_path`
+- LLM：默认 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
+- B 站与多源：`bilibili.browser.*`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.enabled`
+- 调度：`scheduler.enabled`、`discovery_cron`、`pool_target_count`、`account_sync_interval_hours`、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 日志：控制台 / 文件级别、日志目录和文件名、轮转与非托管日志清理参数
+
+保留但不单独暴露的字段主要是目前只有一个有效值的内部兼容项，例如 `[sources.douyin].mode = "direct"`；保存时插件会继续按当前支持值写回，不会删除其他高级字段。
 
 ## 环境变量
 
@@ -323,8 +352,19 @@ model    = "deepseek-v4-flash"
 | `OPENBILICLAW_PROXY_PORT` | Docker 运行时可选宿主机代理端口，默认 `7897` |
 | `OPENBILICLAW_PROXY_TIMEOUT` | Docker 运行时代理探测超时（秒），默认 `1.0` |
 | `OPENBILICLAW_DOUYIN_COOKIE` | 抖音 direct-cookie discovery 的显式 Cookie 覆盖；未设置时读取扩展同步的 `data/douyin_cookie.json` |
+| `OPENBILICLAW_NO_XHS` | 设为 `1` 时永久跳过 `init` 的小红书接入，即使脚本传了 `--yes-xhs` |
+| `OPENBILICLAW_NO_DOUYIN` | 设为 `1` 时永久跳过 `init` 的抖音接入，即使脚本传了 `--yes-douyin` |
+| `OPENBILICLAW_NO_YOUTUBE` | 设为 `1` 时永久跳过 `init` 的 YouTube 接入，即使脚本传了 `--yes-youtube` |
 | `OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS` | `init --yes-xhs` 收集小红书扩展任务结果的最大等待秒数，默认 `180`；`fetch-xhs --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS` | 小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用，`fetch-xhs --force` 可绕过单次复用 |
+| `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-xhs` 的小红书每个 scope 最大滚动轮数，默认 `15` |
+| `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` | `init --yes-xhs` 的小红书每个 scope 最多采集条目数，默认 `300` |
 | `OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS` | `init --yes-douyin` 收集抖音扩展任务结果的最大等待秒数，默认 `180`；`fetch-douyin --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_DY_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-douyin` 的抖音每个 scope 最大滚动轮数，默认 `15` |
+| `OPENBILICLAW_DY_BOOTSTRAP_MAX_ITEMS` | `init --yes-douyin` 的抖音每个 scope 最多采集条目数，默认 `300` |
+| `OPENBILICLAW_YT_BOOTSTRAP_WAIT_SECONDS` | `init --yes-youtube` 收集 YouTube 扩展任务结果的最大等待秒数，默认 `240`；`fetch-youtube --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-youtube` 的 YouTube 每个 scope 最大滚动轮数，默认 `10` |
+| `OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS` | `init --yes-youtube` 的 YouTube 每个 scope 最多采集条目数，默认 `300` |
 
 ## Docker 部署说明
 
@@ -358,7 +398,7 @@ default_provider = "openai"
 
 [llm.openai]
 api_key = "sk-..."
-model = "gpt-4o"
+model = "gpt-5-nano"
 
 [bilibili]
 auth_method = "cookie"

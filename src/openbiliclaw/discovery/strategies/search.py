@@ -52,7 +52,13 @@ class SearchStrategy(DiscoveryStrategy):
     def name(self) -> str:
         return "search"
 
-    async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+        *,
+        pool_snapshot: object | None = None,
+    ) -> list[DiscoveredContent]:
         """Generate search queries based on user soul and execute them.
 
         Strategy:
@@ -64,11 +70,12 @@ class SearchStrategy(DiscoveryStrategy):
         Args:
             profile: User soul profile.
             limit: Maximum results.
+            pool_snapshot: Optional current pool distribution summary.
 
         Returns:
             Discovered content list.
         """
-        queries = await self._generate_queries(profile)
+        queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
         self.last_intermediates = {"queries": list(queries)}
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
@@ -214,20 +221,25 @@ class SearchStrategy(DiscoveryStrategy):
         )
 
     def _create_search_client(self) -> SupportsSearchClient:
-        """Create a fresh API client for search without cookie.
+        """Create a fresh API client for search while preserving auth.
 
-        B站 rate-limits search per cookie/session.  Other strategies
+        B站 rate-limits search per session. Other strategies
         (especially explore) exhaust the shared client's search quota,
-        so we use a cookie-free client here — search doesn't require auth.
-        Falls back to the shared client if creation fails or if the
-        bilibili_client is not the real API client (e.g. in tests).
+        so we use a dedicated client. Search currently returns
+        ``v_voucher`` for anonymous WBI requests, so the dedicated client
+        must carry over the runtime cookie when one exists. Falls back to
+        the shared client if creation fails or if the bilibili_client is
+        not the real API client (e.g. in tests).
         """
         from openbiliclaw.bilibili.api import BilibiliAPIClient
 
         if not isinstance(self.bilibili_client, BilibiliAPIClient):
             return self.bilibili_client
         try:
-            return BilibiliAPIClient(cookie="", min_request_interval=0.8)
+            return BilibiliAPIClient(
+                cookie=str(getattr(self.bilibili_client, "_cookie", "")),
+                min_request_interval=0.8,
+            )
         except Exception:
             logger.debug("Could not create dedicated search client, using shared")
         return self.bilibili_client
@@ -297,11 +309,48 @@ class SearchStrategy(DiscoveryStrategy):
                 consecutive_empty = 0
         return gathered
 
-    async def _generate_queries(self, profile: SoulProfile) -> list[str]:
-        prompt_messages = build_search_queries_prompt(
-            profile_summary=self._profile_summary(profile)
-        )
+    async def _generate_queries(
+        self,
+        profile: SoulProfile,
+        *,
+        pool_snapshot: object | None = None,
+    ) -> list[str]:
+        pool_hints: dict[str, object] | None = None
+        to_prompt_hints = getattr(pool_snapshot, "to_prompt_hints", None)
+        if callable(to_prompt_hints):
+            try:
+                raw_hints = to_prompt_hints()
+            except Exception:
+                logger.warning(
+                    "Search query generation: ignoring invalid pool snapshot hints",
+                    exc_info=True,
+                )
+            else:
+                if isinstance(raw_hints, dict):
+                    pool_hints = raw_hints
+                else:
+                    logger.warning(
+                        "Search query generation: ignoring non-dict pool snapshot hints: %s",
+                        type(raw_hints).__name__,
+                    )
+
         try:
+            try:
+                prompt_messages = build_search_queries_prompt(
+                    profile_summary=self._profile_summary(profile),
+                    pool_hints=pool_hints,
+                )
+            except (TypeError, ValueError) as exc:
+                if pool_hints is None:
+                    raise
+                logger.warning(
+                    "Search query generation: dropping unserializable pool hints: %s",
+                    exc,
+                )
+                prompt_messages = build_search_queries_prompt(
+                    profile_summary=self._profile_summary(profile),
+                    pool_hints=None,
+                )
             response = await self.llm_service.complete_structured_task(
                 system_instruction=prompt_messages[0]["content"],
                 user_input=prompt_messages[1]["content"],

@@ -1875,6 +1875,227 @@ class TestBackendAPI:
 
         assert response.status_code == 422
 
+    def test_interest_probe_reject_records_feedback_history(self) -> None:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {
+                    "probed_domains": {},
+                    "probed_axes": {},
+                    "probe_feedback_history": [],
+                }
+                self.cognition_updates: list[dict[str, object]] = []
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
+                self.runtime_state = dict(state)
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self.cognition_updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.cognition_updates = list(updates)
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.rejected: list[tuple[str, int]] = []
+                self._active = [
+                    SimpleNamespace(
+                        domain="城市漫游路线",
+                        category="生活方式",
+                        reason="用户最近对城市空间和徒步路线表现出探索意愿。",
+                        experience_mode="wander_observe",
+                        entry_load="light",
+                        specifics=[SimpleNamespace(name="老街路线")],
+                    )
+                ]
+
+            def get_active_speculations(self) -> list[object]:
+                return list(self._active)
+
+            def user_reject_speculation(
+                self,
+                domain: str,
+                cooldown_days: int = 30,
+            ) -> bool:
+                self.rejected.append((domain, cooldown_days))
+                self._active = []
+                return True
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self._speculator = FakeSpeculator()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/interest-probes/respond",
+            json={"domain": "城市漫游路线", "response": "reject"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "rejected"
+        history = memory.runtime_state["probe_feedback_history"]
+        assert isinstance(history, list)
+        assert history == [
+            {
+                "domain": "城市漫游路线",
+                "response": "reject",
+                "axis": "wander_observe|light",
+                "category": "生活方式",
+                "reason": "用户最近对城市空间和徒步路线表现出探索意愿。",
+                "specifics": ["老街路线"],
+                "created_at": history[0]["created_at"],
+            }
+        ]
+        assert soul_engine._speculator.rejected == [("城市漫游路线", 30)]
+
+    def test_chat_turn_endpoint_persists_pending_turn_until_reply(
+        self, tmp_path: Path
+    ) -> None:
+        import asyncio
+        import time
+
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.storage.database import Database
+
+        class FakeDialogue:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            async def respond(self, user_message: str) -> str:
+                self.messages.append(user_message)
+                await asyncio.sleep(0.05)
+                return "你更在意的是它背后的逻辑。"
+
+        db = Database(tmp_path / "openbiliclaw.db")
+        db.initialize()
+        dialogue = FakeDialogue()
+        app = create_app(
+            memory_manager=object(),
+            database=db,
+            soul_engine=object(),
+            dialogue=dialogue,
+        )
+
+        with TestClient(app) as client:
+            start = client.post(
+                "/api/chat/turns",
+                json={
+                    "turn_id": "turn-test-1",
+                    "session": "popup",
+                    "scope": "chat",
+                    "message": "我最近总在看国际新闻",
+                },
+            )
+
+            assert start.status_code == 200
+            assert start.json()["turn_id"] == "turn-test-1"
+            assert start.json()["status"] == "pending"
+
+            turn = start.json()
+            for _ in range(20):
+                time.sleep(0.02)
+                turn = client.get("/api/chat/turns/turn-test-1").json()
+                if turn["status"] == "completed":
+                    break
+
+            assert turn["status"] == "completed"
+            assert turn["reply"] == "你更在意的是它背后的逻辑。"
+            assert dialogue.messages == ["我最近总在看国际新闻"]
+
+            history = client.get("/api/chat/turns", params={"session": "popup"}).json()
+            assert history["items"] == [turn]
+
+        # Re-open the app on the same database to simulate a popup/backend
+        # client lifecycle boundary: completed turns must be recoverable.
+        app2 = create_app(
+            memory_manager=object(),
+            database=db,
+            soul_engine=object(),
+            dialogue=dialogue,
+        )
+        client2 = TestClient(app2)
+        restored = client2.get("/api/chat/turns", params={"session": "popup"}).json()
+
+        assert restored["items"][0]["turn_id"] == "turn-test-1"
+        assert restored["items"][0]["status"] == "completed"
+        assert restored["items"][0]["reply"] == "你更在意的是它背后的逻辑。"
+
+    def test_chat_turn_endpoint_records_delight_scope_context(self, tmp_path: Path) -> None:
+        import asyncio
+        import time
+
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.storage.database import Database
+
+        class FakeDialogue:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            async def respond(self, user_message: str) -> str:
+                self.messages.append(user_message)
+                await asyncio.sleep(0.01)
+                return "这条像是从另一个角度补上你的问题。"
+
+        db = Database(tmp_path / "openbiliclaw.db")
+        db.initialize()
+        dialogue = FakeDialogue()
+        app = create_app(
+            memory_manager=object(),
+            database=db,
+            soul_engine=object(),
+            dialogue=dialogue,
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/chat/turns",
+                json={
+                    "turn_id": "turn-delight-1",
+                    "session": "popup",
+                    "scope": "delight",
+                    "subject_id": "BV1DL",
+                    "subject_title": "复杂系统入门",
+                    "message": "我想知道它为什么会推荐给我",
+                },
+            )
+            assert response.status_code == 200
+
+            turn = response.json()
+            for _ in range(20):
+                time.sleep(0.02)
+                turn = client.get("/api/chat/turns/turn-delight-1").json()
+                if turn["status"] == "completed":
+                    break
+
+            assert turn["status"] == "completed"
+            assert turn["scope"] == "delight"
+            assert turn["subject_id"] == "BV1DL"
+            assert "关于惊喜推荐「复杂系统入门」的反馈" in dialogue.messages[0]
+
+            delight_history = client.get(
+                "/api/chat/turns",
+                params={"session": "popup", "scope": "delight"},
+            ).json()
+            assert [item["turn_id"] for item in delight_history["items"]] == [
+                "turn-delight-1"
+            ]
+
     def test_recommendation_click_endpoint_ingests_strong_signal(self) -> None:
         """POST /api/recommendation-click should push a strong signal through the pipeline."""
         from fastapi.testclient import TestClient
@@ -2826,6 +3047,353 @@ class TestEmbeddingAndCompatProviderE2E:
         compat_mask = data["openai_compatible"]["api_key"]
         assert "*" in openai_mask and "*" in compat_mask
         assert openai_mask != compat_mask
+
+    def test_get_config_exposes_sources_and_advanced_settings(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """The config API should expose persisted advanced fields so the
+        extension settings page can stay aligned with config.toml."""
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(
+            data_dir="runtime-data",
+            llm=LLMConfig(
+                default_provider="deepseek",
+                deepseek=LLMProviderConfig(
+                    api_key="ds-key",
+                    model="deepseek-v4-flash",
+                    base_url="https://api.deepseek.com",
+                    reasoning_effort="high",
+                ),
+                openrouter=LLMProviderConfig(
+                    api_key="or-key",
+                    model="openai/gpt-5-nano",
+                    base_url="https://openrouter.ai/api/v1",
+                    http_referer="https://example.com",
+                    x_title="Example App",
+                ),
+            ),
+        )
+        cfg.bilibili.browser_executable = "/Applications/Chrome.app"
+        cfg.bilibili.browser_headed = True
+        cfg.sources.browser_cdp_url = "http://localhost:9222"
+        cfg.sources.browser_headed = True
+        cfg.sources.xiaohongshu.enabled = False
+        cfg.sources.xiaohongshu.daily_search_budget = 11
+        cfg.sources.xiaohongshu.daily_creator_budget = 3
+        cfg.sources.xiaohongshu.task_interval_seconds = 66
+        cfg.sources.douyin.enabled = True
+        cfg.sources.douyin.cookie_env = "CUSTOM_DY_COOKIE"
+        cfg.sources.douyin.daily_search_budget = 12
+        cfg.sources.douyin.daily_hot_budget = 4
+        cfg.sources.douyin.daily_feed_budget = 13
+        cfg.sources.douyin.request_interval_seconds = 5
+        cfg.sources.youtube.enabled = True
+        cfg.scheduler.pool_source_shares = {
+            "bilibili": 6,
+            "xiaohongshu": 2,
+            "douyin": 2,
+            "youtube": 1,
+        }
+        cfg.scheduler.account_sync_interval_hours = 9
+        cfg.scheduler.speculation_interval_minutes = 21
+        cfg.scheduler.speculation_ttl_days = 8
+        cfg.scheduler.auto_update_enabled = True
+        cfg.scheduler.auto_update_check_interval_hours = 10
+        cfg.logging.file_level = "WARNING"
+        cfg.logging.max_file_size_mb = 123
+        cfg.logging.aggregate_budget_mb = 456
+        cfg.logging.unmanaged_truncate_mb = 78
+        cfg.logging.unmanaged_max_age_days = 9
+
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.get("/api/config", params={"reveal_keys": "true"})
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["data_dir"] == "runtime-data"
+        assert data["llm"]["deepseek"]["reasoning_effort"] == "high"
+        assert data["llm"]["openrouter"]["http_referer"] == "https://example.com"
+        assert data["llm"]["openrouter"]["x_title"] == "Example App"
+        assert data["bilibili"]["browser_executable"] == "/Applications/Chrome.app"
+        assert data["bilibili"]["browser_headed"] is True
+        assert data["sources"]["browser"]["cdp_url"] == "http://localhost:9222"
+        assert data["sources"]["browser"]["headed"] is True
+        assert data["sources"]["xiaohongshu"]["enabled"] is False
+        assert data["sources"]["xiaohongshu"]["daily_search_budget"] == 11
+        assert data["sources"]["douyin"]["enabled"] is True
+        assert data["sources"]["douyin"]["daily_feed_budget"] == 13
+        assert data["sources"]["youtube"]["enabled"] is True
+        assert data["scheduler"]["pool_source_shares"] == {
+            "bilibili": 6,
+            "xiaohongshu": 2,
+            "douyin": 2,
+            "youtube": 1,
+        }
+        assert data["scheduler"]["account_sync_interval_hours"] == 9
+        assert data["scheduler"]["speculation_interval_minutes"] == 21
+        assert data["scheduler"]["speculation_ttl_days"] == 8
+        assert data["scheduler"]["auto_update_enabled"] is True
+        assert data["scheduler"]["auto_update_check_interval_hours"] == 10
+        assert data["logging"]["file_level"] == "WARNING"
+        assert data["logging"]["max_file_size_mb"] == 123
+        assert data["logging"]["aggregate_budget_mb"] == 456
+        assert data["logging"]["unmanaged_truncate_mb"] == 78
+        assert data["logging"]["unmanaged_max_age_days"] == 9
+
+    def test_put_config_updates_sources_and_advanced_settings(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """PUT /api/config should update the same advanced fields that the
+        extension settings page exposes."""
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "data_dir": "runtime-data",
+                "llm": {
+                    "deepseek": {"reasoning_effort": "high"},
+                    "openrouter": {
+                        "http_referer": "https://example.com",
+                        "x_title": "Example App",
+                    },
+                    "soul": {"provider": "claude", "model": "claude-sonnet-4-6"},
+                    "discovery": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+                    "recommendation": {"provider": "gemini", "model": "gemini-2.5-flash"},
+                    "evaluation": {"provider": "openai", "model": "gpt-5-nano"},
+                },
+                "bilibili": {
+                    "browser_executable": "/Applications/Chrome.app",
+                    "browser_headed": True,
+                },
+                "sources": {
+                    "browser": {"cdp_url": "http://localhost:9222", "headed": True},
+                    "xiaohongshu": {
+                        "enabled": False,
+                        "daily_search_budget": 11,
+                        "daily_creator_budget": 3,
+                        "task_interval_seconds": 66,
+                    },
+                    "douyin": {
+                        "enabled": True,
+                        "mode": "direct",
+                        "cookie_env": "CUSTOM_DY_COOKIE",
+                        "daily_search_budget": 12,
+                        "daily_hot_budget": 4,
+                        "daily_feed_budget": 13,
+                        "request_interval_seconds": 5,
+                    },
+                    "youtube": {"enabled": True},
+                },
+                "scheduler": {
+                    "account_sync_interval_hours": 9,
+                    "pool_source_shares": {
+                        "bilibili": 6,
+                        "xiaohongshu": 2,
+                        "douyin": 2,
+                        "youtube": 1,
+                    },
+                    "speculation_interval_minutes": 21,
+                    "speculation_ttl_days": 8,
+                    "speculation_cooldown_days": 9,
+                    "speculation_confirmation_threshold": 4,
+                    "speculation_max_active": 6,
+                    "speculation_max_primary_interests": 17,
+                    "speculation_max_secondary_interests": 66,
+                    "auto_update_enabled": True,
+                    "auto_update_check_interval_hours": 10,
+                },
+                "storage": {"db_path": "runtime-data/openbiliclaw.db"},
+                "logging": {
+                    "file_level": "WARNING",
+                    "directory": "runtime-logs",
+                    "filename": "backend.log",
+                    "max_file_size_mb": 123,
+                    "backup_count": 3,
+                    "aggregate_budget_mb": 456,
+                    "unmanaged_truncate_mb": 78,
+                    "unmanaged_max_age_days": 9,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert cfg.data_dir == "runtime-data"
+        assert cfg.llm.deepseek.reasoning_effort == "high"
+        assert cfg.llm.openrouter.http_referer == "https://example.com"
+        assert cfg.llm.openrouter.x_title == "Example App"
+        assert cfg.llm.soul.provider == "claude"
+        assert cfg.llm.discovery.provider == "deepseek"
+        assert cfg.llm.recommendation.provider == "gemini"
+        assert cfg.llm.evaluation.provider == "openai"
+        assert cfg.bilibili.browser_executable == "/Applications/Chrome.app"
+        assert cfg.bilibili.browser_headed is True
+        assert cfg.sources.browser_cdp_url == "http://localhost:9222"
+        assert cfg.sources.browser_headed is True
+        assert cfg.sources.xiaohongshu.enabled is False
+        assert cfg.sources.xiaohongshu.daily_search_budget == 11
+        assert cfg.sources.douyin.enabled is True
+        assert cfg.sources.douyin.cookie_env == "CUSTOM_DY_COOKIE"
+        assert cfg.sources.douyin.daily_feed_budget == 13
+        assert cfg.sources.youtube.enabled is True
+        assert cfg.scheduler.pool_source_shares == {
+            "bilibili": 6,
+            "xiaohongshu": 2,
+            "douyin": 2,
+            "youtube": 1,
+        }
+        assert cfg.scheduler.speculation_interval_minutes == 21
+        assert cfg.scheduler.auto_update_enabled is True
+        assert cfg.scheduler.auto_update_check_interval_hours == 10
+        assert cfg.storage.db_path == "runtime-data/openbiliclaw.db"
+        assert cfg.logging.file_level == "WARNING"
+        assert cfg.logging.max_file_size_mb == 123
+        assert cfg.logging.aggregate_budget_mb == 456
+        assert cfg.logging.unmanaged_truncate_mb == 78
+        assert cfg.logging.unmanaged_max_age_days == 9
+
+    def test_source_share_suggestion_uses_event_counts(self, monkeypatch, tmp_path) -> None:
+        """GET /api/config/source-share-suggestion should suggest ratios
+        from observed platform event counts and current enabled switches."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        cfg = Config()
+        cfg.sources.xiaohongshu.enabled = True
+        cfg.sources.douyin.enabled = True
+        cfg.sources.youtube.enabled = True
+        cfg.scheduler.pool_source_shares = {
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        }
+        config_path = tmp_path / "config.toml"
+        save_config(cfg, config_path)
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+        class FakeDatabase:
+            def count_events_by_source_platform(self) -> dict[str, int]:
+                return {
+                    "bilibili": 900,
+                    "xiaohongshu": 100,
+                    "douyin": 9,
+                    "youtube": 400,
+                }
+
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=object(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/config/source-share-suggestion")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "event_counts": {
+                "bilibili": 900,
+                "xiaohongshu": 100,
+                "douyin": 9,
+                "youtube": 400,
+            },
+            "enabled_sources": {
+                "bilibili": True,
+                "xiaohongshu": True,
+                "douyin": True,
+                "youtube": True,
+            },
+            "suggested_shares": {
+                "bilibili": 8,
+                "xiaohongshu": 3,
+                "douyin": 1,
+                "youtube": 5,
+            },
+        }
+
+    def test_source_share_suggestion_post_uses_form_overrides(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """POST /api/config/source-share-suggestion should support the
+        extension settings page's unsaved switch/share state."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        cfg = Config()
+        cfg.sources.xiaohongshu.enabled = True
+        cfg.sources.douyin.enabled = True
+        cfg.sources.youtube.enabled = False
+        cfg.scheduler.pool_source_shares = {
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        }
+        config_path = tmp_path / "config.toml"
+        save_config(cfg, config_path)
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+        class FakeDatabase:
+            def count_events_by_source_platform(self) -> dict[str, int]:
+                return {
+                    "bilibili": 900,
+                    "xiaohongshu": 100,
+                    "douyin": 9,
+                    "youtube": 400,
+                }
+
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=object(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/config/source-share-suggestion",
+            json={
+                "enabled_sources": {
+                    "bilibili": True,
+                    "xiaohongshu": False,
+                    "douyin": False,
+                    "youtube": True,
+                },
+                "configured_shares": {
+                    "bilibili": 6,
+                    "xiaohongshu": 4,
+                    "douyin": 4,
+                    "youtube": 2,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "event_counts": {
+                "bilibili": 900,
+                "xiaohongshu": 100,
+                "douyin": 9,
+                "youtube": 400,
+            },
+            "enabled_sources": {
+                "bilibili": True,
+                "xiaohongshu": False,
+                "douyin": False,
+                "youtube": True,
+            },
+            "suggested_shares": {
+                "bilibili": 6,
+                "youtube": 4,
+            },
+        }
 
 
 def test_events_endpoint_emits_activity_added_runtime_event() -> None:

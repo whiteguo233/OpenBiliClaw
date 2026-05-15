@@ -166,6 +166,42 @@ export async function sendChatMessage(message) {
   }
 }
 
+export async function startChatTurn({
+  turnId = "",
+  session = "popup",
+  scope = "chat",
+  subjectId = "",
+  subjectTitle = "",
+  message,
+}) {
+  return requestJson("/chat/turns", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      turn_id: turnId,
+      session,
+      scope,
+      subject_id: subjectId,
+      subject_title: subjectTitle,
+      message,
+    }),
+  });
+}
+
+export async function fetchChatTurn(turnId) {
+  return requestJson(`/chat/turns/${encodeURIComponent(turnId)}`, { method: "GET" });
+}
+
+export async function fetchChatTurns({ session = "popup", scope = "", limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  params.set("session", session);
+  if (scope) params.set("scope", scope);
+  if (typeof limit === "number" && Number.isFinite(limit)) {
+    params.set("limit", String(Math.max(1, Math.floor(limit))));
+  }
+  return requestJson(`/chat/turns?${params.toString()}`, { method: "GET" });
+}
+
 export async function respondToInterestProbe(domain, responseType, message = "") {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35_000);
@@ -198,6 +234,19 @@ export async function respondToDelight(bvid, responseType, title = "", message =
 
 export async function fetchConfig() {
   return requestJson("/config?reveal_keys=true", { method: "GET" });
+}
+
+export async function fetchSourceShareSuggestion(overrides = null) {
+  if (overrides && typeof overrides === "object") {
+    return requestJson("/config/source-share-suggestion", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(overrides),
+    });
+  }
+  return requestJson("/config/source-share-suggestion", { method: "GET" });
 }
 
 export async function updateConfig(data) {

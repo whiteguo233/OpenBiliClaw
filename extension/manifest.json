@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "OpenBiliClaw",
-    "version": "0.3.20",
+    "version": "0.3.23",
     "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
     "permissions": [
         "activeTab",
@@ -17,6 +17,7 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.youtube.com/*",
         "http://127.0.0.1:8420/*",
         "http://localhost:8420/*"
     ],
@@ -61,6 +62,15 @@
                 "dist/content/douyin.js"
             ],
             "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.youtube.com/*"
+            ],
+            "js": [
+                "dist/content/youtube.js"
+            ],
+            "run_at": "document_idle"
         }
     ],
     "web_accessible_resources": [

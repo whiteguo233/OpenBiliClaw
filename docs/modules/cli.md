@@ -30,7 +30,9 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `serve-api` | 启动容器友好的 API 服务 | ✅ |
 | `init` | 首次初始化 | ✅ |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像） | ✅ |
-| `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像） | ✅ |
+| `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
+| `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像） | ✅ |
+| `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为 embedding 兜底服务（可选） | ✅ |
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike\|comment>` | 对推荐提交反馈 | ✅ |
@@ -251,9 +253,10 @@ $ openbiliclaw profile
 3. 拉取 B 站历史 / 收藏 / 关注
 4. best-effort 等待插件导入小红书初始化信号
 5. best-effort 等待插件导入抖音初始化信号
-6. 写入事件层并分析偏好
-7. 生成初始画像
-8. 按阶段自动补首轮内容池
+6. best-effort 等待插件导入 YouTube 初始化信号
+7. 写入事件层并分析偏好
+8. 生成初始画像
+9. 按阶段自动补首轮内容池
 
 ```bash
 $ openbiliclaw init
@@ -262,6 +265,7 @@ $ openbiliclaw init
   浏览历史 300 条 / 收藏 128 个 / 关注 43 人
   小红书 收藏 20 个 / 点赞 20 个 / 浏览记录 0 个
   抖音 发布 24 条 / 收藏 13 个 / 点赞 12 个 / 关注 1 人
+  YouTube 观看历史 40 条 / 订阅 12 个 / 点赞 20 个
 2/4 分析偏好
 3/4 生成画像
 4/4 发现内容
@@ -276,21 +280,26 @@ $ openbiliclaw init
   B 站观看历史: 300 条
   小红书 入库事件: 40 条
   抖音 入库事件: 50 条
-  画像建模总事件: 518 条
+  YouTube 入库事件: 72 条
+  画像建模总事件: 590 条
   灵魂画像: 已生成
   首轮发现内容: 94 条
-  本次画像综合了 428 条 B 站信号 + 40 条小红书信号 + 50 条抖音信号。
+  本次画像综合了 428 条 B 站信号 + 40 条小红书信号 + 50 条抖音信号 + 72 条 YouTube 信号。
 ```
 
 小红书导入依赖浏览器插件在用户已登录的小红书网页里执行 `bootstrap_profile` 任务。后端只入队任务并短暂等待结果，不直接登录或爬取小红书。插件会先定位当前用户 profile，再读取 profile state 里的收藏 / 赞过分组；这里的“浏览记录”指小红书网页自己明确暴露的浏览记录/足迹 state，不是读取 Chrome 浏览器历史，也不会把普通推荐流当成浏览记录。如果后端任务显式设置 `max_scroll_rounds`，插件会按任务 payload 中的 `scroll_wait_ms` 和 `max_stagnant_scroll_rounds` 做有限滚动和停滞判断。如果插件未连接、未登录或页面没有暴露对应 scope，`init` 会继续使用已有 B 站数据完成初始化。
 
 抖音导入同样依赖浏览器插件在用户已登录的 `https://www.douyin.com` 页面里执行 `bootstrap_profile` 任务。后端入队 `dy_tasks`，插件依次访问 `dy_post / dy_collect / dy_like / dy_follow` 四个 scope，content script 结合 DOM、MAIN-world fetch tap 和 API harvester 采集发布 / 收藏 / 点赞 / 关注条目，以 `partial` 批次回写 `/api/sources/dy/task-result`。后端会转换为统一事件：发布 → `view`，收藏 → `favorite`，点赞 → `like`，关注 → `follow`，并带 `metadata.source_platform="douyin"`。`init --yes-douyin` 会把这些事件加入 `analyze_events()` 和 `build_initial_profile()`；插件未连接、未登录或抖音风控返回空数据时，初始化继续使用已有信号完成。
 
+YouTube 导入依赖浏览器插件在用户已登录的 `https://www.youtube.com` 页面里执行 `bootstrap_profile` 任务。后端入队 `yt_tasks`，插件依次访问 `/feed/history`、`/feed/channels`、`/playlist?list=LL` 三个 scope，读取观看历史、订阅频道和点赞视频，以 `partial` 批次回写 `/api/sources/yt/task-result`。后端会转换为统一事件：观看历史 → `view`，订阅 → `follow`，点赞 → `like`，并带 `metadata.source_platform="youtube"`。`init --yes-youtube` 会把这些事件加入 `analyze_events()` 和 `build_initial_profile()`；非交互式终端默认跳过，`OPENBILICLAW_NO_YOUTUBE=1` 会压过 `--yes-youtube`，避免脚本环境误触发浏览器前台 tab。
+
 源开关：
 
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
-- `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1`：永久跳过对应源。
+- `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
+- `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1`：永久跳过对应源。
+- `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 
 如果当前终端是交互式，且缺少 provider API Key 或 B 站 Cookie，`init` 会直接进入用户友好的引导（v0.3.5+）：
 
@@ -488,7 +497,36 @@ $ openbiliclaw fetch-xhs
   小红书 收藏 20 个 / 点赞 20 个 / 浏览记录 0 个
 ```
 
-默认最多等待扩展回传 `180s`，与 `init --yes-xhs --yes-douyin` 的单源 collect 窗口保持一致，降低两源连续初始化时小红书未结束就启动抖音的概率。
+默认最多等待扩展回传 `180s`，与 `init --yes-xhs --yes-douyin` 的单源 collect 窗口保持一致，降低两源连续初始化时小红书未结束就启动抖音的概率。命令默认复用 6 小时内已有的 pending / in-progress / completed / failed `bootstrap_profile` 任务，避免重复打开前台小红书 tab 抓收藏 / 点赞；排查时需要强制重拉可加 `--force`，或用 `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS=0` 关闭复用窗口。
+
+### `openbiliclaw fetch-youtube`
+
+单独触发 YouTube `bootstrap_profile` 拉取，用于验证浏览器扩展、登录态和 `/api/sources/yt/*` 后端任务桥是否联通。采集范围与 init 相同：观看历史、订阅频道、点赞视频。
+
+```bash
+$ openbiliclaw fetch-youtube --wait-seconds 240
+YouTube 数据拉取
+  YouTube 观看历史 40 条 / 订阅 12 个 / 点赞 20 个
+  共生成 72 条事件。
+```
+
+这条命令只做单源 smoke / 补拉，不会隐式重建画像。profile 已初始化后，daemon 接收新增 partial 事件时会写入 memory 并进入增量画像更新链路。
+
+### `openbiliclaw import-youtube <path>`
+
+从 Google Takeout 导出的 `.zip` 或解压目录导入 YouTube 观看历史、订阅和点赞数据，适合扩展无法读取旧历史或用户想一次性补齐冷启动信号的场景。
+
+```bash
+$ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
+导入 YouTube Takeout
+  解析完成：
+    观看历史  1200 条
+    订阅频道  88 个
+    点赞视频  320 个
+    合计      1608 条事件
+```
+
+不带 `--dry-run` 时，命令会把解析出的 YouTube 事件传播到记忆层，并调用 `analyze_events()` 更新偏好画像；它不会重新跑完整 init，也不会自动补推荐池。
 
 ### `openbiliclaw discover`
 

@@ -61,6 +61,7 @@ SOURCE_BILIBILI = "bilibili"
 SOURCE_XIAOHONGSHU = "xiaohongshu"
 SOURCE_DOUYIN = "douyin"
 SOURCE_WEB = "web"
+SOURCE_YOUTUBE = "youtube"
 
 # Human-readable platform labels used to render the context string.
 # Keys must match the source_platform values stored in event metadata.
@@ -69,6 +70,7 @@ _PLATFORM_LABELS: dict[str, str] = {
     SOURCE_XIAOHONGSHU: "小红书",
     SOURCE_DOUYIN: "抖音",
     SOURCE_WEB: "网页",
+    SOURCE_YOUTUBE: "YouTube",
 }
 
 # Action verbs per event_type. Designed so the rendered sentence reads

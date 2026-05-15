@@ -5,6 +5,7 @@ from pathlib import Path
 from openbiliclaw.llm.prompts import (
     build_explore_domains_prompt,
     build_recommendation_expression_prompt,
+    build_search_queries_prompt,
     build_socratic_dialogue_prompt,
     build_soul_profile_prompt,
 )
@@ -106,6 +107,26 @@ def test_build_soul_profile_prompt_avoids_report_tone() -> None:
 
     assert "朋友" in messages[0]["content"]
     assert "3 到 6 条" in messages[0]["content"]
+
+
+def test_search_prompt_includes_pool_distribution_hints() -> None:
+    messages = build_search_queries_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        pool_hints={
+            "avoid_topics": ["AI 编程", "原神"],
+            "prefer_axes": ["人物纪录", "审美体验"],
+            "avoid_styles": ["deep_dive"],
+            "avoid_franchises": ["原神"],
+        },
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+
+    assert "avoid_franchises" in system_prompt
+    assert "<pool_distribution_hints>" in user_prompt
+    assert "AI 编程" in user_prompt
+    assert "人物纪录" in user_prompt
 
 
 def test_build_explore_domains_prompt_requires_directional_diversity() -> None:

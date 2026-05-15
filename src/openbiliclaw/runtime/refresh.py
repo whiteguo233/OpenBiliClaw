@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
+from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
@@ -24,8 +25,9 @@ _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "xiaohongshu": 1,
     "douyin": 1,
 }
-_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin")
+_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
+_YOUTUBE_DISCOVERY_SOURCES = ("yt_search", "yt_trending", "yt_channel")
 
 
 def _call_accepts_limit(fn: Any) -> bool:
@@ -50,6 +52,17 @@ def _call_accepts_strategy_limits(fn: Any) -> bool:
     )
 
 
+def _call_accepts_pool_snapshot(fn: Any) -> bool:
+    """Return whether a discovery callable accepts ``pool_snapshot=``."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "pool_snapshot" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
 class SupportsRuntimeState(Protocol):
     def load_discovery_runtime_state(self) -> dict[str, object]: ...
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None: ...
@@ -68,6 +81,7 @@ class SupportsEventDatabase(Protocol):
     def count_unread_recommendations(self) -> int: ...
     def count_pool_candidates(self) -> int: ...
     def count_pool_candidates_by_source(self) -> dict[str, int]: ...
+    def get_pool_distribution_counts(self) -> dict[str, dict[str, int]]: ...
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int: ...
     def trim_topic_group_overflow(self, *, max_per_group: int) -> int: ...
     def trim_pool_to_target_count(
@@ -127,6 +141,7 @@ class SupportsDiscoveryEngine(Protocol):
         limit: int = 30,
         *,
         strategy_limits: dict[str, int] | None = None,
+        pool_snapshot: Any | None = None,
     ) -> list[Any]: ...
 
 
@@ -662,6 +677,7 @@ class ContinuousRefreshController:
         """
         with suppress(Exception):
             await self.prepare_delight_candidates()
+        self._warn_on_stranded_source_shares()
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
@@ -1057,20 +1073,25 @@ class ContinuousRefreshController:
                 current_pool_count=current_pool_count,
                 pool_below_target=initial_pool_below_target,
             )
+            try:
+                pool_snapshot = build_pool_distribution_snapshot(
+                    self.database,
+                    pool_target_count=self.pool_target_count,
+                    source_targets=self._source_target_counts(),
+                )
+            except Exception:
+                logger.exception("Failed to build pool distribution snapshot")
+                pool_snapshot = None
             discover_fn = self.discovery_engine.discover
+            discover_kwargs: dict[str, Any] = {
+                "strategies": strategies,
+                "limit": effective_limit,
+            }
             if strategy_limits and _call_accepts_strategy_limits(discover_fn):
-                discovered = await discover_fn(
-                    profile,
-                    strategies=strategies,
-                    limit=effective_limit,
-                    strategy_limits=strategy_limits,
-                )
-            else:
-                discovered = await discover_fn(
-                    profile,
-                    strategies=strategies,
-                    limit=effective_limit,
-                )
+                discover_kwargs["strategy_limits"] = strategy_limits
+            if _call_accepts_pool_snapshot(discover_fn):
+                discover_kwargs["pool_snapshot"] = pool_snapshot
+            discovered = await discover_fn(profile, **discover_kwargs)
             all_discovered.extend(discovered)
             flattened_strategies.extend(strategies)
 
@@ -1309,6 +1330,7 @@ class ContinuousRefreshController:
             specs,
             probed_domains=set(probed),
             probed_axes=set(probed_axes),
+            feedback_history=state.get("probe_feedback_history", []),
         )
         if top is None:
             return  # All active specs were probed recently
@@ -1372,17 +1394,22 @@ class ContinuousRefreshController:
     def _build_source_replenishment_plan(self) -> list[tuple[list[str], int]]:
         source_counts = self.database.count_pool_candidates_by_source()
         target_counts = self._source_target_counts()
-        bilibili_deficit = max(
-            0,
-            int(target_counts.get("bilibili", 0))
-            - self._platform_source_count(source_counts, "bilibili"),
-        )
-        if bilibili_deficit <= 0:
-            return []
-
-        # Bilibili is a platform quota now, but its implementation still
-        # fans out through four established strategy names.
-        return [(list(_BILIBILI_DISCOVERY_SOURCES), bilibili_deficit)]
+        plan: list[tuple[list[str], int]] = []
+        for source in _PLATFORM_SOURCE_ORDER:
+            deficit = max(
+                0,
+                int(target_counts.get(source, 0))
+                - self._platform_source_count(source_counts, source),
+            )
+            if deficit <= 0:
+                continue
+            if source == "bilibili":
+                # Bilibili is a platform quota now, but its implementation
+                # still fans out through four established strategy names.
+                plan.append((list(_BILIBILI_DISCOVERY_SOURCES), deficit))
+            elif source == "youtube":
+                plan.append((list(_YOUTUBE_DISCOVERY_SOURCES), deficit))
+        return plan
 
     def _source_target_counts(self) -> dict[str, int]:
         shares = self._normalized_pool_source_shares()
@@ -1413,6 +1440,51 @@ class ContinuousRefreshController:
                 return int(source_counts.get("bilibili", 0))
             return sum(int(source_counts.get(source, 0)) for source in _BILIBILI_DISCOVERY_SOURCES)
         return int(source_counts.get(source_family, 0))
+
+    def _warn_on_stranded_source_shares(self) -> None:
+        """Warn once at startup if any configured share has no producer.
+
+        ``runtime.source_policy.effective_pool_source_shares`` already strips
+        sources whose ``enabled`` flag is False, so a stranded share here
+        means the user kept the source on but the matching producer is
+        not wired (missing build_*_producer, scheduler.enabled=False, …).
+        Without this warning the pool sits below ``pool_target_count``
+        forever and the missing slack is invisible.
+        """
+        shares = self._normalized_pool_source_shares()
+        targets = self._source_target_counts()
+        stranded: list[str] = []
+        for source, target in targets.items():
+            if target <= 0:
+                continue
+            if source == "bilibili":
+                continue  # always served by the four discovery strategies
+            if source == "xiaohongshu" and self.xhs_producer is None:
+                stranded.append("xiaohongshu")
+            elif source == "douyin" and self.douyin_producer is None:
+                stranded.append("douyin")
+            elif source == "youtube" and not self._has_registered_discovery_sources(
+                _YOUTUBE_DISCOVERY_SOURCES
+            ):
+                stranded.append("youtube")
+            elif source not in {"bilibili", "xiaohongshu", "douyin", "youtube"}:
+                # Unknown source family with an explicit share.
+                stranded.append(source)
+        if stranded:
+            logger.warning(
+                "pool_source_shares allocate quota to sources without an "
+                "active producer (will leave pool under target): sources=%s "
+                "shares=%s",
+                stranded,
+                {s: shares.get(s) for s in stranded},
+            )
+
+    def _has_registered_discovery_sources(self, names: tuple[str, ...]) -> bool:
+        strategies = getattr(self.discovery_engine, "_strategies", None)
+        if strategies is None:
+            return True
+        registered = {str(getattr(strategy, "name", "")) for strategy in strategies}
+        return any(name in registered for name in names)
 
     def _normalized_pool_source_shares(self) -> dict[str, int]:
         raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES

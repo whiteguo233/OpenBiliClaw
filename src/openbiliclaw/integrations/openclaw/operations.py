@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
-from openbiliclaw.soul.speculator import choose_next_probe_candidate
+from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
 from .errors import AdapterOperationError
 from .schemas import (
@@ -318,17 +319,22 @@ class OpenClawAdapter:
                 None,
             )
             runtime_state = load_runtime_state() if callable(load_runtime_state) else {}
-            probed_axes = (
-                set((runtime_state.get("probed_axes") or {}).keys())
-                if isinstance(runtime_state, dict)
-                else set()
+            if not isinstance(runtime_state, dict):
+                runtime_state = {}
+            probed_domains = set((runtime_state.get("probed_domains") or {}).keys())
+            probed_axes = set((runtime_state.get("probed_axes") or {}).keys())
+            top = choose_next_probe_candidate(
+                specs,
+                probed_domains=probed_domains,
+                probed_axes=probed_axes,
+                feedback_history=runtime_state.get("probe_feedback_history", []),
             )
-            top = choose_next_probe_candidate(specs, probed_axes=probed_axes)
             if top is None:
                 return InterestProbeResponse(probe=None)
             domain = str(getattr(top, "domain", "")).strip()
             if not domain:
                 return InterestProbeResponse(probe=None)
+            self._record_probe_history(runtime_state, top, domain)
             category = str(getattr(top, "category", "")).strip()
             reason = str(getattr(top, "reason", "")).strip()
             confidence = self._to_float(getattr(top, "confidence", 0.0))
@@ -358,6 +364,34 @@ class OpenClawAdapter:
             )
         except Exception as exc:  # pragma: no cover - defensive adapter boundary
             raise AdapterOperationError("Failed to read next interest probe.") from exc
+
+    def _record_probe_history(
+        self,
+        runtime_state: dict[str, object],
+        probe: Any,
+        domain: str,
+    ) -> None:
+        """Persist OpenClaw probe selection so repeated calls avoid repeats."""
+        save_runtime_state = getattr(
+            self.services.memory_manager,
+            "save_discovery_runtime_state",
+            None,
+        )
+        if not callable(save_runtime_state):
+            return
+        probed_domains = dict(runtime_state.get("probed_domains") or {})
+        probed_axes = dict(runtime_state.get("probed_axes") or {})
+        now = datetime.now().isoformat()
+        probed_domains[domain.lower()] = now
+        axis = build_probe_axis(
+            experience_mode=getattr(probe, "experience_mode", ""),
+            entry_load=getattr(probe, "entry_load", ""),
+        )
+        if axis:
+            probed_axes[axis] = now
+        runtime_state["probed_domains"] = probed_domains
+        runtime_state["probed_axes"] = probed_axes
+        save_runtime_state(runtime_state)
 
     @staticmethod
     def _build_probe_question(

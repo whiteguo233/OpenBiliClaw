@@ -21,12 +21,11 @@ from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.recommendation.engine import RecommendationEngine
 from openbiliclaw.runtime.account_sync import AccountSyncService
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
+from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 from openbiliclaw.soul.engine import SoulEngine
 from openbiliclaw.storage.database import Database
 
 from .operations import OpenClawAdapter
-
-_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
 
 
 @dataclass(slots=True)
@@ -131,10 +130,6 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         soul_engine=soul_engine,
         discovery_engine=discovery_engine,
     )
-    pool_source_shares = getattr(config.scheduler, "pool_source_shares", None)
-    if not isinstance(pool_source_shares, dict):
-        pool_source_shares = _DEFAULT_POOL_SOURCE_SHARES
-
     runtime_controller = ContinuousRefreshController(
         memory_manager=memory_manager,
         database=database,
@@ -142,7 +137,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_engine=discovery_engine,
         recommendation_engine=recommendation_engine,
         pool_target_count=config.scheduler.pool_target_count,
-        pool_source_shares=dict(pool_source_shares),
+        pool_source_shares=effective_pool_source_shares(config),
         douyin_producer=douyin_producer,
     )
     account_sync_service = AccountSyncService(

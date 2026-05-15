@@ -221,7 +221,19 @@ class SoulEngine:
 
         # Trigger speculator immediately after init to seed speculative interests
         try:
-            await self._speculator.force_tick(profile)
+            feedback_history: object = []
+            load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
+            if callable(load_runtime_state):
+                runtime_state = load_runtime_state()
+                if isinstance(runtime_state, dict):
+                    feedback_history = runtime_state.get("probe_feedback_history", [])
+            try:
+                await self._speculator.force_tick(
+                    profile,
+                    feedback_history=feedback_history,
+                )
+            except TypeError:
+                await self._speculator.force_tick(profile)
         except Exception:
             logger.debug("Speculator force_tick after init failed", exc_info=True)
 

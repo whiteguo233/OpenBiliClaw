@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -39,6 +39,8 @@ XHS_BOOTSTRAP_SCOPE_LABELS = {
     "liked": "点赞",
     "xhs_history": "浏览记录",
 }
+
+_RECENT_TASK_STATUSES = ("pending", "in_progress", "completed", "failed")
 
 
 def _note_key(note: dict[str, Any]) -> str:
@@ -194,11 +196,19 @@ class XhsTaskQueue:
                 status       TEXT NOT NULL DEFAULT 'pending',
                 result_json  TEXT,
                 created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed_at   TIMESTAMP,
                 completed_at TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_xhs_tasks_status
                 ON xhs_tasks (status, created_at);
         """)
+        columns = {
+            str(row["name"])
+            for row in self._db.conn.execute("PRAGMA table_info(xhs_tasks)").fetchall()
+        }
+        if "claimed_at" not in columns:
+            self._db.conn.execute("ALTER TABLE xhs_tasks ADD COLUMN claimed_at TIMESTAMP")
+            self._db.conn.commit()
 
     def enqueue(
         self,
@@ -228,18 +238,6 @@ class XhsTaskQueue:
         daily_budget: int = 100,
     ) -> str | None:
         """Enqueue a task and return its id, or None when budget is exhausted."""
-        # TEMP DEBUG: log the full call stack on every XHS enqueue so
-        # we can trace why bootstrap_profile tasks appeared without
-        # an obvious CLI invocation. Will be reverted after we find
-        # the source.
-        import traceback
-
-        logger.warning(
-            "[xhs-debug] XhsTaskQueue.enqueue_with_id type=%s called from:\n%s",
-            task_type,
-            "".join(traceback.format_stack(limit=20)),
-        )
-
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         count_today = self._db.conn.execute(
             "SELECT COUNT(*) FROM xhs_tasks WHERE type = ? AND created_at >= ?",
@@ -264,13 +262,85 @@ class XhsTaskQueue:
         return task_id
 
     def next_pending(self) -> dict[str, Any] | None:
-        """Return the oldest pending task, or None."""
-        row = self._db.conn.execute(
-            "SELECT * FROM xhs_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        if row is None:
+        """Claim and return the oldest runnable task, or None.
+
+        The extension can be installed in multiple browser profiles, and
+        MV3 service workers can restart mid-task. Marking the task
+        ``in_progress`` as it is handed out prevents a foreground
+        bootstrap task from being opened repeatedly while one extension
+        instance is already working on it. Stale in-progress tasks are
+        eligible again after 15 minutes so a crashed extension does not
+        permanently wedge the queue.
+        """
+        stale_before = (datetime.now(UTC) - timedelta(minutes=15)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        conn = self._db.conn
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT *
+                FROM xhs_tasks
+                WHERE status = 'pending'
+                   OR (status = 'in_progress' AND claimed_at <= ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (stale_before,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            task_id = str(row["id"])
+            conn.execute(
+                "UPDATE xhs_tasks SET status = 'in_progress', claimed_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (task_id,),
+            )
+            claimed = conn.execute("SELECT * FROM xhs_tasks WHERE id = ?", (task_id,)).fetchone()
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return dict(claimed) if claimed is not None else None
+
+    def find_recent_task(
+        self,
+        task_type: str,
+        *,
+        recent_hours: float,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a recent task of this type for idempotent enqueue paths."""
+        if recent_hours <= 0:
             return None
-        return dict(row)
+        selected_statuses = statuses or _RECENT_TASK_STATUSES
+        if not selected_statuses:
+            return None
+        placeholders = ",".join("?" for _ in selected_statuses)
+        cutoff = (datetime.now(UTC) - timedelta(hours=recent_hours)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        row = self._db.conn.execute(
+            f"""
+            SELECT *
+            FROM xhs_tasks
+            WHERE type = ?
+              AND created_at >= ?
+              AND status IN ({placeholders})
+            ORDER BY
+              CASE
+                WHEN status IN ('pending', 'in_progress') THEN 0
+                WHEN status = 'completed' THEN 1
+                ELSE 2
+              END,
+              created_at DESC
+            LIMIT 1
+            """,
+            (task_type, cutoff, *selected_statuses),
+        ).fetchone()
+        return dict(row) if row is not None else None
 
     def get(self, task_id: str) -> dict[str, Any] | None:
         """Return a task by id, or None."""

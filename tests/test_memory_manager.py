@@ -216,6 +216,9 @@ def test_discovery_runtime_state_defaults_when_missing(tmp_path: Path) -> None:
         "last_discovered_count": 0,
         "last_replenished_count": 0,
         "recent_pool_topics": [],
+        "probed_domains": {},
+        "probed_axes": {},
+        "probe_feedback_history": [],
     }
 
 
@@ -233,6 +236,16 @@ def test_discovery_runtime_state_round_trips_to_json(tmp_path: Path) -> None:
             "last_discovered_count": 18,
             "last_replenished_count": 12,
             "recent_pool_topics": ["国际时事", "宏观经济", "纪录片"],
+            "probed_domains": {"建筑美学": "2026-03-10T10:30:00"},
+            "probed_axes": {"aesthetic|light": "2026-03-10T10:30:00"},
+            "probe_feedback_history": [
+                {
+                    "domain": "城市漫游路线",
+                    "response": "reject",
+                    "axis": "wander_observe|light",
+                    "created_at": "2026-05-15T10:00:00",
+                }
+            ],
         }
     )
 
@@ -246,6 +259,49 @@ def test_discovery_runtime_state_round_trips_to_json(tmp_path: Path) -> None:
     assert state["last_discovered_count"] == 18
     assert state["last_replenished_count"] == 12
     assert state["recent_pool_topics"] == ["国际时事", "宏观经济", "纪录片"]
+    assert state["probed_domains"] == {"建筑美学": "2026-03-10T10:30:00"}
+    assert state["probed_axes"] == {"aesthetic|light": "2026-03-10T10:30:00"}
+    assert state["probe_feedback_history"] == [
+        {
+            "domain": "城市漫游路线",
+            "response": "reject",
+            "axis": "wander_observe|light",
+            "created_at": "2026-05-15T10:00:00",
+        }
+    ]
+
+
+def test_discovery_runtime_state_round_trips_probe_feedback_history(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    memory.save_discovery_runtime_state(
+        {
+            "probe_feedback_history": [
+                {
+                    "domain": "城市漫游路线",
+                    "response": "reject",
+                    "axis": "wander_observe|light",
+                    "specifics": ["老街路线"],
+                    "created_at": "2026-05-15T10:00:00",
+                }
+            ]
+        }
+    )
+
+    state = memory.load_discovery_runtime_state()
+
+    assert state["probe_feedback_history"] == [
+        {
+            "domain": "城市漫游路线",
+            "response": "reject",
+            "axis": "wander_observe|light",
+            "specifics": ["老街路线"],
+            "created_at": "2026-05-15T10:00:00",
+        }
+    ]
 
 
 def test_account_sync_state_defaults_when_missing(tmp_path: Path) -> None:

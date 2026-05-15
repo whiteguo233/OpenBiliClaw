@@ -20,6 +20,7 @@ import {
   isValidDyTask,
   onTabReady,
   pollDyTaskNow,
+  shouldOpenDyTaskActive,
   shouldFinalizeHotTask,
 } from "../src/background/dy-task-dispatcher.ts";
 
@@ -61,6 +62,20 @@ test("buildDyTaskUrl routes feed task to the douyin home", () => {
 
 test("buildDyTaskUrl returns null for unknown task types", () => {
   assert.equal(buildDyTaskUrl({ id: "t", type: "unknown" as never }), null);
+});
+
+test("shouldOpenDyTaskActive only foregrounds bootstrap imports", () => {
+  assert.equal(shouldOpenDyTaskActive({ id: "bootstrap", type: "bootstrap_profile" }), true);
+  assert.equal(shouldOpenDyTaskActive({ id: "search", type: "search", keywords: ["猫"] }), false);
+  assert.equal(
+    shouldOpenDyTaskActive({
+      id: "hot",
+      type: "hot",
+      hot_items: [{ word: "热点词", sentence_id: "2495363" }],
+    }),
+    false,
+  );
+  assert.equal(shouldOpenDyTaskActive({ id: "feed", type: "feed", max_items: 10 }), false);
 });
 
 test("isValidDyTask accepts bootstrap_profile with optional payload fields", () => {

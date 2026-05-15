@@ -647,6 +647,7 @@ def build_insight_prompt(
 def build_search_queries_prompt(
     *,
     profile_summary: dict[str, object],
+    pool_hints: dict[str, object] | None = None,
 ) -> list[dict[str, str]]:
     """Build a structured prompt for search query generation."""
     system_prompt = """
@@ -671,10 +672,10 @@ def build_search_queries_prompt(
    - 约 25% query 跨域探索（桥接用户认知风格或深层需求到相邻但陌生的领域）。
    跨域 query 不需要完全脱离用户认知范围，但核心主题词必须不在用户任何
    interest_domains / interests 中出现。
-7. query 的内容风格必须多样化，不要全部偏向"深度/学术/原理"。
+6. query 的内容风格必须多样化，不要全部偏向"深度/学术/原理"。
    应该混合使用不同风格词，如 盘点/推荐/日常/吐槽/测评/入门/体验/挑战/合集 等，
    整组 query 中带"深度/原理/解析/机制"等学术向关键词的不得超过 2 个。
-8. 多样性双向保护：
+7. 多样性双向保护：
    - 如果 depth_preference 偏低、preferred_duration 偏短，或 humor_preference 偏高，
      就进一步减少"原理/解析/机制"这类硬入口，优先使用更轻、更好点开的形式词；
      不要把"理解力强"误翻译成"必须更学术"。
@@ -683,8 +684,17 @@ def build_search_queries_prompt(
      或 cognitive_style 里有"兼顾/调节/穿插轻松"这类描述，
      仍要至少保证 30% query 用 "盘点/合集/吐槽/日常/挑战/体验/vlog" 这类放松形式词，
      不能因为画像深就只发硬 query；用户硬不代表 24 小时都想看硬内容。
-6. 所有 query 的核心主题词（第一个实词）必须两两不同，
+8. 所有 query 的核心主题词（第一个实词）必须两两不同，
    禁止同一概念换皮出现多次。
+9. 如果 user 消息包含 <pool_distribution_hints>，这些是当前推荐池已经拥挤或欠覆盖的方向。
+   avoid_topics / avoid_styles / avoid_franchises 是软避让信号；prefer_axes 是优先补货方向。
+   source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
+   不要为了避让而生成与用户画像无关的 query。
+10. favorite_up_users 是用户常看的 B 站 UP 主名单，仅供背景参考。
+    严禁从创作者名字推断其内容类型或专长领域，进而生成该类型的 query。
+    "关注/常看某创作者" ≠ "对该创作者的内容类型感兴趣"。
+    用户的内容兴趣已完整体现在 interest_domains / interests / speculative_interests 中，
+    不要从 favorite_up_users 另行推导兴趣方向。
 </rules>
 
 <output_schema>
@@ -723,13 +733,25 @@ def build_search_queries_prompt(
 - "科技 深度 解析" + "历史 深度 解读" + "哲学 深度 讨论"（全部偏学术，风格单一）
 </examples>
 """.strip()
-    user_prompt = "\n\n".join(
-        [
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2),
-            "</profile_summary>",
-        ]
-    )
+    user_sections = [
+        "<profile_summary>",
+        json.dumps(profile_summary, ensure_ascii=False, indent=2),
+        "</profile_summary>",
+    ]
+    compact_pool_hints = {
+        key: value
+        for key, value in (pool_hints or {}).items()
+        if value not in (None, "", [], {}, ())
+    }
+    if compact_pool_hints:
+        user_sections.extend(
+            [
+                "<pool_distribution_hints>",
+                json.dumps(compact_pool_hints, ensure_ascii=False, indent=2),
+                "</pool_distribution_hints>",
+            ]
+        )
+    user_prompt = "\n\n".join(user_sections)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

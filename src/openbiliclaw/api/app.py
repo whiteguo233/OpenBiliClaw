@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,9 @@ from openbiliclaw.api.models import (
     BilibiliCookieIn,
     BilibiliCookieResponse,
     ChatIn,
+    ChatTurnIn,
+    ChatTurnListResponse,
+    ChatTurnOut,
     CognitionUpdateSeenIn,
     CognitionUpdateSeenResponse,
     CognitionUpdateSummary,
@@ -29,6 +33,7 @@ from openbiliclaw.api.models import (
     DelightAckResponse,
     DouyinCookieIn,
     DouyinCookieResponse,
+    DouyinSourceConfigOut,
     EmbeddingConfigOut,
     EventIngestResponse,
     FeedbackIn,
@@ -56,7 +61,13 @@ from openbiliclaw.api.models import (
     RecommendationReshuffleResponse,
     RuntimeStatusResponse,
     SchedulerConfigOut,
+    SourcesBrowserConfigOut,
+    SourcesConfigOut,
+    SourceShareSuggestionIn,
+    SourceShareSuggestionResponse,
     StorageConfigOut,
+    XiaohongshuSourceConfigOut,
+    YoutubeSourceConfigOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +77,63 @@ SOURCE_LABELS = {
     "chat": "聊天",
     "profile_refresh": "聚合观察",
 }
+
+_SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+
+
+def _count_events_by_source_platform(database: Any) -> dict[str, int]:
+    """Count stored behavior events by normalized source platform."""
+
+    counter = {source: 0 for source in _SOURCE_SHARE_ORDER}
+    if hasattr(database, "count_events_by_source_platform"):
+        raw_counts = database.count_events_by_source_platform()
+        if isinstance(raw_counts, dict):
+            for source, count in raw_counts.items():
+                source_key = _normalize_source_platform(source)
+                counter[source_key] = counter.get(source_key, 0) + int(count)
+            return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
+
+    rows: list[dict[str, Any]] = []
+    if hasattr(database, "conn"):
+        try:
+            cursor = database.conn.execute("SELECT metadata FROM events")
+            rows = [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            rows = []
+    elif hasattr(database, "get_recent_events"):
+        try:
+            rows = list(database.get_recent_events(limit=10000))
+        except Exception:
+            rows = []
+
+    for row in rows:
+        metadata = row.get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                import json as _json
+
+                metadata = _json.loads(metadata) if metadata else {}
+            except Exception:
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        source = metadata.get("source_platform", row.get("source_platform", "bilibili"))
+        source_key = _normalize_source_platform(source)
+        counter[source_key] = counter.get(source_key, 0) + 1
+    return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
+
+
+def _normalize_source_platform(source: object) -> str:
+    source_key = str(source or "").strip().lower()
+    if source_key in {"xhs", "rednote"}:
+        return "xiaohongshu"
+    if source_key in {"yt", "youtube"}:
+        return "youtube"
+    if source_key in {"douyin", "tiktok"}:
+        return "douyin"
+    if source_key in {"bilibili", "bili", ""}:
+        return "bilibili"
+    return source_key
 
 
 def _cap_by_franchise(
@@ -262,6 +330,132 @@ def create_app(
                     await ingest(signal)
         except Exception:
             logger.exception("Failed to ingest source task events into profile pipeline")
+
+    chat_turn_lock = asyncio.Lock()
+    fallback_chat_turns: dict[str, dict[str, Any]] = {}
+    running_chat_turn_tasks: set[str] = set()
+
+    def _normalize_chat_scope(scope: str) -> str:
+        normalized = scope.strip().lower()
+        if normalized in {"chat", "delight", "probe"}:
+            return normalized
+        return "chat"
+
+    def _normalize_chat_turn(row: dict[str, Any]) -> ChatTurnOut:
+        return ChatTurnOut(
+            turn_id=str(row.get("turn_id", "")),
+            session=str(row.get("session", "popup") or "popup"),
+            scope=_normalize_chat_scope(str(row.get("scope", "chat"))),
+            subject_id=str(row.get("subject_id", "") or ""),
+            subject_title=str(row.get("subject_title", "") or ""),
+            message=str(row.get("message", "") or ""),
+            reply=str(row.get("reply", "") or ""),
+            status=str(row.get("status", "pending") or "pending"),
+            error=str(row.get("error", "") or ""),
+            created_at=str(row.get("created_at", "") or ""),
+            updated_at=str(row.get("updated_at", "") or ""),
+        )
+
+    def _chat_db_method(name: str) -> Any | None:
+        method = getattr(ctx.database, name, None)
+        return method if callable(method) else None
+
+    def _get_chat_turn_row(turn_id: str) -> dict[str, Any] | None:
+        get_chat_turn = _chat_db_method("get_chat_turn")
+        if get_chat_turn is not None:
+            return cast("dict[str, Any] | None", get_chat_turn(turn_id))
+        row = fallback_chat_turns.get(turn_id)
+        return dict(row) if row else None
+
+    def _list_chat_turn_rows(
+        *,
+        session: str = "popup",
+        scope: str = "",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        list_chat_turns = _chat_db_method("list_chat_turns")
+        if list_chat_turns is not None:
+            return cast(
+                "list[dict[str, Any]]",
+                list_chat_turns(session=session, scope=scope, limit=limit),
+            )
+        rows = [
+            dict(row)
+            for row in fallback_chat_turns.values()
+            if row.get("session") == session and (not scope or row.get("scope") == scope)
+        ]
+        rows.sort(key=lambda row: (str(row.get("created_at", "")), str(row.get("turn_id", ""))))
+        return rows[-max(1, int(limit)) :]
+
+    def _create_chat_turn_row(payload: ChatTurnIn, *, turn_id: str) -> dict[str, Any]:
+        create_chat_turn = _chat_db_method("create_chat_turn")
+        if create_chat_turn is not None:
+            return cast(
+                "dict[str, Any]",
+                create_chat_turn(
+                    turn_id=turn_id,
+                    session=payload.session.strip() or "popup",
+                    scope=_normalize_chat_scope(payload.scope),
+                    subject_id=payload.subject_id.strip(),
+                    subject_title=payload.subject_title.strip(),
+                    message=payload.message.strip(),
+                ),
+            )
+
+        from datetime import datetime
+
+        now = datetime.now().isoformat(sep=" ")
+        fallback_chat_turns.setdefault(
+            turn_id,
+            {
+                "turn_id": turn_id,
+                "session": payload.session.strip() or "popup",
+                "scope": _normalize_chat_scope(payload.scope),
+                "subject_id": payload.subject_id.strip(),
+                "subject_title": payload.subject_title.strip(),
+                "message": payload.message.strip(),
+                "status": "pending",
+                "reply": "",
+                "error": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        return dict(fallback_chat_turns[turn_id])
+
+    def _complete_chat_turn_row(turn_id: str, *, reply: str) -> None:
+        complete_chat_turn = _chat_db_method("complete_chat_turn")
+        if complete_chat_turn is not None:
+            complete_chat_turn(turn_id, reply=reply)
+            return
+        if turn_id in fallback_chat_turns:
+            from datetime import datetime
+
+            fallback_chat_turns[turn_id].update(
+                {
+                    "status": "completed",
+                    "reply": reply,
+                    "error": "",
+                    "updated_at": datetime.now().isoformat(sep=" "),
+                }
+            )
+
+    def _fail_chat_turn_row(turn_id: str, *, error: str, reply: str = "") -> None:
+        fail_chat_turn = _chat_db_method("fail_chat_turn")
+        if fail_chat_turn is not None:
+            fail_chat_turn(turn_id, error=error, reply=reply)
+            return
+        if turn_id in fallback_chat_turns:
+            from datetime import datetime
+
+            fallback_chat_turns[turn_id].update(
+                {
+                    "status": "failed",
+                    "reply": reply,
+                    "error": error,
+                    "updated_at": datetime.now().isoformat(sep=" "),
+                }
+            )
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -1441,6 +1635,78 @@ def create_app(
                 }
             )
 
+    def _probe_metadata_from_active_speculation(
+        speculator: Any,
+        domain: str,
+    ) -> dict[str, object]:
+        """Read active probe metadata before confirm/reject mutates state."""
+        from openbiliclaw.soul.speculator import build_probe_axis
+
+        get_active = getattr(speculator, "get_active_speculations", None)
+        if not callable(get_active):
+            return {"domain": domain}
+        try:
+            active_specs = list(get_active())
+        except Exception:
+            logger.debug("Failed to read active probe metadata", exc_info=True)
+            return {"domain": domain}
+
+        for spec in active_specs:
+            spec_domain = str(getattr(spec, "domain", "")).strip()
+            if spec_domain.lower() != domain.lower():
+                continue
+            specifics = [
+                str(getattr(item, "name", "")).strip()
+                for item in getattr(spec, "specifics", [])
+                if str(getattr(item, "name", "")).strip()
+            ]
+            axis = build_probe_axis(
+                experience_mode=getattr(spec, "experience_mode", ""),
+                entry_load=getattr(spec, "entry_load", ""),
+            )
+            metadata: dict[str, object] = {
+                "domain": spec_domain or domain,
+                "category": str(getattr(spec, "category", "")).strip(),
+                "reason": str(getattr(spec, "reason", "")).strip(),
+            }
+            if axis:
+                metadata["axis"] = axis
+            if specifics:
+                metadata["specifics"] = specifics
+            return metadata
+        return {"domain": domain}
+
+    def _record_probe_feedback_history(
+        domain: str,
+        response: str,
+        *,
+        speculator: Any,
+        message: str = "",
+    ) -> None:
+        """Persist explicit user feedback for future probe novelty checks."""
+        from openbiliclaw.soul.speculator import append_probe_feedback_history
+
+        memory_manager = getattr(ctx, "memory_manager", None)
+        if memory_manager is None:
+            memory_manager = getattr(ctx.runtime_controller, "memory_manager", None)
+        load_state = getattr(memory_manager, "load_discovery_runtime_state", None)
+        save_state = getattr(memory_manager, "save_discovery_runtime_state", None)
+        if not callable(load_state) or not callable(save_state):
+            return
+        try:
+            state = load_state()
+            entry = _probe_metadata_from_active_speculation(speculator, domain)
+            entry["response"] = response
+            if message:
+                entry["message"] = message
+            state["probe_feedback_history"] = append_probe_feedback_history(
+                state.get("probe_feedback_history", []),
+                entry,
+            )
+            save_state(state)
+        except Exception:
+            logger.exception("Failed to record probe feedback history")
+
     async def _judge_probe_sentiment(
         user_message: str,
         ai_reply: str,
@@ -1540,6 +1806,149 @@ def create_app(
             logger.info("Sentiment LLM for '%s' failed, trying keywords", domain)
             return "neutral"
 
+    def _contextual_chat_message(turn: ChatTurnOut) -> str:
+        if turn.scope == "delight":
+            label = turn.subject_title or turn.subject_id or "这条惊喜推荐"
+            return f"[关于惊喜推荐「{label}」的反馈] {turn.message}"
+        if turn.scope == "probe":
+            label = turn.subject_title or turn.subject_id or "这个方向"
+            return f"[关于猜测兴趣「{label}」的反馈] {turn.message}"
+        return turn.message
+
+    async def _generate_durable_chat_reply(turn: ChatTurnOut) -> str:
+        if ctx.dialogue is None:
+            return "对话引擎暂不可用。"
+
+        concurrency = getattr(ctx.discovery_engine, "_concurrency", None)
+        if concurrency is not None:
+            concurrency.chat_active = True
+            await asyncio.sleep(3)
+        try:
+            async with chat_turn_lock:
+                reply = await asyncio.wait_for(
+                    ctx.dialogue.respond(_contextual_chat_message(turn)),
+                    timeout=120,
+                )
+                reply = str(reply)
+        except TimeoutError:
+            return "后台正忙，等一下再聊。"
+        except Exception:
+            logger.exception("Durable chat turn failed: %s", turn.turn_id)
+            return "聊天出了点问题，稍后再试。"
+        finally:
+            if concurrency is not None:
+                concurrency.chat_active = False
+
+        if turn.scope == "delight":
+            label = turn.subject_title or turn.subject_id
+            _record_probe_cognition(
+                f"关于惊喜推荐「{label}」你说：{turn.message}",
+                turn.subject_id or label,
+                "delight_chat",
+                detail=f"你的反馈：{turn.message}\n阿b的回复：{reply}",
+            )
+            await _publish_probe_event(
+                "delight.chat",
+                f"关于「{label}」你说：{turn.message}",
+                turn.subject_id or label,
+            )
+        elif turn.scope == "probe":
+            domain = turn.subject_id or turn.subject_title
+            sentiment = await _judge_probe_sentiment(turn.message, reply, domain)
+            speculator = getattr(ctx.soul_engine, "_speculator", None)
+            if sentiment == "negative":
+                if speculator is not None:
+                    with suppress(Exception):
+                        speculator.user_reject_speculation(domain, cooldown_days=14)
+                summary = f"你对「{domain}」的反馈偏负面（{turn.message}），已暂时搁置 14 天。"
+            elif sentiment == "positive":
+                if speculator is not None:
+                    with suppress(Exception):
+                        speculator.observe(
+                            [
+                                {
+                                    "event_type": "dialogue",
+                                    "title": domain,
+                                    "metadata": {
+                                        "user_message": turn.message,
+                                        "source": "probe_chat",
+                                    },
+                                }
+                            ]
+                        )
+                summary = f"你对「{domain}」表示了兴趣，确认度 +1。"
+            else:
+                summary = f"关于「{domain}」你说：{turn.message}"
+            _record_probe_cognition(
+                summary,
+                domain,
+                "chat",
+                detail=f"你的反馈：{turn.message}\n阿b的回复：{reply}",
+            )
+            await _publish_probe_event("interest.chat", summary, domain)
+
+        return reply
+
+    async def _complete_durable_chat_turn(turn_id: str) -> None:
+        if turn_id in running_chat_turn_tasks:
+            return
+        running_chat_turn_tasks.add(turn_id)
+        try:
+            row = _get_chat_turn_row(turn_id)
+            if row is None:
+                return
+            turn = _normalize_chat_turn(row)
+            if turn.status != "pending":
+                return
+            reply = await _generate_durable_chat_reply(turn)
+            _complete_chat_turn_row(turn_id, reply=reply)
+        except Exception as exc:
+            logger.exception("Failed to complete durable chat turn %s", turn_id)
+            _fail_chat_turn_row(turn_id, error=str(exc), reply="聊天出了点问题，稍后再试。")
+        finally:
+            running_chat_turn_tasks.discard(turn_id)
+
+    @app.post("/api/chat/turns", response_model=ChatTurnOut)
+    async def start_chat_turn(payload: ChatTurnIn) -> ChatTurnOut:
+        message = payload.message.strip()
+        if not message:
+            raise HTTPException(status_code=422, detail="Chat message is required.")
+        raw_turn_id = payload.turn_id.strip()
+        turn_id = raw_turn_id or f"turn-{uuid.uuid4().hex}"
+        existing = _get_chat_turn_row(turn_id)
+        if existing is not None:
+            turn = _normalize_chat_turn(existing)
+            if turn.status == "pending":
+                asyncio.create_task(_complete_durable_chat_turn(turn.turn_id))
+            return turn
+        row = _create_chat_turn_row(payload, turn_id=turn_id)
+        asyncio.create_task(_complete_durable_chat_turn(turn_id))
+        return _normalize_chat_turn(row)
+
+    @app.get("/api/chat/turns", response_model=ChatTurnListResponse)
+    async def list_chat_turns(
+        session: str = "popup",
+        scope: str = "",
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> ChatTurnListResponse:
+        normalized_scope = _normalize_chat_scope(scope) if scope else ""
+        rows = _list_chat_turn_rows(
+            session=session.strip() or "popup",
+            scope=normalized_scope,
+            limit=limit,
+        )
+        return ChatTurnListResponse(items=[_normalize_chat_turn(row) for row in rows])
+
+    @app.get("/api/chat/turns/{turn_id}", response_model=ChatTurnOut)
+    async def get_chat_turn(turn_id: str) -> ChatTurnOut:
+        row = _get_chat_turn_row(turn_id.strip())
+        if row is None:
+            raise HTTPException(status_code=404, detail="Chat turn not found.")
+        turn = _normalize_chat_turn(row)
+        if turn.status == "pending":
+            asyncio.create_task(_complete_durable_chat_turn(turn.turn_id))
+        return turn
+
     @app.post("/api/interest-probes/trigger")
     async def trigger_interest_probe() -> dict[str, Any]:
         """Manually trigger an interest probe push via WebSocket.
@@ -1579,6 +1988,11 @@ def create_app(
             raise HTTPException(status_code=503, detail="Speculator not available")
 
         if response_type == "confirm":
+            _record_probe_feedback_history(
+                domain,
+                "confirm",
+                speculator=speculator,
+            )
             ok = speculator.user_confirm_speculation(domain)
             if ok:
                 # Force_tick generates 5 new probes via LLM (~30-60s).
@@ -1594,10 +2008,32 @@ def create_app(
                     async def _bg_force_tick() -> None:
                         try:
                             profile = await ctx.soul_engine.get_profile()
+                            feedback_history: object = []
+                            load_runtime_state = getattr(
+                                ctx.memory_manager,
+                                "load_discovery_runtime_state",
+                                None,
+                            )
+                            if callable(load_runtime_state):
+                                runtime_state = load_runtime_state()
+                                if isinstance(runtime_state, dict):
+                                    feedback_history = runtime_state.get(
+                                        "probe_feedback_history",
+                                        [],
+                                    )
                             if asyncio.iscoroutinefunction(tick_fn):
-                                await tick_fn(profile)
+                                try:
+                                    await tick_fn(
+                                        profile,
+                                        feedback_history=feedback_history,
+                                    )
+                                except TypeError:
+                                    await tick_fn(profile)
                             else:
-                                tick_fn(profile)
+                                try:
+                                    tick_fn(profile, feedback_history=feedback_history)
+                                except TypeError:
+                                    tick_fn(profile)
                         except Exception:
                             logger.exception("Background force_tick after confirm failed")
 
@@ -1617,6 +2053,11 @@ def create_app(
             return {"ok": ok, "action": "confirmed", "domain": domain}
 
         if response_type == "reject":
+            _record_probe_feedback_history(
+                domain,
+                "reject",
+                speculator=speculator,
+            )
             ok = speculator.user_reject_speculation(domain)
             if ok:
                 _record_probe_cognition(
@@ -1670,6 +2111,16 @@ def create_app(
         finally:
             if concurrency is not None:
                 concurrency.chat_active = False
+
+        chat_response = (
+            f"chat_{sentiment}" if sentiment in {"positive", "negative"} else "chat_neutral"
+        )
+        _record_probe_feedback_history(
+            domain,
+            chat_response,
+            speculator=speculator,
+            message=raw_message,
+        )
 
         if sentiment == "negative":
             speculator.user_reject_speculation(domain, cooldown_days=14)
@@ -2343,7 +2794,7 @@ def create_app(
 
     @app.get("/api/sources/xhs/next-task")
     def xhs_next_task(response: Any = None) -> Any:
-        """Return the oldest pending xhs task, or 204 if none."""
+        """Claim and return the oldest runnable xhs task, or 204 if none."""
         from starlette.responses import Response
 
         # 204 No Content responses MUST NOT carry a body (RFC 7230).
@@ -2360,13 +2811,6 @@ def create_app(
 
         import json as _json
 
-        # TEMP DEBUG: surface every served task type so we can see
-        # what the extension dispatcher is consuming.
-        logger.warning(
-            "[xhs-debug] /api/sources/xhs/next-task served: type=%s id=%s",
-            task.get("type"),
-            str(task.get("id", ""))[:8],
-        )
         payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
         return {
             "id": task["id"],
@@ -2634,6 +3078,89 @@ def create_app(
                 await publish({"type": "dy_task_available", "source": "task_kick"})
         return {"ok": True}
 
+    # ── YouTube bootstrap endpoints ────────────────────────────────
+    from openbiliclaw.sources.yt_tasks import (
+        YtTaskQueue,
+        yt_bootstrap_items_to_events,
+    )
+
+    _yt_task_queue: YtTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _yt_task_queue = YtTaskQueue(ctx.database)
+
+    @app.get("/api/sources/yt/next-task")
+    def yt_next_task(response: Any = None) -> Any:
+        """Return the oldest pending YouTube task, or 204 if none."""
+        from starlette.responses import Response
+
+        if _yt_task_queue is None:
+            return Response(status_code=204)
+        task = _yt_task_queue.next_pending()
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/yt/task-result")
+    async def yt_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a YouTube task result from the extension dispatcher."""
+        task_id = payload.get("task_id", "")
+        status = payload.get("status", "")
+        items = [v for v in payload.get("items", []) if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        if not task_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=422, detail="task_id is required")
+
+        if _yt_task_queue is None:
+            return {"ok": True}
+
+        task = _yt_task_queue.get(task_id)
+        task_type = str(task.get("type", "")).strip() if task else ""
+
+        if status in {"partial", "ok"} or (status == "empty" and task_type == "bootstrap_profile"):
+            is_final = status == "ok" or (status == "empty" and task_type == "bootstrap_profile")
+            added_items = _yt_task_queue.merge_result(
+                task_id,
+                items=items if items else None,
+                scope_counts=scope_counts,
+                debug=debug,
+                complete=is_final,
+            )
+            if task_type == "bootstrap_profile" and added_items:
+                profile_events: list[dict[str, Any]] = []
+                for event in yt_bootstrap_items_to_events(added_items):
+                    await ctx.memory_manager.propagate_event(event)
+                    profile_events.append(event)
+                await _ingest_profile_update_events(profile_events)
+        else:
+            _yt_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+
+        return {"ok": True}
+
+    @app.post("/api/sources/yt/kick")
+    async def yt_task_kick() -> dict[str, Any]:
+        """Broadcast `yt_task_available` over runtime-stream."""
+        publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "yt_task_available", "source": "task_kick"})
+        return {"ok": True}
+
     @app.post("/api/extension/reload")
     async def extension_reload() -> dict[str, Any]:
         """Dev-only: broadcast `extension_reload` so the connected
@@ -2672,6 +3199,7 @@ def create_app(
                 base_url=p.base_url,
                 http_referer=getattr(p, "http_referer", ""),
                 x_title=getattr(p, "x_title", ""),
+                reasoning_effort=getattr(p, "reasoning_effort", ""),
             )
 
         issue_list = [ConfigIssueOut(field=i.field, message=i.message) for i in (issues or [])]
@@ -2718,11 +3246,49 @@ def create_app(
                 browser_executable=cfg.bilibili.browser_executable,
                 browser_headed=cfg.bilibili.browser_headed,
             ),
+            sources=SourcesConfigOut(
+                browser=SourcesBrowserConfigOut(
+                    cdp_url=cfg.sources.browser_cdp_url,
+                    headed=cfg.sources.browser_headed,
+                ),
+                xiaohongshu=XiaohongshuSourceConfigOut(
+                    enabled=cfg.sources.xiaohongshu.enabled,
+                    daily_search_budget=cfg.sources.xiaohongshu.daily_search_budget,
+                    daily_creator_budget=cfg.sources.xiaohongshu.daily_creator_budget,
+                    task_interval_seconds=cfg.sources.xiaohongshu.task_interval_seconds,
+                ),
+                douyin=DouyinSourceConfigOut(
+                    enabled=cfg.sources.douyin.enabled,
+                    mode=cfg.sources.douyin.mode,
+                    cookie_env=cfg.sources.douyin.cookie_env,
+                    daily_search_budget=cfg.sources.douyin.daily_search_budget,
+                    daily_hot_budget=cfg.sources.douyin.daily_hot_budget,
+                    daily_feed_budget=cfg.sources.douyin.daily_feed_budget,
+                    request_interval_seconds=cfg.sources.douyin.request_interval_seconds,
+                ),
+                youtube=YoutubeSourceConfigOut(
+                    enabled=cfg.sources.youtube.enabled,
+                ),
+            ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
                 discovery_cron=cfg.scheduler.discovery_cron,
                 pool_target_count=cfg.scheduler.pool_target_count,
+                pool_source_shares=dict(cfg.scheduler.pool_source_shares),
                 account_sync_interval_hours=cfg.scheduler.account_sync_interval_hours,
+                speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
+                speculation_ttl_days=cfg.scheduler.speculation_ttl_days,
+                speculation_cooldown_days=cfg.scheduler.speculation_cooldown_days,
+                speculation_confirmation_threshold=(
+                    cfg.scheduler.speculation_confirmation_threshold
+                ),
+                speculation_max_active=cfg.scheduler.speculation_max_active,
+                speculation_max_primary_interests=(
+                    cfg.scheduler.speculation_max_primary_interests
+                ),
+                speculation_max_secondary_interests=(
+                    cfg.scheduler.speculation_max_secondary_interests
+                ),
                 auto_update_enabled=cfg.scheduler.auto_update_enabled,
                 auto_update_check_interval_hours=cfg.scheduler.auto_update_check_interval_hours,
             ),
@@ -2732,6 +3298,11 @@ def create_app(
                 file_level=cfg.logging.file_level,
                 directory=cfg.logging.directory,
                 filename=cfg.logging.filename,
+                max_file_size_mb=cfg.logging.max_file_size_mb,
+                backup_count=cfg.logging.backup_count,
+                aggregate_budget_mb=cfg.logging.aggregate_budget_mb,
+                unmanaged_truncate_mb=cfg.logging.unmanaged_truncate_mb,
+                unmanaged_max_age_days=cfg.logging.unmanaged_max_age_days,
             ),
             issues=issue_list,
         )
@@ -2758,12 +3329,20 @@ def create_app(
         """
         from openbiliclaw.config import (
             _collect_config_issues,
+            _normalize_pool_source_shares,
             load_config,
             save_config,
         )
 
         cfg = load_config()
         update = payload.model_dump(exclude_none=True)
+
+        def _as_bool(value: object) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+            return bool(value)
 
         # Apply top-level scalars
         if "language" in update:
@@ -2788,7 +3367,14 @@ def create_app(
                 if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
                     provider_cfg = getattr(cfg.llm, provider_name)
                     pdata = llm_data[provider_name]
-                    for field_name in ("api_key", "model", "base_url", "http_referer", "x_title"):
+                    for field_name in (
+                        "api_key",
+                        "model",
+                        "base_url",
+                        "http_referer",
+                        "x_title",
+                        "reasoning_effort",
+                    ):
                         if field_name in pdata:
                             setattr(provider_cfg, field_name, str(pdata[field_name]))
             if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
@@ -2829,7 +3415,51 @@ def create_app(
             if "browser_executable" in bdata:
                 cfg.bilibili.browser_executable = str(bdata["browser_executable"])
             if "browser_headed" in bdata:
-                cfg.bilibili.browser_headed = bool(bdata["browser_headed"])
+                cfg.bilibili.browser_headed = _as_bool(bdata["browser_headed"])
+
+        # Apply source updates
+        if "sources" in update:
+            sources_data = update["sources"]
+            if isinstance(sources_data, dict):
+                browser_data = sources_data.get("browser")
+                if isinstance(browser_data, dict):
+                    if "cdp_url" in browser_data:
+                        cfg.sources.browser_cdp_url = str(browser_data["cdp_url"])
+                    if "headed" in browser_data:
+                        cfg.sources.browser_headed = _as_bool(browser_data["headed"])
+
+                xhs_data = sources_data.get("xiaohongshu")
+                if isinstance(xhs_data, dict):
+                    if "enabled" in xhs_data:
+                        cfg.sources.xiaohongshu.enabled = _as_bool(xhs_data["enabled"])
+                    for key in (
+                        "daily_search_budget",
+                        "daily_creator_budget",
+                        "task_interval_seconds",
+                    ):
+                        if key in xhs_data:
+                            setattr(cfg.sources.xiaohongshu, key, int(xhs_data[key]))
+
+                dy_data = sources_data.get("douyin")
+                if isinstance(dy_data, dict):
+                    if "enabled" in dy_data:
+                        cfg.sources.douyin.enabled = _as_bool(dy_data["enabled"])
+                    if "mode" in dy_data:
+                        cfg.sources.douyin.mode = str(dy_data["mode"])
+                    if "cookie_env" in dy_data:
+                        cfg.sources.douyin.cookie_env = str(dy_data["cookie_env"])
+                    for key in (
+                        "daily_search_budget",
+                        "daily_hot_budget",
+                        "daily_feed_budget",
+                        "request_interval_seconds",
+                    ):
+                        if key in dy_data:
+                            setattr(cfg.sources.douyin, key, int(dy_data[key]))
+
+                yt_data = sources_data.get("youtube")
+                if isinstance(yt_data, dict) and "enabled" in yt_data:
+                    cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
 
         # Apply scheduler updates
         if "scheduler" in update:
@@ -2839,17 +3469,28 @@ def create_app(
                 "discovery_cron",
                 "pool_target_count",
                 "account_sync_interval_hours",
+                "speculation_interval_minutes",
+                "speculation_ttl_days",
+                "speculation_cooldown_days",
+                "speculation_confirmation_threshold",
+                "speculation_max_active",
+                "speculation_max_primary_interests",
+                "speculation_max_secondary_interests",
                 "auto_update_enabled",
                 "auto_update_check_interval_hours",
             ):
                 if key in sdata:
                     current_val = getattr(cfg.scheduler, key)
                     if isinstance(current_val, bool):
-                        setattr(cfg.scheduler, key, bool(sdata[key]))
+                        setattr(cfg.scheduler, key, _as_bool(sdata[key]))
                     elif isinstance(current_val, int):
                         setattr(cfg.scheduler, key, int(sdata[key]))
                     else:
                         setattr(cfg.scheduler, key, str(sdata[key]))
+            if "pool_source_shares" in sdata:
+                cfg.scheduler.pool_source_shares = _normalize_pool_source_shares(
+                    sdata["pool_source_shares"]
+                )
 
         # Apply storage updates
         if "storage" in update:
@@ -2863,6 +3504,15 @@ def create_app(
             for key in ("level", "file_level", "directory", "filename"):
                 if key in ldata:
                     setattr(cfg.logging, key, str(ldata[key]))
+            for key in (
+                "max_file_size_mb",
+                "backup_count",
+                "aggregate_budget_mb",
+                "unmanaged_truncate_mb",
+                "unmanaged_max_age_days",
+            ):
+                if key in ldata:
+                    setattr(cfg.logging, key, int(ldata[key]))
 
         # Save to disk
         saved_path = save_config(cfg)
@@ -2896,6 +3546,68 @@ def create_app(
             message=reload_message,
             reloaded=reloaded,
         )
+
+    def _normalize_enabled_sources_override(
+        raw_enabled: dict[str, bool] | None,
+        fallback: dict[str, bool],
+    ) -> dict[str, bool]:
+        if raw_enabled is None:
+            return fallback
+        enabled = {"bilibili": True}
+        for source in _SOURCE_SHARE_ORDER:
+            if source == "bilibili":
+                continue
+            enabled[source] = bool(raw_enabled.get(source, False))
+        return {source: enabled.get(source, False) for source in _SOURCE_SHARE_ORDER}
+
+    def _build_source_share_suggestion_response(
+        payload: SourceShareSuggestionIn | None = None,
+    ) -> SourceShareSuggestionResponse:
+        """Suggest pool source shares from observed platform event counts."""
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.source_policy import (
+            source_enabled_map,
+            suggest_pool_source_shares,
+        )
+
+        cfg = load_config()
+        event_counts = _count_events_by_source_platform(ctx.database)
+        enabled_sources = _normalize_enabled_sources_override(
+            payload.enabled_sources if payload else None,
+            source_enabled_map(cfg),
+        )
+        suggested_shares = suggest_pool_source_shares(
+            event_counts,
+            enabled_sources=enabled_sources,
+            configured_shares=(
+                payload.configured_shares
+                if payload and payload.configured_shares is not None
+                else cfg.scheduler.pool_source_shares
+            ),
+        )
+        return SourceShareSuggestionResponse(
+            event_counts=event_counts,
+            enabled_sources=enabled_sources,
+            suggested_shares=suggested_shares,
+        )
+
+    @app.get(
+        "/api/config/source-share-suggestion",
+        response_model=SourceShareSuggestionResponse,
+    )
+    def source_share_suggestion() -> SourceShareSuggestionResponse:
+        """Suggest pool source shares from saved config switches."""
+        return _build_source_share_suggestion_response()
+
+    @app.post(
+        "/api/config/source-share-suggestion",
+        response_model=SourceShareSuggestionResponse,
+    )
+    def source_share_suggestion_for_form(
+        payload: SourceShareSuggestionIn,
+    ) -> SourceShareSuggestionResponse:
+        """Suggest pool source shares from unsaved settings form state."""
+        return _build_source_share_suggestion_response(payload)
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that
     # accumulated before the per-path filter was wired in. No-op on

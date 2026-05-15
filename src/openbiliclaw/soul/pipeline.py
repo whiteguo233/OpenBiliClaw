@@ -818,7 +818,20 @@ class ProfileUpdatePipeline:
         from openbiliclaw.soul.profile import InterestDomain
 
         profile = self._load_profile()
-        tick_result = await self._speculator.tick(profile)  # type: ignore[union-attr]
+        feedback_history: object = []
+        load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
+        if callable(load_runtime_state):
+            try:
+                runtime_state = load_runtime_state()
+                if isinstance(runtime_state, dict):
+                    feedback_history = runtime_state.get("probe_feedback_history", [])
+            except Exception:
+                logger.debug("Failed to load probe feedback history", exc_info=True)
+        tick = self._speculator.tick  # type: ignore[union-attr]
+        try:
+            tick_result = await tick(profile, feedback_history=feedback_history)
+        except TypeError:
+            tick_result = await tick(profile)
 
         # Promote confirmed speculations into the interest layer
         if tick_result.promoted:

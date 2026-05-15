@@ -78,6 +78,7 @@ class TestConfigDefaults:
         assert config.llm.default_provider == "openai"
         assert config.bilibili.auth_method == "cookie"
         assert config.scheduler.enabled is True
+        assert config.scheduler.discovery_cron == "0 */8 * * *"
         assert config.scheduler.pool_target_count == 600
 
     def test_config_defaults_pool_target_count_to_600(self) -> None:
@@ -92,6 +93,7 @@ class TestConfigDefaults:
             "bilibili": 8,
             "xiaohongshu": 1,
             "douyin": 1,
+            "youtube": 1,
         }
 
     def test_build_from_empty_dict(self) -> None:
@@ -434,6 +436,7 @@ def test_scheduler_pool_source_shares_override(tmp_path: Path) -> None:
 bilibili = 7
 xiaohongshu = 2
 douyin = 1
+youtube = 3
 """.strip(),
         encoding="utf-8",
     )
@@ -444,6 +447,7 @@ douyin = 1
         "bilibili": 7,
         "xiaohongshu": 2,
         "douyin": 1,
+        "youtube": 3,
     }
 
 
@@ -473,6 +477,7 @@ def test_sources_browser_defaults_are_empty() -> None:
 def test_sources_xiaohongshu_defaults() -> None:
     config = _build_config({})
 
+    assert config.sources.xiaohongshu.enabled is True
     assert config.sources.xiaohongshu.daily_search_budget == 30
     assert config.sources.xiaohongshu.daily_creator_budget == 10
     assert config.sources.xiaohongshu.task_interval_seconds == 45
@@ -490,11 +495,18 @@ def test_sources_douyin_defaults() -> None:
     assert config.sources.douyin.request_interval_seconds == 2
 
 
+def test_sources_youtube_defaults() -> None:
+    config = _build_config({})
+
+    assert config.sources.youtube.enabled is False
+
+
 def test_build_config_supports_sources_xiaohongshu(tmp_path: Path) -> None:
     toml_path = tmp_path / "c.toml"
     toml_path.write_text(
         """
 [sources.xiaohongshu]
+enabled = false
 daily_search_budget = 30
 daily_creator_budget = 5
 task_interval_seconds = 60
@@ -504,6 +516,7 @@ task_interval_seconds = 60
 
     config = load_config(toml_path)
 
+    assert config.sources.xiaohongshu.enabled is False
     assert config.sources.xiaohongshu.daily_search_budget == 30
     assert config.sources.xiaohongshu.daily_creator_budget == 5
     assert config.sources.xiaohongshu.task_interval_seconds == 60
@@ -536,6 +549,21 @@ request_interval_seconds = 4
     assert config.sources.douyin.request_interval_seconds == 4
 
 
+def test_build_config_supports_sources_youtube(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[sources.youtube]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.sources.youtube.enabled is True
+
+
 def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config = Config()
@@ -554,6 +582,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "bilibili": 6,
         "xiaohongshu": 2,
         "douyin": 2,
+        "youtube": 1,
     }
 
     save_config(config, config_path)
@@ -563,7 +592,44 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "bilibili": 6,
         "xiaohongshu": 2,
         "douyin": 2,
+        "youtube": 1,
     }
+
+
+def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
+    tmp_path: Path,
+) -> None:
+    """Popup/API saves must not drop advanced fields that the UI may not edit."""
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.scheduler.speculation_interval_minutes = 22
+    config.scheduler.speculation_ttl_days = 8
+    config.scheduler.speculation_cooldown_days = 9
+    config.scheduler.speculation_confirmation_threshold = 4
+    config.scheduler.speculation_max_active = 6
+    config.scheduler.speculation_max_primary_interests = 17
+    config.scheduler.speculation_max_secondary_interests = 66
+    config.scheduler.auto_update_enabled = True
+    config.scheduler.auto_update_check_interval_hours = 12
+    config.logging.aggregate_budget_mb = 444
+    config.logging.unmanaged_truncate_mb = 55
+    config.logging.unmanaged_max_age_days = 6
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.scheduler.speculation_interval_minutes == 22
+    assert loaded.scheduler.speculation_ttl_days == 8
+    assert loaded.scheduler.speculation_cooldown_days == 9
+    assert loaded.scheduler.speculation_confirmation_threshold == 4
+    assert loaded.scheduler.speculation_max_active == 6
+    assert loaded.scheduler.speculation_max_primary_interests == 17
+    assert loaded.scheduler.speculation_max_secondary_interests == 66
+    assert loaded.scheduler.auto_update_enabled is True
+    assert loaded.scheduler.auto_update_check_interval_hours == 12
+    assert loaded.logging.aggregate_budget_mb == 444
+    assert loaded.logging.unmanaged_truncate_mb == 55
+    assert loaded.logging.unmanaged_max_age_days == 6
 
 
 def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:

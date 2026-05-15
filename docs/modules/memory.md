@@ -106,6 +106,7 @@
 | 持续刷新状态 | ✅ | `discovery_runtime.json` 记录候选池刷新、通知游标和最近处理事件位置 |
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
 | 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、签名和最近错误 |
+| 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊和兴趣猜测内聊的 pending/completed/failed 状态 |
 
 ## 公开 API
 
@@ -139,6 +140,20 @@ events = memory.query_events(
 
 # 事件统计
 stats = memory.get_event_stats()  # {"view": 42, "search": 7, ...}
+
+# 插件 side panel 的 durable chat turn 由 Database 管理：
+from openbiliclaw.storage.database import Database
+
+database = Database(Path("data/openbiliclaw.db"))
+database.initialize()
+turn = database.create_chat_turn(
+    turn_id="turn-...",
+    session="popup",
+    scope="chat",  # chat|delight|probe
+    message="我想继续聊聊这个方向",
+)
+database.complete_chat_turn(turn["turn_id"], reply="这句我记下了。")
+history = database.list_chat_turns(session="popup", scope="chat")
 
 # 层操作
 layer = memory.get_layer("preference")
@@ -348,11 +363,19 @@ data/memory/
 |------|------|-----------|
 | `feedback_state.json` | 记录反馈处理到了哪一条，避免重复分析 | SoulEngine |
 | `account_sync_state.json` | 历史/收藏/关注的增量同步游标和签名 | AccountSyncService |
-| `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题 | RefreshController |
+| `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题、近期 probe domain / axis 历史、显式 probe feedback 历史 | RefreshController / OpenClaw / FastAPI |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
 | `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → 浏览器插件通知 |
 
 设计原则：每种状态独立文件，不和画像数据混存。
+
+`discovery_runtime.json` 里与兴趣探针相关的字段：
+
+| 字段 | 结构 | 说明 |
+|------|------|------|
+| `probed_domains` | `{normalized_domain: iso_timestamp}` | 近期已推送 / 已返回的 probe domain，用于短期避免重复问同一方向 |
+| `probed_axes` | `{experience_mode|entry_load: iso_timestamp}` | 近期已推送 / 已返回的体验轴，用于在验证压力相同的候选中优先选择不同体验 |
+| `probe_feedback_history` | `[{domain,response,axis?,category?,reason?,specifics?,message?,created_at}]` | 最近 100 条用户显式探针反馈；reject / chat_negative 会参与后续 novelty guard 与 probe selection，confirm / chat_positive / chat_neutral 只作为审计记录 |
 
 ## 系统集成
 
@@ -391,6 +414,7 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 8. **插件事件兼容**：事件层白名单已扩到插件采集事件，避免 `/api/events` 在 `snapshot`、`scroll`、`hover`、`seek` 等行为上拒收
 9. **反馈状态独立持久化**：`feedback_state.json` 单独保存反馈处理游标，避免把运行状态塞进 `preference.json` 或 `soul.json`
 10. **聊天候选与正式画像分层**：聊天提取出的 `insight_candidates.json` 先作为中间状态保留，不直接覆盖 `soul.json`
-11. **候选池运行状态分层**：`discovery_runtime.json` 只负责刷新与通知游标，不与 `feedback_state.json`、`insight_candidates.json` 或画像数据混存
-12. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
+11. **插件聊天回合独立持久化**：`chat_turns` 只保存 side panel durable turn 的请求、回复和状态，解决 Chrome side panel reload / discard 时 DOM 和 JS 内存丢失的问题；它不替代事件层学习，完成后的 dialogue/cognition 仍按后端流程受控进入画像链路
+12. **候选池运行状态分层**：`discovery_runtime.json` 只负责刷新与通知游标，不与 `feedback_state.json`、`insight_candidates.json` 或画像数据混存
+13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
 13. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标和签名，避免每轮全量重灌事件层

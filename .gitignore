@@ -66,6 +66,11 @@ output/
 .cc-connect/
 .claude/
 
+# Local dev caches
+.deps/
+.playwright-mcp/
+
 # Logs
 *.log
 logs/
+extension/dist-firefox/

@@ -1217,6 +1217,53 @@ async def test_update_interest_ingests_speculative_seeds(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_update_interest_dedupes_speculative_seeds_against_profile(
+    tmp_path: Path,
+) -> None:
+    """PreferenceAnalyzer seeds should not restate existing profile specifics."""
+    from openbiliclaw.soul.layer_updaters import _update_interest
+    from openbiliclaw.soul.profile import InterestDomain, InterestLayer, InterestSpecific
+    from openbiliclaw.soul.speculator import load_speculative_state
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+
+    class _SeedingService:
+        async def complete_structured_task(self, **kwargs: Any) -> LLMResponse:
+            payload = json.loads(_PREF_RESP)
+            payload["speculative_interests"] = [
+                {"name": "ComfyUI工作流拆解", "category": "AI", "weight": 0.5},
+                {"name": "量子计算", "category": "知识", "weight": 0.5},
+            ]
+            return LLMResponse(content=json.dumps(payload), provider="fake")
+
+    svc = _SeedingService()
+    profile = OnionProfile(
+        interest=InterestLayer(
+            likes=[
+                InterestDomain(
+                    domain="AI",
+                    specifics=[InterestSpecific(name="ComfyUI工作流")],
+                )
+            ]
+        )
+    )
+
+    await _update_interest(
+        signals=[{"payload": {"event_type": "view", "title": "AI"}}],
+        profile=profile,
+        memory=memory,
+        preference_analyzer=PreferenceAnalyzer(registry=svc),
+        profile_builder=ProfileBuilder(registry=svc),
+    )
+
+    state = load_speculative_state(Path(tmp_path))
+    domains = {s.domain for s in state.active}
+    assert "量子计算" in domains
+    assert "ComfyUI工作流拆解" not in domains
+
+
+@pytest.mark.asyncio
 async def test_update_interest_detects_dislike_changes(tmp_path: Path) -> None:
     """New disliked_topics from analyzer should produce '新增讨厌' changes."""
     from openbiliclaw.soul.layer_updaters import _update_interest

@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -35,15 +36,8 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
-_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
-
-
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
-    scheduler = getattr(config, "scheduler", None)
-    shares = getattr(scheduler, "pool_source_shares", None)
-    if not isinstance(shares, dict):
-        return dict(_DEFAULT_POOL_SOURCE_SHARES)
-    return dict(shares)
+    return effective_pool_source_shares(config)
 
 
 @dataclass
@@ -244,6 +238,45 @@ class RuntimeContext:
         xiaohongshu_adapter = XiaohongshuAdapter()
         new_discovery_engine.register_adapter(xiaohongshu_adapter)
 
+        # 7c. YouTube discovery strategies — only registered when the user
+        # has YouTube follow events in the DB (i.e. has run init --yes-youtube
+        # or fetch-youtube at least once).  Registration is intentionally
+        # gated so the strategies don't fire for users who never set up YouTube.
+        try:
+            from openbiliclaw.discovery.strategies.youtube import (
+                YoutubeChannelStrategy,
+                YoutubeSearchStrategy,
+                YoutubeTrendingStrategy,
+            )
+            from openbiliclaw.youtube.client import YtScraperClient
+
+            yt_client = YtScraperClient()
+            yt_search = YoutubeSearchStrategy(
+                client=yt_client,
+                llm_service=new_llm_service,
+                concurrency=concurrency,
+            )
+            yt_trending = YoutubeTrendingStrategy(
+                client=yt_client,
+                llm_service=new_llm_service,
+                concurrency=concurrency,
+            )
+            yt_channel = YoutubeChannelStrategy(
+                client=yt_client,
+                llm_service=new_llm_service,
+                memory=cast("Any", self.memory_manager),
+                concurrency=concurrency,
+            )
+            new_discovery_engine.register_strategy(yt_search)
+            new_discovery_engine.register_strategy(yt_trending)
+            new_discovery_engine.register_strategy(yt_channel)
+            logger.info("YouTube discovery strategies registered")
+        except ImportError as _yt_import_err:
+            logger.info(
+                "YouTube discovery skipped (scrapetube/yt-dlp not installed): %s",
+                _yt_import_err,
+            )
+
         # 8. Continuous refresh controller
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
@@ -253,11 +286,14 @@ class RuntimeContext:
 
             xhs_cfg = getattr(new_config.sources, "xiaohongshu", None)
             sched_cfg = getattr(new_config, "scheduler", None)
+            xhs_enabled = bool(getattr(xhs_cfg, "enabled", True)) and bool(
+                getattr(sched_cfg, "enabled", True)
+            )
             new_xhs_producer = XhsTaskProducer(
                 task_queue=XhsTaskQueue(self.database),
                 soul_engine=new_soul_engine,
                 llm_service=new_llm_service,
-                enabled=bool(getattr(sched_cfg, "enabled", True)),
+                enabled=xhs_enabled,
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 30)),
             )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
@@ -372,7 +408,26 @@ class RuntimeContext:
                 profile = await self.soul_engine.get_profile()
                 speculator = getattr(self.soul_engine, "_speculator", None)
                 if speculator is not None:
-                    await speculator.force_tick(profile)
+                    feedback_history: object = []
+                    load_runtime_state = getattr(
+                        self.memory_manager,
+                        "load_discovery_runtime_state",
+                        None,
+                    )
+                    if callable(load_runtime_state):
+                        runtime_state = load_runtime_state()
+                        if isinstance(runtime_state, dict):
+                            feedback_history = runtime_state.get(
+                                "probe_feedback_history",
+                                [],
+                            )
+                    try:
+                        await speculator.force_tick(
+                            profile,
+                            feedback_history=feedback_history,
+                        )
+                    except TypeError:
+                        await speculator.force_tick(profile)
             except Exception:
                 pass  # Profile not initialized yet — skip silently
 

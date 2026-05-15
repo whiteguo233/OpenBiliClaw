@@ -114,6 +114,47 @@ test("openExtensionUi prefers chrome.sidePanel when available", async () => {
   assert.deepEqual(calls, [{ type: "sidePanel", value: { windowId: 42 } }]);
 });
 
+test("openExtensionUi uses Firefox sidebarAction when Chrome sidePanel is unavailable", async () => {
+  const previousBrowser = (globalThis as Record<string, unknown>).browser;
+  const calls: string[] = [];
+  (globalThis as Record<string, unknown>).browser = {
+    sidebarAction: {
+      async open() {
+        calls.push("sidebarAction.open");
+      },
+    },
+  };
+
+  try {
+    const chromeLike = {
+      runtime: {
+        getURL(path: string) {
+          return `chrome-extension://__EXTENSION_ID__/${path}`;
+        },
+      },
+      tabs: {
+        async create(_options: { url: string }) {
+          calls.push("tabs.create");
+        },
+      },
+    };
+
+    const result = await openExtensionUi(chromeLike, {
+      windowId: 42,
+      tab: "profile",
+    });
+
+    assert.equal(result, "sidebarPanel");
+    assert.deepEqual(calls, ["sidebarAction.open"]);
+  } finally {
+    if (previousBrowser === undefined) {
+      delete (globalThis as Record<string, unknown>).browser;
+    } else {
+      (globalThis as Record<string, unknown>).browser = previousBrowser;
+    }
+  }
+});
+
 test("openExtensionUi falls back to extension tab when sidePanel is unavailable", async () => {
   const calls: Array<{ type: string; value: unknown }> = [];
   const chromeLike = {

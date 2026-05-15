@@ -4,9 +4,41 @@
 
 ---
 
+## v0.3.71: Firefox 扩展构建与打包补强（2026-05-16）
+
+- 浏览器扩展新增 Firefox 140+ 支持：新增 `manifest.firefox.json` 使用 `sidebar_action` 替代 Chrome 的 `sidePanel`，`npm run build:firefox` / `npm run package:firefox` 产出独立 `dist-firefox/` 和 `openbiliclaw-extension-v*-firefox.zip`；`openExtensionUi()` 增加 Chrome sidePanel -> Firefox sidebarAction -> tab 的三段降级。Firefox manifest 的 version 在构建时从 `manifest.json` 注入，并声明 AMO 所需 `data_collection_permissions`；Chrome / Firefox 打包前都会删除旧 zip，避免本地重复打包残留过期文件。Chrome / Edge / Brave 构建路径完全不变。
+- 浏览器插件版本提升到 v0.3.23，避免复用已发布的 `extension-v0.3.22` tag / release 资产语义。
+- README / README_EN 顶部 highlights callout 收敛为“只保留最新版本、≤4 条、≤1 句、CN/EN 同步”，完整历史继续放在 changelog，避免 README 顶部堆成迷你变更日志。
+
+---
+
+## v0.3.70: 修复扩展未启动后端时 WebSocket 报错（2026-05-16）
+
+- 修复 [#7](https://github.com/whiteguo233/OpenBiliClaw/issues/7)：扩展 service worker 连接 `/api/runtime-stream` 之前先做一次 2 秒超时的 HTTP `GET /api/health` 健康探针，只有后端可达才 `new WebSocket(...)`。fresh-install 用户只装扩展、未启动 `openbiliclaw start` 时，`chrome://extensions` 不会再被浏览器层的 `WebSocket ... ERR_CONNECTION_REFUSED` 计入「错误」徽标；健康探针失败仍走 5s → 60s 指数退避兜底重连，后端起来后自动恢复。
+- 后端不可达时在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内继续显示「后端还没开张，先运行 `openbiliclaw start`」。
+- 浏览器插件版本提升到 v0.3.22 并准备发布该修复。
+
+---
+
 ## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
 
 - Gemini provider 在 json_mode 下识别 reasoning-first 模型（`gemini-3.x` / `gemini-2.5-pro*`）并跳过 `thinking_budget=0` 优化，避免 `gemini-3.1-pro-preview` 等模型被 Google API 以 `400 INVALID_ARGUMENT` 拒绝；`gemini-2.5-flash` 的省钱通路保持原样。同时补全 pricing 别名（`gemini-3.1-pro-preview` / `gemini-3-pro-preview`），CLI / config / 文档统一改用真实模型 ID 并标注 Public Preview 需付费项目。
+- 兴趣探针新增本地 novelty guard：LLM 生成和 PreferenceAnalyzer seed 注入都会对照现有画像 domain / specifics、active/cooldown 猜测和近期 probe history 做规范化字符串 + 中文 bigram 去重，避免把已知画像细项换皮成新探针；active pool 多样性选择也会参考已有 active 体验轴。
+- probe 近期历史补齐持久化：`discovery_runtime_state` 现在保存 `probed_axes`，OpenClaw `next-probe` 成功返回后也会记录 domain / axis，连续调用不再重复拿同一条 active probe。
+- probe 显式反馈纳入历史治理：`/api/interest-probes/respond` 现在记录 `probe_feedback_history`，后续 LLM 生成、PreferenceAnalyzer seed、runtime push 和 OpenClaw `next-probe` 会避开 reject / chat_negative 明显重复的方向，并降低负向反馈体验轴的入池/推送优先级。
+- 搜索词生成 prompt 新增 Rule 10：禁止从 `favorite_up_users` 创作者名字推断其内容类型作为 query 主题，避免跨平台关注的作者（如抖音耽美作者）泄漏到 B 站搜索发现。
+- pool_source_shares 多源配比修复：`[sources.xiaohongshu]` 新增 `enabled` 字段（默认 `true`，init 选 No / `--no-xhs` / `OPENBILICLAW_NO_XHS=1` 会写回 `false`），关闭后 XhsTaskProducer 不再吃 `daily_search_budget` 跑空；`[sources.youtube]` 新增 `enabled` 字段（默认 `false`）；`runtime_context._pool_source_shares_from_config` 会按 `enabled` 剔除被关闭源的份额，让 bilibili 自动吃下剩余配额而不是把池子卡在 540/600；`_pool_source_family` 识别 YouTube `yt_search` / `yt_channel` 等来源；controller 启动时若发现仍有"有配额但 producer is None"的源，会 warn 一次。
+- source policy 控制面补齐：`[scheduler.pool_source_shares]` 默认保存 B 站 / 小红书 / 抖音 / YouTube = `8 / 1 / 1 / 1`，但 runtime / OpenClaw 都只使用按 `sources.<platform>.enabled` 剔除后的有效配比；`init` 会写回小红书 / 抖音 / YouTube 开关，并在采集完事件后按各平台事件量推荐比例让用户确认或手填；`/api/config/source-share-suggestion` 与插件设置页可按已有事件重新生成建议比例。
+- 插件设置页的“按已有信号建议比例”修复为按当前页面尚未保存的平台开关 / 比例 POST 生成，避免按钮因 `setVal` 作用域错误点击失败，也避免先勾选或关闭渠道后仍按旧保存配置给建议值。
+- Chrome 插件版本提升到 v0.3.21，随设置页比例建议 POST 修复重新发布；后端包版本对齐当前 v0.3.69 changelog，便于同步分发新的 `/api/config/source-share-suggestion` POST 能力。
+- Chrome side panel 聊天改为 durable turn：新增后端 `/api/chat/turns` 创建 / 查询接口和 SQLite `chat_turns` 表，popup 主聊天、惊喜推荐内聊和兴趣猜测内聊都会先写入 `pending` 再轮询完成；Chrome 切 tab、reload 或丢弃不可见 side panel 后可恢复消息、thinking 占位和已完成回复。
+- 插件设置页与后端配置 schema 对齐：新增 DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站 / sources 浏览器配置、小红书 / 抖音预算、数据目录 / SQLite、scheduler 高级项、候选池平台配比、自动更新和 logging 清理参数，并通过 `/api/config` 完整读写。
+- `/api/config` 现在暴露并保存 `sources.*`、scheduler speculation / `pool_source_shares` / auto-update interval、logging rotation / unmanaged cleanup 和 `llm.deepseek.reasoning_effort`；`save_config()` 同步串行化这些隐藏高级字段，避免插件保存常用项时把它们丢回默认值。
+- 配置默认值文档和示例补齐：`discovery_cron` 统一为 `"0 */8 * * *"`，`auto_update_enabled` 统一为保守默认 `false`，配置参考移除已废弃的 `[sources.xiaohongshu].sidecar_url`，并补上 YouTube / XHS / Douyin init 环境变量说明。
+- YouTube 已接入首次 `init` 的多源画像链路：交互式 `--yes-youtube` / `--no-youtube` 决策、`OPENBILICLAW_NO_YOUTUBE=1` 环境跳过、浏览器扩展 `yt_tasks` 串行拉取观看历史 / 订阅 / 点赞，并把事件送入 `analyze_events()` 与 `build_initial_profile()`。
+- YouTube discovery 真实 smoke 补强并修复集成问题：`yt_search` 现在正确解析真实 `LLMService` 返回的 `LLMResponse.content` 作为搜索关键词，`yt_channel` 可从真实 YouTube follow 事件里的频道 URL 拉取最新视频并在 `scrapetube` 失效时使用 `yt-dlp` fallback，`ContentDiscoveryEngine` 改为按跨源 `source_platform + content_id` 去重 / 缓存，避免多个 YouTube 候选因空 `bvid` 被合并。
+- `yt_trending` 增加真实网络 fallback：当 YouTube 当前 `FEtrending` InnerTube browseId 返回 400 时，改为抓取公开 topic 页（gaming / sports / news / podcasts / live）的 `ytInitialData` 视频并继续进入 LLM 打分，真实 smoke 已从 `fetched=0` 恢复为可产出候选。
+- 新增 YouTube 单源工具：`openbiliclaw fetch-youtube` 用于 smoke 浏览器扩展任务桥，`openbiliclaw import-youtube <path>` 支持 Google Takeout `.zip` 或目录导入观看历史 / 订阅 / 点赞。
 - 新增 GitHub Pages 项目主页：`docs/index.html` 作为 `/docs` 发布入口，首屏突出纯本地 / 私有 / 开源 / 自进化跨平台内容发现 Agent 定位，并提供一句话安装提示、Chrome 插件下载、GitHub 源码、产品闭环和推荐 / 价值画像 / 认知风格 / 聊天校准截图；原文档导航保留在 `docs/index.md`。
 - GitHub Pages 项目主页新增中英文双语切换：默认跟随浏览器语言，用户手动选择后写入 `localStorage`，安装提示、导航、CTA、截图说明、架构说明和复制按钮状态均同步切换。
 - Chrome 插件版本提升到 v0.3.20 并准备发布：打包这几天已合入的抖音任务桥、Douyin search / hot / feed 插件签名链路、抖音 Cookie 同步和小红书 / 抖音 dispatcher 互斥，manifest 描述同步改为跨平台内容发现 Agent。
@@ -21,6 +53,8 @@
 - discovery LLM 评估增加池子容量感知：runtime 会按 B 站平台缺口而不是总池子缺口决定本轮 limit；`search` / `trending` / `related_chain` / `explore` / `douyin_direct` 在送 LLM 前会把候选窗口收缩到 `max(12, limit*4)`、上限 90，避免只缺少量候选时仍评估几十条并随后立刻 suppressed。
 - discovery batch 评估解析补强：兼容 provider 回显输入 JSON 后再输出结果、Markdown fenced JSON，以及一行一个 JSON object 的 NDJSON 结果，避免 batch 解析失败后退回 N 次单条 LLM 评估。
 - 小红书 / 抖音 bootstrap task-result 的新增事件现在不只落 memory：profile 已初始化后会转成 `ProfileSignal` 进入 `ProfileUpdatePipeline`，让后续拉到的收藏 / 点赞 / 关注事件参与增量画像更新；首次 init 仍由 `analyze_events()` + `build_initial_profile()` 统一处理，避免重复学习。
+- 小红书 `bootstrap_profile` 加入近期任务复用和领取态防重：`init --yes-xhs` / `fetch-xhs` 默认复用 6 小时内的 pending / in-progress / completed / failed bootstrap 任务，避免反复打开前台 tab 拉收藏 / 点赞；扩展通过 `/api/sources/xhs/next-task` 取任务时会把任务原子标记为 `in_progress`，15 分钟无回写才允许重新领取。需要强制重拉可用 `openbiliclaw fetch-xhs --force` 或把 `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS=0`。
+- 抖音 discovery 插件任务改为后台 tab：`dy_tasks(type="search"|"hot"|"feed")` 仍复用登录浏览器签名桥，但 `chrome.tabs.create({active:false})` 执行，不再抢用户焦点；只有显式导入用户事件的 `bootstrap_profile` 继续以前台 tab 运行。
 - 初始化偏好分析的并发分片增加容错：当某个分片被 LLM 风控拒绝或返回非 JSON 时，会递归拆小定位问题事件，最终只跳过仍失败的单条事件，避免一个标题导致整次 `init` 中断；provider / 网络错误仍会正常失败并暴露。
 - 初始化画像生成增加 compact retry：首轮 `history_summary` 触发模型风控或坏 JSON 时，会移除原始标题 / context 后用结构化偏好、来源分布、觉察和洞察重试一次，避免真实多源初始化在最后画像阶段被单个高风险标题中断。
 - `ProfileBuilder` 的画像长度校验上限从 320 放宽到 500 字：prompt 仍要求 150-260 字，但真实模型偶尔会返回 330 字左右的有效画像，不再因为轻微超长让完整 init 失败。
@@ -31,9 +65,14 @@
 - 修复 B 站 Cookie 自动同步后的后台循环丢失：`/api/bilibili/cookie` 热重载 runtime 后会重新启动 refresh / account sync / auto update 任务，避免扩展首次同步 Cookie 后把小红书与抖音 producer 停住，导致抖音配额长期为 0；重复同步相同 Cookie 时保持幂等，不再反复 hot-reload 打断抖音 discovery 等待。
 - 抖音插件 discovery 入队前会清理过期的 search / hot / feed pending 任务，避免旧版本重复 hot-reload 留下的陈旧队列挡住当前 producer，导致新任务等到超时才回退。
 - discovery engine 注册同名 strategy 时改为替换旧实例，避免 runtime `DouyinDiscoveryService(cache=True)` 每轮追加一个新的 `douyin_direct`，导致后续一次抖音 discovery 同时跑多个相同 search 任务、快速耗尽 `daily_search_budget`。
+- B 站 `SearchStrategy` 的专用 search client 现在会继承运行时 B 站 Cookie：真实 smoke 发现匿名 WBI search 稳定返回 `data.v_voucher`，而同一签名请求带有效 Cookie 可正常返回 `result`；保留独立 client 降低 session 串扰，但不再丢认证态。
 - 抖音扩展 search 任务的单关键词超时窗口从 60 秒放宽到 180 秒，后端 runtime / CLI 默认等待窗口同步为 180 秒；真实 smoke 显示搜索页导航到 `DY_SEARCH_EXECUTE` 可能已消耗 100s+，旧 120s 会在 search API bridge 返回前先触发 `task_timeout`。
 - runtime 抖音 producer 每轮只取 1 个画像关键词做 search，然后继续跑 hot / feed，避免后台补池在多个搜索关键词上串行等待插件超时并消耗过多 search budget；CLI `discover-douyin` 仍可按显式关键词调试多 search。
 - runtime 补池进一步收敛无效成本：B 站四策略共享同一个平台缺口预算并通过 `strategy_limits` 分摊到各策略，手动 refresh 也复用同一套平台缺口计划；小红书 producer 会按小红书缺口减少本轮关键词数；抖音 producer 在小缺口时优先 feed / hot，只有缺口较大才恢复 search；各策略送 LLM 评估前的窗口从 `max(12, limit*4)` 收紧到 `max(6, limit*2)`、上限 90。
+- 新增 pool distribution snapshot 基础模型：`PoolDistributionSnapshot` 汇总候选池总量、平台族数量 / 缺口和 topic/style/franchise 饱和方向，并通过 `Database.get_pool_distribution_counts()` 复用 fresh、非 dislike、未推荐且可打开的候选统计口径；默认饱和阈值为 topic `max(8, pool_target_count // 20)`、style `max(12, pool_target_count // 8)`、franchise 10，且 `source_deficits` 明确保持为平台 / 来源缺口信号，不混入内容轴。
+- runtime refresh 现在会在 B 站 discovery 前 fail-soft 构建 pool snapshot，并通过 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)` 兼容转发给支持该参数的主策略与 backfill 策略，旧版 strategy 签名保持可用。
+- `SearchStrategy.discover(..., pool_snapshot=...)` 现在会把 `PoolDistributionSnapshot.to_prompt_hints()` 注入搜索 query prompt：对已拥挤 topic/style/franchise 做软避让，显式 `undercovered_axes` 可形成 `prefer_axes`；运行时快照暂不把平台名转成内容 `prefer_axes`，且坏 hint 会被丢弃后继续走正常 LLM query 生成。
+- discovery engine 会在最终压缩和入池前应用 pool snapshot 软重排：饱和 topic/style/franchise 轻微降权，undercovered axes 轻微加权，强相关候选保留优先级且原始 `relevance_score` 不被改写；推荐 serving 路径保持从 `content_cache` 取已预生成候选不变。
 - 抖音补池预算修正：`dy_tasks` 中因 daemon 重启 / 插件未及时消费而失败的 `stale_pending` discovery 任务不再计入 search / hot / feed 每日预算，避免历史陈旧 pending 吃光当天 search 配额。
 - 抖音 runtime 大缺口补池改为优先 `search` / `hot`，不再把低产出的 `feed` 混进大批量补池；`daily_hot_budget` 在 runtime 中会按本轮抖音缺口动态抬高到最多 60，默认 `5` 仍作为小缺口 / 手动调试的保守基线。
 - 参考开源实现确认首页推荐流端点：F2 暴露 `fetch_post_feed` + `TAB_FEED=/aweme/v1/web/tab/feed/`，Douyin_TikTok_Download_API 也记录了 `TAB_FEED` 和 `PostFeed` 参数模型；本项目不引入第三方依赖，只复用端点和参数形态。

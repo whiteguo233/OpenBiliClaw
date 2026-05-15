@@ -12,6 +12,11 @@ from openbiliclaw.discovery.strategies.explore import ExploreStrategy
 from openbiliclaw.discovery.strategies.related_chain import RelatedChainStrategy
 from openbiliclaw.discovery.strategies.search import SearchStrategy
 from openbiliclaw.discovery.strategies.trending import TrendingStrategy
+from openbiliclaw.discovery.strategies.youtube import (
+    YoutubeChannelStrategy,
+    YoutubeSearchStrategy,
+    YoutubeTrendingStrategy,
+)
 
 __all__ = [
     "DouyinDirectStrategy",
@@ -19,6 +24,9 @@ __all__ = [
     "RelatedChainStrategy",
     "SearchStrategy",
     "TrendingStrategy",
+    "YoutubeChannelStrategy",
+    "YoutubeSearchStrategy",
+    "YoutubeTrendingStrategy",
     "SupportsSearchClient",
     "SupportsRankingClient",
     "SupportsRelatedClient",

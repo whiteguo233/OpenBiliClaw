@@ -15,6 +15,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveryConcurrencyController,
     llm_eval_candidate_limit,
 )
+from openbiliclaw.discovery.pool_snapshot import PoolDistributionSnapshot
 from openbiliclaw.soul.profile import SoulProfile
 from openbiliclaw.storage.database import Database
 
@@ -338,6 +339,49 @@ class _BackfillAwareStrategy(_RecordingStrategy):
         )
 
 
+class _PoolSnapshotStrategy(_RecordingStrategy):
+    def __init__(self) -> None:
+        super().__init__(
+            "snapshot-aware",
+            [
+                DiscoveredContent(
+                    bvid="BV1SNAP",
+                    relevance_score=0.9,
+                    source_strategy="snapshot-aware",
+                )
+            ],
+        )
+        self.pool_snapshots: list[object | None] = []
+
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+        *,
+        pool_snapshot: object | None = None,
+    ) -> list[DiscoveredContent]:
+        self.pool_snapshots.append(pool_snapshot)
+        return await super().discover(profile, limit=limit)
+
+
+class _PoolSnapshotBackfillStrategy(_RecordingStrategy):
+    def __init__(self, backfill_strategy: _PoolSnapshotStrategy) -> None:
+        super().__init__(
+            "snapshot-primary",
+            [
+                DiscoveredContent(
+                    bvid="BV1PRIMARY",
+                    relevance_score=0.9,
+                    source_strategy="snapshot-primary",
+                )
+            ],
+        )
+        self._backfill_strategy = backfill_strategy
+
+    def create_backfill_strategy(self) -> _PoolSnapshotStrategy:
+        return self._backfill_strategy
+
+
 @pytest.mark.asyncio
 async def test_register_strategy_replaces_existing_strategy_with_same_name() -> None:
     started: list[str] = []
@@ -365,6 +409,195 @@ async def test_register_strategy_replaces_existing_strategy_with_same_name() -> 
 
     assert started == ["douyin_direct"]
     assert [item.bvid for item in results] == ["dy:new"]
+
+
+@pytest.mark.asyncio
+async def test_discovery_engine_passes_pool_snapshot_to_supported_strategy() -> None:
+    pool_snapshot = object()
+    strategy = _PoolSnapshotStrategy()
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(strategy)
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["snapshot-aware"],
+        limit=1,
+        pool_snapshot=pool_snapshot,
+    )
+
+    assert [item.bvid for item in results] == ["BV1SNAP"]
+    assert strategy.pool_snapshots == [pool_snapshot]
+
+
+@pytest.mark.asyncio
+async def test_discovery_engine_keeps_legacy_strategy_signature() -> None:
+    strategy = _RecordingStrategy(
+        "legacy",
+        [
+            DiscoveredContent(
+                bvid="BV1LEGACY",
+                relevance_score=0.9,
+                source_strategy="legacy",
+            )
+        ],
+    )
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(strategy)
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["legacy"],
+        limit=1,
+        pool_snapshot=object(),
+    )
+
+    assert [item.bvid for item in results] == ["BV1LEGACY"]
+    assert strategy.limits == [1]
+
+
+@pytest.mark.asyncio
+async def test_discovery_engine_passes_pool_snapshot_to_backfill_strategy() -> None:
+    pool_snapshot = object()
+    backfill_strategy = _PoolSnapshotStrategy()
+    engine = ContentDiscoveryEngine(target_primary_count=2)
+    engine.register_strategy(_PoolSnapshotBackfillStrategy(backfill_strategy))
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["snapshot-primary"],
+        limit=2,
+        pool_snapshot=pool_snapshot,
+    )
+
+    assert [item.bvid for item in results] == ["BV1PRIMARY", "BV1SNAP"]
+    assert backfill_strategy.pool_snapshots == [pool_snapshot]
+
+
+@pytest.mark.asyncio
+async def test_pool_snapshot_soft_rerank_prefers_undercovered_topics_without_dropping_strong_matches(  # noqa: E501
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sat = DiscoveredContent(
+        bvid="BVsat",
+        title="AI",
+        topic_group="AI 编程",
+        style_key="deep_dive",
+        relevance_score=0.82,
+    )
+    gap = DiscoveredContent(
+        bvid="BVgap",
+        title="纪录",
+        topic_group="人物纪录",
+        style_key="story_doc",
+        relevance_score=0.79,
+    )
+    strong = DiscoveredContent(
+        bvid="BVstrong",
+        title="AI high",
+        topic_group="AI 编程",
+        relevance_score=0.96,
+    )
+    pool_snapshot = PoolDistributionSnapshot(
+        pool_target_count=10,
+        pool_available_count=10,
+        source_targets={},
+        source_counts={},
+        source_deficits={},
+        saturated_topics=("AI 编程",),
+        undercovered_axes=("人物纪录",),
+    )
+
+    class _ThreeCandidateStrategy(_RecordingStrategy):
+        async def discover(
+            self,
+            profile: SoulProfile,
+            limit: int = 20,
+        ) -> list[DiscoveredContent]:
+            self.limits.append(limit)
+            return [sat, gap, strong]
+
+    strategy = _ThreeCandidateStrategy("search", [sat, gap, strong])
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(strategy)
+    monkeypatch.setattr(
+        ContentDiscoveryEngine,
+        "_compress_topic_repeats",
+        staticmethod(lambda results, *, limit: results[:limit]),
+    )
+    monkeypatch.setattr(engine, "_cache_results", lambda results: None)
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["search"],
+        limit=2,
+        pool_snapshot=pool_snapshot,
+    )
+
+    assert [item.bvid for item in results] == ["BVstrong", "BVgap"]
+    assert gap.relevance_score == 0.79
+    assert sat.relevance_score == 0.82
+
+
+@pytest.mark.asyncio
+async def test_pool_snapshot_soft_rerank_runs_before_real_compression() -> None:
+    strong = DiscoveredContent(
+        bvid="BVstrong",
+        title="AI high",
+        topic_group="AI 编程",
+        style_key="tech_analysis",
+        source_strategy="search",
+        relevance_score=0.96,
+    )
+    weak_saturated = DiscoveredContent(
+        bvid="BVsatweak",
+        title="AI tool",
+        topic_group="AI 工具",
+        style_key="deep_dive",
+        source_strategy="explore",
+        relevance_score=0.82,
+    )
+    gap = DiscoveredContent(
+        bvid="BVgap",
+        title="人物纪录",
+        topic_group="人物纪录",
+        style_key="story_doc",
+        source_strategy="related_chain",
+        relevance_score=0.79,
+    )
+    pool_snapshot = PoolDistributionSnapshot(
+        pool_target_count=10,
+        pool_available_count=10,
+        source_targets={},
+        source_counts={},
+        source_deficits={},
+        saturated_topics=("AI 编程", "AI 工具"),
+        undercovered_axes=("人物纪录",),
+    )
+
+    class _ThreeSourceStrategy(_RecordingStrategy):
+        async def discover(
+            self,
+            profile: SoulProfile,
+            limit: int = 20,
+        ) -> list[DiscoveredContent]:
+            self.limits.append(limit)
+            return [strong, weak_saturated, gap]
+
+    strategy = _ThreeSourceStrategy("search", [strong, weak_saturated, gap])
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(strategy)
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["search"],
+        limit=2,
+        pool_snapshot=pool_snapshot,
+    )
+
+    assert [item.bvid for item in results] == ["BVstrong", "BVgap"]
+    assert "BVsatweak" not in {item.bvid for item in results}
+    assert strong.relevance_score == 0.96
+    assert gap.relevance_score == 0.79
 
 
 def test_llm_eval_candidate_limit_uses_tighter_small_gap_window() -> None:
@@ -942,6 +1175,32 @@ async def test_discovery_engine_cache_results_preserves_multi_source_fields() ->
         assert row["source"] == "xhs-extension-task"
         assert row["content_id"] == "6613e9ac000000001a015e65"
         assert row["content_url"].endswith("/6613e9ac000000001a015e65")
+
+
+def test_merge_duplicates_uses_multi_source_content_identity() -> None:
+    first = DiscoveredContent(
+        content_id="yt-a",
+        source_platform="youtube",
+        title="YouTube A",
+        relevance_score=0.6,
+    )
+    second = DiscoveredContent(
+        content_id="yt-b",
+        source_platform="youtube",
+        title="YouTube B",
+        relevance_score=0.5,
+    )
+    duplicate = DiscoveredContent(
+        content_id="yt-a",
+        source_platform="youtube",
+        title="YouTube A better",
+        relevance_score=0.9,
+    )
+
+    merged = ContentDiscoveryEngine._merge_duplicates([first, second, duplicate])
+
+    assert [item.content_id for item in merged] == ["yt-a", "yt-b"]
+    assert merged[0].title == "YouTube A better"
 
 
 @pytest.mark.asyncio

@@ -7,13 +7,14 @@ that matches the user's soul profile.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import time
 from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
@@ -406,6 +407,33 @@ class DiscoveryStrategy(ABC):
         return None
 
 
+def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
+    """Return whether a strategy discover callable accepts ``pool_snapshot=``."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "pool_snapshot" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
+async def _call_strategy_discover(
+    strategy: DiscoveryStrategy,
+    profile: SoulProfile,
+    *,
+    limit: int,
+    pool_snapshot: Any | None,
+) -> list[DiscoveredContent]:
+    discover_fn: Any = strategy.discover
+    if _strategy_accepts_pool_snapshot(discover_fn):
+        return cast(
+            "list[DiscoveredContent]",
+            await discover_fn(profile, limit=limit, pool_snapshot=pool_snapshot),
+        )
+    return cast("list[DiscoveredContent]", await discover_fn(profile, limit=limit))
+
+
 class ContentDiscoveryEngine:
     """Orchestrates multiple discovery strategies.
 
@@ -473,6 +501,7 @@ class ContentDiscoveryEngine:
         *,
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
+        pool_snapshot: Any | None = None,
     ) -> list[DiscoveredContent]:
         """Run discovery with selected (or all) strategies.
 
@@ -491,6 +520,8 @@ class ContentDiscoveryEngine:
                 ``limit`` still caps returned/cached results; this only
                 prevents a grouped refresh from giving every strategy the
                 full platform deficit.
+            pool_snapshot: Optional current pool distribution summary for
+                strategies that can use pool-aware discovery guidance.
 
         Returns:
             Combined, deduplicated, and scored list of discovered content.
@@ -509,11 +540,13 @@ class ContentDiscoveryEngine:
             limit=effective_limit,
             fully_parallel=fully_parallel,
             strategy_limits=strategy_limits,
+            pool_snapshot=pool_snapshot,
         )
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
         await self._normalize_topic_groups(merged_primary)
         await self._normalize_topic_keys(merged_primary)
+        merged_primary = self._apply_pool_snapshot_rerank(merged_primary, pool_snapshot)
         final_results = self._compress_topic_repeats(
             merged_primary,
             limit=effective_limit,
@@ -526,10 +559,12 @@ class ContentDiscoveryEngine:
                 profile=profile,
                 limit=effective_limit,
                 existing=final_results,
+                pool_snapshot=pool_snapshot,
             )
             all_results = self._merge_and_rank([*final_results, *backfill_results])
             await self._normalize_topic_groups(all_results)
             await self._normalize_topic_keys(all_results)
+            all_results = self._apply_pool_snapshot_rerank(all_results, pool_snapshot)
             final_results = self._compress_topic_repeats(
                 all_results,
                 limit=effective_limit,
@@ -738,8 +773,8 @@ class ContentDiscoveryEngine:
         if self._llm_service is None:
             return 0.0
 
-        # Check eval cache (same bvid in same profile → same score)
-        cache_key = f"{content.bvid}:{id(profile)}"
+        # Check eval cache (same content identity in same profile → same score)
+        cache_key = f"{self._content_identity(content)}:{id(profile)}"
         cached = self._eval_cache.get(cache_key)
         if cached is not None:
             score, reason, topic_group, style_key, franchise_key = cached
@@ -905,7 +940,7 @@ class ContentDiscoveryEngine:
         uncached_indices: list[int] = []
         scores: list[float] = [0.0] * len(contents)
         for i, content in enumerate(contents):
-            cache_key = f"{content.bvid}:{id(profile)}"
+            cache_key = f"{self._content_identity(content)}:{id(profile)}"
             cached = self._eval_cache.get(cache_key)
             if cached is not None:
                 # Cache tuple grew in v0.3.18 to carry franchise_key.
@@ -1119,7 +1154,7 @@ class ContentDiscoveryEngine:
             if franchise_key:
                 content.franchise_key = franchise_key
 
-            cache_key = f"{content.bvid}:{id(profile)}"
+            cache_key = f"{self._content_identity(content)}:{id(profile)}"
             self._eval_cache[cache_key] = (
                 score,
                 reason,
@@ -1219,12 +1254,21 @@ class ContentDiscoveryEngine:
 
     @staticmethod
     def _merge_duplicates(results: list[DiscoveredContent]) -> list[DiscoveredContent]:
-        by_bvid: dict[str, DiscoveredContent] = {}
+        by_identity: dict[str, DiscoveredContent] = {}
         for item in results:
-            existing = by_bvid.get(item.bvid)
+            identity = ContentDiscoveryEngine._content_identity(item)
+            existing = by_identity.get(identity)
             if existing is None or item.relevance_score > existing.relevance_score:
-                by_bvid[item.bvid] = item
-        return list(by_bvid.values())
+                by_identity[identity] = item
+        return list(by_identity.values())
+
+    @staticmethod
+    def _content_identity(item: DiscoveredContent) -> str:
+        platform = (item.source_platform or "bilibili").strip() or "bilibili"
+        content_id = (item.content_id or item.bvid or item.content_url).strip()
+        if content_id:
+            return f"{platform}:{content_id}"
+        return f"{platform}:title:{item.title}:{item.author_name or item.up_name}"
 
     async def _run_strategies(
         self,
@@ -1234,6 +1278,7 @@ class ContentDiscoveryEngine:
         limit: int,
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
+        pool_snapshot: Any | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
         run_entries = [
@@ -1262,7 +1307,12 @@ class ContentDiscoveryEngine:
                 s_t0 = time.monotonic()
                 logger.info("strategy %s: dispatch limit=%d", strategy.name, run_limit)
                 try:
-                    result = await strategy.discover(profile, limit=run_limit)
+                    result = await _call_strategy_discover(
+                        strategy,
+                        profile,
+                        limit=run_limit,
+                        pool_snapshot=pool_snapshot,
+                    )
                 finally:
                     logger.info(
                         "strategy %s: done in %.1fs",
@@ -1295,7 +1345,15 @@ class ContentDiscoveryEngine:
 
             # Phase 1: run search strategy first to get clean IP quota
             if search_entries:
-                tasks = [s.discover(profile, limit=run_limit) for s, run_limit in search_entries]
+                tasks = [
+                    _call_strategy_discover(
+                        s,
+                        profile,
+                        limit=run_limit,
+                        pool_snapshot=pool_snapshot,
+                    )
+                    for s, run_limit in search_entries
+                ]
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
                 results.extend(
                     self._collect_strategy_results([s for s, _ in search_entries], gathered)
@@ -1307,7 +1365,15 @@ class ContentDiscoveryEngine:
 
             # Phase 2: run remaining strategies concurrently
             if other_entries:
-                tasks = [s.discover(profile, limit=run_limit) for s, run_limit in other_entries]
+                tasks = [
+                    _call_strategy_discover(
+                        s,
+                        profile,
+                        limit=run_limit,
+                        pool_snapshot=pool_snapshot,
+                    )
+                    for s, run_limit in other_entries
+                ]
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
                 results.extend(
                     self._collect_strategy_results([s for s, _ in other_entries], gathered)
@@ -1394,6 +1460,7 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         limit: int,
         existing: list[DiscoveredContent],
+        pool_snapshot: Any | None = None,
     ) -> list[DiscoveredContent]:
         remaining = limit - len(existing)
         if remaining <= 0:
@@ -1414,6 +1481,7 @@ class ContentDiscoveryEngine:
                     active_backfill,
                     profile=profile,
                     limit=remaining,
+                    pool_snapshot=pool_snapshot,
                 )
             )
 
@@ -1488,6 +1556,91 @@ class ContentDiscoveryEngine:
         return merged
 
     @staticmethod
+    def _apply_pool_snapshot_rerank(
+        results: list[DiscoveredContent],
+        pool_snapshot: Any | None,
+    ) -> list[DiscoveredContent]:
+        if pool_snapshot is None or len(results) <= 1:
+            return list(results)
+
+        saturated_topics = ContentDiscoveryEngine._normalized_snapshot_values(
+            pool_snapshot,
+            "saturated_topics",
+        )
+        saturated_styles = ContentDiscoveryEngine._normalized_snapshot_values(
+            pool_snapshot,
+            "saturated_styles",
+        )
+        saturated_franchises = ContentDiscoveryEngine._normalized_snapshot_values(
+            pool_snapshot,
+            "saturated_franchises",
+        )
+        undercovered_axes = ContentDiscoveryEngine._normalized_snapshot_values(
+            pool_snapshot,
+            "undercovered_axes",
+        )
+        if not (saturated_topics or saturated_styles or saturated_franchises or undercovered_axes):
+            return list(results)
+
+        indexed_results = list(enumerate(results))
+        indexed_results.sort(
+            key=lambda indexed: ContentDiscoveryEngine._pool_rerank_key(
+                indexed[1],
+                original_index=indexed[0],
+                saturated_topics=saturated_topics,
+                saturated_styles=saturated_styles,
+                saturated_franchises=saturated_franchises,
+                undercovered_axes=undercovered_axes,
+            )
+        )
+        return [item for _, item in indexed_results]
+
+    @staticmethod
+    def _pool_rerank_key(
+        item: DiscoveredContent,
+        *,
+        original_index: int,
+        saturated_topics: set[str],
+        saturated_styles: set[str],
+        saturated_franchises: set[str],
+        undercovered_axes: set[str],
+    ) -> tuple[bool, bool, float, float, int]:
+        raw_score = item.relevance_score
+        adjusted_score = raw_score
+        topic = ContentDiscoveryEngine._topic_bucket(item)
+        style = ContentDiscoveryEngine._style_bucket(item)
+        franchise = ContentDiscoveryEngine._normalize_topic_token(item.franchise_key)
+
+        if topic in saturated_topics:
+            adjusted_score -= 0.08
+        if style in saturated_styles:
+            adjusted_score -= 0.04
+        if franchise in saturated_franchises:
+            adjusted_score -= 0.10
+        if topic in undercovered_axes:
+            adjusted_score += 0.04
+
+        return (
+            item.candidate_tier != "primary",
+            raw_score < 0.92,
+            -adjusted_score,
+            -raw_score,
+            original_index,
+        )
+
+    @staticmethod
+    def _normalized_snapshot_values(pool_snapshot: Any, attribute: str) -> set[str]:
+        values = getattr(pool_snapshot, attribute, ()) or ()
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            return set()
+        return {
+            token
+            for value in values
+            if isinstance(value, str)
+            if (token := ContentDiscoveryEngine._normalize_topic_token(value))
+        }
+
+    @staticmethod
     def _compress_topic_repeats(
         results: list[DiscoveredContent],
         *,
@@ -1540,9 +1693,9 @@ class ContentDiscoveryEngine:
 
         # Combine reserved + selected
         combined = list(reserved)
-        reserved_bvids = {item.bvid for item in reserved}
+        reserved_keys = {ContentDiscoveryEngine._content_identity(item) for item in reserved}
         for item in selected:
-            if item.bvid not in reserved_bvids:
+            if ContentDiscoveryEngine._content_identity(item) not in reserved_keys:
                 combined.append(item)
         if len(combined) >= limit:
             return combined[:limit]
@@ -1581,7 +1734,7 @@ class ContentDiscoveryEngine:
                 source_buckets[source].append(item)
 
         reserved: list[DiscoveredContent] = []
-        reserved_bvids: set[str] = set()
+        reserved_keys: set[str] = set()
         # Track topics across ALL sources to avoid reserving duplicate topics
         global_seen_topics: set[str] = set()
         source_counts: dict[str, int] = {s: 0 for s in unique_sources}
@@ -1597,12 +1750,16 @@ class ContentDiscoveryEngine:
             if topic and topic in global_seen_topics:
                 continue
             reserved.append(item)
-            reserved_bvids.add(item.bvid)
+            reserved_keys.add(ContentDiscoveryEngine._content_identity(item))
             source_counts[source] += 1
             if topic:
                 global_seen_topics.add(topic)
 
-        unreserved = [item for item in results if item.bvid not in reserved_bvids]
+        unreserved = [
+            item
+            for item in results
+            if ContentDiscoveryEngine._content_identity(item) not in reserved_keys
+        ]
         return reserved, unreserved
 
     @staticmethod
@@ -1839,7 +1996,7 @@ class ContentDiscoveryEngine:
                     skipped_franchise[franchise_key] = skipped_franchise.get(franchise_key, 0) + 1
                     continue
             try:
-                self._database.cache_content(item.bvid, **item.to_cache_kwargs())
+                self._database.cache_content(item.bvid or item.content_id, **item.to_cache_kwargs())
                 persisted.append(item)
                 if franchise_key:
                     round_franchise_counts[franchise_key] = (

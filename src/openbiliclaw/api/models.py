@@ -456,6 +456,44 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class ChatTurnIn(BaseModel):
+    """Durable popup chat turn request.
+
+    The popup uses this endpoint for lifecycle-safe chat.  The POST
+    returns quickly with a pending turn; the backend completes it in the
+    background and the popup polls by ``turn_id`` after reloads.
+    """
+
+    message: str
+    turn_id: str = ""
+    session: str = "popup"
+    scope: str = "chat"
+    subject_id: str = ""
+    subject_title: str = ""
+
+
+class ChatTurnOut(BaseModel):
+    """One durable popup chat turn."""
+
+    turn_id: str
+    session: str = "popup"
+    scope: str = "chat"
+    subject_id: str = ""
+    subject_title: str = ""
+    message: str = ""
+    reply: str = ""
+    status: str = "pending"
+    error: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ChatTurnListResponse(BaseModel):
+    """Durable popup chat history."""
+
+    items: list[ChatTurnOut]
+
+
 # --- Configuration API models ---
 
 
@@ -467,6 +505,7 @@ class LLMProviderConfigOut(BaseModel):
     base_url: str = ""
     http_referer: str = ""
     x_title: str = ""
+    reasoning_effort: str = ""
 
 
 class EmbeddingConfigOut(BaseModel):
@@ -507,12 +546,55 @@ class BilibiliConfigOut(BaseModel):
     browser_headed: bool = False
 
 
+class SourcesBrowserConfigOut(BaseModel):
+    cdp_url: str = ""
+    headed: bool = False
+
+
+class XiaohongshuSourceConfigOut(BaseModel):
+    enabled: bool = True
+    daily_search_budget: int = 30
+    daily_creator_budget: int = 10
+    task_interval_seconds: int = 45
+
+
+class DouyinSourceConfigOut(BaseModel):
+    enabled: bool = False
+    mode: str = "direct"
+    cookie_env: str = "OPENBILICLAW_DOUYIN_COOKIE"
+    daily_search_budget: int = 30
+    daily_hot_budget: int = 5
+    daily_feed_budget: int = 30
+    request_interval_seconds: int = 2
+
+
+class YoutubeSourceConfigOut(BaseModel):
+    enabled: bool = False
+
+
+class SourcesConfigOut(BaseModel):
+    browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
+    xiaohongshu: XiaohongshuSourceConfigOut = Field(
+        default_factory=XiaohongshuSourceConfigOut
+    )
+    douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
+    youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+
+
 class SchedulerConfigOut(BaseModel):
     enabled: bool = True
-    discovery_cron: str = "0 */4 * * *"
+    discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 600
+    pool_source_shares: dict[str, int] = Field(default_factory=dict)
     account_sync_interval_hours: int = 6
-    auto_update_enabled: bool = True
+    speculation_interval_minutes: int = 10
+    speculation_ttl_days: int = 3
+    speculation_cooldown_days: int = 7
+    speculation_confirmation_threshold: int = 3
+    speculation_max_active: int = 5
+    speculation_max_primary_interests: int = 15
+    speculation_max_secondary_interests: int = 60
+    auto_update_enabled: bool = False
     auto_update_check_interval_hours: int = 6
 
 
@@ -525,6 +607,11 @@ class LoggingConfigOut(BaseModel):
     file_level: str = "DEBUG"
     directory: str = "logs"
     filename: str = "openbiliclaw.log"
+    max_file_size_mb: int = 100
+    backup_count: int = 1
+    aggregate_budget_mb: int = 500
+    unmanaged_truncate_mb: int = 200
+    unmanaged_max_age_days: int = 30
 
 
 class ConfigIssueOut(BaseModel):
@@ -539,6 +626,7 @@ class ConfigResponse(BaseModel):
     data_dir: str = "data"
     llm: LLMConfigOut = Field(default_factory=LLMConfigOut)
     bilibili: BilibiliConfigOut = Field(default_factory=BilibiliConfigOut)
+    sources: SourcesConfigOut = Field(default_factory=SourcesConfigOut)
     scheduler: SchedulerConfigOut = Field(default_factory=SchedulerConfigOut)
     storage: StorageConfigOut = Field(default_factory=StorageConfigOut)
     logging: LoggingConfigOut = Field(default_factory=LoggingConfigOut)
@@ -552,9 +640,17 @@ class ConfigUpdateIn(BaseModel):
     data_dir: str | None = None
     llm: dict[str, object] | None = None
     bilibili: dict[str, object] | None = None
+    sources: dict[str, object] | None = None
     scheduler: dict[str, object] | None = None
     storage: dict[str, object] | None = None
     logging: dict[str, object] | None = None
+
+
+class SourceShareSuggestionIn(BaseModel):
+    """Optional overrides from a settings form that has not been saved yet."""
+
+    enabled_sources: dict[str, bool] | None = None
+    configured_shares: dict[str, int] | None = None
 
 
 class ConfigUpdateResponse(BaseModel):
@@ -564,3 +660,11 @@ class ConfigUpdateResponse(BaseModel):
     config: ConfigResponse
     message: str = ""
     reloaded: bool = False
+
+
+class SourceShareSuggestionResponse(BaseModel):
+    """Suggested source shares based on observed source event counts."""
+
+    event_counts: dict[str, int] = Field(default_factory=dict)
+    enabled_sources: dict[str, bool] = Field(default_factory=dict)
+    suggested_shares: dict[str, int] = Field(default_factory=dict)
