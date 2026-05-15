@@ -465,19 +465,27 @@ async def test_gemini_provider_normalizes_response(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gemini-3.1-pro-preview",
+        "gemini-2.5-pro",
+    ],
+)
 async def test_gemini_reasoning_model_skips_thinking_budget_in_json_mode(
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     # Regression: gemini-3.x and 2.5-pro reject thinking_budget=0 with
     # 400 INVALID_ARGUMENT. json_mode must not attach the budget on them.
-    provider = GeminiProvider(api_key="test-key", model="gemini-3.1-pro-preview")
+    provider = GeminiProvider(api_key="test-key", model=model)
     captured: dict[str, object] = {}
 
     async def fake_generate_content(**kwargs: object) -> SimpleNamespace:
         captured.update(kwargs)
         return SimpleNamespace(
             text='{"ok": true}',
-            model_version="gemini-3.1-pro-preview",
+            model_version=model,
             usage_metadata=None,
         )
 
