@@ -61,9 +61,9 @@ from openbiliclaw.api.models import (
     RecommendationReshuffleResponse,
     RuntimeStatusResponse,
     SchedulerConfigOut,
-    SourceShareSuggestionResponse,
     SourcesBrowserConfigOut,
     SourcesConfigOut,
+    SourceShareSuggestionResponse,
     StorageConfigOut,
     XiaohongshuSourceConfigOut,
     YoutubeSourceConfigOut,
@@ -3457,9 +3457,8 @@ def create_app(
                             setattr(cfg.sources.douyin, key, int(dy_data[key]))
 
                 yt_data = sources_data.get("youtube")
-                if isinstance(yt_data, dict):
-                    if "enabled" in yt_data:
-                        cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
+                if isinstance(yt_data, dict) and "enabled" in yt_data:
+                    cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
 
         # Apply scheduler updates
         if "scheduler" in update:

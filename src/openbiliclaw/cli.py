@@ -11,7 +11,7 @@ import re
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import typer
@@ -139,7 +139,7 @@ _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
 _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 
 def _print_page_title(title: str, subtitle: str = "") -> None:

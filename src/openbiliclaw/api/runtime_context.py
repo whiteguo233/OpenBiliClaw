@@ -27,8 +27,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

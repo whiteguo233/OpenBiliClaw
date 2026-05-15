@@ -2734,8 +2734,8 @@ def test_init_youtube_env_skip_overrides_yes_flag(
 def test_persist_init_source_enabled_flags_updates_optional_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from openbiliclaw.config import Config
     from openbiliclaw.cli import _persist_init_source_enabled_flags
+    from openbiliclaw.config import Config
 
     config = Config()
     saved: list[Config] = []
