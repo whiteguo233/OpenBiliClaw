@@ -680,8 +680,19 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     fake_config = SimpleNamespace(
         data_path=Path("/tmp/openclaw-data"),
         bilibili=SimpleNamespace(cookie="raw-cookie"),
+        sources=SimpleNamespace(
+            xiaohongshu=SimpleNamespace(enabled=False),
+            douyin=SimpleNamespace(enabled=False),
+            youtube=SimpleNamespace(enabled=False),
+        ),
         scheduler=SimpleNamespace(
             pool_target_count=30,
+            pool_source_shares={
+                "bilibili": 8,
+                "xiaohongshu": 3,
+                "douyin": 2,
+                "youtube": 1,
+            },
             account_sync_interval_hours=6,
         ),
     )
@@ -719,6 +730,9 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
         "FakeStrategy",
         "FakeStrategy",
     ]
+    assert services.runtime_controller.kwargs["pool_source_shares"] == {
+        "bilibili": 8,
+    }
 
 
 def test_build_openclaw_adapter_returns_ready_adapter(monkeypatch) -> None:

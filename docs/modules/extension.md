@@ -16,6 +16,7 @@
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复 |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
+| 设置页源策略控制 | ✅ | side panel 设置页可开关小红书 / 抖音 / YouTube discovery，编辑 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |
@@ -228,7 +229,8 @@ CLI 入口：
 
 - 后端连接状态检查
 - 从 `/api/recommendations` 拉取推荐列表
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站浏览器、通用 source 浏览器、小红书 / 抖音 source 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、猜测兴趣参数和日志清理参数
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站浏览器、通用 source 浏览器、小红书 / 抖音 / YouTube source 开关、小红书 / 抖音 source 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、猜测兴趣参数和日志清理参数
+- 设置页的“按已有信号建议比例”会调用 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
 - 设置页保存配置时会保留后端已有的高级字段：`save_config()` 会串行化 scheduler speculation / auto-update 和 logging unmanaged cleanup 字段，避免 UI 修改常用项时把隐藏高级项写回默认值
 - 推荐 tab 现已改成“换一批”，会调用 `/api/recommendations/reshuffle` 直接从 discovery pool 秒级换出一批新推荐
 - 推荐 tab 滚到底时会调用 `/api/recommendations/append` 继续往下续 10 条，不会把当前这一屏直接替换掉；首次渲染、切回推荐 tab 和追加完成后也会再检查一次底部距离，避免停在底部时没有新 scroll 事件导致续页卡住

@@ -63,8 +63,10 @@ from openbiliclaw.api.models import (
     SchedulerConfigOut,
     SourcesBrowserConfigOut,
     SourcesConfigOut,
+    SourceShareSuggestionResponse,
     StorageConfigOut,
     XiaohongshuSourceConfigOut,
+    YoutubeSourceConfigOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,63 @@ SOURCE_LABELS = {
     "chat": "聊天",
     "profile_refresh": "聚合观察",
 }
+
+_SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+
+
+def _count_events_by_source_platform(database: Any) -> dict[str, int]:
+    """Count stored behavior events by normalized source platform."""
+
+    counter = {source: 0 for source in _SOURCE_SHARE_ORDER}
+    if hasattr(database, "count_events_by_source_platform"):
+        raw_counts = database.count_events_by_source_platform()
+        if isinstance(raw_counts, dict):
+            for source, count in raw_counts.items():
+                source_key = _normalize_source_platform(source)
+                counter[source_key] = counter.get(source_key, 0) + int(count)
+            return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
+
+    rows: list[dict[str, Any]] = []
+    if hasattr(database, "conn"):
+        try:
+            cursor = database.conn.execute("SELECT metadata FROM events")
+            rows = [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            rows = []
+    elif hasattr(database, "get_recent_events"):
+        try:
+            rows = list(database.get_recent_events(limit=10000))
+        except Exception:
+            rows = []
+
+    for row in rows:
+        metadata = row.get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                import json as _json
+
+                metadata = _json.loads(metadata) if metadata else {}
+            except Exception:
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        source = metadata.get("source_platform", row.get("source_platform", "bilibili"))
+        source_key = _normalize_source_platform(source)
+        counter[source_key] = counter.get(source_key, 0) + 1
+    return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
+
+
+def _normalize_source_platform(source: object) -> str:
+    source_key = str(source or "").strip().lower()
+    if source_key in {"xhs", "rednote"}:
+        return "xiaohongshu"
+    if source_key in {"yt", "youtube"}:
+        return "youtube"
+    if source_key in {"douyin", "tiktok"}:
+        return "douyin"
+    if source_key in {"bilibili", "bili", ""}:
+        return "bilibili"
+    return source_key
 
 
 def _cap_by_franchise(
@@ -3192,6 +3251,7 @@ def create_app(
                     headed=cfg.sources.browser_headed,
                 ),
                 xiaohongshu=XiaohongshuSourceConfigOut(
+                    enabled=cfg.sources.xiaohongshu.enabled,
                     daily_search_budget=cfg.sources.xiaohongshu.daily_search_budget,
                     daily_creator_budget=cfg.sources.xiaohongshu.daily_creator_budget,
                     task_interval_seconds=cfg.sources.xiaohongshu.task_interval_seconds,
@@ -3204,6 +3264,9 @@ def create_app(
                     daily_hot_budget=cfg.sources.douyin.daily_hot_budget,
                     daily_feed_budget=cfg.sources.douyin.daily_feed_budget,
                     request_interval_seconds=cfg.sources.douyin.request_interval_seconds,
+                ),
+                youtube=YoutubeSourceConfigOut(
+                    enabled=cfg.sources.youtube.enabled,
                 ),
             ),
             scheduler=SchedulerConfigOut(
@@ -3366,6 +3429,8 @@ def create_app(
 
                 xhs_data = sources_data.get("xiaohongshu")
                 if isinstance(xhs_data, dict):
+                    if "enabled" in xhs_data:
+                        cfg.sources.xiaohongshu.enabled = _as_bool(xhs_data["enabled"])
                     for key in (
                         "daily_search_budget",
                         "daily_creator_budget",
@@ -3390,6 +3455,10 @@ def create_app(
                     ):
                         if key in dy_data:
                             setattr(cfg.sources.douyin, key, int(dy_data[key]))
+
+                yt_data = sources_data.get("youtube")
+                if isinstance(yt_data, dict) and "enabled" in yt_data:
+                    cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
 
         # Apply scheduler updates
         if "scheduler" in update:
@@ -3475,6 +3544,32 @@ def create_app(
             config=_config_to_response(cfg, issues, mask_keys=True),
             message=reload_message,
             reloaded=reloaded,
+        )
+
+    @app.get(
+        "/api/config/source-share-suggestion",
+        response_model=SourceShareSuggestionResponse,
+    )
+    def source_share_suggestion() -> SourceShareSuggestionResponse:
+        """Suggest pool source shares from observed platform event counts."""
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime.source_policy import (
+            source_enabled_map,
+            suggest_pool_source_shares,
+        )
+
+        cfg = load_config()
+        event_counts = _count_events_by_source_platform(ctx.database)
+        enabled_sources = source_enabled_map(cfg)
+        suggested_shares = suggest_pool_source_shares(
+            event_counts,
+            enabled_sources=enabled_sources,
+            configured_shares=cfg.scheduler.pool_source_shares,
+        )
+        return SourceShareSuggestionResponse(
+            event_counts=event_counts,
+            enabled_sources=enabled_sources,
+            suggested_shares=suggested_shares,
         )
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that

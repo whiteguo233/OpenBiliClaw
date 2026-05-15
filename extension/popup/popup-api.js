@@ -236,6 +236,10 @@ export async function fetchConfig() {
   return requestJson("/config?reveal_keys=true", { method: "GET" });
 }
 
+export async function fetchSourceShareSuggestion() {
+  return requestJson("/config/source-share-suggestion", { method: "GET" });
+}
+
 export async function updateConfig(data) {
   return requestJson("/config", {
     method: "PUT",

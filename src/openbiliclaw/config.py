@@ -23,6 +23,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 8,
     "xiaohongshu": 1,
     "douyin": 1,
+    "youtube": 1,
 }
 _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
@@ -761,6 +762,7 @@ def _render_config_toml(config: Config) -> str:
             f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 8))}",
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
+            f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
             "",
             "[storage]",
             f"db_path = {_toml_string(config.storage.db_path)}",

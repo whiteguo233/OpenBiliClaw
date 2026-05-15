@@ -38,6 +38,7 @@ import {
   fetchProfileSummary,
   fetchRecommendations,
   fetchRuntimeStatus,
+  fetchSourceShareSuggestion,
   markDelightSent,
   reportRecommendationClick,
   reshuffleRecommendations,
@@ -3941,6 +3942,8 @@ function bindSettings() {
     if (sourcesBrowserHeaded) {
       sourcesBrowserHeaded.checked = cfg.sources?.browser?.headed === true;
     }
+    const xhsEnabled = document.getElementById("cfgXhsEnabled");
+    if (xhsEnabled) xhsEnabled.checked = cfg.sources?.xiaohongshu?.enabled !== false;
     setVal("cfgXhsDailySearchBudget", cfg.sources?.xiaohongshu?.daily_search_budget);
     setVal("cfgXhsDailyCreatorBudget", cfg.sources?.xiaohongshu?.daily_creator_budget);
     setVal("cfgXhsTaskInterval", cfg.sources?.xiaohongshu?.task_interval_seconds);
@@ -3951,6 +3954,8 @@ function bindSettings() {
     setVal("cfgDouyinDailyHotBudget", cfg.sources?.douyin?.daily_hot_budget);
     setVal("cfgDouyinDailyFeedBudget", cfg.sources?.douyin?.daily_feed_budget);
     setVal("cfgDouyinRequestInterval", cfg.sources?.douyin?.request_interval_seconds);
+    const youtubeEnabled = document.getElementById("cfgYoutubeEnabled");
+    if (youtubeEnabled) youtubeEnabled.checked = cfg.sources?.youtube?.enabled === true;
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -3970,6 +3975,7 @@ function bindSettings() {
     setVal("cfgPoolShareBilibili", cfg.scheduler?.pool_source_shares?.bilibili);
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
+    setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -4092,6 +4098,7 @@ function bindSettings() {
           headed: checked("cfgSourcesBrowserHeaded"),
         },
         xiaohongshu: {
+          enabled: checked("cfgXhsEnabled", true),
           daily_search_budget: getInt("cfgXhsDailySearchBudget", 30),
           daily_creator_budget: getInt("cfgXhsDailyCreatorBudget", 10),
           task_interval_seconds: getInt("cfgXhsTaskInterval", 45),
@@ -4105,6 +4112,9 @@ function bindSettings() {
           daily_feed_budget: getInt("cfgDouyinDailyFeedBudget", 30),
           request_interval_seconds: getInt("cfgDouyinRequestInterval", 2),
         },
+        youtube: {
+          enabled: checked("cfgYoutubeEnabled"),
+        },
       },
       scheduler: {
         enabled: checked("cfgSchedulerEnabled", true),
@@ -4115,6 +4125,7 @@ function bindSettings() {
           bilibili: getInt("cfgPoolShareBilibili", 8),
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
+          youtube: getInt("cfgPoolShareYoutube", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -4158,6 +4169,27 @@ function bindSettings() {
   backBtn.addEventListener("click", () => {
     overlay.hidden = true;
   });
+
+  const suggestBtn = document.getElementById("cfgSuggestPoolShares");
+  if (suggestBtn) {
+    suggestBtn.addEventListener("click", async () => {
+      suggestBtn.disabled = true;
+      toast.hidden = true;
+      try {
+        const suggestion = await fetchSourceShareSuggestion();
+        const shares = suggestion?.suggested_shares || {};
+        setVal("cfgPoolShareBilibili", shares.bilibili);
+        setVal("cfgPoolShareXhs", shares.xiaohongshu);
+        setVal("cfgPoolShareDouyin", shares.douyin);
+        setVal("cfgPoolShareYoutube", shares.youtube);
+        showToast("已按已有信号填入建议比例，保存后生效。", "success");
+      } catch (err) {
+        showToast(`生成建议失败: ${err.message}`, "error");
+      } finally {
+        suggestBtn.disabled = false;
+      }
+    });
+  }
 
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;

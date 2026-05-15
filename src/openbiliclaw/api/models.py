@@ -552,6 +552,7 @@ class SourcesBrowserConfigOut(BaseModel):
 
 
 class XiaohongshuSourceConfigOut(BaseModel):
+    enabled: bool = True
     daily_search_budget: int = 30
     daily_creator_budget: int = 10
     task_interval_seconds: int = 45
@@ -567,12 +568,17 @@ class DouyinSourceConfigOut(BaseModel):
     request_interval_seconds: int = 2
 
 
+class YoutubeSourceConfigOut(BaseModel):
+    enabled: bool = False
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     xiaohongshu: XiaohongshuSourceConfigOut = Field(
         default_factory=XiaohongshuSourceConfigOut
     )
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
+    youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
@@ -647,3 +653,11 @@ class ConfigUpdateResponse(BaseModel):
     config: ConfigResponse
     message: str = ""
     reloaded: bool = False
+
+
+class SourceShareSuggestionResponse(BaseModel):
+    """Suggested source shares based on observed source event counts."""
+
+    event_counts: dict[str, int] = Field(default_factory=dict)
+    enabled_sources: dict[str, bool] = Field(default_factory=dict)
+    suggested_shares: dict[str, int] = Field(default_factory=dict)

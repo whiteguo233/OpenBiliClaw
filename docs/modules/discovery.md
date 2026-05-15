@@ -25,6 +25,7 @@
 - **RelatedChainStrategy** — 从近期高价值视频种子出发，沿相关推荐链扩展候选内容
 - **ExploreStrategy** — 推断"高相关的远域探索方向"，寻找更有陌生感但仍可解释的内容
 - **PoolDistributionSnapshot** — runtime 在补池前构建的候选池分布快照，给 discovery 提供当前供给拥挤/缺口的软信号
+- **SourcePolicy** — 统一读取 `sources.<platform>.enabled` 与 `[scheduler.pool_source_shares]`，生成有效平台配比；关闭的平台保留配置但不占 runtime quota
 - **SourceAdapter 协议** — 多源适配层（`sources/`），在上述 4 个 B 站策略之外挂载非 B 站内容源（小红书、抖音初始化画像信号与 search / hot / feed discovery、YouTube 初始化画像信号、知乎、V2EX 等）
 
 ## 多源适配层
@@ -463,7 +464,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M119 style_key 风格标注 | ✅ | discovery 入池时会按标题/描述轻规则补 `style_key`，为推荐层的风格多样性约束提供稳定信号 |
 | M120 候选池来源交错取样 | ✅ | `get_pool_candidates()` 现在会按 `search / trending / related_chain / explore` 交错取样，避免候选窗口被单一来源刷满 |
 | M122 来源优先补齐与风格误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少硬内容误判成 `light_chat` |
-| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认 B 站 / 小红书 / 抖音 = 8 / 1 / 1。B 站缺口会合并四个策略到一次 discover()，再用 `strategy_limits` 把同一个平台缺口分摊给各策略；小红书 / 抖音缺口分别交给对应 producer；超配额平台族会被压回目标内 |
+| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1，但 disabled 平台会从有效配比中剔除。B 站缺口会合并四个策略到一次 discover()，再用 `strategy_limits` 把同一个平台缺口分摊给各策略；小红书 / 抖音缺口分别交给对应 producer；YouTube 缺口走 `yt_search` / `yt_trending` / `yt_channel`；超配额平台族会被压回目标内 |
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
 | M126 explore 高风险子簇压缩 | ✅ | refresh 结束后会温和压一轮 `explore` 内部的高风险相邻簇，例如制造 / 工艺 / 材料、博弈 / 桌游 / 机制，避免单簇继续堆满 fresh pool |
 | v0.3.0 trending 按 rid 交错 | ✅ | `TrendingStrategy` 拉 5 个分区排行榜后做 round-robin 交错再送 LLM 评估，避免下游 30 条 hard-cap 把 rid=0/36 的顶部全吃掉 |
@@ -472,7 +473,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.0 deficit-source 合并并行 | ✅ | `_build_source_replenishment_plan` 把 B 站平台缺口合并到一次 `discover()` 并行 fan-out，单轮多策略混排，告别"每轮一种 source"的 60s 串行 |
 | v0.3.0 share-aware trim_pool | ✅ | `trim_pool_to_target_count(source_share_quotas=...)` 用三段桶（protected / negotiable_untracked / negotiable_tracked），保证 under-quota 源不会被 score-only 修剪误伤 |
 | v0.3.0 suppressed 重发现复活 | ✅ | `cache_content` UPSERT 时把 `pool_status='suppressed'` 自动复位为 `'fresh'`；slow-churning 源（trending）从此不再被旧 trim 决定终生淘汰 |
-| v0.3.69 平台级来源配比 | ✅ | `_SOURCE_TARGET_SHARES` 硬编码策略配比改为配置项 `[scheduler.pool_source_shares]`；默认池子目标从 raw source 转为 `bilibili=480 / xiaohongshu=60 / douyin=60`（pool=600），并对超配额平台族做硬上限 |
+| v0.3.69 平台级来源配比 | ✅ | `_SOURCE_TARGET_SHARES` 硬编码策略配比改为配置项 `[scheduler.pool_source_shares]`；`source_policy` 会按 `[sources.xiaohongshu]` / `[sources.douyin]` / `[sources.youtube]` 的 `enabled` 生成有效配比，避免关闭源占 quota；配置页和 init 都可更新开关与比例 |
 | Pool distribution snapshot | ✅ | `build_pool_distribution_snapshot()` 汇总候选池总量、平台缺口、饱和 topic/style/franchise，为后续 pool-aware discovery prompt 和 rerank 提供轻量输入 |
 | v0.3.1 trim_topic_group 每 tick 触发 | ✅ | 修复"trim 只在 discover 之后跑"的盲点：`_enforce_pool_cap` 路径上每 tick 都调一次，避免 pool 满 cap 时 topic 配额永远不收敛 |
 | v0.3.31 小红书来源族均衡 | ✅ | `xhs-extension-task/search/profile` 等 raw source 归并为 `xiaohongshu` 平台族参与配额，满池时会从 suppressed 高分小红书候选中复活 under-quota 库存，再按统一 cap trim 让出空间 |
@@ -600,7 +601,7 @@ hints = snapshot.to_prompt_hints()
 
 - `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`。
 - 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以 `pool_target_count=600` 为例，topic 30 条、style 75 条、franchise 10 条即进入软避让。
-- `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
+- `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin`、`youtube` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
 - `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
 - 当前 runtime 构建的 snapshot 不会把平台缺口自动合成内容 `prefer_axes`；`undercovered_axes` / `prefer_axes` 保留给手动传入或未来更细的内容轴缺口判断。
 - 统计口径复用候选池可见性：只看 fresh、非 dislike、未推荐、已预生成 pool copy 且可打开的候选。
@@ -611,12 +612,14 @@ hints = snapshot.to_prompt_hints()
 
 ```python
 source_targets = controller._source_target_counts()
-# 默认 [scheduler.pool_source_shares] = 8:1:1 且 pool_target=600 时：
+# 默认有效 [scheduler.pool_source_shares] = 8:1:1 且 pool_target=600 时：
 # {
 #     "bilibili": 480,
 #     "xiaohongshu": 60,
 #     "douyin": 60,
 # }
+# 如果 YouTube enabled=true 且有效配比为 8:1:1:1，则 YouTube 也会获得
+# 独立 target，并由 yt_search / yt_trending / yt_channel 补池。
 
 database.reactivate_under_quota_pool_sources(
     target=600,

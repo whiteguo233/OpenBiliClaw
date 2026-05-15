@@ -2731,6 +2731,94 @@ def test_init_youtube_env_skip_overrides_yes_flag(
     assert "OPENBILICLAW_NO_YOUTUBE=1" in result.stdout
 
 
+def test_persist_init_source_enabled_flags_updates_optional_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _persist_init_source_enabled_flags
+    from openbiliclaw.config import Config
+
+    config = Config()
+    saved: list[Config] = []
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: config)
+    monkeypatch.setattr("openbiliclaw.config.save_config", lambda cfg: saved.append(cfg))
+
+    _persist_init_source_enabled_flags(include_xhs=False, include_dy=True, include_yt=True)
+
+    assert config.sources.xiaohongshu.enabled is False
+    assert config.sources.douyin.enabled is True
+    assert config.sources.youtube.enabled is True
+    assert saved == [config]
+
+
+def test_select_init_source_shares_accepts_suggested_ratios(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _select_init_source_shares
+
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda *args, **kwargs: True)
+
+    selected = _select_init_source_shares(
+        {"bilibili": 900, "xiaohongshu": 100, "douyin": 9, "youtube": 400},
+        enabled_sources={
+            "bilibili": True,
+            "xiaohongshu": True,
+            "douyin": True,
+            "youtube": True,
+        },
+        configured_shares={
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        },
+    )
+
+    assert selected == {
+        "bilibili": 8,
+        "xiaohongshu": 3,
+        "douyin": 1,
+        "youtube": 5,
+    }
+
+
+def test_select_init_source_shares_accepts_manual_ratios(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _select_init_source_shares
+
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        cli_module.typer,
+        "prompt",
+        lambda *args, **kwargs: "bilibili=6,xiaohongshu=2,youtube=3",
+    )
+
+    selected = _select_init_source_shares(
+        {"bilibili": 10, "xiaohongshu": 10, "youtube": 10},
+        enabled_sources={
+            "bilibili": True,
+            "xiaohongshu": True,
+            "douyin": False,
+            "youtube": True,
+        },
+        configured_shares={
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        },
+    )
+
+    assert selected == {
+        "bilibili": 6,
+        "xiaohongshu": 2,
+        "douyin": 1,
+        "youtube": 3,
+    }
+
+
 def test_init_no_xhs_flag_skips_enqueue(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:

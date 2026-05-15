@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -35,34 +36,8 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
-_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
-
-
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
-    scheduler = getattr(config, "scheduler", None)
-    shares = getattr(scheduler, "pool_source_shares", None)
-    if not isinstance(shares, dict):
-        shares = dict(_DEFAULT_POOL_SOURCE_SHARES)
-    else:
-        shares = dict(shares)
-
-    # Drop shares for sources the user has disabled.  Otherwise the quota
-    # is stranded — the source's producer is None / short-circuits so the
-    # deficit is never filled, and bilibili is held back from absorbing
-    # the slack.  See refresh.py ``_source_target_counts`` for the
-    # downstream share-to-count math.
-    sources_cfg = getattr(config, "sources", None)
-    if sources_cfg is not None:
-        xhs_cfg = getattr(sources_cfg, "xiaohongshu", None)
-        if xhs_cfg is not None and not bool(getattr(xhs_cfg, "enabled", True)):
-            shares.pop("xiaohongshu", None)
-        dy_cfg = getattr(sources_cfg, "douyin", None)
-        if dy_cfg is not None and not bool(getattr(dy_cfg, "enabled", False)):
-            shares.pop("douyin", None)
-        yt_cfg = getattr(sources_cfg, "youtube", None)
-        if yt_cfg is not None and not bool(getattr(yt_cfg, "enabled", False)):
-            shares.pop("youtube", None)
-    return shares
+    return effective_pool_source_shares(config)
 
 
 @dataclass

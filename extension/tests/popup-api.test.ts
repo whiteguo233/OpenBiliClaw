@@ -9,6 +9,7 @@ import {
   fetchChatTurns,
   fetchConfig,
   fetchProfileSummary,
+  fetchSourceShareSuggestion,
   reshuffleRecommendations,
   startChatTurn,
   updateConfig,
@@ -276,6 +277,33 @@ test("fetchConfig sends GET to /config with reveal_keys", async () => {
   assert.equal(result.llm.embedding.provider, "gemini");
   assert.equal(result.llm.embedding.model, "gemini-embedding-001");
   assert.equal(result.llm.embedding.similarity_threshold, 0.85);
+});
+
+test("fetchSourceShareSuggestion loads source-share recommendation", async () => {
+  const calls: Array<{ url: string; options: any }> = [];
+  globalThis.fetch = async (url: any, options: any) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return {
+          event_counts: { bilibili: 9, youtube: 4 },
+          enabled_sources: { bilibili: true, youtube: true },
+          suggested_shares: { bilibili: 8, youtube: 5 },
+        };
+      },
+    };
+  };
+
+  const result = await fetchSourceShareSuggestion();
+
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].url,
+    "http://127.0.0.1:8420/api/config/source-share-suggestion",
+  );
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(result.suggested_shares.youtube, 5);
 });
 
 test("updateConfig sends PUT with embedding config", async () => {

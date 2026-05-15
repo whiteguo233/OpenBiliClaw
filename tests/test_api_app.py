@@ -3078,6 +3078,7 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.bilibili.browser_headed = True
         cfg.sources.browser_cdp_url = "http://localhost:9222"
         cfg.sources.browser_headed = True
+        cfg.sources.xiaohongshu.enabled = False
         cfg.sources.xiaohongshu.daily_search_budget = 11
         cfg.sources.xiaohongshu.daily_creator_budget = 3
         cfg.sources.xiaohongshu.task_interval_seconds = 66
@@ -3087,7 +3088,13 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.sources.douyin.daily_hot_budget = 4
         cfg.sources.douyin.daily_feed_budget = 13
         cfg.sources.douyin.request_interval_seconds = 5
-        cfg.scheduler.pool_source_shares = {"bilibili": 6, "xiaohongshu": 2, "douyin": 2}
+        cfg.sources.youtube.enabled = True
+        cfg.scheduler.pool_source_shares = {
+            "bilibili": 6,
+            "xiaohongshu": 2,
+            "douyin": 2,
+            "youtube": 1,
+        }
         cfg.scheduler.account_sync_interval_hours = 9
         cfg.scheduler.speculation_interval_minutes = 21
         cfg.scheduler.speculation_ttl_days = 8
@@ -3113,13 +3120,16 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["bilibili"]["browser_headed"] is True
         assert data["sources"]["browser"]["cdp_url"] == "http://localhost:9222"
         assert data["sources"]["browser"]["headed"] is True
+        assert data["sources"]["xiaohongshu"]["enabled"] is False
         assert data["sources"]["xiaohongshu"]["daily_search_budget"] == 11
         assert data["sources"]["douyin"]["enabled"] is True
         assert data["sources"]["douyin"]["daily_feed_budget"] == 13
+        assert data["sources"]["youtube"]["enabled"] is True
         assert data["scheduler"]["pool_source_shares"] == {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
+            "youtube": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["speculation_interval_minutes"] == 21
@@ -3164,6 +3174,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "sources": {
                     "browser": {"cdp_url": "http://localhost:9222", "headed": True},
                     "xiaohongshu": {
+                        "enabled": False,
                         "daily_search_budget": 11,
                         "daily_creator_budget": 3,
                         "task_interval_seconds": 66,
@@ -3177,10 +3188,16 @@ class TestEmbeddingAndCompatProviderE2E:
                         "daily_feed_budget": 13,
                         "request_interval_seconds": 5,
                     },
+                    "youtube": {"enabled": True},
                 },
                 "scheduler": {
                     "account_sync_interval_hours": 9,
-                    "pool_source_shares": {"bilibili": 6, "xiaohongshu": 2, "douyin": 2},
+                    "pool_source_shares": {
+                        "bilibili": 6,
+                        "xiaohongshu": 2,
+                        "douyin": 2,
+                        "youtube": 1,
+                    },
                     "speculation_interval_minutes": 21,
                     "speculation_ttl_days": 8,
                     "speculation_cooldown_days": 9,
@@ -3218,14 +3235,17 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.bilibili.browser_headed is True
         assert cfg.sources.browser_cdp_url == "http://localhost:9222"
         assert cfg.sources.browser_headed is True
+        assert cfg.sources.xiaohongshu.enabled is False
         assert cfg.sources.xiaohongshu.daily_search_budget == 11
         assert cfg.sources.douyin.enabled is True
         assert cfg.sources.douyin.cookie_env == "CUSTOM_DY_COOKIE"
         assert cfg.sources.douyin.daily_feed_budget == 13
+        assert cfg.sources.youtube.enabled is True
         assert cfg.scheduler.pool_source_shares == {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
+            "youtube": 1,
         }
         assert cfg.scheduler.speculation_interval_minutes == 21
         assert cfg.scheduler.auto_update_enabled is True
@@ -3236,6 +3256,67 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.logging.aggregate_budget_mb == 456
         assert cfg.logging.unmanaged_truncate_mb == 78
         assert cfg.logging.unmanaged_max_age_days == 9
+
+    def test_source_share_suggestion_uses_event_counts(self, monkeypatch, tmp_path) -> None:
+        """GET /api/config/source-share-suggestion should suggest ratios
+        from observed platform event counts and current enabled switches."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        cfg = Config()
+        cfg.sources.xiaohongshu.enabled = True
+        cfg.sources.douyin.enabled = True
+        cfg.sources.youtube.enabled = True
+        cfg.scheduler.pool_source_shares = {
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+            "youtube": 1,
+        }
+        config_path = tmp_path / "config.toml"
+        save_config(cfg, config_path)
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+        class FakeDatabase:
+            def count_events_by_source_platform(self) -> dict[str, int]:
+                return {
+                    "bilibili": 900,
+                    "xiaohongshu": 100,
+                    "douyin": 9,
+                    "youtube": 400,
+                }
+
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=object(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/config/source-share-suggestion")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "event_counts": {
+                "bilibili": 900,
+                "xiaohongshu": 100,
+                "douyin": 9,
+                "youtube": 400,
+            },
+            "enabled_sources": {
+                "bilibili": True,
+                "xiaohongshu": True,
+                "douyin": True,
+                "youtube": True,
+            },
+            "suggested_shares": {
+                "bilibili": 8,
+                "xiaohongshu": 3,
+                "douyin": 1,
+                "youtube": 5,
+            },
+        }
 
 
 def test_events_endpoint_emits_activity_added_runtime_event() -> None:

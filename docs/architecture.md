@@ -37,7 +37,7 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 - 自我编辑和遗忘机制
 
 ### Content Discovery (`discovery/`)
-- 多策略内容发现（B 站 search · trending · related_chain · explore + 小红书 `xiaohongshu` + 抖音 `douyin`），按 `[scheduler.pool_source_shares]` 平台配比并行调度；默认 B 站 / 小红书 / 抖音 = 8 / 1 / 1
+- 多策略内容发现（B 站 search · trending · related_chain · explore + 小红书 `xiaohongshu` + 抖音 `douyin` + YouTube `yt_search` / `yt_trending` / `yt_channel`），按 `runtime.source_policy` 生成的平台有效配比并行调度；默认配置 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1，关闭的平台不会占候选池 quota
 - 内容评估（基于用户 Soul，LLM 批量打分）
 - 候选分层、去重和缓存写入；写入时 `pool_status='suppressed'` 的旧候选在重新发现时自动复活成 `'fresh'`
 - v0.3.0+ 多样性栈：trending 按 rid 交错 / explore 按 domain 交错 / `_compress_topic_repeats` 单次压缩 / `trim_topic_group_overflow` 跨源跨轮配额（任意 topic_group ≤ 池子 10%）/ deficit-source 合并 + 并行 fan-out

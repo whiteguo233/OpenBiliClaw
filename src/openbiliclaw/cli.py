@@ -139,7 +139,7 @@ _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
 _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 
 def _print_page_title(title: str, subtitle: str = "") -> None:
@@ -3247,6 +3247,168 @@ def _ask_yt_inclusion() -> bool:
     return True
 
 
+def _persist_init_source_enabled_flags(
+    *,
+    include_xhs: bool,
+    include_dy: bool,
+    include_yt: bool,
+) -> None:
+    """Persist init source choices so background discovery obeys them."""
+
+    try:
+        from openbiliclaw.config import load_config, save_config
+
+        cfg = load_config()
+        changed = False
+        if bool(getattr(cfg.sources.xiaohongshu, "enabled", True)) != include_xhs:
+            cfg.sources.xiaohongshu.enabled = include_xhs
+            changed = True
+        if bool(getattr(cfg.sources.douyin, "enabled", False)) != include_dy:
+            cfg.sources.douyin.enabled = include_dy
+            changed = True
+        if bool(getattr(cfg.sources.youtube, "enabled", False)) != include_yt:
+            cfg.sources.youtube.enabled = include_yt
+            changed = True
+        if changed:
+            save_config(cfg)
+    except Exception:
+        # Persisting init choices is best-effort; init should continue.
+        return
+
+
+def _select_init_source_shares(
+    event_counts: Mapping[str, int],
+    *,
+    enabled_sources: Mapping[str, bool],
+    configured_shares: Mapping[str, int],
+) -> dict[str, int]:
+    """Return source shares selected during interactive init."""
+
+    from openbiliclaw.runtime.source_policy import (
+        SOURCE_ORDER,
+        suggest_pool_source_shares,
+    )
+
+    configured = _merge_source_shares(configured_shares, {})
+    suggestion = suggest_pool_source_shares(
+        event_counts,
+        enabled_sources=enabled_sources,
+        configured_shares=configured,
+    )
+    if not _is_interactive_terminal():
+        return configured
+
+    enabled_order = [source for source in SOURCE_ORDER if enabled_sources.get(source, False)]
+    console.print()
+    console.print("[bold]平台发现比例[/bold]")
+    console.print(
+        "[dim]根据本次初始化采集到的各平台事件量，推荐后台发现池比例："
+        f"{_format_source_shares(suggestion)}。[/dim]"
+    )
+    if typer.confirm("使用这个比例?", default=True):
+        return _merge_source_shares(configured, suggestion)
+
+    raw = typer.prompt(
+        "手动输入比例",
+        default=",".join(f"{source}={configured.get(source, 1)}" for source in enabled_order),
+    ).strip()
+    parsed = _parse_source_share_input(raw, enabled_order=enabled_order)
+    if not parsed:
+        console.print("[yellow]比例输入无效，保留原配置。[/yellow]")
+        return configured
+    return _merge_source_shares(configured, parsed)
+
+
+def _maybe_update_init_source_shares(event_counts: Mapping[str, int]) -> None:
+    """Ask the user to accept/update source shares after init event collection."""
+
+    try:
+        from openbiliclaw.config import load_config, save_config
+        from openbiliclaw.runtime.source_policy import source_enabled_map
+
+        cfg = load_config()
+        enabled_sources = source_enabled_map(cfg)
+        selected = _select_init_source_shares(
+            event_counts,
+            enabled_sources=enabled_sources,
+            configured_shares=cfg.scheduler.pool_source_shares,
+        )
+        if selected != cfg.scheduler.pool_source_shares:
+            cfg.scheduler.pool_source_shares = selected
+            save_config(cfg)
+    except Exception:
+        return
+
+
+def _merge_source_shares(
+    configured_shares: Mapping[str, int],
+    updates: Mapping[str, int],
+) -> dict[str, int]:
+    from openbiliclaw.runtime.source_policy import DEFAULT_POOL_SOURCE_SHARES, SOURCE_ORDER
+
+    merged = dict(DEFAULT_POOL_SOURCE_SHARES)
+    for source in SOURCE_ORDER:
+        if source in configured_shares:
+            try:
+                share = int(configured_shares[source])
+            except (TypeError, ValueError):
+                continue
+            if share > 0:
+                merged[source] = share
+    for source, raw_share in updates.items():
+        if source not in SOURCE_ORDER:
+            continue
+        try:
+            share = int(raw_share)
+        except (TypeError, ValueError):
+            continue
+        if share > 0:
+            merged[source] = share
+    return {source: merged[source] for source in SOURCE_ORDER if source in merged}
+
+
+def _parse_source_share_input(raw: str, *, enabled_order: list[str]) -> dict[str, int]:
+    if not raw.strip():
+        return {}
+
+    parsed: dict[str, int] = {}
+    if "=" in raw:
+        for part in re.split(r"[,，\s]+", raw.strip()):
+            if not part or "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            source = key.strip().lower()
+            if source not in enabled_order:
+                continue
+            try:
+                share = int(value)
+            except ValueError:
+                continue
+            if share > 0:
+                parsed[source] = share
+        return parsed
+
+    values = [item for item in re.split(r"[:：,，\s]+", raw.strip()) if item]
+    for source, value in zip(enabled_order, values, strict=False):
+        try:
+            share = int(value)
+        except ValueError:
+            continue
+        if share > 0:
+            parsed[source] = share
+    return parsed
+
+
+def _format_source_shares(shares: Mapping[str, int]) -> str:
+    labels = {
+        "bilibili": "B站",
+        "xiaohongshu": "小红书",
+        "douyin": "抖音",
+        "youtube": "YouTube",
+    }
+    return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
+
+
 @app.command()
 def init(
     no_xhs: bool = typer.Option(
@@ -3382,22 +3544,6 @@ def init(
     else:
         include_xhs = _ask_xhs_inclusion()
 
-    # Persist the XHS decision into config so the long-running runtime
-    # doesn't keep dispatching extension search tasks and burning
-    # daily_search_budget when the user has opted out. The init prompt
-    # only controls bootstrap; without persisting enabled=False, the XHS
-    # producer would still tick every 60s against an empty deficit.
-    try:
-        from openbiliclaw.config import load_config, save_config
-
-        cfg_for_persist = load_config()
-        if bool(getattr(cfg_for_persist.sources.xiaohongshu, "enabled", True)) != include_xhs:
-            cfg_for_persist.sources.xiaohongshu.enabled = include_xhs
-            save_config(cfg_for_persist)
-    except Exception:
-        # Persisting the flag is best-effort; init proceeds either way.
-        pass
-
     # Same resolution order for the Douyin opt-in. Default is
     # off-in-non-interactive (see _ask_dy_inclusion docstring) which
     # diverges from the XHS auto-on default — Douyin's risk control
@@ -3421,6 +3567,12 @@ def init(
         include_yt = True
     else:
         include_yt = _ask_yt_inclusion()
+
+    _persist_init_source_enabled_flags(
+        include_xhs=include_xhs,
+        include_dy=include_dy,
+        include_yt=include_yt,
+    )
 
     # Enqueue the XHS bootstrap task FIRST so the browser extension
     # can run it in parallel with the slow B站 history/favs/follows
@@ -3583,10 +3735,19 @@ def init(
                 },
             )
         )
+    bilibili_event_count = len(events)
     events_to_persist = list(events)
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
+    _maybe_update_init_source_shares(
+        {
+            "bilibili": bilibili_event_count,
+            "xiaohongshu": len(xhs_events),
+            "douyin": len(dy_events),
+            "youtube": len(yt_events),
+        }
+    )
     for event in events_to_persist:
         asyncio.run(memory.propagate_event(event))
 
