@@ -30,3 +30,40 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest -q
+
+  extension-firefox-build:
+    name: Smoke-build Firefox extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci
+        working-directory: extension
+
+      - name: Build Firefox extension
+        run: npm run build:firefox
+        working-directory: extension
+
+      - name: Verify Firefox manifest at dist-firefox root
+        shell: bash
+        working-directory: extension
+        run: |
+          test -f dist-firefox/manifest.json
+          # Confirm version was injected from manifest.json
+          chrome_version=$(node -e "console.log(JSON.parse(require('fs').readFileSync('manifest.json','utf-8')).version)")
+          firefox_version=$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist-firefox/manifest.json','utf-8')).version)")
+          if [ "$chrome_version" != "$firefox_version" ]; then
+            echo "version mismatch: manifest.json=$chrome_version vs dist-firefox/manifest.json=$firefox_version"
+            exit 1
+          fi
+          echo "Firefox manifest version $firefox_version matches manifest.json"

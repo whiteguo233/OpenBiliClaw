@@ -75,6 +75,29 @@ Built on Manifest V3, the extension works in any Chrome-compatible browser — *
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Drag the downloaded `.zip` file into the page to install
 
+<details>
+<summary>Firefox users: build locally and sideload (Firefox 128+)</summary>
+
+Firefox uses `sidebar_action` instead of Chrome's `sidePanel`, so it needs a separate build. Releases ship only the Chrome zip for now; on Firefox you build locally and load the addon temporarily via `about:debugging`:
+
+```bash
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
+cd OpenBiliClaw/extension
+npm install
+npm run build:firefox          # writes dist-firefox/
+# or: npm run package:firefox   # also produces openbiliclaw-extension-v*-firefox.zip
+```
+
+Then:
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click "Load Temporary Add-on…"
+3. Pick `extension/dist-firefox/manifest.json`
+
+Caveat: temporary add-ons disappear on Firefox restart; signed AMO distribution is still on the roadmap.
+
+</details>
+
 ### 2. Ask an AI coding agent to deploy the backend
 
 Paste this whole prompt into Claude Code, Codex CLI, Cursor, Windsurf, or another AI coding agent. The parenthetical note is for the agent; you do not need to understand it.

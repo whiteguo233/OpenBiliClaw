@@ -1,4 +1,4 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -59,12 +59,28 @@ for (const target of entrypoints) {
   });
 }
 
-// For Firefox builds, copy the Firefox manifest and popup into the output directory
+// For Firefox builds, write the Firefox manifest with version injected from
+// the Chrome manifest (single source of truth), and stage popup/icons.
 if (isFirefox) {
-  const src = resolve(root, "manifest.firefox.json");
-  const dest = resolve(root, `${outDir}/manifest.json`);
-  await cp(src, dest);
-  console.log(`\n📄 Copied manifest.firefox.json → ${outDir}/manifest.json`);
+  const chromeManifest = JSON.parse(
+    await readFile(resolve(root, "manifest.json"), "utf-8"),
+  );
+  const firefoxManifest = JSON.parse(
+    await readFile(resolve(root, "manifest.firefox.json"), "utf-8"),
+  );
+  // Preserve Firefox manifest field order: insert version right after `name`.
+  const merged = {};
+  for (const [key, value] of Object.entries(firefoxManifest)) {
+    merged[key] = value;
+    if (key === "name") merged.version = chromeManifest.version;
+  }
+  await writeFile(
+    resolve(root, `${outDir}/manifest.json`),
+    `${JSON.stringify(merged, null, 4)}\n`,
+  );
+  console.log(
+    `\n📄 Wrote ${outDir}/manifest.json (version ${chromeManifest.version} from manifest.json)`,
+  );
 
   // Firefox loads the extension from dist-firefox/, so popup/ and icons/ must be present there
   await cp(resolve(root, "popup"), resolve(root, `${outDir}/popup`), { recursive: true });

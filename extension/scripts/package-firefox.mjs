@@ -16,6 +16,7 @@ import {
  */
 
 const root = resolve(import.meta.dirname, "..");
+const distDir = resolve(root, "dist-firefox");
 const skipBuild = process.argv.includes("--no-build");
 const archiveVersionFlag = process.argv.indexOf("--archive-version");
 const archiveVersionInput =
@@ -32,8 +33,10 @@ if (!skipBuild) {
 }
 
 // --- 2. Read version from manifest ------------------------------------
+// manifest.json is the single source of truth; build:firefox injects the
+// same version into dist-firefox/manifest.json at build time.
 const manifest = JSON.parse(
-  await readFile(resolve(root, "manifest.firefox.json"), "utf-8"),
+  await readFile(resolve(root, "manifest.json"), "utf-8"),
 );
 const version = normalizeReleaseVersion(archiveVersionInput ?? manifest.version);
 const outName = makeExtensionArchiveName(version).replace(
@@ -42,17 +45,13 @@ const outName = makeExtensionArchiveName(version).replace(
 );
 const outPath = resolve(root, outName);
 
-// --- 3. Collect files to include --------------------------------------
-// Ship: dist-firefox/ (as dist/), icons/, popup/, manifest.firefox.json (as manifest.json)
-// The build script already copies manifest.firefox.json → dist-firefox/manifest.json,
-// so we just zip the dist-firefox directory contents + static assets.
-const includes = ["dist-firefox/manifest.json", "dist-firefox/background", "dist-firefox/content", "dist-firefox/main", "icons", "popup"];
-
+// --- 3. Zip dist-firefox/ contents ------------------------------------
+// Firefox / AMO require manifest.json at the archive root, so we zip the
+// contents of dist-firefox/ (not the directory itself). build:firefox has
+// already laid out manifest.json, popup/, icons/, and the bundled scripts
+// inside dist-firefox/.
 console.log(`\nPackaging ${outName}...`);
-execSync(
-  `cd "${root}" && zip -r -9 "${outPath}" ${includes.join(" ")}`,
-  { stdio: "inherit" },
-);
+execSync(`zip -r -9 "${outPath}" .`, { cwd: distDir, stdio: "inherit" });
 
 // --- 4. Report --------------------------------------------------------
 const stats = await stat(outPath);

@@ -131,6 +131,29 @@
 3. 打开扩展管理页面（Chrome：`chrome://extensions/` · Edge：`edge://extensions/` · Brave：`brave://extensions/`），开启右上角「开发者模式」
 4. 将下载的 `.zip` 文件拖入页面安装
 
+<details>
+<summary>Firefox 用户：本地构建临时加载（Firefox 128+）</summary>
+
+Firefox 用 `sidebar_action` 而不是 Chrome 的 `sidePanel`，需要单独构建。Release 里暂时只提供 Chrome 包，Firefox 走本地构建 + `about:debugging` 临时加载：
+
+```bash
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
+cd OpenBiliClaw/extension
+npm install
+npm run build:firefox          # 产出 dist-firefox/
+# 或: npm run package:firefox   # 额外打成 openbiliclaw-extension-v*-firefox.zip
+```
+
+加载方式：
+
+1. 打开 `about:debugging#/runtime/this-firefox`
+2. 点「Load Temporary Add-on…」
+3. 选 `extension/dist-firefox/manifest.json`
+
+注意：Firefox 临时加载在浏览器重启后会失效；正式签名 / AMO 上架仍在规划中。
+
+</details>
+
 ### 2. 让 AI 助手部署后端
 
 把下面整句粘给 Claude Code、Codex CLI、Cursor、Windsurf 或其他 AI 编程助手即可。括号里的限制是给 AI 助手看的，你不用理解。
