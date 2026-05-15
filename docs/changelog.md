@@ -6,6 +6,7 @@
 
 ## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
 
+- README / README_EN 顶部 v0.3.69 重要更新 callout 收紧为 4 条单句摘要（抖音 discovery / YouTube init / 抖音 init / pool_source_shares），移除内部 smoke 命令、E2E 覆盖等不直接面向用户的条目；`CLAUDE.md` 文档规则同步把"📌 highlights callout"约束改为硬上限（≤4 条、≤1 句、CN/EN 同步、release 整体替换不追加），并加进 pre-merge checklist。
 - 浏览器扩展新增 Firefox 128+ 支持：新增 `manifest.firefox.json` 使用 `sidebar_action` 替代 Chrome 的 `sidePanel`，`npm run build:firefox` / `npm run package:firefox` 产出独立 `dist-firefox/` 和 `openbiliclaw-extension-v*-firefox.zip`；`openExtensionUi()` 增加 Chrome sidePanel → Firefox sidebarAction → tab 的三段降级。Firefox manifest 的 version 在构建时从 `manifest.json` 注入，消除三处版本号漂移风险。Chrome / Edge / Brave 构建路径完全不变。
 - 插件设置页与后端配置 schema 对齐：新增 DeepSeek reasoning、OpenRouter headers、per-module LLM override、B 站 / sources 浏览器配置、小红书 / 抖音预算、数据目录 / SQLite、scheduler 高级项、候选池平台配比、自动更新和 logging 清理参数，并通过 `/api/config` 完整读写。
 - `/api/config` 现在暴露并保存 `sources.*`、scheduler speculation / `pool_source_shares` / auto-update interval、logging rotation / unmanaged cleanup 和 `llm.deepseek.reasoning_effort`；`save_config()` 同步串行化这些隐藏高级字段，避免插件保存常用项时把它们丢回默认值。
