@@ -291,6 +291,8 @@ class MemoryManager:
             "last_discovered_count": 0,
             "last_replenished_count": 0,
             "recent_pool_topics": [],
+            "probed_domains": {},
+            "probed_axes": {},
         }
         if not self._discovery_runtime_state_path.exists():
             return default_state
@@ -308,6 +310,7 @@ class MemoryManager:
             "last_replenished_count": self._to_int(loaded.get("last_replenished_count", 0)),
             "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
             "probed_domains": loaded.get("probed_domains", {}),
+            "probed_axes": loaded.get("probed_axes", {}),
             "last_delight_notification_at": str(loaded.get("last_delight_notification_at", "")),
         }
 
@@ -324,6 +327,7 @@ class MemoryManager:
             "last_replenished_count": self._to_int(state.get("last_replenished_count", 0)),
             "recent_pool_topics": self._as_str_list(state.get("recent_pool_topics", [])),
             "probed_domains": state.get("probed_domains", {}),
+            "probed_axes": state.get("probed_axes", {}),
             "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
         }
         with open(self._discovery_runtime_state_path, "w", encoding="utf-8") as file:
