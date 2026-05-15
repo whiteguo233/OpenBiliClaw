@@ -6,6 +6,7 @@
 
 ## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
 
+- Gemini provider 在 json_mode 下识别 reasoning-first 模型（`gemini-3.x` / `gemini-2.5-pro*`）并跳过 `thinking_budget=0` 优化，避免 `gemini-3.1-pro-preview` 等模型被 Google API 以 `400 INVALID_ARGUMENT` 拒绝；`gemini-2.5-flash` 的省钱通路保持原样。同时补全 pricing 别名（`gemini-3.1-pro-preview` / `gemini-3-pro-preview`），CLI / config / 文档统一改用真实模型 ID 并标注 Public Preview 需付费项目。
 - 新增 GitHub Pages 项目主页：`docs/index.html` 作为 `/docs` 发布入口，首屏突出纯本地 / 私有 / 开源 / 自进化跨平台内容发现 Agent 定位，并提供一句话安装提示、Chrome 插件下载、GitHub 源码、产品闭环和推荐 / 价值画像 / 认知风格 / 聊天校准截图；原文档导航保留在 `docs/index.md`。
 - GitHub Pages 项目主页新增中英文双语切换：默认跟随浏览器语言，用户手动选择后写入 `localStorage`，安装提示、导航、CTA、截图说明、架构说明和复制按钮状态均同步切换。
 - Chrome 插件版本提升到 v0.3.20 并准备发布：打包这几天已合入的抖音任务桥、Douyin search / hot / feed 插件签名链路、抖音 Cookie 同步和小红书 / 抖音 dispatcher 互斥，manifest 描述同步改为跨平台内容发现 Agent。

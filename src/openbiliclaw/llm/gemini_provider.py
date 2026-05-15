@@ -81,9 +81,7 @@ class GeminiProvider(LLMProvider):
             return True
         # 2.5-pro is reasoning-first too; 2.5-flash is the only 2.5
         # variant that legitimately accepts thinking_budget=0.
-        if m.startswith("gemini-2.5-pro"):
-            return True
-        return False
+        return m.startswith("gemini-2.5-pro")
 
     @property
     def name(self) -> str:
