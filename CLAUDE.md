@@ -157,7 +157,12 @@ Update on demand based on PR type:
 7. `README.md` / `README_EN.md` — positioning changes, tagline changes, core feature list changes, install flow changes, version releases
 8. GitHub About (`gh repo edit --description`) — when project positioning shifts
 9. `scripts/install.sh` post-install summary, `docs/agent-install.md`, `docs/docker-deployment.md` — installer flow / dependencies / opt-in steps changing
-10. `README.md` 📌 v0.X.Y highlights callout — every user-perceivable change (perf, behaviour difference, new dependency)
+10. `README.md` / `README_EN.md` 📌 vX.Y.Z highlights callout — keep it a **teaser, not a mini-changelog**. Hard rules:
+    - **At most 4 bullets**, each one tight sentence (~60 字 / ~40 words max).
+    - Surface only the release's biggest **user-facing** wins: new platform, behaviour change, perf jump, breaking config. Skip internal smokes, test coverage, refactor, default-value tweaks, observability-only changes — those live only in `docs/changelog.md`.
+    - When releasing, **replace** the previous version's callout entirely; never stack two version headers, and never append the new version's bullets onto the old list.
+    - Both `README.md` (中文) and `README_EN.md` (英文) callouts must stay in sync — same bullet count, same items, same order.
+    - The bullet ends with a one-liner "完整变更详见 [docs/changelog.md](docs/changelog.md)。" (CN) / "Full changelog: [docs/changelog.md](docs/changelog.md)." (EN). The full detail is *always* in changelog, never in README.
 
 Pre-merge checklist:
 
@@ -167,6 +172,7 @@ Pre-merge checklist:
 - [ ] CLI / config changed → corresponding module doc synced
 - [ ] Installer flow changed → `install.sh` output + agent-install.md + docker-deployment.md synced
 - [ ] Positioning / tagline changed → README CN/EN + GitHub About synced
+- [ ] New release → README CN/EN 📌 highlights callout **replaced** (not appended), ≤4 bullets, ≤1 sentence each, CN/EN in sync, no internal smokes/test coverage entries
 
 ## Development Order
 

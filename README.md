@@ -28,29 +28,6 @@
 
 ---
 
-## 📌 v0.3.70 重要更新（2026-05-16）
-
-- **🧩 Chrome 插件离线后端体验修复** —— `extension-v0.3.22` 在连接 `/api/runtime-stream` 之前会先做 `GET /api/health` 健康探针；只安装插件、尚未运行 `openbiliclaw start` 时，不再把浏览器层 WebSocket 连接失败计入 `chrome://extensions` 的「错误」徽标。
-- **⚪ 后端状态可见** —— 后端不可达时扩展工具栏图标会显示浅灰 `!` badge，WebSocket 首次连上后自动清除；popup 内仍保留启动后端提示。
-
-完整变更详见 [docs/changelog.md](docs/changelog.md)。
-
----
-
-## 📌 v0.3.69 重要更新（2026-05-12）
-
-- **🎵 抖音初始化画像信号** —— `openbiliclaw init --yes-douyin` 可通过浏览器扩展拉取发布 / 收藏 / 点赞 / 关注，并混入偏好分析与初始画像。
-- **▶ YouTube 初始化画像信号** —— `openbiliclaw init --yes-youtube` 可通过浏览器扩展拉取观看历史 / 订阅 / 点赞；`openbiliclaw import-youtube` 也支持 Google Takeout 离线导入。
-- **🎬 抖音内容发现** —— `openbiliclaw discover --source douyin` 的 search 走已登录浏览器后台 tab 插件签名桥，hot 走后台插件 `/hot/{sentence_id}` → related 链路，feed 走后台首页 `/aweme/v1/web/tab/feed/` 签名桥；`openbiliclaw discover-douyin` 可独立调试召回。
-- **⚖️ 可配置入池配比** —— `[scheduler.pool_source_shares]` 默认按 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1 保存比例；关闭的平台不占候选池 quota，init 和插件设置页都可按已有事件生成建议比例。
-- **🔎 抖音插件搜索 smoke** —— `openbiliclaw search-douyin -k 猫 -w 180` 走同一页面签名桥，单独验证搜索候选召回但不写推荐池。
-- **🔎 独立 smoke 命令** —— `openbiliclaw fetch-douyin` 单独验证抖音拉取链路，事件由 daemon 入库，不隐式重建画像。
-- **🧪 E2E 覆盖补强** —— 扩展 MAIN-world API harvester、后端 partial 合并去重、CLI init 对接均已补回归测试。
-
-完整变更详见 [docs/changelog.md](docs/changelog.md)。
-
----
-
 ## 为什么需要 OpenBiliClaw？
 
 推荐系统本质上是一个**中间商**——平台站在海量内容和海量用户之间做匹配分发。现代推荐系统远比「优化点击率」复杂：它同时权衡点击率、完播率、点赞/投币概率、停留时长、用户留存、创作者生态健康、广告收入等十几个目标，把它们加权压成一个分数来排序。听起来很科学，但问题在于：**这些权重是平台定的，优化目标归根结底是平台的**——用户满意度只是被当作留存和变现的手段，而非目的本身。你以为你在挑内容，其实是中间商在替你决定你能看到什么。结果就是：推荐越来越像你已经看过的东西，偶尔的惊喜全靠运气。

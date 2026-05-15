@@ -26,29 +26,6 @@ Full changelog: [docs/changelog.md](docs/changelog.md).
 
 ---
 
-## 📌 v0.3.70 Highlights (2026-05-16)
-
-- **🧩 Chrome extension offline-backend fix** — `extension-v0.3.22` probes `GET /api/health` before connecting to `/api/runtime-stream`; installing the extension before running `openbiliclaw start` no longer lets browser-level WebSocket connection failures count toward the `chrome://extensions` error badge.
-- **⚪ Backend status is visible** — when the backend is unreachable, the extension toolbar icon shows a subtle gray `!` badge and clears it after the runtime WebSocket first connects; the popup still keeps the backend startup hint.
-
-Full changelog: [docs/changelog.md](docs/changelog.md).
-
----
-
-## 📌 v0.3.69 Highlights (2026-05-12)
-
-- **🎵 Douyin init-profile signals** — `openbiliclaw init --yes-douyin` can pull post / favorite / like / follow signals through the browser extension and feed them into preference analysis and the first soul profile.
-- **▶ YouTube init-profile signals** — `openbiliclaw init --yes-youtube` can pull watch history / subscriptions / likes through the browser extension; `openbiliclaw import-youtube` also supports Google Takeout offline imports.
-- **🎬 Douyin content discovery** — `openbiliclaw discover --source douyin` uses background logged-in browser plugin signing for search, `/hot/{sentence_id}` → related for hot, and `/aweme/v1/web/tab/feed/` for the home feed; `openbiliclaw discover-douyin` debugs recall standalone.
-- **⚖️ Configurable pool mix** — `[scheduler.pool_source_shares]` stores Bilibili / Xiaohongshu / Douyin / YouTube = 8 / 1 / 1 / 1 by default; disabled sources do not consume pool quota, and init / settings can suggest ratios from observed events.
-- **🔎 Douyin plugin search smoke** — `openbiliclaw search-douyin -k cat -w 180` uses the same page signing bridge to validate search recall without writing the recommendation pool.
-- **🔎 Standalone smoke command** — `openbiliclaw fetch-douyin` verifies the Douyin pull path without implicitly rebuilding the profile.
-- **🧪 E2E coverage tightened** — extension MAIN-world API harvester, backend partial merge/dedup, and CLI init integration now have regression tests.
-
-Full changelog: [docs/changelog.md](docs/changelog.md).
-
----
-
 ## Why OpenBiliClaw?
 
 Recommendation systems are essentially a **middleman** — the platform sits between millions of videos and millions of users, matching and distributing content at scale. Modern systems are far more sophisticated than "just optimizing CTR": they jointly weigh click-through rate, completion rate, like/coin probability, dwell time, user retention, creator ecosystem health, ad revenue, and a dozen other objectives, compressing them into a single weighted ranking score. Sounds scientific, but here's the catch: **the weights are set by the platform, and the optimization targets ultimately serve the platform** — user satisfaction is valued as a means to retention and monetization, not as an end in itself. You think you're choosing content, but really the middleman decides what you get to see. The result: recommendations look more and more like what you've already watched, and the occasional surprise is pure luck.

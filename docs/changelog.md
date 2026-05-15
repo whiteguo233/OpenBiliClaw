@@ -8,6 +8,7 @@
 
 - 浏览器扩展新增 Firefox 140+ 支持：新增 `manifest.firefox.json` 使用 `sidebar_action` 替代 Chrome 的 `sidePanel`，`npm run build:firefox` / `npm run package:firefox` 产出独立 `dist-firefox/` 和 `openbiliclaw-extension-v*-firefox.zip`；`openExtensionUi()` 增加 Chrome sidePanel -> Firefox sidebarAction -> tab 的三段降级。Firefox manifest 的 version 在构建时从 `manifest.json` 注入，并声明 AMO 所需 `data_collection_permissions`；Chrome / Firefox 打包前都会删除旧 zip，避免本地重复打包残留过期文件。Chrome / Edge / Brave 构建路径完全不变。
 - 浏览器插件版本提升到 v0.3.23，避免复用已发布的 `extension-v0.3.22` tag / release 资产语义。
+- README / README_EN 顶部 highlights callout 收敛为“只保留最新版本、≤4 条、≤1 句、CN/EN 同步”，完整历史继续放在 changelog，避免 README 顶部堆成迷你变更日志。
 
 ---
 
