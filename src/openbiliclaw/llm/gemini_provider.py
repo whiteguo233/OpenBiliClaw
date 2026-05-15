@@ -135,9 +135,7 @@ class GeminiProvider(LLMProvider):
             # Gemini exposes cached_content_token_count when a previously
             # uploaded explicit cache (Context Caching API) was used.
             # Normalize under the universal ``cached_input_tokens`` key.
-            cached = int(
-                getattr(response.usage_metadata, "cached_content_token_count", 0) or 0
-            )
+            cached = int(getattr(response.usage_metadata, "cached_content_token_count", 0) or 0)
             if cached:
                 usage["cached_input_tokens"] = cached
 
