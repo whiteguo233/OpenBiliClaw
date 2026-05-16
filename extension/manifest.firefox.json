@@ -35,8 +35,8 @@
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
         "*://*.youtube.com/*",
-        "http://127.0.0.1:8420/*",
-        "http://localhost:8420/*"
+        "http://127.0.0.1/*",
+        "http://localhost/*"
     ],
     "background": {
         "scripts": [
