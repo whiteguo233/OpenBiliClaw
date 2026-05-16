@@ -806,3 +806,21 @@ def test_build_cognition_updates_falls_back_to_generic_context_when_signals_are_
     assert updates[0]["context_line"] == "基于最近几条相关内容"
     assert updates[0]["source_label"] == "聚合观察"
     assert updates[0]["expand_hint"] == "expandable"
+
+
+@pytest.mark.asyncio
+async def test_soul_engine_passes_satisfaction_flag_to_preference_analyzer(
+    tmp_path: Path,
+) -> None:
+    """SoulEngine kwarg threads through to the internal PreferenceAnalyzer."""
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine_default = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    assert engine_default._preference_analyzer.satisfaction_filter_enabled is False
+
+    engine_on = SoulEngine(
+        llm=FakeRegistry("{}"),
+        memory=memory,
+        satisfaction_filter_enabled=True,
+    )
+    assert engine_on._preference_analyzer.satisfaction_filter_enabled is True

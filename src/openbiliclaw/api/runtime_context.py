@@ -155,6 +155,9 @@ class RuntimeContext:
             llm=new_registry,  # type: ignore[arg-type]
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
+            satisfaction_filter_enabled=(
+                new_config.soul.preference.satisfaction_filter_enabled
+            ),
         )
 
         # 4. Embedding service

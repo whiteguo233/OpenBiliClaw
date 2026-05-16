@@ -300,3 +300,13 @@ aggregate_budget_mb = 500
 unmanaged_truncate_mb = 200
 # logs/ 目录里超过这个天数的 *unmanaged* 文件,启动时直接删除。设 0 关闭。
 unmanaged_max_age_days = 30
+
+[soul.preference]
+# v0.3.x event-satisfaction signal.
+# When true, preference analysis ignores events the storage classifier
+# marked as quick_exit (clicked then bounced in <5s) or explicit_negative
+# (thumbs-down feedback). Default false; flip after one release cycle of
+# observing inferred_satisfaction distributions in
+# `openbiliclaw cost --by caller` to confirm the classifier is doing the
+# right thing for your usage pattern.
+satisfaction_filter_enabled = false
