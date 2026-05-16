@@ -4,6 +4,7 @@
         "lib": ["ES2022", "DOM"],
         "module": "ESNext",
         "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
         "strict": true,
         "esModuleInterop": true,
         "types": ["chrome"],
