@@ -15,6 +15,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompts import build_preference_analysis_prompt
 from openbiliclaw.llm.service import LLMServiceError
+from openbiliclaw.soul.event_filters import filter_events_by_satisfaction
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,12 @@ class PreferenceAnalyzer:
     # EMA blend: 0.3 * latest batch + 0.7 * prior mix. Chosen so one-off
     # cross-platform batches don't erase long-running bilibili history.
     source_mix_blend_alpha: float = 0.3
+    # v0.3.x event-satisfaction signal: when True, drop events the
+    # storage classifier marked as quick-exit / explicit-negative before
+    # building the LLM prompt. Default False so existing installs keep
+    # current behavior until the operator flips the config flag. See
+    # docs/plans/2026-05-16-event-satisfaction-signal.md.
+    satisfaction_filter_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
@@ -72,6 +79,7 @@ class PreferenceAnalyzer:
         with hundreds of historical events) where a single max-thinking
         call on the whole batch would block for minutes.
         """
+        events = self._maybe_filter_events(events)
         if event_chunk_size > 0 and len(events) > event_chunk_size:
             return await self._analyze_events_chunked(
                 events=events,
@@ -82,6 +90,28 @@ class PreferenceAnalyzer:
             events=events,
             existing_preference=existing_preference,
         )
+
+    def _maybe_filter_events(
+        self,
+        events: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Drop quick-exit / explicit-negative events when the flag is on.
+
+        The ``"unknown"`` bucket is included so pre-classification legacy
+        rows (NULL ``inferred_satisfaction``) still feed the analyzer.
+        """
+        if not self.satisfaction_filter_enabled:
+            return events
+        filtered = filter_events_by_satisfaction(
+            events, modes=frozenset({"positive", "unknown"})
+        )
+        if len(filtered) != len(events):
+            logger.info(
+                "satisfaction_filter dropped %d/%d events before preference analysis",
+                len(events) - len(filtered),
+                len(events),
+            )
+        return filtered
 
     async def _analyze_events_single(
         self,

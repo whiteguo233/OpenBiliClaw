@@ -335,13 +335,17 @@ def _build_soul_engine() -> Any:
         async def complete(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("LLM registry is unavailable for this command.")
 
-    load_config()
+    cfg = load_config()
     memory = _build_memory_manager()
     try:
         llm = _build_registry()
     except Exception:
         llm = _UnavailableLLM()
-    return SoulEngine(llm=llm, memory=memory)
+    return SoulEngine(
+        llm=llm,
+        memory=memory,
+        satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
+    )
 
 
 def _build_recommendation_engine() -> Any:

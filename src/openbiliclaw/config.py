@@ -301,6 +301,28 @@ class LoggingConfig:
 
 
 @dataclass
+class SoulPreferenceConfig:
+    """Preference-layer toggles.
+
+    ``satisfaction_filter_enabled``: v0.3.x event-satisfaction signal —
+    when True, the preference analyzer ignores events the storage
+    classifier marked as quick-exit / explicit-negative. Default False
+    so existing installs keep current behavior until the operator flips
+    the flag after observing inferred_satisfaction distributions for a
+    release cycle.
+    """
+
+    satisfaction_filter_enabled: bool = False
+
+
+@dataclass
+class SoulConfig:
+    """Soul engine knobs. Currently only the preference sub-section."""
+
+    preference: SoulPreferenceConfig = field(default_factory=SoulPreferenceConfig)
+
+
+@dataclass
 class Config:
     """Root configuration for OpenBiliClaw."""
 
@@ -312,6 +334,9 @@ class Config:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
+    # provider override): this carries soul-engine behavior toggles.
+    soul: SoulConfig = field(default_factory=SoulConfig)
 
     @property
     def data_path(self) -> Path:
@@ -485,6 +510,20 @@ def _build_config(raw: dict[str, Any]) -> Config:
         ),
     )
 
+    soul_raw = raw.get("soul", {}) if isinstance(raw.get("soul"), dict) else {}
+    soul_preference_raw = (
+        soul_raw.get("preference", {})
+        if isinstance(soul_raw.get("preference"), dict)
+        else {}
+    )
+    soul = SoulConfig(
+        preference=SoulPreferenceConfig(
+            satisfaction_filter_enabled=bool(
+                soul_preference_raw.get("satisfaction_filter_enabled", False)
+            ),
+        ),
+    )
+
     return Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
@@ -501,6 +540,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
         ),
         storage=StorageConfig(**store_raw),
         logging=LoggingConfig(**logging_raw),
+        soul=soul,
     )
 
 
@@ -777,6 +817,15 @@ def _render_config_toml(config: Config) -> str:
             f"aggregate_budget_mb = {config.logging.aggregate_budget_mb}",
             f"unmanaged_truncate_mb = {config.logging.unmanaged_truncate_mb}",
             f"unmanaged_max_age_days = {config.logging.unmanaged_max_age_days}",
+            "",
+            "[soul.preference]",
+            "# v0.3.x event-satisfaction signal. When true, preference",
+            "# analysis ignores events the storage classifier marked as",
+            "# quick_exit or explicit_negative. Default false; flip after",
+            "# one release cycle of observing inferred_satisfaction",
+            "# distributions in `openbiliclaw cost --by caller`.",
+            "satisfaction_filter_enabled = "
+            f"{_toml_bool(config.soul.preference.satisfaction_filter_enabled)}",
             "",
         ]
     )

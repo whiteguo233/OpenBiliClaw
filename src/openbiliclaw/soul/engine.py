@@ -79,9 +79,11 @@ class SoulEngine:
         embedding_service: Any | None = None,
         cognition_cycle_interval_seconds: int | None = None,
         usage_recorder: Any | None = None,
+        satisfaction_filter_enabled: bool = False,
     ) -> None:
         self._llm = llm
         self._memory = memory
+        self._satisfaction_filter_enabled = satisfaction_filter_enabled
         # Pass usage_recorder through so internal LLM calls
         # (preference / awareness / insight / profile_builder / speculator
         # / dialogue_insight) appear in the cost ledger with their caller
@@ -97,7 +99,10 @@ class SoulEngine:
         self._awareness_analyzer = AwarenessAnalyzer(self._llm_service)
         self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)
         self._insight_analyzer = InsightAnalyzer(self._llm_service)
-        self._preference_analyzer = PreferenceAnalyzer(self._llm_service)
+        self._preference_analyzer = PreferenceAnalyzer(
+            self._llm_service,
+            satisfaction_filter_enabled=satisfaction_filter_enabled,
+        )
         self._profile_builder = ProfileBuilder(self._llm_service)
         data_dir = getattr(memory, "_data_dir", None)
         self._speculator = InterestSpeculator(

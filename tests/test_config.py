@@ -13,6 +13,8 @@ from openbiliclaw.config import (
     LLMConfig,
     LLMProviderConfig,
     SchedulerConfig,
+    SoulConfig,
+    SoulPreferenceConfig,
     _build_config,
     load_config,
     load_config_with_diagnostics,
@@ -120,6 +122,40 @@ class TestConfigDefaults:
     def test_data_path_absolute(self) -> None:
         config = Config(data_dir="/tmp/openbiliclaw_test")
         assert config.data_path == Path("/tmp/openbiliclaw_test")
+
+    def test_soul_preference_satisfaction_filter_defaults_off(self) -> None:
+        """v0.3.x event-satisfaction: flag defaults to False so existing
+        installs keep current behavior until the operator opts in."""
+        config = Config()
+        assert isinstance(config.soul, SoulConfig)
+        assert isinstance(config.soul.preference, SoulPreferenceConfig)
+        assert config.soul.preference.satisfaction_filter_enabled is False
+
+    def test_soul_preference_satisfaction_filter_round_trips_true(
+        self, tmp_path: Path
+    ) -> None:
+        """save_config → load_config preserves the explicit `true` setting."""
+        cfg = Config()
+        cfg.soul.preference.satisfaction_filter_enabled = True
+        target = tmp_path / "config.toml"
+        save_config(cfg, target)
+        loaded = load_config(target)
+        assert loaded.soul.preference.satisfaction_filter_enabled is True
+
+    def test_soul_preference_satisfaction_filter_built_from_toml(self) -> None:
+        raw = {"soul": {"preference": {"satisfaction_filter_enabled": True}}}
+        config = _build_config(raw)
+        assert config.soul.preference.satisfaction_filter_enabled is True
+
+    def test_soul_preference_section_appears_in_rendered_toml(self) -> None:
+        """The default config should round-trip through render with a
+        documented `[soul.preference]` section so existing installs see
+        the new toggle on the next save."""
+        from openbiliclaw.config import _render_config_toml
+
+        rendered = _render_config_toml(Config())
+        assert "[soul.preference]" in rendered
+        assert "satisfaction_filter_enabled = false" in rendered
 
     def test_load_config_missing_file(self) -> None:
         """Should return defaults when no config file exists."""
