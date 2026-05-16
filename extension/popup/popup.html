@@ -3853,6 +3853,13 @@
       <div class="settings-section">
         <h3><span class="section-icon">&#x2699;&#xFE0F;</span> 通用</h3>
         <div class="settings-field">
+          <label for="cfgBackendPort">后端端口</label>
+          <input id="cfgBackendPort" type="number" min="1" max="65535" step="1" placeholder="8420">
+          <p class="settings-hint">
+            默认 8420。仅在本地端口被 Hyper-V / WSL / Docker 占用时修改，并用 <code>openbiliclaw start --port &lt;同一端口&gt;</code> 启动后端。
+          </p>
+        </div>
+        <div class="settings-field">
           <label for="cfgLanguage">语言</label>
           <select id="cfgLanguage">
             <option value="zh">中文</option>

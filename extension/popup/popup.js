@@ -27,6 +27,11 @@ import {
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
+  getBackendEndpointConfig,
+  isValidBackendPort,
+  updateBackendPort,
+} from "./popup-backend-config.js";
+import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
@@ -152,6 +157,7 @@ const elements = {
 };
 
 let recommendationLoadCheckTimer = null;
+let runtimeStreamClient = null;
 const CHAT_SESSION = "popup";
 const CHAT_POLL_INTERVAL_MS = 1200;
 const CHAT_POLL_DEADLINE_MS = 180_000;
@@ -421,6 +427,9 @@ function getRuntimeEventTone(event) {
 }
 
 function connectRuntimeStream() {
+  // Disconnect any previous client first so a settings-page port change
+  // doesn't leave a zombie WebSocket against the old origin.
+  runtimeStreamClient?.disconnect?.();
   const client = createRuntimeStreamClient({
     onEvent(event) {
       state.runtimeEvent = event;
@@ -534,6 +543,7 @@ function connectRuntimeStream() {
     },
   });
   client.connect();
+  runtimeStreamClient = client;
 }
 
 function renderActivityHistory(items) {
@@ -3794,8 +3804,19 @@ function bindSettings() {
   const toast = document.getElementById("settingsToast");
   const issuesContainer = document.getElementById("settingsIssues");
   const providerSelect = document.getElementById("cfgLlmProvider");
+  const backendPortInput = document.getElementById("cfgBackendPort");
 
   if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
+
+  async function populateBackendEndpoint() {
+    if (!(backendPortInput instanceof HTMLInputElement)) return;
+    try {
+      const endpoint = await getBackendEndpointConfig();
+      backendPortInput.value = String(endpoint.port);
+    } catch {
+      // Fall back to the placeholder default if storage is unavailable.
+    }
+  }
 
   function showProviderFields(provider) {
     for (const el of overlay.querySelectorAll(".settings-provider-fields")) {
@@ -4160,6 +4181,10 @@ function bindSettings() {
     overlay.hidden = false;
     toast.hidden = true;
     issuesContainer.innerHTML = "";
+    // Backend port is stored in chrome.storage, not on the backend, so it
+    // populates even when the backend is unreachable — which is the whole
+    // point of changing it.
+    await populateBackendEndpoint();
     try {
       const cfg = await fetchConfig();
       populateForm(cfg);
@@ -4211,13 +4236,53 @@ function bindSettings() {
     saveBtn.textContent = "保存中...";
     toast.hidden = true;
     try {
-      const data = collectForm();
-      const result = await updateConfig(data);
-      if (result.config) {
-        renderIssues(result.config.issues);
+      // Backend port lives in chrome.storage, not the backend's
+      // config.toml — persist it locally first so the subsequent
+      // updateConfig() PUT targets the new origin (if the user
+      // restarted the daemon with --port <newPort>).
+      let portChanged = false;
+      let newPort = null;
+      if (backendPortInput instanceof HTMLInputElement) {
+        const portRaw = backendPortInput.value.trim();
+        if (!isValidBackendPort(portRaw)) {
+          showToast("后端端口必须是 1-65535 的整数。", "error");
+          return;
+        }
+        const previous = await getBackendEndpointConfig();
+        const next = await updateBackendPort(portRaw);
+        newPort = next.port;
+        portChanged = next.port !== previous.port;
       }
-      const tone = result.reloaded ? "success" : "warning";
-      showToast(result.message || "配置已保存。", tone);
+
+      const data = collectForm();
+      try {
+        const result = await updateConfig(data);
+        if (result.config) {
+          renderIssues(result.config.issues);
+        }
+        const tone = result.reloaded ? "success" : "warning";
+        showToast(result.message || "配置已保存。", tone);
+      } catch (err) {
+        if (portChanged) {
+          showToast(
+            `端口已切换为 ${newPort}，但保存其余配置失败。请用 openbiliclaw start --port ${newPort} 启动后端后重试。`,
+            "warning",
+          );
+        } else {
+          throw err;
+        }
+      }
+
+      if (portChanged) {
+        // Rebind the runtime stream against the new origin and refresh
+        // the online indicator. If the backend isn't yet running on the
+        // new port these will retry per the WS backoff and the popup
+        // status will flip to offline — exactly the signal the user
+        // needs to remember to start the daemon with --port.
+        connectRuntimeStream();
+        state.online = await checkBackendStatus();
+        setStatus(state.online);
+      }
     } catch (err) {
       showToast(`保存失败: ${err.message}`, "error");
     } finally {

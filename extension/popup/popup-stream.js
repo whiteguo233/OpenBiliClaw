@@ -1,3 +1,5 @@
+import { getBackendBaseUrl } from "./popup-backend-config.js";
+
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8420/api";
 
 export function createRuntimeStreamUrl(backendUrl = DEFAULT_BACKEND_URL) {
@@ -9,7 +11,12 @@ export function createRuntimeStreamUrl(backendUrl = DEFAULT_BACKEND_URL) {
 }
 
 export function createRuntimeStreamClient({
-  backendUrl = DEFAULT_BACKEND_URL,
+  // ``backendUrl`` stays as a test-only override. Production callers
+  // omit it and ``resolveBackendUrl`` reads the configured endpoint at
+  // each (re)connect, so a settings-page port change rebinds the WS to
+  // the new origin without a full popup reload.
+  backendUrl = null,
+  resolveBackendUrl = getBackendBaseUrl,
   WebSocketImpl = globalThis.WebSocket,
   reconnectDelayMs = 2000,
   // v0.3.14+: cap reconnect delay so popup doesn't flood console with
@@ -43,11 +50,8 @@ export function createRuntimeStreamClient({
     );
   }
 
-  function connect() {
-    if (stopped || typeof WebSocketImpl !== "function") {
-      return;
-    }
-    socket = new WebSocketImpl(createRuntimeStreamUrl(backendUrl));
+  function attachSocket(nextSocket) {
+    socket = nextSocket;
     socket.onopen = () => {
       wasConnected = true;
       currentReconnectDelay = reconnectDelayMs;
@@ -69,6 +73,30 @@ export function createRuntimeStreamClient({
       }
       scheduleReconnect();
     };
+  }
+
+  function connect() {
+    if (stopped || typeof WebSocketImpl !== "function") {
+      return;
+    }
+    if (backendUrl != null) {
+      // Synchronous path preserves tests that drive the client with an
+      // explicit backendUrl and a fake WebSocket constructor — they
+      // expect socket creation on the same tick as connect().
+      attachSocket(new WebSocketImpl(createRuntimeStreamUrl(backendUrl)));
+      return;
+    }
+    void (async () => {
+      let resolved;
+      try {
+        resolved = await resolveBackendUrl();
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      if (stopped) return;
+      attachSocket(new WebSocketImpl(createRuntimeStreamUrl(resolved)));
+    })();
   }
 
   function disconnect() {
