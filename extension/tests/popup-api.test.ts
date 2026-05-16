@@ -14,6 +14,7 @@ import {
   startChatTurn,
   updateConfig,
 } from "../popup/popup-api.js";
+import { __resetBackendEndpointForTests } from "../popup/popup-backend-config.js";
 
 test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
   const calls = [];
@@ -500,4 +501,46 @@ test("fetchChatTurn and fetchChatTurns read durable chat state", async () => {
   assert.equal(calls[1].options.method, "GET");
   assert.equal(turn.reply, "你好，我在。");
   assert.equal(history.items[0].turn_id, "turn-abc");
+});
+
+test("popup-api requests honor configured backend port from chrome.storage.local", async () => {
+  // Reset module cache so the previous tests' default-port resolution
+  // doesn't shadow the stubbed chrome.storage value.
+  __resetBackendEndpointForTests();
+  const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({
+            popup_backend_endpoint: {
+              host: "127.0.0.1",
+              port: 19090,
+              basePath: "/api",
+            },
+          });
+        },
+      },
+    },
+  };
+
+  const calls: Array<{ url: string; options: { method?: string } }> = [];
+  globalThis.fetch = (async (url: string, options: { method?: string }) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { language: "zh" };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  try {
+    await fetchConfig();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "http://127.0.0.1:19090/api/config?reveal_keys=true");
+  } finally {
+    (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    __resetBackendEndpointForTests();
+  }
 });

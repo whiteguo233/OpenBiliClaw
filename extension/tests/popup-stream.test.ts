@@ -15,6 +15,10 @@ test("createRuntimeStreamUrl converts backend http url to websocket runtime stre
     createRuntimeStreamUrl("https://api.example.com/api"),
     "wss://api.example.com/api/runtime-stream",
   );
+  assert.equal(
+    createRuntimeStreamUrl("http://127.0.0.1:19090/api"),
+    "ws://127.0.0.1:19090/api/runtime-stream",
+  );
 });
 
 class FakeWebSocket {
@@ -102,6 +106,22 @@ test("runtime stream client calls onDisconnect when socket closes after being co
   FakeWebSocket.latest?.onclose?.();
   assert.equal(disconnected, true);
 
+  client.disconnect();
+});
+
+test("runtime stream client resolves backend URL dynamically when no explicit backendUrl is given", async () => {
+  FakeWebSocket.latest = null;
+  const client = createRuntimeStreamClient({
+    backendUrl: null,
+    resolveBackendUrl: async () => "http://127.0.0.1:19090/api",
+    WebSocketImpl: FakeWebSocket as never,
+  });
+
+  client.connect();
+  // resolveBackendUrl is async — wait one microtask flush before checking.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(FakeWebSocket.latest?.url, "ws://127.0.0.1:19090/api/runtime-stream");
   client.disconnect();
 });
 
