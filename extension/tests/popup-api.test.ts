@@ -320,3 +320,42 @@ test("updateConfig sends PUT with embedding config", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.reloaded, true);
 });
+
+test("fetchConfig uses backend port configured in chrome.storage.local", async () => {
+  const originalChrome = (globalThis as any).chrome;
+  const calls: Array<{ url: string; options: any }> = [];
+
+  (globalThis as any).chrome = {
+    storage: {
+      local: {
+        get(_key: string, callback: (items: Record<string, unknown>) => void) {
+          callback({
+            popup_backend_endpoint: {
+              host: "127.0.0.1",
+              port: 9527,
+              basePath: "/api",
+            },
+          });
+        },
+      },
+    },
+  };
+
+  globalThis.fetch = async (url: any, options: any) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { language: "zh" };
+      },
+    };
+  };
+
+  try {
+    await fetchConfig();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "http://127.0.0.1:9527/api/config?reveal_keys=true");
+  } finally {
+    (globalThis as any).chrome = originalChrome;
+  }
+});

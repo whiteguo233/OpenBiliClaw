@@ -27,6 +27,11 @@ import {
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
+  getBackendEndpointConfig,
+  isValidBackendPort,
+  updateBackendPort,
+} from "./popup-backend-config.js";
+import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
@@ -149,6 +154,7 @@ const elements = {
 };
 
 let recommendationLoadCheckTimer = null;
+let runtimeStreamClient = null;
 
 function setRefreshButtonState(loading, message = "") {
   state.refreshStatusMessage = message;
@@ -412,6 +418,7 @@ function getRuntimeEventTone(event) {
 }
 
 function connectRuntimeStream() {
+  runtimeStreamClient?.disconnect?.();
   const client = createRuntimeStreamClient({
     onEvent(event) {
       state.runtimeEvent = event;
@@ -525,6 +532,7 @@ function connectRuntimeStream() {
     },
   });
   client.connect();
+  runtimeStreamClient = client;
 }
 
 function renderActivityHistory(items) {
@@ -3394,6 +3402,7 @@ function bindSettings() {
   const toast = document.getElementById("settingsToast");
   const issuesContainer = document.getElementById("settingsIssues");
   const providerSelect = document.getElementById("cfgLlmProvider");
+  const backendPortInput = document.getElementById("cfgBackendPort");
 
   if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
 
@@ -3595,6 +3604,14 @@ function bindSettings() {
     renderIssues(cfg.issues);
   }
 
+  async function populateBackendEndpoint() {
+    if (!(backendPortInput instanceof HTMLInputElement)) {
+      return;
+    }
+    const endpoint = await getBackendEndpointConfig();
+    backendPortInput.value = String(endpoint.port);
+  }
+
   function collectForm() {
     const getVal = (id) => {
       const el = document.getElementById(id);
@@ -3748,6 +3765,7 @@ function bindSettings() {
     overlay.hidden = false;
     toast.hidden = true;
     issuesContainer.innerHTML = "";
+    await populateBackendEndpoint();
     try {
       const cfg = await fetchConfig();
       populateForm(cfg);
@@ -3765,6 +3783,14 @@ function bindSettings() {
     saveBtn.textContent = "保存中...";
     toast.hidden = true;
     try {
+      const backendPort = backendPortInput instanceof HTMLInputElement
+        ? backendPortInput.value.trim()
+        : "";
+      if (!isValidBackendPort(backendPort)) {
+        showToast("后端端口必须是 1-65535 的整数。", "error");
+        return;
+      }
+      await updateBackendPort(backendPort);
       const data = collectForm();
       const result = await updateConfig(data);
       if (result.config) {
@@ -3772,6 +3798,10 @@ function bindSettings() {
       }
       const tone = result.reloaded ? "success" : "warning";
       showToast(result.message || "配置已保存。", tone);
+      connectRuntimeStream();
+      state.online = await checkBackendStatus();
+      setStatus(state.online);
+      void initializeRecommendations();
     } catch (err) {
       showToast(`保存失败: ${err.message}`, "error");
     } finally {

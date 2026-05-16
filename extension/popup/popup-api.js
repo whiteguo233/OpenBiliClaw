@@ -1,9 +1,9 @@
 import { normalizeRecommendation } from "./popup-helpers.js";
-
-const BACKEND_URL = "http://127.0.0.1:8420/api";
+import { getBackendBaseUrl } from "./popup-backend-config.js";
 
 async function requestJson(path, options = {}) {
-  const response = await fetch(`${BACKEND_URL}${path}`, options);
+  const backendUrl = await getBackendBaseUrl();
+  const response = await fetch(`${backendUrl}${path}`, options);
   if (!response.ok) {
     throw new Error(`${path} request failed: ${response.status}`);
   }
@@ -12,7 +12,8 @@ async function requestJson(path, options = {}) {
 
 export async function checkBackendStatus() {
   try {
-    const response = await fetch(`${BACKEND_URL}/health`, { method: "GET" });
+    const backendUrl = await getBackendBaseUrl();
+    const response = await fetch(`${backendUrl}/health`, { method: "GET" });
     return response.ok;
   } catch {
     return false;

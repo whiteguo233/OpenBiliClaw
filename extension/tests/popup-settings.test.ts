@@ -7,6 +7,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
   const expectedIds = [
+    "cfgBackendPort",
     "cfgDataDir",
     "cfgDeepseekReasoning",
     "cfgOpenrouterReferer",
