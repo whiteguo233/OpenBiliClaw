@@ -1008,6 +1008,13 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "应当给到 0.6-0.75,与画像中的娱乐/二次元/生活类兴趣标签保持权重一致。\n"
     "9. 不同 source_platform(bilibili / xiaohongshu / 其他)的内容标签同 schema,"
     "不要因为来源不同特殊处理评分逻辑。\n"
+    "10. 当 user 消息携带 `<negative_examples>` 时,把这些标题视为用户最近"
+    "**明确不喜欢**的样本——理由可能是快速划走 (`quick_exit`) 或显式负反馈"
+    " (`explicit_negative`)。\n"
+    "11. 对每个候选项,先与 `<negative_examples>` 中的标题做**结构 / 话术 / "
+    "商业意图**层面的比较;若高度相似(同款震惊体、同款保姆级全攻略、同款月入过万"
+    "钓贴),`integration_fit` 与 `interest_overlap` 必须显著降低,不要被表面话题词"
+    "吸引而错给高分。比较的是**话术模式**,不是关键词重叠。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "[\n"
@@ -1028,6 +1035,7 @@ def build_batch_content_evaluation_prompt(
     content_items: list[dict[str, object]],
     source_context: str = "",
     source_platform: str = "bilibili",
+    negative_examples: list[dict[str, object]] | None = None,
 ) -> list[dict[str, str]]:
     """Build a prompt that evaluates multiple content items in one LLM call.
 
@@ -1043,23 +1051,47 @@ def build_batch_content_evaluation_prompt(
     (content_batch, changes every call). DeepSeek's auto-cache hits the
     system prefix every call after the first; explicit-cache providers
     can mark the system block with cache_control.
+
+    v0.3.x: optional ``negative_examples`` block sits between
+    ``<source_context>`` and ``<content_batch>``, carrying recent
+    quick-exit / explicit-negative titles for the model to pattern-match
+    against. When ``None`` or empty the block is omitted entirely so the
+    user-message bytes are identical to the no-examples path (cache
+    prefix unchanged for cold-start users). System prompt picks up two
+    permanent rules about how to consume the block (rules 10 + 11) and
+    stays call-invariant after that one-time template change.
     """
-    user_prompt = "\n\n".join(
+    user_blocks: list[str] = [
+        "<profile_summary>",
+        json.dumps(
+            profile_summary,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "</profile_summary>",
+        "<source_platform>",
+        source_platform or "bilibili",
+        "</source_platform>",
+        "<source_context>",
+        source_context or "(unspecified)",
+        "</source_context>",
+    ]
+    if negative_examples:
+        user_blocks.extend(
+            [
+                "<negative_examples>",
+                json.dumps(
+                    negative_examples,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                "</negative_examples>",
+            ]
+        )
+    user_blocks.extend(
         [
-            "<profile_summary>",
-            json.dumps(
-                profile_summary,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</profile_summary>",
-            "<source_platform>",
-            source_platform or "bilibili",
-            "</source_platform>",
-            "<source_context>",
-            source_context or "(unspecified)",
-            "</source_context>",
             "<content_batch>",
             json.dumps(
                 content_items,
@@ -1070,6 +1102,7 @@ def build_batch_content_evaluation_prompt(
             "</content_batch>",
         ]
     )
+    user_prompt = "\n\n".join(user_blocks)
     return [
         {"role": "system", "content": _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},

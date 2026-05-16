@@ -4,6 +4,7 @@ from pathlib import Path
 
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
+    _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT,
     build_awareness_prompt,
     build_batch_content_evaluation_prompt,
     build_explore_domains_prompt,
@@ -472,3 +473,112 @@ def test_prompt_builder_system_messages_are_call_invariant() -> None:
         "input — extends provider cache miss across all calls): "
         f"{failures}. Refactor to put per-call variables in user_prompt."
     )
+
+
+# ----------------------------------------------------------------------
+# v0.3.x batch_content_evaluation negative_examples block.
+
+
+def test_batch_eval_no_examples_user_message_equals_none_path() -> None:
+    """negative_examples=None and =[] both produce a user message
+    byte-identical to the pre-feature shape — preserves cache prefix for
+    cold-start users with no negative classified events yet."""
+    base_kwargs: dict[str, object] = dict(
+        profile_summary={"a": 1},
+        content_items=[{"x": 1}],
+        source_context="trending",
+        source_platform="bilibili",
+    )
+    none_msg = build_batch_content_evaluation_prompt(**base_kwargs)
+    empty_msg = build_batch_content_evaluation_prompt(
+        **base_kwargs, negative_examples=[]
+    )
+
+    assert none_msg[1]["content"] == empty_msg[1]["content"]
+    assert "<negative_examples>" not in none_msg[1]["content"]
+
+
+def test_batch_eval_negative_examples_block_sits_after_source_context() -> None:
+    """When supplied, the block sits strictly between <source_context>
+    and <content_batch> — the cache-stable suffix slot in the builder."""
+    msg = build_batch_content_evaluation_prompt(
+        profile_summary={"a": 1},
+        content_items=[{"x": 1}],
+        source_context="search",
+        source_platform="bilibili",
+        negative_examples=[
+            {"title": "被微电子男朋友的学识震惊到", "reason": "quick_exit", "age_days": 2}
+        ],
+    )
+    user = msg[1]["content"]
+    src_end = user.index("</source_context>")
+    neg_start = user.index("<negative_examples>")
+    batch_start = user.index("<content_batch>")
+    assert src_end < neg_start < batch_start
+    assert "被微电子男朋友的学识震惊到" in user
+
+
+def test_batch_eval_system_message_byte_equal_to_constant_with_negatives() -> None:
+    """The system prompt must remain identical to the module constant
+    regardless of whether negative_examples is supplied — the two new
+    rules (10, 11) are PERMANENT additions, not call-conditional."""
+    base_kwargs: dict[str, object] = dict(
+        profile_summary={"a": 1},
+        content_items=[{"x": 1}],
+        source_context="explore",
+        source_platform="bilibili",
+    )
+    none_msg = build_batch_content_evaluation_prompt(**base_kwargs)
+    with_neg = build_batch_content_evaluation_prompt(
+        **base_kwargs,
+        negative_examples=[{"title": "X", "reason": "quick_exit", "age_days": 1}],
+    )
+    assert none_msg[0]["content"] == _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+    assert with_neg[0]["content"] == _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+
+def test_batch_eval_system_invariant_across_negative_example_lengths() -> None:
+    """Sanity: feeding 0, 1, and 5 examples must yield the same system bytes."""
+    base_kwargs: dict[str, object] = dict(
+        profile_summary={"a": 1},
+        content_items=[{"x": 1}],
+        source_context="explore",
+        source_platform="bilibili",
+    )
+    payloads = [
+        None,
+        [{"title": "X", "reason": "quick_exit", "age_days": 1}],
+        [{"title": f"标题{i}", "reason": "quick_exit", "age_days": i} for i in range(5)],
+    ]
+    systems = {
+        build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=p)[0]["content"]
+        for p in payloads
+    }
+    assert len(systems) == 1
+
+
+def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:
+    """The new block must round-trip differently-ordered dict keys to
+    byte-identical bytes — same prompt-cache discipline as the rest of
+    the builder."""
+    examples_a = [
+        {"title": "X", "reason": "quick_exit", "age_days": 1},
+        {"age_days": 2, "title": "Y", "reason": "explicit_negative"},
+    ]
+    examples_b = [
+        {"age_days": 1, "title": "X", "reason": "quick_exit"},
+        {"reason": "explicit_negative", "title": "Y", "age_days": 2},
+    ]
+    base_kwargs: dict[str, object] = dict(
+        profile_summary={"a": 1},
+        content_items=[{"x": 1}],
+        source_context="explore",
+        source_platform="bilibili",
+    )
+    msg_a = build_batch_content_evaluation_prompt(
+        **base_kwargs, negative_examples=examples_a
+    )
+    msg_b = build_batch_content_evaluation_prompt(
+        **base_kwargs, negative_examples=examples_b
+    )
+    assert msg_a[1]["content"] == msg_b[1]["content"]
