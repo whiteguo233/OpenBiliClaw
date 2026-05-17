@@ -3586,6 +3586,35 @@ def test_save_module_overrides_writes_per_module_blocks(
     assert reloaded.llm.evaluation.model == ""
 
 
+def test_build_recommendation_engine_wires_module_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from openbiliclaw.config import Config, LLMConfig, save_config
+
+    config_path = tmp_path / "config.toml"
+    config = Config(llm=LLMConfig(default_provider="openai"))
+    config.llm.recommendation.provider = "deepseek"
+    config.llm.recommendation.model = "deepseek-chat"
+    save_config(config, config_path)
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: object())
+    monkeypatch.setattr(
+        cli_module,
+        "_build_registry",
+        lambda: SimpleNamespace(default_provider="openai"),
+    )
+    monkeypatch.setattr("openbiliclaw.llm.registry.build_embedding_service", lambda *_: None)
+
+    engine = cli_module._build_recommendation_engine()
+
+    assert engine._llm.module_overrides["recommendation"].provider == "deepseek"
+    assert engine._llm.module_overrides["recommendation"].model == "deepseek-chat"
+
+
 def test_save_runtime_provider_config_persists_triplet(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

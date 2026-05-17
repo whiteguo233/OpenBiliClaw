@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from openbiliclaw.llm.base import LLMResponse
-from openbiliclaw.llm.service import LLMServiceError
+from openbiliclaw.llm.service import LLMServiceError, ModuleOverride
 from openbiliclaw.soul.dialogue import DialogueTurn, SocraticDialogue
 
 
@@ -22,9 +24,7 @@ class FakeSoulEngine:
         assistant_reply: str,
         session: str,
     ) -> None:
-        self.learn_calls.append(
-            f"{session}:{user_message}->{assistant_reply}"
-        )
+        self.learn_calls.append(f"{session}:{user_message}->{assistant_reply}")
 
 
 class FakeService:
@@ -125,3 +125,14 @@ def test_dialogue_clear_history_resets_turns() -> None:
     dialogue.clear_history()
 
     assert dialogue.history == []
+
+
+def test_dialogue_fallback_service_inherits_soul_engine_module_overrides() -> None:
+    overrides = {"soul": ModuleOverride(provider="claude", model="claude-sonnet")}
+    registry = SimpleNamespace(default_provider="openai")
+    soul_engine = SimpleNamespace(_memory=object(), _module_overrides=overrides)
+    dialogue = SocraticDialogue(llm=registry, soul_engine=soul_engine)  # type: ignore[arg-type]
+
+    service = dialogue._build_service()
+
+    assert service.module_overrides == overrides

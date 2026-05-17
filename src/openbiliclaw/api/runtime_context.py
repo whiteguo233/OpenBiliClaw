@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
+
+
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
     return effective_pool_source_shares(config)
 
@@ -130,7 +132,7 @@ class RuntimeContext:
         )
         from openbiliclaw.llm import build_llm_registry
         from openbiliclaw.llm.registry import build_embedding_service
-        from openbiliclaw.llm.service import LLMService
+        from openbiliclaw.llm.service import LLMService, module_overrides_from_config
         from openbiliclaw.llm.usage_recorder import UsageRecorder
         from openbiliclaw.recommendation.engine import RecommendationEngine
         from openbiliclaw.runtime.account_sync import AccountSyncService
@@ -142,10 +144,12 @@ class RuntimeContext:
         # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
         new_registry = build_llm_registry(new_config)
         new_usage_recorder = UsageRecorder(sink=self.database)
+        new_module_overrides = module_overrides_from_config(new_config)
         new_llm_service = LLMService(
             registry=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
+            module_overrides=new_module_overrides,
         )
 
         # 2. Bilibili client
@@ -178,6 +182,7 @@ class RuntimeContext:
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
+            module_overrides=new_module_overrides,
         )
 
         # 4. Embedding service

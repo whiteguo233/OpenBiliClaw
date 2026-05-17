@@ -325,6 +325,23 @@ class TestBackendAPI:
         assert created_memories[0].initialized == 1
         assert created_memories[0].database is created_databases[0]
 
+    def test_runtime_context_wires_llm_module_overrides(self, tmp_path: Path) -> None:
+        from openbiliclaw.api.runtime_context import build_runtime_context
+        from openbiliclaw.config import Config
+
+        config = Config(data_dir=str(tmp_path / "data"))
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "llama3"
+        config.llm.soul.provider = "ollama"
+        config.llm.soul.model = "llama3-soul"
+        config.llm.discovery.model = "llama3-discovery"
+
+        ctx = build_runtime_context(config)
+
+        assert ctx.llm_service.module_overrides["soul"].model == "llama3-soul"
+        assert ctx.llm_service.module_overrides["discovery"].model == "llama3-discovery"
+        assert ctx.soul_engine._llm_service.module_overrides["soul"].provider == "ollama"
+
     def test_create_app_bootstrap_wires_discovery_concurrency_controller(
         self,
         monkeypatch,
@@ -521,8 +538,7 @@ class TestBackendAPI:
         assert all(item is captured["controller"] for item in captured["strategy_concurrency"])
         assert captured["runtime_controller_kwargs"]["scheduler_config"] is fake_config.scheduler
         assert (
-            captured["runtime_controller_kwargs"]["presence"]
-            is app.state.runtime_context.presence
+            captured["runtime_controller_kwargs"]["presence"] is app.state.runtime_context.presence
         )
         assert callable(captured["account_sync_kwargs"]["llm_work_allowed"])
 

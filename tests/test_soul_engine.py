@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from openbiliclaw.llm.base import LLMResponse
+from openbiliclaw.llm.service import ModuleOverride
 from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.soul.engine import SoulEngine
 
@@ -26,9 +27,25 @@ class FakeRegistry:
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         self.calls.append(messages)
         return LLMResponse(content=self.content, provider="openai")
+
+
+def test_soul_engine_wires_module_overrides_to_internal_service(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    overrides = {"soul": ModuleOverride(provider="claude", model="claude-sonnet")}
+
+    engine = SoulEngine(
+        llm=FakeRegistry("{}"),
+        memory=memory,
+        module_overrides=overrides,
+    )
+
+    assert engine._module_overrides == overrides
+    assert engine._llm_service.module_overrides == overrides
 
 
 @pytest.mark.asyncio
@@ -79,8 +96,7 @@ async def test_build_initial_profile_reads_preference_and_saves_soul(tmp_path: P
         json.dumps(
             {
                 "personality_portrait": (
-                    "这个人会反复在高信息密度内容里停留，也会主动寻找讲清原理的表达方式。"
-                    * 8
+                    "这个人会反复在高信息密度内容里停留，也会主动寻找讲清原理的表达方式。" * 8
                 ),
                 "core_traits": ["理性", "好奇", "克制"],
                 "cognitive_style": ["会先看结构", "偏好把问题讲透"],
@@ -120,8 +136,7 @@ async def test_get_profile_loads_saved_soul_profile(tmp_path: Path) -> None:
     memory.get_layer("soul").data.update(
         {
             "personality_portrait": (
-                "这是一个偏爱深度内容、对信息质量较敏感、做决定前会先观察的人。"
-                * 8
+                "这是一个偏爱深度内容、对信息质量较敏感、做决定前会先观察的人。" * 8
             ),
             "core_traits": ["理性", "谨慎", "自驱"],
             "cognitive_style": ["偏好先看证据再判断"],
@@ -168,8 +183,7 @@ async def test_generate_awareness_note_saves_awareness_layer(tmp_path: Path) -> 
     memory.get_layer("soul").data.update(
         {
             "personality_portrait": (
-                "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。"
-                * 8
+                "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。" * 8
             ),
             "core_traits": ["理性", "谨慎", "自驱"],
         }
@@ -215,8 +229,7 @@ async def test_generate_insight_saves_insight_layer(tmp_path: Path) -> None:
     memory.get_layer("soul").data.update(
         {
             "personality_portrait": (
-                "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。"
-                * 8
+                "这是一个偏爱深度内容、会主动寻找原理解释、决策比较克制的人。" * 8
             ),
             "core_traits": ["理性", "谨慎", "自驱"],
         }
@@ -499,8 +512,7 @@ async def test_learn_from_dialogue_records_immediate_cognition_for_strong_single
         cognition_updates[0]["evidence"]
     )
     assert (
-        cognition_updates[0]["context_line"]
-        == "来自最近这轮聊天：想把国际新闻背后的因果链看明白"
+        cognition_updates[0]["context_line"] == "来自最近这轮聊天：想把国际新闻背后的因果链看明白"
     )
     assert cognition_updates[0]["source_label"] == "聊天"
     assert cognition_updates[0]["expand_hint"] == "expandable"
