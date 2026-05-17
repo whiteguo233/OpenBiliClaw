@@ -76,6 +76,62 @@ async def test_openai_provider_accepts_per_call_model_override(
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_uses_json_schema_for_lm_studio_json_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(
+        api_key="lm-studio",
+        model="qwen3.5-9b",
+        base_url="http://127.0.0.1:1234/v1",
+        provider_name="openai_compatible",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response('{"ok": true}')
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    await provider.complete([{"role": "user", "content": "hi"}], json_mode=True)
+
+    response_format = captured["response_format"]
+    assert isinstance(response_format, dict)
+    assert response_format["type"] == "json_schema"
+    assert "json_schema" in response_format
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_retries_json_mode_with_schema_when_json_object_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(
+        api_key="test-key",
+        base_url="http://localhost:8000/v1",
+        provider_name="openai_compatible",
+    )
+    response_formats: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        response_format = kwargs["response_format"]
+        assert isinstance(response_format, dict)
+        response_formats.append(response_format)
+        if response_format["type"] == "json_object":
+            raise LLMProviderError(
+                "openai_compatible request failed: HTTP 400: "
+                '"response_format.type" must be "json_schema" or "text"'
+            )
+        return _openai_response('{"ok": true}')
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete([{"role": "user", "content": "hi"}], json_mode=True)
+
+    assert response.content == '{"ok": true}'
+    assert [item["type"] for item in response_formats] == ["json_object", "json_schema"]
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_retries_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

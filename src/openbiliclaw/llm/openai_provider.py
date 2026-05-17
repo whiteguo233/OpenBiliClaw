@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 
@@ -22,6 +23,22 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _generic_json_schema_response_format() -> dict[str, Any]:
+    """OpenAI structured-output shape for arbitrary JSON object tasks."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "structured_response",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+        },
+    }
 
 
 class OpenAIProvider(LLMProvider):
@@ -78,7 +95,7 @@ class OpenAIProvider(LLMProvider):
             "max_tokens": max_tokens,
         }
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+            kwargs["response_format"] = self._json_response_format()
         extra_headers = self._extra_headers()
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
@@ -86,7 +103,24 @@ class OpenAIProvider(LLMProvider):
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        response = await self._request_with_retry(**kwargs)
+        try:
+            response = await self._request_with_retry(**kwargs)
+        except LLMProviderError as exc:
+            # Retry at most once: after replacement kwargs["response_format"]
+            # is no longer json_object, so _uses_json_object returns False.
+            if (
+                json_mode
+                and self._uses_json_object(kwargs.get("response_format"))
+                and self._json_object_response_format_rejected(exc)
+            ):
+                logger.info(
+                    "%s rejected json_object response_format; retrying with json_schema",
+                    self._provider_name,
+                )
+                kwargs["response_format"] = _generic_json_schema_response_format()
+                response = await self._request_with_retry(**kwargs)
+            else:
+                raise
         choice = response.choices[0]
         content = choice.message.content or ""
         if not content.strip():
@@ -205,6 +239,40 @@ class OpenAIProvider(LLMProvider):
         if isinstance(exc, LLMRateLimitError):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))
+
+    def _json_response_format(self) -> dict[str, Any]:
+        if self._prefers_json_schema_response_format():
+            return _generic_json_schema_response_format()
+        return {"type": "json_object"}
+
+    def _prefers_json_schema_response_format(self) -> bool:
+        """Return True for backends known to reject OpenAI JSON-object mode."""
+        raw_base_url = self.base_url.strip()
+        if not raw_base_url:
+            return False
+        normalized = raw_base_url.lower()
+        if "lmstudio" in normalized or "lm-studio" in normalized:
+            return True
+        parsed_url = raw_base_url if "://" in raw_base_url else f"http://{raw_base_url}"
+        parsed = urlparse(parsed_url)
+        host = (parsed.hostname or "").lower()
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        if host in {"localhost", "127.0.0.1", "::1"} and port == 1234:
+            logger.debug("treating %s as LM Studio (default port 1234)", raw_base_url)
+            return True
+        return False
+
+    @staticmethod
+    def _uses_json_object(response_format: object) -> bool:
+        return isinstance(response_format, dict) and response_format.get("type") == "json_object"
+
+    @staticmethod
+    def _json_object_response_format_rejected(exc: LLMProviderError) -> bool:
+        message = str(exc).lower()
+        return "response_format.type" in message and "json_schema" in message and "text" in message
 
     async def embed(self, text: str, *, model: str = "text-embedding-3-small") -> list[float]:
         """Get text embedding via OpenAI's ``/v1/embeddings`` endpoint.
