@@ -9,6 +9,7 @@
 - Popup 顶部新增两个运行时开关：`暂停后台 LLM` 直接写入 `scheduler.enabled=false`，`关浏览器后暂停后台` 写入 `scheduler.pause_on_extension_disconnect=true`；设置页同步暴露后者。后端 `/api/config`、`config-show`、`start` / `serve-api` WARN 和 `config.example.toml` 都同步展示新字段。
 - 后端新增 `PresenceTracker` 与共享 `background_llm_work_allowed()` gate：`scheduler.enabled` 是后台 LLM / embedding 总开关，`pause_on_extension_disconnect` 开启后还要求浏览器插件 `runtime-stream` 在线或处于断开宽限窗口。gate 覆盖 refresh、pool precompute、soul pipeline、xhs/dy producer、proactive push、AccountSyncService、startup one-shot 和 OpenClaw direct bootstrap；手动 CLI / API 操作不被隐式拦截。
 - `/api/runtime-stream` 增加 reader / receive-side disconnect detector，浏览器 idle disconnect 后会正确触发 presence decrement，避免后端误以为插件一直在线；最后一个连接断开后按 `extension_disconnect_grace_seconds` 进入宽限。
+- 浏览器插件版本提升到 v0.3.25，准备发布 `extension-v0.3.25`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.25.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.25-firefox.zip`。
 - 文档同步更新 `docs/modules/config.md`、`docs/modules/cli.md`、`docs/modules/extension.md`、`docs/modules/integrations.md`、`docs/architecture.md`、`docs/spec.md`、README / README_EN 和配置样例，明确 pause gate 的范围是 daemon-owned background LLM / embedding work。
 
 ---
