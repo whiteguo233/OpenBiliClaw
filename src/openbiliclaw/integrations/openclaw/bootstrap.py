@@ -16,7 +16,7 @@ from openbiliclaw.discovery.strategies.strategies import (
     TrendingStrategy,
 )
 from openbiliclaw.llm import build_llm_registry
-from openbiliclaw.llm.service import LLMService
+from openbiliclaw.llm.service import LLMService, module_overrides_from_config
 from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.recommendation.engine import RecommendationEngine
 from openbiliclaw.runtime.account_sync import AccountSyncService
@@ -49,6 +49,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     """Build the shared service bundle for the OpenClaw adapter."""
     config = load_config()
     llm_registry = build_llm_registry(config)
+    module_overrides = module_overrides_from_config(config)
 
     database = Database(config.data_path / "openbiliclaw.db")
     database.initialize()
@@ -59,8 +60,13 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     soul_engine = SoulEngine(
         llm=llm_registry,  # type: ignore[arg-type]
         memory=memory_manager,
+        module_overrides=module_overrides,
     )
-    llm_service = LLMService(registry=llm_registry, memory=memory_manager)
+    llm_service = LLMService(
+        registry=llm_registry,
+        memory=memory_manager,
+        module_overrides=module_overrides,
+    )
     from openbiliclaw.llm.registry import build_embedding_service
     from openbiliclaw.recommendation.curator import PoolCurator
 

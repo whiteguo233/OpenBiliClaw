@@ -15,6 +15,7 @@ from openbiliclaw.llm.service import (
     LLMService,
     ModuleOverride,
     PrioritySemaphore,
+    module_overrides_from_config,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -206,6 +207,22 @@ def test_route_bucket_for_caller_covers_actual_callers() -> None:
     assert LLMService._route_bucket_for_caller("sources.xhs.classify") == "discovery"
     assert LLMService._route_bucket_for_caller("eval.batch") == "evaluation"
     assert LLMService._route_bucket_for_caller("unrelated.tag") is None
+
+
+def test_module_overrides_from_config_normalizes_non_empty_blocks() -> None:
+    from openbiliclaw.config import Config
+
+    config = Config()
+    config.llm.soul.provider = " Claude "
+    config.llm.soul.model = " claude-sonnet "
+    config.llm.discovery.model = " gpt-4o-mini "
+
+    overrides = module_overrides_from_config(config)
+
+    assert overrides == {
+        "soul": ModuleOverride(provider="claude", model="claude-sonnet"),
+        "discovery": ModuleOverride(provider="", model="gpt-4o-mini"),
+    }
 
 
 @pytest.mark.asyncio

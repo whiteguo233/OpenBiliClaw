@@ -6,7 +6,6 @@ import asyncio
 import heapq
 import itertools
 import logging
-from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, Protocol
@@ -20,7 +19,7 @@ from .prompts import build_socratic_dialogue_prompt
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
 
     from openbiliclaw.memory.manager import MemoryManager
 
@@ -76,6 +75,27 @@ class ModuleOverride:
 
     provider: str = ""
     model: str = ""
+
+
+_MODULE_OVERRIDE_BUCKETS = ("soul", "discovery", "recommendation", "evaluation")
+
+
+def module_overrides_from_config(config: object) -> dict[str, ModuleOverride]:
+    """Build normalized module LLM overrides from ``Config.llm`` blocks."""
+    llm_config = getattr(config, "llm", None)
+    if llm_config is None:
+        return {}
+
+    overrides: dict[str, ModuleOverride] = {}
+    for bucket in _MODULE_OVERRIDE_BUCKETS:
+        raw = getattr(llm_config, bucket, None)
+        if raw is None:
+            continue
+        provider = str(getattr(raw, "provider", "") or "").strip().lower()
+        model = str(getattr(raw, "model", "") or "").strip()
+        if provider or model:
+            overrides[bucket] = ModuleOverride(provider=provider, model=model)
+    return overrides
 
 
 class PrioritySemaphore:

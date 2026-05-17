@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from openbiliclaw.llm.base import LLMProvider
+    from openbiliclaw.llm.service import ModuleOverride
     from openbiliclaw.memory.manager import MemoryManager
 
 from openbiliclaw.llm.service import LLMService
@@ -80,10 +83,12 @@ class SoulEngine:
         cognition_cycle_interval_seconds: int | None = None,
         usage_recorder: Any | None = None,
         satisfaction_filter_enabled: bool = True,
+        module_overrides: Mapping[str, ModuleOverride] | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
+        self._module_overrides = dict(module_overrides or {})
         # Pass usage_recorder through so internal LLM calls
         # (preference / awareness / insight / profile_builder / speculator
         # / dialogue_insight) appear in the cost ledger with their caller
@@ -95,6 +100,7 @@ class SoulEngine:
             registry=llm,
             memory=memory,
             usage_recorder=usage_recorder,
+            module_overrides=self._module_overrides,
         )
         self._awareness_analyzer = AwarenessAnalyzer(self._llm_service)
         self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)

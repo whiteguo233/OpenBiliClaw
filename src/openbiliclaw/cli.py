@@ -355,10 +355,19 @@ def _build_bilibili_client() -> Any:
 def _build_soul_engine() -> Any:
     """Build the configured soul engine with initialized memory storage."""
     from openbiliclaw.config import load_config
+    from openbiliclaw.llm.service import module_overrides_from_config
     from openbiliclaw.soul.engine import SoulEngine
 
     class _UnavailableLLM:
+        default_provider = ""
+
+        def is_chat_capable(self, _name: str) -> bool:
+            return False
+
         async def complete(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("LLM registry is unavailable for this command.")
+
+        async def complete_provider(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("LLM registry is unavailable for this command.")
 
     cfg = load_config()
@@ -371,13 +380,14 @@ def _build_soul_engine() -> Any:
         llm=llm,
         memory=memory,
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
+        module_overrides=module_overrides_from_config(cfg),
     )
 
 
 def _build_recommendation_engine() -> Any:
     """Build the recommendation engine with core-memory-aware LLM access."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
     from openbiliclaw.recommendation.engine import (
         RecommendationEngine,
         SupportsEmbeddingService,
@@ -387,7 +397,11 @@ def _build_recommendation_engine() -> Any:
     database = _get_runtime_database()
     cfg = load_config()
     registry = _build_registry()
-    llm_service = LLMService(registry=registry, memory=memory)
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(cfg),
+    )
     from openbiliclaw.llm.registry import build_embedding_service
 
     _emb = build_embedding_service(cfg, registry)
@@ -459,12 +473,20 @@ def _build_discovery_engine() -> Any:
         SearchStrategy,
         TrendingStrategy,
     )
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
 
     memory = _build_memory_manager()
     database = _get_runtime_database()
     bilibili_client = _build_bilibili_client()
-    llm_service = LLMService(registry=_build_registry(), memory=memory)
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    registry = _build_registry()
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(cfg),
+    )
     concurrency = DiscoveryConcurrencyController(
         bilibili_request_concurrency=2,
         # Inherit dataclass default (currently 32) — sized so an init
@@ -473,11 +495,9 @@ def _build_discovery_engine() -> Any:
     )
 
     # Build embedding service from config (optional)
-    from openbiliclaw.config import load_config
     from openbiliclaw.llm.registry import build_embedding_service
 
-    cfg = load_config()
-    embedding_service = build_embedding_service(cfg, _build_registry())
+    embedding_service = build_embedding_service(cfg, registry)
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
@@ -4786,7 +4806,7 @@ def _normalize_strategy_names(raw: list[str] | None) -> list[str]:
 def _run_xhs_discovery(*, force: bool) -> None:
     """Trigger one Soul-driven xhs keyword production cycle."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
     from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
     from openbiliclaw.soul.engine import SoulProfileNotInitializedError
     from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
@@ -4807,7 +4827,11 @@ def _run_xhs_discovery(*, force: bool) -> None:
     memory = _build_memory_manager()
     database = _get_runtime_database()
     registry = _build_registry()
-    llm_service = LLMService(registry=registry, memory=memory)
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(config),
+    )
 
     xhs_cfg = getattr(config.sources, "xiaohongshu", None)
     producer = XhsTaskProducer(
