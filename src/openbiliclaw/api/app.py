@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import uuid
 from contextlib import suppress
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -70,7 +72,11 @@ from openbiliclaw.api.models import (
     YoutubeSourceConfigOut,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
+_CONFIG_SAVE_LOCK = asyncio.Lock()
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -89,6 +95,41 @@ _RESETTABLE_CONFIG_FIELDS = {
     "llm.openai_compatible.api_key": ("llm", "openai_compatible", "api_key"),
     "llm.embedding.api_key": ("llm", "embedding", "api_key"),
 }
+
+
+def _config_backup_path(config_path: Path) -> Path:
+    return config_path.with_name(f"{config_path.name}.bak")
+
+
+def _snapshot_config_file(config_path: Path) -> Path | None:
+    if not config_path.exists():
+        return None
+    backup_path = _config_backup_path(config_path)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(config_path, backup_path)
+    return backup_path
+
+
+def _restore_config_snapshot(backup_path: Path, config_path: Path) -> None:
+    shutil.copy2(backup_path, config_path)
+
+
+def _validate_llm_buildable(cfg: Any, base_issues: list[Any]) -> list[Any]:
+    from openbiliclaw.config import ConfigIssue
+    from openbiliclaw.llm.registry import RegistryBuildError, build_llm_registry
+
+    issues = list(base_issues)
+    try:
+        build_llm_registry(cfg)
+    except RegistryBuildError as exc:
+        issues.append(
+            ConfigIssue(
+                field="llm",
+                message=f"LLM registry would fail to build: {exc}",
+                severity="blocking",
+            )
+        )
+    return issues
 
 
 def _count_events_by_source_platform(database: Any) -> dict[str, int]:
@@ -215,8 +256,6 @@ def create_app(
     auto_update_service: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
-    from fastapi.responses import JSONResponse
-
     from openbiliclaw.api.runtime_context import RuntimeContext, build_runtime_context
     from openbiliclaw.config import load_config
 
@@ -3264,7 +3303,14 @@ def create_app(
                 reasoning_effort=getattr(p, "reasoning_effort", ""),
             )
 
-        issue_list = [ConfigIssueOut(field=i.field, message=i.message) for i in (issues or [])]
+        issue_list = [
+            ConfigIssueOut(
+                field=i.field,
+                message=i.message,
+                severity=getattr(i, "severity", "warning"),
+            )
+            for i in (issues or [])
+        ]
 
         return ConfigResponse(
             language=cfg.language,
@@ -3384,7 +3430,7 @@ def create_app(
         return _config_to_response(cfg, issues, mask_keys=not reveal_keys)
 
     @app.put("/api/config", response_model=ConfigUpdateResponse)
-    async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse:
+    async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse | JSONResponse:
         """Update configuration, persist to config.toml, and hot-reload runtime.
 
         Only the fields included in the request body are modified.
@@ -3393,6 +3439,7 @@ def create_app(
         """
         from openbiliclaw.config import (
             _collect_config_issues,
+            _default_config_path,
             _normalize_extension_disconnect_grace,
             _normalize_pool_source_shares,
             load_config,
@@ -3631,38 +3678,105 @@ def create_app(
             subsection = getattr(section, target[1])
             setattr(subsection, target[2], "")
 
-        # Save to disk
-        saved_path = save_config(cfg)
-        issues = _collect_config_issues(cfg)
-        logger.info("Configuration saved to %s", saved_path)
+        issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if any(getattr(issue, "severity", "warning") == "blocking" for issue in issues):
+            response = ConfigUpdateResponse(
+                ok=False,
+                config=_config_to_response(cfg, issues, mask_keys=True),
+                message="配置校验失败，未写入 config.toml。",
+                reloaded=False,
+                rollback_applied=False,
+                restart_required=False,
+            )
+            return JSONResponse(
+                status_code=400,
+                content=response.model_dump(mode="json"),
+            )
 
-        # ── Hot-reload: rebuild runtime components ──────────────────
-        reloaded = False
-        reload_message = f"配置已保存到 {saved_path}。"
-        try:
-            await ctx.rebuild_from_config(cfg)
-            await ctx.restart_background_tasks(app)
-            reloaded = True
-            reload_message += " 运行时组件已热重载，新配置立即生效。"
-            logger.info("Config hot-reload succeeded")
-            # Notify WebSocket subscribers so the extension re-fetches data
-            with suppress(Exception):
-                await ctx.event_hub.publish(
-                    {
-                        "type": "config_reloaded",
-                        "message": "配置已热重载，运行时组件已重建。",
-                    }
+        async with _CONFIG_SAVE_LOCK:
+            config_path = _default_config_path()
+            try:
+                backup_path = _snapshot_config_file(config_path)
+            except Exception as exc:
+                logger.exception("Config snapshot failed — refusing to overwrite config.toml")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error": "config_snapshot_failed",
+                        "message": f"couldn't snapshot config, refusing to risk overwrite: {exc}",
+                    },
                 )
-        except Exception as exc:
-            logger.exception("Config hot-reload failed — old components remain active")
-            reload_message += f" 热重载失败（{exc}），旧组件仍在运行，重启后端可完全生效。"
 
-        return ConfigUpdateResponse(
-            ok=True,
-            config=_config_to_response(cfg, issues, mask_keys=True),
-            message=reload_message,
-            reloaded=reloaded,
-        )
+            saved_path = save_config(cfg)
+            logger.info("Configuration saved to %s", saved_path)
+
+            # ── Hot-reload: rebuild runtime components ──────────────
+            reload_message = f"配置已保存到 {saved_path}。"
+            try:
+                await ctx.rebuild_from_config(cfg)
+                await ctx.restart_background_tasks(app)
+                reload_message += " 运行时组件已热重载，新配置立即生效。"
+                logger.info("Config hot-reload succeeded")
+                # Notify WebSocket subscribers so the extension re-fetches data
+                with suppress(Exception):
+                    await ctx.event_hub.publish(
+                        {
+                            "type": "config_reloaded",
+                            "message": "配置已热重载，运行时组件已重建。",
+                        }
+                    )
+                return ConfigUpdateResponse(
+                    ok=True,
+                    config=_config_to_response(cfg, issues, mask_keys=True),
+                    message=reload_message,
+                    reloaded=True,
+                    rollback_applied=False,
+                    restart_required=False,
+                )
+            except Exception as exc:
+                logger.exception("Config hot-reload failed — attempting config rollback")
+                if backup_path is None:
+                    rollback_message = (
+                        f" 热重载失败（{str(exc)[:200]}），未找到可回滚的 config.toml.bak。"
+                    )
+                    rollback_cfg = cfg
+                    rollback_applied = False
+                else:
+                    try:
+                        _restore_config_snapshot(backup_path, saved_path)
+                    except Exception as restore_exc:
+                        logger.critical(
+                            "Config rollback failed after hot-reload exception",
+                            exc_info=True,
+                        )
+                        return JSONResponse(
+                            status_code=500,
+                            content={
+                                "error": "config_persistence_corrupted",
+                                "message": (
+                                    "config.toml may be in inconsistent state after hot-reload "
+                                    f"failure and rollback failure: {restore_exc}"
+                                ),
+                                "manual_recovery": (
+                                    "config.toml may be in inconsistent state; if "
+                                    "config.toml.bak exists, manually copy it back."
+                                ),
+                            },
+                        )
+                    rollback_cfg = load_config(saved_path)
+                    rollback_message = (
+                        f" 热重载失败（{str(exc)[:200]}），已从 config.toml.bak 回滚。"
+                    )
+                    rollback_applied = True
+
+                return ConfigUpdateResponse(
+                    ok=True,
+                    config=_config_to_response(rollback_cfg, _collect_config_issues(rollback_cfg)),
+                    message=reload_message + rollback_message,
+                    reloaded=False,
+                    rollback_applied=rollback_applied,
+                    restart_required=False,
+                )
 
     def _normalize_enabled_sources_override(
         raw_enabled: dict[str, bool] | None,

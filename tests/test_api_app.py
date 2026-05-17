@@ -2783,6 +2783,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         # Patch load_config to return our config
         monkeypatch.setattr(
@@ -2854,6 +2855,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         monkeypatch.setattr(
             "openbiliclaw.config.load_config",
@@ -2934,6 +2936,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
         monkeypatch.setattr(
             "openbiliclaw.config.load_config",
             lambda *_a, **_kw: cfg,
@@ -3000,6 +3003,7 @@ class TestEmbeddingAndCompatProviderE2E:
 
         config_path = tmp_path / "config.toml"
         save_config(initial_cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         # `cfg` is a single mutable instance that both load_config and
         # save_config see — that mirrors how the FastAPI lifecycle reads
@@ -3508,9 +3512,9 @@ class TestEmbeddingAndCompatProviderE2E:
         raw_bool: str,
         bad_grace: object,
     ) -> None:
-        from openbiliclaw.config import Config
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
 
-        cfg = Config()
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
         client = self._make_client(monkeypatch, tmp_path, cfg)
 
         response = client.put(
@@ -3538,9 +3542,9 @@ class TestEmbeddingAndCompatProviderE2E:
         from types import SimpleNamespace
 
         from openbiliclaw.api.runtime_context import RuntimeContext
-        from openbiliclaw.config import Config
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
 
-        cfg = Config()
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
 
         async def _fake_rebuild(self: RuntimeContext, config: Config) -> None:
             self.config = config

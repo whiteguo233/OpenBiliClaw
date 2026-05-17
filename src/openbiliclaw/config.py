@@ -51,6 +51,7 @@ class ConfigIssue:
 
     field: str
     message: str
+    severity: str = "warning"
 
 
 @dataclass

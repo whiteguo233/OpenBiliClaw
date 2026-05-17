@@ -631,6 +631,7 @@ class LoggingConfigOut(BaseModel):
 class ConfigIssueOut(BaseModel):
     field: str
     message: str
+    severity: str = "warning"
 
 
 class ConfigResponse(BaseModel):
@@ -675,6 +676,8 @@ class ConfigUpdateResponse(BaseModel):
     config: ConfigResponse
     message: str = ""
     reloaded: bool = False
+    rollback_applied: bool = False
+    restart_required: bool = False
 
 
 class SourceShareSuggestionResponse(BaseModel):
