@@ -3483,6 +3483,87 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["logging"]["unmanaged_truncate_mb"] == 78
         assert data["logging"]["unmanaged_max_age_days"] == 9
 
+    def test_get_config_exposes_scheduler_pause_on_extension_disconnect(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+        cfg.scheduler.pause_on_extension_disconnect = True
+        cfg.scheduler.extension_disconnect_grace_seconds = 45
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.get("/api/config")
+
+        assert response.status_code == 200
+        scheduler = response.json()["scheduler"]
+        assert scheduler["pause_on_extension_disconnect"] is True
+        assert scheduler["extension_disconnect_grace_seconds"] == 45
+
+    @pytest.mark.parametrize(("raw_bool", "bad_grace"), [("true", -1), ("on", 0), ("true", "abc")])
+    def test_put_config_updates_scheduler_pause_on_extension_disconnect(
+        self,
+        monkeypatch,
+        tmp_path,
+        raw_bool: str,
+        bad_grace: object,
+    ) -> None:
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "scheduler": {
+                    "pause_on_extension_disconnect": raw_bool,
+                    "extension_disconnect_grace_seconds": bad_grace,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert cfg.scheduler.pause_on_extension_disconnect is True
+        assert cfg.scheduler.extension_disconnect_grace_seconds == 90
+        scheduler = response.json()["config"]["scheduler"]
+        assert scheduler["pause_on_extension_disconnect"] is True
+        assert scheduler["extension_disconnect_grace_seconds"] == 90
+
+    def test_put_config_rebuilds_runtime_with_pause_on_disconnect(
+        self,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+
+        async def _fake_rebuild(self: RuntimeContext, config: Config) -> None:
+            self.config = config
+            self.runtime_controller = SimpleNamespace(scheduler_config=config.scheduler)
+
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "scheduler": {
+                    "pause_on_extension_disconnect": True,
+                    "extension_disconnect_grace_seconds": 12,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        runtime_scheduler = client.app.state.runtime_context.runtime_controller.scheduler_config
+        assert runtime_scheduler.pause_on_extension_disconnect is True
+        assert runtime_scheduler.extension_disconnect_grace_seconds == 12
+
     def test_put_config_updates_sources_and_advanced_settings(self, monkeypatch, tmp_path) -> None:
         """PUT /api/config should update the same advanced fields that the
         extension settings page exposes."""

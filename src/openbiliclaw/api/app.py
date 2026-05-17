@@ -3324,6 +3324,8 @@ def create_app(
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
+                pause_on_extension_disconnect=cfg.scheduler.pause_on_extension_disconnect,
+                extension_disconnect_grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
                 discovery_cron=cfg.scheduler.discovery_cron,
                 pool_target_count=cfg.scheduler.pool_target_count,
                 pool_source_shares=dict(cfg.scheduler.pool_source_shares),
@@ -3381,6 +3383,7 @@ def create_app(
         """
         from openbiliclaw.config import (
             _collect_config_issues,
+            _normalize_extension_disconnect_grace,
             _normalize_pool_source_shares,
             load_config,
             save_config,
@@ -3518,6 +3521,8 @@ def create_app(
             sdata = update["scheduler"]
             for key in (
                 "enabled",
+                "pause_on_extension_disconnect",
+                "extension_disconnect_grace_seconds",
                 "discovery_cron",
                 "pool_target_count",
                 "account_sync_interval_hours",
@@ -3533,7 +3538,13 @@ def create_app(
             ):
                 if key in sdata:
                     current_val = getattr(cfg.scheduler, key)
-                    if isinstance(current_val, bool):
+                    if key == "extension_disconnect_grace_seconds":
+                        setattr(
+                            cfg.scheduler,
+                            key,
+                            _normalize_extension_disconnect_grace(sdata[key]),
+                        )
+                    elif isinstance(current_val, bool):
                         setattr(cfg.scheduler, key, _as_bool(sdata[key]))
                     elif isinstance(current_val, int):
                         setattr(cfg.scheduler, key, int(sdata[key]))
