@@ -24,7 +24,7 @@
 - **🧯 配置死锁恢复** —— `/api/config` 先校验再写盘，热重载失败自动回滚；启动遇到 LLM registry 配置错误时进入降级模式，popup 仍能打开设置页保存修复配置。
 - **🧷 设置页不再擦配置** —— masked key、非空 model/base_url/header/reasoning 字段会被保留，只有显式 reset 才会清空允许列表里的 API Key。
 - **🧩 MiMo / 非 OpenAI JSON 容错统一** —— recommendation、discovery、delight、awareness 和 insight 共用结构化输出解析，兼容 object wrapper、fenced JSON、JSONL 和 schema echo。
-- **⬆️ 后端自动更新真的会跑** —— 自动更新改为按 `backend-v*` git tag 过滤，停止把扩展 release 误判成「Already up-to-date」，之前被静默卡在老版本的 daemon 会自动追上来。
+- **⬆️ 后端自动更新真的会跑** —— 自动更新改为按 `backend-v*` git tag 过滤，停止把扩展 release 误判成「Already up-to-date」；从这一版起开了 auto-update 的 daemon 才会正确追新版（已经卡住的存量 daemon 请先手动 `pip install -U openbiliclaw` 桥接一次）。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
