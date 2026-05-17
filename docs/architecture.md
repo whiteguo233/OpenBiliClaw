@@ -65,6 +65,7 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ### Runtime (`runtime/`)
 - 系统生命周期管理和服务编排
+- `AutoUpdateService` — 后端自动更新只查询 GitHub `/tags` 并过滤 `backend-v*`（兼容 legacy `v*` / 裸 semver），明确忽略 `extension-v*`；当前 GitHub Releases 由扩展 artifact 占用，不能用 `/releases/latest` 判断后端源码是否最新
 - `ContinuousRefreshController` — 后台定时刷新候选池；按平台族配额评估 deficit，B 站缺货合并到一次 discover() 并行 fan-out，小红书缺口交给 xhs producer / 扩展任务链；抖音缺口交给 runtime `DouyinDiscoveryProducer`，通过 `DouyinDiscoveryService(cache=True)` 复用 search / hot / feed 后台插件签名链路补池
 - `background_llm_work_allowed()` — 共享 gate predicate；`scheduler.enabled=false` 会暂停 daemon-owned 后台 LLM / embedding 工作，`scheduler.pause_on_extension_disconnect=true` 时还要求浏览器插件 presence 在线或仍处于断开宽限窗口。该 gate 覆盖 refresh、pool precompute、soul pipeline、xhs/dy producer、proactive push、低频 account sync、startup one-shot 和 OpenClaw direct bootstrap
 - `_enforce_pool_cap` 每 tick 跑 `trim_topic_group_overflow` + under-quota suppressed 候选复活 + 必要时按 share quotas 修剪过额源

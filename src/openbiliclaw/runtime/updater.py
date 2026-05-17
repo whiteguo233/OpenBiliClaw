@@ -1,4 +1,13 @@
-"""Auto-update service — periodically check for and apply new versions."""
+"""Auto-update service — periodically check for and apply backend source tags.
+
+Release contract:
+- backend source updates are git tags named ``backend-vX.Y.Z``;
+- legacy ``vX.Y.Z`` / bare ``X.Y.Z`` tags are tolerated for old installs;
+- extension artifacts use ``extension-vX.Y.Z`` and MUST be ignored here;
+- GitHub ``/releases/latest`` is not authoritative for backend updates because
+  current Releases are extension artifacts. ``_fetch_latest_version`` therefore
+  queries ``/tags`` directly and filters for backend tags.
+"""
 
 from __future__ import annotations
 

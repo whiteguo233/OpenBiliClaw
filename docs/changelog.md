@@ -4,6 +4,12 @@
 
 ---
 
+## v0.3.74: Config deadlock recovery（2026-05-17）
+
+- 后端自动更新改为直接查询 GitHub `/tags` 并只接受 `backend-v*`（兼容 legacy `v*` / 裸 semver）作为后端版本来源，明确忽略 `extension-v*`；当 tag 列表里暂时没有 backend tag 时返回 `no_backend_tag_yet`，不再把扩展 release 误判成 "Already up-to-date"。
+
+---
+
 ## v0.3.73: Popup 运行时省钱开关（2026-05-17）
 
 - Popup 顶部新增两个运行时开关：`暂停后台 LLM` 直接写入 `scheduler.enabled=false`，`关浏览器后暂停后台` 写入 `scheduler.pause_on_extension_disconnect=true`；设置页同步暴露后者。后端 `/api/config`、`config-show`、`start` / `serve-api` WARN 和 `config.example.toml` 都同步展示新字段。

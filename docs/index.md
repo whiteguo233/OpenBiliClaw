@@ -34,6 +34,7 @@
 | CLI 命令参考 | [modules/cli.md](modules/cli.md) | `src/openbiliclaw/cli.py` | ✅ 持续更新 (含 `setup-embedding` / `discover-douyin` / `fetch-youtube` / `import-youtube`) |
 | 配置参考 | [modules/config.md](modules/config.md) | `config.example.toml` | ✅ 持续更新 (含 `[llm.embedding]`) |
 | 集成适配层 | [modules/integrations.md](modules/integrations.md) | `src/openbiliclaw/integrations/` | ✅ OpenClaw adapter 已接入 |
+| 运行时服务 | [modules/runtime.md](modules/runtime.md) | `src/openbiliclaw/runtime/` | ✅ refresh / presence gate / runtime-stream / backend tag auto-update |
 
 ## 开发指南
 
