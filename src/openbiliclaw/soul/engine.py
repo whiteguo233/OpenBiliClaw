@@ -14,8 +14,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from openbiliclaw.llm.base import LLMProvider
-    from openbiliclaw.llm.service import ModuleOverride
+    from openbiliclaw.llm.service import ModuleOverride, SupportsComplete
     from openbiliclaw.memory.manager import MemoryManager
 
 from openbiliclaw.llm.service import LLMService
@@ -76,7 +75,7 @@ class SoulEngine:
 
     def __init__(
         self,
-        llm: LLMProvider,
+        llm: SupportsComplete,
         memory: MemoryManager,
         *,
         embedding_service: Any | None = None,

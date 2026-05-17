@@ -289,10 +289,12 @@ class TestBackendAPI:
                 registry: object,
                 memory: object,
                 usage_recorder: object | None = None,
+                module_overrides: object | None = None,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                self.module_overrides = module_overrides
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -418,10 +420,12 @@ class TestBackendAPI:
                 registry: object,
                 memory: object,
                 usage_recorder: object | None = None,
+                module_overrides: object | None = None,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                self.module_overrides = module_overrides
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:

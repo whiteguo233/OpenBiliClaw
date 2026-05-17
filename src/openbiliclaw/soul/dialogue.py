@@ -17,8 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from openbiliclaw.llm.base import LLMProvider
-    from openbiliclaw.llm.service import LLMService, ModuleOverride
+    from openbiliclaw.llm.service import LLMService, ModuleOverride, SupportsComplete
     from openbiliclaw.soul.engine import SoulEngine
 
 logger = logging.getLogger(__name__)
@@ -50,7 +49,7 @@ class SocraticDialogue:
 
     def __init__(
         self,
-        llm: LLMProvider | None,
+        llm: SupportsComplete | None,
         soul_engine: SoulEngine,
         llm_service: LLMService | None = None,
         session: str = "cli",

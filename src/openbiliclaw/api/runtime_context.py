@@ -178,7 +178,7 @@ class RuntimeContext:
             getattr(preference_cfg, "satisfaction_filter_enabled", True)
         )
         new_soul_engine = SoulEngine(
-            llm=new_registry,  # type: ignore[arg-type]
+            llm=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,

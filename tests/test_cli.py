@@ -626,9 +626,16 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             self.initialized += 1
 
     class FakeLLMService:
-        def __init__(self, *, registry: object, memory: object) -> None:
+        def __init__(
+            self,
+            *,
+            registry: object,
+            memory: object,
+            module_overrides: object | None = None,
+        ) -> None:
             self.registry = registry
             self.memory = memory
+            self.module_overrides = module_overrides
 
     class FakeRecommendationEngine:
         def __init__(

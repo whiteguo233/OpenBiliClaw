@@ -58,7 +58,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     memory_manager.initialize()
 
     soul_engine = SoulEngine(
-        llm=llm_registry,  # type: ignore[arg-type]
+        llm=llm_registry,
         memory=memory_manager,
         module_overrides=module_overrides,
     )
