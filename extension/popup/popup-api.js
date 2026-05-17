@@ -259,3 +259,14 @@ export async function updateConfig(data) {
     body: JSON.stringify(data),
   });
 }
+
+export async function updateRuntimeToggle(name, value) {
+  const enabled = Boolean(value);
+  if (name === "pause_llm") {
+    return updateConfig({ scheduler: { enabled: !enabled } });
+  }
+  if (name === "pause_on_disconnect") {
+    return updateConfig({ scheduler: { pause_on_extension_disconnect: enabled } });
+  }
+  throw new Error(`Unknown runtime toggle: ${name}`);
+}

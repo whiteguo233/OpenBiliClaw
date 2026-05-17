@@ -53,6 +53,7 @@ import {
   startChatTurn,
   submitFeedback,
   updateConfig,
+  updateRuntimeToggle,
 } from "./popup-api.js";
 
 const state = {
@@ -73,6 +74,7 @@ const state = {
   expandedCognitionIndex: null,
   runtimeStatus: null,
   runtimeEvent: null,
+  runtimeConfig: null,
   activityFeed: null,
   activityExpanded: false,
   activityLoadingMore: false,
@@ -200,6 +202,75 @@ function setStatus(online) {
   elements.statusBadge.dataset.tone = badgeState.tone;
   elements.statusDot.classList.toggle("offline", badgeState.tone === "offline");
   elements.statusLabel.textContent = badgeState.label;
+}
+
+function renderRuntimeToggles(config = state.runtimeConfig) {
+  const scheduler = config?.scheduler || {};
+  const pauseLlm = scheduler.enabled === false;
+  const pauseOnDisconnect = scheduler.pause_on_extension_disconnect === true;
+
+  const runtimePauseLlm = document.getElementById("cfgRuntimePauseLlm");
+  if (runtimePauseLlm instanceof HTMLInputElement) {
+    runtimePauseLlm.checked = pauseLlm;
+  }
+  const runtimePauseOnDisconnect = document.getElementById("cfgRuntimePauseOnDisconnect");
+  if (runtimePauseOnDisconnect instanceof HTMLInputElement) {
+    runtimePauseOnDisconnect.checked = pauseOnDisconnect;
+  }
+  const pauseLlmHint = document.getElementById("cfgRuntimePauseLlmHint");
+  if (pauseLlmHint instanceof HTMLElement) {
+    pauseLlmHint.textContent = pauseLlm ? "✓ 已暂停" : "✗ 后台运行中";
+  }
+  const pauseOnDisconnectHint = document.getElementById("cfgRuntimePauseOnDisconnectHint");
+  if (pauseOnDisconnectHint instanceof HTMLElement) {
+    pauseOnDisconnectHint.textContent = pauseOnDisconnect ? "✓ 已启用" : "✗ 始终后台运行";
+  }
+
+  const schedEnabled = document.getElementById("cfgSchedulerEnabled");
+  if (schedEnabled instanceof HTMLInputElement) {
+    schedEnabled.checked = !pauseLlm;
+  }
+  const pauseDisconnect = document.getElementById("cfgPauseOnDisconnect");
+  if (pauseDisconnect instanceof HTMLInputElement) {
+    pauseDisconnect.checked = pauseOnDisconnect;
+  }
+}
+
+function applyRuntimeConfig(config) {
+  if (!config) return;
+  state.runtimeConfig = config;
+  renderRuntimeToggles(config);
+}
+
+function bindRuntimeToggles() {
+  const bindings = [
+    ["cfgRuntimePauseLlm", "pause_llm"],
+    ["cfgRuntimePauseOnDisconnect", "pause_on_disconnect"],
+  ];
+
+  for (const [id, name] of bindings) {
+    const input = document.getElementById(id);
+    if (!(input instanceof HTMLInputElement)) continue;
+    input.addEventListener("change", async () => {
+      const nextValue = input.checked;
+      input.disabled = true;
+      try {
+        const result = await updateRuntimeToggle(name, nextValue);
+        if (result?.config) {
+          applyRuntimeConfig(result.config);
+        } else {
+          applyRuntimeConfig(await fetchConfig());
+        }
+        setHint("后台运行开关已保存。", "success");
+      } catch (err) {
+        input.checked = !nextValue;
+        renderRuntimeToggles();
+        setHint(`运行开关保存失败: ${err.message}`, "error");
+      } finally {
+        input.disabled = false;
+      }
+    });
+  }
 }
 
 function queueRecommendationLoadCheck() {
@@ -3527,23 +3598,30 @@ async function initializeRecommendations() {
 
   if (!online) {
     state.runtimeStatus = null;
+    state.runtimeConfig = null;
     state.recommendations = [];
     clearDelightQueue();
     state.hasMoreRecommendations = false;
     state.loadingMore = false;
+    renderRuntimeToggles();
     renderDelightSlot();
     renderRecommendationState(getPopupState({ online, items: [], runtimeStatus: null }));
     renderProfileSummary(normalizeProfileSummary({ initialized: false }));
     return;
   }
 
-  const [runtimeResult, recommendationResult, delightResult] = await Promise.allSettled([
-    fetchRuntimeStatus(),
-    fetchRecommendations(),
-    fetchPendingDelightBatch(20),
-  ]);
+  const [runtimeResult, recommendationResult, delightResult, configResult] =
+    await Promise.allSettled([
+      fetchRuntimeStatus(),
+      fetchRecommendations(),
+      fetchPendingDelightBatch(20),
+      fetchConfig(),
+    ]);
 
   state.runtimeStatus = runtimeResult.status === "fulfilled" ? runtimeResult.value : null;
+  if (configResult.status === "fulfilled") {
+    applyRuntimeConfig(configResult.value);
+  }
   if (delightResult.status === "fulfilled" && Array.isArray(delightResult.value)) {
     // Reset queue then re-push all from server so dismissed items in
     // memory are still respected (pushDelightCandidate filters them).
@@ -3927,6 +4005,7 @@ function bindSettings() {
   };
 
   function populateForm(cfg) {
+    applyRuntimeConfig(cfg);
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
@@ -4010,6 +4089,10 @@ function bindSettings() {
     // Scheduler
     const schedEnabled = document.getElementById("cfgSchedulerEnabled");
     if (schedEnabled) schedEnabled.checked = cfg.scheduler?.enabled !== false;
+    const pauseOnDisconnect = document.getElementById("cfgPauseOnDisconnect");
+    if (pauseOnDisconnect) {
+      pauseOnDisconnect.checked = cfg.scheduler?.pause_on_extension_disconnect === true;
+    }
     setVal("cfgDiscoveryCron", cfg.scheduler?.discovery_cron);
     setVal("cfgPoolTarget", cfg.scheduler?.pool_target_count);
     setVal("cfgAccountSyncInterval", cfg.scheduler?.account_sync_interval_hours);
@@ -4141,6 +4224,7 @@ function bindSettings() {
       },
       scheduler: {
         enabled: checked("cfgSchedulerEnabled", true),
+        pause_on_extension_disconnect: checked("cfgPauseOnDisconnect"),
         discovery_cron: getVal("cfgDiscoveryCron"),
         pool_target_count: getInt("cfgPoolTarget", 600),
         account_sync_interval_hours: getInt("cfgAccountSyncInterval", 6),
@@ -4258,6 +4342,7 @@ function bindSettings() {
       try {
         const result = await updateConfig(data);
         if (result.config) {
+          applyRuntimeConfig(result.config);
           renderIssues(result.config.issues);
         }
         const tone = result.reloaded ? "success" : "warning";
@@ -4302,6 +4387,7 @@ async function initializePopup() {
   bindActivityToggle();
   bindChat();
   bindSettings();
+  bindRuntimeToggles();
   bindMessages();
   setActiveTab(
     requestedTab === "profile" || requestedTab === "chat" || requestedTab === "recommend"

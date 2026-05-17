@@ -442,6 +442,56 @@
       padding: 0 11px;
     }
 
+    .runtime-toggle-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .runtime-toggle {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      min-height: 48px;
+      padding: 8px 9px;
+      border: 1px solid rgba(225, 232, 241, 0.96);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .runtime-toggle input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--brand);
+    }
+
+    .runtime-toggle-label {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .runtime-toggle-title {
+      font-size: 11px;
+      line-height: 1.25;
+      color: var(--text-main);
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .runtime-toggle-hint {
+      font-size: 10px;
+      line-height: 1.3;
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+
     .recommendation-summary-row {
       position: relative;
       z-index: 1;
@@ -1240,6 +1290,10 @@
 
       .recommendation-header-top .action-button {
         width: 100%;
+      }
+
+      .runtime-toggle-row {
+        grid-template-columns: 1fr;
       }
 
       .recommendation-status-chip {
@@ -3340,6 +3394,22 @@
             </div>
             <button id="refreshRecommendationsButton" class="action-button action-secondary" type="button">换一批</button>
           </div>
+          <div class="runtime-toggle-row" aria-label="后台运行开关">
+            <label class="runtime-toggle" title="暂停定时发现、候选池预计算和画像后台任务里的 LLM / embedding 调用">
+              <input id="cfgRuntimePauseLlm" type="checkbox">
+              <span class="runtime-toggle-label">
+                <span class="runtime-toggle-title">省钱模式（暂停后台 LLM）</span>
+                <span id="cfgRuntimePauseLlmHint" class="runtime-toggle-hint">✗ 后台运行中</span>
+              </span>
+            </label>
+            <label class="runtime-toggle" title="所有扩展窗口断开后，后台 LLM / embedding 工作会在宽限期后暂停">
+              <input id="cfgRuntimePauseOnDisconnect" type="checkbox">
+              <span class="runtime-toggle-label">
+                <span class="runtime-toggle-title">关闭浏览器后停止后台</span>
+                <span id="cfgRuntimePauseOnDisconnectHint" class="runtime-toggle-hint">✗ 始终后台运行</span>
+              </span>
+            </label>
+          </div>
           <div class="recommendation-summary-row">
             <div id="poolStatus" class="recommendation-status-row" hidden>
               <div class="recommendation-status-chip" data-tone="neutral">
@@ -3881,8 +3951,13 @@
         <h3><span class="section-icon">&#x23F0;</span> 调度</h3>
         <div class="settings-field-row">
           <input id="cfgSchedulerEnabled" type="checkbox">
-          <label for="cfgSchedulerEnabled">启用定时发现</label>
+          <label for="cfgSchedulerEnabled">后台 LLM 总开关（关闭=省钱模式）</label>
         </div>
+        <div class="settings-field-row">
+          <input id="cfgPauseOnDisconnect" type="checkbox">
+          <label for="cfgPauseOnDisconnect">关闭浏览器后停止后台</label>
+        </div>
+        <p class="settings-hint">扩展 runtime-stream 全部断开后，后台 LLM / embedding 工作会在宽限期后暂停。</p>
         <div class="settings-field">
           <label for="cfgDiscoveryCron">发现 Cron 表达式</label>
           <input id="cfgDiscoveryCron" type="text" placeholder="0 */8 * * *">
