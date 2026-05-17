@@ -11,6 +11,7 @@ from openbiliclaw.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMRateLimitError,
+    LLMRegistry,
     LLMResponse,
     LLMResponseError,
 )
@@ -337,6 +338,71 @@ def test_build_embedding_service_respects_explicit_model_override(
     assert service._model == "custom-embed-v2"
 
 
+def test_ollama_embedding_with_empty_credentials_uses_local_default_without_warning(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ollama embedding is local, so empty credentials are not chat
+    credential back-compat.
+    """
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            ollama=LLMProviderConfig(model="", base_url=""),
+            embedding=EmbeddingConfig(
+                provider="ollama",
+                model="bge-m3",
+                api_key="",
+                base_url="",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._model == "bge-m3"
+    assert service._provider.base_url == "http://localhost:11434/v1"
+    assert "back-compat" not in caplog.text.lower()
+
+
+def test_ollama_embedding_uses_chat_base_url_without_warning(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            ollama=LLMProviderConfig(model="", base_url="http://localhost:11434"),
+            embedding=EmbeddingConfig(provider="ollama", model="bge-m3"),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._provider.base_url == "http://localhost:11434/v1"
+    assert "back-compat" not in caplog.text.lower()
+
+
 # ---------------------------------------------------------------------------
 # Regression: providers without an embeddings endpoint must NOT silently
 # return None. v0.3.18 and earlier handed the request to Claude / DeepSeek /
@@ -569,6 +635,36 @@ def test_embedding_back_compat_falls_back_to_chat_block(tmp_path) -> None:
     # proves the back-compat code path was taken.
     assert service._provider._client.api_key == "legacy-chat-side-key"
     assert service._model == "text-embedding-3-small"
+
+
+def test_openai_embedding_chat_credential_fallback_still_warns_once(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-test", base_url=""),
+            embedding=EmbeddingConfig(provider="openai", api_key="", base_url=""),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, build_llm_registry(config))
+        again = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert again is not None
+    compat = [r for r in caplog.records if "back-compat" in r.getMessage().lower()]
+    assert len(compat) == 1
+    assert "[llm.openai]" in compat[0].getMessage()
 
 
 def test_emit_embedding_compat_warning_fires_once_per_provider(

@@ -234,13 +234,22 @@ def _build_dedicated_embedding_provider(
     else:
         # Back-compat: borrow from [llm.<candidate>]. Triggers a one-time
         # WARNING only when the user explicitly chose this provider for
-        # embedding (otherwise it's just normal fallback resolution).
+        # embedding and remote credentials were actually borrowed
+        # (otherwise it's just normal fallback resolution). Ollama is
+        # local and credentialless, so this warning never applies there.
         chat_cfg = getattr(config.llm, candidate, None)
         api_key = (getattr(chat_cfg, "api_key", "") if chat_cfg is not None else "").strip()
         base_url = (getattr(chat_cfg, "base_url", "") if chat_cfg is not None else "").strip()
+        borrowed_chat_credentials = (
+            bool(api_key and base_url)
+            if candidate == "openai_compatible"
+            else bool(api_key)
+        )
         if (
             emb_cfg.provider.strip().lower() == candidate
             and candidate == requested_name
+            and candidate != "ollama"
+            and borrowed_chat_credentials
         ):
             _emit_embedding_compat_warning(candidate)
 
