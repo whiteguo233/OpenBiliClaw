@@ -8,7 +8,7 @@
 
 - 浏览器插件设置页的后端 endpoint 从“仅端口可改”扩展为“后端地址 + 端口”一起配置：Chrome / Firefox manifest 都加入 `http://*/*` 权限，用户可把后端运行在局域网另一台机器上（`openbiliclaw start --host 0.0.0.0 --port 8420`），再在插件设置页填写该机器的局域网 IP；新增 host 校验、endpoint 持久化和 manifest 权限回归测试。
 - 插件推荐页移除「停止后台 LLM 请求」和「关闭浏览器后停止后台」快捷开关，只在设置页调度区保留；弃用“省钱模式”旧称，并补充说明开启后不会自动补货，候选池为空时可能暂时没有推荐。`config-show` 同步显示「停止后台 LLM 请求」。
-- 修复 [#27](https://github.com/whiteguo233/OpenBiliClaw/issues/27)：LM Studio 在 `json_schema` response format 下可能返回 HTTP 200 且后台 UI 可见模型输出，但 OpenAI-compatible API 的 `message.content` 为空；`OpenAIProvider` 现在会在结构化请求遇到这种空内容时移除 `response_format` 自动重试一次，避免偏好分析阶段直接报 `openai returned empty content`。
+- 修复 [#27](https://github.com/whiteguo233/OpenBiliClaw/issues/27)：LM Studio 在 `json_object` / `json_schema` response format 下可能返回 HTTP 200 且后台 UI 可见模型输出，但 OpenAI-compatible API 的 `message.content` 为空；`OpenAIProvider` 现在识别本地 LM Studio 后从第一次结构化请求起不发送 `response_format`，依赖 prompt 约束 JSON，避免先浪费一整次 LLM 调用再重试。
 - 浏览器插件版本提升到 v0.3.30，准备发布 `extension-v0.3.30`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.30.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.30-firefox.zip`。
 
 ---
@@ -24,7 +24,7 @@
 
 - `/api/config` 热重载后的 speculator tick 改为受 `BackgroundTaskRegistry` 管理的 detached task，保存配置不再等待一次可能很慢的 `force_tick()`；异常由 helper 记录并吞掉，避免后台补货失败反向影响配置保存响应。
 - 浏览器插件配置保存请求新增 60s AbortController 超时，超时时显示 amber toast，提示“请求可能已写入，热重载可能仍在后台进行”，不再错误断言配置一定已落盘。
-- 修复 [#12](https://github.com/whiteguo233/OpenBiliClaw/issues/12)：LM Studio 的 OpenAI-compatible `/v1/chat/completions` 不接受 `response_format={"type":"json_object"}`，`OpenAIProvider` 现在对 LM Studio 默认本地端口直接使用 `json_schema`，并在其它兼容服务明确拒绝 `json_object` 时自动用通用 JSON schema 重试，避免初始化偏好分析阶段 400 后再误导性 fallback 到模板里的 Ollama `qwen2.5:7b`。
+- 修复 [#12](https://github.com/whiteguo233/OpenBiliClaw/issues/12)：LM Studio 的 OpenAI-compatible `/v1/chat/completions` 不接受 `response_format={"type":"json_object"}`；v0.3.75 先对 LM Studio 默认本地端口改用通用 `json_schema`，并在其它兼容服务明确拒绝 `json_object` 时自动用通用 JSON schema 重试，避免初始化偏好分析阶段 400 后再误导性 fallback 到模板里的 Ollama `qwen2.5:7b`。v0.3.77 起 LM Studio 路径进一步调整为首次跳过 `response_format`，普通兼容服务仍保留 `json_schema` 重试。
 - `[llm.soul]` / `[llm.discovery]` / `[llm.recommendation]` / `[llm.evaluation]` 覆盖现在真正进入运行时路由：`LLMService` 按内置 caller bucket（如 `recommendation.delight_score` → evaluation、`sources.xhs.*` → discovery）调用 `LLMRegistry.complete_provider()`，并用 per-call `model=` 覆盖 provider 模型而不污染 provider 实例默认值；override provider rate-limit / 错误不会偷偷 spill 到 default，未知或 embedding-only provider 只 INFO 一次后走默认链。
 - `RuntimeContext`、`SoulEngine`、CLI builder、OpenClaw bootstrap 和 `SocraticDialogue` fallback 均接入 config-backed `module_overrides`，避免只在部分入口生效导致“配置保存了但实际调用没换模型”。
 - 后端包版本提升到 v0.3.75；浏览器插件版本提升到 v0.3.27，准备发布 `extension-v0.3.27`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.27.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.27-firefox.zip`。

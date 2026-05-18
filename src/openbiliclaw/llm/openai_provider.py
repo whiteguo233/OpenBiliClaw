@@ -95,7 +95,9 @@ class OpenAIProvider(LLMProvider):
             "max_tokens": max_tokens,
         }
         if json_mode:
-            kwargs["response_format"] = self._json_response_format()
+            fmt = self._json_response_format()
+            if fmt is not None:
+                kwargs["response_format"] = fmt
         extra_headers = self._extra_headers()
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
@@ -124,13 +126,10 @@ class OpenAIProvider(LLMProvider):
         choice = response.choices[0]
         content = choice.message.content or ""
         if not content.strip():
-            # Some local backends (notably LM Studio) return HTTP 200 and
-            # report completion_tokens > 0, yet ``message.content`` is
-            # empty when ``response_format`` is set to ``json_schema``.
-            # The model *did* generate output (visible in the backend UI)
-            # but the OpenAI-compat layer loses it.  Retry once with
-            # ``response_format`` removed — the prompt itself already asks
-            # for JSON, so the model will still produce valid output.
+            # Some OpenAI-compatible backends return HTTP 200 and report
+            # completion_tokens > 0, yet ``message.content`` is empty when
+            # ``response_format`` is set. Retry once without the constraint;
+            # the prompt itself already asks for JSON.
             if json_mode and "response_format" in kwargs:
                 logger.warning(
                     "%s returned empty content with response_format=%s; "
@@ -259,13 +258,18 @@ class OpenAIProvider(LLMProvider):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))
 
-    def _json_response_format(self) -> dict[str, Any]:
-        if self._prefers_json_schema_response_format():
-            return _generic_json_schema_response_format()
+    def _json_response_format(self) -> dict[str, Any] | None:
+        if self._is_lm_studio():
+            # LM Studio's OpenAI-compat layer loses ``message.content``
+            # with both ``json_object`` and ``json_schema`` response
+            # formats (HTTP 200, completion_tokens > 0, but content is
+            # empty). Skip ``response_format`` entirely; the prompt
+            # already asks for JSON so the model still produces it.
+            return None
         return {"type": "json_object"}
 
-    def _prefers_json_schema_response_format(self) -> bool:
-        """Return True for backends known to reject OpenAI JSON-object mode."""
+    def _is_lm_studio(self) -> bool:
+        """Detect LM Studio by URL heuristics (name or default port)."""
         raw_base_url = self.base_url.strip()
         if not raw_base_url:
             return False
