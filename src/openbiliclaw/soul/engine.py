@@ -456,6 +456,7 @@ class SoulEngine:
         updated_preference = await self._preference_analyzer.analyze_events(
             events=feedback_events,
             existing_preference=existing_preference,
+            event_chunk_size=200,
         )
         preference_layer.data.clear()
         preference_layer.data.update(updated_preference)

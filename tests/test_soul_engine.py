@@ -403,8 +403,10 @@ async def test_process_feedback_batch_updates_preference_after_threshold(
         *,
         events: list[dict[str, object]],
         existing_preference: dict[str, object],
+        event_chunk_size: int = 0,
     ) -> dict[str, object]:
         assert len(events) == 3
+        assert event_chunk_size == 200
         return {
             "interests": [
                 {"name": "纪录片", "category": "知识", "weight": 0.9, "source": "feedback"}
@@ -735,7 +737,9 @@ async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_s
         *,
         events: list[dict[str, object]],
         existing_preference: dict[str, object],
+        event_chunk_size: int = 0,
     ) -> dict[str, object]:
+        assert event_chunk_size == 200
         return {
             "interests": [
                 {"name": "纪录片", "category": "知识", "weight": 0.95, "source": "feedback"},

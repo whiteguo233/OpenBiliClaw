@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.service import LLMServiceError
 
 
 class FakeRegistry:
@@ -46,6 +47,79 @@ class FakeStructuredService:
     ) -> LLMResponse:
         self.calls.append({"system_instruction": system_instruction, "user_input": user_input})
         return self.response
+
+
+class BudgetCapturingStructuredService:
+    def __init__(self, max_prompt_chars: int) -> None:
+        self.max_prompt_chars = max_prompt_chars
+        self.calls: list[dict[str, str]] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append({"system_instruction": system_instruction, "user_input": user_input})
+        assert len(system_instruction) + len(user_input) <= self.max_prompt_chars
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
+
+
+class ContextOverflowOnceStructuredService:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        if "PAIR_ONLY_OVERFLOWS" in user_input and user_input.count("PAIR_ONLY_OVERFLOWS") > 1:
+            raise LLMProviderError(
+                "openai request failed: HTTP 400: The number of tokens to keep "
+                "from the initial prompt is greater than the context length "
+                "(n_keep: 135132 >= n_ctx: 36096)"
+            )
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
+
+
+class ServiceContextOverflowOnceStructuredService(ContextOverflowOnceStructuredService):
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        if (
+            "SERVICE_PAIR_ONLY_OVERFLOWS" in user_input
+            and user_input.count("SERVICE_PAIR_ONLY_OVERFLOWS") > 1
+        ):
+            raise LLMServiceError("structured task failed: prompt is too long for context length")
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
 
 
 class FakeErrorStructuredService:
@@ -321,6 +395,289 @@ async def test_chunked_analysis_splits_and_skips_rejected_single_event() -> None
         "xiaohongshu": 0.25,
     }
     assert len(service.calls) > 1
+
+
+@pytest.mark.asyncio
+async def test_analyze_events_count_chunking_avoids_whole_batch_prompt_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.soul import preference_analyzer as analyzer_module
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    original_build_prompt = analyzer_module.build_preference_analysis_prompt
+
+    def build_prompt_rejecting_whole_batch(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> list[dict[str, str]]:
+        if len(events) > 1:
+            raise AssertionError("count-based chunking must not build a whole-batch prompt")
+        return original_build_prompt(events=events, existing_preference=existing_preference)
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "build_preference_analysis_prompt",
+        build_prompt_rejecting_whole_batch,
+    )
+    service = FakeStructuredService(
+        LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
+    )
+
+    await PreferenceAnalyzer(service).analyze_events(
+        events=[
+            {"event_type": "view", "title": "事件 1"},
+            {"event_type": "view", "title": "事件 2"},
+        ],
+        existing_preference={},
+        event_chunk_size=1,
+    )
+
+    assert len(service.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_chunked_analysis_splits_by_prompt_budget_before_llm_call() -> None:
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    base_messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    budget = len(base_messages[0]["content"]) + 1800
+    service = BudgetCapturingStructuredService(max_prompt_chars=budget)
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=budget)
+
+    events = [
+        {
+            "event_type": "view",
+            "title": f"长事件 {idx}",
+            "context": "这是一段偏好上下文" * 80,
+            "metadata": {"source_platform": "bilibili", "bvid": f"BV{idx}"},
+        }
+        for idx in range(4)
+    ]
+
+    preference = await analyzer.analyze_events(
+        events=events,
+        existing_preference={},
+        event_chunk_size=4,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert len(service.calls) > 1
+    assert all(
+        len(call["system_instruction"]) + len(call["user_input"]) <= budget
+        for call in service.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_events_splits_by_prompt_budget_without_explicit_chunk_size() -> None:
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    base_messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    budget = len(base_messages[0]["content"]) + 1800
+    service = BudgetCapturingStructuredService(max_prompt_chars=budget)
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=budget)
+
+    events = [
+        {
+            "event_type": "view",
+            "title": f"自动分片 {idx}",
+            "context": "这是一段偏好上下文" * 80,
+            "metadata": {"source_platform": "bilibili", "bvid": f"BV_AUTO_{idx}"},
+        }
+        for idx in range(4)
+    ]
+
+    await analyzer.analyze_events(events=events, existing_preference={})
+
+    assert len(service.calls) > 1
+    assert all(
+        len(call["system_instruction"]) + len(call["user_input"]) <= budget
+        for call in service.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_single_oversized_preference_event_is_compacted_before_llm_call() -> None:
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    base_messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    budget = len(base_messages[0]["content"]) + 2200
+    service = BudgetCapturingStructuredService(max_prompt_chars=budget)
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=budget)
+
+    await analyzer.analyze_events(
+        events=[
+            {
+                "event_type": "feedback",
+                "title": "很长但重要的标题" + "x" * 2000,
+                "context": "用户明确点踩了这条内容。" + "y" * 20_000,
+                "inferred_satisfaction": "negative",
+                "satisfaction_reason": "explicit_negative",
+                "metadata": {
+                    "source_platform": "bilibili",
+                    "up_name": "测试UP",
+                    "bvid": "BV_LONG",
+                    "feedback_type": "dislike",
+                    "raw_context": "z" * 50_000,
+                },
+            }
+        ],
+        existing_preference={},
+    )
+
+    assert len(service.calls) == 1
+    user_input = service.calls[0]["user_input"]
+    assert "测试UP" in user_input
+    assert "BV_LONG" in user_input
+    assert "feedback_type" in user_input
+    assert "raw_context" not in user_input
+    assert "z" * 1000 not in user_input
+
+
+@pytest.mark.asyncio
+async def test_single_event_is_skipped_when_compact_prompt_still_exceeds_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+    from openbiliclaw.soul import preference_analyzer as analyzer_module
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    compact_prompt_events: list[dict[str, object]] = []
+    original_build_prompt = analyzer_module.build_preference_analysis_prompt
+
+    def capture_prompt_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> list[dict[str, str]]:
+        if len(events) == 1 and events[0].get("title"):
+            compact_prompt_events.append(dict(events[0]))
+        return original_build_prompt(events=events, existing_preference=existing_preference)
+
+    monkeypatch.setattr(
+        analyzer_module,
+        "build_preference_analysis_prompt",
+        capture_prompt_events,
+    )
+
+    base_messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    budget = len(base_messages[0]["content"]) + 20
+    service = BudgetCapturingStructuredService(max_prompt_chars=budget)
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=budget)
+
+    preference = await analyzer.analyze_events(
+        events=[
+            {
+                "event_type": "view",
+                "title": "too large",
+                "context": "x" * 10_000,
+                "raw_context": "y" * 10_000,
+                "payload": {"comments": "z" * 10_000},
+            }
+        ],
+        existing_preference={},
+    )
+
+    assert service.calls == []
+    assert preference["source_platform_mix"] == {"bilibili": 1.0}
+    compact_event = compact_prompt_events[-1]
+    assert "raw_context" not in compact_event
+    assert "payload" not in compact_event
+
+
+@pytest.mark.asyncio
+async def test_provider_context_overflow_splits_chunk_and_retries() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = ContextOverflowOnceStructuredService()
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=0)
+
+    preference = await analyzer.analyze_events(
+        events=[
+            {"event_type": "view", "title": "PAIR_ONLY_OVERFLOWS A"},
+            {"event_type": "view", "title": "PAIR_ONLY_OVERFLOWS B"},
+        ],
+        existing_preference={},
+        event_chunk_size=2,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert len(service.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_service_context_overflow_splits_chunk_and_retries() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = ServiceContextOverflowOnceStructuredService()
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=0)
+
+    preference = await analyzer.analyze_events(
+        events=[
+            {"event_type": "view", "title": "SERVICE_PAIR_ONLY_OVERFLOWS A"},
+            {"event_type": "view", "title": "SERVICE_PAIR_ONLY_OVERFLOWS B"},
+        ],
+        existing_preference={},
+        event_chunk_size=2,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert len(service.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_non_context_provider_error_still_aborts_chunked_analysis() -> None:
+    from openbiliclaw.soul.preference_analyzer import (
+        PreferenceAnalysisError,
+        PreferenceAnalyzer,
+    )
+
+    analyzer = PreferenceAnalyzer(
+        FakeErrorStructuredService(LLMProviderError("provider down")),
+        max_prompt_chars=0,
+    )
+
+    with pytest.raises(PreferenceAnalysisError, match="provider down"):
+        await analyzer.analyze_events(
+            events=[
+                {"event_type": "view", "title": "x"},
+                {"event_type": "view", "title": "y"},
+                {"event_type": "view", "title": "z"},
+            ],
+            existing_preference={},
+            event_chunk_size=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_context_service_error_still_aborts_chunked_analysis() -> None:
+    from openbiliclaw.soul.preference_analyzer import (
+        PreferenceAnalysisError,
+        PreferenceAnalyzer,
+    )
+
+    analyzer = PreferenceAnalyzer(
+        FakeErrorStructuredService(LLMServiceError("service unavailable")),
+        max_prompt_chars=0,
+    )
+
+    with pytest.raises(PreferenceAnalysisError, match="service unavailable"):
+        await analyzer.analyze_events(
+            events=[
+                {"event_type": "view", "title": "x"},
+                {"event_type": "view", "title": "y"},
+                {"event_type": "view", "title": "z"},
+            ],
+            existing_preference={},
+            event_chunk_size=2,
+        )
 
 
 @pytest.mark.asyncio

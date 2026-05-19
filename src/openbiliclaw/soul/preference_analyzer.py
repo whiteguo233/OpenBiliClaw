@@ -20,6 +20,24 @@ from openbiliclaw.soul.event_filters import filter_events_by_satisfaction
 logger = logging.getLogger(__name__)
 
 
+_COMPACT_METADATA_KEYS = frozenset(
+    {
+        "source_platform",
+        "up_name",
+        "author",
+        "bvid",
+        "aid",
+        "content_id",
+        "folder",
+        "duration",
+        "watch_seconds",
+        "video_duration_seconds",
+        "feedback_type",
+        "reaction",
+    }
+)
+
+
 class SupportsCoreMemoryTask(Protocol):
     async def complete_structured_task(
         self,
@@ -53,6 +71,10 @@ class PreferenceAnalyzer:
     # update disliked_topics without mistaking that title for a positive
     # interest.
     satisfaction_filter_enabled: bool = True
+    max_prompt_chars: int = 24_000
+    compact_title_chars: int = 180
+    compact_context_chars: int = 600
+    compact_metadata_value_chars: int = 300
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
@@ -69,22 +91,43 @@ class PreferenceAnalyzer:
     ) -> dict[str, object]:
         """Run structured extraction and merge the result with existing preference state.
 
-        When ``event_chunk_size`` > 0 and the event list exceeds that size,
-        the input is split into chunks of at most ``event_chunk_size``
-        events and each chunk is analysed concurrently in a separate LLM
-        call. Partial preferences from each chunk are then folded into
-        ``existing_preference`` via the regular ``merge_preferences``
-        path, preserving weighted interest merging and cognitive-style
-        union. Use this for latency-sensitive flows (e.g. init bootstrap
-        with hundreds of historical events) where a single max-thinking
-        call on the whole batch would block for minutes.
+        When ``event_chunk_size`` > 0 and the event list reaches that size,
+        the input is split into chunks of at most ``event_chunk_size`` events
+        and each chunk is analysed concurrently in a separate LLM call. Partial
+        preferences from each chunk are then folded into ``existing_preference``
+        via the regular ``merge_preferences`` path, preserving weighted
+        interest merging and cognitive-style union. Use this for
+        latency-sensitive flows (e.g. init bootstrap with hundreds of
+        historical events) where a single max-thinking call on the whole batch
+        would block for minutes.
         """
         events = self._maybe_filter_events(events)
-        if event_chunk_size > 0 and len(events) > event_chunk_size:
+        if event_chunk_size > 0 and len(events) >= event_chunk_size:
             return await self._analyze_events_chunked(
                 events=events,
                 existing_preference=existing_preference,
                 chunk_size=event_chunk_size,
+            )
+
+        whole_batch_prompt = build_preference_analysis_prompt(
+            events=events,
+            existing_preference=existing_preference,
+        )
+        prompt_chars = self._prompt_char_count(whole_batch_prompt)
+        should_chunk_by_budget = self.max_prompt_chars > 0 and prompt_chars > self.max_prompt_chars
+        if should_chunk_by_budget:
+            initial_chunk_size = (
+                event_chunk_size
+                if event_chunk_size > 0
+                else self._estimate_budget_chunk_size(
+                    event_count=len(events),
+                    prompt_chars=prompt_chars,
+                )
+            )
+            return await self._analyze_events_chunked(
+                events=events,
+                existing_preference=existing_preference,
+                chunk_size=initial_chunk_size,
             )
         return await self._analyze_events_single(
             events=events,
@@ -178,6 +221,91 @@ class PreferenceAnalyzer:
                 merged["cognitive_style"] = existing_cs
         return merged
 
+    def _prompt_char_count(self, messages: list[dict[str, str]]) -> int:
+        return sum(len(message.get("content", "")) for message in messages)
+
+    def _prompt_fits_budget(self, messages: list[dict[str, str]]) -> bool:
+        return (
+            self.max_prompt_chars <= 0
+            or self._prompt_char_count(messages) <= self.max_prompt_chars
+        )
+
+    def _estimate_budget_chunk_size(self, *, event_count: int, prompt_chars: int) -> int:
+        if event_count <= 0:
+            return 1
+        if self.max_prompt_chars <= 0 or prompt_chars <= self.max_prompt_chars:
+            return max(1, event_count)
+        estimated = event_count * self.max_prompt_chars // max(prompt_chars, 1)
+        return max(1, min(event_count, estimated))
+
+    @staticmethod
+    def _is_context_overflow_error(exc: PreferenceAnalysisError) -> bool:
+        text = str(exc).lower()
+        markers = (
+            "context length",
+            "maximum context",
+            "n_ctx",
+            "n_keep",
+            "tokens to keep",
+            "prompt is too long",
+            "input is too long",
+        )
+        return any(marker in text for marker in markers)
+
+    def _compact_event_for_prompt(self, event: dict[str, object]) -> dict[str, object]:
+        compact: dict[str, object] = {}
+        for key in (
+            "event_type",
+            "type",
+            "created_at",
+            "inferred_satisfaction",
+            "satisfaction_reason",
+        ):
+            value = event.get(key)
+            if value not in (None, ""):
+                compact[key] = value
+
+        title = event.get("title")
+        if title not in (None, ""):
+            compact["title"] = self._truncate_for_prompt(title, self.compact_title_chars)
+
+        context = event.get("context")
+        if context not in (None, ""):
+            compact["context"] = self._truncate_for_prompt(context, self.compact_context_chars)
+
+        url = event.get("url")
+        if url not in (None, ""):
+            compact["url"] = self._truncate_for_prompt(url, self.compact_metadata_value_chars)
+
+        metadata = event.get("metadata")
+        if isinstance(metadata, dict):
+            compact_metadata: dict[str, object] = {}
+            for key in sorted(_COMPACT_METADATA_KEYS):
+                value = metadata.get(key)
+                if value in (None, ""):
+                    continue
+                if isinstance(value, str):
+                    compact_metadata[key] = self._truncate_for_prompt(
+                        value,
+                        self.compact_metadata_value_chars,
+                    )
+                elif isinstance(value, bool | int | float):
+                    compact_metadata[key] = value
+            if compact_metadata:
+                compact["metadata"] = compact_metadata
+        return compact
+
+    @staticmethod
+    def _truncate_for_prompt(value: object, max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+        text = str(value or "").strip()
+        if len(text) <= max_chars:
+            return text
+        if max_chars <= 3:
+            return text[:max_chars]
+        return text[: max_chars - 3].rstrip() + "..."
+
     async def _analyze_events_chunked(
         self,
         *,
@@ -188,6 +316,7 @@ class PreferenceAnalyzer:
         """Split events into chunks, analyse each concurrently, then fold."""
         import asyncio as _asyncio
 
+        chunk_size = max(1, chunk_size)
         chunks = [events[i : i + chunk_size] for i in range(0, len(events), chunk_size)]
         logger.info(
             "analyze_events chunked: total_events=%d chunks=%d chunk_size=%d",
@@ -221,18 +350,56 @@ class PreferenceAnalyzer:
             raw = self._parse_response(response.content)
             return raw, self._normalize_preference(raw)
 
+        async def _split_or_compact_chunk(
+            chunk: list[dict[str, object]],
+        ) -> list[tuple[dict[str, object], dict[str, object]]]:
+            if len(chunk) <= 1:
+                compact = self._compact_event_for_prompt(chunk[0]) if chunk else {}
+                compact_messages = build_preference_analysis_prompt(
+                    events=[compact],
+                    existing_preference={},
+                )
+                if not self._prompt_fits_budget(compact_messages):
+                    logger.warning(
+                        "preference event skipped because compact prompt still exceeds "
+                        "budget: title=%r prompt_chars=%d budget=%d",
+                        str(chunk[0].get("title", ""))
+                        if chunk and isinstance(chunk[0], dict)
+                        else "",
+                        self._prompt_char_count(compact_messages),
+                        self.max_prompt_chars,
+                    )
+                    return []
+                return [await _run_chunk_once([compact])]
+            midpoint = max(1, len(chunk) // 2)
+            left, right = await _asyncio.gather(
+                _run_chunk_resilient(chunk[:midpoint]),
+                _run_chunk_resilient(chunk[midpoint:]),
+            )
+            return [*left, *right]
+
         async def _run_chunk_resilient(
             chunk: list[dict[str, object]],
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
+            messages = build_preference_analysis_prompt(events=chunk, existing_preference={})
+            if not self._prompt_fits_budget(messages):
+                return await _split_or_compact_chunk(chunk)
             try:
                 return [await _run_chunk_once(chunk)]
             except PreferenceAnalysisError as exc:
-                # Provider / transport errors should still abort the whole
-                # run. Invalid JSON / model refusal is often content-local:
-                # split the batch to isolate the offending event, then skip
-                # only that final single event if it still refuses.
                 if exc.__cause__ is not None:
+                    if self._is_context_overflow_error(exc):
+                        logger.warning(
+                            "preference chunk exceeded provider context; splitting: "
+                            "events=%d error=%s",
+                            len(chunk),
+                            exc,
+                        )
+                        return await _split_or_compact_chunk(chunk)
                     raise
+                # Invalid JSON / model refusal is often content-local: split
+                # the batch to isolate the offending event, then skip only
+                # that final single event if it still refuses.
                 if len(chunk) <= 1:
                     event = chunk[0] if chunk else {}
                     logger.warning(
@@ -240,12 +407,7 @@ class PreferenceAnalyzer:
                         str(event.get("title", "")) if isinstance(event, dict) else "",
                     )
                     return []
-                midpoint = max(1, len(chunk) // 2)
-                left, right = await _asyncio.gather(
-                    _run_chunk_resilient(chunk[:midpoint]),
-                    _run_chunk_resilient(chunk[midpoint:]),
-                )
-                return [*left, *right]
+                return await _split_or_compact_chunk(chunk)
 
         outcome_groups = await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in chunks))
         outcomes = [item for group in outcome_groups for item in group]

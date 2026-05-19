@@ -8,6 +8,7 @@
 
 - 浏览器插件聊天 tab 新增多场景 placeholder 轮播，覆盖纪录片、测评、健身、怀旧动画、注意力、自我描述和近期状态等入口；输入框 focus 时暂停轮播，blur 且内容为空时恢复，避免用户正在输入时被提示语打断。
 - 聊天历史区域高度从固定 `220px` 改为 `clamp(220px, 45vh, 420px)`：小窗口保持原有保底高度，侧栏拉高时可展示更多长回复，最高限制在 420px，避免挤压输入区。
+- 偏好分析新增 prompt 预算保护：初始化 / bootstrap / feedback batch 不再只按事件条数分片，超长 chunk 会在本地继续拆分，单条超长事件会保守 compact，provider 返回 `n_keep >= n_ctx` 等 context-window 错误时会用更小 chunk 重试，避免一个巨大事件批次中断整轮画像初始化。
 - 浏览器插件版本提升到 v0.3.32，准备发布 `extension-v0.3.32`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.32.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.32-firefox.zip`。
 
 ---
