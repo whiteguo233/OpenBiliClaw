@@ -326,6 +326,7 @@
       gap: 12px;
       min-height: 0;
       padding-bottom: 4px;
+      flex: 1;
     }
 
     .view[hidden] {
@@ -2368,7 +2369,10 @@
     .chat-shell {
       padding: 14px;
       min-height: 0;
-      flex-shrink: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
     .chat-intro {
@@ -2395,11 +2399,9 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      min-height: 72px;
-      max-height: clamp(220px, 45vh, 420px);
+      flex: 1;
       overflow-y: auto;
       padding-right: 4px;
-      margin-top: 12px;
     }
 
     /* Collapse the conversation surface entirely when no messages
@@ -2505,7 +2507,9 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      margin-top: 12px;
+      margin-top: auto;
+      flex-shrink: 0;
+      padding-top: 10px;
     }
 
     .chat-input-shell {
@@ -2528,7 +2532,7 @@
     }
 
     .chat-input {
-      min-height: 88px;
+      min-height: 48px;
       border: 0;
       padding: 10px 12px;
       border-radius: 14px;
@@ -3567,17 +3571,12 @@
       </section>
 
       <section id="viewChat" class="view" role="tabpanel" aria-labelledby="tabChat" hidden>
-        <div class="view-intro">
-          <p class="view-kicker">Chat</p>
-          <h2>说说你最近怎么想</h2>
-          <p>你是什么样的人、怎么想、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。</p>
-        </div>
         <div class="chat-shell">
           <div id="chatMessages" class="chat-messages"></div>
           <form id="chatForm" class="chat-form">
             <label class="chat-input-shell">
               <span class="chat-input-label">写点你的想法和口味</span>
-              <textarea id="chatInput" class="chat-input" placeholder="比如：我喜欢慢慢讲清楚的长视频，讨厌标题党；最近总想看能帮我理清问题的内容。"></textarea>
+              <textarea id="chatInput" class="chat-input" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，为什么会停下来，都可以直接说。"></textarea>
             </label>
             <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
             <p id="chatStatus" class="chat-status" aria-live="polite"></p>
@@ -3994,7 +3993,7 @@
           <label for="cfgBackendHost">后端地址</label>
           <input id="cfgBackendHost" type="text" placeholder="127.0.0.1">
           <p class="settings-hint">
-            默认 127.0.0.1（本机）。如需连接内网其他机器上的后端，填写该机器的局域网 IP，如 <code>192.168.1.100</code>。
+            默认 127.0.0.1（本机）。支持局域网 IP（如 <code>192.168.1.100</code>）或远程服务器域名（如 <code>my-server.example.com</code>）。公网部署建议通过反向代理启用 HTTPS。
           </p>
         </div>
         <div class="settings-field">
