@@ -114,6 +114,27 @@ def test_put_config_writes_real_new_chat_provider_model(monkeypatch, tmp_path) -
     assert load_config_from_path(config_path).llm.openai.model == "gpt-4.1-mini"
 
 
+def test_put_config_round_trips_openai_auth_mode(monkeypatch, tmp_path) -> None:
+    from openbiliclaw.llm.codex_auth import CodexCredentials
+
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+    monkeypatch.setattr(
+        "openbiliclaw.llm.codex_auth.load_codex_credentials",
+        lambda: CodexCredentials("access-token", "refresh-token", 9999999999),
+    )
+
+    response = client.put(
+        "/api/config",
+        json={"llm": {"openai": {"auth_mode": "codex_oauth"}}},
+    )
+
+    assert response.status_code == 200
+    assert load_config_from_path(config_path).llm.openai.auth_mode == "codex_oauth"
+    get_response = client.get("/api/config")
+    assert get_response.status_code == 200
+    assert get_response.json()["llm"]["openai"]["auth_mode"] == "codex_oauth"
+
+
 def test_put_config_ignores_whitespace_only_chat_provider_api_key(monkeypatch, tmp_path) -> None:
     client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
 

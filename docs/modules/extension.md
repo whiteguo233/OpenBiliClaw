@@ -37,6 +37,7 @@
 | 后台 LLM 暂停配置 | ✅ | 设置页调度区提供「停止后台 LLM 请求」和「关闭浏览器后停止后台」两个配置项，推荐页不再放运行时开关；后端通过 `/api/runtime-stream` presence 判断插件是否在线，浏览器 idle disconnect 会被 receive-side detector 及时清掉 |
 | 配置恢复与降级模式 UI | ✅ | popup API 会缓存最近一次成功的 `/api/config` 快照；设置页打开时如果后端离线但有缓存，会用缓存填表并显示离线时间；如果后端以 `degraded=true` 返回配置，会展示 blocking issues，保存按钮切到“保存并提示重启”，配合后端降级模式修复错误配置 |
 | 配置保存超时提示 | ✅ | `popup-api.requestJson()` 支持 AbortController timeout，`updateConfig()` 对 `PUT /api/config` 使用 60s 上限；超时时设置页显示 amber toast，文案只提示“保存请求可能已写入、热重载可能仍在后台进行”，不会断言配置一定已落盘 |
+| OpenAI 认证方式配置 | ✅ | 设置页 OpenAI provider 区域可选择 `API Key` 或 `Codex OAuth`，保存时把 `[llm.openai].auth_mode` 纳入 `/api/config` payload；后端仍负责 Codex token 导入、域名限制和配置校验 |
 | B 站负反馈动作采集 | ✅ | B 站 content script 会把“不感兴趣 / 不喜欢 / 减少此类推荐 / dislike”等控件识别为 `dislike` 动作，并经 `normalizeActionSignal()` 规范化为 `feedback` 事件，metadata 带 `feedback_type=dislike` 与 `reaction=thumbs_down`；后台 buffer 把 `feedback` 视为强信号即时 flush |
 
 ## 目录结构

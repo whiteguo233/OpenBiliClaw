@@ -17,12 +17,17 @@ default_provider = "openai"
 
 [llm.openai]
 # 若 default_provider = "openai"，api_key 必填
+# 实验选项：先运行 `openbiliclaw login codex` 导入 Codex CLI 的 ChatGPT OAuth
+# 凭据后，可把 auth_mode 改成 "codex_oauth"，此时 api_key 会被忽略。
+# 这是非官方路径，可能因 OpenAI / Codex CLI 变更随时失效；同时必须保持
+# base_url 为空或指向 OpenAI 官方 API 域名，避免把 ChatGPT token 发给第三方代理。
 # 当前(2026-05)模型清单: gpt-5-nano (最便宜) / gpt-5.4-nano / gpt-5.4-mini /
 #                      gpt-5.5 (旗舰 4/2026) / gpt-5.5-pro
 # gpt-4o 系列已从 ChatGPT 退役但 API 仍可调
 api_key = ""
 model = "gpt-5-nano"
 base_url = ""  # Leave empty for default, or set for compatible APIs
+auth_mode = ""  # "" / "api_key" / "codex_oauth"
 
 [llm.claude]
 # 若 default_provider = "claude"，api_key 必填

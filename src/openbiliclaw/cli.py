@@ -59,8 +59,10 @@ app = typer.Typer(
     add_completion=False,
 )
 auth_app = typer.Typer(help="B 站认证命令")
+login_app = typer.Typer(help="账号登录命令")
 browser_app = typer.Typer(help="agent-browser 浏览器命令")
 app.add_typer(auth_app, name="auth")
+app.add_typer(login_app, name="login")
 app.add_typer(browser_app, name="browser")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
@@ -96,6 +98,26 @@ _DOUYIN_SEARCH_KEYWORDS_OPTION = typer.Option(
     "--keyword",
     "-k",
     help="抖音搜索关键词，可重复传或用逗号分隔。",
+)
+_CODEX_LOGIN_IMPORT_OPTION = typer.Option(
+    False,
+    "--import",
+    help="只导入已有 Codex CLI 凭据，不调用 `codex login`。",
+)
+_CODEX_LOGIN_SOURCE_OPTION = typer.Option(
+    None,
+    "--source",
+    help="Codex CLI auth.json 路径；默认读取 ~/.codex/auth.json。",
+)
+_CODEX_LOGIN_STATUS_OPTION = typer.Option(
+    False,
+    "--status",
+    help="查看 Codex OAuth 登录状态。",
+)
+_CODEX_LOGIN_LOGOUT_OPTION = typer.Option(
+    False,
+    "--logout",
+    help="删除 OpenBiliClaw 本地 Codex 凭据。",
 )
 
 
@@ -5462,6 +5484,74 @@ def auth_status() -> None:
     manager = _build_auth_manager()
     status = asyncio.run(manager.get_status())
     _print_auth_status(status)
+
+
+@login_app.command("codex")
+def login_codex(
+    import_credentials: bool = _CODEX_LOGIN_IMPORT_OPTION,
+    source: Path | None = _CODEX_LOGIN_SOURCE_OPTION,
+    status: bool = _CODEX_LOGIN_STATUS_OPTION,
+    logout: bool = _CODEX_LOGIN_LOGOUT_OPTION,
+) -> None:
+    """导入或管理 Codex CLI 的 ChatGPT OAuth 凭据."""
+    from datetime import datetime
+
+    from openbiliclaw.llm.codex_auth import (
+        CodexAuthError,
+        CodexCredentials,
+        delete_codex_credentials,
+        import_codex_credentials,
+        load_codex_credentials,
+        run_codex_cli_login,
+    )
+
+    def _print_codex_credentials(credentials: CodexCredentials) -> None:
+        expires = datetime.fromtimestamp(credentials.expires_at).strftime("%Y-%m-%d %H:%M:%S")
+        state = "临期/需刷新" if credentials.is_expired() else "有效"
+        _print_key_value_table(
+            "Codex OAuth",
+            [
+                ("状态", f"已登录（{state}）"),
+                ("账号", credentials.account_id or "（未知）"),
+                ("过期时间", expires),
+            ],
+        )
+
+    if status:
+        credentials = load_codex_credentials()
+        if credentials is None:
+            _print_status_panel(
+                "warning",
+                "Codex OAuth",
+                "未登录。请运行 `openbiliclaw login codex` "
+                "或 `openbiliclaw login codex --import`。",
+            )
+            return
+        _print_codex_credentials(credentials)
+        return
+
+    if logout:
+        deleted = delete_codex_credentials()
+        body = "已登出 Codex OAuth。" if deleted else "本地没有 Codex OAuth 凭据。"
+        _print_status_panel("success" if deleted else "info", "Codex OAuth", body)
+        return
+
+    try:
+        if import_credentials or source is not None:
+            credentials = import_codex_credentials(source=source)
+        else:
+            try:
+                credentials = import_codex_credentials()
+            except CodexAuthError:
+                console.print("[dim]未找到可导入的 Codex 凭据，启动 `codex login`...[/dim]")
+                run_codex_cli_login()
+                credentials = import_codex_credentials()
+    except CodexAuthError as exc:
+        _print_status_panel("error", "Codex OAuth 登录失败", str(exc))
+        raise typer.Exit(code=1) from exc
+
+    _print_status_panel("success", "Codex OAuth", "登录凭据已导入。")
+    _print_codex_credentials(credentials)
 
 
 @app.command("health-check")

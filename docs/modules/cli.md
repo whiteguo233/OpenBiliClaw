@@ -22,6 +22,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
 | `auth status` | 查看认证状态 | ✅ |
+| `login codex` | 导入 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
 | `browser status` | 检查 agent-browser 安装 | ✅ |
 | `browser open <url>` | 通过浏览器打开页面 | ✅ |
 | `browser content <url>` | 获取页面文本内容 | ✅ |
@@ -99,6 +100,38 @@ $ openbiliclaw auth status
   用户名: alice
   UID: 10086
 ```
+
+### `openbiliclaw login codex`
+
+管理实验性的 Codex OAuth 凭据。该命令不自建 OAuth 流程，而是复用官方 Codex CLI 的登录态：默认读取 `~/.codex/auth.json`，导入到 `~/.openbiliclaw/codex_auth.json`，供 `[llm.openai].auth_mode="codex_oauth"` 使用。
+
+```bash
+# 默认：先尝试导入 ~/.codex/auth.json；没有时调用官方 `codex login` 后再导入
+$ openbiliclaw login codex
+
+# 只导入现有 Codex CLI 凭据
+$ openbiliclaw login codex --import
+
+# 从指定路径导入
+$ openbiliclaw login codex --import --source ~/.codex/auth.json
+
+# 查看状态；不会显示 token 明文
+$ openbiliclaw login codex --status
+
+# 删除 OpenBiliClaw 本地副本，不会删除 Codex CLI 自己的登录态
+$ openbiliclaw login codex --logout
+```
+
+启用方式：
+
+```toml
+[llm.openai]
+auth_mode = "codex_oauth"
+api_key = ""
+base_url = ""
+```
+
+这是非官方实验路径，OpenAI / Codex CLI 可能随时调整 token 权限或文件格式。`codex_oauth` 下 `base_url` 只能留空或指向 OpenAI 官方 API 域名，避免把 ChatGPT OAuth token 发给第三方代理。
 
 ### `openbiliclaw browser status`
 

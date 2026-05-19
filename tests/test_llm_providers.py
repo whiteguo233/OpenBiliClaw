@@ -155,6 +155,38 @@ async def test_openai_provider_retries_transient_failure(
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_refreshes_token_once_on_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_calls: list[bool] = []
+
+    async def token_provider(force_refresh: bool = False) -> str:
+        token_calls.append(force_refresh)
+        return "fresh-token" if force_refresh else "initial-token"
+
+    provider = OpenAIProvider(api_key="stale-token", token_provider=token_provider)
+    calls = {"count": 0}
+
+    class UnauthorizedError(Exception):
+        status_code = 401
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise UnauthorizedError("unauthorized")
+        assert provider._client.api_key == "fresh-token"
+        return _openai_response("after-refresh")
+
+    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
+
+    response = await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert response.content == "after-refresh"
+    assert calls["count"] == 2
+    assert token_calls == [False, True]
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_maps_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = OpenAIProvider(api_key="test-key")
 

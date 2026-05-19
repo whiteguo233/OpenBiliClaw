@@ -259,6 +259,75 @@ def test_auth_login_accepts_interactive_cookie_and_saves_on_success(
     assert "alice" in result.stdout
 
 
+def test_login_codex_status_reports_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    from openbiliclaw.llm.codex_auth import CodexCredentials
+
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(
+        "openbiliclaw.llm.codex_auth.load_codex_credentials",
+        lambda: CodexCredentials(
+            access_token="secret-access",
+            refresh_token="secret-refresh",
+            expires_at=4_102_444_800.0,
+            account_id="acct_test",
+        ),
+    )
+
+    result = runner.invoke(app, ["login", "codex", "--status"])
+
+    assert result.exit_code == 0
+    assert "已登录" in result.stdout
+    assert "acct_test" in result.stdout
+    assert "secret-access" not in result.stdout
+    assert "secret-refresh" not in result.stdout
+
+
+def test_login_codex_import_uses_source_path(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.llm.codex_auth import CodexCredentials
+
+    source = tmp_path / "auth.json"
+    calls: list[Path | None] = []
+
+    def fake_import(*, source=None, destination=None) -> CodexCredentials:
+        calls.append(source)
+        return CodexCredentials("access", "refresh", 4_102_444_800.0, "acct_imported")
+
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr("openbiliclaw.llm.codex_auth.import_codex_credentials", fake_import)
+
+    result = runner.invoke(app, ["login", "codex", "--import", "--source", str(source)])
+
+    assert result.exit_code == 0
+    assert calls == [source]
+    assert "acct_imported" in result.stdout
+
+
+def test_login_codex_logout_deletes_local_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    calls: list[bool] = []
+
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(
+        "openbiliclaw.llm.codex_auth.delete_codex_credentials",
+        lambda: calls.append(True) or True,
+    )
+
+    result = runner.invoke(app, ["login", "codex", "--logout"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+    assert "已登出" in result.stdout
+
+
 def test_auth_login_does_not_save_on_validation_failure(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:

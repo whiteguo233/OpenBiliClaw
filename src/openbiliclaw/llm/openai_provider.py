@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
@@ -23,6 +23,9 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 def _generic_json_schema_response_format() -> dict[str, Any]:
@@ -59,10 +62,12 @@ class OpenAIProvider(LLMProvider):
         model: str = "gpt-4o",
         base_url: str = "",
         provider_name: str = "openai",
+        token_provider: Callable[[bool], Awaitable[str]] | None = None,
     ) -> None:
         self._model = model
         self._provider_name = provider_name
         self.base_url = base_url or ""
+        self._token_provider = token_provider
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url or None,
@@ -183,8 +188,16 @@ class OpenAIProvider(LLMProvider):
 
         for attempt in range(1, self._MAX_RETRIES + 1):
             try:
+                await self._apply_dynamic_token(force_refresh=False)
                 return await self._client.chat.completions.create(**kwargs)
             except Exception as exc:
+                if self._is_unauthorized(exc) and self._token_provider is not None:
+                    try:
+                        await self._apply_dynamic_token(force_refresh=True)
+                        return await self._client.chat.completions.create(**kwargs)
+                    except Exception as refresh_exc:
+                        mapped_refresh = self._map_error(refresh_exc)
+                        raise mapped_refresh from refresh_exc
                 mapped = self._map_error(exc)
                 last_error = mapped
                 if not self._is_retryable(mapped) or attempt == self._MAX_RETRIES:
@@ -195,6 +208,27 @@ class OpenAIProvider(LLMProvider):
         if last_error is None:
             raise LLMProviderError(f"{self._provider_name} request failed")
         raise last_error
+
+    async def _apply_dynamic_token(self, *, force_refresh: bool) -> None:
+        if self._token_provider is None:
+            return
+        try:
+            token = await self._token_provider(force_refresh)
+        except Exception as exc:
+            raise LLMProviderError(
+                f"{self._provider_name} token refresh failed; run `openbiliclaw login codex` again."
+            ) from exc
+        if token:
+            self._client.api_key = token
+
+    @staticmethod
+    def _is_unauthorized(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code == 401
+        if isinstance(status_code, str):
+            return status_code.strip() == "401"
+        return False
 
     def _map_error(self, exc: Exception) -> LLMProviderError:
         """Map provider or network exceptions into shared provider errors."""

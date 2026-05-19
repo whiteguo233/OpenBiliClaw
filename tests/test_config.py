@@ -137,9 +137,7 @@ class TestConfigDefaults:
         assert isinstance(config.soul.preference, SoulPreferenceConfig)
         assert config.soul.preference.satisfaction_filter_enabled is True
 
-    def test_soul_preference_satisfaction_filter_round_trips_false(
-        self, tmp_path: Path
-    ) -> None:
+    def test_soul_preference_satisfaction_filter_round_trips_false(self, tmp_path: Path) -> None:
         """save_config → load_config preserves an explicit opt-out."""
         cfg = Config()
         cfg.soul.preference.satisfaction_filter_enabled = False
@@ -362,6 +360,82 @@ def test_save_config_round_trips_openai_compatible(tmp_path: Path) -> None:
     assert loaded.llm.openai_compatible.api_key == "gsk-test-key"
     assert loaded.llm.openai_compatible.model == "qwen2.5-72b-instruct"
     assert loaded.llm.openai_compatible.base_url == "https://api.together.xyz/v1"
+
+
+def test_build_config_supports_openai_codex_auth_mode() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "openai",
+                "openai": {
+                    "api_key": "",
+                    "model": "gpt-5-nano",
+                    "auth_mode": "codex_oauth",
+                },
+            }
+        }
+    )
+
+    assert config.llm.openai.auth_mode == "codex_oauth"
+
+
+def test_save_config_round_trips_openai_auth_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.llm.openai.auth_mode = "codex_oauth"
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.llm.openai.auth_mode == "codex_oauth"
+
+
+def test_collect_issues_allows_codex_oauth_without_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    token_path = tmp_path / "codex_auth.json"
+    token_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_CODEX_AUTH_PATH", str(token_path))
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="", auth_mode="codex_oauth"),
+        )
+    )
+
+    fields = [issue.field for issue in _collect_config_issues(config)]
+
+    assert "llm.openai.api_key" not in fields
+    assert "llm.openai.codex_oauth" not in fields
+
+
+def test_collect_issues_blocks_codex_oauth_with_custom_base_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    token_path = tmp_path / "codex_auth.json"
+    token_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_CODEX_AUTH_PATH", str(token_path))
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(
+                api_key="",
+                auth_mode="codex_oauth",
+                base_url="https://proxy.example.com/v1",
+            ),
+        )
+    )
+
+    issues = _collect_config_issues(config)
+
+    assert any(issue.field == "llm.openai.base_url" for issue in issues)
+    assert any(issue.severity == "blocking" for issue in issues)
 
 
 def test_collect_issues_flags_missing_base_url_for_openai_compatible() -> None:

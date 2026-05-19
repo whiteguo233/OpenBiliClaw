@@ -3579,6 +3579,13 @@
         <!-- OpenAI -->
         <div class="settings-provider-fields" data-provider="openai">
           <div class="settings-field">
+            <label for="cfgOpenaiAuthMode">认证方式</label>
+            <select id="cfgOpenaiAuthMode">
+              <option value="api_key">API Key</option>
+              <option value="codex_oauth">Codex OAuth</option>
+            </select>
+          </div>
+          <div class="settings-field">
             <label for="cfgOpenaiKey">OpenAI API Key</label>
             <input id="cfgOpenaiKey" type="password" autocomplete="off" placeholder="sk-...">
           </div>

@@ -17,10 +17,11 @@
 
 ---
 
-## 📌 v0.3.77 Highlights (2026-05-18)
+## 📌 v0.3.78 Highlights (2026-05-19)
 
-- **🌐 Extension can connect to a LAN backend** — the settings page now has a backend host field, so the daemon can run on another machine in your LAN; Chrome and Firefox manifests both allow remote HTTP backend origins.
-- **⚙️ Background LLM controls moved back to settings** — the recommendation tab no longer shows the quick toggles; the settings page now explains that enabling them stops automatic replenishment, so an empty candidate pool may temporarily show no recommendations.
+- **🔑 Experimental Codex OAuth auth** — `openbiliclaw login codex` can import local Codex CLI ChatGPT OAuth credentials, then `[llm.openai].auth_mode="codex_oauth"` uses them for the OpenAI provider.
+- **🧩 Extension settings support** — the browser extension OpenAI settings can select `API Key` or `Codex OAuth`, and save `[llm.openai].auth_mode` through the local config API.
+- **🛡️ Token safety boundary** — `codex_oauth` only allows the official OpenAI API domain, so ChatGPT OAuth tokens are not sent to third-party OpenAI-compatible proxies; this remains an unofficial experimental path.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -42,7 +43,7 @@ This is the core differentiator: the system **guesses domains you might enjoy bu
 
 ### 🔒 100% local, 100% yours
 
-All data lives in a single SQLite file on your disk. LLM calls use your own API key. No cloud, no accounts, no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, edit the database, whatever you want.
+All data lives in a single SQLite file on your disk. LLM calls use your own API key by default, with an experimental option to reuse local Codex CLI ChatGPT OAuth credentials. No cloud, no accounts, no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, edit the database, whatever you want.
 
 > 💡 **How it compares**
 >
@@ -353,7 +354,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │  Engine │ System   │  Engine   │     Engine          │
 │(Sat.filter)│(5-Layer)│(Neg.anchor)│  (Expression)   │
 ├─────────┴──────────┴───────────┴────────────────────┤
-│  LLM · Bilibili API · Extension Proxy · Runtime Gate  │
+│ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
 │         recommendations · chat_turns                    │
 └─────────────────────────────────────────────────────┘
@@ -414,7 +415,7 @@ OpenBiliClaw/
 |--------|-----------|
 | Backend | Python 3.11+ |
 | Browser Extension | TypeScript + Chrome Extension (Manifest V3) |
-| LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url |
+| LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url; OpenAI can experimentally reuse Codex CLI OAuth |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; scrolling init imports open `/explore` in the foreground, click the page's profile entry, then use bounded scrolling and partial batches; no backend crawling |
 | Douyin | Extension DOM + MAIN-world fetch/API harvester + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery use background tabs and the logged-in plugin signer; no backend crawling |
@@ -434,7 +435,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.77: Browser extension LAN backend host configuration (2026-05-18)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
+Latest: **v0.3.78: Experimental Codex OAuth auth (2026-05-19)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
 
 ## 🗺️ Roadmap
 

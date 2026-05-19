@@ -9,6 +9,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
   const expectedIds = [
     "cfgBackendPort",
     "cfgDataDir",
+    "cfgOpenaiAuthMode",
     "cfgDeepseekReasoning",
     "cfgOpenrouterReferer",
     "cfgOpenrouterTitle",
@@ -64,6 +65,20 @@ test("settings page exposes advanced config fields from backend schema", () => {
     assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
     assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
   }
+});
+
+test("settings page round-trips OpenAI auth mode", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupHtml, /id="cfgOpenaiAuthMode"/);
+  assert.match(popupHtml, /<option value="api_key">API Key<\/option>/);
+  assert.match(popupHtml, /<option value="codex_oauth">Codex OAuth<\/option>/);
+  assert.match(
+    popupJs,
+    /setVal\("cfgOpenaiAuthMode", cfg\.llm\?\.openai\?\.auth_mode \|\| "api_key"\)/,
+  );
+  assert.match(popupJs, /auth_mode: getVal\("cfgOpenaiAuthMode"\) \|\| "api_key"/);
 });
 
 test("settings page placeholders match config example defaults", () => {

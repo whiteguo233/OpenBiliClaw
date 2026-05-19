@@ -4,6 +4,16 @@
 
 ---
 
+## v0.3.78: Codex OAuth 实验认证（2026-05-19）
+
+- 新增实验性 `[llm.openai].auth_mode = "codex_oauth"`：OpenAI provider 仍复用现有 `OpenAIProvider`，但 token 来源改为本机 Codex CLI 的 ChatGPT OAuth 凭据；`codex_auth.py` 负责导入 `~/.codex/auth.json`、写入 `~/.openbiliclaw/codex_auth.json`、临期刷新和 401 后强制刷新重试。
+- 新增 `openbiliclaw login codex`：支持默认导入 / 调用官方 `codex login` 后导入、`--import`、`--source`、`--status`、`--logout`；状态输出只展示账号和过期时间，不泄露 token。
+- 配置和本地 API 增加 `auth_mode` round-trip；`codex_oauth` 下 `api_key` 会被忽略，且 `base_url` 只允许留空或指向 OpenAI 官方 API 域名，避免把 ChatGPT OAuth token 发给第三方 OpenAI-compatible 代理。
+- 浏览器插件设置页同步支持 OpenAI `API Key` / `Codex OAuth` 认证方式选择，保存配置时会写入 `[llm.openai].auth_mode`；插件版本提升到 v0.3.31，准备发布 `extension-v0.3.31`。
+- 明确风险边界：该功能是非官方实验集成，OpenAI 官方 API 认证稳定入口仍是 Platform API key，Codex CLI token 格式、权限和刷新行为可能随上游变化失效。
+
+---
+
 ## v0.3.77: 浏览器插件局域网后端地址配置（2026-05-18）
 
 - 浏览器插件设置页的后端 endpoint 从“仅端口可改”扩展为“后端地址 + 端口”一起配置：Chrome / Firefox manifest 都加入 `http://*/*` 权限，用户可把后端运行在局域网另一台机器上（`openbiliclaw start --host 0.0.0.0 --port 8420`），再在插件设置页填写该机器的局域网 IP；新增 host 校验、endpoint 持久化和 manifest 权限回归测试。

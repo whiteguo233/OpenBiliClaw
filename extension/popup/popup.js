@@ -4028,6 +4028,7 @@ function bindSettings() {
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
 
+    setVal("cfgOpenaiAuthMode", cfg.llm?.openai?.auth_mode || "api_key");
     setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
     setVal("cfgOpenaiModel", cfg.llm?.openai?.model);
     setVal("cfgOpenaiBaseUrl", cfg.llm?.openai?.base_url);
@@ -4153,6 +4154,7 @@ function bindSettings() {
       llm: {
         default_provider: providerSelect.value,
         openai: {
+          auth_mode: getVal("cfgOpenaiAuthMode") || "api_key",
           api_key: getVal("cfgOpenaiKey"),
           model: getVal("cfgOpenaiModel"),
           base_url: getVal("cfgOpenaiBaseUrl"),

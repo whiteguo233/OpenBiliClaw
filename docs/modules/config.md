@@ -6,7 +6,7 @@
 
 ```bash
 cp config.example.toml config.toml
-# 编辑 config.toml，填入 LLM API Key
+# 编辑 config.toml，填入 LLM API Key；或对 OpenAI 实验性启用 Codex OAuth
 ```
 
 ## 配置段落
@@ -31,12 +31,15 @@ cp config.example.toml config.toml
 | `api_key` | string | `""` | API Key（default_provider=openai 时必填，OpenAI 兼容服务也填这里） |
 | `model` | string | `"gpt-5-nano"` | 模型名称（按 `base_url` 后端实际部署的模型填，例如 vLLM 上是 `meta-llama/Llama-3.1-70B-Instruct`） |
 | `base_url` | string | `""` | 留空使用 OpenAI 官方 `https://api.openai.com/v1`；指向任何 OpenAI 兼容服务的 `/v1` 端点：Azure OpenAI / vLLM / LMStudio / OneAPI / Cloudflare AI Gateway / 自建 LLM 网关 |
+| `auth_mode` | string | `""` | 认证模式：`""` / `"api_key"` 使用 `api_key`；`"codex_oauth"` 使用 `openbiliclaw login codex` 导入的 Codex CLI ChatGPT OAuth 凭据 |
 
 > **「openai」是协议家族，不是厂商。** v0.3.5 起 `init` 向导会显式说明这一点。任何兼容 `POST /v1/chat/completions` 的服务都填到这一段，区别只在 `base_url`。
 > 例如：
 > - Azure OpenAI → `base_url = "https://your-resource.openai.azure.com/openai/deployments/your-deployment"`
 > - 本地 vLLM → `base_url = "http://localhost:8000/v1"`，`api_key` 任填或留空
 > - OneAPI 网关 → `base_url = "https://your-oneapi.example.com/v1"`
+
+> `auth_mode = "codex_oauth"` 是实验性 / 非官方路径：OpenAI 官方 API 认证仍以 Platform API key 为稳定入口。启用前先运行 `openbiliclaw login codex`，OpenBiliClaw 会从官方 Codex CLI 登录态导入 token 到 `~/.openbiliclaw/codex_auth.json`。该模式下 `api_key` 会被忽略，并且 `base_url` 只能留空或指向 `https://api.openai.com`，避免把 ChatGPT OAuth token 发给第三方 OpenAI-compatible 代理。自定义代理仍请使用 `api_key` 模式或 `[llm.openai_compatible]`。
 
 ### `[llm.claude]`
 

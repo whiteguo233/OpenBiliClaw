@@ -3390,6 +3390,7 @@ def create_app(
                 api_key=_mask(p.api_key),
                 model=p.model,
                 base_url=p.base_url,
+                auth_mode=getattr(p, "auth_mode", ""),
                 http_referer=getattr(p, "http_referer", ""),
                 x_title=getattr(p, "x_title", ""),
                 reasoning_effort=getattr(p, "reasoning_effort", ""),
@@ -3487,9 +3488,7 @@ def create_app(
                     cfg.scheduler.speculation_confirmation_threshold
                 ),
                 speculation_max_active=cfg.scheduler.speculation_max_active,
-                speculation_max_primary_interests=(
-                    cfg.scheduler.speculation_max_primary_interests
-                ),
+                speculation_max_primary_interests=(cfg.scheduler.speculation_max_primary_interests),
                 speculation_max_secondary_interests=(
                     cfg.scheduler.speculation_max_secondary_interests
                 ),
@@ -3598,6 +3597,7 @@ def create_app(
                         "api_key",
                         "model",
                         "base_url",
+                        "auth_mode",
                         "http_referer",
                         "x_title",
                         "reasoning_effort",
@@ -3609,7 +3609,8 @@ def create_app(
                                 continue
                             existing = getattr(provider_cfg, field_name, "")
                             if (
-                                not new_value.strip()
+                                field_name != "auth_mode"
+                                and not new_value.strip()
                                 and isinstance(existing, str)
                                 and existing.strip()
                             ):
@@ -3637,9 +3638,8 @@ def create_app(
                 # contains ``*``.
                 if "api_key" in emb:
                     new_key = str(emb["api_key"])
-                    if (
-                        "*" not in new_key
-                        and (new_key.strip() or not cfg.llm.embedding.api_key.strip())
+                    if "*" not in new_key and (
+                        new_key.strip() or not cfg.llm.embedding.api_key.strip()
                     ):
                         cfg.llm.embedding.api_key = new_key
                 if "base_url" in emb:

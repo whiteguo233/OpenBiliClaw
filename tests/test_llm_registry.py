@@ -77,6 +77,35 @@ def test_build_llm_registry_registers_available_providers() -> None:
     assert registry.available_providers == ["openai", "deepseek", "ollama"]
 
 
+def test_build_llm_registry_registers_openai_with_codex_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm.codex_auth import CodexCredentials
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(
+                api_key="",
+                model="gpt-5-nano",
+                auth_mode="codex_oauth",
+            ),
+        )
+    )
+
+    monkeypatch.setattr(
+        "openbiliclaw.llm.codex_auth.load_codex_credentials",
+        lambda: CodexCredentials("access-token", "refresh-token", 9999999999),
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "openai"
+    assert registry.available_providers == ["openai"]
+    provider = registry.get("openai")
+    assert provider._client.api_key == "access-token"
+
+
 def test_build_llm_registry_registers_openrouter() -> None:
     config = Config(
         llm=LLMConfig(

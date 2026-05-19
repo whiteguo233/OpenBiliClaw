@@ -146,8 +146,7 @@ def build_embedding_service(
 
         emb_cfg = config.llm.embedding
         requested_name = (
-            emb_cfg.provider.strip().lower()
-            or config.llm.default_provider.strip().lower()
+            emb_cfg.provider.strip().lower() or config.llm.default_provider.strip().lower()
         )
 
         # Build candidate ordering: requested first, then local-first
@@ -162,9 +161,7 @@ def build_embedding_service(
         chosen_name = ""
         chosen_model = ""
         for candidate in fallback_order:
-            built = _build_dedicated_embedding_provider(
-                candidate, emb_cfg, config, requested_name
-            )
+            built = _build_dedicated_embedding_provider(candidate, emb_cfg, config, requested_name)
             if built is None:
                 continue
             chosen_provider, chosen_model = built
@@ -241,9 +238,7 @@ def _build_dedicated_embedding_provider(
         api_key = (getattr(chat_cfg, "api_key", "") if chat_cfg is not None else "").strip()
         base_url = (getattr(chat_cfg, "base_url", "") if chat_cfg is not None else "").strip()
         borrowed_chat_credentials = (
-            bool(api_key and base_url)
-            if candidate == "openai_compatible"
-            else bool(api_key)
+            bool(api_key and base_url) if candidate == "openai_compatible" else bool(api_key)
         )
         if (
             emb_cfg.provider.strip().lower() == candidate
@@ -274,14 +269,8 @@ def _build_dedicated_embedding_provider(
         #   - the user requested Ollama for embedding, OR
         #   - [llm.ollama] is configured (back-compat — they run it locally).
         chat_ollama = config.llm.ollama
-        has_chat_ollama_config = bool(
-            chat_ollama.model.strip() or chat_ollama.base_url.strip()
-        )
-        if (
-            not use_embedding_creds
-            and requested_name != "ollama"
-            and not has_chat_ollama_config
-        ):
+        has_chat_ollama_config = bool(chat_ollama.model.strip() or chat_ollama.base_url.strip())
+        if not use_embedding_creds and requested_name != "ollama" and not has_chat_ollama_config:
             return None
         if not base_url:
             base_url = "http://localhost:11434/v1"
@@ -364,6 +353,24 @@ def summarize_registry(config: Config, registry: LLMRegistry) -> RegistrySummary
 def _maybe_openai_provider(config: Config, overrides: dict[str, LLMProvider]) -> LLMProvider | None:
     if "openai" in overrides:
         return overrides["openai"]
+    auth_mode = config.llm.openai.auth_mode.strip().lower()
+    if auth_mode == "codex_oauth":
+        from openbiliclaw.llm.codex_auth import get_valid_codex_token, load_codex_credentials
+
+        credentials = load_codex_credentials()
+        if credentials is None:
+            logger.warning("codex_oauth configured but no Codex credentials were found")
+            return None
+
+        async def _codex_token_provider(force_refresh: bool = False) -> str:
+            return await get_valid_codex_token(force_refresh=force_refresh)
+
+        return OpenAIProvider(
+            api_key=credentials.access_token,
+            model=config.llm.openai.model or "gpt-4o",
+            base_url=config.llm.openai.base_url,
+            token_provider=_codex_token_provider,
+        )
     if not config.llm.openai.api_key.strip():
         return None
     return OpenAIProvider(

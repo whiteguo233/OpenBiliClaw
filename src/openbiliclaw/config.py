@@ -12,12 +12,14 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # Default config search paths
 _CONFIG_FILENAMES = ["config.toml", "config.local.toml"]
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PROJECT_ROOT_ENV = "OPENBILICLAW_PROJECT_ROOT"
 _SUPPORTED_AUTH_METHODS = {"cookie", "qrcode", "none"}
+_SUPPORTED_OPENAI_AUTH_MODES = {"", "api_key", "codex_oauth"}
 _MIN_POOL_TARGET_COUNT = 1
 _MAX_POOL_TARGET_COUNT = 600
 _DEFAULT_EXTENSION_DISCONNECT_GRACE_SECONDS = 90
@@ -71,6 +73,7 @@ class LLMProviderConfig:
     api_key: str = ""
     model: str = ""
     base_url: str = ""
+    auth_mode: str = ""
     http_referer: str = ""
     x_title: str = ""
     # DeepSeek v4 thinking-mode control. "" disables; "high" / "max" enable
@@ -619,9 +622,58 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         )
         return issues
 
+    openai_auth_mode = config.llm.openai.auth_mode.strip().lower()
+    if openai_auth_mode not in _SUPPORTED_OPENAI_AUTH_MODES:
+        issues.append(
+            ConfigIssue(
+                field="llm.openai.auth_mode",
+                message='`llm.openai.auth_mode` 仅支持: "", "api_key", "codex_oauth"。',
+                severity="blocking",
+            )
+        )
+
+    if openai_auth_mode == "codex_oauth":
+        if config.llm.openai.api_key.strip():
+            issues.append(
+                ConfigIssue(
+                    field="llm.openai.api_key",
+                    message='`auth_mode = "codex_oauth"` 时 `api_key` 会被忽略。',
+                )
+            )
+        if not _is_openai_official_base_url(config.llm.openai.base_url):
+            issues.append(
+                ConfigIssue(
+                    field="llm.openai.base_url",
+                    message=(
+                        '`auth_mode = "codex_oauth"` 只允许留空 base_url '
+                        "或使用 OpenAI 官方 API 域名，避免泄露 ChatGPT token。"
+                    ),
+                    severity="blocking",
+                )
+            )
+        try:
+            from openbiliclaw.llm.codex_auth import codex_credentials_exist
+
+            has_codex_credentials = codex_credentials_exist()
+        except Exception:
+            has_codex_credentials = False
+        if not has_codex_credentials:
+            issues.append(
+                ConfigIssue(
+                    field="llm.openai.codex_oauth",
+                    message="未找到 Codex OAuth 凭据，请先运行 `openbiliclaw login codex`。",
+                )
+            )
+
     required_field = _REMOTE_PROVIDER_FIELDS.get(provider_name)
     has_env_fallback = provider_name == "gemini" and bool(_gemini_api_key_from_env())
-    if required_field and not provider_config.api_key.strip() and not has_env_fallback:
+    provider_uses_codex_oauth = provider_name == "openai" and openai_auth_mode == "codex_oauth"
+    if (
+        required_field
+        and not provider_config.api_key.strip()
+        and not has_env_fallback
+        and not provider_uses_codex_oauth
+    ):
         issues.append(
             ConfigIssue(
                 field=required_field,
@@ -658,6 +710,14 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         )
 
     return issues
+
+
+def _is_openai_official_base_url(base_url: str) -> bool:
+    raw = base_url.strip()
+    if not raw:
+        return True
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    return parsed.scheme == "https" and (parsed.hostname or "").lower() == "api.openai.com"
 
 
 def load_config_with_diagnostics(
@@ -863,6 +923,8 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
     lines.append(f"model = {_toml_string(provider.model)}")
     if name in {"openai", "deepseek", "ollama", "openrouter", "openai_compatible"}:
         lines.append(f"base_url = {_toml_string(provider.base_url)}")
+    if name == "openai":
+        lines.append(f"auth_mode = {_toml_string(provider.auth_mode)}")
     if name == "deepseek" and provider.reasoning_effort:
         lines.append(f"reasoning_effort = {_toml_string(provider.reasoning_effort)}")
     if name == "openrouter":
