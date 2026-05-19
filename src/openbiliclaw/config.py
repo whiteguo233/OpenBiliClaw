@@ -227,14 +227,17 @@ class DouyinSourceConfig:
 class YoutubeSourceConfig:
     """YouTube source-specific configuration.
 
-    Discovery runs as a regular B 站-side strategy (``YoutubeSearchStrategy``)
-    rather than a per-source producer loop, so ``enabled`` controls only
-    whether YouTube participates in pool-share accounting: when ``False``,
-    the ``youtube`` entry is dropped from ``pool_source_shares`` so its
-    slice doesn't get stranded.
+    YouTube discovery runs through the regular strategy pipeline rather
+    than a per-source plugin producer. The budget knobs therefore tune
+    each runtime discovery pass: search queries, trending fetch size and
+    subscribed-channel breadth.
     """
 
     enabled: bool = False
+    daily_search_budget: int = 6
+    daily_trending_budget: int = 50
+    daily_channel_budget: int = 10
+    request_interval_seconds: int = 2
 
 
 @dataclass
@@ -513,6 +516,10 @@ def _build_config(raw: dict[str, Any]) -> Config:
         ),
         youtube=YoutubeSourceConfig(
             enabled=bool(youtube_raw.get("enabled", False)),
+            daily_search_budget=int(youtube_raw.get("daily_search_budget", 6)),
+            daily_trending_budget=int(youtube_raw.get("daily_trending_budget", 50)),
+            daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 10)),
+            request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
         ),
     )
 
@@ -859,6 +866,10 @@ def _render_config_toml(config: Config) -> str:
             "",
             "[sources.youtube]",
             f"enabled = {_toml_bool(config.sources.youtube.enabled)}",
+            f"daily_search_budget = {config.sources.youtube.daily_search_budget}",
+            f"daily_trending_budget = {config.sources.youtube.daily_trending_budget}",
+            f"daily_channel_budget = {config.sources.youtube.daily_channel_budget}",
+            f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",

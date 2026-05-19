@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.83: 插件设置页分组与 YouTube 配置补齐（2026-05-19）
+
+- 浏览器插件设置页按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab，候选池来源占比移入平台源区，避免所有配置挤在同一个长列表里。
+- `[sources.youtube]` 补齐 `daily_search_budget` / `daily_trending_budget` / `daily_channel_budget` / `request_interval_seconds`，并通过 `/api/config` 与插件设置页 round-trip；runtime 会把前三个预算传给 `yt_search` / `yt_trending` / `yt_channel` 对应策略。
+- 后端包版本提升到 v0.3.83，准备发布 `backend-v0.3.83`；浏览器插件版本提升到 v0.3.34，准备发布 `extension-v0.3.34`。
+
+---
+
 ## v0.3.82: 一句话安装合约对齐（2026-05-19）
 
 - 一句话安装合约补齐 YouTube opt-in：`agent_bootstrap.py` 现在像小红书 / 抖音一样要求 `--yes-youtube` / `--no-youtube`，并把该选择传给自动 `openbiliclaw init`；`install.sh` / `install.ps1` 状态块和 agent/Docker/CLI 文档同步打印 YouTube 决策，同时统一 LLM 默认推荐为 DeepSeek 并修正安装文档的模型菜单编号。

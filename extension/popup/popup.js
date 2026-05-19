@@ -3900,6 +3900,34 @@ function bindSettings() {
 
   if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
 
+  const settingsTabs = [
+    ["models", document.getElementById("settingsTabModels")],
+    ["sources", document.getElementById("settingsTabSources")],
+    ["scheduler", document.getElementById("settingsTabScheduler")],
+    ["general", document.getElementById("settingsTabGeneral")],
+    ["logging", document.getElementById("settingsTabLogging")],
+  ];
+
+  function setActiveSettingsPanel(activePanel = "models") {
+    for (const [name, tab] of settingsTabs) {
+      const isActive = name === activePanel;
+      if (tab instanceof HTMLButtonElement) {
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      }
+      const panel = overlay.querySelector(`[data-settings-panel="${name}"]`);
+      if (panel instanceof HTMLElement) {
+        panel.hidden = !isActive;
+      }
+    }
+  }
+
+  for (const [name, tab] of settingsTabs) {
+    if (tab instanceof HTMLButtonElement) {
+      tab.addEventListener("click", () => setActiveSettingsPanel(name));
+    }
+  }
+
   async function populateBackendEndpoint() {
     try {
       const endpoint = await getBackendEndpointConfig();
@@ -4154,6 +4182,10 @@ function bindSettings() {
     setVal("cfgDouyinRequestInterval", cfg.sources?.douyin?.request_interval_seconds);
     const youtubeEnabled = document.getElementById("cfgYoutubeEnabled");
     if (youtubeEnabled) youtubeEnabled.checked = cfg.sources?.youtube?.enabled === true;
+    setVal("cfgYoutubeDailySearchBudget", cfg.sources?.youtube?.daily_search_budget);
+    setVal("cfgYoutubeDailyTrendingBudget", cfg.sources?.youtube?.daily_trending_budget);
+    setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
+    setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -4297,6 +4329,10 @@ function bindSettings() {
         },
         youtube: {
           enabled: checked("cfgYoutubeEnabled"),
+          daily_search_budget: getInt("cfgYoutubeDailySearchBudget", 6),
+          daily_trending_budget: getInt("cfgYoutubeDailyTrendingBudget", 50),
+          daily_channel_budget: getInt("cfgYoutubeDailyChannelBudget", 10),
+          request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
         },
       },
       scheduler: {
@@ -4344,6 +4380,7 @@ function bindSettings() {
     issuesContainer.innerHTML = "";
     hideConfigBanners();
     setSaveButtonMode("");
+    setActiveSettingsPanel("models");
     // Backend port is stored in chrome.storage, not on the backend, so it
     // populates even when the backend is unreachable — which is the whole
     // point of changing it.

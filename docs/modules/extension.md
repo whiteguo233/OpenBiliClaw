@@ -17,7 +17,7 @@
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；聊天输入框会轮播想法、口味、自我描述、近期状态等多场景提示语，长聊天历史区域会随侧栏高度扩展 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页可开关小红书 / 抖音 / YouTube discovery，编辑 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；平台源 tab 可开关小红书 / 抖音 / YouTube discovery，编辑 YouTube search / trending / channel 策略预算和 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |

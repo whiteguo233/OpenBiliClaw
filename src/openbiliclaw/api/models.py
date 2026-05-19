@@ -584,6 +584,10 @@ class DouyinSourceConfigOut(BaseModel):
 
 class YoutubeSourceConfigOut(BaseModel):
     enabled: bool = False
+    daily_search_budget: int = 6
+    daily_trending_budget: int = 50
+    daily_channel_budget: int = 10
+    request_interval_seconds: int = 2
 
 
 class SourcesConfigOut(BaseModel):

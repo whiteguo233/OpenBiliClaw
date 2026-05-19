@@ -3606,6 +3606,10 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.sources.douyin.daily_feed_budget = 13
         cfg.sources.douyin.request_interval_seconds = 5
         cfg.sources.youtube.enabled = True
+        cfg.sources.youtube.daily_search_budget = 4
+        cfg.sources.youtube.daily_trending_budget = 44
+        cfg.sources.youtube.daily_channel_budget = 8
+        cfg.sources.youtube.request_interval_seconds = 3
         cfg.scheduler.pool_source_shares = {
             "bilibili": 6,
             "xiaohongshu": 2,
@@ -3642,6 +3646,10 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["sources"]["douyin"]["enabled"] is True
         assert data["sources"]["douyin"]["daily_feed_budget"] == 13
         assert data["sources"]["youtube"]["enabled"] is True
+        assert data["sources"]["youtube"]["daily_search_budget"] == 4
+        assert data["sources"]["youtube"]["daily_trending_budget"] == 44
+        assert data["sources"]["youtube"]["daily_channel_budget"] == 8
+        assert data["sources"]["youtube"]["request_interval_seconds"] == 3
         assert data["scheduler"]["pool_source_shares"] == {
             "bilibili": 6,
             "xiaohongshu": 2,
@@ -3784,7 +3792,13 @@ class TestEmbeddingAndCompatProviderE2E:
                         "daily_feed_budget": 13,
                         "request_interval_seconds": 5,
                     },
-                    "youtube": {"enabled": True},
+                    "youtube": {
+                        "enabled": True,
+                        "daily_search_budget": 5,
+                        "daily_trending_budget": 41,
+                        "daily_channel_budget": 9,
+                        "request_interval_seconds": 4,
+                    },
                 },
                 "scheduler": {
                     "account_sync_interval_hours": 9,
@@ -3837,6 +3851,10 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.sources.douyin.cookie_env == "CUSTOM_DY_COOKIE"
         assert cfg.sources.douyin.daily_feed_budget == 13
         assert cfg.sources.youtube.enabled is True
+        assert cfg.sources.youtube.daily_search_budget == 5
+        assert cfg.sources.youtube.daily_trending_budget == 41
+        assert cfg.sources.youtube.daily_channel_budget == 9
+        assert cfg.sources.youtube.request_interval_seconds == 4
         assert cfg.scheduler.pool_source_shares == {
             "bilibili": 6,
             "xiaohongshu": 2,

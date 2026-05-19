@@ -3104,6 +3104,55 @@
       background: var(--brand-soft);
     }
 
+    .settings-tabs {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.68);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .settings-tab {
+      min-height: 36px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+
+    .settings-tab:hover {
+      background: var(--sky-soft);
+      color: var(--text-main);
+    }
+
+    .settings-tab.is-active {
+      background: linear-gradient(135deg, rgba(251, 114, 153, 0.92), rgba(246, 87, 136, 0.92));
+      color: #fff;
+      box-shadow: 0 8px 16px rgba(251, 114, 153, 0.18);
+    }
+
+    .settings-tab:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+
+    .settings-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .settings-panel[hidden] {
+      display: none;
+    }
+
     .settings-section {
       background: var(--surface-strong);
       border: 1px solid var(--line);
@@ -3561,6 +3610,15 @@
 
       <div id="settingsIssues" class="settings-issues"></div>
 
+      <div class="settings-tabs" role="tablist" aria-label="后端设置分类">
+        <button id="settingsTabModels" class="settings-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelModels">模型</button>
+        <button id="settingsTabSources" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSources">平台源</button>
+        <button id="settingsTabScheduler" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelScheduler">调度</button>
+        <button id="settingsTabGeneral" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelGeneral">通用</button>
+        <button id="settingsTabLogging" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelLogging">日志</button>
+      </div>
+
+      <div id="settingsPanelModels" class="settings-panel" data-settings-panel="models" role="tabpanel" aria-labelledby="settingsTabModels">
       <!-- LLM Provider -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x1F916;</span> LLM 模型</h3>
@@ -3806,7 +3864,9 @@
           <input id="cfgModuleEvaluationModel" type="text" placeholder="留空继承 provider 默认模型">
         </div>
       </div>
+      </div>
 
+      <div id="settingsPanelSources" class="settings-panel" data-settings-panel="sources" role="tabpanel" aria-labelledby="settingsTabSources" hidden>
       <!-- Bilibili -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x1F4FA;</span> Bilibili</h3>
@@ -3887,8 +3947,46 @@
           <input id="cfgYoutubeEnabled" type="checkbox">
           <label for="cfgYoutubeEnabled">启用 YouTube discovery</label>
         </div>
+        <div class="settings-field">
+          <label for="cfgYoutubeDailySearchBudget">YouTube 搜索 query 预算</label>
+          <input id="cfgYoutubeDailySearchBudget" type="number" min="0" step="1" placeholder="6">
+        </div>
+        <div class="settings-field">
+          <label for="cfgYoutubeDailyTrendingBudget">YouTube 热门候选预算</label>
+          <input id="cfgYoutubeDailyTrendingBudget" type="number" min="0" step="1" placeholder="50">
+        </div>
+        <div class="settings-field">
+          <label for="cfgYoutubeDailyChannelBudget">YouTube 订阅频道预算</label>
+          <input id="cfgYoutubeDailyChannelBudget" type="number" min="0" step="1" placeholder="10">
+        </div>
+        <div class="settings-field">
+          <label for="cfgYoutubeRequestInterval">YouTube 请求间隔秒数</label>
+          <input id="cfgYoutubeRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <p class="settings-hint">YouTube 没有独立插件 producer；这些值会限制 yt_search / yt_trending / yt_channel 三个 discovery 策略的单轮规模。</p>
+        <div class="settings-field">
+          <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
+          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareXhs">候选池小红书占比</label>
+          <input id="cfgPoolShareXhs" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareDouyin">候选池抖音占比</label>
+          <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
+          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-actions">
+          <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
+        </div>
+      </div>
       </div>
 
+      <div id="settingsPanelGeneral" class="settings-panel" data-settings-panel="general" role="tabpanel" aria-labelledby="settingsTabGeneral" hidden>
       <!-- General -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x2699;&#xFE0F;</span> 通用</h3>
@@ -3922,7 +4020,9 @@
           <input id="cfgStorageDbPath" type="text" placeholder="data/openbiliclaw.db">
         </div>
       </div>
+      </div>
 
+      <div id="settingsPanelScheduler" class="settings-panel" data-settings-panel="scheduler" role="tabpanel" aria-labelledby="settingsTabScheduler" hidden>
       <!-- Scheduler -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x23F0;</span> 调度</h3>
@@ -3957,25 +4057,6 @@
           <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">
         </div>
         <div class="settings-field">
-          <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
-          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
-        </div>
-        <div class="settings-field">
-          <label for="cfgPoolShareXhs">候选池小红书占比</label>
-          <input id="cfgPoolShareXhs" type="number" min="1" step="1" placeholder="1">
-        </div>
-        <div class="settings-field">
-          <label for="cfgPoolShareDouyin">候选池抖音占比</label>
-          <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
-        </div>
-        <div class="settings-field">
-          <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
-          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
-        </div>
-        <div class="settings-actions">
-          <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
-        </div>
-        <div class="settings-field">
           <label for="cfgSpeculationInterval">猜测兴趣间隔分钟</label>
           <input id="cfgSpeculationInterval" type="number" min="1" step="1" placeholder="10">
         </div>
@@ -4004,7 +4085,9 @@
           <input id="cfgSpeculationMaxSecondary" type="number" min="1" step="1" placeholder="60">
         </div>
       </div>
+      </div>
 
+      <div id="settingsPanelLogging" class="settings-panel" data-settings-panel="logging" role="tabpanel" aria-labelledby="settingsTabLogging" hidden>
       <!-- Logging -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x1F4CB;</span> 日志</h3>
@@ -4054,6 +4137,7 @@
           <label for="cfgLogUnmanagedMaxAge">非托管日志保留天数</label>
           <input id="cfgLogUnmanagedMaxAge" type="number" min="0" step="1" placeholder="30">
         </div>
+      </div>
       </div>
 
       <p class="settings-note">保存后会尝试热重载；少数路径类设置仍建议重启后端确认。</p>

@@ -230,11 +230,15 @@ daily_feed_budget = 30
 request_interval_seconds = 2
 
 # ── YouTube 专用配置 ──
-# 当前仅用于 pool-share 归属：enabled=false 时 pool_source_shares 中的 youtube
-# 配额会被丢弃（避免池子卡在低于目标）。YouTube discovery 走 B 站侧的策略管线
-# （YoutubeSearchStrategy），不存在独立 producer loop。
+# enabled=false 时 pool_source_shares 中的 youtube 配额会被丢弃（避免池子卡在低于目标）。
+# YouTube discovery 走 yt_search / yt_trending / yt_channel 三个策略，
+# 不存在独立插件 producer loop；下面的预算控制单轮 discovery 规模。
 [sources.youtube]
 enabled = false
+daily_search_budget = 6
+daily_trending_budget = 50
+daily_channel_budget = 10
+request_interval_seconds = 2
 
 [scheduler]
 # Enable scheduled content discovery

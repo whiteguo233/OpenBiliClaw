@@ -132,6 +132,25 @@ test("popup page is structured for side panel browsing", () => {
   assert.doesNotMatch(bodyBlock, /height:\s*560px;/);
 });
 
+test("settings tabs use stable compact panels", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const tabsBlock = popupHtml.match(/\.settings-tabs\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const tabBlock = popupHtml.match(/\.settings-tab\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const activeTabBlock = popupHtml.match(/\.settings-tab\.is-active\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const panelBlock = popupHtml.match(/\.settings-panel\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const hiddenPanelBlock =
+    popupHtml.match(/\.settings-panel\[hidden\]\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  assert.match(tabsBlock, /display:\s*grid;/);
+  assert.match(tabsBlock, /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(tabBlock, /min-height:\s*36px;/);
+  assert.match(tabBlock, /cursor:\s*pointer;/);
+  assert.match(activeTabBlock, /background:/);
+  assert.match(panelBlock, /display:\s*flex;/);
+  assert.match(panelBlock, /flex-direction:\s*column;/);
+  assert.match(hiddenPanelBlock, /display:\s*none;/);
+});
+
 test("recommendation card layout reserves a media cover slot", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const previewBlock = popupHtml.match(/\.recommendation-preview\s*\{[\s\S]*?\}/)?.[0] ?? "";

@@ -685,6 +685,10 @@ def test_sources_youtube_defaults() -> None:
     config = _build_config({})
 
     assert config.sources.youtube.enabled is False
+    assert config.sources.youtube.daily_search_budget == 6
+    assert config.sources.youtube.daily_trending_budget == 50
+    assert config.sources.youtube.daily_channel_budget == 10
+    assert config.sources.youtube.request_interval_seconds == 2
 
 
 def test_build_config_supports_sources_xiaohongshu(tmp_path: Path) -> None:
@@ -741,6 +745,10 @@ def test_build_config_supports_sources_youtube(tmp_path: Path) -> None:
         """
 [sources.youtube]
 enabled = true
+daily_search_budget = 4
+daily_trending_budget = 40
+daily_channel_budget = 7
+request_interval_seconds = 3
 """.strip(),
         encoding="utf-8",
     )
@@ -748,6 +756,29 @@ enabled = true
     config = load_config(toml_path)
 
     assert config.sources.youtube.enabled is True
+    assert config.sources.youtube.daily_search_budget == 4
+    assert config.sources.youtube.daily_trending_budget == 40
+    assert config.sources.youtube.daily_channel_budget == 7
+    assert config.sources.youtube.request_interval_seconds == 3
+
+
+def test_save_config_round_trips_sources_youtube(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.sources.youtube.enabled = True
+    config.sources.youtube.daily_search_budget = 5
+    config.sources.youtube.daily_trending_budget = 42
+    config.sources.youtube.daily_channel_budget = 8
+    config.sources.youtube.request_interval_seconds = 4
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.sources.youtube.enabled is True
+    assert loaded.sources.youtube.daily_search_budget == 5
+    assert loaded.sources.youtube.daily_trending_budget == 42
+    assert loaded.sources.youtube.daily_channel_budget == 8
+    assert loaded.sources.youtube.request_interval_seconds == 4
 
 
 def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None:

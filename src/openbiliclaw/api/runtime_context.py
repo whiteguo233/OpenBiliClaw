@@ -45,6 +45,46 @@ def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
     return effective_pool_source_shares(config)
 
 
+def build_youtube_discovery_strategies(
+    *,
+    config: Any,
+    client: Any,
+    llm_service: Any,
+    memory: Any,
+    concurrency: Any,
+) -> list[Any]:
+    """Build YouTube discovery strategies from `[sources.youtube]` config."""
+
+    from openbiliclaw.discovery.strategies.youtube import (
+        YoutubeChannelStrategy,
+        YoutubeSearchStrategy,
+        YoutubeTrendingStrategy,
+    )
+
+    yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
+    return [
+        YoutubeSearchStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            queries_per_run=int(getattr(yt_cfg, "daily_search_budget", 6)),
+        ),
+        YoutubeTrendingStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            fetch_limit=int(getattr(yt_cfg, "daily_trending_budget", 50)),
+        ),
+        YoutubeChannelStrategy(
+            client=client,
+            llm_service=llm_service,
+            memory=memory,
+            concurrency=concurrency,
+            max_channels=int(getattr(yt_cfg, "daily_channel_budget", 10)),
+        ),
+    ]
+
+
 @dataclass
 class RuntimeContext:
     """Mutable holder for all runtime components used by API endpoints."""
@@ -271,33 +311,18 @@ class RuntimeContext:
         # or fetch-youtube at least once).  Registration is intentionally
         # gated so the strategies don't fire for users who never set up YouTube.
         try:
-            from openbiliclaw.discovery.strategies.youtube import (
-                YoutubeChannelStrategy,
-                YoutubeSearchStrategy,
-                YoutubeTrendingStrategy,
-            )
             from openbiliclaw.youtube.client import YtScraperClient
 
             yt_client = YtScraperClient()
-            yt_search = YoutubeSearchStrategy(
-                client=yt_client,
-                llm_service=new_llm_service,
-                concurrency=concurrency,
-            )
-            yt_trending = YoutubeTrendingStrategy(
-                client=yt_client,
-                llm_service=new_llm_service,
-                concurrency=concurrency,
-            )
-            yt_channel = YoutubeChannelStrategy(
+            youtube_strategies = build_youtube_discovery_strategies(
+                config=new_config,
                 client=yt_client,
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
                 concurrency=concurrency,
             )
-            new_discovery_engine.register_strategy(yt_search)
-            new_discovery_engine.register_strategy(yt_trending)
-            new_discovery_engine.register_strategy(yt_channel)
+            for strategy in youtube_strategies:
+                new_discovery_engine.register_strategy(strategy)
             logger.info("YouTube discovery strategies registered")
         except ImportError as _yt_import_err:
             logger.info(

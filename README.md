@@ -19,11 +19,11 @@
 
 ---
 
-## 📌 v0.3.78 重要更新（2026-05-19）
+## 📌 v0.3.83 重要更新（2026-05-19）
 
-- **🔑 Codex OAuth 实验认证** —— 可运行 `openbiliclaw login codex` 导入本机 Codex CLI 的 ChatGPT OAuth 凭据，并用 `[llm.openai].auth_mode="codex_oauth"` 作为 OpenAI provider 的认证来源。
-- **🧩 插件设置页适配** —— 浏览器插件 OpenAI 配置区可直接选择 `API Key` 或 `Codex OAuth`，保存时同步写入 `[llm.openai].auth_mode`。
-- **🛡️ Token 安全边界** —— `codex_oauth` 下只允许 OpenAI 官方 API 域名，避免把 ChatGPT OAuth token 发给第三方 OpenAI-compatible 代理；该能力仍是非官方实验路径。
+- **🧩 插件设置页分组** —— 后端设置按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab，平台源和候选池占比放到一起，不再挤在一个长列表里。
+- **▶️ YouTube 配置补齐** —— `[sources.youtube]` 现在可配置 search / trending / channel 三条 discovery 策略预算，并可从插件设置页保存。
+- **🚀 双通道发布** —— 后端版本提升到 `backend-v0.3.83`，浏览器插件版本提升到 `extension-v0.3.34`。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 

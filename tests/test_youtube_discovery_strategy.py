@@ -69,9 +69,7 @@ class _FakeYtClient:
             }
         ]
 
-    async def get_channel_videos(
-        self, channel_id: str, limit: int = 5
-    ) -> list[dict[str, Any]]:
+    async def get_channel_videos(self, channel_id: str, limit: int = 5) -> list[dict[str, Any]]:
         self.calls.append((channel_id, limit))
         return []
 
@@ -138,6 +136,33 @@ def test_youtube_channel_reads_channel_url_when_channel_id_missing() -> None:
         "https://www.youtube.com/@AswathDamodaranonValuation",
         "UC123",
     ]
+
+
+def test_runtime_youtube_strategy_builder_uses_source_config() -> None:
+    from openbiliclaw.api.runtime_context import build_youtube_discovery_strategies
+    from openbiliclaw.config import Config
+
+    config = Config()
+    config.sources.youtube.daily_search_budget = 4
+    config.sources.youtube.daily_trending_budget = 37
+    config.sources.youtube.daily_channel_budget = 6
+
+    strategies = build_youtube_discovery_strategies(
+        config=config,
+        client=_FakeYtClient(),
+        llm_service=_FakeLLMService("{}"),
+        memory=_MemoryWithYoutubeUrls(),
+        concurrency=None,
+    )
+
+    assert [strategy.name for strategy in strategies] == [
+        "yt_search",
+        "yt_trending",
+        "yt_channel",
+    ]
+    assert strategies[0].queries_per_run == 4
+    assert strategies[1].fetch_limit == 37
+    assert strategies[2].max_channels == 6
 
 
 def test_extract_innertube_config_reads_current_youtube_constants() -> None:

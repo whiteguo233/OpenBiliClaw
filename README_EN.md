@@ -17,11 +17,11 @@
 
 ---
 
-## 📌 v0.3.78 Highlights (2026-05-19)
+## 📌 v0.3.83 Highlights (2026-05-19)
 
-- **🔑 Experimental Codex OAuth auth** — `openbiliclaw login codex` can import local Codex CLI ChatGPT OAuth credentials, then `[llm.openai].auth_mode="codex_oauth"` uses them for the OpenAI provider.
-- **🧩 Extension settings support** — the browser extension OpenAI settings can select `API Key` or `Codex OAuth`, and save `[llm.openai].auth_mode` through the local config API.
-- **🛡️ Token safety boundary** — `codex_oauth` only allows the official OpenAI API domain, so ChatGPT OAuth tokens are not sent to third-party OpenAI-compatible proxies; this remains an unofficial experimental path.
+- **🧩 Tabbed extension settings** — backend settings are split into Models / Sources / Scheduler / General / Logs, with source toggles and pool shares grouped together.
+- **▶️ YouTube config parity** — `[sources.youtube]` can now tune search / trending / channel discovery budgets, and those fields are editable from the extension settings page.
+- **🚀 Split-channel release** — backend bumps to `backend-v0.3.83`, and the browser extension bumps to `extension-v0.3.34`.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 

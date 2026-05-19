@@ -275,11 +275,15 @@ model    = "deepseek-v4-flash"
 
 ### `[sources.youtube]`
 
-YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 走 `yt_search` / `yt_trending` / `yt_channel` 三个策略。
+YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 走 `yt_search` / `yt_trending` / `yt_channel` 三个策略。YouTube 没有独立插件 producer，因此这里的预算控制单轮 runtime discovery 的策略规模，不是独立任务队列的每日入队数。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `false` | 是否让 YouTube 参与候选池配比和后台 discovery；`init --yes-youtube` 会写回 `true`，`--no-youtube` 或 `OPENBILICLAW_NO_YOUTUBE=1` 会写回 `false` |
+| `daily_search_budget` | int | `6` | `yt_search` 每轮最多生成的 YouTube 搜索 query 数，对应 `YoutubeSearchStrategy.queries_per_run` |
+| `daily_trending_budget` | int | `50` | `yt_trending` 每轮最多拉取的热门候选数，对应 `YoutubeTrendingStrategy.fetch_limit` |
+| `daily_channel_budget` | int | `10` | `yt_channel` 每轮最多读取的订阅频道数，对应 `YoutubeChannelStrategy.max_channels` |
+| `request_interval_seconds` | int | `2` | 预留的 YouTube 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
 
 ### `[scheduler]`
 

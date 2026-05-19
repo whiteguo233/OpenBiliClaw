@@ -3491,6 +3491,10 @@ def create_app(
                 ),
                 youtube=YoutubeSourceConfigOut(
                     enabled=cfg.sources.youtube.enabled,
+                    daily_search_budget=cfg.sources.youtube.daily_search_budget,
+                    daily_trending_budget=cfg.sources.youtube.daily_trending_budget,
+                    daily_channel_budget=cfg.sources.youtube.daily_channel_budget,
+                    request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                 ),
             ),
             scheduler=SchedulerConfigOut(
@@ -3730,8 +3734,17 @@ def create_app(
                             setattr(cfg.sources.douyin, key, int(dy_data[key]))
 
                 yt_data = sources_data.get("youtube")
-                if isinstance(yt_data, dict) and "enabled" in yt_data:
-                    cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
+                if isinstance(yt_data, dict):
+                    if "enabled" in yt_data:
+                        cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
+                    for key in (
+                        "daily_search_budget",
+                        "daily_trending_budget",
+                        "daily_channel_budget",
+                        "request_interval_seconds",
+                    ):
+                        if key in yt_data:
+                            setattr(cfg.sources.youtube, key, int(yt_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:
