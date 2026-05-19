@@ -1521,6 +1521,7 @@ class TestBackendAPI:
                 *,
                 profile: object,
                 limit: int = 10,
+                mode: str = "",
             ) -> list[object]:
                 assert profile == {"profile": "ok"}
                 assert limit == 10
@@ -1581,7 +1582,7 @@ class TestBackendAPI:
 
         class FakeRecommendationEngine:
             def __init__(self) -> None:
-                self.calls: list[tuple[object, list[str], int]] = []
+                self.calls: list[tuple[object, list[str], int, str]] = []
 
             async def append_recommendations(
                 self,
@@ -1589,8 +1590,9 @@ class TestBackendAPI:
                 profile: object,
                 excluded_bvids: list[str],
                 limit: int = 10,
+                mode: str = "",
             ) -> list[object]:
-                self.calls.append((profile, excluded_bvids, limit))
+                self.calls.append((profile, excluded_bvids, limit, mode))
                 from openbiliclaw.discovery.engine import DiscoveredContent
                 from openbiliclaw.recommendation.engine import Recommendation
 
@@ -1625,7 +1627,7 @@ class TestBackendAPI:
         )
 
         assert response.status_code == 200
-        assert recommendation_engine.calls == [({"profile": "ok"}, ["BV1A", "BV1B"], 10)]
+        assert recommendation_engine.calls == [({"profile": "ok"}, ["BV1A", "BV1B"], 10, "")]
         assert response.json() == {
             "items": [
                 {

@@ -212,6 +212,7 @@ class RecommendationEngine:
         limit: int = 5,
         excluded_bvids: frozenset[str] = frozenset(),
         expression_mode: Literal["realtime", "precomputed"] = "precomputed",
+        mode: str = "",
     ) -> list[Recommendation]:
         """Unified recommendation entry point — always picks from the pool.
 
@@ -226,6 +227,9 @@ class RecommendationEngine:
             expression_mode: ``"precomputed"`` uses pool-cached copy (fast),
                 ``"realtime"`` generates fresh expressions via LLM (slow but
                 higher quality).
+            mode: Optional recommendation mode — ``"explore"`` for filter-bubble
+                breaking content, ``"professional"`` for tech/programming content,
+                ``"casual"`` for gaming/entertainment content.
 
         Returns:
             List of personalized recommendations.
@@ -294,6 +298,12 @@ class RecommendationEngine:
         if self._curator is not None:
             context = self._curator.build_context()
             score_override = self._curator.score_candidates(candidates, context)
+
+        # Apply mode-based score boost before diversity selection.
+        if mode and candidates:
+            score_override = self._apply_mode_boost(
+                candidates, mode, score_override,
+            )
 
         # v0.3.44+: pre-fetch embeddings for MMR-based diversification.
         # In v0.3.45+ discovery and classify_pool_backlog warm these into
@@ -1296,12 +1306,13 @@ class RecommendationEngine:
         *,
         profile: SoulProfile,
         limit: int = 5,
+        mode: str = "",
     ) -> list[Recommendation]:
         """Instantly pick a new batch from the discovery pool.
 
         Delegates to :meth:`serve` with ``expression_mode="precomputed"``.
         """
-        return await self.serve(profile, limit=limit, expression_mode="precomputed")
+        return await self.serve(profile, limit=limit, expression_mode="precomputed", mode=mode)
 
     async def append_recommendations(
         self,
@@ -1309,6 +1320,7 @@ class RecommendationEngine:
         profile: SoulProfile,
         excluded_bvids: list[str],
         limit: int = 10,
+        mode: str = "",
     ) -> list[Recommendation]:
         """Append another page of recommendations from the discovery pool.
 
@@ -1320,6 +1332,7 @@ class RecommendationEngine:
             limit=limit,
             excluded_bvids=excluded,
             expression_mode="precomputed",
+            mode=mode,
         )
 
     async def generate_personal_topic(
@@ -1466,6 +1479,49 @@ class RecommendationEngine:
     def get_recommendation(self, recommendation_id: int) -> dict[str, object] | None:
         """Load a recommendation row for CLI or feedback workflows."""
         return self._database.get_recommendation_by_id(recommendation_id)
+
+    # Mode boost keywords — lightweight topic_group matching for the three
+    # content-mode buttons in the popup. The keywords are intentionally broad
+    # (substring match on topic_group) to catch LLM-generated topic labels
+    # that may vary in phrasing.
+    _PROFESSIONAL_KEYWORDS: tuple[str, ...] = (
+        "编程", "程序", "代码", "开发", "软件", "计算机", "算法", "架构",
+        "技术", "人工智能", "机器学习", "前端", "后端", "开源", "程序员",
+        "Python", "Java", "Go", "Rust", "C++", "Linux", "IT",
+    )
+    _CASUAL_KEYWORDS: tuple[str, ...] = (
+        "游戏", "电竞", "主机", "手游", "Switch", "Steam", "PS5",
+        "娱乐", "搞笑", "休闲", "番剧", "动漫", "动画", "漫画",
+        "音乐", "电影", "综艺", "吃播", "美食", "旅行",
+    )
+
+    @staticmethod
+    def _apply_mode_boost(
+        candidates: list[DiscoveredContent],
+        mode: str,
+        score_override: dict[str, float] | None,
+    ) -> dict[str, float]:
+        """Apply a mode-based score boost to candidates.
+
+        Returns a score_override dict (or a new one) with adjusted scores.
+        """
+        BOOST = 0.25
+        overrides: dict[str, float] = dict(score_override) if score_override else {}
+        for c in candidates:
+            key = c.bvid
+            base = overrides.get(key, c.relevance_score)
+            if mode == "explore":
+                if c.source_strategy == "explore":
+                    overrides[key] = min(base + BOOST, 1.0)
+            elif mode == "professional":
+                tg = (c.topic_group or "").lower()
+                if any(kw.lower() in tg for kw in RecommendationEngine._PROFESSIONAL_KEYWORDS):
+                    overrides[key] = min(base + BOOST, 1.0)
+            elif mode == "casual":
+                tg = (c.topic_group or "").lower()
+                if any(kw.lower() in tg for kw in RecommendationEngine._CASUAL_KEYWORDS):
+                    overrides[key] = min(base + BOOST, 1.0)
+        return overrides
 
     @staticmethod
     def _ranking_key(item: DiscoveredContent) -> tuple[int, float, float, int, str]:
