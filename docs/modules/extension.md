@@ -14,7 +14,7 @@
 |------|------|------|
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
-| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复 |
+| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；聊天输入框会轮播多场景提示语，长聊天历史区域会随侧栏高度扩展 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
 | 设置页源策略控制 | ✅ | side panel 设置页可开关小红书 / 抖音 / YouTube discovery，编辑 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
@@ -299,6 +299,7 @@ CLI 入口：
 - 推荐里提交 `dislike` 或 `说说原因` 后，这块会即时刷新，不再必须等到反馈批处理阈值满足
 - 聊天或推荐反馈成功后，如果 side panel 已经看过画像摘要，popup 会强制重拉 `/api/profile-summary`，让“阿B 最近新记住了什么”尽快同步到当前视图
 - 聊天 tab：调用 `/api/chat/turns` 创建 durable turn，后端先写入 `pending`，再后台生成回复；side panel reload 后会从 `/api/chat/turns?scope=chat` 重新 hydrate 用户消息、thinking 占位和已完成回复
+- 聊天输入框内置多场景 placeholder 轮播，提示用户可以描述近期观看行为、自我状态、喜好厌恶或注意力变化；输入框 focus 时暂停轮播，blur 且内容为空时恢复。聊天历史区域使用 `clamp(220px, 45vh, 420px)` 控制高度，侧栏拉高时可展示更多长回复，同时保留小窗口下的 220px 保底
 - 惊喜推荐和兴趣猜测卡片内的 `聊一聊` 也会用 `scope=delight/probe` 写入 durable turn，回复完成后同步刷新对应卡片状态、画像摘要和最近动态；旧的 `/api/chat` 仍保留给兼容入口
 - durable chat turn 写入 SQLite `chat_turns`，不再依赖 DOM、JS 内存或 `sessionStorage` 保留主聊天历史；惊喜推荐只保留少量 `localStorage` UI 草稿/展开态作为本地兜底，权威回复状态以后端为准
 - 推荐、画像和聊天文案共享后端的 `ToneProfile`，基础风格是“老B友”，但会根据画像和近期反馈在信息密度、温度和梗感上动态调整

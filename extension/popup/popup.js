@@ -166,6 +166,33 @@ const CHAT_POLL_INTERVAL_MS = 1200;
 const CHAT_POLL_DEADLINE_MS = 180_000;
 const activeChatPolls = new Map();
 
+const CHAT_PLACEHOLDERS = [
+  // 观看行为类
+  "比如：我最近老点开国际新闻和商业分析，想知道自己到底在找什么。",
+  "比如：最近迷上了做饭视频，但每次都只看不动手。",
+  "比如：一到深夜就开始刷纪录片，越冷门越上头。",
+  "比如：我连着看了十几个测评视频，但最后什么也没买。",
+  "比如：最近总是搜同一个UP主，可能是因为声音好听？",
+  "比如：这周突然开始看健身视频了，也不知道能坚持多久。",
+  "比如：我经常刷到一半就退出去了，好像注意力很难集中。",
+  "比如：最近看了好多怀旧动画剪辑，可能是想回到小时候吧。",
+  // 自我描述类
+  "说说你自己：我是个容易三分钟热度的人，什么都想试但很难坚持。",
+  "说说你自己：我算是个i人，喜欢一个人安静看东西，不太爱凑热闹。",
+  "说说你自己：我对画面和音乐特别敏感，好看的封面就忍不住点进去。",
+  // 喜好与厌恶类
+  "聊聊喜好：我喜欢有深度的长视频，受不了标题党和故意搞悬念的。",
+  "聊聊喜好：我讨厌那种假装真实的摆拍日常，一眼就能看出来。",
+  "聊聊喜好：我偏爱小众冷门内容，热门排行榜上的反而不太想看。",
+  // 近期状态类
+  "最近在想：换工作的事情想了很久，刷视频可能就是在逃避。",
+  "最近在想：马上要考试了，但就是控制不住打开B站。",
+  "最近的状态：这阵子心情一般，老看一些治愈系的东西。",
+  "最近在做：在学一门新技能，想看看有没有靠谱的教程。",
+];
+let chatPlaceholderIndex = 0;
+let chatPlaceholderTimer = null;
+
 function setRefreshButtonState(loading, message = "") {
   state.refreshStatusMessage = message;
   if (elements.refreshRecommendationsButton instanceof HTMLButtonElement) {
@@ -3731,6 +3758,31 @@ function bindChat() {
   ) {
     return;
   }
+
+  // ── Rotating placeholder hints ──
+  function rotatePlaceholder() {
+    chatPlaceholderIndex = (chatPlaceholderIndex + 1) % CHAT_PLACEHOLDERS.length;
+    elements.chatInput.setAttribute("placeholder", CHAT_PLACEHOLDERS[chatPlaceholderIndex]);
+  }
+  function startPlaceholderRotation() {
+    if (!chatPlaceholderTimer) {
+      chatPlaceholderTimer = window.setInterval(rotatePlaceholder, 5000);
+    }
+  }
+  function stopPlaceholderRotation() {
+    if (chatPlaceholderTimer) {
+      clearInterval(chatPlaceholderTimer);
+      chatPlaceholderTimer = null;
+    }
+  }
+  // Start rotating when chat tab is visible; pause when user is typing.
+  elements.chatInput.addEventListener("focus", stopPlaceholderRotation);
+  elements.chatInput.addEventListener("blur", () => {
+    if (!elements.chatInput.value.trim()) {
+      startPlaceholderRotation();
+    }
+  });
+  startPlaceholderRotation();
 
   let slowStatusTimer = null;
 

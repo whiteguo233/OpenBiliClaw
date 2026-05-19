@@ -8,6 +8,7 @@ test("chat tab layout keeps chat shell and message list from collapsing", () => 
 
   assert.match(popupHtml, /\.chat-shell\s*\{[\s\S]*?flex-shrink:\s*0;/);
   assert.match(popupHtml, /\.chat-messages\s*\{[\s\S]*?min-height:\s*72px;/);
+  assert.match(popupHtml, /\.chat-messages\s*\{[\s\S]*?max-height:\s*clamp\(220px,\s*45vh,\s*420px\);/);
 });
 
 test("chat textarea keeps inner spacing and readable line height", () => {
@@ -18,6 +19,17 @@ test("chat textarea keeps inner spacing and readable line height", () => {
   assert.match(chatInputBlock, /padding:\s*10px\s+12px;/);
   assert.match(chatInputBlock, /line-height:\s*1\.6;/);
   assert.match(chatInputBlock, /border-radius:\s*14px;/);
+});
+
+test("chat input placeholder rotation array and timer are defined", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupJs, /CHAT_PLACEHOLDERS\s*=\s*\[/);
+  // At least 4 distinct placeholder hints
+  const matches = popupJs.match(/比如：/g) ?? [];
+  assert.ok(matches.length >= 4, `expected >=4 placeholder hints, got ${matches.length}`);
+  assert.match(popupJs, /chatPlaceholderTimer/);
+  assert.match(popupJs, /rotatePlaceholder/);
 });
 
 test("chat form reserves a dedicated status line for staged progress", () => {

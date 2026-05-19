@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.79: Popup 聊天输入体验补强（2026-05-19）
+
+- 浏览器插件聊天 tab 新增多场景 placeholder 轮播，覆盖纪录片、测评、健身、怀旧动画、注意力、自我描述和近期状态等入口；输入框 focus 时暂停轮播，blur 且内容为空时恢复，避免用户正在输入时被提示语打断。
+- 聊天历史区域高度从固定 `220px` 改为 `clamp(220px, 45vh, 420px)`：小窗口保持原有保底高度，侧栏拉高时可展示更多长回复，最高限制在 420px，避免挤压输入区。
+- 浏览器插件版本提升到 v0.3.32，准备发布 `extension-v0.3.32`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.32.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.32-firefox.zip`。
+
+---
+
 ## v0.3.78: Codex OAuth 实验认证（2026-05-19）
 
 - 新增实验性 `[llm.openai].auth_mode = "codex_oauth"`：OpenAI provider 仍复用现有 `OpenAIProvider`，但 token 来源改为本机 Codex CLI 的 ChatGPT OAuth 凭据；`codex_auth.py` 负责导入 `~/.codex/auth.json`、写入 `~/.openbiliclaw/codex_auth.json`、临期刷新和 401 后强制刷新重试。
