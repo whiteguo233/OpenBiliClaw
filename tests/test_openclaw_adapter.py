@@ -627,10 +627,11 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.initialized += 1
 
     class FakeSoulEngine:
-        def __init__(self, *, llm: object, memory: object, module_overrides=None) -> None:
+        def __init__(self, *, llm: object, memory: object, module_overrides=None, **kwargs) -> None:
             self.llm = llm
             self.memory = memory
             self.module_overrides = module_overrides
+            self.kwargs = kwargs
 
     class FakeLLMService:
         def __init__(self, *, registry: object, memory: object, module_overrides=None) -> None:
@@ -714,6 +715,14 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             explore_refresh_hours=18,
             discovery_limit=17,
             proactive_push_interval_seconds=155,
+            speculation_interval_minutes=22,
+            speculation_ttl_days=8,
+            speculation_cooldown_days=9,
+            speculation_confirmation_threshold=4,
+            speculation_max_active=6,
+            speculation_max_primary_interests=17,
+            speculation_max_secondary_interests=66,
+            speculator_idle_interval_minutes=11,
         ),
     )
 
@@ -745,6 +754,14 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     assert services.database is created_databases[0]
     assert services.memory_manager is created_memories[0]
     assert services.soul_engine.module_overrides["soul"].provider == "claude"
+    assert services.soul_engine.kwargs["speculation_interval_minutes"] == 22
+    assert services.soul_engine.kwargs["speculation_ttl_days"] == 8
+    assert services.soul_engine.kwargs["speculation_cooldown_days"] == 9
+    assert services.soul_engine.kwargs["speculation_confirmation_threshold"] == 4
+    assert services.soul_engine.kwargs["speculation_max_active"] == 6
+    assert services.soul_engine.kwargs["speculation_max_primary_interests"] == 17
+    assert services.soul_engine.kwargs["speculation_max_secondary_interests"] == 66
+    assert services.soul_engine.kwargs["speculator_idle_interval_minutes"] == 11
     assert services.llm_service.module_overrides["discovery"].provider == "deepseek"
     assert services.llm_service.module_overrides["evaluation"].model == "gpt-4o-mini"
     assert registered_strategies == [

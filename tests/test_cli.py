@@ -32,6 +32,42 @@ class _FakeMemoryLayer:
         self.data = data or {}
 
 
+def test_build_soul_engine_forwards_scheduler_speculation_config(monkeypatch) -> None:
+    from openbiliclaw.config import Config
+
+    cfg = Config()
+    cfg.scheduler.speculation_interval_minutes = 22
+    cfg.scheduler.speculation_ttl_days = 8
+    cfg.scheduler.speculation_cooldown_days = 9
+    cfg.scheduler.speculation_confirmation_threshold = 4
+    cfg.scheduler.speculation_max_active = 6
+    cfg.scheduler.speculation_max_primary_interests = 17
+    cfg.scheduler.speculation_max_secondary_interests = 66
+    cfg.scheduler.speculator_idle_interval_minutes = 11
+
+    captured: dict[str, object] = {}
+
+    class FakeSoulEngine:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: object())
+    monkeypatch.setattr("openbiliclaw.soul.engine.SoulEngine", FakeSoulEngine)
+
+    cli_module._build_soul_engine()
+
+    assert captured["speculation_interval_minutes"] == 22
+    assert captured["speculation_ttl_days"] == 8
+    assert captured["speculation_cooldown_days"] == 9
+    assert captured["speculation_confirmation_threshold"] == 4
+    assert captured["speculation_max_active"] == 6
+    assert captured["speculation_max_primary_interests"] == 17
+    assert captured["speculation_max_secondary_interests"] == 66
+    assert captured["speculator_idle_interval_minutes"] == 11
+
+
 def _write_example_config(project_root: Path) -> None:
     (project_root / "config.example.toml").write_text(
         """

@@ -403,6 +403,14 @@ def _build_soul_engine() -> Any:
         memory=memory,
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
         module_overrides=module_overrides_from_config(cfg),
+        speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
+        speculation_ttl_days=cfg.scheduler.speculation_ttl_days,
+        speculation_cooldown_days=cfg.scheduler.speculation_cooldown_days,
+        speculation_confirmation_threshold=cfg.scheduler.speculation_confirmation_threshold,
+        speculation_max_active=cfg.scheduler.speculation_max_active,
+        speculation_max_primary_interests=cfg.scheduler.speculation_max_primary_interests,
+        speculation_max_secondary_interests=cfg.scheduler.speculation_max_secondary_interests,
+        speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
     )
 
 

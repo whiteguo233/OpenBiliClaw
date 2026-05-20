@@ -83,6 +83,14 @@ class SoulEngine:
         usage_recorder: Any | None = None,
         satisfaction_filter_enabled: bool = True,
         module_overrides: Mapping[str, ModuleOverride] | None = None,
+        speculation_interval_minutes: int = 10,
+        speculation_ttl_days: int = 3,
+        speculation_cooldown_days: int = 7,
+        speculation_confirmation_threshold: int = 3,
+        speculation_max_active: int = 5,
+        speculation_max_primary_interests: int = 15,
+        speculation_max_secondary_interests: int = 60,
+        speculator_idle_interval_minutes: int = 30,
     ) -> None:
         self._llm = llm
         self._memory = memory
@@ -113,6 +121,13 @@ class SoulEngine:
         self._speculator = InterestSpeculator(
             llm_service=self._llm_service,
             data_dir=data_dir,
+            generation_interval_minutes=speculation_interval_minutes,
+            default_ttl_days=speculation_ttl_days,
+            cooldown_days=speculation_cooldown_days,
+            confirmation_threshold=speculation_confirmation_threshold,
+            max_active=speculation_max_active,
+            max_primary_interests=speculation_max_primary_interests,
+            max_secondary_interests=speculation_max_secondary_interests,
         )
         self._embedding_service = embedding_service
         self._cognition_cycle = CognitionCycle(
@@ -132,6 +147,7 @@ class SoulEngine:
             speculator=self._speculator,
             embedding_service=embedding_service,
             cognition_cycle=self._cognition_cycle,
+            speculator_idle_interval_minutes=speculator_idle_interval_minutes,
         )
 
     def set_embedding_service(self, embedding_service: Any) -> None:

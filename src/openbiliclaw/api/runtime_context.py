@@ -223,6 +223,26 @@ class RuntimeContext:
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
             module_overrides=new_module_overrides,
+            speculation_interval_minutes=int(
+                getattr(new_config.scheduler, "speculation_interval_minutes", 10)
+            ),
+            speculation_ttl_days=int(getattr(new_config.scheduler, "speculation_ttl_days", 3)),
+            speculation_cooldown_days=int(
+                getattr(new_config.scheduler, "speculation_cooldown_days", 7)
+            ),
+            speculation_confirmation_threshold=int(
+                getattr(new_config.scheduler, "speculation_confirmation_threshold", 3)
+            ),
+            speculation_max_active=int(getattr(new_config.scheduler, "speculation_max_active", 5)),
+            speculation_max_primary_interests=int(
+                getattr(new_config.scheduler, "speculation_max_primary_interests", 15)
+            ),
+            speculation_max_secondary_interests=int(
+                getattr(new_config.scheduler, "speculation_max_secondary_interests", 60)
+            ),
+            speculator_idle_interval_minutes=int(
+                getattr(new_config.scheduler, "speculator_idle_interval_minutes", 30)
+            ),
         )
 
         # 4. Embedding service

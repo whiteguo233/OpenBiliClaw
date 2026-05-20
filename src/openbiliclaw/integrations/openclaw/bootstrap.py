@@ -61,6 +61,14 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         llm=llm_registry,
         memory=memory_manager,
         module_overrides=module_overrides,
+        speculation_interval_minutes=config.scheduler.speculation_interval_minutes,
+        speculation_ttl_days=config.scheduler.speculation_ttl_days,
+        speculation_cooldown_days=config.scheduler.speculation_cooldown_days,
+        speculation_confirmation_threshold=config.scheduler.speculation_confirmation_threshold,
+        speculation_max_active=config.scheduler.speculation_max_active,
+        speculation_max_primary_interests=config.scheduler.speculation_max_primary_interests,
+        speculation_max_secondary_interests=config.scheduler.speculation_max_secondary_interests,
+        speculator_idle_interval_minutes=config.scheduler.speculator_idle_interval_minutes,
     )
     llm_service = LLMService(
         registry=llm_registry,

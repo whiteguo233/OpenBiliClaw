@@ -443,6 +443,7 @@ class TestBackendAPI:
                 self.llm = llm
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                captured["soul_engine_kwargs"] = _extras
 
         class FakeRecommendationEngine:
             def __init__(
@@ -509,6 +510,14 @@ class TestBackendAPI:
                 explore_refresh_hours=18,
                 discovery_limit=17,
                 proactive_push_interval_seconds=155,
+                speculation_interval_minutes=22,
+                speculation_ttl_days=8,
+                speculation_cooldown_days=9,
+                speculation_confirmation_threshold=4,
+                speculation_max_active=6,
+                speculation_max_primary_interests=17,
+                speculation_max_secondary_interests=66,
+                speculator_idle_interval_minutes=11,
             ),
         )
 
@@ -556,6 +565,14 @@ class TestBackendAPI:
         assert captured["runtime_controller_kwargs"]["explore_refresh_hours"] == 18
         assert captured["runtime_controller_kwargs"]["discovery_limit"] == 17
         assert captured["runtime_controller_kwargs"]["proactive_push_interval_seconds"] == 155
+        assert captured["soul_engine_kwargs"]["speculation_interval_minutes"] == 22
+        assert captured["soul_engine_kwargs"]["speculation_ttl_days"] == 8
+        assert captured["soul_engine_kwargs"]["speculation_cooldown_days"] == 9
+        assert captured["soul_engine_kwargs"]["speculation_confirmation_threshold"] == 4
+        assert captured["soul_engine_kwargs"]["speculation_max_active"] == 6
+        assert captured["soul_engine_kwargs"]["speculation_max_primary_interests"] == 17
+        assert captured["soul_engine_kwargs"]["speculation_max_secondary_interests"] == 66
+        assert captured["soul_engine_kwargs"]["speculator_idle_interval_minutes"] == 11
         assert callable(captured["account_sync_kwargs"]["llm_work_allowed"])
 
     def test_cap_by_franchise_keeps_at_most_n_per_franchise(self) -> None:

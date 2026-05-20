@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -46,6 +47,33 @@ def test_soul_engine_wires_module_overrides_to_internal_service(tmp_path: Path) 
 
     assert engine._module_overrides == overrides
     assert engine._llm_service.module_overrides == overrides
+
+
+def test_soul_engine_wires_scheduler_speculation_config(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    engine = SoulEngine(
+        llm=FakeRegistry("{}"),
+        memory=memory,
+        speculation_interval_minutes=22,
+        speculation_ttl_days=8,
+        speculation_cooldown_days=9,
+        speculation_confirmation_threshold=4,
+        speculation_max_active=6,
+        speculation_max_primary_interests=17,
+        speculation_max_secondary_interests=66,
+        speculator_idle_interval_minutes=11,
+    )
+
+    assert engine._speculator._generation_interval_minutes == 22
+    assert engine._speculator._default_ttl_days == 8
+    assert engine._speculator._cooldown_days == 9
+    assert engine._speculator._confirmation_threshold == 4
+    assert engine._speculator._max_active == 6
+    assert engine._speculator._max_primary_interests == 17
+    assert engine._speculator._max_secondary_interests == 66
+    assert engine._pipeline._speculator_idle_min_interval == timedelta(minutes=11)
 
 
 @pytest.mark.asyncio
