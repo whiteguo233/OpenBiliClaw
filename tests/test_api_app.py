@@ -1386,6 +1386,26 @@ class TestBackendAPI:
                         "feedback_type": "comment",
                         "feedback_note": "想看更深一点的。",
                         "feedback_at": "2026-03-15T10:05:00+08:00",
+                    },
+                    {
+                        "id": 8,
+                        "title": "酷态科是怎么放这种东西出厂的",
+                        "topic": "数码评测",
+                        "expression": "这条来自候选池。",
+                        "created_at": "2026-03-15T10:01:00+08:00",
+                        "feedback_type": "Dismiss",
+                        "feedback_note": "",
+                        "feedback_at": "2026-03-15T10:06:00+08:00",
+                    },
+                    {
+                        "id": 9,
+                        "title": "未知反馈类型不该展示",
+                        "topic": "数码评测",
+                        "expression": "这条来自候选池。",
+                        "created_at": "2026-03-15T10:02:00+08:00",
+                        "feedback_type": "archive",
+                        "feedback_note": "",
+                        "feedback_at": "2026-03-15T10:07:00+08:00",
                     }
                 ]
 
@@ -1432,7 +1452,19 @@ class TestBackendAPI:
         assert data["live_summary"] == "正在给你补候选…"
         assert data["headline"] == "阿B 刚记下了：你最近更吃把因果链讲透的内容。"
         assert data["items"][0]["kind"] == "interest_added"
-        assert any(item["kind"] == "feedback" for item in data["items"])
+        feedback_items = [item for item in data["items"] if item["kind"] == "feedback"]
+        assert feedback_items == [
+            {
+                "id": "feedback-7",
+                "kind": "feedback",
+                "summary": "你刚给 讲透贸易逆差 写了一句反馈",
+                "detail": "想看更深一点的。",
+                "created_at": "2026-03-15T10:05:00+08:00",
+                "tone": "info",
+            }
+        ]
+        assert not any("酷态科" in item["summary"] for item in feedback_items)
+        assert not any("未知反馈类型" in item["summary"] for item in feedback_items)
         assert any(item["kind"] == "pool_update" for item in data["items"])
 
     def test_refresh_recommendations_endpoint_triggers_runtime_refresh(self) -> None:
