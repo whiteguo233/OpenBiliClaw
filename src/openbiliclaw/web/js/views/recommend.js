@@ -67,7 +67,14 @@ function render() {
   // Sub-renderers append to wrapper via $root.
   const realRoot = $root;
   $root = wrapper;
+  // Header lives in a stable container for partial re-render.
+  const headerSlot = document.createElement("div");
+  headerSlot.id = "header-slot";
+  wrapper.appendChild(headerSlot);
+  const prevForHeader = $root;
+  $root = headerSlot;
   renderRecommendationHeader();
+  $root = prevForHeader;
 
   // Delight tray lives in a stable container so it can be re-rendered
   // independently (e.g. nav arrows) without rebuilding the full page.
@@ -164,7 +171,7 @@ function renderRecommendationHeader() {
   toggle.textContent = headerState.activityToggleLabel;
   toggle.addEventListener("click", () => {
     patchState({ activityExpanded: !state.activityExpanded });
-    render();
+    rerenderHeaderOnly();
   });
   activity.appendChild(toggle);
   header.appendChild(activity);
@@ -191,6 +198,17 @@ function renderRecommendationHeader() {
   $root.appendChild(header);
 }
 
+/** Re-render only the header without touching cards or delight. */
+function rerenderHeaderOnly() {
+  const slot = document.getElementById("header-slot");
+  if (!slot) return;
+  slot.innerHTML = "";
+  const prev = $root;
+  $root = slot;
+  renderRecommendationHeader();
+  $root = prev;
+}
+
 async function loadMoreActivity() {
   const feed = normalizeActivityFeed(state.activityFeed);
   if (!feed.next_cursor) return;
@@ -203,7 +221,7 @@ async function loadMoreActivity() {
         items: [...(state.activityFeed?.items || []), ...(merged.items || [])],
       },
     });
-    render();
+    rerenderHeaderOnly();
   } catch { /* ignore */ }
 }
 
