@@ -1,4 +1,5 @@
 import {
+  buildImageProxyPath,
   getActivityCardState,
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
@@ -28,6 +29,7 @@ import {
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
   getBackendEndpointConfig,
+  getBackendOrigin,
   isValidBackendHost,
   isValidBackendPort,
   updateBackendEndpoint,
@@ -170,6 +172,14 @@ const elements = {
   messagesBack: document.getElementById("messagesBack"),
   messagesList: document.getElementById("messagesList"),
 };
+
+async function setProxyImageSrc(image, coverUrl) {
+  const path = buildImageProxyPath(coverUrl);
+  if (!path) return false;
+  const origin = await getBackendOrigin();
+  image.src = `${origin}${path}`;
+  return true;
+}
 
 let recommendationLoadCheckTimer = null;
 let runtimeStreamClient = null;
@@ -1304,9 +1314,8 @@ function buildDelightCard(delight) {
   thumb.className = "message-delight-thumb";
   if (delight.cover_url) {
     const image = document.createElement("img");
-    image.src = delight.cover_url;
+    void setProxyImageSrc(image, delight.cover_url);
     image.alt = "";
-    image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
       image.remove();
       thumb.classList.add("is-fallback");
@@ -2769,9 +2778,8 @@ function renderDelightSlot() {
   thumb.className = "delight-banner-thumb";
   if (delight.cover_url) {
     const image = document.createElement("img");
-    image.src = delight.cover_url;
+    void setProxyImageSrc(image, delight.cover_url);
     image.alt = "";
-    image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
       image.remove();
       thumb.classList.add("is-fallback");
@@ -3221,9 +3229,8 @@ function renderRecommendations(items, { append = false } = {}) {
     cover.className = "recommendation-cover";
     if (item.cover_url) {
       const image = document.createElement("img");
-      image.src = item.cover_url;
+      void setProxyImageSrc(image, item.cover_url);
       image.alt = `${item.title} 的封面`;
-      image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => {
         image.remove();
         cover.classList.add("is-fallback");

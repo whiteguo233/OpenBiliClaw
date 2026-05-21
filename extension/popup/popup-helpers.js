@@ -22,6 +22,19 @@ function normalizeCoverUrl(value) {
   return text;
 }
 
+export function buildImageProxyPath(value) {
+  const src = normalizeCoverUrl(value);
+  if (!src) {
+    return "";
+  }
+  try {
+    new URL(src);
+  } catch {
+    return "";
+  }
+  return `/api/image-proxy?url=${encodeURIComponent(src)}`;
+}
+
 export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }

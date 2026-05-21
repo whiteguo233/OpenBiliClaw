@@ -183,14 +183,37 @@ body {
   margin-bottom: 12px;
 }
 
-.card-cover {
+.card-cover-frame {
   width: 100%;
   aspect-ratio: 16 / 9;
+  background: var(--surface-soft);
+  overflow: hidden;
+  display: block;
+}
+
+.card-cover {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
   background:
     linear-gradient(135deg, rgba(251, 114, 153, 0.08), rgba(90, 169, 255, 0.08)),
     var(--surface-soft);
+}
+
+.card-cover-frame.is-error,
+.message-cover-frame.is-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+
+.card-cover-frame.is-error::after,
+.message-cover-frame.is-error::after {
+  content: "封面加载失败";
 }
 
 .card-body {
@@ -1160,6 +1183,22 @@ body {
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.message-cover-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.message-cover-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .message-card-actions {

@@ -12,6 +12,7 @@
 
 ## v0.3.88 / extension v0.3.39: 移动端 Web 主入口与 fallback 默认关闭（2026-05-21）
 
+- 新增 `/api/image-proxy` 后端图片代理，移动 Web 和浏览器插件的推荐、惊喜推荐、消息封面统一经本地后端加载；代理限制白名单 CDN、逐跳校验 redirect、校验 `image/*` 类型和 10MB 实际字节，前端加载失败时保留固定比例占位。
 - `[llm].fallback_enabled` 新增为默认关闭的 LLM 请求 fallback 开关；关闭时 `LLMRegistry.complete()` 只调用默认 provider，失败直接暴露。
 - `[llm.embedding].fallback_enabled` 新增为默认关闭的 embedding fallback 开关；关闭时不切 provider、不借用 `[llm.<provider>]` 凭据，且 embedding provider 留空表示不启用，不再跟随默认 LLM。
 - 浏览器插件设置页「模型」tab 增加 LLM fallback 与 embedding fallback 两个开关，并更新文案说明 embedding 与 LLM 独立配置。

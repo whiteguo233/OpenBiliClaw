@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 from textwrap import dedent
 
 import pytest
@@ -33,7 +34,8 @@ class TestMobileWebViewModels:
 
     def test_existing_helpers_still_work(self) -> None:
         """Backward compatibility for legacy mobile web helpers."""
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getCoverImageAttrs, normalizeChatTurn, normalizeCoverUrl,
@@ -75,16 +77,22 @@ class TestMobileWebViewModels:
 
             assert.equal(normalizeCoverUrl("http://i2.hdslb.com/bfs/archive/demo.jpg"), "https://i2.hdslb.com/bfs/archive/demo.jpg");
             assert.equal(normalizeCoverUrl("//i1.hdslb.com/bfs/archive/demo.jpg"), "https://i1.hdslb.com/bfs/archive/demo.jpg");
-            assert.equal(normalizeCoverUrl("https://sns-webpic-qc.xhscdn.com/demo.jpg"), "");
+            assert.equal(
+              normalizeCoverUrl("https://sns-webpic-qc.xhscdn.com/demo.jpg"),
+              "https://sns-webpic-qc.xhscdn.com/demo.jpg",
+            );
             assert.deepEqual(
               getCoverImageAttrs("https://i1.hdslb.com/bfs/archive/demo.jpg"),
-              { src: "https://i1.hdslb.com/bfs/archive/demo.jpg", referrerPolicy: "no-referrer" },
+              { src: "/api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fdemo.jpg" },
             );
-        """))
+            assert.equal(getCoverImageAttrs("not-a-url"), null);
+        """)
+        )
 
     def test_export_presence(self) -> None:
         """All Phase 1 helpers are exported."""
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import * as vm from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -107,12 +115,30 @@ class TestMobileWebViewModels:
               "normalizePoolStatus", "normalizeMbtiDimensions", "normalizeChatTurn",
             ];
             for (const name of required) {
-              assert.equal(typeof vm[name], "function", `missing export: ${name}`);
+                assert.equal(typeof vm[name], "function", `missing export: ${name}`);
             }
-        """))
+        """)
+        )
+
+    def test_mobile_cover_templates_use_wrapper_fallbacks(self) -> None:
+        recommend_js = Path("src/openbiliclaw/web/js/views/recommend.js").read_text()
+        chat_js = Path("src/openbiliclaw/web/js/views/chat.js").read_text()
+        app_css = Path("src/openbiliclaw/web/css/app.css").read_text()
+
+        assert 'referrerpolicy="${cover.referrerPolicy}"' not in recommend_js
+        assert 'referrerpolicy="${cover.referrerPolicy}"' not in chat_js
+        assert '? `<img class="card-cover"' not in recommend_js
+        assert 'onerror="this.remove()"' not in recommend_js
+        assert "card-cover-frame" in recommend_js
+        assert "message-cover-frame" in chat_js
+        assert ".card-cover-frame.is-error" in app_css
+        assert ".message-cover-frame.is-error" in app_css
+        assert ".card-cover::after" not in app_css
+        assert ".message-cover-frame img" in app_css
 
     def test_normalize_recommendation_defaults(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { normalizeRecommendation } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -122,10 +148,12 @@ class TestMobileWebViewModels:
             assert.equal(rec.title, "这条标题还没对上号");
             assert.equal(rec.up_name, "这位 UP 还没认出来");
             assert.equal(rec.source_platform, "bilibili");
-        """))
+        """)
+        )
 
     def test_build_feedback_payload(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { buildFeedbackPayload } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -137,11 +165,13 @@ class TestMobileWebViewModels:
             const p2 = buildFeedbackPayload("99", "comment");
             assert.equal(p2.recommendation_id, 99);
             assert.equal(p2.note, "");
-        """))
+        """)
+        )
 
     def test_delight_action_state(self) -> None:
         """getDelightActionState maps UI actions to backend-safe API tokens."""
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { getDelightActionState } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -169,10 +199,12 @@ class TestMobileWebViewModels:
             assert.equal(unknown.apiResponse, null);
             assert.equal(unknown.uiState, "pending");
             assert.equal(unknown.permanent, false);
-        """))
+        """)
+        )
 
     def test_delight_ui_state(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { getDelightUiState } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -191,10 +223,12 @@ class TestMobileWebViewModels:
 
             const empty = getDelightUiState({});
             assert.equal(empty.visible, false);
-        """))
+        """)
+        )
 
     def test_chat_alignment_helpers(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getDelightMessageActions,
@@ -225,10 +259,12 @@ class TestMobileWebViewModels:
                 ["多聊聊", "chat"],
               ],
             );
-        """))
+        """)
+        )
 
     def test_pool_status_summary_semantic(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { getPoolStatusSummary } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -267,10 +303,12 @@ class TestMobileWebViewModels:
               manual_refresh_state: "idle",
             });
             assert.equal(internal.topics, "小红书任务 / 小红书探索");
-        """))
+        """)
+        )
 
     def test_mobile_recommendation_header_matches_plugin_semantics(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getMobileRecommendationHeaderState,
@@ -327,10 +365,12 @@ class TestMobileWebViewModels:
                 ["现在在忙", "小红书任务 / 探索"],
               ],
             );
-        """))
+        """)
+        )
 
     def test_normalize_activity_feed(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getActivityCardState,
@@ -354,10 +394,12 @@ class TestMobileWebViewModels:
             const card = getActivityCardState({ feed, expanded: false });
             assert.equal(card.line1, "正在补货");
             assert.equal(card.expanded, false);
-        """))
+        """)
+        )
 
     def test_normalize_profile_summary(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { normalizeProfileSummary } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -388,10 +430,12 @@ class TestMobileWebViewModels:
             assert.equal(full.exploration_openness, 0.7);
             assert.deepEqual(full.favorite_up_users, ["UP1"]);
             assert.equal(full.speculative_interests[0].domain, "cooking");
-        """))
+        """)
+        )
 
     def test_profile_display_helpers_preserve_plugin_semantics(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getContextPatternRows,
@@ -428,10 +472,12 @@ class TestMobileWebViewModels:
                 ["session", "模式", "研究型长会话"],
               ],
             );
-        """))
+        """)
+        )
 
     def test_cognition_card_normalization_is_idempotent(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { normalizeCognitionUpdateCard } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -454,10 +500,12 @@ class TestMobileWebViewModels:
             assert.equal(second.source, "feedback");
             assert.equal(second.sourceLabel, "推荐反馈");
             assert.equal(second.expandable, true);
-        """))
+        """)
+        )
 
     def test_format_relative_timestamp(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import { formatRelativeTimestamp } from "./src/openbiliclaw/web/js/view-models.js";
 
@@ -468,10 +516,12 @@ class TestMobileWebViewModels:
             assert.equal(formatRelativeTimestamp("2025-05-30T12:00:00Z", now), "2 天前");
             assert.equal(formatRelativeTimestamp(""), "");
             assert.equal(formatRelativeTimestamp("not-a-date"), "");
-        """))
+        """)
+        )
 
     def test_source_platform_and_label(self) -> None:
-        _assert_js(dedent("""
+        _assert_js(
+            dedent("""
             import assert from "node:assert/strict";
             import {
               getSourceLabel,
@@ -489,4 +539,5 @@ class TestMobileWebViewModels:
             assert.equal(getSourceLabel("bilibili"), "Bilibili");
             assert.equal(getSourceLabel("youtube"), "YouTube");
             assert.equal(getSourceLabel("unknown"), "unknown");
-        """))
+        """)
+        )

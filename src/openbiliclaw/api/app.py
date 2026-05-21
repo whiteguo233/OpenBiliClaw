@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import tempfile
 import uuid
-from collections.abc import Callable
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -75,7 +76,7 @@ from openbiliclaw.api.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,28 @@ SOURCE_LABELS = {
 }
 
 _SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+
+_IMAGE_PROXY_ALLOWED_SUFFIXES = (
+    "hdslb.com",
+    "xhscdn.com",
+    "pstatp.com",
+    "douyinpic.com",
+    "douyinvod.com",
+    "ytimg.com",
+    "ggpht.com",
+)
+_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
+_IMAGE_PROXY_SPOOL_MEMORY_BYTES = 1024 * 1024
+_IMAGE_PROXY_TIMEOUT_SECONDS = 10.0
+_IMAGE_PROXY_MAX_REDIRECTS = 3
+_IMAGE_PROXY_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_IMAGE_PROXY_UPSTREAM_HEADERS = {
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+    ),
+}
 
 _RESETTABLE_CONFIG_FIELDS = {
     "llm.openai.api_key": ("llm", "openai", "api_key"),
@@ -244,6 +267,94 @@ def _normalize_cognition_update(item: dict[str, object]) -> CognitionUpdateSumma
         expand_hint=expand_hint,
         created_at=str(item.get("created_at", "")).strip(),
     )
+
+
+def _is_image_proxy_host_allowed(hostname: str) -> bool:
+    host = hostname.rstrip(".").lower()
+    return any(
+        host == suffix or host.endswith(f".{suffix}") for suffix in _IMAGE_PROXY_ALLOWED_SUFFIXES
+    )
+
+
+def _parse_image_proxy_url(raw_url: str) -> httpx.URL:
+    try:
+        parsed = httpx.URL(raw_url)
+    except httpx.InvalidURL as exc:
+        raise HTTPException(status_code=400, detail="Invalid URL") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.host:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    if parsed.userinfo:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    if not _is_image_proxy_host_allowed(parsed.host):
+        raise HTTPException(status_code=403, detail="Domain not in whitelist")
+    return parsed
+
+
+def _validate_image_proxy_content_headers(headers: httpx.Headers) -> str:
+    content_type = str(headers.get("content-type", "")).strip()
+    if not content_type.lower().startswith("image/"):
+        raise HTTPException(status_code=400, detail="Not an image")
+    content_length = headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Invalid upstream content length") from exc
+        if size > _IMAGE_PROXY_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large")
+    return content_type
+
+
+def _iter_spooled_file(file_obj: BinaryIO) -> Iterator[bytes]:
+    try:
+        while True:
+            chunk = file_obj.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        file_obj.close()
+
+
+async def _send_image_proxy_request(client: httpx.AsyncClient, url: httpx.URL) -> httpx.Response:
+    current = url
+    seen: set[str] = set()
+    for _ in range(_IMAGE_PROXY_MAX_REDIRECTS + 1):
+        current = _parse_image_proxy_url(str(current))
+        current_key = str(current)
+        if current_key in seen:
+            raise HTTPException(status_code=502, detail="Redirect loop")
+        seen.add(current_key)
+        request = client.build_request("GET", current_key, headers=_IMAGE_PROXY_UPSTREAM_HEADERS)
+        response = await client.send(request, stream=True)
+        if response.status_code in _IMAGE_PROXY_REDIRECT_STATUSES:
+            location = response.headers.get("location", "").strip()
+            await response.aclose()
+            if not location:
+                raise HTTPException(status_code=502, detail="Invalid redirect")
+            current = current.join(location)
+            continue
+        return response
+    raise HTTPException(status_code=502, detail="Too many redirects")
+
+
+async def _read_image_proxy_body(response: httpx.Response) -> BinaryIO:
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - returned after validation.
+        max_size=_IMAGE_PROXY_SPOOL_MEMORY_BYTES,
+        mode="w+b",
+    )
+    total = 0
+    try:
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > _IMAGE_PROXY_MAX_BYTES:
+                raise HTTPException(status_code=413, detail="Image too large")
+            spool.write(chunk)
+        spool.seek(0)
+        return cast("BinaryIO", spool)
+    except Exception:
+        spool.close()
+        raise
 
 
 def create_app(
@@ -670,6 +781,40 @@ def create_app(
             status="ok",
             service="openbiliclaw-api",
             profile_ready=profile_ready,
+        )
+
+    @app.get("/api/image-proxy")
+    async def image_proxy(
+        url: str = Query(..., description="URL-encoded image URL to proxy"),
+    ) -> StreamingResponse:
+        """Proxy whitelisted remote cover images through the local backend."""
+
+        parsed = _parse_image_proxy_url(url)
+        try:
+            async with httpx.AsyncClient(
+                timeout=_IMAGE_PROXY_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ) as client:
+                response = await _send_image_proxy_request(client, parsed)
+                try:
+                    if response.status_code < 200 or response.status_code >= 300:
+                        raise HTTPException(status_code=502, detail="Upstream request failed")
+                    content_type = _validate_image_proxy_content_headers(response.headers)
+                    spool = await _read_image_proxy_body(response)
+                finally:
+                    await response.aclose()
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Upstream timeout") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
+
+        return StreamingResponse(
+            _iter_spooled_file(spool),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @app.post("/api/bilibili/cookie", response_model=BilibiliCookieResponse)

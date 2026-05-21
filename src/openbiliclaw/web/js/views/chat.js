@@ -329,7 +329,7 @@ function renderOverlay() {
     card.className = "message-card";
     card.innerHTML = `
       <div class="message-card-type">\u2728 \u60CA\u559C\u63A8\u8350</div>
-      ${cover ? `<img src="${esc(cover.src)}" referrerpolicy="${cover.referrerPolicy}" style="width:100%;border-radius:8px;margin-bottom:6px" onerror="this.remove()">` : ""}
+      ${cover ? `<div class="message-cover-frame"><img src="${esc(cover.src)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>` : `<div class="message-cover-frame is-error"></div>`}
       <div class="message-card-title">${esc(nd.title)}</div>
       <div class="message-card-body">${esc(nd.delight_hook || nd.delight_reason)}</div>
       <div style="font-size:11px;color:var(--text-muted);margin-top:4px">

@@ -204,7 +204,7 @@ function renderDelightTray() {
 
   const cover = getCoverImageAttrs(d.cover_url);
   const coverHtml = cover
-    ? `<span class="delight-thumb"><img src="${esc(cover.src)}" alt="" loading="lazy" referrerpolicy="${cover.referrerPolicy}" onerror="this.parentElement.classList.add('is-fallback');this.remove()"></span>`
+    ? `<span class="delight-thumb"><img src="${esc(cover.src)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-fallback');this.remove()"></span>`
     : `<span class="delight-thumb is-fallback">\u2728</span>`;
   const reasonText = d.delight_reason || d.delight_hook || "";
 
@@ -363,8 +363,8 @@ function renderCard(rawItem) {
   const cover = getCoverImageAttrs(item.cover_url);
 
   const coverHtml = cover
-    ? `<img class="card-cover" src="${esc(cover.src)}" alt="" loading="lazy" referrerpolicy="${cover.referrerPolicy}" onerror="this.remove()">`
-    : "";
+    ? `<div class="card-cover-frame"><img class="card-cover" src="${esc(cover.src)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
+    : `<div class="card-cover-frame is-error"></div>`;
 
   card.innerHTML = `
     ${coverHtml}

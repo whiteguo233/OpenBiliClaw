@@ -51,8 +51,7 @@ export function normalizeCoverUrl(value) {
     url = `https://${url.slice("http://".length)}`;
   }
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host.endsWith(".xhscdn.com")) return "";
+    new URL(url);
   } catch {
     return "";
   }
@@ -62,7 +61,7 @@ export function normalizeCoverUrl(value) {
 export function getCoverImageAttrs(value) {
   const src = normalizeCoverUrl(value);
   if (!src) return null;
-  return { src, referrerPolicy: "no-referrer" };
+  return { src: `/api/image-proxy?url=${encodeURIComponent(src)}` };
 }
 
 // ── Source Platform ──────────────────────────────────────────
