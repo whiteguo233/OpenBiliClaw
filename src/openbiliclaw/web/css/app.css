@@ -1389,29 +1389,19 @@ body {
   color: var(--text-secondary);
 }
 
-/* ── Card Actions ─────────────────────────────────────────── */
-.card-actions {
+/* ── Card Feedback Actions ────────────────────────────────── */
+.card-feedback-actions {
   display: flex;
-  border-top: 1px solid var(--line);
-  padding: 0;
+  gap: 6px;
+  padding: 8px 12px 10px;
 }
 
-.card-action-btn {
-  flex: 1;
-  padding: 10px 4px;
-  font-size: 13px;
-  cursor: pointer;
-  text-align: center;
-  color: var(--text-muted);
-  min-height: 44px;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, color 0.15s;
-  border-right: 1px solid rgba(225, 232, 241, 0.6);
+.card-feedback-actions .btn {
+  font-size: 12px;
+  min-height: 38px;
+  padding: 6px 4px;
+  border-radius: 12px;
 }
-
-.card-action-btn:last-child { border-right: none; }
-.card-action-btn:active { background: var(--brand-soft); color: var(--brand); }
-.card-action-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Feedback Bottom Sheet ────────────────────────────────── */
 .feedback-sheet {
