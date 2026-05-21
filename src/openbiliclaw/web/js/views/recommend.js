@@ -216,22 +216,35 @@ function renderDelightTray() {
         <button class="delight-inline-nav" id="delight-next" type="button" ${idx >= delights.length - 1 ? "disabled" : ""}>\u203A</button>
       </div>
     ` : ""}
+    ${!uiState.handled ? `<button class="delight-later-btn" id="delight-later" type="button" title="\u7A0D\u540E\u770B" aria-label="\u7A0D\u540E\u770B">\u00D7</button>` : ""}
     <div class="delight-compact">
-      ${coverHtml}
       <div class="delight-kicker-line">
-        <span class="delight-tag">\u2728 \u60CA\u559C\u63A8\u8350</span>
+        <span class="delight-tag">\u60CA\u559C\u63A8\u8350</span>
         ${d.delight_hook ? `<span class="delight-hook-badge">${esc(d.delight_hook)}</span>` : ""}
       </div>
-      <div class="delight-title">${esc(d.title)}</div>
-      ${reasonText ? `<div class="delight-reason">${esc(reasonText)}</div>` : ""}
-      <div class="delight-meta">
-        <span class="card-source" data-source="${d.source_platform}">${esc(getSourceLabel(d.source_platform))}</span>
-        ${uiState.score_label ? `<span>${esc(uiState.score_label)}</span>` : ""}
+      <div class="delight-feature-copy">
+        <div class="delight-title">${esc(d.title)}</div>
+        ${reasonText ? `
+          <div class="delight-reason-wrap">
+            ${coverHtml}
+            <div class="delight-reason"><span class="delight-reason-label">\u63A8\u8350\u539F\u56E0</span>${esc(reasonText)}</div>
+            <div class="delight-meta">
+              <span class="card-source" data-source="${d.source_platform}">${esc(getSourceLabel(d.source_platform))}</span>
+              ${uiState.score_label ? `<span>${esc(uiState.score_label)}</span>` : ""}
+            </div>
+          </div>
+        ` : `
+          <div class="delight-media-only">${coverHtml}</div>
+          <div class="delight-meta">
+            <span class="card-source" data-source="${d.source_platform}">${esc(getSourceLabel(d.source_platform))}</span>
+            ${uiState.score_label ? `<span>${esc(uiState.score_label)}</span>` : ""}
+          </div>
+        `}
       </div>
     </div>`;
 
   if (uiState.handled) {
-    tray.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--${uiState.response_tone === "success" ? "success" : "text-muted"})">${esc(uiState.response_message)}</div>`;
+    tray.innerHTML += `<div class="delight-result-state" data-tone="${esc(uiState.response_tone)}">${esc(uiState.response_message)}</div>`;
   } else {
     // Action buttons
     const actions = document.createElement("div");
@@ -252,6 +265,10 @@ function renderDelightTray() {
     tray.appendChild(actions);
   }
 
+  tray.querySelector("#delight-later")?.addEventListener("click", () => {
+    skipDelightAt(idx);
+  });
+
   if (delights.length > 1) {
     tray.querySelector("#delight-prev")?.addEventListener("click", () => {
       if (idx > 0) { patchState({ delightCurrentIndex: idx - 1 }); render(); }
@@ -262,6 +279,13 @@ function renderDelightTray() {
   }
 
   $root.appendChild(tray);
+}
+
+function skipDelightAt(index) {
+  const filtered = state.activeDelights.filter((_, i) => i !== index);
+  const newIdx = Math.min(index, Math.max(0, filtered.length - 1));
+  patchState({ activeDelights: filtered, delightCurrentIndex: newIdx });
+  render();
 }
 
 async function handleDelightAction(d, action) {

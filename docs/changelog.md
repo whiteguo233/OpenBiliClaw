@@ -11,11 +11,12 @@
 - 浏览器插件设置页「模型」tab 增加 LLM fallback 与 embedding fallback 两个开关，并更新文案说明 embedding 与 LLM 独立配置。
 - 移动 Web 新增轻量 view-model 适配层，推荐页池状态会读取 `/api/runtime-status` 的 `pool_available_count` / `last_replenished_count` / `recent_pool_topics`，画像页 MBTI 可渲染后端返回的 `{EI: {pole, strength}}` 对象形态；对话页兼容 `/api/chat/turns` 返回的 `reply` 字段，不再因字段形态不一致空白或漏显回复。
 - 移动 Web 资源噪声收敛：根路径 `/favicon.ico` 现在复用 PWA 图标返回 PNG；推荐页封面会过滤直接 403 的小红书 CDN URL、把 B 站 `http` / protocol-relative 封面升到 HTTPS，并用 `no-referrer` 加载外链图片，避免浏览器控制台残留 favicon / hotlink 错误。
-- 移动 Web 推荐页的惊喜推荐动作对齐浏览器插件：按钮改为「看看 / 喜欢 / 不感兴趣 / 聊一聊」，移除仅移动端存在的「稍后」，并把「喜欢」写入 `/api/delight/respond` 的 `like` 反馈。
+- 移动 Web 推荐页的惊喜推荐动作对齐浏览器插件：底部按钮改为「看看 / 喜欢 / 不感兴趣 / 聊一聊」，「稍后看」收进右上角关闭控件，并把「喜欢」写入 `/api/delight/respond` 的 `like` 反馈。
 - 移动 Web 推荐页头部对齐插件：新增 `For You / 这几条，你大概会点开` 紧凑 header，把「换一批」放回首屏主操作位，池状态三枚 chip 改为「当前可换 / 最近补进 / 现在在忙」，活动状态降级为 header 内辅助行，「加载更多」移动到推荐列表底部。
 - 移动 Web 推荐页头部再次压缩移动端状态区：三枚池状态从大卡片改成横向轻量 pill，活动摘要改成单行；`xhs-extension-*`、`dy-plugin-*`、`yt-*` 等内部来源名会在移动端显示为用户可读的中文短标签。README 移动端预览说明同步使用「不感兴趣」文案。
 - 移动 Web 惊喜推荐改为接近插件的 compact banner：封面从全宽大图收敛为左侧小缩略图，右侧展示标签、标题、理由和来源，翻页控件并入标签行，减少首屏占用并保留「看看 / 喜欢 / 不感兴趣 / 聊一聊」动作。
-- 移动 Web 惊喜推荐 compact banner 恢复独立推荐原因描述：`delight_hook` 作为短标签展示，`delight_reason` 围绕左侧头图排版，避免只剩标题和 hook 看不到推荐理由，同时让这张卡明显区别于普通推荐卡。
+- 移动 Web 惊喜推荐 compact banner 恢复独立推荐原因描述：`delight_hook` 作为短标签展示，`delight_reason` 带「推荐原因」标记并围绕左侧头图排版，右上角保留「稍后看」关闭入口，避免只剩标题和 hook 看不到推荐理由，同时让这张卡明显区别于普通推荐卡。
+- README / README_EN 的移动端预览截图已刷新为当前 `/m/` 推荐页实际渲染图，展示惊喜推荐 compact banner、推荐原因环绕头图和插件一致的动作区。
 - 移动 Web 画像页补齐与插件一致的画像细节：MBTI 显示可信度，使用场景显示“模式”，内容口味把 `long/slow` 等 raw 值本地化为中文标签，认知更新卡片保留后端 `context_line` 与 `source_label`。
 - 移动 Web 对话页对齐插件主聊天会话：读取和提交都使用 `session=popup&scope=chat`，聊天回复完成后会刷新画像和活动流；消息 overlay 内的兴趣探测动作改为「喜欢 / 不喜欢 / 多聊聊」，惊喜推荐动作补齐「喜欢」，聊天输入框固定在底部并以两行高度起步，保留更多历史上下文可视空间。
 - 新增移动 Web 原生重设计 spec，明确 `/m/` 与浏览器插件在推荐、画像、对话、消息和 delight 工作流上的功能对齐范围，以及手机端独立信息架构。

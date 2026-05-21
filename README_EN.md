@@ -20,6 +20,7 @@
 ## 📌 v0.3.88 Highlights (2026-05-21)
 
 - **📱 Mobile Web is now a primary surface** — open `/m/` from a phone on the same LAN to view recommendations, profile, chat, messages, and delight candidates; the phone icon in the extension header now opens a scan-ready QR code.
+- **✨ Mobile delight card refreshed** — the recommendation tab now shows delight candidates as a compact banner, with the reason wrapping around the left cover and actions aligned with the extension.
 - **🚫 LLM fallback off by default** — `[llm].fallback_enabled` defaults to `false`; failures surface immediately instead of silently switching providers.
 - **🚫 Embedding fallback off by default** — `[llm.embedding].fallback_enabled` defaults to `false`; no more borrowing chat-side credentials or falling through to other embedding providers.
 - **🔌 Embedding fully independent** — empty embedding provider means disabled, no longer follows `[llm].default_provider`; the two config surfaces are fully decoupled.
@@ -64,8 +65,8 @@ All data lives in a single SQLite file on your disk. LLM calls use your own API 
     <td align="center" width="33%">
       <img src="docs/images/mobile-recommend.png" width="210" /><br/>
       <b>Recommendations</b><br/>
-      <sub>Reshuffle · load more</sub><br/>
-      <sub>Like / not interested / chat</sub>
+      <sub>Delight candidate · reason around cover</sub><br/>
+      <sub>View / like / not interested / chat</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/images/mobile-profile.png" width="210" /><br/>

@@ -22,6 +22,7 @@
 ## 📌 v0.3.88 重要更新（2026-05-21）
 
 - **📱 移动端 Web 成为主入口之一** —— 同局域网手机访问 `/m/` 可看推荐、画像、聊一聊、消息和惊喜推荐；插件顶部手机图标可直接弹出扫码入口。
+- **✨ 手机惊喜推荐样式刷新** —— 移动端推荐页现在用真实 compact banner 展示惊喜推荐，推荐原因围绕左侧头图排版，动作与插件保持一致。
 - **🚫 LLM fallback 默认关闭** —— `[llm].fallback_enabled` 默认 `false`，请求失败直接暴露而非静默切 provider。
 - **🚫 Embedding fallback 默认关闭** —— `[llm.embedding].fallback_enabled` 默认 `false`，不再借用 chat-side 凭据或切换 embedding provider。
 - **🔌 Embedding 完全独立** —— embedding provider 留空即禁用，不再跟随 `[llm].default_provider`；两套配置彻底解耦。
@@ -97,8 +98,8 @@
     <td align="center" width="33%">
       <img src="docs/images/mobile-recommend.png" width="210" /><br/>
       <b>手机推荐页</b><br/>
-      <sub>换一批 · 加载更多</sub><br/>
-      <sub>喜欢 / 不感兴趣 / 聊一聊</sub>
+      <sub>惊喜推荐 · 推荐原因环绕头图</sub><br/>
+      <sub>看看 / 喜欢 / 不感兴趣 / 聊一聊</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/images/mobile-profile.png" width="210" /><br/>
