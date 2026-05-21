@@ -1224,6 +1224,7 @@ def create_app(
                 expression=str(item.expression),
                 topic_label=str(item.topic_label),
                 presented=bool(item.presented),
+                feedback_type=str(getattr(item, "feedback_type", "") or ""),
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
@@ -3880,6 +3881,7 @@ def create_app(
             llm=LLMConfigOut(
                 default_provider=cfg.llm.default_provider,
                 fallback_enabled=cfg.llm.fallback_enabled,
+                fallback_provider=cfg.llm.fallback_provider,
                 openai=_provider_out(cfg.llm.openai),
                 claude=_provider_out(cfg.llm.claude),
                 gemini=_provider_out(cfg.llm.gemini),
@@ -3894,6 +3896,7 @@ def create_app(
                     base_url=cfg.llm.embedding.base_url,
                     similarity_threshold=cfg.llm.embedding.similarity_threshold,
                     fallback_enabled=cfg.llm.embedding.fallback_enabled,
+                    fallback_provider=cfg.llm.embedding.fallback_provider,
                 ),
                 soul=ModuleLLMConfigOut(
                     provider=cfg.llm.soul.provider,
@@ -4075,6 +4078,8 @@ def create_app(
                 cfg.llm.default_provider = str(llm_data["default_provider"])
             if "fallback_enabled" in llm_data:
                 cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
+            if "fallback_provider" in llm_data:
+                cfg.llm.fallback_provider = str(llm_data["fallback_provider"]).strip()
             for provider_name in (
                 "openai",
                 "claude",
@@ -4145,6 +4150,8 @@ def create_app(
                     cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
                 if "fallback_enabled" in emb:
                     cfg.llm.embedding.fallback_enabled = _as_bool(emb["fallback_enabled"])
+                if "fallback_provider" in emb:
+                    cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             for module_name in ("soul", "discovery", "recommendation", "evaluation"):
                 if module_name in llm_data and isinstance(llm_data[module_name], dict):
                     mod_cfg = getattr(cfg.llm, module_name)
