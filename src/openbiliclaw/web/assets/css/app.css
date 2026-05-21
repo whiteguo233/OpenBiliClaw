@@ -469,7 +469,7 @@
       .delight-queue-tools { justify-content: start; }
       .delight-actions { flex-direction: column; align-items: stretch; gap: var(--space-3); }
       .delight-main-actions { order: 1; flex: 0 0 auto; grid-template-columns: 1fr; }
-      .delight-feedback-actions.card-feedback-icons { order: 2; flex: 0 0 128px; width: 128px; max-width: 128px; margin-left: 0; align-self: flex-start; justify-content: center; padding: 3px 6px; }
+      .delight-feedback-actions.card-feedback-icons { order: 2; flex: 0 0 auto; width: 128px; max-width: 128px; min-height: 34px; margin-left: 0; align-self: flex-start; justify-content: center; padding: 3px 6px; }
       .delight-main-actions .small-btn { width: 100%; }
       .metric-row { grid-template-columns: 1fr; }
       .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
