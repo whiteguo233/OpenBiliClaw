@@ -466,6 +466,17 @@ export function onStreamEvent(payload) {
       delightMsgs.push(item);
       updateBadgeCount();
     }
+  } else if (type === "delight.liked" || type === "delight.disliked") {
+    // Another client dismissed this delight — remove from messages overlay
+    const bvid = (payload.data || payload)?.bvid;
+    if (bvid) {
+      const before = delightMsgs.length;
+      delightMsgs = delightMsgs.filter((d) => d.bvid !== bvid);
+      if (delightMsgs.length !== before) {
+        updateBadgeCount();
+        if (overlayOpen) renderOverlay();
+      }
+    }
   }
 }
 

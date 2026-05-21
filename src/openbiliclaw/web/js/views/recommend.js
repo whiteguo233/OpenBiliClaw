@@ -600,5 +600,18 @@ export function onStreamEvent(payload) {
       });
       render();
     }
+  } else if (type === "delight.liked" || type === "delight.disliked") {
+    // Another client (e.g. extension) dismissed this delight — remove from local queue
+    const bvid = (payload.data || payload)?.bvid;
+    if (bvid) {
+      const filtered = state.activeDelights.filter(
+        (d) => (d.bvid || normalizeDelightCandidate(d).bvid) !== bvid
+      );
+      if (filtered.length !== state.activeDelights.length) {
+        const newIdx = Math.min(state.delightCurrentIndex, Math.max(0, filtered.length - 1));
+        patchState({ activeDelights: filtered, delightCurrentIndex: newIdx });
+        render();
+      }
+    }
   }
 }
