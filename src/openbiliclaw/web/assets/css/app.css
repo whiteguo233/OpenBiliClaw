@@ -452,6 +452,14 @@
       .drawer-head h2, .modal-head h2 { font-size: clamp(28px, 7vw, 40px); }
       .chat-input { grid-template-columns: minmax(0, 1fr) auto; }
       .settings-tabs { overflow-x: auto; grid-template-columns: repeat(5, minmax(92px, 1fr)); }
+      #profileDrawer .drawer-panel, #profileDetails, .profile-layer, .profile-item, .profile-domain, .profile-insight, .profile-memory, .speculative-item, .mbti-block { min-width: 0; max-width: 100%; }
+      .profile-domain-head, .profile-insight-head, .profile-memory-head, .profile-context-row { align-items: start; }
+      .profile-context-row { display: grid; grid-template-columns: 1fr; }
+      .profile-context-row > span { white-space: normal; }
+      .profile-context-row > strong { text-align: left; }
+      .spec-header, .spec-confidence-row { grid-template-columns: minmax(0, 1fr); align-items: start; }
+      .spec-status, .spec-progress, .spec-confidence-label, .spec-specific-count, .profile-domain-weight, .profile-confidence, .profile-memory-meta { white-space: normal; }
+      .spec-actions { flex-wrap: wrap; }
     }
     @media (max-width: 620px) {
       .delight-actions { flex-wrap: wrap; justify-content: stretch; }
