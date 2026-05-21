@@ -53,68 +53,69 @@ function esc(s) {
 function render() {
   if (!$root) return;
 
-  // Build the new view into a wrapper div, then swap it in one shot.
-  // This avoids the white flash from clearing innerHTML first.
-  const wrapper = document.createElement("div");
+  // Capture scroll position before replacing DOM.
+  const scrollTop = $root.parentElement?.scrollTop ?? 0;
+
+  // Build everything into a fragment, then swap in one shot.
+  const frag = document.createDocumentFragment();
 
   // Pull indicator
   const pull = document.createElement("div");
   pull.className = "pull-indicator";
   pull.id = "pull-indicator";
   pull.textContent = "\u2193 \u4E0B\u62C9\u5237\u65B0";
-  wrapper.appendChild(pull);
+  frag.appendChild(pull);
 
-  // Sub-renderers append to wrapper via $root.
-  const realRoot = $root;
-  $root = wrapper;
-  // Header lives in a stable container for partial re-render.
+  // Header slot
   const headerSlot = document.createElement("div");
   headerSlot.id = "header-slot";
-  wrapper.appendChild(headerSlot);
-  const prevForHeader = $root;
-  $root = headerSlot;
-  renderRecommendationHeader();
-  $root = prevForHeader;
+  frag.appendChild(headerSlot);
+  renderInto(headerSlot, renderRecommendationHeader);
 
-  // Delight tray lives in a stable container so it can be re-rendered
-  // independently (e.g. nav arrows) without rebuilding the full page.
+  // Delight slot
   const delightSlot = document.createElement("div");
   delightSlot.id = "delight-slot";
-  wrapper.appendChild(delightSlot);
-  const prevRoot = $root;
-  $root = delightSlot;
-  renderDelightTray();
-  $root = prevRoot;
+  frag.appendChild(delightSlot);
+  renderInto(delightSlot, renderDelightTray);
 
+  // Recommendation cards
   const recs = state.recommendations;
   if (recs.length === 0 && !loading) {
     const hint = getReadyRecommendationHint(state.runtimeStatus);
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `<div class="empty-state-icon">\u{1F30A}</div><div class="empty-state-text">${esc(hint.message)}</div>`;
-    wrapper.appendChild(empty);
+    frag.appendChild(empty);
   }
 
   for (const item of recs) {
-    wrapper.appendChild(renderCard(item));
+    frag.appendChild(renderCard(item));
   }
 
-  renderLoadMoreRow();
+  renderInto(frag, renderLoadMoreRow);
 
   if (loading) {
     const sp = document.createElement("div");
     sp.style.padding = "20px";
     sp.innerHTML = `<div class="spinner"></div>`;
-    wrapper.appendChild(sp);
+    frag.appendChild(sp);
   }
 
-  $root = realRoot;
+  $root.replaceChildren(frag);
 
-  // Swap: move all children from wrapper into $root in one operation.
-  $root.replaceChildren(...wrapper.childNodes);
+  // Restore scroll position so the page doesn't jump to top.
+  if ($root.parentElement) $root.parentElement.scrollTop = scrollTop;
 
   // Feedback bottom sheet
   renderFeedbackSheet();
+}
+
+/** Run a sub-renderer with $root temporarily pointed at the given container. */
+function renderInto(container, fn) {
+  const prev = $root;
+  $root = container;
+  fn();
+  $root = prev;
 }
 
 // ── Recommendation Header ───────────────────────────────────
@@ -203,10 +204,7 @@ function rerenderHeaderOnly() {
   const slot = document.getElementById("header-slot");
   if (!slot) return;
   slot.innerHTML = "";
-  const prev = $root;
-  $root = slot;
-  renderRecommendationHeader();
-  $root = prev;
+  renderInto(slot, renderRecommendationHeader);
 }
 
 async function loadMoreActivity() {
@@ -322,10 +320,7 @@ function rerenderDelightOnly() {
   const slot = document.getElementById("delight-slot");
   if (!slot) return;
   slot.innerHTML = "";
-  const prev = $root;
-  $root = slot;
-  renderDelightTray();
-  $root = prev;
+  renderInto(slot, renderDelightTray);
 }
 
 function skipDelightAt(index) {
@@ -663,7 +658,7 @@ export function onStreamEvent(payload) {
     loadData();
   } else if (type === "refresh.started" || type === "refresh.strategy") {
     patchState({ runtimeEvent: payload.data || payload });
-    render();
+    rerenderHeaderOnly();
   } else if (type === "activity.added") {
     // Prepend to activity feed
     const item = payload.data || payload;
@@ -676,7 +671,7 @@ export function onStreamEvent(payload) {
           live_summary: item.summary,
         },
       });
-      render();
+      rerenderHeaderOnly();
     }
   } else if (type === "delight.candidate") {
     const item = payload.data || payload;
@@ -684,7 +679,7 @@ export function onStreamEvent(payload) {
       patchState({
         activeDelights: [...state.activeDelights, normalizeDelightCandidate(item)],
       });
-      render();
+      rerenderDelightOnly();
     }
   } else if (type === "delight.liked" || type === "delight.disliked") {
     // Another client (e.g. extension) dismissed this delight — remove from local queue
@@ -696,7 +691,7 @@ export function onStreamEvent(payload) {
       if (filtered.length !== state.activeDelights.length) {
         const newIdx = Math.min(state.delightCurrentIndex, Math.max(0, filtered.length - 1));
         patchState({ activeDelights: filtered, delightCurrentIndex: newIdx });
-        render();
+        rerenderDelightOnly();
       }
     }
   }
