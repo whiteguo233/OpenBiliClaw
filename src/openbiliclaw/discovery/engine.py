@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.llm.json_utils import extract_llm_json_list, parse_llm_json_tolerant
+from openbiliclaw.llm.service import is_llm_rate_limit_error
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
@@ -1180,7 +1181,15 @@ class ContentDiscoveryEngine:
             payload = _parse_batch_evaluation_payload(raw)
             if payload is None:
                 raise ValueError("Expected scored JSON array from batch evaluation")
-        except Exception:
+        except Exception as exc:
+            if is_llm_rate_limit_error(exc):
+                logger.warning(
+                    "Batch evaluation skipped single-item fallback for %d items because "
+                    "the LLM provider is rate-limited or cooling down: %s",
+                    len(batch),
+                    exc,
+                )
+                return [0.0 for _ in batch]
             logger.warning(
                 "Batch evaluation failed for %d items, falling back to single eval",
                 len(batch),

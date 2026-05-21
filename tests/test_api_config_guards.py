@@ -135,6 +135,31 @@ def test_put_config_round_trips_openai_auth_mode(monkeypatch, tmp_path) -> None:
     assert get_response.json()["llm"]["openai"]["auth_mode"] == "codex_oauth"
 
 
+def test_put_config_round_trips_explicit_fallback_providers(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={
+            "llm": {
+                "fallback_provider": "gemini",
+                "embedding": {"fallback_provider": "ollama"},
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    loaded = load_config_from_path(config_path)
+    assert loaded.llm.fallback_provider == "gemini"
+    assert loaded.llm.embedding.fallback_provider == "ollama"
+
+    get_response = client.get("/api/config")
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert body["llm"]["fallback_provider"] == "gemini"
+    assert body["llm"]["embedding"]["fallback_provider"] == "ollama"
+
+
 def test_put_config_ignores_whitespace_only_chat_provider_api_key(monkeypatch, tmp_path) -> None:
     client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
 

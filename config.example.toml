@@ -19,11 +19,13 @@ host = "0.0.0.0"
 port = 8420
 
 [llm]
-# Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter"
+# Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter" | "openai_compatible"
 # 这里选择的 provider 决定了运行时会检查哪一组敏感字段。
 default_provider = "openai"
-# 默认关闭跨 provider fallback：默认 provider 请求失败时直接报错，不再静默切到其它 provider。
+# 旧兼容开关；实际 fallback 只在 fallback_provider 非空时发生。
 fallback_enabled = false
+# 第二个备选 provider；默认空 = 不 fallback，不再自动尝试其它 provider。
+fallback_provider = ""
 
 [llm.openai]
 # 若 default_provider = "openai"，api_key 必填
@@ -158,9 +160,10 @@ api_key = ""
 base_url = ""
 # Cosine similarity threshold: topics above this are considered "same topic"
 similarity_threshold = 0.82
-# 默认关闭 embedding fallback：不会自动切换 provider，也不会借用 [llm.<provider>] 凭据。
-# 设为 true 后，才会尝试 ollama → gemini → openai fallback 链，并允许旧配置借用 chat-side 凭据。
+# 默认关闭 embedding fallback；只有 fallback_provider 非空时才会尝试一个显式备选 provider。
+# 插件设置页会在你选择备选 provider 时同步打开 fallback_enabled，以允许借用对应 chat-side 凭据。
 fallback_enabled = false
+fallback_provider = ""
 
 # Per-module LLM overrides — set provider/model to use a different LLM
 # for specific modules. Leave empty to inherit from [llm] defaults.

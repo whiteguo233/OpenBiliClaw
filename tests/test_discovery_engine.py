@@ -17,6 +17,7 @@ from openbiliclaw.discovery.engine import (
     llm_eval_candidate_limit,
 )
 from openbiliclaw.discovery.pool_snapshot import PoolDistributionSnapshot
+from openbiliclaw.llm.service import LLMProviderExecutionError
 from openbiliclaw.soul.profile import SoulProfile
 from openbiliclaw.storage.database import Database
 
@@ -1413,6 +1414,42 @@ async def test_evaluate_batch_accepts_fenced_json_without_single_eval_fallback()
     scores = await engine._evaluate_batch(batch, _build_profile())
 
     assert scores == [0.82, 0.76]
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_skips_single_fallback_during_provider_cooldown() -> None:
+    class _CooldownLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            raise LLMProviderExecutionError(
+                "All providers failed (gemini). Last error: "
+                "Provider gemini is cooling down after rate limit."
+            )
+
+    llm_service = _CooldownLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BV_COOL_A", title="A", source_strategy="trending"),
+        DiscoveredContent(bvid="BV_COOL_B", title="B", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.0, 0.0]
     assert llm_service.calls == 1
 
 

@@ -450,10 +450,24 @@ def _image_cache_save(url: str, data: bytes, content_type: str) -> None:
     if ext not in {"jpeg", "jpg", "png", "webp", "avif", "gif"}:
         ext = "jpg"
     path = _image_cache_dir() / f"{key}.{ext}"
-    try:
+    with suppress(Exception):
         path.write_bytes(data)
-    except Exception:
-        pass
+
+
+def _image_cache_response(url: str) -> FileResponse | None:
+    cached = _image_cache_lookup(url)
+    if not cached:
+        return None
+    cache_path, cache_ct = cached
+    return FileResponse(
+        cache_path,
+        media_type=cache_ct,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+            "X-Image-Cache": "hit",
+        },
+    )
 
 
 def _image_cache_cleanup() -> int:
@@ -463,13 +477,11 @@ def _image_cache_cleanup() -> int:
     cache_dir = _image_cache_dir()
     cutoff = time.time() - _IMAGE_CACHE_MAX_AGE_DAYS * 86400
     removed = 0
-    try:
+    with suppress(Exception):
         for f in cache_dir.iterdir():
             if f.is_file() and f.stat().st_mtime < cutoff:
                 f.unlink(missing_ok=True)
                 removed += 1
-    except Exception:
-        pass
     return removed
 
 
@@ -969,21 +981,19 @@ def create_app(
                     spool = await _read_image_proxy_body(response)
                 finally:
                     await response.aclose()
-        except (httpx.TimeoutException, httpx.HTTPError, HTTPException):
-            # Upstream failed — try serving from cache.
-            cached = _image_cache_lookup(url)
-            if cached:
-                cache_path, cache_ct = cached
-                return FileResponse(
-                    cache_path,
-                    media_type=cache_ct,
-                    headers={
-                        "Cache-Control": "public, max-age=86400",
-                        "X-Content-Type-Options": "nosniff",
-                        "X-Image-Cache": "hit",
-                    },
-                )
-            raise HTTPException(status_code=502, detail="Upstream request failed")
+        except httpx.TimeoutException as exc:
+            # Network-level upstream failures may use a cached copy.
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=504, detail="Upstream request timed out") from exc
+        except httpx.HTTPError as exc:
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
+        except HTTPException as exc:
+            if exc.status_code >= 500 and (cached := _image_cache_response(url)):
+                return cached
+            raise
 
         # Cache the successfully fetched image.
         spool.seek(0)

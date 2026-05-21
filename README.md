@@ -19,15 +19,12 @@
 
 ---
 
-## 📌 v0.3.88 / extension v0.3.42 重要更新（2026-05-21）
+## 📌 v0.3.89 / extension v0.3.43 重要更新（2026-05-22）
 
-- **📱 移动端 Web 成为主入口之一** —— 同局域网手机访问 `/m/` 可看推荐、画像、聊一聊、消息和惊喜推荐；插件顶部手机图标可直接弹出扫码入口。
-- **📶 二维码自动改用局域网 IP** —— 插件后端仍是 `127.0.0.1` / `localhost` 时，会读取 `/api/health.lan_ip`，优先显示 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类手机可访问地址。
-- **🖼️ 封面图改走本地代理** —— 移动端 Web 和插件 side panel 的推荐、惊喜推荐、消息封面统一经 `/api/image-proxy` 加载，后端做 CDN 白名单、redirect 和 10MB 大小校验，失败时保留占位区域。
-- **✨ 手机惊喜推荐样式刷新** —— 移动端推荐页现在用真实 compact banner 展示惊喜推荐，推荐原因围绕左侧头图排版，动作与插件保持一致。
-- **🚫 LLM fallback 默认关闭** —— `[llm].fallback_enabled` 默认 `false`，请求失败直接暴露而非静默切 provider。
-- **🚫 Embedding fallback 默认关闭** —— `[llm.embedding].fallback_enabled` 默认 `false`，不再借用 chat-side 凭据或切换 embedding provider。
-- **🔌 Embedding 完全独立** —— embedding provider 留空即禁用，不再跟随 `[llm].default_provider`；两套配置彻底解耦。
+- **🔀 fallback 改为显式备选 Provider** —— 插件设置页现在分别为 LLM 和 embedding 提供“备选 Provider”下拉框，默认空；只有显式选择时才会 fallback。
+- **🧯 429 / cooldown 不再放大** —— discovery eval batch 和 recommendation copy batch 遇到 provider 限流时不再退回逐条 LLM 调用，避免一次 429 扩散成整批 traceback。
+- **🧵 平台任务领取更稳** —— 小红书、抖音、YouTube 的 `/next-task` claim 改用短生命周期 SQLite 连接，收敛并发插件轮询时的嵌套事务错误。
+- **📉 后台日志更安静** —— `httpx` / `httpcore` 文件日志默认降到 WARNING，减少模型服务请求噪声。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -544,7 +541,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.88 / extension v0.3.42: 局域网二维码与封面代理合并发布（2026-05-21）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
-from .base import LLMProviderError
+from .base import LLMProviderError, LLMRateLimitError
 from .prompts import build_socratic_dialogue_prompt
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,36 @@ class LLMResponseContentError(LLMServiceError):
 
 class LLMProviderExecutionError(LLMServiceError):
     """Raised when the underlying provider or registry call fails."""
+
+
+_RATE_LIMIT_ERROR_MARKERS = (
+    "rate limit",
+    "429",
+    "cooling down",
+    "too many requests",
+    "resource exhausted",
+    "quota exceeded",
+)
+
+
+def is_llm_rate_limit_error(exc: BaseException) -> bool:
+    """Return True when an exception chain represents provider backoff.
+
+    Batch callers use this to avoid exploding one provider-limit event
+    into N doomed per-item calls while the registry is already cooling
+    down.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, LLMRateLimitError):
+            return True
+        message = str(current).lower()
+        if any(marker in message for marker in _RATE_LIMIT_ERROR_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 @dataclass(frozen=True)

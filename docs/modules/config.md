@@ -32,7 +32,8 @@ cp config.example.toml config.toml
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `openai_compatible` |
-| `fallback_enabled` | bool | `false` | LLM 请求失败时是否尝试其它已注册 provider。默认关闭，失败直接暴露，避免静默切模型 / 切费用来源 |
+| `fallback_enabled` | bool | `false` | 旧兼容开关；当前实际 fallback 只在 `fallback_provider` 非空时发生 |
+| `fallback_provider` | string | `""` | 第二个备选 Provider。留空 = 不 fallback；非空时只按 `default_provider → fallback_provider` 尝试，不再自动遍历其它 provider |
 
 ### `[llm.openai]`
 
@@ -131,7 +132,8 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 | `api_key` | string | `""` | v0.3.32+ embedding 专属 API Key。默认不会借用 `[llm.<provider>].api_key`；只有 `fallback_enabled=true` 时才允许旧配置借用 chat-side 凭据并打一条 WARNING。Ollama 不需要 |
 | `base_url` | string | `""` | v0.3.32+ embedding 专属 base URL。留空使用 provider 默认值（OpenAI → `api.openai.com/v1`、Ollama → `localhost:11434/v1`）。Gemini SDK 忽略此字段 |
 | `similarity_threshold` | float | `0.82` | 余弦相似度阈值，超过即视为"同主题" |
-| `fallback_enabled` | bool | `false` | Embedding provider 不可用时是否 fallback 到 `ollama → gemini → openai`，并允许借用对应 chat provider 凭据。默认关闭 |
+| `fallback_enabled` | bool | `false` | 旧兼容开关；插件设置页选择 `fallback_provider` 时会同步写成 `true`，用于允许借用对应 chat provider 凭据 |
+| `fallback_provider` | string | `""` | 第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`，不会再自动走 `ollama → gemini → openai` 链 |
 
 #### 启用本地 Ollama embedding（v0.3.0+，**v0.3.3 起真实生效**）
 
@@ -388,7 +390,7 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 浏览器插件的设置页通过后端 `/api/config` 读取和保存配置。当前 UI 已覆盖常用和高风险易漏项：
 
 - 基础：`language`、`data_dir`、`storage.db_path`
-- LLM：默认 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
+- LLM：默认 provider、显式备选 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.*`
 - 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数

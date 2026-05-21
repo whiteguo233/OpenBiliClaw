@@ -995,9 +995,11 @@ def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:
     config.data_dir = "runtime-data"
     config.llm.default_provider = "gemini"
     config.llm.fallback_enabled = True
+    config.llm.fallback_provider = "openai"
     config.llm.gemini.api_key = "gemini-test-key"
     config.llm.gemini.model = "gemini-2.5-flash"
     config.llm.embedding.fallback_enabled = True
+    config.llm.embedding.fallback_provider = "ollama"
 
     save_config(config, config_path)
     loaded = load_config(config_path)
@@ -1006,16 +1008,20 @@ def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:
     assert loaded.data_dir == "runtime-data"
     assert loaded.llm.default_provider == "gemini"
     assert loaded.llm.fallback_enabled is True
+    assert loaded.llm.fallback_provider == "openai"
     assert loaded.llm.gemini.api_key == "gemini-test-key"
     assert loaded.llm.gemini.model == "gemini-2.5-flash"
     assert loaded.llm.embedding.fallback_enabled is True
+    assert loaded.llm.embedding.fallback_provider == "ollama"
 
 
 def test_llm_and_embedding_fallback_defaults_are_disabled() -> None:
     config = Config()
 
     assert config.llm.fallback_enabled is False
+    assert config.llm.fallback_provider == ""
     assert config.llm.embedding.fallback_enabled is False
+    assert config.llm.embedding.fallback_provider == ""
 
 
 def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:

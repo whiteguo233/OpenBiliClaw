@@ -3775,11 +3775,20 @@
             <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
           </select>
         </div>
-        <div class="settings-field-row">
-          <label for="cfgLlmFallbackEnabled">LLM 请求失败时切换 Provider</label>
-          <input id="cfgLlmFallbackEnabled" type="checkbox">
+        <div class="settings-field">
+          <label for="cfgLlmFallbackProvider">备选 Provider</label>
+          <select id="cfgLlmFallbackProvider">
+            <option value="">(不启用 fallback)</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama (本地)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
+          </select>
         </div>
-        <p class="settings-hint">默认关闭；关闭时只调用当前默认 Provider，失败后直接报错。</p>
+        <p class="settings-hint">默认空；只有显式选择备选 Provider 时才会 fallback，不再自动尝试其它 Provider。</p>
         <!-- OpenAI -->
         <div class="settings-provider-fields" data-provider="openai">
           <div class="settings-field">
@@ -3917,11 +3926,17 @@
             <option value="openai_compatible">OpenAI 协议兼容 (Together/vLLM/Azure 等)</option>
           </select>
         </div>
-        <div class="settings-field-row">
-          <label for="cfgEmbeddingFallbackEnabled">Embedding 不可用时启用 fallback</label>
-          <input id="cfgEmbeddingFallbackEnabled" type="checkbox">
+        <div class="settings-field">
+          <label for="cfgEmbeddingFallbackProvider">备选 Provider</label>
+          <select id="cfgEmbeddingFallbackProvider">
+            <option value="">(不启用 fallback)</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (本地)</option>
+            <option value="openai_compatible">OpenAI 协议兼容 (Together/vLLM/Azure 等)</option>
+          </select>
         </div>
-        <p class="settings-hint">默认关闭；开启后才会尝试其它 embedding provider 或借用对应 chat provider 凭据。</p>
+        <p class="settings-hint">默认空；只有显式选择备选 Provider 时才会 fallback，并借用对应 chat provider 凭据。</p>
         <div class="settings-field" data-embedding-field="api_key">
           <label for="cfgEmbeddingApiKey">Embedding API Key</label>
           <input id="cfgEmbeddingApiKey" type="password" autocomplete="off" placeholder="sk-...">

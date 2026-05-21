@@ -12,6 +12,7 @@ import pytest
 
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.llm.base import LLMResponse
+from openbiliclaw.llm.service import LLMProviderExecutionError
 from openbiliclaw.recommendation.engine import (
     RecommendationEngine,
     _recommendation_profile_summary,
@@ -1785,6 +1786,47 @@ async def test_precompute_batch_accepts_items_wrapper_without_single_fallback(
         assert row["pool_topic_label"] == "流程拆解"
         assert llm.callers == ["recommendation.write_expression"]
         assert "Batch expression generation failed" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_precompute_batch_skips_single_fallback_during_provider_cooldown() -> None:
+    class _CooldownExpressionLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            self.calls += 1
+            raise LLMProviderExecutionError(
+                "All providers failed (gemini). Last error: "
+                "Provider gemini is cooling down after rate limit."
+            )
+
+    items = [
+        DiscoveredContent(bvid="BV_COOL_EXPR_A", title="A", relevance_score=0.8),
+        DiscoveredContent(bvid="BV_COOL_EXPR_B", title="B", relevance_score=0.7),
+    ]
+    llm = _CooldownExpressionLLM()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_pool(db, items, precomputed=False)
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._precompute_batch(items, _build_profile())
+
+    assert completed == 0
+    assert llm.calls == 1
 
 
 @pytest.mark.asyncio

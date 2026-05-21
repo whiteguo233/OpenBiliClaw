@@ -4291,8 +4291,7 @@ function bindSettings() {
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
-    const cfgLlmFallback = document.getElementById("cfgLlmFallbackEnabled");
-    if (cfgLlmFallback) cfgLlmFallback.checked = cfg.llm?.fallback_enabled === true;
+    setVal("cfgLlmFallbackProvider", cfg.llm?.fallback_provider);
 
     setVal("cfgOpenaiAuthMode", cfg.llm?.openai?.auth_mode || "api_key");
     setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
@@ -4330,10 +4329,7 @@ function bindSettings() {
     // Embedding (v0.3.32+ — owns its own api_key/base_url)
     const embProvider = document.getElementById("cfgEmbeddingProvider");
     if (embProvider) embProvider.value = cfg.llm?.embedding?.provider || "";
-    const embeddingFallback = document.getElementById("cfgEmbeddingFallbackEnabled");
-    if (embeddingFallback) {
-      embeddingFallback.checked = cfg.llm?.embedding?.fallback_enabled === true;
-    }
+    setVal("cfgEmbeddingFallbackProvider", cfg.llm?.embedding?.fallback_provider);
     setVal("cfgEmbeddingApiKey", cfg.llm?.embedding?.api_key);
     setVal("cfgEmbeddingBaseUrl", cfg.llm?.embedding?.base_url);
     setVal("cfgEmbeddingModel", cfg.llm?.embedding?.model);
@@ -4432,12 +4428,15 @@ function bindSettings() {
 
   function collectForm() {
     const logPath = splitLogPath(getVal("cfgLogPath"), state.runtimeConfig?.logging);
+    const llmFallbackProvider = getVal("cfgLlmFallbackProvider");
+    const embeddingFallbackProvider = getVal("cfgEmbeddingFallbackProvider");
     return {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
         default_provider: providerSelect.value,
-        fallback_enabled: checked("cfgLlmFallbackEnabled"),
+        fallback_enabled: Boolean(llmFallbackProvider),
+        fallback_provider: llmFallbackProvider,
         openai: {
           auth_mode: getVal("cfgOpenaiAuthMode") || "api_key",
           api_key: getVal("cfgOpenaiKey"),
@@ -4480,7 +4479,8 @@ function bindSettings() {
           base_url: getVal("cfgEmbeddingBaseUrl"),
           model: getVal("cfgEmbeddingModel"),
           similarity_threshold: getFloat("cfgEmbeddingSimilarity", 0.82),
-          fallback_enabled: checked("cfgEmbeddingFallbackEnabled"),
+          fallback_enabled: Boolean(embeddingFallbackProvider),
+          fallback_provider: embeddingFallbackProvider,
         },
         soul: {
           provider: getVal("cfgModuleSoulProvider"),

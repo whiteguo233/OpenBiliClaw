@@ -18,7 +18,7 @@
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；模型 tab 可开关 LLM provider fallback 与 embedding fallback，并明确 embedding 不再跟随默认 LLM；平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / 通用网页 / 候选池配比独立分块，可开关四个平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 用单个「完整日志路径」编辑后端日志文件位置 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；模型 tab 可设置 LLM / embedding 的显式备选 Provider，留空即不 fallback，并明确 embedding 不再跟随默认 LLM；平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / 通用网页 / 候选池配比独立分块，可开关四个平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 用单个「完整日志路径」编辑后端日志文件位置 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |
@@ -30,6 +30,7 @@
 | xhs token 嗅探（MAIN world） | ✅ | `src/main/xhs-token-sniffer.ts` 以 `world: "MAIN"`、`run_at: "document_start"` 注入 xhs 页面，劫持 `window.fetch` / `XMLHttpRequest` 扫描 xhs 自家 API 响应里的 `(note_id, xsec_token)` 对子，通过 `postMessage` 桥接到 isolated world 再 `/api/sources/xhs/tokens` 回填——解决搜索页永不带 token 导致点击命中 300031 登录墙的问题 |
 | xhs 初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；`/api/sources/xhs/next-task` 会先把任务原子标记为 `in_progress` 再返回给扩展，避免多个浏览器实例重复领取同一个前台拉取任务；插件先打开小红书 `/explore`，滚动任务会以前台 tab 点击页面“我”入口进入 profile，再从 profile 页 state / DOM 解析收藏、点赞和小红书页面内显式浏览记录信号；显式启用 `max_scroll_rounds` 时会有限滚动，并用 `status="partial"` 分批回传给 `/api/sources/xhs/task-result` |
 | 抖音初始化画像任务 | ✅ | 后端可派发 `bootstrap_profile` 任务；插件依次访问抖音发布 / 收藏 / 喜欢 / 关注 scope，content script 结合 DOM、MAIN-world fetch tap 与 API harvester 采集条目，并用 `partial` 分批回传给 `/api/sources/dy/task-result` |
+| 扩展任务并发领取保护 | ✅ | XHS / 抖音 / YouTube 的 `/next-task` claim 使用短生命周期 SQLite 连接执行 `BEGIN IMMEDIATE`，避免多个 FastAPI threadpool 请求共享同一 connection 时出现嵌套事务错误 |
 | 抖音搜索任务 | ✅ | 后端可派发 `search` 任务；插件用后台 tab 在已登录抖音会话中执行关键词搜索，MAIN-world search bridge 调用页面 `byted_acrawler.frontierSign()` 签名搜索 API，回传 `dy_search` 候选供 CLI smoke 和正式 `dy-plugin-search` discovery 使用；单关键词任务 timeout 为 180 秒 |
 | 抖音热点任务 | ✅ | 后端可派发 `hot` 任务；插件用后台 tab 打开 `/hot/{sentence_id}`，从跳转后的 `/video/{aweme_id}` 取 seed aweme，并通过 MAIN-world related bridge 签名 `/aweme/v1/web/aweme/related/`，回传 `dy_hot` 候选供 `dy-plugin-hot-related` discovery 使用 |
 | 抖音首页推荐流任务 | ✅ | 后端可派发 `feed` 任务；插件用后台 tab 在已登录抖音首页通过 MAIN-world feed bridge 签名 `/aweme/v1/web/tab/feed/`，回传 `dy_feed` 候选供 `dy-plugin-feed` discovery 使用 |
@@ -133,7 +134,7 @@ extension/
 
 ### 小红书任务桥
 
-`src/background/xhs-task-dispatcher.ts` 会轮询后端 `/api/sources/xhs/next-task`。后端返回任务前会把 `xhs_tasks.status` 从 `pending` 原子切到 `in_progress` 并写入 `claimed_at`；partial 回写会保留 `in_progress`，最终 `ok / empty / failed` 才进入终态，15 分钟无回写的领取会重新变为可领取。这个领取态用于挡住多个扩展实例、service worker 重启或多次手动命令造成的同一 `bootstrap_profile` 前台 tab 重复打开。
+`src/background/xhs-task-dispatcher.ts` 会轮询后端 `/api/sources/xhs/next-task`。后端返回任务前会把 `xhs_tasks.status` 从 `pending` 原子切到 `in_progress` 并写入 `claimed_at`；claim 事务使用独立短连接执行，避免和 API 进程共享 SQLite connection 上的其他请求互相嵌套事务。partial 回写会保留 `in_progress`，最终 `ok / empty / failed` 才进入终态，15 分钟无回写的领取会重新变为可领取。这个领取态用于挡住多个扩展实例、service worker 重启或多次手动命令造成的同一 `bootstrap_profile` 前台 tab 重复打开。
 
 当收到 `bootstrap_profile` 时，它会先打开 `https://www.xiaohongshu.com/explore`；默认用非激活 tab，若任务显式启用了 `max_scroll_rounds > 0` 则打开前台 tab，方便页面自己处理 profile 点击和后续滚动。dispatcher 会向 content script 发送：
 
@@ -249,7 +250,7 @@ CLI 入口：
 - 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；如果当前 host 仍是 `127.0.0.1` / `localhost`，面板会提示手机通常无法访问，需要先把插件后端地址改成电脑局域网 IP
 - 设置页调度区的「停止后台 LLM 请求」写入 `scheduler.enabled=false`；开启后会暂停 daemon-owned 定时发现、候选池预计算和画像更新里的 LLM / embedding 调用，推荐列表不会自动补充新内容，候选池为空时可能暂时没有推荐。「关闭浏览器后停止后台」写入 `scheduler.pause_on_extension_disconnect=true`，断开宽限秒数写入 `scheduler.extension_disconnect_grace_seconds`；所有扩展窗口断开并超过宽限期后，后台 LLM / embedding 工作暂停，重新打开浏览器后恢复。手动刷新和显式 CLI / API 操作仍按用户动作执行
 - 从 `/api/recommendations` 拉取推荐列表
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM fallback 开关、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/fallback 开关、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣参数、完整日志路径和日志清理参数
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM 显式备选 provider、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/显式备选 provider、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣参数、完整日志路径和日志清理参数
 - 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
 - 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues，保存按钮显示“保存并提示重启”；保存响应带 `restart_required=true` 时用 warning tone 提示用户重启 daemon
 - 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`

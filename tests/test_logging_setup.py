@@ -46,6 +46,25 @@ def test_configure_logging_replaces_existing_handlers(tmp_path: Path) -> None:
     assert first_count == second_count
 
 
+def test_configure_logging_quiets_noisy_http_libraries(tmp_path: Path) -> None:
+    config = Config(
+        logging=LoggingConfig(
+            level="INFO",
+            file_level="DEBUG",
+            directory=str(tmp_path / "logs"),
+            filename="openbiliclaw.log",
+        )
+    )
+
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    logging.getLogger("httpcore").setLevel(logging.NOTSET)
+
+    configure_logging(config)
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
 def test_configure_logging_uses_rotating_handler_when_enabled(tmp_path: Path) -> None:
     config = Config(
         logging=LoggingConfig(

@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import LLMProviderError, LLMRateLimitError, LLMResponse
 from openbiliclaw.llm.service import (
     LLMProviderExecutionError,
     LLMResponseContentError,
     LLMService,
     ModuleOverride,
     PrioritySemaphore,
+    is_llm_rate_limit_error,
     module_overrides_from_config,
 )
 from openbiliclaw.memory.manager import MemoryManager
@@ -93,6 +94,21 @@ class FakeMemoryManager:
 
     def render_core_memory_prompt(self) -> str:
         return self.core_prompt
+
+
+def test_is_llm_rate_limit_error_detects_wrapped_provider_backoff() -> None:
+    try:
+        try:
+            raise LLMRateLimitError("429 Too Many Requests")
+        except LLMRateLimitError as err:
+            raise LLMProviderExecutionError("All providers failed") from err
+    except LLMProviderExecutionError as wrapped:
+        assert is_llm_rate_limit_error(wrapped)
+
+    assert is_llm_rate_limit_error(
+        LLMProviderExecutionError("Provider gemini is cooling down after 429")
+    )
+    assert not is_llm_rate_limit_error(ValueError("Expected scored JSON array"))
 
 
 @pytest.mark.asyncio

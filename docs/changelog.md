@@ -4,6 +4,13 @@
 
 ---
 
+## v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）
+
+- 后端源码版本提升到 v0.3.89，准备发布 `backend-v0.3.89`；浏览器插件版本提升到 extension v0.3.43，准备发布 `extension-v0.3.43`。
+- LLM provider 限流 / cooldown 时，discovery eval batch 和 recommendation copy batch 不再退回逐条 LLM 调用，避免一次 Gemini 429 放大成整批 traceback；XHS / 抖音 / YouTube task claim 改用短生命周期 SQLite 连接，修复并发 `/next-task` poll 的嵌套事务错误；`httpx` / `httpcore` 文件日志默认降到 WARNING。
+- 插件设置页将 LLM / embedding fallback 从“自动尝试其它 provider”改成显式“备选 Provider”下拉框；`fallback_provider = ""` 时完全不 fallback，非空时只尝试这一个备选 provider。
+- `/api/image-proxy` 不再把 redirect 白名单失败、非图片 Content-Type、超过 10MB 和超时统一折叠成 502；校验类错误保留 403 / 400 / 413，网络超时返回 504，缓存回退只用于上游网络失败或 5xx 类错误。
+
 ## v0.3.88 / extension v0.3.42: 局域网二维码与封面代理合并发布（2026-05-21）
 
 - 浏览器插件版本提升到 extension v0.3.42，合入 extension v0.3.41 的封面代理发布内容，并补齐 main 上的移动端二维码局域网 IP 自动检测逻辑；当插件后端仍配置为 `127.0.0.1` / `localhost` 时，会读取 `/api/health.lan_ip` 生成手机可访问的 `/m/` 二维码。

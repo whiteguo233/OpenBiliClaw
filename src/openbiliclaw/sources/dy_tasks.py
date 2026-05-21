@@ -392,7 +392,7 @@ class DyTaskQueue:
 
     def next_pending(self) -> dict[str, Any] | None:
         stale_before = (datetime.now(UTC) - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
-        conn = self._db.conn
+        conn = self._db.open_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -418,8 +418,11 @@ class DyTaskQueue:
             claimed = conn.execute("SELECT * FROM dy_tasks WHERE id = ?", (task_id,)).fetchone()
             conn.commit()
         except Exception:
-            conn.rollback()
+            if conn.in_transaction:
+                conn.rollback()
             raise
+        finally:
+            conn.close()
         return dict(claimed) if claimed is not None else None
 
     def find_recent_task(

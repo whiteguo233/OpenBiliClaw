@@ -1,6 +1,6 @@
 # LLM 多模型支持
 
-> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带可配置 fallback、retry 和健康检查。
+> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带显式备选 Provider、retry 和健康检查。
 
 ## 概述
 
@@ -25,11 +25,11 @@
 | 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
 | v0.3.0 Ollama embedding 兜底 | ✅ | `OllamaProvider.embed()` 走原生 `/api/embeddings`，配合 `bge-m3` 模型可在 Mac/Win/Linux CPU 跑相似度计算，不需要额外的 embedding API Key |
 | v0.3.0 EmbeddingService 双层缓存 | ✅ | L1 内存 + L2 SQLite 持久化；`build_embedding_service` 按 provider 自动选默认 model（gemini→gemini-embedding-001 / openai→text-embedding-3-small / ollama→bge-m3） |
-| v0.3.20 Embedding 自动 fallback | ✅ | `LLMProvider.supports_embedding` 类属性显式声明 provider 是否真的有 embeddings endpoint。Claude / DeepSeek / OpenRouter 标 `False`（前者无 API、后两者继承自 OpenAIProvider 但实际后端不路由 embeddings）；OpenAI / Gemini / Ollama 标 `True`。`build_embedding_service` 据此跑 fallback 链（请求的 provider → ollama → gemini → openai），主 LLM 没有 embedding 能力时透明回退而不是返回 None |
+| v0.3.20 Embedding fallback 能力识别 | ✅ | `LLMProvider.supports_embedding` 类属性显式声明 provider 是否真的有 embeddings endpoint。Claude / DeepSeek / OpenRouter 标 `False`（前者无 API、后两者继承自 OpenAIProvider 但实际后端不路由 embeddings）；OpenAI / Gemini / Ollama 标 `True`。当前只在 `[llm.embedding].fallback_provider` 非空时尝试一个显式备选 provider |
 | v0.3.20 OpenAI Provider embed | ✅ | `OpenAIProvider.embed()` 走 `/v1/embeddings`，默认 `text-embedding-3-small`。OpenAI 用户没显式配 embedding 时不再静默返回 None。失败返回 `[]`（与 Ollama / Gemini 一致），调用方降级处理 |
 | v0.3.31 DeepSeek 空内容兜底 | ✅ | DeepSeek 返回 HTTP 200 但 `content=""` 时，provider 会重试一次；`reasoning_effort` 开启时仍先关闭 thinking 重试，普通模式则原参数重试，避免 explore / structured task 因一次空内容直接降级为空结果 |
 | v0.3.32 Embedding 与 LLM Provider 解耦 | ✅ | `EmbeddingConfig` 拥有独立的 `api_key` / `base_url`；`build_embedding_service` 直接构造一个独立 provider 实例（不走 chat-side `LLMRegistry`），并把旧的 `embedding_wants_ollama` 自动注册 hack 删掉 |
-| v0.3.x Fallback 开关收口 | ✅ | `[llm].fallback_enabled=false` 时 `LLMRegistry.complete()` 只调用默认 provider；`[llm.embedding].fallback_enabled=false` 时 embedding 不切 provider、不借用 chat-side 凭据，且空 provider 不再跟随 `[llm].default_provider` |
+| v0.3.x 显式 fallback provider | ✅ | 自动 fallback 链已移除。`LLMRegistry.complete()` 只在 `[llm].fallback_provider` 非空时按 `default_provider → fallback_provider` 尝试；embedding 只在 `[llm.embedding].fallback_provider` 非空时尝试一个备选 provider，空 provider 不再跟随 `[llm].default_provider` |
 | v0.3.32 OpenAI 协议兼容 provider | ✅ | 新增 `openai_compatible` 一级 provider（独立 `[llm.openai_compatible]` block），用于 Groq / Together / Azure OpenAI / vLLM / 自建等任何走 OpenAI 协议的服务。底层复用 `OpenAIProvider`，但 `provider_name="openai_compatible"`，与 `[llm.openai]` 互不干扰。`base_url` 必填（缺失会被 `_collect_config_issues` 拦下、`_maybe_openai_compatible_provider` 拒绝注册）。embedding 段也接受 `openai_compatible` |
 | v0.3.69 Gemini reasoning-first 模型适配 | ✅ | `GeminiProvider._is_reasoning_first_model` 用 prefix 识别 `gemini-3.x` / `gemini-2.5-pro*`，json_mode 下不再附加 `thinking_budget=0`（这些模型会以 `400 INVALID_ARGUMENT` 拒绝）；`gemini-2.5-flash` 等非 reasoning-first 模型继续走省钱通路。pricing 补全 `gemini-3.1-pro-preview` / `gemini-3-pro-preview` 别名，配套 CLI / config / 文档统一改用真实模型 ID |
 | v0.3.71 Prompt-cache 与 400 诊断 | ✅ | `build_awareness_prompt` / `build_batch_content_evaluation_prompt` 的 user prompt 按稳定画像在前、本次批次在后排序，并使用 `sort_keys=True` 的确定性 JSON；`OpenAIProvider._map_error()` 会把 OpenAI-compatible HTTP 400 响应体摘要写入 WARNING 和错误文本，便于定位 MiMo 等兼容服务的请求 schema 问题 |
@@ -38,6 +38,7 @@
 | v0.3.74 Ollama embedding 空凭据静默本地默认 | ✅ | `embedding.provider="ollama"` 且 embedding `api_key/base_url` 为空时直接构造本地 Ollama provider，默认 `http://localhost:11434/v1`；如果 chat-side `[llm.ollama].base_url` 非空，会复用并规范化到 `/v1`，不再触发 `_emit_embedding_compat_warning()`。远端 embedding provider 留空凭据时仍保留一次性向后兼容 WARNING |
 | v0.3.77 LM Studio JSON mode 兼容 | ✅ | `OpenAIProvider` 的 `json_mode=True` 对普通 OpenAI-compatible 后端默认使用 `json_object`，遇到 `response_format.type` 只允许 `json_schema/text` 时用通用 `json_schema` 重试；对本地 LM Studio（默认 `localhost/127.0.0.1:1234` 或 URL 含 `lmstudio` / `lm-studio`）首次请求即不发送 `response_format`，依赖 prompt 约束 JSON，避免 compat 层在 `json_object` / `json_schema` 下丢失 `message.content` 后再浪费一整次 LLM 调用 |
 | v0.3.78 Codex OAuth 实验认证 | ✅ | `[llm.openai].auth_mode="codex_oauth"` 时，OpenAI provider 复用 Codex CLI 的 ChatGPT OAuth 凭据；`codex_auth.py` 负责导入 `~/.codex/auth.json`、安全落盘、临期刷新，`OpenAIProvider` 在 401 时强制刷新并重试一次。该路径为非官方实验集成，只允许 OpenAI 官方 `base_url` |
+| v0.3.x LLM 限流识别 | ✅ | `is_llm_rate_limit_error()` 会沿异常链识别 `LLMRateLimitError`、cooldown、429 / quota / resource exhausted 文本；discovery / recommendation 批量调用据此跳过逐条 fallback，避免一次 provider 限流放大成 N 个必失败调用和堆栈日志 |
 | v0.3.x Eval-batch 负样本锚定 | ✅ | `build_batch_content_evaluation_prompt` 新增可选 `negative_examples` kwarg；非空时在 user prompt `<source_context>` 与 `<content_batch>` 之间插入 `<negative_examples>` 块（`sort_keys=True` 决定性 JSON）。`None` / `[]` 退回原 user 字节形态以保留 cold-start 缓存前缀。`_BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT` 加入两条永久规则 (10 / 11)：按话术 / 商业意图 / 标题结构层面 pattern-match 候选与示例，不要看关键词重叠；规则改动一次后系统消息保持 call-invariant |
 | v0.3.x dislike-aware prompts | ✅ | `build_preference_analysis_prompt` 明确把 negative / dislike / thumbs_down 事件限制为 `disliked_topics` 与风格避让证据，禁止提取为正向兴趣；`build_awareness_prompt` 可从近期 dislike 生成“最近开始避开 X”的保守观察；单条 / 批量推荐表达 prompt 会消费 `profile_summary.disliked_topics`，命中避雷项时不得热情背书 |
 
@@ -121,7 +122,7 @@ registry = build_llm_registry(load_config())
 print(registry.available_providers)  # ["openai", "gemini", "deepseek", "ollama", "openrouter"]
 print(registry.default_provider)     # "openai"
 
-# 默认不 fallback；如需默认 provider 失败时自动尝试下一个，先启用 [llm].fallback_enabled
+# 默认不 fallback；如需备选，设置 [llm].fallback_provider 为第二个 provider
 response = await registry.complete([{"role": "user", "content": "hi"}])
 
 # 精确调用某个 chat-capable provider，不走 fallback；用于 per-module override
@@ -159,6 +160,15 @@ response = await service.complete_structured_task(
     user_input='{"events": [...]}',
 )
 # 自动注入 core memory，并以 json_mode 调用 provider
+
+from openbiliclaw.llm import is_llm_rate_limit_error
+
+try:
+    await service.complete_structured_task(system_instruction="...", user_input="...")
+except Exception as exc:
+    if is_llm_rate_limit_error(exc):
+        # 批量调用方可跳过逐条 fallback，等待下一轮调度重试。
+        ...
 ```
 
 ### 结构化 JSON 解析 helper
@@ -214,7 +224,7 @@ priority≤2 任务。
 命中 override 后走 `registry.complete_provider(provider, ..., model=model)`：
 
 - override provider 错误 / rate-limit：直接报错，不自动 spill 到 default。
-- override provider 未注册或不是 chat-capable：按 `(bucket, provider)` INFO 一次，然后走默认 provider 路径；是否跨 provider fallback 取决于 `[llm].fallback_enabled`。
+- override provider 未注册或不是 chat-capable：按 `(bucket, provider)` INFO 一次，然后走默认 provider 路径；是否跨 provider fallback 取决于 `[llm].fallback_provider` 是否非空。
 - 只填 `model` 不填 `provider`：使用 `registry.default_provider` + per-call model。
 
 ### 异常体系
@@ -274,7 +284,7 @@ x_title = "OpenBiliClaw"
 ## 设计决策
 
 1. **retry 策略**：传输 / provider 临时错误走 3 次重试 + 线性退避（0.25s × attempt）；通用 OpenAI-compatible 的 `LLMResponseError` 默认不重试。DeepSeek 例外：线上观测到它会偶发 HTTP 200 但 `content=""`，因此 `DeepSeekProvider` 对空内容额外重试一次。HTTP 400 会记录 provider response body 摘要，避免只看到 `Error code: 400`
-2. **fallback 顺序**：默认关闭。开启 `[llm].fallback_enabled` 后，chat 请求按默认 provider 优先、随后注册顺序尝试；开启 `[llm.embedding].fallback_enabled` 后，embedding 请求按显式 provider 优先、随后 `ollama → gemini → openai` 尝试。Embedding provider 留空表示禁用，不再跟随默认 LLM。
+2. **fallback 顺序**：默认关闭。chat 只在 `[llm].fallback_provider` 非空时按默认 provider 优先、随后这个显式备选 provider 尝试；embedding 只在 `[llm.embedding].fallback_provider` 非空时按显式 provider 优先、随后这个备选 provider 尝试。Embedding provider 留空表示禁用，不再跟随默认 LLM。
 3. **Protocol DI**：`SupportsComplete` Protocol 解耦了调用方和具体实现，测试时可注入 Fake
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
 5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 负责把核心记忆注入到所有 Soul 相关任务里

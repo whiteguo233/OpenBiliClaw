@@ -44,6 +44,7 @@ def build_llm_registry(
     overrides = provider_overrides or {}
     registry = LLMRegistry()
     registry.fallback_enabled = bool(getattr(config.llm, "fallback_enabled", False))
+    registry.fallback_provider = str(getattr(config.llm, "fallback_provider", "")).strip().lower()
 
     provider_specs = [
         ("openai", _maybe_openai_provider(config, overrides)),
@@ -127,11 +128,10 @@ def build_embedding_service(
     call sites don't need to change; it is no longer consulted.
 
     Empty ``[llm.embedding].provider`` disables embedding; it no longer
-    follows ``[llm].default_provider``. Provider fallback and the legacy
-    chat-side credential fallback are both opt-in via
-    ``[llm.embedding].fallback_enabled = true``. When enabled and the
-    requested provider cannot be built, we walk ``ollama → gemini →
-    openai`` and use the first constructible provider.
+    follows ``[llm].default_provider``. Provider fallback is opt-in via
+    ``[llm.embedding].fallback_provider`` and only tries that one
+    explicit backup provider. ``fallback_enabled`` remains as a legacy
+    compatibility flag for borrowing chat-side credentials.
     """
     try:
         from typing import cast
@@ -140,16 +140,14 @@ def build_embedding_service(
 
         emb_cfg = config.llm.embedding
         requested_name = emb_cfg.provider.strip().lower()
-        fallback_enabled = bool(getattr(emb_cfg, "fallback_enabled", False))
+        fallback_provider = str(getattr(emb_cfg, "fallback_provider", "")).strip().lower()
 
         # Build candidate ordering: requested first, then optional
-        # local-first ollama → gemini → openai fallback. Empty provider
-        # no longer follows [llm].default_provider; embedding is an
-        # independent config surface.
+        # explicit fallback provider. Empty provider no longer follows
+        # [llm].default_provider; embedding is an independent config
+        # surface.
         fallback_order: list[str] = []
-        fallback_candidates: tuple[str, ...] = (
-            ("ollama", "gemini", "openai") if fallback_enabled else ()
-        )
+        fallback_candidates: tuple[str, ...] = ((fallback_provider,) if fallback_provider else ())
         for name in ((requested_name,) if requested_name else ()) + fallback_candidates:
             if name in _EMBEDDING_CAPABLE_PROVIDERS and name not in fallback_order:
                 fallback_order.append(name)

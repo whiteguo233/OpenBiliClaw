@@ -9,8 +9,8 @@ test("settings page exposes advanced config fields from backend schema", () => {
   const expectedIds = [
     "cfgBackendPort",
     "cfgDataDir",
-    "cfgLlmFallbackEnabled",
-    "cfgEmbeddingFallbackEnabled",
+    "cfgLlmFallbackProvider",
+    "cfgEmbeddingFallbackProvider",
     "cfgOpenaiAuthMode",
     "cfgDeepseekReasoning",
     "cfgOpenrouterReferer",
@@ -213,24 +213,28 @@ test("settings page round-trips OpenAI auth mode", () => {
   assert.match(popupJs, /auth_mode: getVal\("cfgOpenaiAuthMode"\) \|\| "api_key"/);
 });
 
-test("settings page round-trips LLM and embedding fallback switches", () => {
+test("settings page round-trips explicit LLM and embedding fallback providers", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
-  assert.match(popupHtml, /id="cfgLlmFallbackEnabled"/);
-  assert.match(popupHtml, /id="cfgEmbeddingFallbackEnabled"/);
+  assert.match(popupHtml, /id="cfgLlmFallbackProvider"/);
+  assert.match(popupHtml, /id="cfgEmbeddingFallbackProvider"/);
+  assert.doesNotMatch(popupHtml, /id="cfgLlmFallbackEnabled"/);
+  assert.doesNotMatch(popupHtml, /id="cfgEmbeddingFallbackEnabled"/);
+  assert.match(popupJs, /setVal\("cfgLlmFallbackProvider", cfg\.llm\?\.fallback_provider\)/);
   assert.match(
     popupJs,
-    /cfgLlmFallback\.checked = cfg\.llm\?\.fallback_enabled === true/,
+    /setVal\("cfgEmbeddingFallbackProvider", cfg\.llm\?\.embedding\?\.fallback_provider\)/,
+  );
+  assert.match(popupJs, /const llmFallbackProvider = getVal\("cfgLlmFallbackProvider"\)/);
+  assert.match(popupJs, /fallback_provider: llmFallbackProvider/);
+  assert.match(
+    popupJs,
+    /const embeddingFallbackProvider = getVal\("cfgEmbeddingFallbackProvider"\)/,
   );
   assert.match(
     popupJs,
-    /embeddingFallback\.checked = cfg\.llm\?\.embedding\?\.fallback_enabled === true/,
-  );
-  assert.match(popupJs, /fallback_enabled: checked\("cfgLlmFallbackEnabled"\)/);
-  assert.match(
-    popupJs,
-    /fallback_enabled: checked\("cfgEmbeddingFallbackEnabled"\)/,
+    /fallback_provider: embeddingFallbackProvider/,
   );
 });
 

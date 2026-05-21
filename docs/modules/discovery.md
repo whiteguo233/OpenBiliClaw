@@ -535,6 +535,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
 | v0.3.74 eval-batch JSON 容错统一 | ✅ | `_evaluate_batch` 改用 `llm.json_utils.extract_llm_json_list()`，在原 fenced / echo / JSONL 基础上统一兼容 `results/items/data/output/scores/evaluations` wrapper、MiMo malformed `{ [ ... ] }` 数组包裹和 schema echo 后最终结果；解析失败仍按原有降级路径处理，不把示例 JSON 当作真实评分 |
 | v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时降级逐条评估 |
+| v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`；本批候选返回 0 分并等待下一轮补货重试，避免一次 Gemini 429 放大成整批 traceback |
 | M126 explore 高风险子簇压缩 | ✅ | refresh 结束后会温和压一轮 `explore` 内部的高风险相邻簇，例如制造 / 工艺 / 材料、博弈 / 桌游 / 机制，避免单簇继续堆满 fresh pool |
 | v0.3.0 trending 按 rid 交错 | ✅ | `TrendingStrategy` 拉 5 个分区排行榜后做 round-robin 交错再送 LLM 评估，避免下游 30 条 hard-cap 把 rid=0/36 的顶部全吃掉 |
 | v0.3.0 explore 按 domain 交错 | ✅ | `ExploreStrategy` 同模式：按 `domain_label` round-robin 后再送评估 |
@@ -615,6 +616,7 @@ assert 0.0 <= score <= 1.0
 - 当调用方只需要少量候选时，策略会先把送入 LLM 评估的候选窗口压到 `max(6, limit*2)`，仍保留过采样缓冲，但不再用固定 90 条窗口浪费评估调用
 - batch 评估结果解析会优先选择包含 `score` 的结果数组或 object 序列；如果 provider 回显输入 JSON、包 Markdown fence、或返回 NDJSON，仍按一次 batch 处理，不再拆成 N 次单条评估
 - batch prompt 和响应都带 `bvid/content_id`；只要响应里有可识别 ID，引擎会按 ID 而不是数组下标写回评分和理由。没有 ID 且结果数量不完整时会回退到单条评估，避免 LLM 漏项导致后续候选整体错位
+- 如果 batch 调用失败被识别为 LLM provider 限流或 cooldown，本轮不会再触发逐条 fallback；这些候选按 0 分处理，下一轮 refresh 在 provider 恢复后重新发现 / 评估
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
 

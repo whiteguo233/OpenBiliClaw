@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
+from openbiliclaw.llm.service import is_llm_rate_limit_error
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
 if TYPE_CHECKING:
@@ -1294,7 +1295,15 @@ class RecommendationEngine:
             )
             if payload is None:
                 raise ValueError("Expected expression JSON array or compatible wrapper.")
-        except Exception:
+        except Exception as exc:
+            if is_llm_rate_limit_error(exc):
+                logger.warning(
+                    "Batch expression generation skipped single-item fallback for %d items "
+                    "because the LLM provider is rate-limited or cooling down: %s",
+                    len(batch),
+                    exc,
+                )
+                return 0
             logger.warning(
                 "Batch expression generation failed for %d items, falling back to single",
                 len(batch),

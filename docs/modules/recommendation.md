@@ -48,6 +48,7 @@
 | v0.3.57 pool gate on precomputed copy | ✅ | `get_pool_candidates` / `count_pool_candidates` SQL 加 `AND COALESCE(pool_expression, '') != '' AND COALESCE(pool_topic_label, '') != ''` —— 未 precompute 的 row 对 serve() 不可见,消除"discovery 完成→precompute 完成"60–90s 窗口内 popup 显示占位模板的旧 bug。`engine.py:320` 的 `_fallback_expression` 路径变成 race-window 安全网,触发即 `logger.warning("Pool gate leak: ...")` |
 | v0.3.74 recommendation/delight JSON 容错统一 | ✅ | `RecommendationEngine` 的内容分类、单条表达和批量表达解析，以及 `delight.precompute_delight_scores()` 的 batch scorer 都改用 `llm.json_utils`。MiMo / OpenAI-compatible provider 返回 object wrapper、fenced JSON、JSONL、schema echo 或 malformed `{ [ ... ] }` 时会优先提取满足字段 predicate 的真实结果 |
 | v0.3.81 批量结果按内容 ID 绑定 | ✅ | 批量推荐文案和源无关内容分类的 prompt 都带 `bvid/content_id`，解析时优先按返回 ID 写回。模型乱序、漏项或只返回部分条目时不再按数组下标把原因写到错误视频；无 ID 且数量不完整的文案批次会降级单条生成，分类批次会标记失败避免错写 |
+| v0.3.x 批量文案限流保护 | ✅ | `_precompute_batch()` 遇到 LLM provider rate limit / cooldown / quota 时不再进入逐条 `_try_generate_expression()` fallback；本轮预生成计为 0，保留空 `pool_expression/topic_label` 等后续调度重试 |
 | v0.3.x 负反馈表达避让 | ✅ | `_recommendation_profile_summary()` 会把 `preferences.disliked_topics` 带入推荐画像摘要；单条和批量推荐表达 prompt 都要求避开这些主题 / 话术模式，候选明显命中时只能保守说明差异化理由，不得热情背书或把避雷项包装成用户偏好 |
 
 ## 公开 API
@@ -143,6 +144,7 @@ count = await engine.precompute_pool_copy(
 - 低并发批量调用 `generate_expression()` 的 LLM 主链生成朋友式推荐文案
 - 解析批量 LLM 响应时通过共享 JSON helper 接受 `results/items/data/output` 等 wrapper、fenced JSON、JSONL 和回显 schema 后的最终结果，但仍要求每条结果具备推荐表达所需字段
 - 批量 prompt 会把每条候选的 `bvid/content_id` 交给 LLM；如果响应带回 ID，写库时按 ID 匹配，不信任数组顺序。响应没有 ID 且数量不完整时会降级到单条生成，避免把后续视频的文案整体前移
+- 批量调用若命中 provider 限流 / cooldown / quota，不会再逐条调用 LLM；这些候选继续保持文案空值，等待下一轮后台预生成
 - 成功后把结果回写到 `content_cache.pool_expression / content_cache.pool_topic_label`
 - 生成失败时不会写 profile 级统一 fallback，而是保留空值，交给 popup 隐藏
 - runtime refresh 会在补货后自动触发这一步，避免 popup 的“换一批 / 继续追加”现场等待 LLM

@@ -110,6 +110,7 @@ class EmbeddingConfig:
     base_url: str = ""
     similarity_threshold: float = 0.82
     fallback_enabled: bool = False
+    fallback_provider: str = ""
 
 
 @dataclass
@@ -126,6 +127,7 @@ class LLMConfig:
 
     default_provider: str = "openai"
     fallback_enabled: bool = False
+    fallback_provider: str = ""
     openai: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     claude: LLMProviderConfig = field(default_factory=LLMProviderConfig)
     gemini: LLMProviderConfig = field(default_factory=LLMProviderConfig)
@@ -489,6 +491,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     llm = LLMConfig(
         default_provider=llm_raw.get("default_provider", "openai"),
         fallback_enabled=bool(llm_raw.get("fallback_enabled", False)),
+        fallback_provider=llm_raw.get("fallback_provider", ""),
         openai=LLMProviderConfig(**llm_raw.get("openai", {})),
         claude=LLMProviderConfig(**llm_raw.get("claude", {})),
         gemini=LLMProviderConfig(**llm_raw.get("gemini", {})),
@@ -508,6 +511,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     "base_url",
                     "similarity_threshold",
                     "fallback_enabled",
+                    "fallback_provider",
                 )
             }
         ),
@@ -934,6 +938,7 @@ def _render_config_toml(config: Config) -> str:
         "[llm]",
         f"default_provider = {_toml_string(config.llm.default_provider)}",
         f"fallback_enabled = {_toml_bool(config.llm.fallback_enabled)}",
+        f"fallback_provider = {_toml_string(config.llm.fallback_provider)}",
         "",
     ]
     lines.extend(_render_provider_section("openai", config.llm.openai))
@@ -952,6 +957,7 @@ def _render_config_toml(config: Config) -> str:
             f"base_url = {_toml_string(config.llm.embedding.base_url)}",
             f"similarity_threshold = {config.llm.embedding.similarity_threshold}",
             f"fallback_enabled = {_toml_bool(config.llm.embedding.fallback_enabled)}",
+            f"fallback_provider = {_toml_string(config.llm.embedding.fallback_provider)}",
             "",
             "# Per-module LLM overrides (empty = use global default)",
             "[llm.soul]",
