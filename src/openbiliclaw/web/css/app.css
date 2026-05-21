@@ -1033,7 +1033,7 @@ body {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 10px;
+  padding: 0 4px 10px;
 }
 
 .chat-bubble {
@@ -1071,7 +1071,7 @@ body {
   z-index: 10;
   display: flex;
   gap: 8px;
-  padding: 8px 0 10px;
+  padding: 8px 4px 10px;
   align-items: flex-end;
   background:
     linear-gradient(180deg, rgba(242, 248, 255, 0), var(--bg-sky) 18px),
