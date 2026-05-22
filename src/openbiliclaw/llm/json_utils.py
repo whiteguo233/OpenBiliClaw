@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,26 @@ JSONValue: TypeAlias = JSONPrimitive | dict[str, "JSONValue"] | list["JSONValue"
 JSONObject: TypeAlias = dict[str, JSONValue]
 JSONArray: TypeAlias = list[JSONValue]
 JSONContainer: TypeAlias = JSONObject | JSONArray
+JSONDictPredicate: TypeAlias = Callable[[dict[str, JSONValue]], bool]
+
+_DEFAULT_LIST_WRAPPER_KEYS = (
+    "results",
+    "items",
+    "data",
+    "output",
+    "scores",
+    "evaluations",
+    "entries",
+    "candidates",
+    "delights",
+    "observations",
+    "insights",
+    "hypotheses",
+    "notes",
+    "list",
+    "array",
+)
+_DEFAULT_OBJECT_WRAPPER_KEYS = ("result", "item", "data", "output")
 
 
 def strip_json_fences(text: str) -> str:
@@ -78,6 +99,80 @@ def parse_llm_json_tolerant(text: str) -> JSONContainer | None:
 
     # Unknown root — try both
     return _salvage_container(cleaned, open_ch="{") or _salvage_container(cleaned, open_ch="[")
+
+
+def extract_llm_json_list(
+    content: str,
+    *,
+    wrapper_keys: tuple[str, ...] = (),
+    allow_singleton: bool = False,
+    item_predicate: JSONDictPredicate | None = None,
+) -> list[dict[str, JSONValue]] | None:
+    """Extract a schema-valid JSON object list from messy LLM output."""
+    keys = _merge_wrapper_keys(_DEFAULT_LIST_WRAPPER_KEYS, wrapper_keys)
+    parsed = parse_llm_json_tolerant(content)
+    direct = _coerce_candidate_list(
+        parsed,
+        wrapper_keys=keys,
+        allow_singleton=allow_singleton,
+        item_predicate=item_predicate,
+    )
+    if direct is not None:
+        return direct
+
+    for snippet in reversed(_extract_json_array_snippets(content)):
+        candidate = _coerce_candidate_list(
+            parse_llm_json_tolerant(snippet),
+            wrapper_keys=keys,
+            allow_singleton=allow_singleton,
+            item_predicate=item_predicate,
+        )
+        if candidate is not None:
+            return candidate
+
+    jsonl_candidate = _coerce_jsonl_objects(content, item_predicate=item_predicate)
+    if jsonl_candidate is not None:
+        return jsonl_candidate
+
+    if allow_singleton:
+        for snippet in reversed(_extract_json_object_snippets(content)):
+            candidate = _coerce_candidate_list(
+                parse_llm_json_tolerant(snippet),
+                wrapper_keys=keys,
+                allow_singleton=True,
+                item_predicate=item_predicate,
+            )
+            if candidate is not None:
+                return candidate
+    return None
+
+
+def extract_llm_json_object(
+    content: str,
+    *,
+    wrapper_keys: tuple[str, ...] = (),
+    item_predicate: JSONDictPredicate | None = None,
+) -> dict[str, JSONValue] | None:
+    """Extract a schema-valid JSON object from messy LLM output."""
+    keys = _merge_wrapper_keys(_DEFAULT_OBJECT_WRAPPER_KEYS, wrapper_keys)
+    parsed = parse_llm_json_tolerant(content)
+    direct = _coerce_candidate_object(
+        parsed,
+        wrapper_keys=keys,
+        item_predicate=item_predicate,
+    )
+    if direct is not None:
+        return direct
+
+    for snippet in reversed(_extract_json_object_snippets(content)):
+        candidate = _coerce_candidate_object(
+            parse_llm_json_tolerant(snippet),
+            wrapper_keys=keys,
+            item_predicate=item_predicate,
+        )
+        if candidate is not None:
+            return candidate
+    return None
 
 
 def format_parse_failure(content: str, exc: Exception, *, label: str) -> str:
@@ -196,6 +291,176 @@ def _coerce_json_value(value: object) -> JSONValue | None:
             coerced_list.append(coerced_item)
         return coerced_list
     return None
+
+
+def _merge_wrapper_keys(
+    default_keys: tuple[str, ...],
+    caller_keys: tuple[str, ...],
+) -> tuple[str, ...]:
+    merged: list[str] = []
+    for key in (*caller_keys, *default_keys):
+        if key and key not in merged:
+            merged.append(key)
+    return tuple(merged)
+
+
+def _coerce_candidate_list(
+    value: object,
+    *,
+    wrapper_keys: tuple[str, ...],
+    allow_singleton: bool,
+    item_predicate: JSONDictPredicate | None,
+) -> list[dict[str, JSONValue]] | None:
+    for candidate in _iter_list_candidates(
+        value,
+        wrapper_keys=wrapper_keys,
+        allow_singleton=allow_singleton,
+    ):
+        coerced = _coerce_json_object_list(candidate)
+        if coerced is None:
+            continue
+        if item_predicate is not None and not any(item_predicate(item) for item in coerced):
+            continue
+        return coerced
+    return None
+
+
+def _iter_list_candidates(
+    value: object,
+    *,
+    wrapper_keys: tuple[str, ...],
+    allow_singleton: bool,
+) -> list[object]:
+    candidates: list[object] = []
+    if isinstance(value, list):
+        candidates.append(value)
+    if isinstance(value, dict):
+        for key in wrapper_keys:
+            if key in value:
+                nested = value[key]
+                candidates.append(nested)
+                if isinstance(nested, dict):
+                    for nested_key in wrapper_keys:
+                        if nested_key in nested:
+                            candidates.append(nested[nested_key])
+        if allow_singleton:
+            candidates.append(value)
+    return candidates
+
+
+def _coerce_json_object_list(value: object) -> list[dict[str, JSONValue]] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    results: list[dict[str, JSONValue]] = []
+    for item in value:
+        coerced_item = _coerce_json_value(item)
+        if not isinstance(coerced_item, dict):
+            return None
+        results.append(coerced_item)
+    return results
+
+
+def _coerce_candidate_object(
+    value: object,
+    *,
+    wrapper_keys: tuple[str, ...],
+    item_predicate: JSONDictPredicate | None,
+) -> dict[str, JSONValue] | None:
+    for candidate in _iter_object_candidates(value, wrapper_keys=wrapper_keys):
+        coerced = _coerce_json_value(candidate)
+        if not isinstance(coerced, dict):
+            continue
+        if item_predicate is not None and not item_predicate(coerced):
+            continue
+        return coerced
+    return None
+
+
+def _iter_object_candidates(
+    value: object,
+    *,
+    wrapper_keys: tuple[str, ...],
+) -> list[object]:
+    candidates: list[object] = []
+    if isinstance(value, dict):
+        candidates.append(value)
+        for key in wrapper_keys:
+            if key in value:
+                nested = value[key]
+                candidates.append(nested)
+                if isinstance(nested, dict):
+                    for nested_key in wrapper_keys:
+                        if nested_key in nested:
+                            candidates.append(nested[nested_key])
+    return candidates
+
+
+def _coerce_jsonl_objects(
+    content: str,
+    *,
+    item_predicate: JSONDictPredicate | None,
+) -> list[dict[str, JSONValue]] | None:
+    rows: list[dict[str, JSONValue]] = []
+    for line in content.splitlines():
+        stripped = line.strip().rstrip(",")
+        if not stripped or not stripped.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        coerced = _coerce_json_value(parsed)
+        if isinstance(coerced, dict):
+            rows.append(coerced)
+    if not rows:
+        return None
+    if item_predicate is not None and not any(item_predicate(item) for item in rows):
+        return None
+    return rows
+
+
+def _extract_json_array_snippets(text: str) -> list[str]:
+    return _extract_balanced_json_snippets(text, open_char="[", close_char="]")
+
+
+def _extract_json_object_snippets(text: str) -> list[str]:
+    return _extract_balanced_json_snippets(text, open_char="{", close_char="}")
+
+
+def _extract_balanced_json_snippets(
+    text: str,
+    *,
+    open_char: str,
+    close_char: str,
+) -> list[str]:
+    snippets: list[str] = []
+    start: int | None = None
+    depth = 0
+    in_string = False
+    escape = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == open_char:
+            if depth == 0:
+                start = index
+            depth += 1
+            continue
+        if char == close_char and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                snippets.append(text[start : index + 1])
+                start = None
+    return snippets
 
 
 def _remaining_closers(partial: str) -> str | None:

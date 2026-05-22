@@ -9,6 +9,7 @@ from typing import Protocol
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
+    extract_llm_json_list,
     format_parse_failure,
     parse_llm_json_tolerant,
 )
@@ -113,6 +114,15 @@ class AwarenessAnalyzer:
     def _parse_response(self, content: str) -> list[object]:
         if not content.strip():
             return []
+        helper_payload = extract_llm_json_list(
+            content,
+            wrapper_keys=_AWARENESS_WRAPPED_ARRAY_KEYS,
+            allow_singleton=True,
+            item_predicate=lambda item: "observation" in item,
+        )
+        if helper_payload is not None:
+            return list(helper_payload)
+
         parsed = parse_llm_json_tolerant(content)
         if parsed is None:
             exc = ValueError("unrecoverable JSON")

@@ -54,11 +54,13 @@ class DouyinDiscoveryService:
         discovery_engine: Any | None = None,
         llm_service: Any | None = None,
         concurrency: Any | None = None,
+        database: Any | None = None,
     ) -> None:
         self._client = client
         self._discovery_engine = discovery_engine
         self._llm_service = llm_service
         self._concurrency = concurrency
+        self._database = database
 
     async def discover(
         self,
@@ -94,14 +96,17 @@ class DouyinDiscoveryService:
     def _build_strategy(self, opts: DouyinDiscoveryOptions) -> DouyinDirectStrategy:
         llm_service = self._llm_service
         concurrency = self._concurrency
+        database = self._database
         if self._discovery_engine is not None:
             llm_service = llm_service or getattr(self._discovery_engine, "_llm_service", None)
             concurrency = concurrency or getattr(self._discovery_engine, "_concurrency", None)
+            database = database or getattr(self._discovery_engine, "_database", None)
 
         return DouyinDirectStrategy(
             client=self._client,
             llm_service=llm_service,
             concurrency=concurrency,
+            database=database,
             sources=opts.sources,
             seed_keywords=opts.keywords,
             creator_sec_uids=opts.creator_sec_uids,

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+_RECENT_TASK_STATUSES = ("pending", "in_progress", "completed", "failed")
 
 # Map each YouTube bootstrap scope to the canonical event_type.
 YT_BOOTSTRAP_SCOPE_EVENT_TYPES: dict[str, str] = {
@@ -106,6 +107,11 @@ def _item_key(item: dict[str, Any]) -> str:
     title = str(item.get("title", "")).strip()
     key = video_id or channel_id or url or title
     return f"{scope}:{key}" if key else ""
+
+
+def yt_bootstrap_item_key(item: dict[str, Any]) -> str:
+    """Return the stable cross-task identity key for one bootstrap item."""
+    return _item_key(item)
 
 
 def _merge_yt_result_payload(
@@ -197,6 +203,13 @@ class YtTaskQueue:
             CREATE INDEX IF NOT EXISTS idx_yt_tasks_status
                 ON yt_tasks (status, created_at);
         """)
+        columns = {
+            str(row["name"])
+            for row in self._db.conn.execute("PRAGMA table_info(yt_tasks)").fetchall()
+        }
+        if "claimed_at" not in columns:
+            self._db.conn.execute("ALTER TABLE yt_tasks ADD COLUMN claimed_at TIMESTAMP")
+            self._db.conn.commit()
 
     def enqueue_with_id(
         self,
@@ -242,10 +255,74 @@ class YtTaskQueue:
         return count
 
     def next_pending(self) -> dict[str, Any] | None:
+        stale_before = (datetime.now(UTC) - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = self._db.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT *
+                FROM yt_tasks
+                WHERE status = 'pending'
+                   OR (status = 'in_progress' AND claimed_at <= ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (stale_before,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            task_id = str(row["id"])
+            conn.execute(
+                "UPDATE yt_tasks SET status = 'in_progress', claimed_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (task_id,),
+            )
+            claimed = conn.execute("SELECT * FROM yt_tasks WHERE id = ?", (task_id,)).fetchone()
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return dict(claimed) if claimed is not None else None
+
+    def find_recent_task(
+        self,
+        task_type: str,
+        *,
+        recent_hours: float,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a recent task of this type for idempotent enqueue paths."""
+        if recent_hours <= 0:
+            return None
+        selected_statuses = statuses or _RECENT_TASK_STATUSES
+        if not selected_statuses:
+            return None
+        placeholders = ",".join("?" for _ in selected_statuses)
+        cutoff = (datetime.now(UTC) - timedelta(hours=recent_hours)).strftime("%Y-%m-%d %H:%M:%S")
         row = self._db.conn.execute(
-            "SELECT * FROM yt_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
+            f"""
+            SELECT *
+            FROM yt_tasks
+            WHERE type = ?
+              AND created_at >= ?
+              AND status IN ({placeholders})
+            ORDER BY
+              CASE
+                WHEN status IN ('pending', 'in_progress') THEN 0
+                WHEN status = 'completed' THEN 1
+                ELSE 2
+              END,
+              created_at DESC
+            LIMIT 1
+            """,
+            (task_type, cutoff, *selected_statuses),
         ).fetchone()
-        return dict(row) if row else None
+        return dict(row) if row is not None else None
 
     def expire_stale_pending(
         self,

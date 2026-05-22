@@ -105,7 +105,8 @@
 | 对话学习状态 | ✅ | `dialogue` 事件 + `insight_candidates.json`，支撑聊天信号的受控学习 |
 | 持续刷新状态 | ✅ | `discovery_runtime.json` 记录候选池刷新、通知游标和最近处理事件位置 |
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
-| 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、签名和最近错误 |
+| 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、已见 ID 集合、签名和最近错误 |
+| 多源 bootstrap 去重状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube 已进入事件路径的 bootstrap identity key，避免跨任务重放旧画像信号 |
 | 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊和兴趣猜测内聊的 pending/completed/failed 状态 |
 
 ## 公开 API
@@ -215,12 +216,23 @@ account_sync_state = memory.load_account_sync_state()
 # {
 #   "last_history_view_at": 1710000000,
 #   "last_history_bvid": "BV1SYNC",
+#   "history_bvids_at_last_view_at": ["BV1SYNC", "BV2SYNC"],
 #   "last_favorites_sync_at": "2026-03-14T12:00:00+00:00",
 #   "favorite_signature": "7:BVFRESH",
+#   "favorite_bvids": ["BVFRESH"],
 #   "last_following_sync_at": "2026-03-14T12:05:00+00:00",
 #   "following_signature": "99",
+#   "following_mids": ["99"],
 #   "last_account_sync_at": "2026-03-14T12:05:00+00:00",
 #   "last_sync_error": "",
+# }
+
+source_bootstrap_state = memory.load_source_bootstrap_state()
+# {
+#   "xhs_seen_note_keys": ["saved:note-id"],
+#   "dy_seen_video_keys": ["dy_collect:aweme-id"],
+#   "yt_seen_item_keys": ["yt_history:video-id"],
+#   "last_source_bootstrap_sync_at": "2026-05-20T12:00:00+00:00",
 # }
 ```
 
@@ -354,6 +366,7 @@ data/memory/
 ├── soul.json                   # 灵魂层
 ├── feedback_state.json         # 反馈处理游标
 ├── account_sync_state.json     # 账户同步游标
+├── source_bootstrap_state.json # 多源 bootstrap 已见 identity key
 ├── discovery_runtime.json      # 候选池刷新游标
 ├── insight_candidates.json     # 聊天候选洞察（中间态）
 └── cognition_updates.json      # 认知变化记录（供插件通知）
@@ -362,7 +375,8 @@ data/memory/
 | 文件 | 用途 | 主要消费者 |
 |------|------|-----------|
 | `feedback_state.json` | 记录反馈处理到了哪一条，避免重复分析 | SoulEngine |
-| `account_sync_state.json` | 历史/收藏/关注的增量同步游标和签名 | AccountSyncService |
+| `account_sync_state.json` | 历史/收藏/关注的增量同步游标、同秒历史 bvid 集合、收藏 bvid 集合、关注 mid 集合和签名 | AccountSyncService |
+| `source_bootstrap_state.json` | XHS / 抖音 / YouTube bootstrap 已传播 identity key，避免跨任务重复写入同一批画像信号 | FastAPI source task endpoints |
 | `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题、近期 probe domain / axis 历史、显式 probe feedback 历史 | RefreshController / OpenClaw / FastAPI |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
 | `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → 浏览器插件通知 |
@@ -386,6 +400,7 @@ MemoryManager 被以下组件直接依赖：
 | **SoulEngine** | 全部五层 + feedback/insight/cognition 状态 | 全部五层 + feedback/insight/cognition 状态 |
 | **LLMService** | `render_core_memory_prompt()`, `get_core_memory()` | — |
 | **FastAPI (app.py)** | `load_cognition_updates()` | `propagate_event()`, `save_cognition_updates()` |
+| **Source task endpoints** | `load_source_bootstrap_state()` | `save_source_bootstrap_state()`, `propagate_event()` |
 | **RefreshController** | `load_discovery_runtime_state()` | `save_discovery_runtime_state()` |
 | **AccountSyncService** | `load_account_sync_state()` | `save_account_sync_state()`, `propagate_event()` |
 | **CLI** | — | `propagate_event()` |
@@ -417,4 +432,5 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 11. **插件聊天回合独立持久化**：`chat_turns` 只保存 side panel durable turn 的请求、回复和状态，解决 Chrome side panel reload / discard 时 DOM 和 JS 内存丢失的问题；它不替代事件层学习，完成后的 dialogue/cognition 仍按后端流程受控进入画像链路
 12. **候选池运行状态分层**：`discovery_runtime.json` 只负责刷新与通知游标，不与 `feedback_state.json`、`insight_candidates.json` 或画像数据混存
 13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
-13. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标和签名，避免每轮全量重灌事件层
+14. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标、已见 ID 集合和稳定签名，避免每轮全量重灌事件层，也避免收藏夹顺序变化或同秒历史游标导致重复画像分析
+15. **多源 bootstrap 去重状态独立持久化**：`source_bootstrap_state.json` 只保存 XHS / 抖音 / YouTube 已见 bootstrap identity key，不塞进画像 JSON；task-result 仍保留完整原始结果用于调试，但进入 memory / profile pipeline 前会过滤旧 key

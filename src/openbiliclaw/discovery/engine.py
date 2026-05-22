@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
-from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.llm.json_utils import extract_llm_json_list, parse_llm_json_tolerant
+from openbiliclaw.llm.service import is_llm_rate_limit_error
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
@@ -173,90 +174,50 @@ def trim_candidates_for_llm(
 
 def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
     """Extract the scored result array from a provider response."""
-    parsed = parse_llm_json_tolerant(raw)
-    direct_list = _coerce_scored_result_list(parsed)
-    if direct_list is not None:
-        return direct_list
-    if isinstance(parsed, dict):
-        for key in ("results", "items", "evaluations", "scores", "data"):
-            nested = _coerce_scored_result_list(parsed.get(key))
-            if nested is not None:
-                return nested
-        if "score" in parsed:
-            return [parsed]
-
-    # Some JSON-mode gateways echo the input JSON before the real output
-    # array. Pick the last array-shaped JSON snippet that actually contains
-    # score objects, not profile/interests/content_batch arrays from the echo.
-    for snippet in reversed(_extract_json_array_snippets(raw)):
-        candidate = _coerce_scored_result_list(parse_llm_json_tolerant(snippet))
-        if candidate is not None:
-            return candidate
-    object_results: list[dict[str, Any]] = []
-    for snippet in _extract_json_object_snippets(raw):
-        parsed_object = parse_llm_json_tolerant(snippet)
-        if isinstance(parsed_object, dict) and "score" in parsed_object:
-            object_results.append(parsed_object)
-    if object_results:
-        return object_results
-    return None
-
-
-def _coerce_scored_result_list(value: object) -> list[dict[str, Any]] | None:
-    if not isinstance(value, list) or not value:
+    payload = extract_llm_json_list(
+        raw,
+        wrapper_keys=("results", "items", "evaluations", "scores", "data"),
+        allow_singleton=True,
+        item_predicate=lambda item: "score" in item,
+    )
+    if payload is None:
         return None
-    results: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            return None
-        results.append(item)
-    if not any("score" in item for item in results):
-        return None
-    return results
+    return [dict(item) for item in payload]
 
 
-def _extract_json_array_snippets(text: str) -> list[str]:
-    return _extract_balanced_json_snippets(text, open_char="[", close_char="]")
+def _content_result_keys(content: DiscoveredContent) -> set[str]:
+    """Stable keys that may identify a content item in batched LLM results."""
+    return {
+        key
+        for key in {
+            str(getattr(content, "bvid", "") or "").strip(),
+            str(getattr(content, "content_id", "") or "").strip(),
+        }
+        if key
+    }
 
 
-def _extract_json_object_snippets(text: str) -> list[str]:
-    return _extract_balanced_json_snippets(text, open_char="{", close_char="}")
+def _batch_results_by_content_key(
+    payload: list[dict[str, Any]],
+    batch: list[DiscoveredContent],
+) -> dict[str, dict[str, Any]] | None:
+    """Return payload entries keyed by content ID when the LLM supplied IDs."""
+    valid_keys: set[str] = set()
+    for content in batch:
+        valid_keys.update(_content_result_keys(content))
 
-
-def _extract_balanced_json_snippets(
-    text: str,
-    *,
-    open_char: str,
-    close_char: str,
-) -> list[str]:
-    snippets: list[str] = []
-    start: int | None = None
-    depth = 0
-    in_string = False
-    escape = False
-    for index, char in enumerate(text):
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
+    matched: dict[str, dict[str, Any]] = {}
+    saw_identifier = False
+    for item in payload:
+        raw_key = str(item.get("bvid") or item.get("content_id") or "").strip()
+        if not raw_key:
             continue
-        if char == '"':
-            in_string = True
+        saw_identifier = True
+        if raw_key not in valid_keys:
             continue
-        if char == open_char:
-            if depth == 0:
-                start = index
-            depth += 1
-            continue
-        if char == close_char and depth > 0:
-            depth -= 1
-            if depth == 0 and start is not None:
-                snippets.append(text[start : index + 1])
-                start = None
-    return snippets
+        matched[raw_key] = item
+
+    return matched if saw_identifier else None
 
 
 @dataclass
@@ -1159,6 +1120,8 @@ class ContentDiscoveryEngine:
         profile_data = build_profile_summary(profile)
         content_items = [
             {
+                "bvid": c.bvid,
+                "content_id": c.content_id or c.bvid,
                 "title": c.title,
                 "up_name": c.up_name,
                 "description": (c.description or "")[:200],
@@ -1218,7 +1181,15 @@ class ContentDiscoveryEngine:
             payload = _parse_batch_evaluation_payload(raw)
             if payload is None:
                 raise ValueError("Expected scored JSON array from batch evaluation")
-        except Exception:
+        except Exception as exc:
+            if is_llm_rate_limit_error(exc):
+                logger.warning(
+                    "Batch evaluation skipped single-item fallback for %d items because "
+                    "the LLM provider is rate-limited or cooling down: %s",
+                    len(batch),
+                    exc,
+                )
+                return [0.0 for _ in batch]
             logger.warning(
                 "Batch evaluation failed for %d items, falling back to single eval",
                 len(batch),
@@ -1229,12 +1200,35 @@ class ContentDiscoveryEngine:
                 for c in batch
             ]
 
+        payload_by_id = _batch_results_by_content_key(payload, batch)
+        if payload_by_id is None and len(payload) != len(batch):
+            logger.warning(
+                "Batch evaluation result count mismatch without IDs (%d results for %d items), "
+                "falling back to single eval",
+                len(payload),
+                len(batch),
+            )
+            return [
+                await self.evaluate_content(c, profile, source_context=source_context)
+                for c in batch
+            ]
+
         results: list[float] = []
         for i, content in enumerate(batch):
-            if i >= len(payload):
+            if payload_by_id is None:
+                raw_item = payload[i] if i < len(payload) else None
+            else:
+                raw_item = next(
+                    (
+                        payload_by_id[key]
+                        for key in _content_result_keys(content)
+                        if key in payload_by_id
+                    ),
+                    None,
+                )
+            if raw_item is None:
                 results.append(0.0)
                 continue
-            raw_item = payload[i]
             if not isinstance(raw_item, dict):
                 results.append(0.0)
                 continue

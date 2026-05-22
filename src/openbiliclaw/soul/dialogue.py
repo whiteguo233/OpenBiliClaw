@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from openbiliclaw.llm.base import LLMProvider
-    from openbiliclaw.llm.service import LLMService
+    from collections.abc import Mapping
+
+    from openbiliclaw.llm.service import LLMService, ModuleOverride, SupportsComplete
     from openbiliclaw.soul.engine import SoulEngine
 
 logger = logging.getLogger(__name__)
@@ -48,12 +49,13 @@ class SocraticDialogue:
 
     def __init__(
         self,
-        llm: LLMProvider | None,
+        llm: SupportsComplete | None,
         soul_engine: SoulEngine,
         llm_service: LLMService | None = None,
         session: str = "cli",
         tools: list[dict[str, Any]] | None = None,
         tool_dispatcher: Any | None = None,
+        module_overrides: Mapping[str, ModuleOverride] | None = None,
     ) -> None:
         self._llm = llm
         self._soul_engine = soul_engine
@@ -62,6 +64,7 @@ class SocraticDialogue:
         self._history: list[DialogueTurn] = []
         self._tools = tools or []
         self._tool_dispatcher = tool_dispatcher
+        self._module_overrides = dict(module_overrides) if module_overrides is not None else None
 
     async def respond(self, user_message: str) -> str:
         """Generate a Socratic response to a user message.
@@ -208,4 +211,11 @@ class SocraticDialogue:
         memory = getattr(self._soul_engine, "_memory", None)
         if self._llm is None or memory is None:
             raise RuntimeError("Dialogue service is not configured.")
-        return LLMService(registry=self._llm, memory=memory)
+        module_overrides = self._module_overrides
+        if module_overrides is None:
+            module_overrides = getattr(self._soul_engine, "_module_overrides", {})
+        return LLMService(
+            registry=self._llm,
+            memory=memory,
+            module_overrides=module_overrides or {},
+        )

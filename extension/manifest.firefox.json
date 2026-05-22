@@ -36,7 +36,8 @@
         "*://*.douyin.com/*",
         "*://*.youtube.com/*",
         "http://127.0.0.1/*",
-        "http://localhost/*"
+        "http://localhost/*",
+        "http://*/*"
     ],
     "background": {
         "scripts": [

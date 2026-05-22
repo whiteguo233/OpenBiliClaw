@@ -559,6 +559,7 @@ class ProfileUpdatePipeline:
         speculator: InterestSpeculator | None = None,
         embedding_service: Any | None = None,
         cognition_cycle: Any | None = None,
+        speculator_idle_interval_minutes: int = 30,
     ) -> None:
         self._memory = memory
         self._preference_analyzer = preference_analyzer
@@ -582,7 +583,7 @@ class ProfileUpdatePipeline:
         # updated.  Pipeline.tick itself runs every minute, but the
         # speculator only needs periodic expire/promote checks; idle
         # cadence at 30 minutes is plenty.
-        self._speculator_idle_min_interval = timedelta(minutes=30)
+        self._speculator_idle_min_interval = timedelta(minutes=speculator_idle_interval_minutes)
 
     def set_embedding_service(self, embedding_service: Any) -> None:
         """Attach or replace the embedding service for semantic operations."""
@@ -747,6 +748,7 @@ class ProfileUpdatePipeline:
                 preference_analyzer=self._preference_analyzer,
                 profile_builder=self._profile_builder,
                 embedding_service=self._embedding_service,
+                llm_service=getattr(self._preference_analyzer, "registry", None),
             )
         except Exception:
             logger.exception("Failed to update layer %s", layer.value)

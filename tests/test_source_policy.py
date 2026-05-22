@@ -9,11 +9,23 @@ from openbiliclaw.runtime.source_policy import (
 )
 
 
-def test_source_enabled_map_keeps_bilibili_core_enabled() -> None:
+def test_source_enabled_map_reads_bilibili_switch() -> None:
     config = Config()
+    config.sources.bilibili.enabled = False
     config.sources.xiaohongshu.enabled = False
     config.sources.douyin.enabled = False
     config.sources.youtube.enabled = False
+
+    assert source_enabled_map(config) == {
+        "bilibili": False,
+        "xiaohongshu": False,
+        "douyin": False,
+        "youtube": False,
+    }
+
+
+def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
+    config = Config()
 
     assert source_enabled_map(config) == {
         "bilibili": True,
@@ -21,6 +33,21 @@ def test_source_enabled_map_keeps_bilibili_core_enabled() -> None:
         "douyin": False,
         "youtube": False,
     }
+    assert effective_pool_source_shares(config) == {"bilibili": 8}
+
+
+def test_effective_pool_source_shares_drop_disabled_bilibili() -> None:
+    config = Config()
+    config.sources.bilibili.enabled = False
+    config.sources.xiaohongshu.enabled = True
+    config.scheduler.pool_source_shares = {
+        "bilibili": 8,
+        "xiaohongshu": 2,
+        "douyin": 1,
+        "youtube": 1,
+    }
+
+    assert effective_pool_source_shares(config) == {"xiaohongshu": 2}
 
 
 def test_effective_pool_source_shares_drop_disabled_optional_sources() -> None:
@@ -94,14 +121,14 @@ def test_suggest_pool_source_shares_ignores_disabled_sources() -> None:
     suggestion = suggest_pool_source_shares(
         {"bilibili": 9, "xiaohongshu": 900, "douyin": 900, "youtube": 900},
         enabled_sources={
-            "bilibili": True,
+            "bilibili": False,
             "xiaohongshu": False,
             "douyin": False,
             "youtube": False,
         },
     )
 
-    assert suggestion == {"bilibili": 8}
+    assert suggestion == {}
 
 
 def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:

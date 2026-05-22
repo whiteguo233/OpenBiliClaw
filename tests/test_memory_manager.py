@@ -361,10 +361,13 @@ def test_account_sync_state_defaults_when_missing(tmp_path: Path) -> None:
     assert state == {
         "last_history_view_at": 0,
         "last_history_bvid": "",
+        "history_bvids_at_last_view_at": [],
         "last_favorites_sync_at": "",
         "favorite_signature": "",
+        "favorite_bvids": [],
         "last_following_sync_at": "",
         "following_signature": "",
+        "following_mids": [],
         "last_account_sync_at": "",
         "last_sync_error": "",
     }
@@ -378,10 +381,13 @@ def test_account_sync_state_round_trips_to_json(tmp_path: Path) -> None:
         {
             "last_history_view_at": 1710000000,
             "last_history_bvid": "BV1SYNC",
+            "history_bvids_at_last_view_at": ["BV1SYNC", "BV2SYNC"],
             "last_favorites_sync_at": "2026-03-14T12:00:00",
             "favorite_signature": "fav:abc",
+            "favorite_bvids": ["BVF1", "BVF2"],
             "last_following_sync_at": "2026-03-14T12:10:00",
             "following_signature": "follow:def",
+            "following_mids": ["1", "2"],
             "last_account_sync_at": "2026-03-14T12:10:00",
             "last_sync_error": "",
         }
@@ -391,12 +397,50 @@ def test_account_sync_state_round_trips_to_json(tmp_path: Path) -> None:
 
     assert state["last_history_view_at"] == 1710000000
     assert state["last_history_bvid"] == "BV1SYNC"
+    assert state["history_bvids_at_last_view_at"] == ["BV1SYNC", "BV2SYNC"]
     assert state["last_favorites_sync_at"] == "2026-03-14T12:00:00"
     assert state["favorite_signature"] == "fav:abc"
+    assert state["favorite_bvids"] == ["BVF1", "BVF2"]
     assert state["last_following_sync_at"] == "2026-03-14T12:10:00"
     assert state["following_signature"] == "follow:def"
+    assert state["following_mids"] == ["1", "2"]
     assert state["last_account_sync_at"] == "2026-03-14T12:10:00"
     assert state["last_sync_error"] == ""
+
+
+def test_source_bootstrap_state_defaults_when_missing(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    state = memory.load_source_bootstrap_state()
+
+    assert state == {
+        "xhs_seen_note_keys": [],
+        "dy_seen_video_keys": [],
+        "yt_seen_item_keys": [],
+        "last_source_bootstrap_sync_at": "",
+    }
+
+
+def test_source_bootstrap_state_round_trips_to_json(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    memory.save_source_bootstrap_state(
+        {
+            "xhs_seen_note_keys": ["saved:xhs-1"],
+            "dy_seen_video_keys": ["dy_collect:dy-1"],
+            "yt_seen_item_keys": ["yt_history:yt-1"],
+            "last_source_bootstrap_sync_at": "2026-05-20T12:00:00",
+        }
+    )
+
+    state = memory.load_source_bootstrap_state()
+
+    assert state["xhs_seen_note_keys"] == ["saved:xhs-1"]
+    assert state["dy_seen_video_keys"] == ["dy_collect:dy-1"]
+    assert state["yt_seen_item_keys"] == ["yt_history:yt-1"]
+    assert state["last_source_bootstrap_sync_at"] == "2026-05-20T12:00:00"
 
 
 def test_insight_candidates_default_to_empty_list(tmp_path: Path) -> None:

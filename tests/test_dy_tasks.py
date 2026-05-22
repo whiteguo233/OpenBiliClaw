@@ -192,3 +192,34 @@ def test_dy_task_queue_counts_non_stale_failures_for_daily_budget(
     assert queue.enqueue_with_id("search", {"keywords": ["有效任务"]}, daily_budget=2)
 
     assert queue.enqueue_with_id("search", {"keywords": ["第三个任务"]}, daily_budget=2) is None
+
+
+def test_dy_task_queue_claims_pending_task_until_terminal_status(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+    task_id = queue.enqueue_with_id("bootstrap_profile", {"scopes": ["dy_collect"]})
+    assert task_id is not None
+
+    first = queue.next_pending()
+
+    assert first is not None
+    assert first["id"] == task_id
+    assert first["status"] == "in_progress"
+    assert queue.next_pending() is None
+
+    queue.merge_result(task_id, videos=[], complete=True)
+    assert queue.next_pending() is None
+
+
+def test_dy_task_queue_finds_recent_bootstrap_task(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+    task_id = queue.enqueue_with_id("bootstrap_profile", {"scopes": ["dy_collect"]})
+    assert task_id is not None
+
+    recent = queue.find_recent_task("bootstrap_profile", recent_hours=6)
+
+    assert recent is not None
+    assert recent["id"] == task_id

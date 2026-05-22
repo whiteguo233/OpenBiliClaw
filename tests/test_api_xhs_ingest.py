@@ -23,6 +23,7 @@ class RecordingMemoryManager:
         self.events: list[dict[str, object]] = []
         self.profile_signals: list[object] = []
         self._discovery_runtime_state: dict[str, object] = {}
+        self._source_bootstrap_state: dict[str, object] = {}
 
     async def propagate_event(self, event: dict[str, object]) -> None:
         self.events.append(event)
@@ -36,6 +37,12 @@ class RecordingMemoryManager:
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         self._discovery_runtime_state = dict(state)
+
+    def load_source_bootstrap_state(self) -> dict[str, object]:
+        return dict(self._source_bootstrap_state)
+
+    def save_source_bootstrap_state(self, state: dict[str, object]) -> None:
+        self._source_bootstrap_state = dict(state)
 
 
 class RecordingProfilePipeline:
@@ -801,6 +808,46 @@ class TestXhsTaskResults:
         assert cache_row["title"] == "手冲咖啡入门"
         assert cache_row["source"] == "xhs-extension-task"
         assert cache_row["source_platform"] == "xiaohongshu"
+
+    def test_xhs_bootstrap_skips_notes_already_seen_in_previous_task(
+        self,
+        xhs_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        """A second bootstrap task returning the same note must not replay
+        old profile signals into memory / incremental profile updates."""
+        from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
+
+        app_client, db, memory = xhs_task_client
+        queue = XhsTaskQueue(db)
+
+        for _ in range(2):
+            assert queue.enqueue(
+                "bootstrap_profile",
+                {"scopes": ["saved", "liked", "xhs_history"]},
+            )
+            task = queue.next_pending()
+            assert task is not None
+            response = app_client.post(
+                "/api/sources/xhs/task-result",
+                json={
+                    "task_id": task["id"],
+                    "status": "ok",
+                    "urls": ["https://www.xiaohongshu.com/explore/repeated-note"],
+                    "notes": [
+                        {
+                            "scope": "saved",
+                            "title": "重复收藏",
+                            "url": "https://www.xiaohongshu.com/explore/repeated-note",
+                            "note_id": "repeated-note",
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 200
+
+        assert [event["title"] for event in memory.events] == ["重复收藏"]
+        assert len(memory.profile_signals) == 1
+        assert memory.load_source_bootstrap_state()["xhs_seen_note_keys"] == ["saved:repeated-note"]
 
     def test_xhs_self_authored_notes_are_filtered(
         self,

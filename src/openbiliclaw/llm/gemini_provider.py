@@ -95,6 +95,7 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # ``reasoning_effort`` is DeepSeek-specific. Gemini has its own
         # ``thinking_config`` that's already auto-disabled in JSON mode.
@@ -102,11 +103,12 @@ class GeminiProvider(LLMProvider):
         del reasoning_effort
         if types is None:
             _raise_missing_sdk()
+        effective_model = (model or "").strip() or self._model
         # ``thinking_budget=0`` is a 2.5-flash cost saver. Reasoning-first
         # models (3.x family, 2.5-pro) reject it with 400 INVALID_ARGUMENT
         # — see _is_reasoning_first_model. Skip the hack on those.
         thinking_config = None
-        if json_mode and not self._is_reasoning_first_model(self._model):
+        if json_mode and not self._is_reasoning_first_model(effective_model):
             thinking_config = types.ThinkingConfig(thinking_budget=0)
         config = types.GenerateContentConfig(
             temperature=temperature,
@@ -116,7 +118,7 @@ class GeminiProvider(LLMProvider):
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         response = await self._request_with_retry(
-            model=self._model,
+            model=effective_model,
             contents=self._render_messages(messages),
             config=config,
         )
@@ -141,7 +143,7 @@ class GeminiProvider(LLMProvider):
 
         return LLMResponse(
             content=content,
-            model=response.model_version or self._model,
+            model=response.model_version or effective_model,
             provider="gemini",
             usage=usage,
             raw=response,

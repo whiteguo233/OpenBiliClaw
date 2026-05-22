@@ -26,7 +26,7 @@
     Backend API port. Default: 8420
 
 .PARAMETER ApiHost
-    Backend bind address. Default: 127.0.0.1
+    Backend bind address. Default: 0.0.0.0
 
 .PARAMETER Mode
     Bootstrap mode. Default: "local" (no Docker on Windows by design;
@@ -118,7 +118,7 @@ $CandidateSources  = @(
 if (-not $InstallDir) { $InstallDir = $DefaultInstallDir }
 if (-not $Branch)     { $Branch     = if ($env:OPENBILICLAW_BRANCH) { $env:OPENBILICLAW_BRANCH } else { $DefaultBranch } }
 if ($Port -le 0)      { $Port       = if ($env:PORT) { [int]$env:PORT } else { 8420 } }
-if (-not $ApiHost)    { $ApiHost    = '127.0.0.1' }
+if (-not $ApiHost)    { $ApiHost    = '0.0.0.0' }
 if (-not $Mode)       { $Mode       = 'local' }   # native Windows defaults to local, not docker
 $RepoUrl = if ($env:OPENBILICLAW_REPO_URL) { $env:OPENBILICLAW_REPO_URL } else { $DefaultRepoUrl }
 
@@ -288,6 +288,10 @@ function Invoke-Bootstrap([string]$PythonExe) {
     )
     if ($ReuseFrom) { $args += '--reuse-from'; $args += $ReuseFrom }
     if ($SkipStart) { $args += '--skip-start' }
+    if (-not $env:OPENBILICLAW_NONINTERACTIVE -and -not $env:CI) {
+        $args += '--interactive-confirm'
+        $args += '--wait-for-extension-cookie'
+    }
 
     $script:BootstrapLog = [IO.Path]::GetTempFileName()
     Log-Info "Running bootstrap: $PythonExe $bootstrap $($args -join ' ')"
@@ -330,19 +334,21 @@ init_decisions = details.get("init_decisions") or {}
 decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
 douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
+youtube_flag = ((init_decisions.get("youtube") or {}).get("flag") or "")
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
 print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
 print(f"DOUYIN_FLAG={douyin_flag}")
+print(f"YOUTUBE_FLAG={youtube_flag}")
 '@
     # PS 5.1 (Windows 10/11 default) lacks the ?? null-coalescing operator
     # — that's a PS 7+ feature. Use a defensive fallback instead.
     $reuseArg = if ($null -ne $ReuseFrom) { $ReuseFrom } else { '' }
     $summary = & $PythonExe -c $parser $script:BootstrapLog $InstallDir "$Port" $ApiHost $reuseArg
 
-    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''; $douyinFlag = ''
+    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''; $douyinFlag = ''; $youtubeFlag = ''
     foreach ($line in $summary -split "`r?`n") {
         if ($line -like 'STATUS=*')     { $status    = $line.Substring(7) }
         elseif ($line -like 'HEALTH_URL=*') { $healthUrl = $line.Substring(11) }
@@ -350,9 +356,18 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         elseif ($line -like 'DECISIONS=*')  { $decisions = $line.Substring(10) }
         elseif ($line -like 'XHS_FLAG=*')   { $xhsFlag   = $line.Substring(9) }
         elseif ($line -like 'DOUYIN_FLAG=*') { $douyinFlag = $line.Substring(12) }
+        elseif ($line -like 'YOUTUBE_FLAG=*') { $youtubeFlag = $line.Substring(13) }
     }
     if (-not $xhsFlag) { $xhsFlag = '--no-xhs' }
     if (-not $douyinFlag) { $douyinFlag = '--no-douyin' }
+    if (-not $youtubeFlag) { $youtubeFlag = '--no-youtube' }
+    if (-not $healthUrl) {
+        if ($ApiHost -in @('0.0.0.0', '::', '[::]')) {
+            $healthUrl = "http://127.0.0.1:$Port/api/health"
+        } else {
+            $healthUrl = "http://${ApiHost}:$Port/api/health"
+        }
+    }
 
     # v0.3.20: distinguish "only B站 cookie missing" (the expected state for
     # users on the recommended browser-extension auto-sync path) from
@@ -407,7 +422,8 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         Write-Host ''
         Write-Host '  2. Source bootstrap data (privacy choice):'
         Write-Host '       Ask whether to include Xiaohongshu likes/favorites and'
-        Write-Host '       Douyin post/favorite/like/follow in the initial profile.'
+        Write-Host '       Douyin post/favorite/like/follow and YouTube history/'
+        Write-Host '       subscriptions/likes in the initial profile.'
         Write-Host '       Default is NO unless they opt in per source.'
         Write-Host ''
         Write-Host '  3. Re-run bootstrap with explicit choices (DO NOT add --skip-init):'
@@ -420,10 +436,11 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         }
         Write-Host "         $xhsFlag ``"
         Write-Host "         $douyinFlag ``"
+        Write-Host "         $youtubeFlag ``"
         Write-Host "         --port $Port --host $ApiHost"
         Write-Host ''
-        Write-Host '     Use --yes-xhs / --yes-douyin only after the user says yes;'
-        Write-Host '     otherwise keep --no-xhs / --no-douyin.'
+        Write-Host '     Use --yes-xhs / --yes-douyin / --yes-youtube only after'
+        Write-Host '     the user says yes; otherwise keep the matching --no-* flag.'
         Write-Host '     This then runs init: B站 history, soul profile, first discovery.'
     } elseif ($missingOnlyCookie) {
         Write-Host 'Next step - get your B站 Cookie to the backend (pick ONE):'
@@ -439,6 +456,7 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         Write-Host '        - Embedding model/service (default: Ollama bge-m3)'
         Write-Host '        - Xiaohongshu likes/favorites? (default: no; yes only on opt-in)'
         Write-Host '        - Douyin post/favorite/like/follow? (default: no; yes only on opt-in)'
+        Write-Host '        - YouTube history/subscriptions/likes? (default: no; yes only on opt-in)'
         Write-Host ''
         Write-Host '  (B) [manual fallback]'
         Write-Host "      F12 -> Network -> copy the 'Cookie' header from any"
@@ -452,9 +470,10 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         }
         Write-Host "            $xhsFlag ``"
         Write-Host "            $douyinFlag ``"
+        Write-Host "            $youtubeFlag ``"
         Write-Host "            --port $Port --host $ApiHost"
-        Write-Host '      Use --yes-xhs / --yes-douyin only after the user opts in;'
-        Write-Host '      otherwise keep --no-xhs / --no-douyin.'
+        Write-Host '      Use --yes-xhs / --yes-douyin / --yes-youtube only after'
+        Write-Host '      the user opts in; otherwise keep the matching --no-* flag.'
         Write-Host ''
         Write-Host '  Verify the backend is healthy any time:'
         Write-Host "      Invoke-RestMethod $healthUrl"
@@ -464,6 +483,16 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         Write-Host '  1. Choose your LLM provider (default: deepseek):'
         Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | ollama'
         Write-Host ''
+        if ($missing -match 'api_key') {
+            Write-Host '     LLM API key - get one from your chosen provider:'
+            Write-Host '         DeepSeek:   https://platform.deepseek.com/api_keys'
+            Write-Host '         OpenAI:     https://platform.openai.com/api-keys'
+            Write-Host '         Gemini:     https://aistudio.google.com/apikey'
+            Write-Host '         Claude:     https://console.anthropic.com/settings/keys'
+            Write-Host '         OpenRouter: https://openrouter.ai/keys'
+            Write-Host '         Ollama:     (no key needed, just install and run)'
+            Write-Host ''
+        }
         if ($missing -match 'bilibili.cookie') {
             Write-Host '     For the Bilibili cookie you have TWO options (pick ONE):'
             Write-Host ''
@@ -483,8 +512,9 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         Write-Host '     or a custom OpenAI-compatible embedding endpoint.'
         Write-Host ''
         Write-Host '  3. Ask whether to include source bootstrap data:'
-        Write-Host '     Xiaohongshu likes/favorites and Douyin post/favorite/like/follow.'
-        Write-Host '     Default: no. Use --yes-xhs / --yes-douyin only after explicit opt-in.'
+        Write-Host '     Xiaohongshu likes/favorites, Douyin post/favorite/like/follow,'
+        Write-Host '     and YouTube history/subscriptions/likes.'
+        Write-Host '     Default: no. Use --yes-* flags only after explicit opt-in.'
         Write-Host ''
         Write-Host '  4. Prepare missing values, then run with values filled in (DO NOT add --skip-init):'
         Write-Host ''
@@ -498,6 +528,7 @@ print(f"DOUYIN_FLAG={douyin_flag}")
         }
         Write-Host "         $xhsFlag ``"
         Write-Host "         $douyinFlag ``"
+        Write-Host "         $youtubeFlag ``"
         if ($missing -match 'bilibili.cookie') { Write-Host "         --bilibili-cookie '<YOUR_COOKIE>' ``" }
         Write-Host "         --port $Port --host $ApiHost"
         Write-Host ''

@@ -37,8 +37,8 @@
 - **BilibiliAdapter** — 把四大 B 站策略包装成 adapter 形态，对 recipe 的 `strategy` 字段分发到 `SearchStrategy` / `TrendingStrategy` / `RelatedChainStrategy` / `ExploreStrategy`。
 - **WebSourceAdapter / XiaohongshuAdapter** — 通用"浏览器 + LLM 抽取"通道。走 `BrowserManager` 拿页面 `(innerText, anchors)` 快照，用 LLM 从 innerText 提取标题 / 作者 / 摘要，再用 anchor 列表按标题模糊匹配回填 `content_url` / `content_id`。
 - **DyTaskQueue** — 抖音初始化画像、`fetch-douyin` smoke、search / hot / feed discovery 都走同一扩展任务桥；初始化回传发布 / 收藏 / 点赞 / 关注后转成统一行为事件，discovery 任务只保留候选结果。
-- **YtTaskQueue / Takeout parser** — YouTube 初始化画像走扩展任务桥读取观看历史 / 订阅 / 点赞；Google Takeout 导入走 `youtube.takeout` 离线解析，两条入口都转成统一行为事件。
-- **YouTube discovery strategies** — `yt_search` 由 LLM 从画像生成关键词后用 `scrapetube` 搜索，`yt_trending` 优先通过 YouTube InnerTube browse API 拉 trending feed，当前 `FEtrending` 失效时降级抓取公开 topic 页的 `ytInitialData` 视频，`yt_channel` 从 DB 中 YouTube follow 事件读取订阅频道并用 `scrapetube` / `yt-dlp` 拉最新视频；三者都输出 `source_platform="youtube"` 的 `DiscoveredContent` 并进入 LLM 打分过滤。
+- **YtTaskQueue / Takeout parser** — YouTube 初始化画像走扩展任务桥读取观看历史 / 订阅 / 点赞；Google Takeout 导入走 `youtube.takeout` 离线解析，两条入口都转成统一行为事件。`yt_tasks` 不承载 steady-state discovery。
+- **YouTube discovery strategies / producer** — `yt_search` 由 LLM 从画像生成关键词后用 `scrapetube` 搜索，`yt_trending` 优先通过 YouTube InnerTube browse API 拉 trending feed，当前 `FEtrending` 失效时降级抓取公开 topic 页的 `ytInitialData` 视频，`yt_channel` 从 DB 中 YouTube follow 事件读取订阅频道并用 `scrapetube` / `yt-dlp` 拉最新视频；三者由后端 `YoutubeDiscoveryProducer` 在 YouTube 低于 quota 时独立调度，输出 `source_platform="youtube"` 的 `DiscoveredContent` 并进入 LLM 打分过滤 / 缓存路径。
 - **DouyinDiscoveryService / DouyinDirectStrategy / DouyinDirectClient** — 抖音 discovery 走 opt-in 路径，服务层统一封装 search / hot / feed 三个公开来源，既可通过 `ContentDiscoveryEngine` 写入 `content_cache`，也可在 `openbiliclaw discover-douyin --no-cache` 下直接跑策略调试。
 - **DouyinPluginSearchClient** — search 子来源优先复用 `dy_tasks(type="search")` 插件签名链路，结果以 `dy-plugin-search` 进入 discovery；hot 子来源优先复用 `dy_tasks(type="hot")`，由扩展后台打开 `/hot/{sentence_id}` 后签名 related API，结果以 `dy-plugin-hot-related` 进入 discovery；feed 子来源复用 `dy_tasks(type="feed")`，由扩展在后台首页签名 `/aweme/v1/web/tab/feed/`，结果以 `dy-plugin-feed` 进入 discovery。search / hot / feed discovery 任务都会用非激活 tab 执行，只有 `bootstrap_profile` 这类显式账号信号导入允许前台。每次入队前会把过期的 search / hot / feed pending discovery 任务标记为 failed，避免旧任务挡住当前 producer；`ContentDiscoveryEngine.register_strategy()` 会按 strategy name 替换旧实例，避免 `DouyinDiscoveryService(cache=True)` 多轮运行后累积多个 `douyin_direct` 并重复入队 search。`openbiliclaw search-douyin` 仍保留为独立 search smoke / 诊断命令，结果不转成 memory event。
 
@@ -530,8 +530,12 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M119 style_key 风格标注 | ✅ | discovery 入池时会按标题/描述轻规则补 `style_key`，为推荐层的风格多样性约束提供稳定信号 |
 | M120 候选池来源交错取样 | ✅ | `get_pool_candidates()` 现在会按 `search / trending / related_chain / explore` 交错取样，避免候选窗口被单一来源刷满 |
 | M122 来源优先补齐与风格误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少硬内容误判成 `light_chat` |
-| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1，但 disabled 平台会从有效配比中剔除。B 站缺口会合并四个策略到一次 discover()，再用 `strategy_limits` 把同一个平台缺口分摊给各策略；小红书 / 抖音缺口分别交给对应 producer；YouTube 缺口走 `yt_search` / `yt_trending` / `yt_channel`；超配额平台族会被压回目标内 |
+| M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认保存的 B 站 / 小红书 / 抖音 / YouTube share = 8 / 1 / 1 / 1，但默认只有 B 站启用，disabled 平台会从有效配比中剔除。B 站缺口会合并四个策略到一次 discover()，再用 `strategy_limits` 把同一个平台缺口分摊给各策略；小红书 / 抖音缺口分别交给对应 producer；YouTube 缺口交给 `YoutubeDiscoveryProducer` 独立 loop，按每日执行 ledger 调用 `yt_search` / `yt_trending` / `yt_channel`；超配额平台族会被压回目标内 |
+| runtime 调度参数配置 | ✅ | 后台 discovery 不使用 `discovery_cron`；`ContinuousRefreshController` 从 `[scheduler]` 读取 `refresh_check_interval_seconds`、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours`、`discovery_limit` 和 `proactive_push_interval_seconds`，配置热重载后重建 controller 生效 |
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
+| v0.3.74 eval-batch JSON 容错统一 | ✅ | `_evaluate_batch` 改用 `llm.json_utils.extract_llm_json_list()`，在原 fenced / echo / JSONL 基础上统一兼容 `results/items/data/output/scores/evaluations` wrapper、MiMo malformed `{ [ ... ] }` 数组包裹和 schema echo 后最终结果；解析失败仍按原有降级路径处理，不把示例 JSON 当作真实评分 |
+| v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时降级逐条评估 |
+| v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`；本批候选返回 0 分并等待下一轮补货重试，避免一次 Gemini 429 放大成整批 traceback |
 | M126 explore 高风险子簇压缩 | ✅ | refresh 结束后会温和压一轮 `explore` 内部的高风险相邻簇，例如制造 / 工艺 / 材料、博弈 / 桌游 / 机制，避免单簇继续堆满 fresh pool |
 | v0.3.0 trending 按 rid 交错 | ✅ | `TrendingStrategy` 拉 5 个分区排行榜后做 round-robin 交错再送 LLM 评估，避免下游 30 条 hard-cap 把 rid=0/36 的顶部全吃掉 |
 | v0.3.0 explore 按 domain 交错 | ✅ | `ExploreStrategy` 同模式：按 `domain_label` round-robin 后再送评估 |
@@ -591,6 +595,7 @@ engine.register_strategy(
     SearchStrategy(
         llm_service=service,
         bilibili_client=bilibili_client,
+        database=db,
     )
 )
 
@@ -611,6 +616,9 @@ assert 0.0 <= score <= 1.0
 - 主候选少于目标数量时，会依次尝试策略 backfill 和历史缓存 backfill；策略 backfill 同样会收到兼容转发的 `pool_snapshot`
 - 当调用方只需要少量候选时，策略会先把送入 LLM 评估的候选窗口压到 `max(6, limit*2)`，仍保留过采样缓冲，但不再用固定 90 条窗口浪费评估调用
 - batch 评估结果解析会优先选择包含 `score` 的结果数组或 object 序列；如果 provider 回显输入 JSON、包 Markdown fence、或返回 NDJSON，仍按一次 batch 处理，不再拆成 N 次单条评估
+- batch prompt 和响应都带 `bvid/content_id`；只要响应里有可识别 ID，引擎会按 ID 而不是数组下标写回评分和理由。没有 ID 且结果数量不完整时会回退到单条评估，避免 LLM 漏项导致后续候选整体错位
+- 如果 batch 调用失败被识别为 LLM provider 限流或 cooldown，本轮不会再触发逐条 fallback；这些候选按 0 分处理，下一轮 refresh 在 provider 恢复后重新发现 / 评估
+- `SearchStrategy` / `TrendingStrategy` / `RelatedChainStrategy` / `ExploreStrategy`、YouTube 三策略和 `DouyinDirectStrategy` 在内部临时构造 evaluator 时都会透传 `database`。因此 CLI、daemon runtime、YouTube producer、Douyin producer 和 OpenClaw bootstrap 路径都能读取同一份近期 negative exemplars，避免只有外层 engine 能看到短期负反馈样本。
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
 
@@ -639,6 +647,7 @@ async with DouyinDirectClient(cookie=cookie) as direct_client:
     service = DouyinDiscoveryService(
         client=client,
         discovery_engine=engine,  # 传入时会注册 douyin_direct 并写 content_cache
+        database=database,        # 可选；未传时会从 discovery_engine._database 兜底
     )
     result = await service.discover(
         profile,
@@ -697,14 +706,12 @@ hints = snapshot.to_prompt_hints()
 
 ```python
 source_targets = controller._source_target_counts()
-# 默认有效 [scheduler.pool_source_shares] = 8:1:1 且 pool_target=600 时：
+# 默认有效 [scheduler.pool_source_shares] = 8 且 pool_target=600 时：
 # {
-#     "bilibili": 480,
-#     "xiaohongshu": 60,
-#     "douyin": 60,
+#     "bilibili": 600,
 # }
-# 如果 YouTube enabled=true 且有效配比为 8:1:1:1，则 YouTube 也会获得
-# 独立 target，并由 yt_search / yt_trending / yt_channel 补池。
+# 如果显式启用 XHS / Douyin / YouTube，对应平台会按保存的 share 获得
+# 独立 target，并由各自 producer 或 strategy 补池。
 
 database.reactivate_under_quota_pool_sources(
     target=600,

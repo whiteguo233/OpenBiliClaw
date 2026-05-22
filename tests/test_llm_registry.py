@@ -6,11 +6,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+from openbiliclaw.config import Config, EmbeddingConfig, LLMConfig, LLMProviderConfig
 from openbiliclaw.llm.base import (
+    LLMFallbackError,
     LLMProvider,
     LLMProviderError,
     LLMRateLimitError,
+    LLMRegistry,
     LLMResponse,
     LLMResponseError,
 )
@@ -31,6 +33,7 @@ class FakeProvider(LLMProvider):
     errors: list[Exception] = field(default_factory=list)
     health: bool = True
     call_count: int = 0
+    models: list[str | None] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -44,8 +47,10 @@ class FakeProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         self.call_count += 1
+        self.models.append(model)
         if self.errors:
             raise self.errors.pop(0)
         if self.responses:
@@ -70,6 +75,35 @@ def test_build_llm_registry_registers_available_providers() -> None:
 
     assert registry.default_provider == "openai"
     assert registry.available_providers == ["openai", "deepseek", "ollama"]
+
+
+def test_build_llm_registry_registers_openai_with_codex_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm.codex_auth import CodexCredentials
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(
+                api_key="",
+                model="gpt-5-nano",
+                auth_mode="codex_oauth",
+            ),
+        )
+    )
+
+    monkeypatch.setattr(
+        "openbiliclaw.llm.codex_auth.load_codex_credentials",
+        lambda: CodexCredentials("access-token", "refresh-token", 9999999999),
+    )
+
+    registry = build_llm_registry(config)
+
+    assert registry.default_provider == "openai"
+    assert registry.available_providers == ["openai"]
+    provider = registry.get("openai")
+    assert provider._client.api_key == "access-token"
 
 
 def test_build_llm_registry_registers_openrouter() -> None:
@@ -169,9 +203,7 @@ def test_openai_compatible_can_serve_as_embedding_provider(tmp_path) -> None:
     assert service._provider.name == "openai_compatible"
     assert service._model == "bge-large-en-v1.5"
     # Built against the embedding-section base_url, not [llm.openai].
-    assert str(service._provider._client.base_url).rstrip("/") == (
-        "http://localhost:8000/v1"
-    )
+    assert str(service._provider._client.base_url).rstrip("/") == ("http://localhost:8000/v1")
     assert service._provider._client.api_key == "vllm-token"
 
 
@@ -337,6 +369,71 @@ def test_build_embedding_service_respects_explicit_model_override(
     assert service._model == "custom-embed-v2"
 
 
+def test_ollama_embedding_with_empty_credentials_uses_local_default_without_warning(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ollama embedding is local, so empty credentials are not chat
+    credential back-compat.
+    """
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            ollama=LLMProviderConfig(model="", base_url=""),
+            embedding=EmbeddingConfig(
+                provider="ollama",
+                model="bge-m3",
+                api_key="",
+                base_url="",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._model == "bge-m3"
+    assert service._provider.base_url == "http://localhost:11434/v1"
+    assert "back-compat" not in caplog.text.lower()
+
+
+def test_ollama_embedding_without_base_url_uses_local_default(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            ollama=LLMProviderConfig(model="", base_url="http://remote-ollama:11434"),
+            embedding=EmbeddingConfig(provider="ollama", model="bge-m3"),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._provider.base_url == "http://localhost:11434/v1"
+    assert "back-compat" not in caplog.text.lower()
+
+
 # ---------------------------------------------------------------------------
 # Regression: providers without an embeddings endpoint must NOT silently
 # return None. v0.3.18 and earlier handed the request to Claude / DeepSeek /
@@ -360,6 +457,7 @@ def test_build_embedding_service_falls_back_when_claude_is_default(
             default_provider="claude",
             claude=LLMProviderConfig(api_key="claude-key"),
             ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+            embedding=EmbeddingConfig(fallback_enabled=True, fallback_provider="ollama"),
         ),
         data_dir=str(tmp_path),
     )
@@ -382,6 +480,7 @@ def test_build_embedding_service_falls_back_when_deepseek_is_default(
             default_provider="deepseek",
             deepseek=LLMProviderConfig(api_key="deepseek-key"),
             ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+            embedding=EmbeddingConfig(fallback_enabled=True, fallback_provider="ollama"),
         ),
         data_dir=str(tmp_path),
     )
@@ -406,6 +505,42 @@ def test_build_embedding_service_returns_none_with_no_capable_provider(
     )
     registry = build_llm_registry(config)
     service = build_embedding_service(config, registry)
+    assert service is None
+
+
+def test_build_embedding_service_empty_provider_does_not_follow_default_llm(
+    tmp_path,
+) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            embedding=EmbeddingConfig(provider="", fallback_enabled=False),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+
+    service = build_embedding_service(config, registry)
+
+    assert service is None
+
+
+def test_build_embedding_service_does_not_borrow_chat_credentials_when_disabled(
+    tmp_path,
+) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            embedding=EmbeddingConfig(provider="openai", api_key="", fallback_enabled=False),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+
+    service = build_embedding_service(config, registry)
+
     assert service is None
 
 
@@ -443,7 +578,11 @@ def test_openai_primary_with_default_embedding_model_uses_correct_default(
         llm=LLMConfig(
             default_provider="openai",
             openai=LLMProviderConfig(api_key="openai-key"),
-            embedding=EmbeddingConfig(provider="", model=""),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="",
+                api_key="openai-key",
+            ),
         ),
         data_dir=str(tmp_path),
     )
@@ -497,9 +636,7 @@ def test_embedding_uses_dedicated_credentials_over_chat_block(
     # SDK client because OpenAIProvider doesn't re-expose api_key.
     assert service._provider._client.api_key == "dedicated-embedding-key"
     # AsyncOpenAI normalises base_url with a trailing slash.
-    assert str(service._provider._client.base_url).rstrip("/") == (
-        "https://embed.example.com/v1"
-    )
+    assert str(service._provider._client.base_url).rstrip("/") == ("https://embed.example.com/v1")
 
 
 def test_embedding_provider_independent_from_chat_provider(
@@ -556,7 +693,12 @@ def test_embedding_back_compat_falls_back_to_chat_block(tmp_path) -> None:
                 api_key="legacy-chat-side-key",
                 base_url="https://api.openai.com/v1",
             ),
-            embedding=EmbeddingConfig(provider="openai", model=""),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="",
+                fallback_enabled=True,
+                fallback_provider="openai",
+            ),
         ),
         data_dir=str(tmp_path),
     )
@@ -569,6 +711,83 @@ def test_embedding_back_compat_falls_back_to_chat_block(tmp_path) -> None:
     # proves the back-compat code path was taken.
     assert service._provider._client.api_key == "legacy-chat-side-key"
     assert service._model == "text-embedding-3-small"
+
+
+def test_embedding_does_not_auto_fallback_without_explicit_fallback_provider(tmp_path) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            gemini=LLMProviderConfig(api_key="gemini-key"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                api_key="",
+                fallback_enabled=True,
+                fallback_provider="",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is None
+
+
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
+def test_embedding_uses_explicit_fallback_provider(tmp_path) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            gemini=LLMProviderConfig(api_key="gemini-key"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                api_key="",
+                fallback_enabled=True,
+                fallback_provider="gemini",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert service._provider.name == "gemini"
+
+
+def test_openai_embedding_chat_credential_fallback_still_warns_once(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm import registry as registry_mod
+
+    registry_mod._embedding_compat_warned.clear()
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-test", base_url=""),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                api_key="",
+                base_url="",
+                fallback_enabled=True,
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="openbiliclaw.llm.registry"):
+        service = build_embedding_service(config, build_llm_registry(config))
+        again = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert again is not None
+    compat = [r for r in caplog.records if "back-compat" in r.getMessage().lower()]
+    assert len(compat) == 1
+    assert "[llm.openai]" in compat[0].getMessage()
 
 
 def test_emit_embedding_compat_warning_fires_once_per_provider(
@@ -623,11 +842,40 @@ def test_openai_provider_supports_embedding_flag_is_set() -> None:
 
 
 @pytest.mark.asyncio
+async def test_registry_complete_does_not_fallback_when_disabled() -> None:
+    openai = FakeProvider("openai", errors=[LLMProviderError("down")])
+    claude = FakeProvider("claude", responses=[LLMResponse(content="ok", provider="claude")])
+    registry = build_llm_registry(
+        Config(
+            llm=LLMConfig(
+                default_provider="openai",
+                fallback_enabled=False,
+                openai=LLMProviderConfig(api_key="openai-key"),
+                claude=LLMProviderConfig(api_key="claude-key"),
+            )
+        ),
+        provider_overrides={
+            "openai": openai,
+            "claude": claude,
+        },
+        fallback_order=["openai", "claude"],
+    )
+
+    with pytest.raises(LLMFallbackError):
+        await registry.complete([{"role": "user", "content": "hi"}])
+
+    assert openai.call_count == 1
+    assert claude.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_registry_falls_back_on_retryable_errors() -> None:
     registry = build_llm_registry(
         Config(
             llm=LLMConfig(
                 default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="claude",
                 openai=LLMProviderConfig(api_key="openai-key"),
             )
         ),
@@ -648,11 +896,42 @@ async def test_registry_falls_back_on_retryable_errors() -> None:
 
 
 @pytest.mark.asyncio
+async def test_registry_does_not_auto_fallback_without_explicit_fallback_provider() -> None:
+    registry = build_llm_registry(
+        Config(
+            llm=LLMConfig(
+                default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="",
+                openai=LLMProviderConfig(api_key="openai-key"),
+                claude=LLMProviderConfig(api_key="claude-key"),
+            )
+        ),
+        provider_overrides={
+            "openai": FakeProvider("openai", errors=[LLMProviderError("down")]),
+            "claude": FakeProvider(
+                "claude",
+                responses=[LLMResponse(content="ok", provider="claude")],
+            ),
+        },
+        fallback_order=["openai", "claude"],
+    )
+
+    with pytest.raises(LLMFallbackError):
+        await registry.complete([{"role": "user", "content": "hi"}])
+
+    assert registry._fallback_order() == ["openai"]
+    assert registry.get("claude").call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_registry_does_not_fallback_on_response_error() -> None:
     registry = build_llm_registry(
         Config(
             llm=LLMConfig(
                 default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="claude",
                 openai=LLMProviderConfig(api_key="openai-key"),
             )
         ),
@@ -676,6 +955,8 @@ async def test_registry_health_check_all() -> None:
         Config(
             llm=LLMConfig(
                 default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="ollama",
                 openai=LLMProviderConfig(api_key="openai-key"),
             )
         ),
@@ -706,6 +987,8 @@ async def test_registry_temporarily_cools_down_rate_limited_provider(
         Config(
             llm=LLMConfig(
                 default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="claude",
                 openai=LLMProviderConfig(api_key="openai-key"),
             )
         ),
@@ -725,6 +1008,63 @@ async def test_registry_temporarily_cools_down_rate_limited_provider(
     assert second.provider == "claude"
     assert third.provider == "openai"
     assert openai.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_registry_complete_provider_uses_exact_provider_and_model() -> None:
+    openai = FakeProvider("openai")
+    claude = FakeProvider("claude", responses=[LLMResponse(content="ok", provider="claude")])
+    registry = LLMRegistry()
+    registry.register(openai, default=True)
+    registry.register(claude)
+
+    response = await registry.complete_provider(
+        "CLAUDE",
+        [{"role": "user", "content": "hi"}],
+        model="claude-sonnet-4.5",
+    )
+
+    assert response.provider == "claude"
+    assert openai.call_count == 0
+    assert claude.call_count == 1
+    assert claude.models == ["claude-sonnet-4.5"]
+
+
+@pytest.mark.asyncio
+async def test_registry_complete_provider_refuses_embedding_only_provider() -> None:
+    registry = LLMRegistry()
+    registry.register(FakeProvider("openai"), default=True)
+    ollama = FakeProvider("ollama")
+    registry.register(ollama, chat_capable=False)
+
+    assert registry.is_chat_capable("ollama") is False
+    assert registry.is_chat_capable("missing") is False
+    with pytest.raises(LLMFallbackError):
+        await registry.complete_provider("ollama", [{"role": "user", "content": "hi"}])
+
+    assert ollama.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_registry_complete_provider_rate_limit_does_not_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 100.0}
+    monkeypatch.setattr("openbiliclaw.llm.base.time.monotonic", lambda: clock["now"])
+
+    openai = FakeProvider("openai")
+    claude = FakeProvider("claude", errors=[LLMRateLimitError("limited")])
+    registry = LLMRegistry()
+    registry.register(openai, default=True)
+    registry.register(claude)
+
+    with pytest.raises(LLMRateLimitError):
+        await registry.complete_provider("claude", [{"role": "user", "content": "hi"}])
+    with pytest.raises(LLMRateLimitError):
+        await registry.complete_provider("claude", [{"role": "user", "content": "again"}])
+
+    assert openai.call_count == 0
+    assert claude.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -794,10 +1134,12 @@ async def test_ollama_with_explicit_chat_model_is_chat_capable() -> None:
     didn't accidentally exclude every Ollama from chat.)
     """
     cfg = Config(
-        llm=LLMConfig(
-            default_provider="openai",
-            openai=LLMProviderConfig(api_key="openai-key"),
-            ollama=LLMProviderConfig(
+            llm=LLMConfig(
+                default_provider="openai",
+                fallback_enabled=True,
+                fallback_provider="ollama",
+                openai=LLMProviderConfig(api_key="openai-key"),
+                ollama=LLMProviderConfig(
                 api_key="ollama",
                 model="llama3",  # ← explicit chat model
                 base_url="http://localhost:11434/v1",

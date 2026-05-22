@@ -244,6 +244,21 @@ class Database:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         return self._conn
 
+    def open_connection(self) -> sqlite3.Connection:
+        """Open a short-lived connection to the initialized database.
+
+        Use this for explicit transactions that may run from FastAPI's
+        threadpool. A separate connection lets SQLite serialize writers
+        with ``busy_timeout`` instead of nesting transactions on the
+        process-wide connection.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        conn = sqlite3.connect(str(self._db_path), timeout=30.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000")
+        return conn
+
     def _ensure_fresh_read(self) -> None:
         """Close any implicit transaction so the next SELECT sees the latest WAL state.
 

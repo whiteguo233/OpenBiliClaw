@@ -213,14 +213,14 @@ class _FakeLLMService:
     """Minimal LLM service that returns a canned Socratic reply."""
 
     async def complete_socratic_dialogue(
-        self, *, user_message: str, history: list[dict[str, str]] | None = None,
+        self,
+        *,
+        user_message: str,
+        history: list[dict[str, str]] | None = None,
         caller: str = "",
     ) -> SimpleNamespace:
         return SimpleNamespace(
-            content=(
-                "你说的这个方向我有个猜测——"
-                "你是不是其实更在意底层结构而不只是结论？"
-            )
+            content=("你说的这个方向我有个猜测——你是不是其实更在意底层结构而不只是结论？")
         )
 
 
@@ -246,7 +246,11 @@ class _FakeSoulEngine:
         return self.profile
 
     async def learn_from_dialogue(
-        self, *, user_message: str, assistant_reply: str, session: str,
+        self,
+        *,
+        user_message: str,
+        assistant_reply: str,
+        session: str,
     ) -> None:
         pass  # no-op for tests
 
@@ -602,6 +606,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     created_databases: list[object] = []
     created_memories: list[object] = []
     registered_strategies: list[str] = []
+    created_strategy_kwargs: list[dict[str, object]] = []
 
     class FakeDatabase:
         def __init__(self, path: str) -> None:
@@ -623,14 +628,17 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.initialized += 1
 
     class FakeSoulEngine:
-        def __init__(self, *, llm: object, memory: object) -> None:
+        def __init__(self, *, llm: object, memory: object, module_overrides=None, **kwargs) -> None:
             self.llm = llm
             self.memory = memory
+            self.module_overrides = module_overrides
+            self.kwargs = kwargs
 
     class FakeLLMService:
-        def __init__(self, *, registry: object, memory: object) -> None:
+        def __init__(self, *, registry: object, memory: object, module_overrides=None) -> None:
             self.registry = registry
             self.memory = memory
+            self.module_overrides = module_overrides
 
     class FakeRecommendationEngine:
         def __init__(
@@ -668,6 +676,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.args = args
             self.kwargs = kwargs
             self.name = self.__class__.__name__
+            created_strategy_kwargs.append(kwargs)
 
     class FakeRuntimeController:
         def __init__(self, **kwargs) -> None:
@@ -679,6 +688,12 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
 
     fake_config = SimpleNamespace(
         data_path=Path("/tmp/openclaw-data"),
+        llm=SimpleNamespace(
+            soul=SimpleNamespace(provider="claude", model="claude-sonnet"),
+            discovery=SimpleNamespace(provider="deepseek", model="deepseek-chat"),
+            recommendation=SimpleNamespace(provider="", model=""),
+            evaluation=SimpleNamespace(provider="", model="gpt-4o-mini"),
+        ),
         bilibili=SimpleNamespace(cookie="raw-cookie"),
         sources=SimpleNamespace(
             xiaohongshu=SimpleNamespace(enabled=False),
@@ -686,6 +701,8 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             youtube=SimpleNamespace(enabled=False),
         ),
         scheduler=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=False,
             pool_target_count=30,
             pool_source_shares={
                 "bilibili": 8,
@@ -694,6 +711,20 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
                 "youtube": 1,
             },
             account_sync_interval_hours=6,
+            refresh_check_interval_seconds=77,
+            signal_event_threshold=9,
+            trending_refresh_hours=5,
+            explore_refresh_hours=18,
+            discovery_limit=17,
+            proactive_push_interval_seconds=155,
+            speculation_interval_minutes=22,
+            speculation_ttl_days=8,
+            speculation_cooldown_days=9,
+            speculation_confirmation_threshold=4,
+            speculation_max_active=6,
+            speculation_max_primary_interests=17,
+            speculation_max_secondary_interests=66,
+            speculator_idle_interval_minutes=11,
         ),
     )
 
@@ -724,6 +755,23 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     assert created_memories[0].database is created_databases[0]
     assert services.database is created_databases[0]
     assert services.memory_manager is created_memories[0]
+    assert [kwargs.get("database") for kwargs in created_strategy_kwargs] == [
+        created_databases[0],
+        created_databases[0],
+        created_databases[0],
+        created_databases[0],
+    ]
+    assert services.soul_engine.module_overrides["soul"].provider == "claude"
+    assert services.soul_engine.kwargs["speculation_interval_minutes"] == 22
+    assert services.soul_engine.kwargs["speculation_ttl_days"] == 8
+    assert services.soul_engine.kwargs["speculation_cooldown_days"] == 9
+    assert services.soul_engine.kwargs["speculation_confirmation_threshold"] == 4
+    assert services.soul_engine.kwargs["speculation_max_active"] == 6
+    assert services.soul_engine.kwargs["speculation_max_primary_interests"] == 17
+    assert services.soul_engine.kwargs["speculation_max_secondary_interests"] == 66
+    assert services.soul_engine.kwargs["speculator_idle_interval_minutes"] == 11
+    assert services.llm_service.module_overrides["discovery"].provider == "deepseek"
+    assert services.llm_service.module_overrides["evaluation"].model == "gpt-4o-mini"
     assert registered_strategies == [
         "FakeStrategy",
         "FakeStrategy",
@@ -733,6 +781,16 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     assert services.runtime_controller.kwargs["pool_source_shares"] == {
         "bilibili": 8,
     }
+    assert services.runtime_controller.kwargs["scheduler_config"] is fake_config.scheduler
+    assert "presence" in services.runtime_controller.kwargs
+    assert "youtube_producer" in services.runtime_controller.kwargs
+    assert services.runtime_controller.kwargs["youtube_producer"] is None
+    assert services.runtime_controller.kwargs["check_interval_seconds"] == 77
+    assert services.runtime_controller.kwargs["signal_event_threshold"] == 9
+    assert services.runtime_controller.kwargs["trending_refresh_hours"] == 5
+    assert services.runtime_controller.kwargs["explore_refresh_hours"] == 18
+    assert services.runtime_controller.kwargs["discovery_limit"] == 17
+    assert services.runtime_controller.kwargs["proactive_push_interval_seconds"] == 155
 
 
 def test_build_openclaw_adapter_returns_ready_adapter(monkeypatch) -> None:
@@ -767,9 +825,7 @@ def test_build_openclaw_adapter_returns_ready_adapter(monkeypatch) -> None:
 async def test_chat_delegates_to_socratic_dialogue() -> None:
     adapter, soul_engine, *_ = _build_adapter()
 
-    result = await adapter.chat(
-        ChatRequest(message="我最近对建筑很感兴趣", session="test")
-    )
+    result = await adapter.chat(ChatRequest(message="我最近对建筑很感兴趣", session="test"))
 
     assert isinstance(result, ChatResponse)
     assert "底层结构" in result.reply
@@ -811,10 +867,12 @@ async def test_get_next_probe_returns_none_when_no_speculations() -> None:
 @pytest.mark.asyncio
 async def test_get_next_probe_picks_lowest_confirmation_count() -> None:
     adapter, soul_engine, *_ = _build_adapter()
-    soul_engine._speculator = _FakeSpeculator(specs=[
-        _FakeSpeculativeInterest(domain="量子物理", confirmation_count=2, weight=0.9),
-        _FakeSpeculativeInterest(domain="分子料理", confirmation_count=0, weight=0.3),
-    ])
+    soul_engine._speculator = _FakeSpeculator(
+        specs=[
+            _FakeSpeculativeInterest(domain="量子物理", confirmation_count=2, weight=0.9),
+            _FakeSpeculativeInterest(domain="分子料理", confirmation_count=0, weight=0.3),
+        ]
+    )
 
     result = await adapter.get_next_probe()
 
@@ -825,16 +883,18 @@ async def test_get_next_probe_picks_lowest_confirmation_count() -> None:
 @pytest.mark.asyncio
 async def test_get_next_probe_includes_specifics_in_question() -> None:
     adapter, soul_engine, *_ = _build_adapter()
-    soul_engine._speculator = _FakeSpeculator(specs=[
-        _FakeSpeculativeInterest(
-            domain="建筑美学",
-            reason="结构和空间让你着迷。",
-            specifics=[
-                _FakeSpeculativeSpecific(name="参数化设计"),
-                _FakeSpeculativeSpecific(name="混凝土美学"),
-            ],
-        ),
-    ])
+    soul_engine._speculator = _FakeSpeculator(
+        specs=[
+            _FakeSpeculativeInterest(
+                domain="建筑美学",
+                reason="结构和空间让你着迷。",
+                specifics=[
+                    _FakeSpeculativeSpecific(name="参数化设计"),
+                    _FakeSpeculativeSpecific(name="混凝土美学"),
+                ],
+            ),
+        ]
+    )
 
     result = await adapter.get_next_probe()
 
@@ -852,22 +912,24 @@ async def test_get_next_probe_prefers_fresher_experience_axis() -> None:
             "knowledge|heavy": datetime.now().isoformat(),
         }
     }
-    soul_engine._speculator = _FakeSpeculator(specs=[
-        _FakeSpeculativeInterest(
-            domain="量子物理",
-            confirmation_count=0,
-            weight=0.9,
-            experience_mode="knowledge",
-            entry_load="heavy",
-        ),
-        _FakeSpeculativeInterest(
-            domain="城市漫游",
-            confirmation_count=0,
-            weight=0.5,
-            experience_mode="wander_observe",
-            entry_load="light",
-        ),
-    ])
+    soul_engine._speculator = _FakeSpeculator(
+        specs=[
+            _FakeSpeculativeInterest(
+                domain="量子物理",
+                confirmation_count=0,
+                weight=0.9,
+                experience_mode="knowledge",
+                entry_load="heavy",
+            ),
+            _FakeSpeculativeInterest(
+                domain="城市漫游",
+                confirmation_count=0,
+                weight=0.5,
+                experience_mode="wander_observe",
+                entry_load="light",
+            ),
+        ]
+    )
 
     result = await adapter.get_next_probe()
 
@@ -878,22 +940,24 @@ async def test_get_next_probe_prefers_fresher_experience_axis() -> None:
 @pytest.mark.asyncio
 async def test_get_next_probe_records_history_and_avoids_repeat() -> None:
     adapter, soul_engine, memory_manager, *_ = _build_adapter()
-    soul_engine._speculator = _FakeSpeculator(specs=[
-        _FakeSpeculativeInterest(
-            domain="量子物理",
-            confirmation_count=0,
-            weight=0.9,
-            experience_mode="knowledge",
-            entry_load="heavy",
-        ),
-        _FakeSpeculativeInterest(
-            domain="城市漫游",
-            confirmation_count=0,
-            weight=0.5,
-            experience_mode="wander_observe",
-            entry_load="light",
-        ),
-    ])
+    soul_engine._speculator = _FakeSpeculator(
+        specs=[
+            _FakeSpeculativeInterest(
+                domain="量子物理",
+                confirmation_count=0,
+                weight=0.9,
+                experience_mode="knowledge",
+                entry_load="heavy",
+            ),
+            _FakeSpeculativeInterest(
+                domain="城市漫游",
+                confirmation_count=0,
+                weight=0.5,
+                experience_mode="wander_observe",
+                entry_load="light",
+            ),
+        ]
+    )
 
     first = await adapter.get_next_probe()
     second = await adapter.get_next_probe()

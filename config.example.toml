@@ -10,19 +10,36 @@ language = "zh"
 # Data directory (relative to project root)
 data_dir = "data"
 
+[api]
+# 后端 API 监听地址。
+# "0.0.0.0" = 绑定所有网卡（默认），同局域网手机可通过 /m/ 访问移动端 Web。
+# "127.0.0.1" = 仅本机可访问，更安全但手机扫码打不开。
+host = "0.0.0.0"
+# 后端 API 监听端口。
+port = 8420
+
 [llm]
-# Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter"
+# Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter" | "openai_compatible"
 # 这里选择的 provider 决定了运行时会检查哪一组敏感字段。
 default_provider = "openai"
+# 旧兼容开关；实际 fallback 只在 fallback_provider 非空时发生。
+fallback_enabled = false
+# 第二个备选 provider；默认空 = 不 fallback，不再自动尝试其它 provider。
+fallback_provider = ""
 
 [llm.openai]
 # 若 default_provider = "openai"，api_key 必填
+# 实验选项：先运行 `openbiliclaw login codex` 导入 Codex CLI 的 ChatGPT OAuth
+# 凭据后，可把 auth_mode 改成 "codex_oauth"，此时 api_key 会被忽略。
+# 这是非官方路径，可能因 OpenAI / Codex CLI 变更随时失效；同时必须保持
+# base_url 为空或指向 OpenAI 官方 API 域名，避免把 ChatGPT token 发给第三方代理。
 # 当前(2026-05)模型清单: gpt-5-nano (最便宜) / gpt-5.4-nano / gpt-5.4-mini /
 #                      gpt-5.5 (旗舰 4/2026) / gpt-5.5-pro
 # gpt-4o 系列已从 ChatGPT 退役但 API 仍可调
 api_key = ""
 model = "gpt-5-nano"
 base_url = ""  # Leave empty for default, or set for compatible APIs
+auth_mode = ""  # "" / "api_key" / "codex_oauth"
 
 [llm.claude]
 # 若 default_provider = "claude"，api_key 必填
@@ -113,8 +130,7 @@ base_url = ""
 # embedding provider, supply its credentials here, and chat traffic keeps
 # using whatever ``[llm].default_provider`` points to.
 #
-# provider: empty = use [llm].default_provider (back-compat path —
-#                   borrows credentials from [llm.<provider>])
+# provider: empty = disable embedding; embedding no longer follows [llm].default_provider
 #           "ollama" = local Ollama (no API key needed)
 #           "openai" / "gemini" = remote embeddings
 # model:    matched to provider when empty:
@@ -122,7 +138,7 @@ base_url = ""
 #             openai → text-embedding-3-small
 #             ollama → bge-m3   (multilingual, ~568MB, sub-second on CPU)
 #
-# To enable the local Ollama fallback:
+# To enable local Ollama embedding:
 #   1. install Ollama   (Mac: `brew install ollama` ; Windows: ollama.com/download)
 #   2. `ollama pull bge-m3`
 #   3. set `provider = "ollama"` here, or run `openbiliclaw setup-embedding`
@@ -144,6 +160,10 @@ api_key = ""
 base_url = ""
 # Cosine similarity threshold: topics above this are considered "same topic"
 similarity_threshold = 0.82
+# 默认关闭 embedding fallback；只有 fallback_provider 非空时才会尝试一个显式备选 provider。
+# 插件设置页会在你选择备选 provider 时同步打开 fallback_enabled，以允许借用对应 chat-side 凭据。
+fallback_enabled = false
+fallback_provider = ""
 
 # Per-module LLM overrides — set provider/model to use a different LLM
 # for specific modules. Leave empty to inherit from [llm] defaults.
@@ -195,6 +215,12 @@ cdp_url = ""
 # agent-browser 回落路径是否使用 headed 模式
 headed = false
 
+# ── Bilibili discovery 开关 ──
+# 设为 false 后：B 站 search / related_chain / trending / explore 不再参与后台 discovery，
+# pool_source_shares 中的 bilibili 配额会被丢弃。
+[sources.bilibili]
+enabled = true
+
 # ── 小红书（xhs）专用配置 ──
 # 内容发现和元数据提取完全由浏览器扩展在真实登录态下完成：
 # 被动收集（用户浏览时自动提取）+ 后台标签页搜索 + 创作者订阅。
@@ -202,8 +228,8 @@ headed = false
 [sources.xiaohongshu]
 # 设为 false 后：跳过 init 的 XHS bootstrap，后端不再生成 XHS 搜索任务，
 # pool_source_shares 中的 xiaohongshu 配额会被丢弃（不会让池子卡在低于目标）。
-# init 交互式提示选 No、--no-xhs 或 OPENBILICLAW_NO_XHS=1 都会写回 false。
-enabled = true
+# 默认 false；init 交互式提示选 Yes、--yes-xhs 或插件设置页打开后才会写回 true。
+enabled = false
 # 每天后端允许入队的 Soul 驱动搜索任务数上限
 daily_search_budget = 30
 # 每天每位订阅创作者的抓取任务上限
@@ -225,27 +251,45 @@ daily_feed_budget = 30
 request_interval_seconds = 2
 
 # ── YouTube 专用配置 ──
-# 当前仅用于 pool-share 归属：enabled=false 时 pool_source_shares 中的 youtube
-# 配额会被丢弃（避免池子卡在低于目标）。YouTube discovery 走 B 站侧的策略管线
-# （YoutubeSearchStrategy），不存在独立 producer loop。
+# enabled=false 时 pool_source_shares 中的 youtube 配额会被丢弃（避免池子卡在低于目标）。
+# YouTube steady-state discovery 由后端 producer 独立调度 yt_search / yt_trending / yt_channel。
+# 下面的 daily_*_budget 按天限制各策略执行规模；bootstrap 画像导入仍走浏览器扩展 yt_tasks。
 [sources.youtube]
 enabled = false
+daily_search_budget = 6
+daily_trending_budget = 50
+daily_channel_budget = 10
+request_interval_seconds = 2
+# YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
+min_interval_minutes = 60
 
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
-# Cron expression for discovery task. v0.3.26+ default is every 8h
-# (was 4h pre-v0.3.26). 4h triggers ~6 refresh ticks per day; combined
-# with the v0.3.24+ pool-aware sizing each tick costs ~¥0.06-0.10 in
-# LLM evaluations. 8h cuts that in half. Set to "0 */4 * * *" if you
-# want fresher recommendations and don't mind ~2x cost. Run
-# ``openbiliclaw cost`` to see your actual spend.
+# Optional cost-saving guard for daemon-owned background LLM / embedding work.
+# When true, refresh / pool precompute / account sync / speculation / proactive
+# push only run while the browser extension has an active runtime-stream
+# connection, plus the grace window below after the last disconnect.
+# Manual CLI/API requests remain explicit and are not blocked by this switch.
+pause_on_extension_disconnect = false
+extension_disconnect_grace_seconds = 90
+# Legacy compatibility field. The current runtime does not consume this cron;
+# discovery is driven by the refresh loop, pool deficits, event thresholds, and
+# per-strategy refresh intervals below.
 discovery_cron = "0 */8 * * *"
 # Keep at least this many fresh candidates ready in the discovery pool
 # Allowed range: 1..600; each single refresh will backfill at most 60
 pool_target_count = 600
 # Low-frequency account sync interval for history / favorites / following
 account_sync_interval_hours = 6
+# --- Runtime refresh tuning ---
+refresh_check_interval_seconds = 60      # Main loop poll interval; values <15 fallback
+signal_event_threshold = 6               # New behavior events before search+related refresh
+trending_refresh_hours = 3               # Minimum interval for trending strategy
+explore_refresh_hours = 12               # Minimum interval for explore strategy
+discovery_limit = 30                     # Per discovery wave limit; allowed range 1..60
+proactive_push_interval_seconds = 120    # Delight/probe push loop interval; values <30 fallback
+speculator_idle_interval_minutes = 30    # Idle interval before checking speculation lifecycle
 # --- 猜测兴趣（Speculative Interest）调度 ---
 # speculation_interval_minutes = 10   # 猜测推测运行间隔（分钟）
 # speculation_ttl_days = 3            # 猜测兴趣默认存活天数
@@ -259,8 +303,8 @@ auto_update_enabled = false        # 是否自动检查并应用新版本（git 
 auto_update_check_interval_hours = 6  # 检查间隔（小时）
 
 [scheduler.pool_source_shares]
-# Candidate-pool source mix by platform family. Default 8:1:1:1 keeps B 站
-# as the main source while reserving pool capacity for 小红书、抖音、YouTube.
+# Candidate-pool source mix by platform family. The saved default 8:1:1:1
+# keeps B 站 as the main source when optional platforms are enabled.
 # 关掉的源（[sources.<name>].enabled = false）的配额会被自动剔除，剩余
 # 源按比例重新归一化吃满 pool_target_count——所以这里写多少不重要，重要的
 # 是源本身的 enabled 开关。

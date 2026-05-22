@@ -19,8 +19,12 @@ test("popup copy uses a more native bilibili-style voice in key entry points", (
   assert.match(popupHtml, /阿B 最近新记住了什么/);
   assert.match(popupHtml, /我感觉你大概是这样的/);
   assert.match(popupHtml, /不是光看你点过啥，我主要在看你会为哪种东西停下来。/);
-  assert.match(popupHtml, /最近你到底在看啥/);
-  assert.match(popupHtml, /写点你最近爱看的/);
+  assert.match(popupHtml, /说说你最近怎么想/);
+  assert.match(popupHtml, /你是什么样的人、怎么想、喜欢什么、讨厌什么/);
+  assert.match(popupHtml, /写点你的想法和口味/);
+  assert.match(popupJs, /说说你怎么看内容/);
+  assert.match(popupJs, /聊聊你自己/);
+  assert.match(popupJs, /最近的状态/);
   assert.match(popupHtml, /class="recommendation-header-card"/);
   assert.match(popupHtml, /class="recommendation-header-title"/);
   assert.match(popupHtml, /class="recommendation-status-row"/);

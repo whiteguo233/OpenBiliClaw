@@ -192,6 +192,7 @@ def _make_low_threshold_pipeline(
     *,
     service: Any = None,
     speculator: Any = None,
+    speculator_idle_interval_minutes: int = 30,
 ) -> tuple[ProfileUpdatePipeline, _RichFakeService, MemoryManager]:
     """Pipeline with min_signals=1 thresholds — every signal triggers update."""
     svc = service or _RichFakeService()
@@ -207,6 +208,7 @@ def _make_low_threshold_pipeline(
         profile_builder=ProfileBuilder(registry=svc),
         thresholds=thresholds,
         speculator=speculator,
+        speculator_idle_interval_minutes=speculator_idle_interval_minutes,
     )
     return pipeline, svc, memory
 
@@ -782,6 +784,17 @@ async def test_speculator_tick_called_during_pipeline_tick(tmp_path: Path) -> No
 
     await pipeline.tick()
     assert spy.tick_called, "pipeline.tick() must invoke speculator.tick()"
+
+
+def test_speculator_idle_interval_is_configurable(tmp_path: Path) -> None:
+    spy = _SpeculatorSpy()
+    pipeline, _, _ = _make_low_threshold_pipeline(
+        tmp_path,
+        speculator=spy,
+        speculator_idle_interval_minutes=11,
+    )
+
+    assert pipeline._speculator_idle_min_interval == timedelta(minutes=11)
 
 
 @pytest.mark.asyncio

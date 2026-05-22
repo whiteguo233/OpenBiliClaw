@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
@@ -29,6 +29,7 @@ from openbiliclaw.llm.prompts import build_explore_domains_prompt
 if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 
 # Minimal contract — explore only needs the topic-group-coverage query
@@ -110,6 +111,7 @@ class ExploreStrategy(DiscoveryStrategy):
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=cast("Database | None", self.database),
             concurrency=self.concurrency,
         )
         search_strategy = SearchStrategy(

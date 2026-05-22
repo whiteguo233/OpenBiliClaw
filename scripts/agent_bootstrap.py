@@ -27,8 +27,7 @@ Typical agent workflow:
     4. If the final status says ``missing_llm_key`` or ``missing_cookie``,
        ask the user for the value and re-run with ``--llm-api-key`` or
        ``--bilibili-cookie``.
-    5. Poll ``http://127.0.0.1:8420/api/health`` to confirm the service is
-       ready.
+    5. Poll the emitted ``Health URL`` to confirm the service is ready.
 
 All secrets accepted via flags are written directly to ``config.toml`` and
 ``data/bilibili_cookie.json``. Nothing is uploaded off the machine.
@@ -48,18 +47,25 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Constants
 
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8420
 DEFAULT_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw.git"
 DEFAULT_HEALTH_PATH = "/api/health"
 HEALTH_TIMEOUT_SECONDS = 90
 HEALTH_POLL_INTERVAL = 2.0
 LOCAL_NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")
+DOCKER_CONTAINER_NAME = "openbiliclaw-backend"
+DOCKER_RUNTIME_ROOT = "/app/runtime"
+DEFAULT_BILIBILI_FAVORITE_LIMIT = 300
+DEFAULT_BILIBILI_FOLLOW_LIMIT = 300
 
 SUPPORTED_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "ollama", "openrouter")
 REMOTE_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "openrouter")
@@ -149,6 +155,21 @@ class BootstrapResult:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class InitConfirmationAnswers:
+    """Explicit user decisions required before auto-init may run."""
+
+    embedding_provider: str
+    embedding_model: str
+    xhs: bool
+    douyin: bool
+    youtube: bool
+    cookie_mode: str
+    bilibili_favorite_limit: int = DEFAULT_BILIBILI_FAVORITE_LIMIT
+    bilibili_follow_limit: int = DEFAULT_BILIBILI_FOLLOW_LIMIT
+    bilibili_cookie: str = ""
+
+
 def emit(result: BootstrapResult) -> None:
     """Emit a machine-parseable status line for the caller agent."""
 
@@ -166,6 +187,161 @@ def info(message: str) -> None:
 
     print(f"[bootstrap] {message}")
     sys.stdout.flush()
+
+
+def confirmation_answers_to_bootstrap_args(answers: InitConfirmationAnswers) -> list[str]:
+    """Convert interactive answers to the same explicit flags agents pass."""
+
+    args = [
+        "--embedding-provider",
+        answers.embedding_provider,
+        "--embedding-model",
+        answers.embedding_model,
+        "--yes-xhs" if answers.xhs else "--no-xhs",
+        "--yes-douyin" if answers.douyin else "--no-douyin",
+        "--yes-youtube" if answers.youtube else "--no-youtube",
+        "--bilibili-favorite-limit",
+        str(max(0, int(answers.bilibili_favorite_limit))),
+        "--bilibili-follow-limit",
+        str(max(0, int(answers.bilibili_follow_limit))),
+    ]
+    if answers.cookie_mode == "manual" and answers.bilibili_cookie:
+        args.extend(["--bilibili-cookie", answers.bilibili_cookie])
+    return args
+
+
+def _ask_yes_no(
+    input_func: Any,
+    prompt: str,
+    *,
+    default: bool = False,
+) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    raw = str(input_func(f"{prompt} [{suffix}]: ")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"y", "yes", "1", "true", "是", "好", "同意"}
+
+
+def _ask_non_negative_int(
+    input_func: Any,
+    prompt: str,
+    *,
+    default: int,
+) -> int:
+    raw = str(input_func(f"{prompt} [{default}]: ")).strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def collect_interactive_confirmations(input_func: Any | None = input) -> InitConfirmationAnswers:
+    """Ask the user for init decisions in human-run installer flows."""
+
+    if input_func is None or (input_func is input and not sys.stdin.isatty()):
+        raise RuntimeError("interactive confirmation requires a terminal")
+
+    print("")
+    print("OpenBiliClaw init choices")
+    print("Embedding default: local Ollama bge-m3 (free/offline/no extra API key).")
+    embedding_choice = str(
+        input_func("Embedding provider [ollama] (enter to accept default): ")
+    ).strip()
+    embedding_provider = embedding_choice or "ollama"
+    model_default = "bge-m3" if embedding_provider == "ollama" else ""
+    embedding_model = (
+        str(input_func(f"Embedding model [{model_default}] (enter to accept default): ")).strip()
+        or model_default
+    )
+
+    print("")
+    print("Bilibili init signal limits default to 300 each; enter 0 to skip one signal.")
+    bilibili_favorite_limit = _ask_non_negative_int(
+        input_func,
+        "Max Bilibili favorites to import during init",
+        default=DEFAULT_BILIBILI_FAVORITE_LIMIT,
+    )
+    bilibili_follow_limit = _ask_non_negative_int(
+        input_func,
+        "Max Bilibili followed creators to import during init",
+        default=DEFAULT_BILIBILI_FOLLOW_LIMIT,
+    )
+
+    print("")
+    print("Optional source data is disabled by default unless you explicitly opt in.")
+    xhs = _ask_yes_no(
+        input_func,
+        "Include Xiaohongshu likes/favorites in the initial profile?",
+        default=False,
+    )
+    douyin = _ask_yes_no(
+        input_func,
+        "Include Douyin post/favorite/like/follow data in the initial profile?",
+        default=False,
+    )
+    youtube = _ask_yes_no(
+        input_func,
+        "Include YouTube history/subscriptions/likes in the initial profile?",
+        default=False,
+    )
+
+    print("")
+    print("Bilibili auth default: browser extension sync.")
+    cookie_mode_raw = (
+        str(input_func("Bilibili cookie source: extension/manual/existing [extension]: "))
+        .strip()
+        .lower()
+    )
+    cookie_mode = cookie_mode_raw or "extension"
+    bilibili_cookie = ""
+    if cookie_mode == "manual":
+        bilibili_cookie = str(input_func("Paste Bilibili Cookie header: ")).strip()
+    elif cookie_mode not in {"extension", "existing"}:
+        cookie_mode = "extension"
+
+    return InitConfirmationAnswers(
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        xhs=xhs,
+        douyin=douyin,
+        youtube=youtube,
+        cookie_mode=cookie_mode,
+        bilibili_favorite_limit=bilibili_favorite_limit,
+        bilibili_follow_limit=bilibili_follow_limit,
+        bilibili_cookie=bilibili_cookie,
+    )
+
+
+def apply_confirmation_answers_to_args(
+    args: argparse.Namespace,
+    answers: InitConfirmationAnswers,
+) -> None:
+    """Mutate parsed args with interactive choices where flags were omitted."""
+
+    if args.embedding_provider is None:
+        args.embedding_provider = answers.embedding_provider
+    if args.embedding_model is None:
+        args.embedding_model = answers.embedding_model
+    if not args.yes_xhs and not args.no_xhs:
+        args.yes_xhs = answers.xhs
+        args.no_xhs = not answers.xhs
+    if not args.yes_douyin and not args.no_douyin:
+        args.yes_douyin = answers.douyin
+        args.no_douyin = not answers.douyin
+    if not args.yes_youtube and not args.no_youtube:
+        args.yes_youtube = answers.youtube
+        args.no_youtube = not answers.youtube
+    if args.bilibili_favorite_limit is None:
+        args.bilibili_favorite_limit = answers.bilibili_favorite_limit
+    if args.bilibili_follow_limit is None:
+        args.bilibili_follow_limit = answers.bilibili_follow_limit
+    if answers.cookie_mode == "manual" and answers.bilibili_cookie and not args.bilibili_cookie:
+        args.bilibili_cookie = answers.bilibili_cookie
+    if answers.cookie_mode == "extension":
+        args.wait_for_extension_cookie = True
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +437,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         choices=("", *SUPPORTED_PROVIDERS),
         help=(
-            "Embedding provider override. Empty string = follow primary LLM "
-            "provider. Use 'ollama' for local bge-m3 fallback, or pick any "
+            "Embedding provider override. Empty string = disable embedding. "
+            "Use 'ollama' for local bge-m3, or pick any "
             "supported provider for a dedicated embedding endpoint."
         ),
     )
@@ -296,6 +472,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--bilibili-cookie",
         default=None,
         help="Bilibili cookie string. Stored in config.toml and data/bilibili_cookie.json.",
+    )
+    parser.add_argument(
+        "--bilibili-favorite-limit",
+        type=int,
+        default=None,
+        help=(
+            "Max Bilibili favorite events imported by auto-init. "
+            "Default is openbiliclaw init's built-in 300; 0 skips favorites."
+        ),
+    )
+    parser.add_argument(
+        "--bilibili-follow-limit",
+        type=int,
+        default=None,
+        help=(
+            "Max Bilibili follow events imported by auto-init. "
+            "Default is openbiliclaw init's built-in 300; 0 skips follows."
+        ),
     )
     xhs_group = parser.add_mutually_exclusive_group()
     xhs_group.add_argument(
@@ -331,6 +525,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "or has not opted in."
         ),
     )
+    youtube_group = parser.add_mutually_exclusive_group()
+    youtube_group.add_argument(
+        "--yes-youtube",
+        action="store_true",
+        help=(
+            "Explicitly opt in to YouTube history/subscription/like data during auto-init. "
+            "AI agents should only pass this after asking the user."
+        ),
+    )
+    youtube_group.add_argument(
+        "--no-youtube",
+        action="store_true",
+        help=(
+            "Explicitly skip YouTube data during auto-init. Use this when the user says no "
+            "or has not opted in."
+        ),
+    )
     parser.add_argument(
         "--skip-ollama-setup",
         action="store_true",
@@ -353,6 +564,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Do not run 'openbiliclaw init' after the backend is healthy.",
     )
     parser.add_argument(
+        "--interactive-confirm",
+        action="store_true",
+        help="Ask required init confirmations from the terminal before auto-init.",
+    )
+    parser.add_argument(
+        "--wait-for-extension-cookie",
+        action="store_true",
+        help="After backend health, wait for the browser extension to sync Bilibili cookie.",
+    )
+    parser.add_argument(
         "--skip-install",
         action="store_true",
         help="Assume dependencies are already installed (local mode only).",
@@ -365,7 +586,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--host",
         default=DEFAULT_HOST,
-        help="API host to bind on local mode (default: 127.0.0.1).",
+        help="API host to bind on local mode (default: 0.0.0.0).",
     )
     parser.add_argument(
         "--port",
@@ -1063,8 +1284,8 @@ def apply_embedding_config(
     """Write [llm.embedding] + (optionally) provider creds.
 
     Returns a structured summary so the bootstrap can emit a single event
-    listing exactly what was changed. Empty-string provider means "follow
-    primary"; missing fields are left untouched.
+    listing exactly what was changed. Empty-string provider means
+    "embedding disabled"; missing fields are left untouched.
     """
 
     config_path = project_dir / "config.toml"
@@ -1077,21 +1298,23 @@ def apply_embedding_config(
         written.append("llm.embedding.model")
 
     target_provider = (provider or "").strip()
-    if target_provider and (base_url is not None or api_key is not None):
-        if base_url is not None:
-            update_config_secret(config_path, f"llm.{target_provider}", "base_url", base_url)
-            written.append(f"llm.{target_provider}.base_url")
-        if api_key is not None:
-            update_config_secret(config_path, f"llm.{target_provider}", "api_key", api_key)
-            written.append(f"llm.{target_provider}.api_key")
+    if base_url is not None:
+        update_config_secret(config_path, "llm.embedding", "base_url", base_url)
+        written.append("llm.embedding.base_url")
+    if api_key is not None:
+        update_config_secret(config_path, "llm.embedding", "api_key", api_key)
+        written.append("llm.embedding.api_key")
 
-    # Mirror the wizard's side-effect: when embedding is ollama, seed
-    # llm.ollama.base_url so the registry actually wires the provider.
-    if target_provider == "ollama":
-        existing = read_simple_toml(config_path).get("llm", {}).get("ollama", {})
+    if target_provider == "ollama" and base_url is None:
+        existing = read_simple_toml(config_path).get("llm", {}).get("embedding", {})
         if not str(existing.get("base_url", "")).strip():
-            update_config_secret(config_path, "llm.ollama", "base_url", "http://localhost:11434/v1")
-            written.append("llm.ollama.base_url(seeded)")
+            update_config_secret(
+                config_path,
+                "llm.embedding",
+                "base_url",
+                "http://localhost:11434/v1",
+            )
+            written.append("llm.embedding.base_url(seeded)")
 
     return {"written": written, "provider": target_provider}
 
@@ -1262,11 +1485,35 @@ def detect_init_decisions(
             "source": "missing",
         }
 
+    if args.yes_youtube:
+        youtube = {
+            "policy": "enabled",
+            "flag": "--yes-youtube",
+            "explicit": True,
+            "source": "flag",
+        }
+    elif args.no_youtube or os.environ.get("OPENBILICLAW_NO_YOUTUBE", "").strip() == "1":
+        youtube = {
+            "policy": "disabled",
+            "flag": "--no-youtube",
+            "explicit": True,
+            "source": "env" if not args.no_youtube else "flag",
+        }
+    else:
+        missing.append("youtube")
+        youtube = {
+            "policy": "pending",
+            "flag": "",
+            "explicit": False,
+            "source": "missing",
+        }
+
     return {
         "missing": missing,
         "embedding": embedding,
         "xhs": xhs,
         "douyin": douyin,
+        "youtube": youtube,
     }
 
 
@@ -1275,6 +1522,10 @@ def build_init_command(
     project_dir: Path,
     xhs_flag: str,
     douyin_flag: str,
+    youtube_flag: str,
+    *,
+    bilibili_favorite_limit: int | None = None,
+    bilibili_follow_limit: int | None = None,
 ) -> list[str]:
     """Build the non-interactive init command used after bootstrap health checks."""
 
@@ -1303,6 +1554,22 @@ def build_init_command(
         init_cmd.append(xhs_flag)
     if douyin_flag:
         init_cmd.append(douyin_flag)
+    if youtube_flag:
+        init_cmd.append(youtube_flag)
+    if bilibili_favorite_limit is not None:
+        init_cmd.extend(
+            [
+                "--bilibili-favorite-limit",
+                str(max(0, int(bilibili_favorite_limit))),
+            ]
+        )
+    if bilibili_follow_limit is not None:
+        init_cmd.extend(
+            [
+                "--bilibili-follow-limit",
+                str(max(0, int(bilibili_follow_limit))),
+            ]
+        )
     return init_cmd
 
 
@@ -1344,6 +1611,18 @@ def local_serve_command(project_dir: Path, host: str, port: int) -> list[str]:
     return [str(python), "-m", "openbiliclaw.cli", "serve-api", "--host", host, "--port", str(port)]
 
 
+def _connect_host_for_bind_host(host: str) -> str:
+    """Return a concrete local address for checks against a bind address."""
+    value = str(host or "").strip().lower()
+    if value in {"", "0.0.0.0", "::", "[::]"}:
+        return "127.0.0.1"
+    return str(host).strip()
+
+
+def _health_url(host: str, port: int) -> str:
+    return f"http://{_connect_host_for_bind_host(host)}:{port}{DEFAULT_HEALTH_PATH}"
+
+
 def _probe_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     """Return True if a TCP listener answers on host:port."""
     import socket
@@ -1358,7 +1637,7 @@ def _probe_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 
 def _probe_is_openbiliclaw(host: str, port: int) -> bool:
     """Confirm the listener on host:port responds to /api/health as OpenBiliClaw."""
-    url = f"http://{host}:{port}{DEFAULT_HEALTH_PATH}"
+    url = _health_url(host, port)
     try:
         with urllib.request.urlopen(url, timeout=2.0) as response:  # noqa: S310
             if not (200 <= response.status < 300):
@@ -1506,11 +1785,12 @@ def start_local_backend(project_dir: Path, host: str, port: int) -> subprocess.P
         process), stop it and replace
       - if it's something else, raise so the caller surfaces a clear error
     """
-    if _probe_port_open(host, port):
-        freed = _stop_existing_obc_backend(host, port)
+    connect_host = _connect_host_for_bind_host(host)
+    if _probe_port_open(connect_host, port):
+        freed = _stop_existing_obc_backend(connect_host, port)
         if not freed:
             raise RuntimeError(
-                f"port {port} on {host} is in use by a non-OpenBiliClaw service. "
+                f"port {port} on {connect_host} is in use by a non-OpenBiliClaw service. "
                 f"Stop that service or set PORT=<free port> and retry."
             )
 
@@ -1551,6 +1831,98 @@ def docker_compose_up(project_dir: Path) -> None:
     run_streaming([docker, "compose", "up", "-d", "--build"], cwd=project_dir)
 
 
+def build_docker_runtime_sync_commands(project_dir: Path) -> list[list[str]]:
+    """Return docker commands that copy confirmed host config into runtime volume."""
+
+    commands = [
+        [
+            "docker",
+            "exec",
+            DOCKER_CONTAINER_NAME,
+            "mkdir",
+            "-p",
+            f"{DOCKER_RUNTIME_ROOT}/data",
+        ],
+        [
+            "docker",
+            "cp",
+            str(project_dir / "config.toml"),
+            f"{DOCKER_CONTAINER_NAME}:{DOCKER_RUNTIME_ROOT}/config.toml",
+        ],
+    ]
+    cookie_file = project_dir / "data" / "bilibili_cookie.json"
+    if cookie_file.exists():
+        commands.append(
+            [
+                "docker",
+                "cp",
+                str(cookie_file),
+                f"{DOCKER_CONTAINER_NAME}:{DOCKER_RUNTIME_ROOT}/data/bilibili_cookie.json",
+            ]
+        )
+    return commands
+
+
+def sync_docker_runtime_config(project_dir: Path) -> None:
+    """Copy bootstrap-written config into the running Docker runtime volume."""
+
+    for command in build_docker_runtime_sync_commands(project_dir):
+        run_streaming(command, cwd=project_dir)
+
+
+def build_docker_missing_secrets_command() -> list[str]:
+    """Return command that inspects secrets inside the backend container."""
+
+    script = r"""
+import json
+import tomllib
+from pathlib import Path
+
+config_path = Path("/app/runtime/config.toml")
+cookie_path = Path("/app/runtime/data/bilibili_cookie.json")
+data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+llm = data.get("llm", {})
+provider = str(llm.get("default_provider", "") or "").strip() or "openai"
+remote = {"openai", "claude", "gemini", "deepseek", "openrouter"}
+provider_cfg = llm.get(provider, {})
+api_key = str(provider_cfg.get("api_key", "") or "").strip()
+bilibili = data.get("bilibili", {})
+cookie_inline = str(bilibili.get("cookie", "") or "").strip()
+cookie_on_disk = False
+if cookie_path.exists():
+    try:
+        cookie_on_disk = bool(str(json.loads(cookie_path.read_text(encoding="utf-8")).get("cookie", "")).strip())
+    except json.JSONDecodeError:
+        cookie_on_disk = False
+missing = []
+if provider in remote and not api_key:
+    missing.append(f"llm.{provider}.api_key")
+if not (cookie_inline or cookie_on_disk):
+    missing.append("bilibili.cookie")
+print(json.dumps({
+    "provider": provider,
+    "missing": missing,
+    "has_cookie_inline": bool(cookie_inline),
+    "has_cookie_file": cookie_on_disk,
+}))
+""".strip()
+    return ["docker", "exec", DOCKER_CONTAINER_NAME, "python", "-c", script]
+
+
+def detect_docker_missing_secrets(_project_dir: Path) -> dict[str, Any]:
+    """Return missing secrets from the running Docker runtime config."""
+
+    proc = subprocess.run(
+        build_docker_missing_secrets_command(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "docker secret detection failed")
+    return json.loads(proc.stdout)
+
+
 # ---------------------------------------------------------------------------
 # Health check
 
@@ -1558,7 +1930,7 @@ def docker_compose_up(project_dir: Path) -> None:
 def wait_for_health(host: str, port: int, timeout: float = HEALTH_TIMEOUT_SECONDS) -> bool:
     """Poll /api/health until it returns 200 or timeout expires."""
 
-    url = f"http://{host}:{port}{DEFAULT_HEALTH_PATH}"
+    url = _health_url(host, port)
     deadline = time.monotonic() + timeout
     last_error: str | None = None
     while time.monotonic() < deadline:
@@ -1573,6 +1945,24 @@ def wait_for_health(host: str, port: int, timeout: float = HEALTH_TIMEOUT_SECOND
             last_error = str(exc)
         time.sleep(HEALTH_POLL_INTERVAL)
     info(f"health check timed out: {last_error}")
+    return False
+
+
+def wait_for_cookie_sync(
+    project_dir: Path,
+    *,
+    timeout_seconds: float = 300.0,
+    interval_seconds: float = 2.0,
+    detector: Callable[[Path], dict[str, Any]] = detect_missing_secrets,
+) -> bool:
+    """Wait until Bilibili cookie arrives via extension sync."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() <= deadline:
+        missing = detector(project_dir).get("missing", [])
+        if "bilibili.cookie" not in missing:
+            return True
+        time.sleep(interval_seconds)
     return False
 
 
@@ -1605,6 +1995,28 @@ def run(args: argparse.Namespace) -> int:
             return 2
         emit(BootstrapResult("ok", "secrets_reused", reuse_summary))
 
+    if args.interactive_confirm:
+        try:
+            answers = collect_interactive_confirmations()
+        except RuntimeError as exc:
+            emit(BootstrapResult("error", str(exc), {"step": "interactive_confirm"}))
+            return 2
+        apply_confirmation_answers_to_args(args, answers)
+        emit(
+            BootstrapResult(
+                "ok",
+                "init_confirmations_set",
+                {
+                    "embedding_provider": args.embedding_provider,
+                    "embedding_model": args.embedding_model,
+                    "xhs": "yes" if args.yes_xhs else "no",
+                    "douyin": "yes" if args.yes_douyin else "no",
+                    "youtube": "yes" if args.yes_youtube else "no",
+                    "cookie_mode": answers.cookie_mode,
+                },
+            )
+        )
+
     if args.provider:
         apply_provider_override(project_dir, args.provider)
         emit(BootstrapResult("ok", "provider_set", {"provider": args.provider}))
@@ -1626,9 +2038,9 @@ def run(args: argparse.Namespace) -> int:
             )
         )
     elif args.provider == "openai":
-        # User picked OpenAI 官方 (option 2 in agent-install.md). If a
-        # previous run wrote a gateway URL into [llm.openai] base_url
-        # (option 4), it would silently keep routing to that gateway.
+        # User picked OpenAI 官方 without a custom base_url. If a previous
+        # run wrote a gateway URL into [llm.openai] base_url, it would
+        # silently keep routing to that gateway.
         # Reset the field to "" so the OpenAI SDK falls back to its
         # built-in https://api.openai.com/v1.
         if clear_config_value(project_dir / "config.toml", "llm.openai", "base_url"):
@@ -1673,51 +2085,7 @@ def run(args: argparse.Namespace) -> int:
         )
         emit(BootstrapResult("ok", "embedding_set", summary))
 
-    # When the primary LLM is a provider with no embeddings endpoint
-    # (Claude / DeepSeek / OpenRouter) AND the user explicitly chose
-    # "follow primary" for embedding, auto-wire local Ollama bge-m3.
-    # If the agent did not ask about embedding at all, leave it pending
-    # for detect_init_decisions() instead of silently choosing.
     auto_embedding_to_ollama = False
-    effective_provider = (args.provider or detect_missing_secrets(project_dir)["provider"]) or ""
-    embedding_follow_requested = (
-        args.embedding_provider == ""
-        and args.embedding_model is None
-        and args.embedding_base_url is None
-        and args.embedding_api_key is None
-    )
-    if effective_provider in PROVIDERS_WITHOUT_EMBED and embedding_follow_requested:
-        # Don't overwrite an existing [llm.embedding] provider that the
-        # user (or a prior bootstrap run) set. Only auto-wire when the
-        # field is empty.
-        existing_emb = (
-            read_simple_toml(project_dir / "config.toml")
-            .get("llm", {})
-            .get("embedding", {})
-            .get("provider", "")
-        )
-        if not str(existing_emb).strip():
-            apply_embedding_config(
-                project_dir,
-                provider="ollama",
-                model="bge-m3",
-                base_url=None,
-                api_key=None,
-            )
-            auto_embedding_to_ollama = True
-            emit(
-                BootstrapResult(
-                    "ok",
-                    "embedding_auto_ollama",
-                    {
-                        "primary_provider": effective_provider,
-                        "reason": (
-                            f"{effective_provider!r} has no embeddings endpoint; "
-                            "wired local Ollama bge-m3 so install pulls the model now"
-                        ),
-                    },
-                )
-            )
 
     if args.module_override:
         try:
@@ -1829,18 +2197,50 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     healthy = wait_for_health(args.host, args.port)
-    final_status = detect_missing_secrets(project_dir)
-    init_decisions = detect_init_decisions(
-        project_dir,
-        args,
-        embedding_touched=embedding_touched or auto_embedding_to_ollama,
-    )
     if healthy:
+        status_detector: Callable[[Path], dict[str, Any]] = detect_missing_secrets
+        if mode == "docker":
+            try:
+                sync_docker_runtime_config(project_dir)
+            except RuntimeError as exc:
+                emit(BootstrapResult("error", str(exc), {"step": "docker_config_sync"}))
+                return 4
+            status_detector = detect_docker_missing_secrets
+
+        final_status = status_detector(project_dir)
+        if args.wait_for_extension_cookie and final_status["missing"] == ["bilibili.cookie"]:
+            emit(
+                BootstrapResult(
+                    "progress",
+                    "waiting_for_extension_cookie",
+                    {
+                        "timeout_seconds": 300,
+                        "hint": "Install the browser extension and log in to bilibili.com.",
+                    },
+                )
+            )
+            if wait_for_cookie_sync(project_dir, detector=status_detector):
+                final_status = status_detector(project_dir)
+                emit(BootstrapResult("ok", "extension_cookie_synced", final_status))
+            else:
+                emit(
+                    BootstrapResult(
+                        "needs_secrets",
+                        "extension_cookie_wait_timeout",
+                        final_status,
+                    )
+                )
+
+        init_decisions = detect_init_decisions(
+            project_dir,
+            args,
+            embedding_touched=embedding_touched or auto_embedding_to_ollama,
+        )
         label = "complete" if not final_status["missing"] else "running_with_missing_secrets"
         if not final_status["missing"] and init_decisions["missing"] and not args.skip_init:
             label = "needs_decisions"
         health_details = {
-            "health_url": f"http://{args.host}:{args.port}{DEFAULT_HEALTH_PATH}",
+            "health_url": _health_url(args.host, args.port),
             **final_status,
             "init_decisions": init_decisions,
         }
@@ -1881,7 +2281,16 @@ def run(args: argparse.Namespace) -> int:
             try:
                 xhs_flag = str(init_decisions["xhs"]["flag"])
                 douyin_flag = str(init_decisions["douyin"]["flag"])
-                init_cmd = build_init_command(mode, project_dir, xhs_flag, douyin_flag)
+                youtube_flag = str(init_decisions["youtube"]["flag"])
+                init_cmd = build_init_command(
+                    mode,
+                    project_dir,
+                    xhs_flag,
+                    douyin_flag,
+                    youtube_flag,
+                    bilibili_favorite_limit=args.bilibili_favorite_limit,
+                    bilibili_follow_limit=args.bilibili_follow_limit,
+                )
                 init_returncode = run_init_streaming(init_cmd, cwd=project_dir, check=False)
                 if init_returncode != 0:
                     emit(
@@ -1917,12 +2326,18 @@ def run(args: argparse.Namespace) -> int:
 
         return 0
 
+    final_status = detect_missing_secrets(project_dir)
+    init_decisions = detect_init_decisions(
+        project_dir,
+        args,
+        embedding_touched=embedding_touched or auto_embedding_to_ollama,
+    )
     emit(
         BootstrapResult(
             "error",
             "health_check_failed",
             {
-                "health_url": f"http://{args.host}:{args.port}{DEFAULT_HEALTH_PATH}",
+                "health_url": _health_url(args.host, args.port),
                 **final_status,
                 "init_decisions": init_decisions,
             },

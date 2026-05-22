@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
+from openbiliclaw.llm.service import is_llm_rate_limit_error
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
 if TYPE_CHECKING:
@@ -93,6 +95,45 @@ def _recommendation_profile_summary(
             for ins in getattr(profile, "active_insights", [])[:5]
         ]
     return summary
+
+
+def _content_result_keys(content: DiscoveredContent) -> set[str]:
+    """Stable keys that may identify a content item in batched LLM results."""
+    return {
+        key
+        for key in {
+            str(getattr(content, "bvid", "") or "").strip(),
+            str(getattr(content, "content_id", "") or "").strip(),
+        }
+        if key
+    }
+
+
+def _batch_results_by_content_key(
+    payload: list[dict[str, Any]],
+    batch: list[DiscoveredContent],
+) -> dict[str, dict[str, Any]] | None:
+    """Return payload entries keyed by content ID when the LLM supplied IDs.
+
+    ``None`` means no usable IDs were present, so callers may fall back to
+    legacy index matching only when the response length is complete.
+    """
+    valid_keys: set[str] = set()
+    for content in batch:
+        valid_keys.update(_content_result_keys(content))
+
+    matched: dict[str, dict[str, Any]] = {}
+    saw_identifier = False
+    for item in payload:
+        raw_key = str(item.get("bvid") or item.get("content_id") or "").strip()
+        if not raw_key:
+            continue
+        saw_identifier = True
+        if raw_key not in valid_keys:
+            continue
+        matched[raw_key] = item
+
+    return matched if saw_identifier else None
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -956,6 +997,8 @@ class RecommendationEngine:
         profile_data = _recommendation_profile_summary(profile)
         content_items = [
             {
+                "bvid": c.bvid,
+                "content_id": c.content_id or c.bvid,
                 "title": c.title,
                 "up_name": c.up_name or c.author_name,
                 "description": (c.description or "")[:200],
@@ -965,6 +1008,16 @@ class RecommendationEngine:
             }
             for c in batch
         ]
+        # Fetch recent negative exemplars so Rule 11 pattern-matching
+        # applies equally to non-bilibili pool items (e.g. xiaohongshu).
+        negative_examples: list[dict[str, object]] | None = None
+        try:
+            from openbiliclaw.soul.negative_exemplars import recent_negative_exemplars
+
+            negative_examples = recent_negative_exemplars(self._database) or None
+        except Exception:
+            logger.debug("classify_batch: negative_exemplars unavailable", exc_info=True)
+
         # Determine the dominant platform for prompt context
         platform = (batch[0].source_platform or "bilibili") if batch else "bilibili"
         messages = build_batch_content_evaluation_prompt(
@@ -972,6 +1025,7 @@ class RecommendationEngine:
             content_items=content_items,
             source_context=batch[0].source_strategy if batch else "",
             source_platform=platform,
+            negative_examples=negative_examples,
         )
 
         response = await self._llm.complete_structured_task(
@@ -984,11 +1038,14 @@ class RecommendationEngine:
             caller="recommendation.evaluate_batch",
         )
         raw = str(getattr(response, "content", "")).strip()
-        payload = json.loads(raw)
-        if isinstance(payload, dict):
-            payload = [payload]
-        if not isinstance(payload, list):
-            raise ValueError(f"Expected JSON array, got {type(payload).__name__}")
+        payload = extract_llm_json_list(
+            raw,
+            wrapper_keys=("results", "items", "evaluations", "scores", "data"),
+            allow_singleton=True,
+            item_predicate=lambda item: "score" in item,
+        )
+        if payload is None:
+            raise ValueError("Expected classification JSON array or compatible wrapper.")
 
         if len(payload) != len(batch):
             logger.warning(
@@ -997,16 +1054,40 @@ class RecommendationEngine:
                 len(batch),
             )
 
+        payload_by_id = _batch_results_by_content_key(payload, batch)
+        if payload_by_id is None and len(payload) != len(batch):
+            logger.warning(
+                "Classification batch result count mismatch without IDs; marking %d items failed",
+                len(batch),
+            )
+            for content in batch:
+                content.relevance_score = 0.01
+                content.relevance_reason = "classification_failed"
+            return
+
         for i, content in enumerate(batch):
-            if i >= len(payload) or not isinstance(payload[i], dict):
+            if payload_by_id is None:
+                result = payload[i] if i < len(payload) else None
+            else:
+                result = next(
+                    (
+                        payload_by_id[key]
+                        for key in _content_result_keys(content)
+                        if key in payload_by_id
+                    ),
+                    None,
+                )
+            if not isinstance(result, dict):
                 # Mark as attempted so get_pool_candidates_needing_evaluation
                 # won't retry this item forever.  A score of 0.01 signals
                 # "classification attempted but no usable result".
                 content.relevance_score = 0.01
                 content.relevance_reason = "classification_failed"
                 continue
-            result = payload[i]
-            score = max(0.0, min(1.0, float(result.get("score", 0.0))))
+            score_value = result.get("score", 0.0)
+            if not isinstance(score_value, (int, float, str)):
+                score_value = 0.0
+            score = max(0.0, min(1.0, float(score_value)))
             reason = str(result.get("reason", "")).strip()
             topic_group = str(result.get("topic_group", "")).strip()
             style_key = str(result.get("style_key", "")).strip().lower()
@@ -1150,8 +1231,12 @@ class RecommendationEngine:
                 user_input=messages[1]["content"],
                 caller="recommendation.delight_reason",
             )
-            payload = json.loads(response.content.strip())
-            if not isinstance(payload, dict):
+            payload = extract_llm_json_object(
+                str(response.content),
+                wrapper_keys=("result", "item", "data", "output"),
+                item_predicate=lambda item: "delight_reason" in item or "delight_hook" in item,
+            )
+            if payload is None:
                 raise ValueError("Delight reason response must be a JSON object.")
             reason = str(payload.get("delight_reason", "")).strip()
             hook = str(payload.get("delight_hook", "")).strip()
@@ -1182,6 +1267,8 @@ class RecommendationEngine:
         )
         content_items = [
             {
+                "bvid": item.bvid,
+                "content_id": item.content_id or item.bvid,
                 "title": item.title,
                 "up_name": item.up_name,
                 "description": (item.description or "")[:200],
@@ -1211,24 +1298,56 @@ class RecommendationEngine:
                 reasoning_effort="",
                 caller="recommendation.write_expression",
             )
-            payload = json.loads(response.content.strip())
-            if isinstance(payload, dict):
-                payload = [payload]
-            if not isinstance(payload, list):
-                raise ValueError(f"Expected JSON array, got {type(payload).__name__}")
-        except Exception:
+            payload = extract_llm_json_list(
+                str(response.content),
+                wrapper_keys=("results", "items", "expressions", "data"),
+                allow_singleton=True,
+                item_predicate=lambda item: "expression" in item or "topic_label" in item,
+            )
+            if payload is None:
+                raise ValueError("Expected expression JSON array or compatible wrapper.")
+        except Exception as exc:
+            if is_llm_rate_limit_error(exc):
+                logger.warning(
+                    "Batch expression generation skipped single-item fallback for %d items "
+                    "because the LLM provider is rate-limited or cooling down: %s",
+                    len(batch),
+                    exc,
+                )
+                return 0
             logger.warning(
                 "Batch expression generation failed for %d items, falling back to single",
                 len(batch),
             )
             return await self._precompute_single_fallback(batch, profile)
 
+        payload_by_id = _batch_results_by_content_key(payload, batch)
+        if payload_by_id is None and len(payload) != len(batch):
+            logger.warning(
+                "Batch expression result count mismatch without IDs (%d results for %d items), "
+                "falling back to single generation",
+                len(payload),
+                len(batch),
+            )
+            return await self._precompute_single_fallback(batch, profile)
+
         completed = 0
         for i, item in enumerate(batch):
-            if i >= len(payload) or not isinstance(payload[i], dict):
+            if payload_by_id is None:
+                result = payload[i] if i < len(payload) else None
+            else:
+                result = next(
+                    (
+                        payload_by_id[key]
+                        for key in _content_result_keys(item)
+                        if key in payload_by_id
+                    ),
+                    None,
+                )
+            if not isinstance(result, dict):
                 continue
-            expression = str(payload[i].get("expression", "")).strip()
-            topic_label = str(payload[i].get("topic_label", "")).strip()
+            expression = str(result.get("expression", "")).strip()
+            topic_label = str(result.get("topic_label", "")).strip()
             if not expression or not topic_label:
                 continue
             self._database.update_pool_copy(
@@ -1386,8 +1505,12 @@ class RecommendationEngine:
                 user_input=messages[1]["content"],
                 caller="recommendation.expression",
             )
-            payload = json.loads(response.content.strip())
-            if not isinstance(payload, dict):
+            payload = extract_llm_json_object(
+                str(response.content),
+                wrapper_keys=("result", "item", "expression", "data", "output"),
+                item_predicate=lambda item: "expression" in item or "topic_label" in item,
+            )
+            if payload is None:
                 raise ValueError("Expression response must be a JSON object.")
             expression = str(payload.get("expression", "")).strip()
             topic_label = str(payload.get("topic_label", "")).strip()

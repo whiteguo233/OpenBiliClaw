@@ -1,4 +1,4 @@
-name: Release Backend Packages
+name: Validate Backend Source Tag
 
 on:
   push:
@@ -6,31 +6,18 @@ on:
       - "backend-v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }} backend package
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: macos
-          - os: windows-latest
-            target: windows
+  validate:
+    name: Validate backend source tag
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Verify backend version matches release tag
+      - name: Verify backend version matches source tag
         shell: python
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -46,58 +33,5 @@ jobs:
 
           if actual_version != expected_version:
               raise SystemExit(
-                  f"backend release tag {release_tag} does not match pyproject version {actual_version}"
+                  f"backend source tag {release_tag} does not match pyproject version {actual_version}"
               )
-
-      - name: Install project dependencies
-        run: python -m pip install -e ".[dev]"
-
-      - name: Build backend release archive
-        run: python packaging/build.py --clean --archive-version "${{ github.ref_name }}"
-
-      - name: Verify release archive
-        shell: python
-        run: |
-          from pathlib import Path
-
-          archives = sorted(Path("dist/release").glob("*.zip"))
-          if len(archives) != 1:
-              raise SystemExit(f"expected exactly one release archive, got: {archives}")
-          print(f"verified release archive: {archives[0]}")
-
-      - name: Upload packaged backend artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-${{ matrix.target }}
-          path: dist/release/*.zip
-          if-no-files-found: error
-
-  publish-release:
-    name: Publish backend release
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Download packaged backend artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: backend-*
-          path: release-artifacts
-          merge-multiple: true
-
-      - name: Verify downloaded artifacts
-        shell: python
-        run: |
-          from pathlib import Path
-
-          archives = sorted(Path("release-artifacts").glob("*.zip"))
-          if len(archives) < 2:
-              raise SystemExit(f"expected at least two backend archives, got: {archives}")
-          for archive in archives:
-              print(f"release artifact ready: {archive}")
-
-      - name: Create GitHub Release and upload packages
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-artifacts/*.zip
-          generate_release_notes: true

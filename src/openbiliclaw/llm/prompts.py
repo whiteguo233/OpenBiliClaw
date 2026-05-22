@@ -970,8 +970,9 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 数组,不要附带解释。\n"
     "2. 数组长度必须与输入内容数量一致,顺序一一对应。\n"
-    "3. 每项包含 score(0-1)、reason(一句中文)、topic_group(2-4词粗分类)、"
-    "style_key(11选1)、franchise_key(可空)。\n"
+    "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
+    "reason(一句中文)、topic_group(2-4词粗分类)、style_key(11选1)、"
+    "franchise_key(可空)。\n"
     "4. 根据 <source_context> 调整评判宽容度:search 要求高度匹配;"
     "trending 基础分 >= 0.6;related_chain 允许适度偏移;"
     "explore 允许主题陌生,但内容仍需具备可看性,过于学术艰深的应适当降分。\n"
@@ -1022,11 +1023,11 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "</rules>\n\n"
     "<output_schema>\n"
     "[\n"
-    '  {"score": 0.78, "reason": "...", "topic_group": "认知科学", '
+    '  {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
     '"style_key": "deep_dive", "franchise_key": ""},\n'
-    '  {"score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
+    '  {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
     '"style_key": "visual_showcase", "franchise_key": "原神"},\n'
-    '  {"score": 0.45, "reason": "...", "topic_group": "美食", '
+    '  {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
     '"style_key": "light_chat", "franchise_key": ""}\n'
     "]\n"
     "</output_schema>"
@@ -1205,7 +1206,8 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "</task>\n\n"
     "<rules>\n"
     "1. 输出必须是严格 JSON 数组,数组长度与输入内容数量一致,顺序一一对应。\n"
-    "2. 每项包含 expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
+    "2. 每项必须原样带回输入里的 bvid 或 content_id,并包含 "
+    "expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
     "3. expression 像朋友私聊。bilibili 用'老 B 友'语境,xiaohongshu 用更生活化的姐妹/朋友语气,"
     "其他平台保持中性朋友感。必须引用至少一个具体内容细节(标题关键词、作者特点、独特切入角度),"
     "不要说空话。\n"
@@ -1223,8 +1225,8 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "</rules>\n\n"
     "<output_schema>\n"
     "[\n"
-    '  {"expression": "这条...", "topic_label": "xxx"},\n'
-    '  {"expression": "这个UP主...", "topic_label": "yyy"}\n'
+    '  {"bvid": "BV1xxx", "expression": "这条...", "topic_label": "xxx"},\n'
+    '  {"bvid": "BV2xxx", "expression": "这个UP主...", "topic_label": "yyy"}\n'
     "]\n"
     "</output_schema>"
 )

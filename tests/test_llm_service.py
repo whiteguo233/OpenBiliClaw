@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
 
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import LLMProviderError, LLMRateLimitError, LLMResponse
 from openbiliclaw.llm.service import (
     LLMProviderExecutionError,
     LLMResponseContentError,
     LLMService,
+    ModuleOverride,
     PrioritySemaphore,
+    is_llm_rate_limit_error,
+    module_overrides_from_config,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -23,10 +27,22 @@ if TYPE_CHECKING:
 class FakeRegistry:
     """Minimal fake registry for service tests."""
 
-    def __init__(self, response: LLMResponse | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        response: LLMResponse | None = None,
+        error: Exception | None = None,
+        *,
+        chat_capable: set[str] | None = None,
+        default_provider: str = "openai",
+        provider_error: Exception | None = None,
+    ) -> None:
         self.response = response
         self.error = error
+        self.provider_error = provider_error
+        self.chat_capable = {name.lower() for name in (chat_capable or {"openai"})}
+        self.default_provider = default_provider
         self.calls: list[list[dict[str, str]]] = []
+        self.provider_calls: list[dict[str, object]] = []
         self.json_modes: list[bool] = []
 
     async def complete(
@@ -44,6 +60,33 @@ class FakeRegistry:
             raise self.error
         return self.response or LLMResponse(content="", provider="openai")
 
+    async def complete_provider(
+        self,
+        provider_name: str,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        self.provider_calls.append(
+            {
+                "provider_name": provider_name,
+                "messages": messages,
+                "json_mode": json_mode,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
+        if self.provider_error is not None:
+            raise self.provider_error
+        return self.response or LLMResponse(content="ok", provider=provider_name)
+
+    def is_chat_capable(self, name: str) -> bool:
+        return name.strip().lower() in self.chat_capable
+
 
 class FakeMemoryManager:
     def __init__(self, core_prompt: str) -> None:
@@ -51,6 +94,21 @@ class FakeMemoryManager:
 
     def render_core_memory_prompt(self) -> str:
         return self.core_prompt
+
+
+def test_is_llm_rate_limit_error_detects_wrapped_provider_backoff() -> None:
+    try:
+        try:
+            raise LLMRateLimitError("429 Too Many Requests")
+        except LLMRateLimitError as err:
+            raise LLMProviderExecutionError("All providers failed") from err
+    except LLMProviderExecutionError as wrapped:
+        assert is_llm_rate_limit_error(wrapped)
+
+    assert is_llm_rate_limit_error(
+        LLMProviderExecutionError("Provider gemini is cooling down after 429")
+    )
+    assert not is_llm_rate_limit_error(ValueError("Expected scored JSON array"))
 
 
 @pytest.mark.asyncio
@@ -152,6 +210,164 @@ def test_resolve_priority_longest_prefix_wins() -> None:
     assert LLMService._resolve_priority("xhs.classify") == 2
     assert LLMService._resolve_priority("unrelated.tag") == LLMService._DEFAULT_PRIORITY
     assert LLMService._resolve_priority("") == LLMService._DEFAULT_PRIORITY
+
+
+def test_route_bucket_for_caller_covers_actual_callers() -> None:
+    assert LLMService._route_bucket_for_caller("soul.profile_builder") == "soul"
+    assert LLMService._route_bucket_for_caller("discovery.search.query") == "discovery"
+    assert LLMService._route_bucket_for_caller("discovery.evaluate_batch") == "evaluation"
+    assert LLMService._route_bucket_for_caller("recommendation.delight_score") == "evaluation"
+    assert (
+        LLMService._route_bucket_for_caller("recommendation.write_expression") == "recommendation"
+    )
+    assert LLMService._route_bucket_for_caller("sources.xhs.classify") == "discovery"
+    assert LLMService._route_bucket_for_caller("eval.batch") == "evaluation"
+    assert LLMService._route_bucket_for_caller("unrelated.tag") is None
+
+
+def test_module_overrides_from_config_normalizes_non_empty_blocks() -> None:
+    from openbiliclaw.config import Config
+
+    config = Config()
+    config.llm.soul.provider = " Claude "
+    config.llm.soul.model = " claude-sonnet "
+    config.llm.discovery.model = " gpt-4o-mini "
+
+    overrides = module_overrides_from_config(config)
+
+    assert overrides == {
+        "soul": ModuleOverride(provider="claude", model="claude-sonnet"),
+        "discovery": ModuleOverride(provider="", model="gpt-4o-mini"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_complete_with_core_memory_routes_module_override() -> None:
+    registry = FakeRegistry(
+        LLMResponse(content="ok", provider="claude"),
+        chat_capable={"openai", "claude"},
+    )
+    memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
+    service = LLMService(
+        registry=registry,
+        memory=memory,  # type: ignore[arg-type]
+        module_overrides={"soul": ModuleOverride(provider="claude", model="claude-sonnet")},
+    )
+
+    await service.complete_with_core_memory(
+        system_instruction="A",
+        user_input="B",
+        caller="soul.profile_builder",
+    )
+
+    assert registry.calls == []
+    assert registry.provider_calls[0]["provider_name"] == "claude"
+    assert registry.provider_calls[0]["model"] == "claude-sonnet"
+
+
+@pytest.mark.asyncio
+async def test_route_bucket_specific_prefix_beats_broad_recommendation() -> None:
+    registry = FakeRegistry(
+        LLMResponse(content="ok", provider="deepseek"),
+        chat_capable={"openai", "deepseek"},
+    )
+    service = LLMService(
+        registry=registry,
+        memory=FakeMemoryManager(core_prompt=""),  # type: ignore[arg-type]
+        module_overrides={
+            "recommendation": ModuleOverride(provider="openai", model="gpt-4o-mini"),
+            "evaluation": ModuleOverride(provider="deepseek", model="deepseek-v4-flash"),
+        },
+    )
+
+    await service.complete_with_core_memory(
+        system_instruction="A",
+        user_input="B",
+        caller="recommendation.delight_score",
+    )
+
+    assert registry.provider_calls[0]["provider_name"] == "deepseek"
+    assert registry.provider_calls[0]["model"] == "deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
+async def test_model_only_module_override_uses_default_provider() -> None:
+    registry = FakeRegistry(
+        LLMResponse(content="ok", provider="openai"),
+        chat_capable={"openai"},
+        default_provider="openai",
+    )
+    service = LLMService(
+        registry=registry,
+        memory=FakeMemoryManager(core_prompt=""),  # type: ignore[arg-type]
+        module_overrides={"soul": ModuleOverride(model="gpt-4.1-mini")},
+    )
+
+    await service.complete_with_core_memory(
+        system_instruction="A",
+        user_input="B",
+        caller="soul.preference",
+    )
+
+    assert registry.calls == []
+    assert registry.provider_calls[0]["provider_name"] == "openai"
+    assert registry.provider_calls[0]["model"] == "gpt-4.1-mini"
+
+
+@pytest.mark.asyncio
+async def test_unknown_module_override_provider_falls_back_and_logs_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = FakeRegistry(
+        LLMResponse(content="ok", provider="openai"),
+        chat_capable={"openai"},
+    )
+    service = LLMService(
+        registry=registry,
+        memory=FakeMemoryManager(core_prompt=""),  # type: ignore[arg-type]
+        module_overrides={"soul": ModuleOverride(provider="claud", model="expensive")},
+    )
+
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.llm.service"):
+        await service.complete_with_core_memory(
+            system_instruction="A",
+            user_input="B",
+            caller="soul.preference",
+        )
+        await service.complete_with_core_memory(
+            system_instruction="A",
+            user_input="C",
+            caller="soul.profile_builder",
+        )
+
+    assert registry.provider_calls == []
+    assert len(registry.calls) == 2
+    ignored = [r for r in caplog.records if "LLM module override ignored" in r.getMessage()]
+    assert len(ignored) == 1
+
+
+@pytest.mark.asyncio
+async def test_override_provider_error_does_not_spill_to_default() -> None:
+    registry = FakeRegistry(
+        LLMResponse(content="ok", provider="openai"),
+        chat_capable={"openai", "claude"},
+        provider_error=LLMProviderError("override down"),
+    )
+    service = LLMService(
+        registry=registry,
+        memory=FakeMemoryManager(core_prompt=""),  # type: ignore[arg-type]
+        module_overrides={"soul": ModuleOverride(provider="claude")},
+    )
+
+    with pytest.raises(LLMProviderExecutionError):
+        await service.complete_with_core_memory(
+            system_instruction="A",
+            user_input="B",
+            caller="soul.preference",
+        )
+
+    assert len(registry.provider_calls) == 1
+    assert registry.calls == []
 
 
 @pytest.mark.asyncio

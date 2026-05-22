@@ -10,6 +10,7 @@ from typing import Protocol
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
+    extract_llm_json_list,
     format_parse_failure,
     parse_llm_json_tolerant,
 )
@@ -97,6 +98,24 @@ class InsightAnalyzer:
     def _parse_response(self, content: str) -> list[object]:
         if not content.strip():
             return []
+        payload = extract_llm_json_list(
+            content,
+            wrapper_keys=(
+                "results",
+                "items",
+                "insights",
+                "hypotheses",
+                "data",
+                "output",
+                "list",
+                "array",
+            ),
+            allow_singleton=True,
+            item_predicate=lambda item: "hypothesis" in item or "evidence" in item,
+        )
+        if payload is not None:
+            return list(payload)
+
         parsed = parse_llm_json_tolerant(content)
         if parsed is None:
             exc = ValueError("unrecoverable JSON")

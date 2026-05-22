@@ -34,6 +34,8 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str
+    profile_ready: bool | None = None
+    lan_ip: str | None = None
 
 
 class RecommendationOut(BaseModel):
@@ -47,6 +49,7 @@ class RecommendationOut(BaseModel):
     expression: str = ""
     topic_label: str = ""
     presented: bool = False
+    feedback_type: str = ""
     # Multi-source fields (additive, backward-compatible)
     content_id: str = ""
     content_url: str = ""
@@ -515,6 +518,7 @@ class LLMProviderConfigOut(BaseModel):
     api_key: str = ""
     model: str = ""
     base_url: str = ""
+    auth_mode: str = ""
     http_referer: str = ""
     x_title: str = ""
     reasoning_effort: str = ""
@@ -527,6 +531,8 @@ class EmbeddingConfigOut(BaseModel):
     api_key: str = ""
     base_url: str = ""
     similarity_threshold: float = 0.82
+    fallback_enabled: bool = False
+    fallback_provider: str = ""
 
 
 class ModuleLLMConfigOut(BaseModel):
@@ -536,6 +542,8 @@ class ModuleLLMConfigOut(BaseModel):
 
 class LLMConfigOut(BaseModel):
     default_provider: str = "openai"
+    fallback_enabled: bool = False
+    fallback_provider: str = ""
     openai: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     claude: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
     gemini: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
@@ -563,8 +571,12 @@ class SourcesBrowserConfigOut(BaseModel):
     headed: bool = False
 
 
-class XiaohongshuSourceConfigOut(BaseModel):
+class BilibiliSourceConfigOut(BaseModel):
     enabled: bool = True
+
+
+class XiaohongshuSourceConfigOut(BaseModel):
+    enabled: bool = False
     daily_search_budget: int = 30
     daily_creator_budget: int = 10
     task_interval_seconds: int = 45
@@ -582,23 +594,36 @@ class DouyinSourceConfigOut(BaseModel):
 
 class YoutubeSourceConfigOut(BaseModel):
     enabled: bool = False
+    daily_search_budget: int = 6
+    daily_trending_budget: int = 50
+    daily_channel_budget: int = 10
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 60
 
 
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
-    xiaohongshu: XiaohongshuSourceConfigOut = Field(
-        default_factory=XiaohongshuSourceConfigOut
-    )
+    bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
+    xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
     enabled: bool = True
+    pause_on_extension_disconnect: bool = False
+    extension_disconnect_grace_seconds: int = 90
     discovery_cron: str = "0 */8 * * *"
     pool_target_count: int = 600
     pool_source_shares: dict[str, int] = Field(default_factory=dict)
     account_sync_interval_hours: int = 6
+    refresh_check_interval_seconds: int = 60
+    signal_event_threshold: int = 6
+    trending_refresh_hours: int = 3
+    explore_refresh_hours: int = 12
+    discovery_limit: int = 30
+    proactive_push_interval_seconds: int = 120
+    speculator_idle_interval_minutes: int = 30
     speculation_interval_minutes: int = 10
     speculation_ttl_days: int = 3
     speculation_cooldown_days: int = 7
@@ -619,6 +644,7 @@ class LoggingConfigOut(BaseModel):
     file_level: str = "DEBUG"
     directory: str = "logs"
     filename: str = "openbiliclaw.log"
+    file_path: str = "logs/openbiliclaw.log"
     max_file_size_mb: int = 100
     backup_count: int = 1
     aggregate_budget_mb: int = 500
@@ -629,6 +655,7 @@ class LoggingConfigOut(BaseModel):
 class ConfigIssueOut(BaseModel):
     field: str
     message: str
+    severity: str = "warning"
 
 
 class ConfigResponse(BaseModel):
@@ -636,6 +663,8 @@ class ConfigResponse(BaseModel):
 
     language: str = "zh"
     data_dir: str = "data"
+    degraded: bool = False
+    degraded_reason: str = ""
     llm: LLMConfigOut = Field(default_factory=LLMConfigOut)
     bilibili: BilibiliConfigOut = Field(default_factory=BilibiliConfigOut)
     sources: SourcesConfigOut = Field(default_factory=SourcesConfigOut)
@@ -650,6 +679,7 @@ class ConfigUpdateIn(BaseModel):
 
     language: str | None = None
     data_dir: str | None = None
+    reset_fields: list[str] | None = None
     llm: dict[str, object] | None = None
     bilibili: dict[str, object] | None = None
     sources: dict[str, object] | None = None
@@ -672,6 +702,8 @@ class ConfigUpdateResponse(BaseModel):
     config: ConfigResponse
     message: str = ""
     reloaded: bool = False
+    rollback_applied: bool = False
+    restart_required: bool = False
 
 
 class SourceShareSuggestionResponse(BaseModel):

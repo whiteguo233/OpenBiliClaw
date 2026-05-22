@@ -87,6 +87,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         """Send a chat completion request.
 
@@ -102,6 +103,9 @@ class LLMProvider(ABC):
                 ``""`` means "explicitly disable thinking for this
                 call" (used by structured tasks like discovery's
                 ``_evaluate_batch`` that don't benefit from reasoning).
+            model: Optional per-call model override. Empty/whitespace
+                values fall back to the provider's configured default
+                without mutating provider state.
 
         Returns:
             Standardized LLMResponse.
@@ -137,6 +141,8 @@ class LLMRegistry:
         self._providers: dict[str, LLMProvider] = {}
         self._default: str = ""
         self._rate_limited_until: dict[str, float] = {}
+        self.fallback_enabled: bool = False
+        self.fallback_provider: str = ""
         # Names of providers that should NOT appear in the chat-completion
         # fallback chain — typically an Ollama instance registered solely
         # for embedding (see register(..., chat_capable=False)).
@@ -213,6 +219,11 @@ class LLMRegistry:
         """Name of the default provider."""
         return self._default
 
+    def is_chat_capable(self, name: str) -> bool:
+        """Return whether *name* is registered for chat completions."""
+        target = name.strip().lower()
+        return bool(target and target in self._providers and target not in self._chat_disabled)
+
     async def complete(
         self,
         messages: list[dict[str, str]],
@@ -262,6 +273,51 @@ class LLMRegistry:
             f"All providers failed ({attempted_list}). Last error: {last_error}"
         ) from last_error
 
+    async def complete_provider(
+        self,
+        provider_name: str,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        """Execute a completion against one exact chat-capable provider.
+
+        Unlike ``complete()``, this method intentionally has no fallback
+        chain. It is used for explicit per-module overrides where
+        falling back to a different provider would violate user intent.
+        """
+        target = provider_name.strip().lower()
+        if not self.is_chat_capable(target):
+            available = ", ".join(self._fallback_order())
+            raise LLMFallbackError(
+                f"LLM provider '{target or provider_name}' is not registered "
+                f"or not chat-capable. Chat-capable providers: {available}"
+            )
+        if self._provider_on_cooldown(target):
+            logger.warning("Provider %s is cooling down after rate limit.", target)
+            raise LLMRateLimitError(f"Provider {target} is cooling down after rate limit.")
+
+        provider = self.get(target)
+        try:
+            response = await provider.complete(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            )
+            self._rate_limited_until.pop(target, None)
+            return response
+        except LLMRateLimitError:
+            self._mark_rate_limited(target)
+            logger.warning("Provider %s rate-limited exact routed call.", target)
+            raise
+
     async def health_check_all(self) -> dict[str, HealthCheckResult]:
         """Run health checks for all registered providers."""
         results: dict[str, HealthCheckResult] = {}
@@ -287,8 +343,9 @@ class LLMRegistry:
 
         Skips providers registered with ``chat_capable=False`` (the
         embedding-only Ollama case). The default provider is honored
-        whenever it's chat-capable; if the user picked an embedding-only
-        provider as default we still skip it from the chat chain.
+        whenever it's chat-capable. A fallback provider is included only
+        when ``fallback_provider`` names a registered chat provider; no
+        automatic provider walk is performed.
         """
         chat_pool = [name for name in self.available_providers if name not in self._chat_disabled]
         if not chat_pool:
@@ -298,11 +355,18 @@ class LLMRegistry:
             # to process the request.").
             return []
         if self._default and self._default in chat_pool:
-            return [
+            ordered = [
                 self._default,
                 *[name for name in chat_pool if name != self._default],
             ]
-        return chat_pool
+        else:
+            ordered = chat_pool
+        fallback_provider = self.fallback_provider.strip().lower()
+        if not fallback_provider:
+            return ordered[:1]
+        if fallback_provider == ordered[0] or fallback_provider not in chat_pool:
+            return ordered[:1]
+        return [ordered[0], fallback_provider]
 
     def _provider_on_cooldown(self, provider_name: str) -> bool:
         until = self._rate_limited_until.get(provider_name)

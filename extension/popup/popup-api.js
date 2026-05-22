@@ -1,13 +1,131 @@
 import { normalizeRecommendation } from "./popup-helpers.js";
 import { getBackendBaseUrl } from "./popup-backend-config.js";
 
-async function requestJson(path, options = {}) {
-  const backendUrl = await getBackendBaseUrl();
-  const response = await fetch(`${backendUrl}${path}`, options);
-  if (!response.ok) {
-    throw new Error(`${path} request failed: ${response.status}`);
+export const CONFIG_CACHE_KEY = "openbiliclaw.config_cache";
+export const CONFIG_PUT_TIMEOUT_MS = 60_000;
+
+function abortError(message = "Request aborted") {
+  if (typeof DOMException === "function") {
+    return new DOMException(message, "AbortError");
   }
-  return response.json();
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function withTimeout(signal, timeoutMs) {
+  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+  if (!hasTimeout && !signal) {
+    return { signal: undefined, cleanup: () => {} };
+  }
+  if (!hasTimeout) {
+    return { signal, cleanup: () => {} };
+  }
+
+  const controller = new AbortController();
+  let timeoutId = null;
+  const abortFrom = (reason) => {
+    if (!controller.signal.aborted) {
+      controller.abort(reason || abortError());
+    }
+  };
+  const onCallerAbort = () => abortFrom(signal?.reason);
+
+  if (signal?.aborted) {
+    abortFrom(signal.reason);
+  } else if (signal) {
+    signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  timeoutId = setTimeout(() => abortFrom(abortError("Request timed out")), timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (signal) signal.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+export async function requestJson(path, options = {}) {
+  const backendUrl = await getBackendBaseUrl();
+  const { timeoutMs, signal, ...fetchOptions } = options;
+  const timeout = withTimeout(signal, timeoutMs);
+  const requestOptions = { ...fetchOptions };
+  if (timeout.signal) {
+    requestOptions.signal = timeout.signal;
+  }
+  try {
+    const response = await fetch(`${backendUrl}${path}`, requestOptions);
+    if (!response.ok) {
+      let details = null;
+      try {
+        details = await response.json();
+      } catch {
+        details = null;
+      }
+      const error = new Error(`${path} request failed: ${response.status}`);
+      error.status = response.status;
+      error.details = details;
+      throw error;
+    }
+    return response.json();
+  } finally {
+    timeout.cleanup();
+  }
+}
+
+function getChromeStorageLocal() {
+  return globalThis.chrome?.storage?.local || null;
+}
+
+function storageGet(key) {
+  const local = getChromeStorageLocal();
+  if (!local?.get) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const maybePromise = local.get(key, (items) => resolve(items || {}));
+      if (maybePromise?.then) {
+        maybePromise.then((items) => resolve(items || {})).catch(() => resolve(null));
+      }
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function storageSet(items) {
+  const local = getChromeStorageLocal();
+  if (!local?.set) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      const maybePromise = local.set(items, () => resolve(true));
+      if (maybePromise?.then) {
+        maybePromise.then(() => resolve(true)).catch(() => resolve(false));
+      }
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+export async function cacheConfigSnapshot(config) {
+  if (!config || !getChromeStorageLocal()) return null;
+  const snapshot = {
+    config,
+    cached_at: new Date().toISOString(),
+  };
+  const ok = await storageSet({ [CONFIG_CACHE_KEY]: snapshot });
+  return ok ? snapshot : null;
+}
+
+export async function readCachedConfigSnapshot() {
+  const items = await storageGet(CONFIG_CACHE_KEY);
+  const snapshot = items?.[CONFIG_CACHE_KEY];
+  if (!snapshot || typeof snapshot !== "object" || !snapshot.config) {
+    return null;
+  }
+  return snapshot;
 }
 
 export async function checkBackendStatus() {
@@ -234,7 +352,9 @@ export async function respondToDelight(bvid, responseType, title = "", message =
 }
 
 export async function fetchConfig() {
-  return requestJson("/config?reveal_keys=true", { method: "GET" });
+  const config = await requestJson("/config?reveal_keys=true", { method: "GET" });
+  await cacheConfigSnapshot(config);
+  return config;
 }
 
 export async function fetchSourceShareSuggestion(overrides = null) {
@@ -253,9 +373,21 @@ export async function fetchSourceShareSuggestion(overrides = null) {
 export async function updateConfig(data) {
   return requestJson("/config", {
     method: "PUT",
+    timeoutMs: CONFIG_PUT_TIMEOUT_MS,
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(data),
   });
+}
+
+export async function updateRuntimeToggle(name, value) {
+  const enabled = Boolean(value);
+  if (name === "pause_llm") {
+    return updateConfig({ scheduler: { enabled: !enabled } });
+  }
+  if (name === "pause_on_disconnect") {
+    return updateConfig({ scheduler: { pause_on_extension_disconnect: enabled } });
+  }
+  throw new Error(`Unknown runtime toggle: ${name}`);
 }

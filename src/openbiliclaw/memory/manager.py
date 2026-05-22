@@ -123,6 +123,7 @@ class MemoryManager:
         self._database = database or Database(data_dir / "openbiliclaw.db")
         self._feedback_state_path = data_dir / "memory" / "feedback_state.json"
         self._account_sync_state_path = data_dir / "memory" / "account_sync_state.json"
+        self._source_bootstrap_state_path = data_dir / "memory" / "source_bootstrap_state.json"
         self._discovery_runtime_state_path = data_dir / "memory" / "discovery_runtime.json"
         self._insight_candidates_path = data_dir / "memory" / "insight_candidates.json"
         self._cognition_updates_path = data_dir / "memory" / "cognition_updates.json"
@@ -240,10 +241,13 @@ class MemoryManager:
         default_state = {
             "last_history_view_at": 0,
             "last_history_bvid": "",
+            "history_bvids_at_last_view_at": [],
             "last_favorites_sync_at": "",
             "favorite_signature": "",
+            "favorite_bvids": [],
             "last_following_sync_at": "",
             "following_signature": "",
+            "following_mids": [],
             "last_account_sync_at": "",
             "last_sync_error": "",
         }
@@ -256,10 +260,15 @@ class MemoryManager:
         return {
             "last_history_view_at": self._to_int(loaded.get("last_history_view_at", 0)),
             "last_history_bvid": str(loaded.get("last_history_bvid", "")),
+            "history_bvids_at_last_view_at": self._as_str_list(
+                loaded.get("history_bvids_at_last_view_at", [])
+            ),
             "last_favorites_sync_at": str(loaded.get("last_favorites_sync_at", "")),
             "favorite_signature": str(loaded.get("favorite_signature", "")),
+            "favorite_bvids": self._as_str_list(loaded.get("favorite_bvids", [])),
             "last_following_sync_at": str(loaded.get("last_following_sync_at", "")),
             "following_signature": str(loaded.get("following_signature", "")),
+            "following_mids": self._as_str_list(loaded.get("following_mids", [])),
             "last_account_sync_at": str(loaded.get("last_account_sync_at", "")),
             "last_sync_error": str(loaded.get("last_sync_error", "")),
         }
@@ -270,14 +279,41 @@ class MemoryManager:
         payload = {
             "last_history_view_at": self._to_int(state.get("last_history_view_at", 0)),
             "last_history_bvid": str(state.get("last_history_bvid", "")),
+            "history_bvids_at_last_view_at": self._as_str_list(
+                state.get("history_bvids_at_last_view_at", [])
+            ),
             "last_favorites_sync_at": str(state.get("last_favorites_sync_at", "")),
             "favorite_signature": str(state.get("favorite_signature", "")),
+            "favorite_bvids": self._as_str_list(state.get("favorite_bvids", [])),
             "last_following_sync_at": str(state.get("last_following_sync_at", "")),
             "following_signature": str(state.get("following_signature", "")),
+            "following_mids": self._as_str_list(state.get("following_mids", [])),
             "last_account_sync_at": str(state.get("last_account_sync_at", "")),
             "last_sync_error": str(state.get("last_sync_error", "")),
         }
         with open(self._account_sync_state_path, "w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False, indent=2)
+
+    def load_source_bootstrap_state(self) -> dict[str, object]:
+        """Load cross-task bootstrap dedupe state for extension sources."""
+        from openbiliclaw.sources.bootstrap_state import (
+            default_source_bootstrap_state,
+            normalize_source_bootstrap_state,
+        )
+
+        if not self._source_bootstrap_state_path.exists():
+            return default_source_bootstrap_state()
+        with open(self._source_bootstrap_state_path, encoding="utf-8") as file:
+            loaded = json.load(file)
+        return normalize_source_bootstrap_state(loaded)
+
+    def save_source_bootstrap_state(self, state: dict[str, object]) -> None:
+        """Persist cross-task bootstrap dedupe state for extension sources."""
+        from openbiliclaw.sources.bootstrap_state import normalize_source_bootstrap_state
+
+        self._source_bootstrap_state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = normalize_source_bootstrap_state(state)
+        with open(self._source_bootstrap_state_path, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
 
     def load_discovery_runtime_state(self) -> dict[str, object]:
@@ -312,9 +348,9 @@ class MemoryManager:
             "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
             "probed_domains": loaded.get("probed_domains", {}),
             "probed_axes": loaded.get("probed_axes", {}),
-            "probe_feedback_history": self._as_dict_list(
-                loaded.get("probe_feedback_history", [])
-            )[-100:],
+            "probe_feedback_history": self._as_dict_list(loaded.get("probe_feedback_history", []))[
+                -100:
+            ],
             "last_delight_notification_at": str(loaded.get("last_delight_notification_at", "")),
         }
 
@@ -332,9 +368,9 @@ class MemoryManager:
             "recent_pool_topics": self._as_str_list(state.get("recent_pool_topics", [])),
             "probed_domains": state.get("probed_domains", {}),
             "probed_axes": state.get("probed_axes", {}),
-            "probe_feedback_history": self._as_dict_list(
-                state.get("probe_feedback_history", [])
-            )[-100:],
+            "probe_feedback_history": self._as_dict_list(state.get("probe_feedback_history", []))[
+                -100:
+            ],
             "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
         }
         with open(self._discovery_runtime_state_path, "w", encoding="utf-8") as file:

@@ -59,8 +59,10 @@ app = typer.Typer(
     add_completion=False,
 )
 auth_app = typer.Typer(help="B 站认证命令")
+login_app = typer.Typer(help="账号登录命令")
 browser_app = typer.Typer(help="agent-browser 浏览器命令")
 app.add_typer(auth_app, name="auth")
+app.add_typer(login_app, name="login")
 app.add_typer(browser_app, name="browser")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
@@ -96,6 +98,26 @@ _DOUYIN_SEARCH_KEYWORDS_OPTION = typer.Option(
     "--keyword",
     "-k",
     help="抖音搜索关键词，可重复传或用逗号分隔。",
+)
+_CODEX_LOGIN_IMPORT_OPTION = typer.Option(
+    False,
+    "--import",
+    help="只导入已有 Codex CLI 凭据，不调用 `codex login`。",
+)
+_CODEX_LOGIN_SOURCE_OPTION = typer.Option(
+    None,
+    "--source",
+    help="Codex CLI auth.json 路径；默认读取 ~/.codex/auth.json。",
+)
+_CODEX_LOGIN_STATUS_OPTION = typer.Option(
+    False,
+    "--status",
+    help="查看 Codex OAuth 登录状态。",
+)
+_CODEX_LOGIN_LOGOUT_OPTION = typer.Option(
+    False,
+    "--logout",
+    help="删除 OpenBiliClaw 本地 Codex 凭据。",
 )
 
 
@@ -133,10 +155,19 @@ _INIT_DISCOVERY_PLAN = [
 # ``scheduler.pool_target_count`` (600) over the following hour, so a
 # tiny init pool only delays diversity, never reduces it.
 _INIT_POOL_TARGET_COUNT = 15
+_INIT_BILIBILI_HISTORY_LIMIT = 300
+_INIT_BILIBILI_FAVORITE_LIMIT = 300
+_INIT_BILIBILI_FOLLOW_LIMIT = 300
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
 _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
+_DEFAULT_DY_BOOTSTRAP_DEDUPE_HOURS = 6.0
+_DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS = 6.0
+_EXTENSION_PRESENCE_REQUIRED_WARNING = (
+    "WARN extension presence required; backend will pause background LLM work "
+    "after grace period if no extension client connects"
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -168,6 +199,28 @@ def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
     for key, value in rows:
         table.add_row(key, value)
     console.print(table)
+
+
+def _format_pause_on_disconnect_status(*, enabled: bool, grace_seconds: int) -> str:
+    if not enabled:
+        return "关闭"
+    return f"开启（宽限 {grace_seconds}s）"
+
+
+def _warn_if_pause_on_disconnect_requires_presence() -> None:
+    """Print a startup warning when background work depends on extension presence."""
+    try:
+        from openbiliclaw.config import load_config
+
+        cfg = load_config()
+    except Exception:
+        return
+
+    if cfg.scheduler.pause_on_extension_disconnect:
+        console.print(
+            f"[yellow]{_EXTENSION_PRESENCE_REQUIRED_WARNING}[/yellow]",
+            soft_wrap=True,
+        )
 
 
 def _print_section_title(title: str) -> None:
@@ -329,10 +382,19 @@ def _build_bilibili_client() -> Any:
 def _build_soul_engine() -> Any:
     """Build the configured soul engine with initialized memory storage."""
     from openbiliclaw.config import load_config
+    from openbiliclaw.llm.service import module_overrides_from_config
     from openbiliclaw.soul.engine import SoulEngine
 
     class _UnavailableLLM:
+        default_provider = ""
+
+        def is_chat_capable(self, _name: str) -> bool:
+            return False
+
         async def complete(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("LLM registry is unavailable for this command.")
+
+        async def complete_provider(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("LLM registry is unavailable for this command.")
 
     cfg = load_config()
@@ -345,13 +407,22 @@ def _build_soul_engine() -> Any:
         llm=llm,
         memory=memory,
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
+        module_overrides=module_overrides_from_config(cfg),
+        speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
+        speculation_ttl_days=cfg.scheduler.speculation_ttl_days,
+        speculation_cooldown_days=cfg.scheduler.speculation_cooldown_days,
+        speculation_confirmation_threshold=cfg.scheduler.speculation_confirmation_threshold,
+        speculation_max_active=cfg.scheduler.speculation_max_active,
+        speculation_max_primary_interests=cfg.scheduler.speculation_max_primary_interests,
+        speculation_max_secondary_interests=cfg.scheduler.speculation_max_secondary_interests,
+        speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
     )
 
 
 def _build_recommendation_engine() -> Any:
     """Build the recommendation engine with core-memory-aware LLM access."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
     from openbiliclaw.recommendation.engine import (
         RecommendationEngine,
         SupportsEmbeddingService,
@@ -361,7 +432,11 @@ def _build_recommendation_engine() -> Any:
     database = _get_runtime_database()
     cfg = load_config()
     registry = _build_registry()
-    llm_service = LLMService(registry=registry, memory=memory)
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(cfg),
+    )
     from openbiliclaw.llm.registry import build_embedding_service
 
     _emb = build_embedding_service(cfg, registry)
@@ -386,7 +461,23 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
     from openbiliclaw.api.app import create_app
 
-    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+    api_app = create_app()
+    state = getattr(api_app, "state", None)
+    if bool(getattr(state, "degraded", False)):
+        issues = []
+        for issue in list(getattr(state, "degraded_issues", [])):
+            field = str(getattr(issue, "field", ""))
+            message = str(getattr(issue, "message", issue))
+            issues.append(f"- {field}: {message}" if field else f"- {message}")
+        reason = str(getattr(state, "degraded_reason", ""))
+        body = (
+            f"reason: {reason or 'unknown'}\n"
+            + "\n".join(issues)
+            + "\n\nOpen the extension popup settings to fix the LLM credentials, "
+            "then restart the daemon."
+        )
+        _print_status_panel("warning", "降级模式 / Degraded mode", body)
+    uvicorn.run(api_app, host=host, port=port, log_level="info")
 
 
 def _build_memory_manager() -> Any:
@@ -417,12 +508,20 @@ def _build_discovery_engine() -> Any:
         SearchStrategy,
         TrendingStrategy,
     )
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
 
     memory = _build_memory_manager()
     database = _get_runtime_database()
     bilibili_client = _build_bilibili_client()
-    llm_service = LLMService(registry=_build_registry(), memory=memory)
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    registry = _build_registry()
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(cfg),
+    )
     concurrency = DiscoveryConcurrencyController(
         bilibili_request_concurrency=2,
         # Inherit dataclass default (currently 32) — sized so an init
@@ -431,11 +530,9 @@ def _build_discovery_engine() -> Any:
     )
 
     # Build embedding service from config (optional)
-    from openbiliclaw.config import load_config
     from openbiliclaw.llm.registry import build_embedding_service
 
-    cfg = load_config()
-    embedding_service = build_embedding_service(cfg, _build_registry())
+    embedding_service = build_embedding_service(cfg, registry)
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
@@ -447,11 +544,13 @@ def _build_discovery_engine() -> Any:
         llm_service=llm_service,
         bilibili_client=bilibili_client,
         concurrency=concurrency,
+        database=database,
     )
     trending_strategy = TrendingStrategy(
         bilibili_client=bilibili_client,
         llm_service=llm_service,
         concurrency=concurrency,
+        database=database,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,
@@ -460,6 +559,7 @@ def _build_discovery_engine() -> Any:
         search_strategy=search_strategy,
         trending_strategy=trending_strategy,
         concurrency=concurrency,
+        database=database,
     )
     explore_strategy = ExploreStrategy(
         llm_service=llm_service,
@@ -1187,29 +1287,21 @@ def _save_embedding_config(
 
     For OpenAI-compatible providers the wizard may collect a custom
     ``base_url`` / ``api_key`` (e.g. a self-hosted vLLM gateway running
-    bge-m3 over the OpenAI protocol). We write those into the matching
-    ``[llm.<provider>]`` block so the registry can resolve them at runtime.
-
-    When ``provider="ollama"``, also fill ``[llm.ollama] base_url`` so the
-    LLM registry's ``_maybe_ollama_provider`` actually registers Ollama
-    (otherwise ``build_embedding_service`` can't resolve the provider and
-    silently falls back to the default LLM provider for embedding).
+    bge-m3 over the OpenAI protocol). These are written into
+    ``[llm.embedding]`` because embedding is independent from chat
+    provider configuration.
     """
     from openbiliclaw.config import load_config_with_diagnostics, save_config
 
     config, diagnostics = load_config_with_diagnostics()
     config.llm.embedding.provider = provider
     config.llm.embedding.model = model
-
-    provider_config = getattr(config.llm, provider, None)
-    if provider_config is not None:
-        if base_url and hasattr(provider_config, "base_url"):
-            provider_config.base_url = base_url.strip()
-        if api_key and hasattr(provider_config, "api_key"):
-            provider_config.api_key = api_key.strip()
-
-    if provider == "ollama" and not config.llm.ollama.base_url.strip():
-        config.llm.ollama.base_url = "http://localhost:11434/v1"
+    if base_url:
+        config.llm.embedding.base_url = base_url.strip()
+    elif provider == "ollama" and not config.llm.embedding.base_url.strip():
+        config.llm.embedding.base_url = "http://localhost:11434/v1"
+    if api_key:
+        config.llm.embedding.api_key = api_key.strip()
     save_config(config, diagnostics.config_path)
 
 
@@ -1562,12 +1654,12 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         ),
         (
             "3",
-            "跟随你刚才选的 LLM",
-            "OpenAI/Gemini 用自家 endpoint;Claude/DeepSeek/OpenRouter 自动回退到选项 1",
+            "暂不启用 embedding",
+            "保留独立配置为空;不会跟随主 LLM,也不会自动 fallback",
         ),
         ("4", "(高级)自定义 OpenAI 兼容服务", "vLLM / OneAPI / 自建网关 —— 自填 base_url"),
         ("5", "(高级)指定其他 provider", "手动选 provider + 模型 + 可选 base_url"),
-        ("0", "跳过(等同于 3 跟随主 LLM)", ""),
+        ("0", "跳过(不修改当前 embedding 配置)", ""),
     )
     table = Table(show_lines=False, show_header=True)
     table.add_column("#", style="cyan", no_wrap=True)
@@ -1584,7 +1676,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
     choice = typer.prompt("请选择 embedding 方案", default="1").strip()
 
     if choice in {"0", "skip", "跳过"}:
-        console.print("[dim]已跳过 embedding 配置,将沿用默认(跟随主 provider)。[/dim]")
+        console.print("[dim]已跳过 embedding 配置,不修改当前设置。[/dim]")
         return
 
     if choice in {"1", "ollama", ""}:
@@ -1592,8 +1684,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         # branch — share the helpers so the user doesn't have to learn
         # different setups for chat vs embedding.
         if not _ollama_install_if_missing():
-            console.print("[yellow]Ollama 装机失败,降级为'跟随主 LLM'(选项 3)。[/yellow]")
-            _save_embedding_config(provider="", model="")
+            console.print("[yellow]Ollama 装机失败,未启用本地 embedding。[/yellow]")
             return
         if not _ollama_start_serve_background():
             console.print("[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]")
@@ -1636,8 +1727,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
                 show_default=False,
             ).strip()
             if not api_key:
-                console.print("[yellow]Key 为空,降级为'跟随主 LLM'(选项 3)。[/yellow]")
-                _save_embedding_config(provider="", model="")
+                console.print("[yellow]Key 为空,未启用 Gemini embedding。[/yellow]")
                 return
 
         _save_embedding_config(
@@ -1651,8 +1741,8 @@ def _interactive_embedding_setup(default_provider: str) -> None:
     if choice in {"3", "follow"}:
         _save_embedding_config(provider="", model="")
         console.print(
-            "[green]已设置为跟随主 LLM。"
-            "若主 LLM 是 Claude/DeepSeek/OpenRouter,运行时会自动回退到 Ollama bge-m3。[/green]"
+            "[green]已设置为不启用 embedding。需要语义去重/相似度时,可之后运行 "
+            "`openbiliclaw setup-embedding` 单独配置。[/green]"
         )
         return
 
@@ -1675,7 +1765,7 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         )
         console.print(
             "[bold green]已配置自定义 OpenAI 兼容 embedding 服务"
-            r"(写入 \[llm.openai] 段)。[/bold green]"
+            r"(写入 \[llm.embedding] 段)。[/bold green]"
         )
         return
 
@@ -1975,6 +2065,28 @@ def _xhs_bootstrap_dedupe_hours() -> float:
         return _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS
 
 
+def _dy_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_DY_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_DY_BOOTSTRAP_DEDUPE_HOURS
+
+
+def _yt_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS
+
+
 def _enqueue_xhs_bootstrap_task(*, force: bool = False) -> str | None:
     """Fire-and-forget enqueue of the bootstrap_profile task.
 
@@ -2203,9 +2315,28 @@ def _enqueue_dy_bootstrap_task() -> str | None:
 
     scroll_rounds = int(os.environ.get("OPENBILICLAW_DY_BOOTSTRAP_SCROLL_ROUNDS", "15"))
     max_items = int(os.environ.get("OPENBILICLAW_DY_BOOTSTRAP_MAX_ITEMS", "300"))
+    task_id: str | None = None
 
     try:
         queue = DyTaskQueue(database)
+        dedupe_hours = _dy_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_profile",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的抖音 bootstrap 任务"
+                        f"({status})；需要重新拉取可设 "
+                        "OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
+                    )
+                    return task_id
         task_id = queue.enqueue_with_id(
             "bootstrap_profile",
             {
@@ -2338,9 +2469,28 @@ def _enqueue_yt_bootstrap_task() -> str | None:
 
     scroll_rounds = int(os.environ.get("OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS", "10"))
     max_items = int(os.environ.get("OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS", "300"))
+    task_id: str | None = None
 
     try:
         queue = YtTaskQueue(database)
+        dedupe_hours = _yt_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_profile",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的 YouTube bootstrap 任务"
+                        f"({status})；需要重新拉取可设 "
+                        "OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
+                    )
+                    return task_id
         task_id = queue.enqueue_with_id(
             "bootstrap_profile",
             {
@@ -2965,19 +3115,27 @@ def logs_prune(
 
 @app.command()
 def start(
-    host: str = typer.Option("127.0.0.1", "--host", help="API 监听地址"),
-    port: int = typer.Option(8420, "--port", min=1, max=65535, help="API 监听端口"),
+    host: str = typer.Option("", "--host", help="API 监听地址（默认读 config.toml [api].host）"),
+    port: int = typer.Option(
+        0, "--port", min=0, max=65535, help="API 监听端口（默认读 config.toml [api].port）"
+    ),
 ) -> None:
     """启动 OpenBiliClaw Agent."""
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    effective_host = host if host else cfg.api.host
+    effective_port = port if port else cfg.api.port
     _print_page_title("启动 OpenBiliClaw", "本地 API 服务")
     _ensure_runtime_database_healthy()
     _print_status_panel(
         "info",
         "API 服务",
-        f"正在启动本地后端，当前监听 {host}:{port}。",
+        f"正在启动本地后端，当前监听 {effective_host}:{effective_port}。",
     )
+    _warn_if_pause_on_disconnect_requires_presence()
     _maybe_create_runtime_database_backup()
-    _run_api_server(host=host, port=port)
+    _run_api_server(host=effective_host, port=effective_port)
 
 
 @app.command("serve-api")
@@ -2992,6 +3150,7 @@ def serve_api(
         "API 服务",
         f"正在启动容器友好的后端入口，当前监听 {host}:{port}。",
     )
+    _warn_if_pause_on_disconnect_requires_presence()
     _run_api_server(host=host, port=port)
 
 
@@ -3015,10 +3174,8 @@ def _ask_xhs_inclusion() -> bool:
 
     Resolution order (first match wins):
       1. ``OPENBILICLAW_NO_XHS=1`` env var → False, silent
-      2. Non-interactive terminal (CI / piped stdin) → True, silent.
-         Auto-on is the safest default — graceful timeout + skip if
-         the extension isn't actually connected.
-      3. Interactive terminal → ask the user with default Y, then
+      2. Non-interactive terminal (CI / piped stdin) → False, silent.
+      3. Interactive terminal → ask the user with default N, then
          (if Y) walk them through a prep checklist.
 
     Returns True iff the caller should proceed with xhs bootstrap.
@@ -3027,7 +3184,7 @@ def _ask_xhs_inclusion() -> bool:
         console.print("[dim]  跳过小红书数据接入(OPENBILICLAW_NO_XHS=1)。[/dim]")
         return False
     if not _is_interactive_terminal():
-        return True
+        return False
 
     console.print()
     console.print("[bold]🌸 小红书数据接入(可选)[/bold]")
@@ -3053,7 +3210,7 @@ def _ask_xhs_inclusion() -> bool:
     )
     console.print()
 
-    if not typer.confirm("加入小红书数据?", default=True):
+    if not typer.confirm("加入小红书数据?", default=False):
         console.print("[dim]  已选择跳过,本次 init 不会请求扩展。[/dim]")
         return False
 
@@ -3102,9 +3259,8 @@ def _ask_dy_inclusion() -> bool:
     Resolution order (first match wins):
       1. ``OPENBILICLAW_NO_DOUYIN=1`` env var → False, silent
       2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
-         Conservative default for Douyin (different from XHS auto-on)
-         because Douyin hits more-aggressive risk-control if the user
-         isn't actually logged in, and the soft anti-bot returns
+         Conservative default because Douyin hits more-aggressive risk-control
+         if the user isn't actually logged in, and the soft anti-bot returns
          HTTP 200 + empty body (design-doc Risk #7) which we can only
          detect after the bootstrap runs. Better to require explicit
          opt-in for Douyin than auto-fire it on every CI run.
@@ -3253,6 +3409,47 @@ def _ask_yt_inclusion() -> bool:
     return True
 
 
+def _ask_network_binding() -> bool:
+    """Ask whether the backend should listen on all interfaces (0.0.0.0).
+
+    Returns True if the user confirms all-interface binding, False for
+    localhost-only.  Non-interactive terminals default to True (the new
+    default keeps mobile web accessible).
+    """
+    if not _is_interactive_terminal():
+        return True
+
+    console.print()
+    console.print("[bold]📱 移动端访问[/bold]")
+    console.print(
+        "OpenBiliClaw 自带移动端 Web（[bold cyan]/m/[/bold cyan]），同一局域网的手机扫码即可打开。"
+    )
+    console.print()
+    console.print(
+        "为此，后端需要监听 [bold]0.0.0.0[/bold]（所有网卡），"
+        "这样手机才能连上来。\n"
+        "如果你只在本机使用、不需要手机端，选 N 会改为仅监听 127.0.0.1。"
+    )
+    console.print()
+    console.print("[dim]后续可在 config.toml 的 [api].host 随时切换。[/dim]")
+    console.print()
+    return typer.confirm("允许局域网设备访问（推荐）?", default=True)
+
+
+def _persist_api_host_choice(*, allow_lan: bool) -> None:
+    """Persist the user's network binding choice to config.toml."""
+    try:
+        from openbiliclaw.config import load_config, save_config
+
+        cfg = load_config()
+        target_host = "0.0.0.0" if allow_lan else "127.0.0.1"
+        if cfg.api.host != target_host:
+            cfg.api.host = target_host
+            save_config(cfg)
+    except Exception:
+        return
+
+
 def _persist_init_source_enabled_flags(
     *,
     include_xhs: bool,
@@ -3266,7 +3463,7 @@ def _persist_init_source_enabled_flags(
 
         cfg = load_config()
         changed = False
-        if bool(getattr(cfg.sources.xiaohongshu, "enabled", True)) != include_xhs:
+        if bool(getattr(cfg.sources.xiaohongshu, "enabled", False)) != include_xhs:
             cfg.sources.xiaohongshu.enabled = include_xhs
             changed = True
         if bool(getattr(cfg.sources.douyin, "enabled", False)) != include_dy:
@@ -3415,6 +3612,56 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
     return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
 
 
+def _normalize_init_bilibili_limit(value: int | None, *, default: int) -> int:
+    """Normalize user-facing init signal limits; 0 means skip that signal."""
+    if value is None:
+        return default
+    return max(0, int(value))
+
+
+def _ask_init_bilibili_limits(
+    *,
+    favorite_limit: int | None,
+    follow_limit: int | None,
+) -> tuple[int, int]:
+    """Ask interactive users to confirm Bilibili init signal caps."""
+    favorite = _normalize_init_bilibili_limit(
+        favorite_limit,
+        default=_INIT_BILIBILI_FAVORITE_LIMIT,
+    )
+    follow = _normalize_init_bilibili_limit(
+        follow_limit,
+        default=_INIT_BILIBILI_FOLLOW_LIMIT,
+    )
+    if not _is_interactive_terminal():
+        return favorite, follow
+    if favorite_limit is not None and follow_limit is not None:
+        return favorite, follow
+
+    console.print(
+        "\n[bold]B 站初始化信号上限[/bold]\n[dim]回车使用默认值；输入 0 可跳过对应信号。[/dim]"
+    )
+    if favorite_limit is None:
+        raw = typer.prompt(
+            "B 站收藏最多导入多少条",
+            default=str(_INIT_BILIBILI_FAVORITE_LIMIT),
+        )
+        try:
+            favorite = max(0, int(str(raw).strip()))
+        except ValueError:
+            favorite = _INIT_BILIBILI_FAVORITE_LIMIT
+    if follow_limit is None:
+        raw = typer.prompt(
+            "B 站关注 UP 最多导入多少人",
+            default=str(_INIT_BILIBILI_FOLLOW_LIMIT),
+        )
+        try:
+            follow = max(0, int(str(raw).strip()))
+        except ValueError:
+            follow = _INIT_BILIBILI_FOLLOW_LIMIT
+    return favorite, follow
+
+
 @app.command()
 def init(
     no_xhs: bool = typer.Option(
@@ -3446,6 +3693,18 @@ def init(
         False,
         "--yes-youtube",
         help="跳过 YouTube 的 y/n 提问,直接启用(适合脚本化场景)。",
+    ),
+    bilibili_favorite_limit: int | None = typer.Option(
+        None,
+        "--bilibili-favorite-limit",
+        min=0,
+        help="B 站收藏初始化信号上限；默认 300，0 表示跳过收藏。",
+    ),
+    bilibili_follow_limit: int | None = typer.Option(
+        None,
+        "--bilibili-follow-limit",
+        min=0,
+        help="B 站关注 UP 初始化信号上限；默认 300，0 表示跳过关注。",
     ),
 ) -> None:
     """首次运行：拉取历史、生成画像并补足首轮发现池."""
@@ -3481,27 +3740,32 @@ def init(
     # Init signal mix:
     #   - 300 most-recent watch history items (truncated; older history
     #     decays into noise quickly)
-    #   - the entire favorites set across every folder (high-signal user
-    #     curation; bigger folders are fine — they go through chunked
-    #     analyze_events anyway)
-    #   - the entire following list (high-signal subscription intent)
+    #   - up to 300 favorites across folders (high-signal user curation,
+    #     but too many low-recency saves dominate init cost)
+    #   - up to 300 followed creators (high-signal subscription intent)
+    resolved_bilibili_favorite_limit = _INIT_BILIBILI_FAVORITE_LIMIT
+    resolved_bilibili_follow_limit = _INIT_BILIBILI_FOLLOW_LIMIT
+
     async def _fetch_all_data() -> tuple[
         list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
     ]:
-        hist = await client.get_user_history(max_items=300)
+        hist = await client.get_user_history(max_items=_INIT_BILIBILI_HISTORY_LIMIT)
 
         favs: list[dict[str, Any]] = []
         try:
-            fav_folders = await client.get_all_favorites(
-                max_folders=200,
-                # ``2000`` is well above any realistic folder size — the
-                # API client itself stops paging when the folder is
-                # exhausted.
-                max_items_per_folder=2000,
+            fav_folders = (
+                await client.get_all_favorites(
+                    max_folders=200,
+                    max_items_per_folder=max(1, resolved_bilibili_favorite_limit),
+                )
+                if resolved_bilibili_favorite_limit > 0
+                else []
             )
             for folder in fav_folders:
                 folder_title = folder.folder.title if hasattr(folder, "folder") else "未知"
                 for item in folder.items if hasattr(folder, "items") else []:
+                    if len(favs) >= resolved_bilibili_favorite_limit:
+                        break
                     favs.append(
                         {
                             "title": getattr(item, "title", str(item)),
@@ -3509,6 +3773,8 @@ def init(
                             "folder": folder_title,
                         }
                     )
+                if len(favs) >= resolved_bilibili_favorite_limit:
+                    break
         except Exception as exc:
             console.print(f"  [yellow]收藏夹拉取失败: {exc}[/yellow]")
 
@@ -3516,11 +3782,13 @@ def init(
         try:
             page = 1
             page_size = 50
-            while True:
+            while len(follows) < resolved_bilibili_follow_limit:
                 page_users = await client.get_following(page=page, page_size=page_size)
                 if not page_users:
                     break
                 for user in page_users:
+                    if len(follows) >= resolved_bilibili_follow_limit:
+                        break
                     follows.append(
                         {
                             "name": getattr(user, "uname", str(user)),
@@ -3535,13 +3803,23 @@ def init(
 
         return hist, favs, follows
 
+    # v0.3.89+: ask user whether the backend should be reachable from
+    # the local network (0.0.0.0) so mobile /m/ works out of the box.
+    allow_lan = _ask_network_binding()
+    _persist_api_host_choice(allow_lan=allow_lan)
+
+    resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = _ask_init_bilibili_limits(
+        favorite_limit=bilibili_favorite_limit,
+        follow_limit=bilibili_follow_limit,
+    )
+
     # v0.3.27+: ask the user whether to include xhs data, with a prep
-    # checklist when they opt in. Three escape hatches preserve the
-    # auto-on default for non-interactive callers:
+    # checklist when they opt in. Defaults stay off unless the user
+    # explicitly enables XHS:
     #   --no-xhs          forces skip
     #   --yes-xhs         skips the y/n + checklist (scripted opt-in)
     #   OPENBILICLAW_NO_XHS=1   env var skip
-    # Default (interactive, no flags): prompt with default Y.
+    # Default (interactive, no flags): prompt with default N.
     if no_xhs:
         include_xhs = False
         console.print("[dim]  跳过小红书数据接入(命令行 --no-xhs)。[/dim]")
@@ -3551,10 +3829,7 @@ def init(
         include_xhs = _ask_xhs_inclusion()
 
     # Same resolution order for the Douyin opt-in. Default is
-    # off-in-non-interactive (see _ask_dy_inclusion docstring) which
-    # diverges from the XHS auto-on default — Douyin's risk control
-    # is more aggressive and the empty-200 anti-bot makes blind
-    # opt-in less safe.
+    # off-in-non-interactive (see _ask_dy_inclusion docstring).
     if no_douyin:
         include_dy = False
         console.print("[dim]  跳过抖音数据接入(命令行 --no-douyin)。[/dim]")
@@ -4742,7 +5017,7 @@ def _normalize_strategy_names(raw: list[str] | None) -> list[str]:
 def _run_xhs_discovery(*, force: bool) -> None:
     """Trigger one Soul-driven xhs keyword production cycle."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
     from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
     from openbiliclaw.soul.engine import SoulProfileNotInitializedError
     from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
@@ -4763,7 +5038,11 @@ def _run_xhs_discovery(*, force: bool) -> None:
     memory = _build_memory_manager()
     database = _get_runtime_database()
     registry = _build_registry()
-    llm_service = LLMService(registry=registry, memory=memory)
+    llm_service = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(config),
+    )
 
     xhs_cfg = getattr(config.sources, "xiaohongshu", None)
     producer = XhsTaskProducer(
@@ -5331,6 +5610,14 @@ def config_show() -> None:
         ("LLM", cfg.llm.default_provider),
         ("B站认证", cfg.bilibili.auth_method),
         ("定时任务", "开启" if cfg.scheduler.enabled else "关闭"),
+        ("停止后台 LLM 请求", "否" if cfg.scheduler.enabled else "是"),
+        (
+            "浏览器断开后暂停",
+            _format_pause_on_disconnect_status(
+                enabled=cfg.scheduler.pause_on_extension_disconnect,
+                grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
+            ),
+        ),
         ("数据目录", str(cfg.data_path)),
     ]
     if diagnostics.config_path:
@@ -5386,6 +5673,74 @@ def auth_status() -> None:
     manager = _build_auth_manager()
     status = asyncio.run(manager.get_status())
     _print_auth_status(status)
+
+
+@login_app.command("codex")
+def login_codex(
+    import_credentials: bool = _CODEX_LOGIN_IMPORT_OPTION,
+    source: Path | None = _CODEX_LOGIN_SOURCE_OPTION,
+    status: bool = _CODEX_LOGIN_STATUS_OPTION,
+    logout: bool = _CODEX_LOGIN_LOGOUT_OPTION,
+) -> None:
+    """导入或管理 Codex CLI 的 ChatGPT OAuth 凭据."""
+    from datetime import datetime
+
+    from openbiliclaw.llm.codex_auth import (
+        CodexAuthError,
+        CodexCredentials,
+        delete_codex_credentials,
+        import_codex_credentials,
+        load_codex_credentials,
+        run_codex_cli_login,
+    )
+
+    def _print_codex_credentials(credentials: CodexCredentials) -> None:
+        expires = datetime.fromtimestamp(credentials.expires_at).strftime("%Y-%m-%d %H:%M:%S")
+        state = "临期/需刷新" if credentials.is_expired() else "有效"
+        _print_key_value_table(
+            "Codex OAuth",
+            [
+                ("状态", f"已登录（{state}）"),
+                ("账号", credentials.account_id or "（未知）"),
+                ("过期时间", expires),
+            ],
+        )
+
+    if status:
+        credentials = load_codex_credentials()
+        if credentials is None:
+            _print_status_panel(
+                "warning",
+                "Codex OAuth",
+                "未登录。请运行 `openbiliclaw login codex` "
+                "或 `openbiliclaw login codex --import`。",
+            )
+            return
+        _print_codex_credentials(credentials)
+        return
+
+    if logout:
+        deleted = delete_codex_credentials()
+        body = "已登出 Codex OAuth。" if deleted else "本地没有 Codex OAuth 凭据。"
+        _print_status_panel("success" if deleted else "info", "Codex OAuth", body)
+        return
+
+    try:
+        if import_credentials or source is not None:
+            credentials = import_codex_credentials(source=source)
+        else:
+            try:
+                credentials = import_codex_credentials()
+            except CodexAuthError:
+                console.print("[dim]未找到可导入的 Codex 凭据，启动 `codex login`...[/dim]")
+                run_codex_cli_login()
+                credentials = import_codex_credentials()
+    except CodexAuthError as exc:
+        _print_status_panel("error", "Codex OAuth 登录失败", str(exc))
+        raise typer.Exit(code=1) from exc
+
+    _print_status_panel("success", "Codex OAuth", "登录凭据已导入。")
+    _print_codex_credentials(credentials)
 
 
 @app.command("health-check")
