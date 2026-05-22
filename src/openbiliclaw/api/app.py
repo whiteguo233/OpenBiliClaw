@@ -1693,6 +1693,21 @@ def create_app(
                     )
 
         rows = _cap_by_franchise(rows, max_per_franchise=2)[:20]
+
+        # ── YouTube repost replacement ──────────────────────────────
+        if rows and ctx.config.sources.youtube.replace_bilibili_reposts:
+            try:
+                from openbiliclaw.yt_replacer import replace_recommendation_row
+
+                import os as _os
+                data_dir = _os.path.dirname(str(ctx.config.storage.db_path)) if ctx.config.storage.db_path else ""
+                for i, row in enumerate(rows):
+                    override = replace_recommendation_row(row, data_dir=data_dir)
+                    if override:
+                        rows[i] = {**row, **override}
+            except Exception as exc:
+                logger.exception("YT replacer failed: %s", exc)  # don't break the response
+
         return RecommendationListResponse(
             items=[
                 RecommendationOut(

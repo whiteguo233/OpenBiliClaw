@@ -63,6 +63,7 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 - `prewarm_supergroup_embeddings` — refresh tick 后台预热所有池中 topic_group embedding，让 reshuffle 跑全 cache hit
 - `batch_insert_recommendations` — 单 transaction 批量插入，避免 popup 给 10 条结果时 10 次 fsync
 - 个性化专题生成
+- **YouTube 搬运替换**：`yt_replacer.py` 在推荐响应中检测并替换外文搬运视频为 YouTube 原版
 
 ### Runtime (`runtime/`)
 - 系统生命周期管理和服务编排

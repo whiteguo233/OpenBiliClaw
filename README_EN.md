@@ -23,6 +23,7 @@
 - **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
 - **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
 - **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
+- **🎯 Bilibili YouTube repost auto-replacement** — `GET /api/recommendations` now detects foreign-language reposts on Bilibili and replaces the title, link, and source with the original YouTube version. Multi-signal detection (Latin ratio >35%, repost keywords, foreign brands, English phrases); zero false positives on Chinese originals; fails safe — logs only, never blocks the response. Gated by `[sources.youtube].replace_bilibili_reposts`.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
