@@ -29,6 +29,16 @@ export const PING_LAUNCHER_TO_BG = "openbiliclaw/popup-launcher/ping";
 export const QUERY_LAUNCHER_PENDING_STATUS =
   "openbiliclaw/popup-launcher/query-pending";
 
+/**
+ * Sent by the popup launcher to ask "how many 稍后再看 bookmarks
+ * does the user have?" — surfaced as a badge in the launcher's
+ * status card.
+ *
+ * Reply shape: see `WatchLaterCount`.
+ */
+export const QUERY_LAUNCHER_WATCH_LATER_COUNT =
+  "openbiliclaw/popup-launcher/query-watch-later-count";
+
 /** Reply to a PING. The SW echoes its version so a corrupt or stale
  * worker can be spotted from the popup. */
 export interface PingReply {
@@ -49,8 +59,17 @@ export interface LauncherPendingStatus {
   ytUrl: string;
 }
 
+/** Reply to a watch-later count query. ``ok`` is false when the
+ * backend was unreachable so the popup can render "—" instead of "0"
+ * (which would be a lie). */
+export interface WatchLaterCount {
+  ok: boolean;
+  total: number;
+}
+
 /** Union of every message type this protocol carries. Used by the
  * SW's onMessage dispatch so the switch is exhaustive. */
 export type LauncherMessage =
   | { type: typeof PING_LAUNCHER_TO_BG }
-  | { type: typeof QUERY_LAUNCHER_PENDING_STATUS };
+  | { type: typeof QUERY_LAUNCHER_PENDING_STATUS }
+  | { type: typeof QUERY_LAUNCHER_WATCH_LATER_COUNT };

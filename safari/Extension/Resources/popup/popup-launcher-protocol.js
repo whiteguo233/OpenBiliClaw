@@ -11,4 +11,5 @@
   root.OpenBiliClawLauncher = root.OpenBiliClawLauncher || {};
   root.OpenBiliClawLauncher.PING_LAUNCHER_TO_BG = "openbiliclaw/popup-launcher/ping";
   root.OpenBiliClawLauncher.QUERY_LAUNCHER_PENDING_STATUS = "openbiliclaw/popup-launcher/query-pending";
+  root.OpenBiliClawLauncher.QUERY_LAUNCHER_WATCH_LATER_COUNT = "openbiliclaw/popup-launcher/query-watch-later-count";
 })(typeof window !== "undefined" ? window : globalThis);

@@ -58,8 +58,10 @@ import type { BehaviorEvent } from "../shared/types.js";
 import {
   PING_LAUNCHER_TO_BG,
   QUERY_LAUNCHER_PENDING_STATUS,
+  QUERY_LAUNCHER_WATCH_LATER_COUNT,
   type LauncherPendingStatus,
   type PingReply,
+  type WatchLaterCount,
 } from "../shared/popup-launcher-protocol.ts";
 
 let eventBuffer: BehaviorEvent[] = [];
@@ -487,6 +489,37 @@ async function handleLauncherPendingQuery(): Promise<LauncherPendingStatus> {
   }
 }
 
+/**
+ * Implement the QUERY_LAUNCHER_WATCH_LATER_COUNT handshake.
+ *
+ * The launcher's status card shows the user's saved-for-later count
+ * as a third row, alongside backend status and version. We fetch
+ * that count from the GET /api/watch-later endpoint (which returns
+ * { items, total }) and surface ``total``.
+ *
+ * Failure modes (no backend reachable, parse error, 4xx/5xx) all
+ * return ``{ ok: false, total: 0 }`` — the launcher renders that as
+ * "—" instead of "0" so the user can tell "backend down" apart from
+ * "no bookmarks". Limit=1 keeps the response small; we only need
+ * the count field.
+ */
+async function handleWatchLaterCountQuery(): Promise<WatchLaterCount> {
+  const fallback: WatchLaterCount = { ok: false, total: 0 };
+  try {
+    const resp = await fetch(apiUrl("/api/watch-later?limit=1"), {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!resp.ok) return fallback;
+    const data = (await resp.json()) as { total?: number };
+    return {
+      ok: true,
+      total: typeof data.total === "number" ? data.total : 0,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // ── Popup-launcher protocol ──────────────────────────────────────
   // The launcher uses `type:` as its discriminator (rest of the
@@ -511,6 +544,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ytUrl: "",
           };
           console.warn("[OpenBiliClaw] pending query failed:", error);
+          sendResponse(fallback);
+        });
+      return true; // async reply
+    }
+    if (message.type === QUERY_LAUNCHER_WATCH_LATER_COUNT) {
+      void handleWatchLaterCountQuery()
+        .then(sendResponse)
+        .catch((error: unknown) => {
+          const fallback: WatchLaterCount = { ok: false, total: 0 };
+          console.warn("[OpenBiliClaw] watch-later count failed:", error);
           sendResponse(fallback);
         });
       return true; // async reply

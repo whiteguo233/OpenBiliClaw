@@ -24,6 +24,7 @@
   var proto = (typeof window !== "undefined" && window.OpenBiliClawLauncher) || {};
   var PING_TYPE = proto.PING_LAUNCHER_TO_BG || "openbiliclaw/popup-launcher/ping";
   var QUERY_PENDING_TYPE = proto.QUERY_LAUNCHER_PENDING_STATUS || "openbiliclaw/popup-launcher/query-pending";
+  var QUERY_WATCH_LATER_TYPE = proto.QUERY_LAUNCHER_WATCH_LATER_COUNT || "openbiliclaw/popup-launcher/query-watch-later-count";
 
   function buildFullUiUrl() {
     var base = "popup/popup.html";
@@ -196,11 +197,38 @@
     }
   }
 
+  /**
+   * Fetch the user's 稍后再看 saved-count from the backend (via the
+   * SW, which knows the configured endpoint) and render it into
+   * the launcher's status card. Errors render "—" instead of "0"
+   * so a backend outage doesn't look like "you have 0 bookmarks".
+   */
+  function queryWatchLaterCount() {
+    if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") {
+      setText("watch-later-count", "—");
+      return;
+    }
+    try {
+      api.runtime.sendMessage({ type: QUERY_WATCH_LATER_TYPE }, function (reply) {
+        var _ = api.runtime && api.runtime.lastError;
+        if (!reply || typeof reply !== "object" || reply.ok !== true) {
+          setText("watch-later-count", "—");
+          return;
+        }
+        var total = typeof reply.total === "number" ? reply.total : 0;
+        setText("watch-later-count", String(total));
+      });
+    } catch (_) {
+      setText("watch-later-count", "—");
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     var btn = document.getElementById("open-full");
     if (btn) btn.addEventListener("click", openFullUi);
     reportVersion();
     pingBackground();
     queryRepostStatus();
+    queryWatchLaterCount();
   });
 })();
