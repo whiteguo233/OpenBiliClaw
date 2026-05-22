@@ -18,7 +18,12 @@ settings:
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
     DEVELOPMENT_TEAM: ""
-    MARKETING_VERSION: "0.3.24"
+    # Keep in sync with extension/manifest.json `version`. The extension
+    # manifest is the canonical version; the host app version exists only
+    # because Apple requires a CFBundleShortVersionString in Info.plist.
+    # ViewController.swift surfaces both in the About panel so a mismatch
+    # is visible at runtime, but they should match in normal releases.
+    MARKETING_VERSION: "0.3.44"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     ENABLE_HARDENED_RUNTIME: YES
