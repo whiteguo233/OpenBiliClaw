@@ -267,6 +267,34 @@ replace_bilibili_reposts = false
 # 在 B 站观看搬运视频时是否自动跳转到 YouTube 原版
 auto_redirect_youtube = false
 
+[recommendation]
+# 营销号 (clickbait / engagement-farming) 过滤。
+#
+# 推荐打分阶段对疑似营销号的候选做软性降权 (curator soft demote)，
+# 主动推送 (delight notification) 阶段则按阈值做硬过滤。
+#
+# 启发式信号包括：震惊/突发/居然/真相/某地/某男 等营销号惯用词、
+# 连续标点 (!!! 或 ???)、高密度 emoji、过长标题、描述复读标题，等等。
+# 多信号叠加会得到额外加成。详见
+# src/openbiliclaw/recommendation/marketing_filter.py。
+
+# 阈值，落在 [0.0, 1.01] 区间。分数 >= 该阈值视为营销号，
+# 在推送 (delight) 时硬过滤。设为 1.01 表示永远不触发硬过滤。
+# 降低 (例如 0.4) 会更激进；过低会造成误伤，使推荐覆盖度下降。
+marketing_filter_threshold = 0.6
+
+# 推荐打分阶段的软性降权权重 (curator demote weight)。每个候选会
+# 被减去 marketing_filter_demote_weight * marketing_score，分数
+# 范围 [0,1]，所以满分 (1.0) 营销号最多被扣 8 分。基础分数通常
+# 在 0–20 区间，扣 8 分足以压到自然相关性内容之下而不必完全剔除。
+# 设为 0 可关闭软降权 (硬过滤仍按 block_delight 控制)。
+marketing_filter_demote_weight = 8.0
+
+# 是否在主动推送 (delight) 阶段做硬过滤。默认开启，因为推送一条
+# 营销号通知比让它低排在推荐列表里破坏感受更大。仅当你发现启发式
+# 大量误伤合法推送时再关闭。
+marketing_filter_block_delight = true
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true

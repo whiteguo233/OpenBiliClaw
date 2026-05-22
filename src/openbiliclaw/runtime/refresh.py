@@ -17,6 +17,8 @@ from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_a
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 logger = logging.getLogger(__name__)
@@ -594,12 +596,23 @@ class ContinuousRefreshController:
             return None
 
         disliked_phrases = self._load_disliked_topic_phrases()
+        marketing_filter = self._marketing_delight_filter()
         candidate: dict[str, Any] | None = None
         for row in candidates:
             title = str(row.get("title", "")).lower()
             tags_raw = str(row.get("tags", "")).lower()
             haystack = f"{title} {tags_raw}"
             if any(phrase in haystack for phrase in disliked_phrases if phrase):
+                continue
+            # 营销号 hard filter for the proactive push surface.
+            # Pushing a notification for a clickbait video is much
+            # worse than burying it under three rows of better
+            # content, so we skip the candidate entirely (vs the
+            # curator's soft demote on the recommendation list).
+            if marketing_filter is not None and marketing_filter(
+                str(row.get("title", "")),
+                str(row.get("description", "")),
+            ):
                 continue
             candidate = row
             break
@@ -634,6 +647,46 @@ class ContinuousRefreshController:
         if not isinstance(raw, list):
             return []
         return [str(item).strip().lower() for item in raw if str(item).strip()]
+
+    def _marketing_delight_filter(self) -> Callable[[str, str], bool] | None:
+        """Return a (title, description) → ``is_clickbait?`` predicate.
+
+        Returns None when the marketing filter is disabled in config
+        — callers skip the per-candidate scoring in that case. The
+        returned closure compares each candidate's score against the
+        user-configured threshold (rather than the module default),
+        so a user who wants the filter more or less aggressive can
+        tune it via [recommendation] marketing_filter_threshold.
+
+        The proactive-delight surface is the natural hard-filter
+        site: any clickbait pushed as a notification has higher
+        pain (user opens the app, sees garbage) than the same
+        content sitting low in the recommendation feed. The
+        curator's soft demote handles the feed case; this handles
+        the push case.
+        """
+        config = getattr(
+            getattr(self, "recommendation_engine", None),
+            "config",
+            None,
+        )
+        rec_cfg = getattr(config, "recommendation", None) if config is not None else None
+        if rec_cfg is None or not getattr(rec_cfg, "marketing_filter_block_delight", True):
+            return None
+
+        from openbiliclaw.recommendation.marketing_filter import (
+            DEFAULT_THRESHOLD,
+            score_marketing_signal,
+        )
+
+        threshold = float(
+            getattr(rec_cfg, "marketing_filter_threshold", DEFAULT_THRESHOLD)
+        )
+
+        def _is_clickbait(title: str, description: str) -> bool:
+            return score_marketing_signal(title, description=description).score >= threshold
+
+        return _is_clickbait
 
     def mark_delight_sent(self, bvid: str) -> None:
         """Persist delight notification delivery markers."""

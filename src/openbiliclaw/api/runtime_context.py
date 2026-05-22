@@ -378,7 +378,23 @@ class RuntimeContext:
         # 6. Recommendation engine
         from openbiliclaw.recommendation.curator import PoolCurator
 
-        new_curator = PoolCurator(self.database)
+        # The 营销号 demote weight is read from
+        # [recommendation] marketing_filter_demote_weight; default 8.0
+        # is calibrated so a fully-clickbait video (score 1.0) loses
+        # 8 points off its rec_score, usually enough to bury it
+        # without removing it entirely. Set the weight to 0 in
+        # config to disable the soft demote (the delight-push
+        # block still applies separately).
+        new_curator = PoolCurator(
+            self.database,
+            marketing_demote_weight=float(
+                getattr(
+                    getattr(self.config, "recommendation", None),
+                    "marketing_filter_demote_weight",
+                    0.0,
+                )
+            ),
+        )
         new_recommendation_engine = RecommendationEngine(
             llm=new_llm_service,
             database=self.database,

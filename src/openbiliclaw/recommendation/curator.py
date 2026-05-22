@@ -110,10 +110,26 @@ class PoolCurator:
         *,
         weights: ScoringWeights = _DEFAULT_WEIGHTS,
         history_window: int = 30,
+        marketing_demote_weight: float = 0.0,
     ) -> None:
         self._database = database
         self._weights = weights
         self._history_window = history_window
+        # When non-zero, the curator subtracts
+        # ``marketing_demote_weight * marketing_score`` from every
+        # candidate's composite score. ``marketing_score`` is the
+        # output of the 营销号 heuristic (0–1), so the maximum
+        # demote applied to any single candidate is the weight
+        # itself — i.e. with the default 8.0 a fully clickbait
+        # title (score 1.0) loses 8 points off its rec_score,
+        # usually enough to push it well below organic peers
+        # without removing it from the pool.
+        #
+        # Defaults to 0.0 so callers that don't opt in (existing
+        # tests, in-process usage from other entry points) get
+        # backward-compatible behavior. The runtime wires this
+        # from Config.recommendation.marketing_filter_demote_weight.
+        self._marketing_demote_weight = max(0.0, float(marketing_demote_weight))
 
     # ------------------------------------------------------------------
     # Public API
@@ -191,7 +207,15 @@ class PoolCurator:
         The returned dict can be passed as ``score_override`` to the
         engine's diversified batch selector.
         """
+        # Local import to avoid loading the pattern bank at module
+        # import time for processes that never call into the
+        # curator (e.g. CLI subcommands that just print config).
+        from openbiliclaw.recommendation.marketing_filter import (
+            score_marketing_signal,
+        )
+
         w = self._weights
+        marketing_weight = self._marketing_demote_weight
         scores: dict[str, float] = {}
         for item in candidates:
             base = item.relevance_score * w.relevance
@@ -219,6 +243,18 @@ class PoolCurator:
 
             # Feedback adjustments (additive, outside weight system)
             score += self._feedback_adjustment(item, context.feedback)
+
+            # 营销号 (clickbait) demote — only when caller opted in
+            # with a non-zero demote weight at construction time.
+            # Cheap (string-only heuristic) but skip the call
+            # entirely in the disabled case to keep this path tight.
+            if marketing_weight > 0:
+                marketing = score_marketing_signal(
+                    str(getattr(item, "title", "") or ""),
+                    description=str(getattr(item, "description", "") or ""),
+                )
+                if marketing.score > 0:
+                    score -= marketing_weight * marketing.score
 
             scores[item.bvid] = max(0.0, score)
         return scores

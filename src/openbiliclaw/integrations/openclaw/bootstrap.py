@@ -81,7 +81,16 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
 
     embedding_service = build_embedding_service(config, llm_registry)
 
-    curator = PoolCurator(database)
+    curator = PoolCurator(
+        database,
+        marketing_demote_weight=float(
+            getattr(
+                getattr(config, "recommendation", None),
+                "marketing_filter_demote_weight",
+                0.0,
+            )
+        ),
+    )
     recommendation_engine = RecommendationEngine(
         llm=llm_service,
         database=database,

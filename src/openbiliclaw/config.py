@@ -378,6 +378,47 @@ class ApiConfig:
 
 
 @dataclass
+class RecommendationConfig:
+    """Recommendation-engine tuning knobs.
+
+    Currently houses 营销号-filter parameters; over time other
+    cross-cutting recommendation switches that don't fit cleanly into
+    SchedulerConfig (which is about *when* to refresh) or
+    SourcesConfig (which is about *where* candidates come from) can
+    move here.
+    """
+
+    # When a candidate's marketing-filter score crosses this
+    # threshold it's treated as "clickbait" for hard-filter contexts
+    # like the delight push notification. The curator's soft demote
+    # path still applies below the threshold, scaled by
+    # ``marketing_filter_demote_weight``.
+    #
+    # Set to 1.01 (i.e. unreachable) to effectively disable the
+    # filter without removing the configuration. Set lower (e.g. 0.4)
+    # to be more aggressive — be aware that false positives compound:
+    # over-filtering looks to the user like the recommendation
+    # engine ignored their interests.
+    marketing_filter_threshold: float = 0.6
+
+    # Per-unit demote weight. The curator subtracts
+    # ``marketing_filter_demote_weight * score`` from a candidate's
+    # composite rec_score. With score in [0, 1] and base scores
+    # typically in the 0–20 range, a default weight of 8 lets a
+    # heavily-clickbait video (score ≈ 1.0) drop ~8 points — usually
+    # enough to push it well below organic relevance-driven peers
+    # without being a hard exclusion.
+    marketing_filter_demote_weight: float = 8.0
+
+    # When True, the proactive-delight push path also applies the
+    # threshold as a hard filter. Pushing a notification for a
+    # clickbait video is much worse UX than burying it, so this
+    # is on by default. Disable only if the heuristics keep
+    # mis-filtering legitimate delights.
+    marketing_filter_block_delight: bool = True
+
+
+@dataclass
 class Config:
     """Root configuration for OpenBiliClaw."""
 
@@ -393,6 +434,7 @@ class Config:
     # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
     # provider override): this carries soul-engine behavior toggles.
     soul: SoulConfig = field(default_factory=SoulConfig)
+    recommendation: RecommendationConfig = field(default_factory=RecommendationConfig)
 
     @property
     def data_path(self) -> Path:
@@ -662,6 +704,54 @@ def _build_config(raw: dict[str, Any]) -> Config:
         storage=StorageConfig(**store_raw),
         logging=LoggingConfig(**logging_raw),
         soul=soul,
+        recommendation=_build_recommendation_config(raw.get("recommendation", {})),
+    )
+
+
+def _build_recommendation_config(raw: object) -> RecommendationConfig:
+    """Build RecommendationConfig from a TOML ``[recommendation]`` block.
+
+    Tolerates a missing/empty block (returns defaults), and clamps
+    out-of-range values rather than raising — config errors here
+    would block the whole app from starting, and the safe fallback
+    for a malformed knob is "off / default" rather than "crash".
+    """
+    if not isinstance(raw, dict):
+        return RecommendationConfig()
+
+    defaults = RecommendationConfig()
+
+    def _clamped_float(key: str, default: float, lo: float, hi: float) -> float:
+        value = raw.get(key, default)
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, f))
+
+    return RecommendationConfig(
+        # Threshold can run from 0 (filter everything) to 1.01
+        # (filter nothing — > any possible score).
+        marketing_filter_threshold=_clamped_float(
+            "marketing_filter_threshold",
+            defaults.marketing_filter_threshold,
+            0.0,
+            1.01,
+        ),
+        # Weight is a multiplier on the candidate score; values
+        # above 50 are absurd (would dominate every other signal).
+        marketing_filter_demote_weight=_clamped_float(
+            "marketing_filter_demote_weight",
+            defaults.marketing_filter_demote_weight,
+            0.0,
+            50.0,
+        ),
+        marketing_filter_block_delight=bool(
+            raw.get(
+                "marketing_filter_block_delight",
+                defaults.marketing_filter_block_delight,
+            )
+        ),
     )
 
 
