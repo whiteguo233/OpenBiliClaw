@@ -5,86 +5,191 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenBiliClaw</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg-base: #fffafc;
-      --surface: rgba(255, 255, 255, 0.96);
-      --line: rgba(217, 227, 242, 0.95);
-      --text-main: #20304a;
-      --text-secondary: #60708c;
+      /* Light theme — soft pastel, matches the brand pink without
+         shouting. The 0.96 surface alpha keeps a hint of the base
+         background showing through for depth. */
+      --bg-base: linear-gradient(160deg, #fff5f8 0%, #fffafc 60%);
+      --surface: rgba(255, 255, 255, 0.86);
+      --surface-strong: rgba(255, 255, 255, 0.96);
+      --line: rgba(217, 227, 242, 0.65);
+      --line-strong: rgba(217, 227, 242, 1);
+      --text-main: #1d2a3e;
+      --text-secondary: #6a7689;
+      --text-muted: #9ba6b8;
       --brand: #fb7299;
       --brand-strong: #f65788;
-      --shadow-sm: 0 8px 18px rgba(73, 93, 130, 0.10);
+      --ok: #22c08a;
+      --ok-bg: rgba(34, 192, 138, 0.12);
+      --warn: #e29036;
+      --warn-bg: rgba(226, 144, 54, 0.14);
+      --err: #e25c5c;
+      --err-bg: rgba(226, 92, 92, 0.14);
+      --shadow-sm: 0 4px 14px rgba(73, 93, 130, 0.08);
+      --shadow-brand: 0 6px 18px rgba(251, 114, 153, 0.30);
+      --shadow-brand-hover: 0 9px 22px rgba(251, 114, 153, 0.40);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-base: linear-gradient(160deg, #1a1822 0%, #221a25 100%);
+        --surface: rgba(46, 41, 54, 0.78);
+        --surface-strong: rgba(56, 49, 66, 0.92);
+        --line: rgba(255, 255, 255, 0.08);
+        --line-strong: rgba(255, 255, 255, 0.16);
+        --text-main: #f0eef5;
+        --text-secondary: #b8b1c2;
+        --text-muted: #807988;
+        --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.35);
+        --shadow-brand: 0 6px 18px rgba(251, 114, 153, 0.42);
+        --shadow-brand-hover: 0 9px 24px rgba(251, 114, 153, 0.55);
+        --ok-bg: rgba(34, 192, 138, 0.22);
+        --warn-bg: rgba(226, 144, 54, 0.22);
+        --err-bg: rgba(226, 92, 92, 0.22);
+      }
     }
 
     html, body {
       width: 320px;
-      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Avenir Next",
+                   "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                   sans-serif;
       color: var(--text-main);
       background: var(--bg-base);
+      -webkit-font-smoothing: antialiased;
     }
 
     body {
-      padding: 16px;
+      padding: 16px 16px 14px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
     }
+
+    /* ── Header ───────────────────────────────────────────────── */
 
     .header {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
+    }
+
+    .header .icon-wrap {
+      width: 40px;
+      height: 40px;
+      border-radius: 11px;
+      background: var(--surface-strong);
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
 
     .header img {
       width: 32px;
       height: 32px;
+      display: block;
+    }
+
+    .header .title-block {
+      flex: 1;
+      min-width: 0;
     }
 
     .header h1 {
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
+      font-size: 14.5px;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+      line-height: 1.2;
     }
 
     .header .tagline {
       font-size: 11px;
       color: var(--text-secondary);
-      margin-top: 2px;
+      margin-top: 3px;
+      line-height: 1.35;
     }
 
+    /* ── Status card ──────────────────────────────────────────── */
+
     .status {
-      padding: 10px 12px;
+      padding: 11px 13px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: 11px;
       font-size: 12px;
-      color: var(--text-secondary);
       line-height: 1.45;
       box-shadow: var(--shadow-sm);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
     }
 
     .status .row {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
+      gap: 10px;
     }
 
     .status .row + .row {
-      margin-top: 4px;
+      margin-top: 7px;
+      padding-top: 7px;
+      border-top: 1px dashed var(--line);
     }
 
     .status .label {
       color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .status .value {
       color: var(--text-main);
-      font-weight: 500;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
+
+    /* Status pill — colored dot + monospace text */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    .pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .pill.pending { background: var(--warn-bg); color: var(--warn); }
+    .pill.pending .dot { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+
+    .pill.ok      { background: var(--ok-bg);   color: var(--ok); }
+    .pill.ok .dot { background: var(--ok); }
+
+    .pill.err     { background: var(--err-bg);  color: var(--err); }
+    .pill.err .dot { background: var(--err); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.35; }
+    }
+
+    /* ── Primary action ───────────────────────────────────────── */
 
     .open-btn {
       width: 100%;
@@ -94,14 +199,18 @@
       color: #fff;
       background: linear-gradient(135deg, var(--brand), var(--brand-strong));
       border: none;
-      border-radius: 10px;
+      border-radius: 11px;
       cursor: pointer;
       transition: transform 0.08s ease, box-shadow 0.15s ease;
-      box-shadow: 0 6px 14px rgba(251, 114, 153, 0.30);
+      box-shadow: var(--shadow-brand);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
 
     .open-btn:hover {
-      box-shadow: 0 8px 18px rgba(251, 114, 153, 0.38);
+      box-shadow: var(--shadow-brand-hover);
     }
 
     .open-btn:active {
@@ -113,37 +222,69 @@
       outline-offset: 2px;
     }
 
+    .open-btn svg {
+      width: 13px;
+      height: 13px;
+    }
+
+    /* ── Footnote ─────────────────────────────────────────────── */
+
     .footnote {
       font-size: 10.5px;
-      color: var(--text-secondary);
+      color: var(--text-muted);
       text-align: center;
-      opacity: 0.8;
+      line-height: 1.4;
+      padding: 0 4px;
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <img src="../icons/icon48.png" alt="OpenBiliClaw">
-    <div>
+    <div class="icon-wrap">
+      <img src="../icons/icon48.png" alt="OpenBiliClaw">
+    </div>
+    <div class="title-block">
       <h1>OpenBiliClaw</h1>
       <div class="tagline">跨平台内容发现 AI Agent</div>
     </div>
   </div>
 
-  <div class="status">
+  <div class="status" role="status" aria-live="polite">
     <div class="row">
-      <span class="label">后台</span>
-      <span class="value" id="bg-status">检查中…</span>
+      <span class="label">
+        <!-- Inline SVG: signal/wifi icon -->
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2 7a8.5 8.5 0 0 1 12 0M4.5 9.5a5 5 0 0 1 7 0M7 12a1.5 1.5 0 0 1 2 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        后台
+      </span>
+      <span class="value" id="bg-status-wrap">
+        <span class="pill pending" id="bg-pill">
+          <span class="dot"></span>
+          <span id="bg-status">检查中…</span>
+        </span>
+      </span>
     </div>
     <div class="row">
-      <span class="label">版本</span>
+      <span class="label">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        版本
+      </span>
       <span class="value" id="version">—</span>
     </div>
   </div>
 
-  <button class="open-btn" id="open-full" type="button">在新标签页中打开</button>
+  <button class="open-btn" id="open-full" type="button">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 3h5M3 3v5M3 3l5 5M13 13H8M13 13V8M13 13l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+    在新标签页中打开完整界面
+  </button>
 
-  <div class="footnote">Safari 暂不支持侧边栏，已切换到独立标签页模式。</div>
+  <div class="footnote">Safari 暂不支持侧边栏 · 已切换到独立标签页模式</div>
 
   <script src="popup-launcher.js"></script>
 </body>

@@ -43,6 +43,21 @@
     if (el) el.textContent = text;
   }
 
+  /**
+   * Update the status pill: replace its class suffix (pending|ok|err)
+   * and rewrite its label. The pill structure (.pill > .dot + <span>)
+   * is established in popup-launcher.html; we don't recreate the DOM
+   * each call so the colored-dot pulse animation stays in sync.
+   */
+  function setPill(pillId, statusId, kind, label) {
+    var pill = document.getElementById(pillId);
+    if (pill) {
+      // Strip any previous status class, keep the base ".pill" class.
+      pill.className = "pill " + kind;
+    }
+    setText(statusId, label);
+  }
+
   function reportVersion() {
     try {
       if (api && api.runtime && typeof api.runtime.getManifest === "function") {
@@ -60,27 +75,41 @@
 
   function pingBackground() {
     if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") {
-      setText("bg-status", "不可用");
+      setPill("bg-pill", "bg-status", "err", "不可用");
       return;
     }
     // We use a "ping" message; the service worker may or may not respond.
     // Either way, the absence of an error implies the runtime is reachable.
-    var responded = false;
+    //
+    // Three terminal states:
+    //   ok      — sendMessage round-tripped OR the 250ms timer expired
+    //             without a thrown error (the SW is alive, just no listener
+    //             for this message type, which is fine).
+    //   err     — sendMessage threw synchronously (extension context is
+    //             gone, runtime is unreachable).
+    //   pending — initial state set in the HTML; replaced before we exit.
+    var settled = false;
     var timer = setTimeout(function () {
-      if (!responded) setText("bg-status", "运行中");
+      if (settled) return;
+      settled = true;
+      setPill("bg-pill", "bg-status", "ok", "运行中");
     }, 250);
 
     try {
       api.runtime.sendMessage({ type: "openbiliclaw/popup-launcher/ping" }, function () {
-        responded = true;
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         // lastError just means no listener responded; the SW is still up.
+        // Touch it so chrome doesn't log "unchecked runtime.lastError".
         var _ = api.runtime.lastError;
-        setText("bg-status", "运行中");
+        setPill("bg-pill", "bg-status", "ok", "运行中");
       });
     } catch (_) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      setText("bg-status", "未连接");
+      setPill("bg-pill", "bg-status", "err", "未连接");
     }
   }
 
