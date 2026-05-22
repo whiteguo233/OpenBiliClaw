@@ -21,18 +21,56 @@ console.log(
 
 /**
  * Check whether YouTube is reachable from the client.
- * Uses a no-cors fetch with a 3-second timeout.
+ *
+ * We probe by loading a 1×1 image from a YouTube origin (the favicon
+ * is a stable target). This is much cheaper than a no-cors fetch:
+ *
+ *   - `fetch(..., { mode: "no-cors" })` still performs a full request
+ *     round-trip and triggers preflight handling on some browsers,
+ *     even though the response is opaque to JS.
+ *   - An <img> load is a single GET that the browser cache can
+ *     short-circuit (the YouTube favicon is almost certainly cached
+ *     already if the user has ever visited the site), and "did the
+ *     onload fire?" is exactly the signal we want.
+ *
+ * Cache-busted with a per-call query param so a cached error doesn't
+ * lock us into "unreachable" between probes. 2s timeout.
+ *
+ * Result is cached for 30s — separate from the auto-redirect cache
+ * because reachability is volatile but the setting is stable.
  */
+let _reachableCache: { value: boolean; expires: number } | null = null;
+
 async function checkYouTubeReachable(): Promise<boolean> {
-  try {
-    await fetch("https://www.youtube.com", {
-      mode: "no-cors",
-      signal: AbortSignal.timeout(3000),
-    });
-    return true;
-  } catch {
-    return false;
+  const now = Date.now();
+  if (_reachableCache && _reachableCache.expires > now) {
+    return _reachableCache.value;
   }
+  const result = await new Promise<boolean>((resolve) => {
+    const img = new Image();
+    const cleanup = () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, 2000);
+    img.onload = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(false);
+    };
+    // Cache-bust so a previous network-error response doesn't pin us.
+    img.src = `https://www.youtube.com/favicon.ico?_obc=${now}`;
+  });
+  _reachableCache = { value: result, expires: now + 30_000 };
+  return result;
 }
 
 /**
