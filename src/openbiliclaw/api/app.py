@@ -1693,6 +1693,21 @@ def create_app(
                     )
 
         rows = _cap_by_franchise(rows, max_per_franchise=2)[:20]
+
+        # ── YouTube repost replacement ──────────────────────────────
+        if rows and ctx.config.sources.youtube.replace_bilibili_reposts:
+            try:
+                from openbiliclaw.yt_replacer import replace_recommendation_row
+
+                import os as _os
+                data_dir = _os.path.dirname(str(ctx.config.storage.db_path)) if ctx.config.storage.db_path else ""
+                for i, row in enumerate(rows):
+                    override = replace_recommendation_row(row, data_dir=data_dir)
+                    if override:
+                        rows[i] = {**row, **override}
+            except Exception as exc:
+                logger.exception("YT replacer failed: %s", exc)  # don't break the response
+
         return RecommendationListResponse(
             items=[
                 RecommendationOut(
@@ -3961,6 +3976,8 @@ def create_app(
                     daily_channel_budget=cfg.sources.youtube.daily_channel_budget,
                     request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
+                    replace_bilibili_reposts=cfg.sources.youtube.replace_bilibili_reposts,
+                    yt_replacer_cache_ttl=cfg.sources.youtube.yt_replacer_cache_ttl,
                 ),
             ),
             scheduler=SchedulerConfigOut(
@@ -4240,6 +4257,14 @@ def create_app(
                     ):
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
+                    if "replace_bilibili_reposts" in yt_data:
+                        cfg.sources.youtube.replace_bilibili_reposts = _as_bool(
+                            yt_data["replace_bilibili_reposts"]
+                        )
+                    if "yt_replacer_cache_ttl" in yt_data:
+                        cfg.sources.youtube.yt_replacer_cache_ttl = int(
+                            yt_data["yt_replacer_cache_ttl"]
+                        )
 
         # Apply scheduler updates
         if "scheduler" in update:
@@ -4532,6 +4557,20 @@ def create_app(
     ) -> SourceShareSuggestionResponse:
         """Suggest pool source shares from unsaved settings form state."""
         return _build_source_share_suggestion_response(payload)
+
+    @app.post("/api/yt-replacer/clear-cache")
+    async def clear_yt_replacer_cache() -> dict[str, object]:
+        """Clear the YouTube repost replacement cache (both in-memory and file)."""
+        try:
+            from openbiliclaw.yt_replacer import clear_cache as _clear_yt_cache
+
+            data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
+            _clear_yt_cache(data_dir=data_dir)
+            return {"ok": True, "message": "YouTube 替换缓存已清除。"}
+        except ImportError:
+            return {"ok": False, "message": "yt_replacer 模块未加载。"}
+        except Exception as exc:
+            return {"ok": False, "message": f"清除失败: {exc}"}
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that
     # accumulated before the per-path filter was wired in. No-op on

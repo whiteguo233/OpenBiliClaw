@@ -13,6 +13,7 @@
 - 插件惊喜推荐卡片从单个 `chat_reply` 升级为 per-delight `turns` 多轮气泡，`chat_reply` 仅保留为兼容 last reply；切换候选和 side panel reload 不再覆盖旧回合。
 - Discovery / recommendation 的批量内容评估统一透传近期 negative exemplars：B 站、抖音、YouTube 策略和 OpenClaw bootstrap 都会把共享 database 传给内部 evaluator；推荐层的未分类池子补评估也会带上 `negative_examples`，让短期话术避让与长期 `disliked_topics` 一起生效。
 - 补充移动端回归测试，锁定 delight inline chat 复用 `session=popup` 契约、`chatted` 状态继续保留「聊一聊」入口，同时 viewed/liked/rejected 等永久处理态不泄漏通用动作按钮。
+- **🎯 B 站 YouTube 搬运视频自动替换** —— 推荐接口自动识别外文搬运内容，将标题、链接和来源替换为 YouTube 原版。新建 `yt_replacer.py`，实现多层检测（拉丁字符比例>35%、搬运关键词、外文品牌/频道名、英文短语），中文原创零误判。yt-dlp 智能搜索 + 双层缓存。配置开关 `[sources.youtube].replace_bilibili_reposts`。涉及：`api/app.py`、`config.py`、`storage/database.py`、`config.example.toml`。
 
 ## v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）
 

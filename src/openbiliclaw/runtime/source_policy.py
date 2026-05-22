@@ -34,12 +34,26 @@ def source_enabled_map(config: Any) -> dict[str, bool]:
 
 
 def effective_pool_source_shares(config: Any) -> dict[str, int]:
-    """Return configured source shares after disabled sources are removed."""
+    """Return configured source shares after disabled sources are removed.
+
+    When ``replace_bilibili_reposts`` is enabled on YouTube, YouTube
+    automatically gets an extra 2 shares to ensure enough YouTube-origin
+    content is available for replacement.
+    """
 
     scheduler = getattr(config, "scheduler", None)
     raw_shares = getattr(scheduler, "pool_source_shares", None)
     shares = _normalize_shares(raw_shares)
     enabled = source_enabled_map(config)
+
+    # Auto-boost YouTube shares when repost replacement is active
+    sources_cfg = getattr(config, "sources", None)
+    yt_cfg = getattr(sources_cfg, "youtube", None) if sources_cfg is not None else None
+    yt_replace = bool(getattr(yt_cfg, "replace_bilibili_reposts", False)) if yt_cfg is not None else False
+    yt_enabled = enabled.get("youtube", False)
+    if yt_replace and yt_enabled:
+        shares["youtube"] = shares.get("youtube", 1) + 2
+
     return {source: share for source, share in shares.items() if enabled.get(source, False)}
 
 

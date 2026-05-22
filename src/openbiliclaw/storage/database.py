@@ -2324,7 +2324,8 @@ class Database:
                 c.content_id AS content_id,
                 c.content_url AS content_url,
                 c.source_platform AS source_platform,
-                c.franchise_key AS franchise_key
+                c.franchise_key AS franchise_key,
+                c.description AS description
             FROM recommendations AS r
             LEFT JOIN content_cache AS c ON c.bvid = r.bvid
             WHERE (
