@@ -637,6 +637,45 @@ async def test_refresh_controller_prepares_delight_candidates_without_refresh() 
     assert recommendations.pool_copy_calls == [({"profile": "ok"}, 0)]
 
 
+async def test_periodic_pool_precompute_reports_newly_available_inventory() -> None:
+    memory = _FakeMemoryManager({"last_discovered_count": 21, "last_replenished_count": 0})
+    database = _FakeDatabase([], pool_count=0)
+    recommendations = _FakeRecommendationEngine()
+    event_hub = _FakeEventHub()
+
+    async def precompute_then_fill(**kwargs):
+        recommendations.pool_copy_calls.append((kwargs["profile"], kwargs["limit"]))
+        database.pool_count = 16
+        return 16
+
+    recommendations.precompute_pool_copy = precompute_then_fill  # type: ignore[assignment]
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        event_hub=event_hub,
+    )
+
+    await controller._drain_pool_precompute_backlog()
+
+    assert memory.state["last_replenished_count"] == 16
+    assert memory.state["last_discovered_count"] == 21
+    pool_updated = [event for event in event_hub.events if event["type"] == "refresh.pool_updated"]
+    assert pool_updated == [
+        {
+            "type": "refresh.pool_updated",
+            "phase": "done",
+            "message": "刚补进 16 条新的",
+            "pool_available_count": 16,
+            "last_discovered_count": 21,
+            "last_replenished_count": 16,
+            "recent_pool_topics": [],
+        }
+    ]
+
+
 async def test_refresh_controller_reports_zero_replenishment_without_false_positive_copy() -> None:
     event_hub = _FakeEventHub()
     controller = ContinuousRefreshController(

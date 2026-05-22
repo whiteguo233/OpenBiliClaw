@@ -65,6 +65,7 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const RUNTIME_REFRESH_DEBOUNCE_MS = 1000;
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -76,6 +77,16 @@
     ];
     let chatPlaceholderIndex = 0;
     let chatPlaceholderTimer = null;
+    let backendHydrationTimer = null;
+    let backendHydrationInFlight = false;
+    let backendHydrationPending = false;
+    let activityPageRefreshTimer = null;
+    let activityPageRefreshInFlight = false;
+    let activityPageRefreshPending = false;
+    let activityPageRefreshReset = false;
+    let delightQueueRefreshTimer = null;
+    let delightQueueRefreshInFlight = false;
+    let delightQueueRefreshPending = false;
 
     function showFatal(error, context = "页面启动") {
       const message = error?.message || String(error || "未知错误");
@@ -1685,11 +1696,89 @@
       applyDelights(payload);
     }
 
+    function scheduleBackendHydration({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      if (backendHydrationTimer !== null) window.clearTimeout(backendHydrationTimer);
+      backendHydrationTimer = window.setTimeout(() => {
+        backendHydrationTimer = null;
+        void runScheduledBackendHydration();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledBackendHydration() {
+      if (backendHydrationInFlight) {
+        backendHydrationPending = true;
+        return;
+      }
+      backendHydrationInFlight = true;
+      try {
+        await hydrateFromBackend();
+      } finally {
+        backendHydrationInFlight = false;
+        if (backendHydrationPending) {
+          backendHydrationPending = false;
+          scheduleBackendHydration();
+        }
+      }
+    }
+
+    function scheduleActivityPageRefresh({ reset = true, delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      activityPageRefreshReset = activityPageRefreshReset || Boolean(reset);
+      if (activityPageRefreshTimer !== null) window.clearTimeout(activityPageRefreshTimer);
+      activityPageRefreshTimer = window.setTimeout(() => {
+        activityPageRefreshTimer = null;
+        void runScheduledActivityPageRefresh();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledActivityPageRefresh() {
+      if (activityPageRefreshInFlight) {
+        activityPageRefreshPending = true;
+        return;
+      }
+      const reset = activityPageRefreshReset;
+      activityPageRefreshReset = false;
+      activityPageRefreshInFlight = true;
+      try {
+        await loadActivityPage({ reset });
+      } finally {
+        activityPageRefreshInFlight = false;
+        if (activityPageRefreshPending) {
+          activityPageRefreshPending = false;
+          scheduleActivityPageRefresh({ reset: activityPageRefreshReset });
+        }
+      }
+    }
+
+    function scheduleDelightQueueRefresh({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      if (delightQueueRefreshTimer !== null) window.clearTimeout(delightQueueRefreshTimer);
+      delightQueueRefreshTimer = window.setTimeout(() => {
+        delightQueueRefreshTimer = null;
+        void runScheduledDelightQueueRefresh();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledDelightQueueRefresh() {
+      if (delightQueueRefreshInFlight) {
+        delightQueueRefreshPending = true;
+        return;
+      }
+      delightQueueRefreshInFlight = true;
+      try {
+        await fetchDelightQueue();
+      } finally {
+        delightQueueRefreshInFlight = false;
+        if (delightQueueRefreshPending) {
+          delightQueueRefreshPending = false;
+          scheduleDelightQueueRefresh();
+        }
+      }
+    }
+
     function handleRuntimeEvent(event) {
       if (!event?.type) return;
       applyRuntimeStatus({ ...event, live_summary: event.message || event.live_summary || event.type });
-      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) void hydrateFromBackend();
-      if (event.type === "activity.added") void loadActivityPage({ reset: true });
+      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      if (event.type === "activity.added") scheduleActivityPageRefresh({ reset: true });
       if (event.type === "profile_updated" || event.type === "interest.confirmed" || event.type === "interest.rejected" || event.type === "interest.chat") void refreshProfile();
       if (event.type === "delight.candidate" && event.bvid) {
         const delight = normalizeDelight(event);
@@ -1699,7 +1788,7 @@
           mergeMessages([delight]);
         }
       }
-      if (event.type === "delight.refreshed") void fetchDelightQueue();
+      if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [] }]);
     }

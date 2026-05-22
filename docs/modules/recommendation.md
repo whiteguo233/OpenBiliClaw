@@ -75,6 +75,7 @@ items = await engine.generate_recommendations(
 - 若传入 `discovered`，优先对该批内容排序
 - 若未传入 `discovered`，从 `content_cache` 中读取未推荐内容
 - 从 `content_cache` 读取时，也会先做一轮来源均衡，避免前排高分缓存把候选窗口压成单一来源
+- 从 `content_cache` / discovery pool 取候选时会用最近 `view` 事件里的 `source_platform:content_id` 过滤已看内容；B 站保留 raw BVID 兼容，其他来源不会再因为没有 BVID 而漏过滤
 - 排序主键先看 `candidate_tier`，再看 `relevance_score`、`last_scored_at/discovered_at`、`view_count`
 - 生成结果后会写入 `recommendations` 表，避免下次重复选中
 - 每条推荐都会调用 `generate_expression()` 生成 `expression` 和 `topic_label`

@@ -1378,6 +1378,88 @@ class TestDatabase:
 
             db.close()
 
+    def test_recent_viewed_content_keys_extract_multi_source_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_event(
+                "view",
+                title="小红书笔记",
+                url="https://www.xiaohongshu.com/explore/note-seen",
+                metadata={"source_platform": "xiaohongshu", "note_id": "note-seen"},
+            )
+            db.insert_event(
+                "view",
+                title="抖音视频",
+                url="https://www.douyin.com/video/7123456789012345678",
+                metadata={
+                    "source_platform": "douyin",
+                    "aweme_id": "7123456789012345678",
+                },
+            )
+            db.insert_event(
+                "view",
+                title="YouTube 视频",
+                url="https://www.youtube.com/watch?v=abc1234defg",
+                metadata={"source_platform": "youtube", "video_id": "abc1234defg"},
+            )
+            db.insert_event(
+                "view",
+                title="B 站视频",
+                url="https://www.bilibili.com/video/BV1SEEN",
+                metadata={"source_platform": "bilibili", "bvid": "BV1SEEN"},
+            )
+
+            keys = db.get_recent_viewed_content_keys()
+
+            assert "xiaohongshu:note-seen" in keys
+            assert "douyin:7123456789012345678" in keys
+            assert "youtube:abc1234defg" in keys
+            assert "bilibili:BV1SEEN" in keys
+            assert "BV1SEEN" in keys
+
+            db.close()
+
+    def test_get_pool_candidates_skips_recently_viewed_non_bilibili_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            _seed_visible(
+                db,
+                "note-seen",
+                title="已经看过的小红书",
+                source="xhs-extension-task",
+                source_platform="xiaohongshu",
+                content_id="note-seen",
+                content_url="https://www.xiaohongshu.com/explore/note-seen?xsec_token=token",
+                relevance_score=0.96,
+            )
+            _seed_visible(
+                db,
+                "note-fresh",
+                title="新小红书",
+                source="xhs-extension-task",
+                source_platform="xiaohongshu",
+                content_id="note-fresh",
+                content_url="https://www.xiaohongshu.com/explore/note-fresh?xsec_token=token",
+                relevance_score=0.91,
+            )
+            db.insert_event(
+                "view",
+                title="已经看过的小红书",
+                url="https://www.xiaohongshu.com/explore/note-seen?xsec_token=token",
+                metadata={"source_platform": "xiaohongshu", "note_id": "note-seen"},
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert [item["bvid"] for item in items] == ["note-fresh"]
+            assert db.count_pool_candidates() == 1
+
+            db.close()
+
     def test_get_pool_candidates_balances_topics_in_candidate_window(self) -> None:
         """Candidate window is balanced by topic_group, not source.
 

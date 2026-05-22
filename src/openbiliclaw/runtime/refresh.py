@@ -782,12 +782,59 @@ class ContinuousRefreshController:
         if profile is None:
             return
         try:
+            before_pool_count = int(self.database.count_pool_candidates())
+        except Exception:
+            before_pool_count = -1
+        try:
             await engine.precompute_pool_copy(
                 profile=profile,
                 limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
             )
         except Exception:
             logger.exception("Periodic precompute drain failed")
+            return
+        if before_pool_count >= 0:
+            await self._publish_precompute_replenishment_if_needed(
+                before_pool_count=before_pool_count,
+            )
+
+    async def _publish_precompute_replenishment_if_needed(
+        self,
+        *,
+        before_pool_count: int,
+    ) -> None:
+        """Report candidates that became usable during the standalone drain."""
+        try:
+            after_pool_count = int(self.database.count_pool_candidates())
+        except Exception:
+            return
+        replenished_count = max(0, after_pool_count - int(before_pool_count))
+        if replenished_count <= 0:
+            return
+
+        state = self.memory_manager.load_discovery_runtime_state()
+        state["last_replenished_count"] = replenished_count
+        discovered_count = self._int_state_value(state, "last_discovered_count")
+        recent_pool_topics = self._list_state_value(state, "recent_pool_topics")
+        self.memory_manager.save_discovery_runtime_state(state)
+        self._last_published_pool_count = after_pool_count
+        logger.info(
+            "Periodic precompute made %s pool candidates available (pool_available %s -> %s)",
+            replenished_count,
+            before_pool_count,
+            after_pool_count,
+        )
+        await self._publish_event(
+            {
+                "type": "refresh.pool_updated",
+                "phase": "done",
+                "message": f"刚补进 {replenished_count} 条新的",
+                "pool_available_count": after_pool_count,
+                "last_discovered_count": discovered_count,
+                "last_replenished_count": replenished_count,
+                "recent_pool_topics": recent_pool_topics,
+            }
+        )
 
     async def _on_profile_ready_if_first_time(self) -> None:
         """One-shot hook fired the tick after soul profile first appears.
