@@ -37,9 +37,21 @@ async function checkYouTubeReachable(): Promise<boolean> {
 
 /**
  * Fetch the backend repost-lookup endpoint for a given BVID.
- * Returns { repost, yt_url } or null on failure.
+ * Returns the parsed response or null on network/parse failure.
+ *
+ * The server may answer with `pending=true` when it detected a repost
+ * but couldn't talk to YouTube to find the URL; the caller should
+ * treat that as "soft yes" and avoid caching.
  */
-async function lookupRepost(bvid: string): Promise<{ repost: boolean; yt_url?: string } | null> {
+interface RepostLookup {
+  repost: boolean;
+  yt_url?: string;
+  yt_title?: string;
+  yt_uploader?: string;
+  pending?: boolean;
+}
+
+async function lookupRepost(bvid: string): Promise<RepostLookup | null> {
   try {
     const resp = await fetch(`/api/yt-replacer/lookup?bvid=${encodeURIComponent(bvid)}`, {
       signal: AbortSignal.timeout(5000),
@@ -49,6 +61,32 @@ async function lookupRepost(bvid: string): Promise<{ repost: boolean; yt_url?: s
   } catch {
     return null;
   }
+}
+
+/**
+ * Cached snapshot of the global auto-redirect setting. Cached for 60s
+ * so we don't re-fetch /api/config on every SPA navigation within the
+ * same video-browsing session.
+ */
+let _autoRedirectCache: { value: boolean; expires: number } | null = null;
+
+async function getAutoRedirectEnabled(): Promise<boolean> {
+  const now = Date.now();
+  if (_autoRedirectCache && _autoRedirectCache.expires > now) {
+    return _autoRedirectCache.value;
+  }
+  let value = false;
+  try {
+    const resp = await fetch("/api/config", { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+      const cfg = await resp.json();
+      value = cfg.sources?.youtube?.auto_redirect_youtube === true;
+    }
+  } catch {
+    // Leave value = false on error
+  }
+  _autoRedirectCache = { value, expires: now + 60_000 };
+  return value;
 }
 
 /**
@@ -169,6 +207,57 @@ function showRepostBanner(ytUrl: string, autoRedirect: boolean, countdown: numbe
 }
 
 /**
+ * Show a "pending" variant of the banner: we know it's a repost but
+ * don't have the YT URL yet (server couldn't reach YouTube). No jump
+ * button — there's nowhere to jump to — but we still let the user
+ * know so they understand why nothing happened.
+ */
+function showPendingBanner(): void {
+  const existing = document.getElementById("obc-repost-banner");
+  if (existing) existing.remove();
+
+  const banner = document.createElement("div");
+  banner.id = "obc-repost-banner";
+  banner.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 999999;
+    background: linear-gradient(135deg, #b89cc7, #8d6da5);
+    color: #fff;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    box-shadow: 0 4px 20px rgba(141, 109, 165, 0.3);
+    transform: translateY(-100%);
+    transition: transform 0.3s ease;
+  `;
+  const text = document.createElement("span");
+  text.textContent = "检测到搬运视频，但服务器暂时无法连接 YouTube，稍后再试。";
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "关闭";
+  closeBtn.style.cssText = `
+    padding: 4px 12px;
+    border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+  `;
+  closeBtn.addEventListener("click", () => banner.remove());
+  banner.appendChild(text);
+  banner.appendChild(closeBtn);
+  document.body.prepend(banner);
+  requestAnimationFrame(() => { banner.style.transform = "translateY(0)"; });
+}
+
+/**
  * Check the current page for a YouTube repost.
  * Called on video pages. Extracts BVID, checks the backend,
  * and shows a banner (with optional auto-redirect) if it's a repost.
@@ -185,45 +274,84 @@ async function checkForRepost(): Promise<void> {
   // Basic online check
   if (!navigator.onLine) return;
 
-  // Try to reach YouTube first
-  const youtubeReachable = await checkYouTubeReachable();
+  // Fire reachability check and backend lookup in parallel — they're
+  // independent. checkYouTubeReachable has a 3s timeout, lookupRepost
+  // has 5s; we don't block one on the other.
+  const [youtubeReachable, result] = await Promise.all([
+    checkYouTubeReachable(),
+    lookupRepost(bvid),
+  ]);
 
-  // Fetch repost info from backend
-  const result = await lookupRepost(bvid);
-  if (!result || !result.repost || !result.yt_url) return;
+  if (!result || !result.repost) return;
 
-  // Check if auto-redirect is enabled in config
-  let autoRedirect = false;
-  try {
-    const configResp = await fetch("/api/config", { signal: AbortSignal.timeout(3000) });
-    if (configResp.ok) {
-      const cfg = await configResp.json();
-      autoRedirect = cfg.sources?.youtube?.auto_redirect_youtube === true;
-    }
-  } catch {
-    // Auto-redirect disabled on error
-  }
-
-  // If YouTube is reachable and auto-redirect is on, redirect immediately
-  if (youtubeReachable && autoRedirect) {
-    // Short delay so the user sees the banner for a moment
-    setTimeout(() => {
-      window.location.href = result.yt_url!;
-    }, 500);
-    // Still show a brief banner
-    showRepostBanner(result.yt_url, false, 0);
+  // Pending state: server detected a repost but couldn't fetch the URL.
+  if (!result.yt_url) {
+    if (result.pending) showPendingBanner();
     return;
   }
 
-  // Show the banner with a [跳转] button (and optional countdown if YouTube unreachable but auto-redirect wanted)
-  showRepostBanner(result.yt_url, autoRedirect && youtubeReachable, 3);
+  const ytUrl = result.yt_url;
+  const autoRedirect = await getAutoRedirectEnabled();
+
+  // Decide what to show. Three cases:
+  //   1. autoRedirect=true  + youtubeReachable=true  → silent banner,
+  //      then jump in 500ms.
+  //   2. autoRedirect=true  + youtubeReachable=false → countdown banner
+  //      (give the user a chance to abort since we're not sure YT loads).
+  //   3. autoRedirect=false                          → static banner with
+  //      manual [跳转] button.
+  if (autoRedirect && youtubeReachable) {
+    showRepostBanner(ytUrl, false, 0);
+    setTimeout(() => { window.location.href = ytUrl; }, 500);
+    return;
+  }
+  showRepostBanner(ytUrl, autoRedirect, 3);
 }
 
-// Run repost check on video page load
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => {
-    void checkForRepost();
-  });
-} else {
+// ── Lifecycle ──────────────────────────────────────────────────────
+//
+// Bilibili's video pages are an SPA: clicking a recommendation in the
+// right rail swaps the BVID in the URL via pushState/replaceState
+// without a page load, so a single DOMContentLoaded check would only
+// catch the first video. We re-run checkForRepost on every URL change.
+
+let _lastCheckedUrl = "";
+function maybeCheckOnUrlChange(): void {
+  const url = window.location.href;
+  if (url === _lastCheckedUrl) return;
+  _lastCheckedUrl = url;
+  // Remove any banner from a previous video before deciding on a new one.
+  document.getElementById("obc-repost-banner")?.remove();
   void checkForRepost();
+}
+
+function installSpaWatcher(): void {
+  // popstate fires on back/forward
+  window.addEventListener("popstate", maybeCheckOnUrlChange);
+  // Bilibili uses history.pushState/replaceState for in-page navigation.
+  // Wrap them so we get notified.
+  const origPush = history.pushState.bind(history);
+  const origReplace = history.replaceState.bind(history);
+  history.pushState = function (...args: Parameters<typeof history.pushState>) {
+    const ret = origPush(...args);
+    queueMicrotask(maybeCheckOnUrlChange);
+    return ret;
+  };
+  history.replaceState = function (...args: Parameters<typeof history.replaceState>) {
+    const ret = origReplace(...args);
+    queueMicrotask(maybeCheckOnUrlChange);
+    return ret;
+  };
+}
+
+function bootRepostWatcher(): void {
+  _lastCheckedUrl = window.location.href;
+  installSpaWatcher();
+  void checkForRepost();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootRepostWatcher);
+} else {
+  bootRepostWatcher();
 }
