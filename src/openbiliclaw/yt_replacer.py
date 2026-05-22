@@ -25,6 +25,8 @@ _yt_cache: dict[str, dict | None] = {}  # bvid -> {yt_url, yt_title, yt_author} 
 _yt_cache_mtime: float = 0.0
 _CACHE_TTL = 86400  # 24h
 
+import socket
+
 # ── Server-side internet reachability ────────────────────────────
 _YOUTUBE_REACHABLE: bool | None = None
 _REACHABLE_CHECK_TIME: float = 0.0
@@ -32,20 +34,24 @@ _REACHABLE_CHECK_TIME: float = 0.0
 
 def _can_reach_youtube() -> bool:
     """Check if YouTube/Google is reachable from this server.
-    
+
     Caches the result for 5 minutes. Uses a socket connection
-    to google.com:443 with 3-second timeout.
+    to google.com:443 with 3-second timeout. We probe google.com
+    rather than youtube.com because in regions where YT is blocked,
+    google.com is usually blocked too, and probing google avoids a
+    dependency on YouTube's specific DNS/CDN behaviour.
     """
     global _YOUTUBE_REACHABLE, _REACHABLE_CHECK_TIME
     now = time.time()
     if _YOUTUBE_REACHABLE is not None and (now - _REACHABLE_CHECK_TIME) < 300:
         return _YOUTUBE_REACHABLE
     try:
-        import socket
         s = socket.create_connection(("google.com", 443), timeout=3)
         s.close()
         _YOUTUBE_REACHABLE = True
-    except (OSError, Exception):
+    except OSError:
+        # socket failures (DNS, refused, timeout, unreachable) all raise
+        # OSError or one of its subclasses (socket.gaierror, socket.timeout).
         _YOUTUBE_REACHABLE = False
     _REACHABLE_CHECK_TIME = time.time()
     logger.debug("YT reachable check: %s", _YOUTUBE_REACHABLE)
@@ -347,21 +353,24 @@ def replace_if_foreign(
         _yt_cache[bvid] = None
         return None
 
-    # Check server-side reachability before attempting YouTube lookup
+    # Check server-side reachability before attempting YouTube lookup.
+    # We DELIBERATELY do NOT write to _yt_cache here. _yt_cache has a
+    # 24-hour TTL and is persisted to disk; if we cached a "no URL"
+    # entry whenever the server briefly couldn't reach youtube.com,
+    # transient network blips would lock the bvid out of replacement
+    # for a full day even after connectivity is restored. The dedicated
+    # _can_reach_youtube() function already has its own short-lived
+    # (5 min) cache that handles backoff at the right granularity.
     if not _can_reach_youtube():
-        logger.info("YT replacer: youtube not reachable, marking repost without lookup")
-        # Store a special entry marking this as a detected repost but no YT URL
-        entry = {
+        logger.info("YT replacer: youtube not reachable, returning transient repost_detected")
+        return {
             "bvid": bvid,
             "yt_url": "",
             "yt_title": "",
             "yt_uploader": "",
             "yt_cover_url": "",
-            "repost_detected": True,  # Signal that it IS a repost, just no YT URL
+            "repost_detected": True,  # Signal: it IS a repost, just no YT URL right now
         }
-        _yt_cache[bvid] = entry
-        _save_cache(data_dir)
-        return entry
 
     # Search YouTube with intelligently built query
     logger.info("YT replacer: searching YouTube for %r (author=%r)", title, author)

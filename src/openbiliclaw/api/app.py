@@ -4576,38 +4576,71 @@ def create_app(
     @app.get("/api/yt-replacer/lookup")
     async def yt_replacer_lookup(bvid: str = Query("")) -> dict:
         """Check if a Bilibili video is a repost and get the YouTube original.
-        
-        Called by the extension content script when a user views a B站视频页面.
-        Returns {repost: bool, yt_url: str, yt_title: str, yt_uploader: str}
+
+        Called by the extension content script when a user views a
+        B站视频页面. Returns:
+
+          {
+            "repost": bool,              # whether the title heuristic says it IS a repost
+            "yt_url": str,               # YouTube URL, or "" if unknown
+            "yt_title": str,
+            "yt_uploader": str,
+            "pending": bool,             # True when repost was detected but the
+                                         # YT lookup couldn't run (e.g. server can't
+                                         # reach youtube.com). Extension should NOT
+                                         # cache this and should retry on next visit.
+          }
+
+        ``repost=True`` with ``yt_url=""`` means "we know it's a repost
+        but don't have the original yet" — the client decides whether to
+        show a soft banner or just stay quiet.
         """
         if not bvid:
-            return {"repost": False, "yt_url": ""}
+            return {"repost": False, "yt_url": "", "pending": False}
         try:
             from openbiliclaw.yt_replacer import replace_if_foreign
-            
+
             cursor = ctx.database.conn.execute(
                 "SELECT c.title, c.up_name, c.description FROM content_cache c WHERE c.bvid = ?",
                 (bvid,)
             )
             row = cursor.fetchone()
             if not row:
-                return {"repost": False, "yt_url": ""}
+                return {"repost": False, "yt_url": "", "pending": False}
             title = str(row["title"] or "")
             author = str(row["up_name"] or "")
             description = str(row["description"] or "")
             data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
             result = replace_if_foreign(bvid, title, author, description=description, data_dir=data_dir)
-            if result and result.get("yt_url"):
+
+            # No detection at all (heuristic said "not a repost").
+            if result is None:
+                return {"repost": False, "yt_url": "", "pending": False}
+
+            # Successful lookup: we have a YT URL.
+            if result.get("yt_url"):
                 return {
                     "repost": True,
                     "yt_url": result["yt_url"],
                     "yt_title": result.get("yt_title", ""),
                     "yt_uploader": result.get("yt_uploader", ""),
+                    "pending": False,
                 }
-            return {"repost": False, "yt_url": ""}
+
+            # Detected as a repost but no URL yet (e.g. transient network
+            # failure caused replace_if_foreign to short-circuit). Tell
+            # the client so it can hint the user and retry later instead
+            # of falling back to "not a repost".
+            return {
+                "repost": bool(result.get("repost_detected")),
+                "yt_url": "",
+                "yt_title": "",
+                "yt_uploader": "",
+                "pending": bool(result.get("repost_detected")),
+            }
         except Exception:
             logger.exception("YT replacer lookup failed for bvid=%s", bvid)
-            return {"repost": False, "yt_url": ""}
+            return {"repost": False, "yt_url": "", "pending": False}
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that
     # accumulated before the per-path filter was wired in. No-op on
