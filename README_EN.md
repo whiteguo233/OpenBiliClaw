@@ -24,6 +24,9 @@
 - **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
 - **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
 - **🎯 Bilibili YouTube repost auto-replacement** — `GET /api/recommendations` now detects foreign-language reposts on Bilibili and replaces the title, link, and source with the original YouTube version. Multi-signal detection (Latin ratio >35%, repost keywords, foreign brands, English phrases); zero false positives on Chinese originals; fails safe — logs only, never blocks the response. Gated by `[sources.youtube].replace_bilibili_reposts`.
+- **⭐ Watch-later (稍后再看)** — recommendation cards now have a ☆/★ bookmark toggle that survives reshuffles. Backed by a new `/api/watch-later` surface (`POST` / `DELETE` / `GET ?limit&offset` / `GET /{bvid}`) that's orthogonal to like/dislike/comment — a video can be liked AND saved. The schema migrates automatically; existing 0.3.44-and-earlier databases pick the table up on next start.
+- **🛑 Clickbait (营销号) demote** — title-heuristic detector for engagement-farm videos. Soft-demotes them in the recommendation curator (the user can still see them if relevance wins) and hard-filters them from proactive push notifications (where a clickbait alert is much worse UX). Six categories of pattern plus typographic signals (stacked `!?!?`, emoji density, length stuffing, description-repeats-title). Three knobs under `[recommendation]` in `config.example.toml` control threshold, demote weight, and push blocking.
+- **🖼️ Cover-load fix** — the image proxy now sends a per-host `Referer` header (bilibili / xiaohongshu / douyin / youtube). The previous bare requests were getting 403'd by Bilibili's `i*.hdslb.com` hot-link protection, which is why every cover was rendering as a broken-image placeholder.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 

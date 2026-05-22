@@ -26,6 +26,9 @@
 - **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
 - **📱 iOS 输入不缩放** —— 内联 composer 输入框保持 16px 字号，避免 iOS Safari focus 时自动放大页面。
 - **🎯 B 站 YouTube 搬运视频自动替换** —— 推荐接口（`GET /api/recommendations`）自动识别 B 站的外文搬运内容，将标题、链接和来源替换为 YouTube 原版。支持多层检测（拉丁字符比例 + 搬运关键词 + 外文品牌 + 英文短语）；中文原创零误判；替换失败仅记日志，不阻塞推荐响应。配置开关 `[sources.youtube].replace_bilibili_reposts`。
+- **⭐ 稍后再看** —— 推荐卡片新增 ☆/★ 收藏按钮，点击即可加入「稍后再看」列表，跨刷新保持选中状态。后端通过 `/api/watch-later` 暴露 `POST` / `DELETE` / `GET (?limit&offset)` / `GET /{bvid}` 四个端点，独立于点赞/不喜欢/评论之外，可与任意 feedback 共存。表 schema 自动迁移，0.3.44 及更早版本升级即用。
+- **🛑 营销号识别与降权** —— 新增基于标题启发式的营销号识别（震惊/突发/居然/真相/某地等关键词、连续标点、emoji 密度、标题过长、描述复读标题等多重信号叠加置信度）。在推荐打分阶段做软性降权（curator demote），主动推送通道做硬过滤——你仍能在 feed 中看到边缘内容（相关性高时会上来），但永远不会被推送通知打扰。`[recommendation]` 三个 knob 控制阈值、降权权重和推送阻断，详见 `config.example.toml`。
+- **🖼️ 封面加载修复** —— image proxy 现在按 CDN 域名自动附加正确的 `Referer` 头（bilibili / 小红书 / 抖音 / YouTube），修复 B 站 `i*.hdslb.com` 的热链保护 403。所有平台覆盖。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
