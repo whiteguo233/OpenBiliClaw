@@ -189,8 +189,8 @@ def _build_search_query(title: str) -> str:
 
 def find_original(title: str, author: str = "", description: str = "") -> dict | None:
     """Search YouTube for the original of a video described by *title*
-    (and optionally *author*). Returns ``{url, title, uploader}`` on match,
-    or ``None``.
+    (and optionally *author*). Returns ``{url, title, uploader, cover_url}``
+    on match, or ``None``.
 
     Builds a search query from the English terms in the title, then
     scores results by title similarity. If the description already
@@ -206,6 +206,7 @@ def find_original(title: str, author: str = "", description: str = "") -> dict |
                 "url": f"https://www.youtube.com/watch?v={vid}",
                 "title": title,
                 "uploader": author or "",
+                "cover_url": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
             }
 
     query = _build_search_query(title)
@@ -239,10 +240,13 @@ def find_original(title: str, author: str = "", description: str = "") -> dict |
         return None
 
     url = f"https://www.youtube.com/watch?v={best.get('id', '')}"
+    vid = best.get("id", "")
+    cover_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""
     return {
         "url": url,
         "title": best.get("title", ""),
         "uploader": best.get("uploader", ""),
+        "cover_url": cover_url,
     }
 
 
@@ -332,6 +336,7 @@ def replace_if_foreign(
         "yt_url": result["url"],
         "yt_title": result["title"],
         "yt_uploader": result.get("uploader", ""),
+        "yt_cover_url": result.get("cover_url", ""),
     }
     _yt_cache[bvid] = entry
     _save_cache(data_dir)
@@ -373,14 +378,18 @@ def replace_recommendation_row(
 
     original_expr = str(row.get("expression", "") or "")
     yt_url = yt["yt_url"]
+    yt_cover = yt.get("yt_cover_url", "")
     expr_suffix = (
         f"\n💡 这是搬运，原视频在 YouTube：{yt_url}"
     )
-    return {
+    override = {
         "content_url": yt_url,
         "source_platform": "youtube",
         "expression": (original_expr + expr_suffix) if original_expr else f"原视频在 YouTube：{yt_url}",
     }
+    if yt_cover:
+        override["cover_url"] = yt_cover
+    return override
 
 
 def clear_cache(data_dir: str = "") -> None:

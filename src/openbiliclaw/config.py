@@ -257,6 +257,8 @@ class YoutubeSourceConfig:
     # with the original YouTube URL.  Detection is title-based heuristic
     # + yt-dlp search.  Results cached in <data_dir>/yt_replacer_cache.json.
     replace_bilibili_reposts: bool = False
+    # Cache TTL for yt_replacer results in hours (default 24).
+    yt_replacer_cache_ttl: int = 24
 
 
 @dataclass
