@@ -435,6 +435,52 @@ class FeedbackResponse(BaseModel):
     feedback_type: str
 
 
+# ── 稍后再看 (watch-later) ─────────────────────────────────────────
+
+
+class WatchLaterAddIn(BaseModel):
+    """Bookmark a bvid for later viewing."""
+
+    bvid: str
+    note: str = ""
+
+
+class WatchLaterItem(BaseModel):
+    """One row in the saved-list view.
+
+    `title`, `up_name`, etc. are best-effort: they come from
+    content_cache via a LEFT JOIN, so a bvid that was evicted from
+    the cache still surfaces here with empty metadata. The bvid
+    itself is always present — it's the user's intent that we're
+    preserving, not the cache snapshot at save time.
+    """
+
+    bvid: str
+    added_at: str = ""
+    note: str = ""
+    title: str = ""
+    up_name: str = ""
+    up_mid: int = 0
+    duration: int = 0
+    cover_url: str = ""
+    view_count: int = 0
+    like_count: int = 0
+
+
+class WatchLaterListResponse(BaseModel):
+    items: list[WatchLaterItem]
+    total: int
+
+
+class WatchLaterStateResponse(BaseModel):
+    """Status response for add/remove/exists."""
+
+    ok: bool
+    bvid: str
+    saved: bool
+    total: int
+
+
 class RecommendationClickIn(BaseModel):
     """Payload for a recommendation click-through from the extension popup."""
 

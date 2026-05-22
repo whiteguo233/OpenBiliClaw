@@ -77,6 +77,10 @@ from openbiliclaw.api.models import (
     SourceShareSuggestionIn,
     SourceShareSuggestionResponse,
     StorageConfigOut,
+    WatchLaterAddIn,
+    WatchLaterItem,
+    WatchLaterListResponse,
+    WatchLaterStateResponse,
     XiaohongshuSourceConfigOut,
     YoutubeSourceConfigOut,
 )
@@ -2910,6 +2914,109 @@ def create_app(
             recommendation_id=payload.recommendation_id,
             feedback_type=feedback_type,
         )
+
+    # ── 稍后再看 (watch-later) ─────────────────────────────────────
+    #
+    # Bookmarks live in their own `watch_later` table, parallel to
+    # recommendations.feedback_type. The intentional split is so that
+    # a video can be both liked AND saved-for-later, which the
+    # mutually-exclusive feedback_type slots can't represent.
+    #
+    # No auth — this whole API listens on 127.0.0.1 by default, and
+    # the same posture as /api/feedback applies. Users who flip the
+    # listener to 0.0.0.0 need their own auth shim.
+
+    def _watch_later_state(bvid: str) -> WatchLaterStateResponse:
+        """Shared status-builder used by add/remove/exists endpoints."""
+        return WatchLaterStateResponse(
+            ok=True,
+            bvid=bvid,
+            saved=ctx.database.is_in_watch_later(bvid),
+            total=ctx.database.count_watch_later(),
+        )
+
+    @app.post("/api/watch-later", response_model=WatchLaterStateResponse)
+    async def watch_later_add(
+        payload: WatchLaterAddIn,
+    ) -> WatchLaterStateResponse:
+        """Save (or re-save) ``bvid`` to 稍后再看.
+
+        UPSERT semantics: re-saving an existing bookmark refreshes
+        its note and bumps `added_at` so re-saved bookmarks float to
+        the top of the saved-list view.
+
+        We deliberately don't require the bvid to exist in
+        content_cache; bookmarks are user intent and shouldn't be
+        gated on whether the cache happens to have a matching row.
+        """
+        bvid = payload.bvid.strip()
+        if not bvid:
+            raise HTTPException(status_code=422, detail="bvid is required")
+        ctx.database.add_to_watch_later(bvid, note=payload.note.strip())
+        return _watch_later_state(bvid)
+
+    @app.delete("/api/watch-later/{bvid}", response_model=WatchLaterStateResponse)
+    async def watch_later_remove(bvid: str) -> WatchLaterStateResponse:
+        """Remove a bookmark.
+
+        Returns the same shape as add for client symmetry — the
+        caller can flip its local "saved" UI from the `saved` field
+        without needing to know whether the request was an add or a
+        remove.
+        """
+        normalized = bvid.strip()
+        if not normalized:
+            raise HTTPException(status_code=422, detail="bvid is required")
+        ctx.database.remove_from_watch_later(normalized)
+        return _watch_later_state(normalized)
+
+    @app.get("/api/watch-later", response_model=WatchLaterListResponse)
+    async def watch_later_list(
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ) -> WatchLaterListResponse:
+        """List saved bookmarks, newest first.
+
+        Page with ``limit`` / ``offset`` — the default 50 is the same
+        page size used by the recommendation list endpoint. The
+        upper bound of 200 caps a single response at a reasonable
+        payload size; the saved list is meant for browsing, not bulk
+        export.
+        """
+        rows = ctx.database.list_watch_later(limit=limit, offset=offset)
+        items = [
+            WatchLaterItem(
+                bvid=str(r.get("bvid", "") or ""),
+                added_at=str(r.get("added_at", "") or ""),
+                note=str(r.get("note", "") or ""),
+                title=str(r.get("title", "") or ""),
+                up_name=str(r.get("up_name", "") or ""),
+                up_mid=int(r.get("up_mid", 0) or 0),
+                duration=int(r.get("duration", 0) or 0),
+                cover_url=str(r.get("cover_url", "") or ""),
+                view_count=int(r.get("view_count", 0) or 0),
+                like_count=int(r.get("like_count", 0) or 0),
+            )
+            for r in rows
+        ]
+        return WatchLaterListResponse(
+            items=items,
+            total=ctx.database.count_watch_later(),
+        )
+
+    @app.get("/api/watch-later/{bvid}", response_model=WatchLaterStateResponse)
+    async def watch_later_status(bvid: str) -> WatchLaterStateResponse:
+        """Whether ``bvid`` is currently bookmarked.
+
+        Used by the recommendation card render path to decide
+        between "🤍" (not saved) and "♥" (saved) iconography
+        without re-fetching the whole saved list. Cheap — primary-
+        key lookup.
+        """
+        normalized = bvid.strip()
+        if not normalized:
+            raise HTTPException(status_code=422, detail="bvid is required")
+        return _watch_later_state(normalized)
 
     @app.post(
         "/api/recommendation-click",

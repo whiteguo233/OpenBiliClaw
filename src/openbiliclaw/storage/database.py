@@ -141,6 +141,28 @@ CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created
 CREATE INDEX IF NOT EXISTS idx_chat_turns_scope_subject
     ON chat_turns(scope, subject_id, created_at);
 
+CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created
+    ON chat_turns(session, created_at, turn_id);
+CREATE INDEX IF NOT EXISTS idx_chat_turns_scope_subject
+    ON chat_turns(scope, subject_id, created_at);
+
+-- v0.3.45+: 稍后再看 (watch-later) bookmarks.
+--
+-- Orthogonal to like/dislike/comment in `recommendations.feedback_type`:
+-- a video can be both liked and bookmarked, or bookmarked without any
+-- prior feedback. Keying on (bvid) deliberately — the user can
+-- bookmark anything that has appeared in content_cache, not just rows
+-- that ever made it into the recommendation table. note is a free-text
+-- field surfaced in the UI for "why am I saving this".
+CREATE TABLE IF NOT EXISTS watch_later (
+    bvid     TEXT PRIMARY KEY,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    note     TEXT DEFAULT '',
+    FOREIGN KEY (bvid) REFERENCES content_cache(bvid)
+);
+CREATE INDEX IF NOT EXISTS idx_watch_later_added
+    ON watch_later(added_at DESC);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
@@ -229,6 +251,7 @@ class Database:
         self._ensure_xhs_observed_urls_table()
         self._ensure_llm_usage_cache_columns()
         self._ensure_chat_turns_table()
+        self._ensure_watch_later_table()
 
         # Set schema version
         self._conn.execute(
@@ -2700,6 +2723,117 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_chat_turns_scope_subject
                 ON chat_turns(scope, subject_id, created_at);
         """)
+
+    def _ensure_watch_later_table(self) -> None:
+        """Create the 稍后再看 bookmark table for existing databases.
+
+        Idempotent — the CREATE statements use IF NOT EXISTS. New
+        installs already get the table from _SCHEMA_SQL; this method
+        exists so users upgrading from v0.3.44 or earlier pick it up
+        on next start.
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS watch_later (
+                bvid     TEXT PRIMARY KEY,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                note     TEXT DEFAULT '',
+                FOREIGN KEY (bvid) REFERENCES content_cache(bvid)
+            );
+            CREATE INDEX IF NOT EXISTS idx_watch_later_added
+                ON watch_later(added_at DESC);
+        """)
+
+    # ── 稍后再看 (watch-later) bookmarks ───────────────────────────
+
+    def add_to_watch_later(self, bvid: str, note: str = "") -> bool:
+        """Bookmark ``bvid``. Returns True on success.
+
+        UPSERT semantics: re-saving an already-saved bvid replaces
+        the note and bumps added_at so the most-recently-revisited
+        bookmark surfaces first. The client doesn't need a pre-check
+        round-trip to avoid duplicates.
+        """
+        normalized = str(bvid or "").strip()
+        if not normalized:
+            return False
+        self._execute_write(
+            """
+            INSERT INTO watch_later (bvid, note)
+            VALUES (?, ?)
+            ON CONFLICT(bvid) DO UPDATE SET
+                note = excluded.note,
+                added_at = CURRENT_TIMESTAMP
+            """,
+            (normalized, str(note or "")),
+        )
+        return True
+
+    def remove_from_watch_later(self, bvid: str) -> bool:
+        """Remove a bookmark. Returns True if a row was deleted."""
+        normalized = str(bvid or "").strip()
+        if not normalized:
+            return False
+        cursor = self._execute_write(
+            "DELETE FROM watch_later WHERE bvid = ?",
+            (normalized,),
+        )
+        return cursor.rowcount > 0
+
+    def is_in_watch_later(self, bvid: str) -> bool:
+        """Cheap existence check, used to render the star toggle."""
+        normalized = str(bvid or "").strip()
+        if not normalized:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM watch_later WHERE bvid = ?",
+            (normalized,),
+        ).fetchone()
+        return row is not None
+
+    def count_watch_later(self) -> int:
+        """Total saved-for-later count. Used by the popup badge."""
+        row = self.conn.execute("SELECT COUNT(*) FROM watch_later").fetchone()
+        return int(row[0]) if row else 0
+
+    def list_watch_later(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
+        """List bookmarks, newest first, joined with cached metadata.
+
+        Returns the same shape used by the recommendation cards
+        (title, up_name, duration, cover_url, etc.) so the frontend
+        can render the saved list with the existing card template.
+        Bookmarked bvids that have been evicted from content_cache
+        still appear with empty metadata — the bookmark is the
+        user's intent and shouldn't disappear just because the
+        content cache rolled over.
+        """
+        safe_limit = max(1, min(200, int(limit)))
+        safe_offset = max(0, int(offset))
+        cursor = self.conn.execute(
+            """
+            SELECT
+                w.bvid               AS bvid,
+                w.added_at           AS added_at,
+                w.note               AS note,
+                COALESCE(c.title, '')       AS title,
+                COALESCE(c.up_name, '')     AS up_name,
+                COALESCE(c.up_mid, 0)       AS up_mid,
+                COALESCE(c.duration, 0)     AS duration,
+                COALESCE(c.cover_url, '')   AS cover_url,
+                COALESCE(c.view_count, 0)   AS view_count,
+                COALESCE(c.like_count, 0)   AS like_count
+            FROM watch_later w
+            LEFT JOIN content_cache c ON c.bvid = w.bvid
+            ORDER BY w.added_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (safe_limit, safe_offset),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     # ── XHS observed URL ingest ───────────────────────────────────
 

@@ -47,6 +47,15 @@ let loaded = false;
 let loading = false;
 let feedbackSheet = null; // { itemId, note, submitState }
 const feedbackDone = new Map(); // recId -> "like" | "dislike" | "comment"
+// 稍后再看 (watch-later) saved-state cache.
+//
+// Keyed by bvid (not recommendation id) because a bookmark is on the
+// underlying video, not on the recommendation row that surfaced it —
+// the same bvid can recur across recommendation refreshes and the
+// star should stay filled. Populated lazily: each card fires off a
+// GET /api/watch-later/{bvid} on first render and toggles the local
+// entry optimistically on click.
+const watchLaterSaved = new Set();
 const COVER_PRELOAD_BATCH_SIZE = 8;
 const AUTO_APPEND_ROOT_MARGIN = "700px 0px 900px 0px";
 const warmedCoverUrls = new Set();
@@ -715,9 +724,73 @@ function renderCard(rawItem, index = 0) {
     renderFeedbackSheet();
   });
 
+  // 稍后再看 (watch-later) star toggle. Filled "★" when saved,
+  // outlined "☆" otherwise. We optimistically flip the UI on click
+  // so the user gets immediate feedback, then await the API; on
+  // failure we revert.
+  const renderStar = (saved) => (saved ? "\u2605" : "\u2606");
+  const wlBtn = createCardAction(
+    renderStar(watchLaterSaved.has(item.bvid)),
+    async () => {
+      const wasSaved = watchLaterSaved.has(item.bvid);
+      const nextSaved = !wasSaved;
+      // Optimistic flip.
+      if (nextSaved) watchLaterSaved.add(item.bvid);
+      else watchLaterSaved.delete(item.bvid);
+      wlBtn.textContent = renderStar(nextSaved);
+      wlBtn.disabled = true;
+      try {
+        const url = nextSaved
+          ? "/api/watch-later"
+          : `/api/watch-later/${encodeURIComponent(item.bvid)}`;
+        const init = nextSaved
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ bvid: item.bvid, note: "" }),
+            }
+          : { method: "DELETE" };
+        const resp = await fetch(url, init);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        // Reconcile with server truth — covers concurrent edits and
+        // the optimistic-flip-was-wrong case.
+        const data = await resp.json();
+        if (data && typeof data.saved === "boolean") {
+          if (data.saved) watchLaterSaved.add(item.bvid);
+          else watchLaterSaved.delete(item.bvid);
+          wlBtn.textContent = renderStar(data.saved);
+        }
+      } catch {
+        // Revert optimistic flip.
+        if (wasSaved) watchLaterSaved.add(item.bvid);
+        else watchLaterSaved.delete(item.bvid);
+        wlBtn.textContent = renderStar(wasSaved);
+      } finally {
+        wlBtn.disabled = false;
+      }
+    },
+  );
+  // Lazy-check the saved state on first render. We don't block render
+  // on this — the star may flip from ☆ to ★ a moment after the card
+  // appears, which is acceptable for a non-critical decoration.
+  if (item.bvid && !watchLaterSaved.has(item.bvid)) {
+    fetch(`/api/watch-later/${encodeURIComponent(item.bvid)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.saved) {
+          watchLaterSaved.add(item.bvid);
+          wlBtn.textContent = renderStar(true);
+        }
+      })
+      .catch(() => {
+        // Best-effort. Keep ☆ on error.
+      });
+  }
+
   actionsRow.appendChild(openBtn);
   actionsRow.appendChild(likeBtn);
   actionsRow.appendChild(dislikeBtn);
+  actionsRow.appendChild(wlBtn);
   actionsRow.appendChild(commentBtn);
   card.appendChild(actionsRow);
 
