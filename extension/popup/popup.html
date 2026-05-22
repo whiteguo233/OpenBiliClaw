@@ -4183,6 +4183,11 @@
           <label for="cfgYoutubeReplaceReposts">B站搬运视频自动替换为YouTube原版</label>
         </div>
         <p class="settings-hint">开启后，推荐列表中检测到的 B 站搬运视频将被替换为 YouTube 原版链接。标题启发式匹配 + yt-dlp 搜索，结果缓存至本地。</p>
+        <div class="settings-field-row">
+          <input id="cfgAutoRedirectYoutube" type="checkbox">
+          <label for="cfgAutoRedirectYoutube" title="在B站观看搬运视频时自动跳转到YouTube原版（需客户端能连接YouTube）">自动跳转YouTube</label>
+        </div>
+        <p class="settings-hint">在B站观看搬运视频时自动跳转到YouTube原版（需客户端能连接YouTube）</p>
         <div class="settings-field">
           <label for="cfgYoutubeReplacerCacheTtl">YouTube 缓存时长（小时）</label>
           <input id="cfgYoutubeReplacerCacheTtl" type="number" min="1" step="1" placeholder="24">

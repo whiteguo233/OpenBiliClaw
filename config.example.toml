@@ -264,6 +264,8 @@ request_interval_seconds = 2
 min_interval_minutes = 60
 # 是否在推荐接口中将 B 站外文搬运标题自动替换为 YouTube 原版（需安装 yt-dlp: pip install yt-dlp）
 replace_bilibili_reposts = false
+# 在 B 站观看搬运视频时是否自动跳转到 YouTube 原版
+auto_redirect_youtube = false
 
 [scheduler]
 # Enable scheduled content discovery

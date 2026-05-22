@@ -3978,6 +3978,7 @@ def create_app(
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                     replace_bilibili_reposts=cfg.sources.youtube.replace_bilibili_reposts,
                     yt_replacer_cache_ttl=cfg.sources.youtube.yt_replacer_cache_ttl,
+                    auto_redirect_youtube=cfg.sources.youtube.auto_redirect_youtube,
                 ),
             ),
             scheduler=SchedulerConfigOut(
@@ -4571,6 +4572,42 @@ def create_app(
             return {"ok": False, "message": "yt_replacer 模块未加载。"}
         except Exception as exc:
             return {"ok": False, "message": f"清除失败: {exc}"}
+
+    @app.get("/api/yt-replacer/lookup")
+    async def yt_replacer_lookup(bvid: str = Query("")) -> dict:
+        """Check if a Bilibili video is a repost and get the YouTube original.
+        
+        Called by the extension content script when a user views a B站视频页面.
+        Returns {repost: bool, yt_url: str, yt_title: str, yt_uploader: str}
+        """
+        if not bvid:
+            return {"repost": False, "yt_url": ""}
+        try:
+            from openbiliclaw.yt_replacer import replace_if_foreign
+            
+            cursor = ctx.database.conn.execute(
+                "SELECT c.title, c.up_name, c.description FROM content_cache c WHERE c.bvid = ?",
+                (bvid,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {"repost": False, "yt_url": ""}
+            title = str(row["title"] or "")
+            author = str(row["up_name"] or "")
+            description = str(row["description"] or "")
+            data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
+            result = replace_if_foreign(bvid, title, author, description=description, data_dir=data_dir)
+            if result and result.get("yt_url"):
+                return {
+                    "repost": True,
+                    "yt_url": result["yt_url"],
+                    "yt_title": result.get("yt_title", ""),
+                    "yt_uploader": result.get("yt_uploader", ""),
+                }
+            return {"repost": False, "yt_url": ""}
+        except Exception:
+            logger.exception("YT replacer lookup failed for bvid=%s", bvid)
+            return {"repost": False, "yt_url": ""}
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that
     # accumulated before the per-path filter was wired in. No-op on

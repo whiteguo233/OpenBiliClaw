@@ -259,6 +259,9 @@ class YoutubeSourceConfig:
     replace_bilibili_reposts: bool = False
     # Cache TTL for yt_replacer results in hours (default 24).
     yt_replacer_cache_ttl: int = 24
+    # When True, the Bilibili content script will automatically redirect
+    # to YouTube when viewing a reposted video on B站.
+    auto_redirect_youtube: bool = False
 
 
 @dataclass
@@ -582,6 +585,8 @@ def _build_config(raw: dict[str, Any]) -> Config:
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 60))),
             replace_bilibili_reposts=bool(youtube_raw.get("replace_bilibili_reposts", False)),
+            yt_replacer_cache_ttl=int(youtube_raw.get("yt_replacer_cache_ttl", 24)),
+            auto_redirect_youtube=bool(youtube_raw.get("auto_redirect_youtube", False)),
         ),
     )
 
