@@ -1,0 +1,104 @@
+{
+    "manifest_version": 3,
+    "name": "OpenBiliClaw",
+    "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
+    "browser_specific_settings": {
+        "safari": {
+            "strict_min_version": "17.4"
+        }
+    },
+    "permissions": [
+        "activeTab",
+        "alarms",
+        "cookies",
+        "notifications",
+        "scripting",
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
+        "*://*.bilibili.com/*",
+        "*://*.xiaohongshu.com/*",
+        "*://*.douyin.com/*",
+        "*://*.youtube.com/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+    ],
+    "background": {
+        "scripts": [
+            "background/service-worker.js"
+        ]
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://*.bilibili.com/*"
+            ],
+            "js": [
+                "content/bilibili.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ],
+            "js": [
+                "content/xiaohongshu.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.xiaohongshu.com/*"
+            ],
+            "js": [
+                "main/xhs-token-sniffer.js",
+                "main/xhs-state-bridge.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
+        },
+        {
+            "matches": [
+                "*://*.douyin.com/*"
+            ],
+            "js": [
+                "content/douyin.js"
+            ],
+            "run_at": "document_start"
+        },
+        {
+            "matches": [
+                "*://*.youtube.com/*"
+            ],
+            "js": [
+                "content/youtube.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "main/dy-fetch-tap.js"
+            ],
+            "matches": [
+                "*://*.douyin.com/*"
+            ]
+        }
+    ],
+    "action": {
+        "default_popup": "popup/popup-launcher.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "icons": {
+        "16": "icons/icon16.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+    }
+}
