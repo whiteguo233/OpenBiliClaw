@@ -53,6 +53,7 @@ const AUTO_APPEND_ROOT_MARGIN = "700px 0px 900px 0px";
 const SCROLL_PREHEAT_LOOKAHEAD = 6;
 const SCROLL_PREHEAT_ROOT_MARGIN = "0px 0px 800px 0px";
 const warmedCoverUrls = new Set();
+const decodedCoverUrls = new Set();
 const warmingImages = new Map();
 let autoAppendObserver = null;
 let scrollPreheatObserver = null;
@@ -611,8 +612,9 @@ function warmRecommendationCovers(
 
     const img = new Image();
     const cleanup = () => warmingImages.delete(src);
+    const markDecoded = () => { cleanup(); decodedCoverUrls.add(src); };
     const loaded = new Promise((resolve) => {
-      img.onload = () => { cleanup(); resolve(); };
+      img.onload = () => { markDecoded(); resolve(); };
       img.onerror = () => { cleanup(); resolve(); };
     });
     img.decoding = "async";
@@ -621,7 +623,7 @@ function warmRecommendationCovers(
     img.src = src;
     let ready = loaded;
     if (typeof img.decode === "function") {
-      ready = img.decode().then(cleanup).catch(cleanup);
+      ready = img.decode().then(markDecoded).catch(cleanup);
     }
     if (waitForDecode) pending.push(ready);
   }
@@ -700,8 +702,9 @@ function renderCard(rawItem, index = 0) {
   const cover = getCoverImageAttrs(item.cover_url);
   const imageAttrs = getRecommendationImageLoadingAttrs(index);
 
+  const alreadyWarmed = cover && decodedCoverUrls.has(cover.src);
   const coverHtml = cover
-    ? `<div class="card-cover-frame"><img class="card-cover" onload="(this.decode ? this.decode() : Promise.resolve()).then(() => this.classList.add('is-loaded')).catch(() => this.classList.add('is-loaded'))" src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
+    ? `<div class="card-cover-frame"><img class="card-cover${alreadyWarmed ? " is-loaded" : ""}" ${alreadyWarmed ? "" : `onload="(this.decode ? this.decode() : Promise.resolve()).then(() => this.classList.add('is-loaded')).catch(() => this.classList.add('is-loaded'))"`} src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
     : `<div class="card-cover-frame is-error"></div>`;
 
   card.innerHTML = `
