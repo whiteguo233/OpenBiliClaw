@@ -123,6 +123,53 @@ _IMAGE_PROXY_UPSTREAM_HEADERS = {
     ),
 }
 
+# Per-host Referer policy. The bilibili and douyin CDNs both implement
+# hot-link protection: a request without a matching site Referer gets
+# a 403 (Bilibili) or an empty body (Douyin). Without these headers
+# every cover URL in the recommendation rail and delight chat goes to
+# the broken-image placeholder, which is exactly the symptom users
+# have been reporting.
+#
+# Keys are host suffixes (matched the same way as
+# _IMAGE_PROXY_ALLOWED_SUFFIXES). The first matching suffix wins;
+# unmatched hosts get no Referer header at all (which is fine —
+# ytimg.com and ggpht.com don't hot-link-protect cover thumbnails).
+_IMAGE_PROXY_REFERER_BY_SUFFIX: tuple[tuple[str, str], ...] = (
+    ("hdslb.com", "https://www.bilibili.com/"),
+    ("xhscdn.com", "https://www.xiaohongshu.com/"),
+    ("pstatp.com", "https://www.douyin.com/"),
+    ("douyinpic.com", "https://www.douyin.com/"),
+    ("douyinvod.com", "https://www.douyin.com/"),
+    ("ytimg.com", "https://www.youtube.com/"),
+    ("ggpht.com", "https://www.youtube.com/"),
+)
+
+
+def _referer_for_image_host(hostname: str) -> str | None:
+    """Return the Referer to use for an upstream image fetch, or None.
+
+    Hot-link protection on Bilibili's `i*.hdslb.com` CDN is the most
+    common cause of broken cover images in the recommendation view —
+    bare CDN requests get a 403, but requests with `Referer:
+    https://www.bilibili.com/` succeed. The other CDNs behave
+    similarly (XHS expires its signed-URL tokens regardless, but a
+    matching referer at least avoids a second class of refusal).
+    """
+    host = hostname.rstrip(".").lower()
+    for suffix, referer in _IMAGE_PROXY_REFERER_BY_SUFFIX:
+        if host == suffix or host.endswith(f".{suffix}"):
+            return referer
+    return None
+
+
+def _build_image_proxy_headers(hostname: str) -> dict[str, str]:
+    """Return the headers we send upstream for a given host."""
+    headers = dict(_IMAGE_PROXY_UPSTREAM_HEADERS)
+    referer = _referer_for_image_host(hostname)
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
 
 def _default_route_ip() -> str | None:
     """Return the IPv4 address selected for outbound traffic, if usable."""
@@ -494,7 +541,11 @@ async def _send_image_proxy_request(client: httpx.AsyncClient, url: httpx.URL) -
         if current_key in seen:
             raise HTTPException(status_code=502, detail="Redirect loop")
         seen.add(current_key)
-        request = client.build_request("GET", current_key, headers=_IMAGE_PROXY_UPSTREAM_HEADERS)
+        request = client.build_request(
+            "GET",
+            current_key,
+            headers=_build_image_proxy_headers(current.host),
+        )
         response = await client.send(request, stream=True)
         if response.status_code in _IMAGE_PROXY_REDIRECT_STATUSES:
             location = response.headers.get("location", "").strip()
