@@ -702,9 +702,8 @@ function renderCard(rawItem, index = 0) {
   const cover = getCoverImageAttrs(item.cover_url);
   const imageAttrs = getRecommendationImageLoadingAttrs(index);
 
-  const alreadyWarmed = cover && decodedCoverUrls.has(cover.src);
   const coverHtml = cover
-    ? `<div class="card-cover-frame"><img class="card-cover${alreadyWarmed ? " is-loaded is-instant" : ""}" ${alreadyWarmed ? "" : `onload="(this.decode ? this.decode() : Promise.resolve()).then(() => this.classList.add('is-loaded')).catch(() => this.classList.add('is-loaded'))"`} src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
+    ? `<div class="card-cover-frame"><img class="card-cover" src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
     : `<div class="card-cover-frame is-error"></div>`;
 
   card.innerHTML = `

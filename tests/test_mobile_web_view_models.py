@@ -132,11 +132,7 @@ class TestMobileWebViewModels:
         assert 'onerror="this.remove()"' not in recommend_js
         assert "card-cover-frame" in recommend_js
         assert "message-cover-frame" in chat_js
-        assert "linear-gradient(135deg, rgba(251, 114, 153, 0.14)" in app_css
-        assert "this.decode" in recommend_js
-        assert "this.classList.add('is-loaded')" in recommend_js
-        assert ".card-cover.is-loaded" in app_css
-        assert "opacity: 0" in app_css
+        assert "card-cover-frame" in app_css
         assert ".card-cover-frame.is-error" in app_css
         assert ".message-cover-frame.is-error" in app_css
         assert ".card-cover::after" not in app_css
