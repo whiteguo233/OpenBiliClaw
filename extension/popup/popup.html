@@ -4178,7 +4178,16 @@
           <label for="cfgYoutubeMinInterval">YouTube 最小调度间隔分钟数</label>
           <input id="cfgYoutubeMinInterval" type="number" min="0" step="1" placeholder="60">
         </div>
-        <p class="settings-hint">YouTube 通过后端 producer 独立调度；预算按天限制 yt_search / yt_trending / yt_channel 的执行规模。</p>
+        <div class="settings-field-row">
+          <input id="cfgYoutubeReplaceReposts" type="checkbox">
+          <label for="cfgYoutubeReplaceReposts">B站搬运视频自动替换为YouTube原版</label>
+        </div>
+        <p class="settings-hint">开启后，推荐列表中检测到的 B 站搬运视频将被替换为 YouTube 原版链接。标题启发式匹配 + yt-dlp 搜索，结果缓存至本地。</p>
+        <div class="settings-field">
+          <label for="cfgYoutubeReplacerCacheTtl">YouTube 缓存时长（小时）</label>
+          <input id="cfgYoutubeReplacerCacheTtl" type="number" min="1" step="1" placeholder="24">
+        </div>
+        <p class="settings-hint">YouTube 替换缓存失效时间；缓存过期后下次检测到同一视频时会重新搜索原版链接。默认 24 小时。</p>
       </div>
 
       <div class="settings-section settings-source-card" data-source-card="browser">
@@ -4223,7 +4232,10 @@
         <h3><span class="section-icon">&#x2699;&#xFE0F;</span> 通用</h3>
         <div class="settings-field">
           <label for="cfgBackendHost">后端地址</label>
-          <input id="cfgBackendHost" type="text" placeholder="127.0.0.1">
+          <div class="settings-field-row">
+            <input id="cfgBackendHost" type="text" placeholder="127.0.0.1" style="flex:1">
+            <button id="cfgTestConnection" class="settings-save" type="button" style="flex:0 0 auto;padding:8px 14px;min-height:36px;font-size:12px">测试连接</button>
+          </div>
           <p class="settings-hint">
             默认 127.0.0.1（本机）。支持局域网 IP（如 <code>192.168.1.100</code>）或远程服务器域名（如 <code>my-server.example.com</code>）。公网部署建议通过反向代理启用 HTTPS。
           </p>
@@ -4249,6 +4261,13 @@
         <div class="settings-field">
           <label for="cfgStorageDbPath">SQLite 数据库路径</label>
           <input id="cfgStorageDbPath" type="text" placeholder="data/openbiliclaw.db">
+        </div>
+      </div>
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F504;</span> YouTube 替换缓存</h3>
+        <p class="settings-hint">清除 YouTube 搬运视频替换缓存（内存 + 本地文件）。下次推荐时会重新搜索原版链接。</p>
+        <div class="settings-actions">
+          <button id="cfgClearYtCache" class="settings-save" type="button">清除 YouTube 缓存</button>
         </div>
       </div>
       </div>

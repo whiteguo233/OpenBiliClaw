@@ -65,6 +65,19 @@ const DEFAULT_SCOPES: readonly YtScope[] = [
   "yt_likes",
 ];
 
+/**
+ * Detect Safari by checking for the sidePanel API, which Safari does not
+ * support. Without this check, every task dispatches a new foreground tab
+ * on Safari (no sidePanel to hide in), flooding the user's browser with
+ * tabs that never close cleanly.
+ */
+function _isSafari(): boolean {
+  return (
+    typeof chrome.sidePanel === "undefined" ||
+    typeof (chrome.sidePanel as { open?: unknown }).open !== "function"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Task types
 // ---------------------------------------------------------------------------
@@ -304,7 +317,7 @@ export async function executeTask(task: YtTask): Promise<void> {
   const firstUrl = YT_SCOPE_URLS[scopes[0]];
   let tab: chrome.tabs.Tab;
   try {
-    tab = await chrome.tabs.create({ url: firstUrl, active: true });
+    tab = await chrome.tabs.create({ url: firstUrl, active: _isSafari() ? false : true });
   } catch {
     await postTaskResult({ task_id: task.id, status: "failed", error: "tab_create_failed" });
     cleanupTask();
@@ -375,6 +388,7 @@ async function pollNextTask(): Promise<void> {
 }
 
 export function startYtTaskPolling(): void {
+  if (_isSafari()) return;
   if (typeof chrome === "undefined" || !chrome.alarms) return;
   chrome.alarms.create(POLL_ALARM_NAME, { periodInMinutes: DEFAULT_POLL_INTERVAL_MS / 60_000 });
 }

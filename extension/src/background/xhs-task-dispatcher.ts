@@ -63,6 +63,19 @@ const MAX_BOOTSTRAP_SCROLL_WAIT_MS = 5_000;
 const BOOTSTRAP_CLICKED_NAVIGATION_FALLBACK_MS = 2_500;
 const POLL_ALARM_NAME = "openbiliclaw-xhs-task-poll";
 
+/**
+ * Detect Safari by checking for the sidePanel API, which Safari does not
+ * support. Without this check, every task dispatches a new foreground tab
+ * on Safari (no sidePanel to hide in), flooding the user's browser with
+ * tabs that never close cleanly.
+ */
+function _isSafari(): boolean {
+  return (
+    typeof chrome.sidePanel === "undefined" ||
+    typeof (chrome.sidePanel as { open?: unknown }).open !== "function"
+  );
+}
+
 export type XhsBootstrapScope = "saved" | "liked" | "xhs_history";
 
 export interface XhsTask {
@@ -365,7 +378,7 @@ export async function executeTask(task: XhsTask): Promise<void> {
     // doesn't interrupt active browsing.
     const tab = await chrome.tabs.create({
       url,
-      active: task.type === "bootstrap_profile",
+      active: _isSafari() ? false : task.type === "bootstrap_profile",
     });
     taskTabId = tab.id ?? null;
     ownsTaskTab = taskTabId !== null;
@@ -433,6 +446,7 @@ async function pollOnce(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function startXhsTaskPolling(intervalMs: number = DEFAULT_POLL_INTERVAL_MS): void {
+  if (_isSafari()) return;
   chrome.alarms.create(POLL_ALARM_NAME, {
     periodInMinutes: intervalMs / 60_000,
   });

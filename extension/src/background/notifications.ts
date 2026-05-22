@@ -178,6 +178,23 @@ export async function openExtensionUi(
   } catch {
     // Not Firefox or sidebarAction unavailable — fall through
   }
+  // Safari: no sidePanel API — open as a popup window instead of a full tab
+  const isSafari =
+    typeof chrome !== "undefined" &&
+    typeof chrome.sidePanel === "undefined";
+  if (isSafari) {
+    try {
+      const w = await chrome.windows?.create({
+        url: buildExtensionUiUrl(tab, { delightBvid }),
+        type: "popup",
+        width: 400,
+        height: 600,
+      });
+      if (w) return "tab";
+    } catch {
+      // fall through to tabs.create
+    }
+  }
   // Fallback: open in a new tab
   await chromeApi.tabs?.create({ url: buildExtensionUiUrl(tab, { delightBvid }) });
   return "tab";

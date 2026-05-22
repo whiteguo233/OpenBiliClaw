@@ -55,6 +55,7 @@ import {
   markDelightSent,
   readCachedConfigSnapshot,
   reportRecommendationClick,
+  requestJson,
   reshuffleRecommendations,
   refreshRecommendations,
   respondToDelight,
@@ -4417,6 +4418,9 @@ function bindSettings() {
     setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
     setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
+    const ytReplaceReposts = document.getElementById("cfgYoutubeReplaceReposts");
+    if (ytReplaceReposts) ytReplaceReposts.checked = cfg.sources?.youtube?.replace_bilibili_reposts === true;
+    setVal("cfgYoutubeReplacerCacheTtl", cfg.sources?.youtube?.yt_replacer_cache_ttl);
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -4581,6 +4585,8 @@ function bindSettings() {
           daily_channel_budget: getInt("cfgYoutubeDailyChannelBudget", 10),
           request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 60),
+          replace_bilibili_reposts: checked("cfgYoutubeReplaceReposts"),
+          yt_replacer_cache_ttl: getInt("cfgYoutubeReplacerCacheTtl", 24),
         },
       },
       scheduler: {
@@ -4699,6 +4705,60 @@ function bindSettings() {
         showToast(`生成建议失败: ${err.message}`, "error");
       } finally {
         suggestBtn.disabled = false;
+      }
+    });
+  }
+
+  // Clear YouTube cache button
+  const clearYtCacheBtn = document.getElementById("cfgClearYtCache");
+  if (clearYtCacheBtn) {
+    clearYtCacheBtn.addEventListener("click", async () => {
+      clearYtCacheBtn.disabled = true;
+      clearYtCacheBtn.textContent = "清除中...";
+      toast.hidden = true;
+      try {
+        const data = await requestJson("/api/yt-replacer/clear-cache", {
+          method: "POST",
+        });
+        showToast(data.message || "缓存已清除。", data.ok ? "success" : "error");
+      } catch (err) {
+        showToast(`清除失败: ${err.message}`, "error");
+      } finally {
+        clearYtCacheBtn.disabled = false;
+        clearYtCacheBtn.textContent = "清除 YouTube 缓存";
+      }
+    });
+  }
+
+  // Test connection button
+  const testConnBtn = document.getElementById("cfgTestConnection");
+  if (testConnBtn) {
+    testConnBtn.addEventListener("click", async () => {
+      testConnBtn.disabled = true;
+      testConnBtn.textContent = "测试中...";
+      toast.hidden = true;
+      try {
+        const { getBackendOrigin } = await import("./popup-backend-config.js");
+        const base = getBackendOrigin();
+        const url = `${base}/api/config?reveal_keys=0`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(url, { method: "GET", signal: controller.signal });
+        clearTimeout(timer);
+        if (resp.ok) {
+          showToast("连接成功", "success");
+        } else {
+          showToast(`后端返回错误 (${resp.status})`, "error");
+        }
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          showToast("连接超时（5 秒），请确认后端地址和端口。", "error");
+        } else {
+          showToast(`连接失败: ${err.message}`, "error");
+        }
+      } finally {
+        testConnBtn.disabled = false;
+        testConnBtn.textContent = "测试连接";
       }
     });
   }
