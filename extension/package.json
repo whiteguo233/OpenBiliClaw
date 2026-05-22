@@ -17,7 +17,9 @@
     "package:firefox": "node scripts/package-firefox.mjs",
     "package:firefox:only": "node scripts/package-firefox.mjs --no-build",
     "package:safari": "node scripts/package-safari.mjs",
-    "package:safari:only": "node scripts/package-safari.mjs --no-build"
+    "package:safari:only": "node scripts/package-safari.mjs --no-build",
+    "bump-version": "node scripts/bump-version.mjs",
+    "check-version": "node scripts/bump-version.mjs --check"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.29",
