@@ -25,6 +25,32 @@ _yt_cache: dict[str, dict | None] = {}  # bvid -> {yt_url, yt_title, yt_author} 
 _yt_cache_mtime: float = 0.0
 _CACHE_TTL = 86400  # 24h
 
+# ── Server-side internet reachability ────────────────────────────
+_YOUTUBE_REACHABLE: bool | None = None
+_REACHABLE_CHECK_TIME: float = 0.0
+
+
+def _can_reach_youtube() -> bool:
+    """Check if YouTube/Google is reachable from this server.
+    
+    Caches the result for 5 minutes. Uses a socket connection
+    to google.com:443 with 3-second timeout.
+    """
+    global _YOUTUBE_REACHABLE, _REACHABLE_CHECK_TIME
+    now = time.time()
+    if _YOUTUBE_REACHABLE is not None and (now - _REACHABLE_CHECK_TIME) < 300:
+        return _YOUTUBE_REACHABLE
+    try:
+        import socket
+        s = socket.create_connection(("google.com", 443), timeout=3)
+        s.close()
+        _YOUTUBE_REACHABLE = True
+    except (OSError, Exception):
+        _YOUTUBE_REACHABLE = False
+    _REACHABLE_CHECK_TIME = time.time()
+    logger.debug("YT reachable check: %s", _YOUTUBE_REACHABLE)
+    return _YOUTUBE_REACHABLE
+
 # ── Heuristic: is this likely a repost of foreign content? ─────────
 
 # Signs in the title that indicate this is a translation/repost
@@ -321,6 +347,22 @@ def replace_if_foreign(
         _yt_cache[bvid] = None
         return None
 
+    # Check server-side reachability before attempting YouTube lookup
+    if not _can_reach_youtube():
+        logger.info("YT replacer: youtube not reachable, marking repost without lookup")
+        # Store a special entry marking this as a detected repost but no YT URL
+        entry = {
+            "bvid": bvid,
+            "yt_url": "",
+            "yt_title": "",
+            "yt_uploader": "",
+            "yt_cover_url": "",
+            "repost_detected": True,  # Signal that it IS a repost, just no YT URL
+        }
+        _yt_cache[bvid] = entry
+        _save_cache(data_dir)
+        return entry
+
     # Search YouTube with intelligently built query
     logger.info("YT replacer: searching YouTube for %r (author=%r)", title, author)
     result = find_original(title, author=author, description=description)
@@ -375,6 +417,14 @@ def replace_recommendation_row(
     yt = replace_if_foreign(bvid, title, author, description=description, data_dir=data_dir)
     if yt is None:
         return None
+
+    # Handle detected-repost-but-no-URL case (server-side internet check failed)
+    if yt.get("repost_detected") and not yt.get("yt_url"):
+        original_expr = str(row.get("expression", "") or "")
+        expr_suffix = "\n此视频疑似搬运内容"
+        return {
+            "expression": (original_expr + expr_suffix) if original_expr else "此视频疑似搬运内容",
+        }
 
     original_expr = str(row.get("expression", "") or "")
     yt_url = yt["yt_url"]

@@ -601,6 +601,7 @@ class YoutubeSourceConfigOut(BaseModel):
     min_interval_minutes: int = 60
     replace_bilibili_reposts: bool = False
     yt_replacer_cache_ttl: int = 24
+    auto_redirect_youtube: bool = False
 
 
 class SourcesConfigOut(BaseModel):

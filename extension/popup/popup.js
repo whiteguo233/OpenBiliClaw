@@ -4420,6 +4420,8 @@ function bindSettings() {
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
     const ytReplaceReposts = document.getElementById("cfgYoutubeReplaceReposts");
     if (ytReplaceReposts) ytReplaceReposts.checked = cfg.sources?.youtube?.replace_bilibili_reposts === true;
+    const ytAutoRedirect = document.getElementById("cfgAutoRedirectYoutube");
+    if (ytAutoRedirect) ytAutoRedirect.checked = cfg.sources?.youtube?.auto_redirect_youtube === true;
     setVal("cfgYoutubeReplacerCacheTtl", cfg.sources?.youtube?.yt_replacer_cache_ttl);
 
     // General
@@ -4586,6 +4588,7 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 60),
           replace_bilibili_reposts: checked("cfgYoutubeReplaceReposts"),
+          auto_redirect_youtube: checked("cfgAutoRedirectYoutube"),
           yt_replacer_cache_ttl: getInt("cfgYoutubeReplacerCacheTtl", 24),
         },
       },
