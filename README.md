@@ -25,6 +25,7 @@
 - **🧵 多轮历史不串线** —— 每条惊喜推荐都有自己的多轮气泡历史，左右切换候选、side panel reload 或 pending 回复完成后都能按内容恢复。
 - **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
 - **📱 iOS 输入不缩放** —— 内联 composer 输入框保持 16px 字号，避免 iOS Safari focus 时自动放大页面。
+- **🎯 B 站 YouTube 搬运视频自动替换** —— 推荐接口（`GET /api/recommendations`）自动识别 B 站的外文搬运内容，将标题、链接和来源替换为 YouTube 原版。支持多层检测（拉丁字符比例 + 搬运关键词 + 外文品牌 + 英文短语）；中文原创零误判；替换失败仅记日志，不阻塞推荐响应。配置开关 `[sources.youtube].replace_bilibili_reposts`。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 

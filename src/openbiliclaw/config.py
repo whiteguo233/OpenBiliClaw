@@ -252,6 +252,13 @@ class YoutubeSourceConfig:
     daily_channel_budget: int = 10
     request_interval_seconds: int = 2
     min_interval_minutes: int = 60
+    # When True, the recommendation API endpoint will detect Bilibili
+    # reposts of English/foreign-language videos and replace the link
+    # with the original YouTube URL.  Detection is title-based heuristic
+    # + yt-dlp search.  Results cached in <data_dir>/yt_replacer_cache.json.
+    replace_bilibili_reposts: bool = False
+    # Cache TTL for yt_replacer results in hours (default 24).
+    yt_replacer_cache_ttl: int = 24
 
 
 @dataclass
@@ -574,6 +581,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 10)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 60))),
+            replace_bilibili_reposts=bool(youtube_raw.get("replace_bilibili_reposts", False)),
         ),
     )
 
@@ -1017,6 +1025,7 @@ def _render_config_toml(config: Config) -> str:
             f"daily_channel_budget = {config.sources.youtube.daily_channel_budget}",
             f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
+            f"replace_bilibili_reposts = {_toml_bool(config.sources.youtube.replace_bilibili_reposts)}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",

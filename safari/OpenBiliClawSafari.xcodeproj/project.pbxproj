@@ -1,0 +1,480 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		19BAC47D36879393BE9703EC /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D07D29F7B6196EA0DA7F625 /* ViewController.swift */; };
+		23209DD53BBF75A7273C859D /* OpenBiliClaw Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 926AEC1FD57D353330624902 /* OpenBiliClaw Extension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		23D93E9934F7275CE618E6A6 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA27CB03893A6D96E65C54BF /* SafariWebExtensionHandler.swift */; };
+		4B05116E6CD6D8E824175C8B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4E454D38A658EA508C7DED69 /* Assets.xcassets */; };
+		B209F16B0A6FA207916EFB00 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC87D9AC127468D5EDA3926 /* AppDelegate.swift */; };
+		C6A953CD4C515F6DCCB114EC /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 6CD5F4C87A9FB8FC4C59CEB1 /* Main.storyboard */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		494CD27719CE0514DD5AA249 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 12C236B66C733A56E5C3BC74 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 91D66C4CA2782ECD7B9A3BE4;
+			remoteInfo = OpenBiliClawExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FF407C972C5EF088728E760F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				23209DD53BBF75A7273C859D /* OpenBiliClaw Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		3F93F8BF0002614F05FEA42A /* OpenBiliClaw.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenBiliClaw.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4E454D38A658EA508C7DED69 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		55D853509C6AB0B25B46D011 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6BFABB43BC804FCDC9FDC17C /* OpenBiliClaw.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OpenBiliClaw.entitlements; sourceTree = "<group>"; };
+		6D07D29F7B6196EA0DA7F625 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		7F505090828154A536A32442 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		926AEC1FD57D353330624902 /* OpenBiliClaw Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "OpenBiliClaw Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		CA27CB03893A6D96E65C54BF /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		CCC87D9AC127468D5EDA3926 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		10A58DF6C259FFD4B18D9B4A = {
+			isa = PBXGroup;
+			children = (
+				6F389B43B5F7E12C14E92414 /* App */,
+				FFE70546CAA00F43F642539F /* Extension */,
+				9FF663A97100CB076C171D39 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6F389B43B5F7E12C14E92414 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				6CD5F4C87A9FB8FC4C59CEB1 /* Main.storyboard */,
+				CCC87D9AC127468D5EDA3926 /* AppDelegate.swift */,
+				4E454D38A658EA508C7DED69 /* Assets.xcassets */,
+				55D853509C6AB0B25B46D011 /* Info.plist */,
+				6BFABB43BC804FCDC9FDC17C /* OpenBiliClaw.entitlements */,
+				6D07D29F7B6196EA0DA7F625 /* ViewController.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		9FF663A97100CB076C171D39 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				926AEC1FD57D353330624902 /* OpenBiliClaw Extension.appex */,
+				3F93F8BF0002614F05FEA42A /* OpenBiliClaw.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FFE70546CAA00F43F642539F /* Extension */ = {
+			isa = PBXGroup;
+			children = (
+				CA27CB03893A6D96E65C54BF /* SafariWebExtensionHandler.swift */,
+			);
+			path = Extension;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		91D66C4CA2782ECD7B9A3BE4 /* OpenBiliClawExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 53152C6D0AAB91DAA17146AB /* Build configuration list for PBXNativeTarget "OpenBiliClawExtension" */;
+			buildPhases = (
+				47F71A5B9BC743BC5CA7C381 /* Sources */,
+				7AF818CB7D8DAADE36343995 /* Stage WebExtension Resources into bundle */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OpenBiliClawExtension;
+			packageProductDependencies = (
+			);
+			productName = OpenBiliClawExtension;
+			productReference = 926AEC1FD57D353330624902 /* OpenBiliClaw Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		FFB8C33C4BB238D2568E2DF4 /* OpenBiliClaw */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A008DA3EAD340808EA4CA965 /* Build configuration list for PBXNativeTarget "OpenBiliClaw" */;
+			buildPhases = (
+				3D3B069FFEE068EAF099F2C4 /* Sources */,
+				EF752022724CD181ACBC52E9 /* Resources */,
+				FF407C972C5EF088728E760F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CFB551CEE078E5A12853642A /* PBXTargetDependency */,
+			);
+			name = OpenBiliClaw;
+			packageProductDependencies = (
+			);
+			productName = OpenBiliClaw;
+			productReference = 3F93F8BF0002614F05FEA42A /* OpenBiliClaw.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		12C236B66C733A56E5C3BC74 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					91D66C4CA2782ECD7B9A3BE4 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					FFB8C33C4BB238D2568E2DF4 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = DE5970C282FB8D2761A2E995 /* Build configuration list for PBXProject "OpenBiliClawSafari" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 10A58DF6C259FFD4B18D9B4A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9FF663A97100CB076C171D39 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FFB8C33C4BB238D2568E2DF4 /* OpenBiliClaw */,
+				91D66C4CA2782ECD7B9A3BE4 /* OpenBiliClawExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EF752022724CD181ACBC52E9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4B05116E6CD6D8E824175C8B /* Assets.xcassets in Resources */,
+				C6A953CD4C515F6DCCB114EC /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7AF818CB7D8DAADE36343995 /* Stage WebExtension Resources into bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stage WebExtension Resources into bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e -o pipefail\n\n# Xcode supplies these for any macOS bundle target. We assert\n# them explicitly rather than relying on `set -u`, because\n# `set -u` also trips on every optional env var the project\n# might inherit, producing confusing failures.\n: \"${SRCROOT:?SRCROOT must be set by Xcode}\"\n: \"${TARGET_BUILD_DIR:?TARGET_BUILD_DIR must be set by Xcode}\"\n: \"${CONTENTS_FOLDER_PATH:?CONTENTS_FOLDER_PATH must be set by Xcode}\"\n\nSRC=\"${SRCROOT}/Extension/Resources\"\n# CONTENTS_FOLDER_PATH on macOS is \"<bundle>.appex/Contents\".\n# The Resources folder lives directly inside Contents/.\nDST=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Resources\"\n\nif [ ! -f \"$SRC/manifest.json\" ]; then\n  echo \"error: $SRC/manifest.json is missing.\" >&2\n  echo \"error: Run 'npm run package:safari' from the extension/ directory before building.\" >&2\n  exit 1\nfi\n\nmkdir -p \"$DST\"\n# Copy CONTENTS of Extension/Resources/ into the bundle's\n# Resources/, flattened (trailing slash on $SRC). --delete\n# removes stale files left over from previous builds.\nrsync -a --delete \\\n  --exclude='.gitkeep' \\\n  --exclude='README.md' \\\n  \"$SRC/\" \"$DST/\"\n\necho \"✓ Staged WebExtension resources → $DST\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3D3B069FFEE068EAF099F2C4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B209F16B0A6FA207916EFB00 /* AppDelegate.swift in Sources */,
+				19BAC47D36879393BE9703EC /* ViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		47F71A5B9BC743BC5CA7C381 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				23D93E9934F7275CE618E6A6 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CFB551CEE078E5A12853642A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 91D66C4CA2782ECD7B9A3BE4 /* OpenBiliClawExtension */;
+			targetProxy = 494CD27719CE0514DD5AA249 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		6CD5F4C87A9FB8FC4C59CEB1 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				7F505090828154A536A32442 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		171B41248F103F631EEB4DF0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.3.24;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		3F52412D25EDD51FBED7A6F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/OpenBiliClaw.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.whiteguo233.openbiliclaw;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		7B8EABCC913568BF506798DB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/OpenBiliClaw.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.whiteguo233.openbiliclaw;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		837B3FFC21C68263B4288813 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Extension/OpenBiliClaw_Extension.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Extension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.whiteguo233.openbiliclaw.extension;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		888F43DF819B7CE2BC24BF99 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Extension/OpenBiliClaw_Extension.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Extension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.whiteguo233.openbiliclaw.extension;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		938006CF1C4E16F0602CCE41 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.3.24;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		53152C6D0AAB91DAA17146AB /* Build configuration list for PBXNativeTarget "OpenBiliClawExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				888F43DF819B7CE2BC24BF99 /* Debug */,
+				837B3FFC21C68263B4288813 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A008DA3EAD340808EA4CA965 /* Build configuration list for PBXNativeTarget "OpenBiliClaw" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B8EABCC913568BF506798DB /* Debug */,
+				3F52412D25EDD51FBED7A6F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DE5970C282FB8D2761A2E995 /* Build configuration list for PBXProject "OpenBiliClawSafari" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				171B41248F103F631EEB4DF0 /* Debug */,
+				938006CF1C4E16F0602CCE41 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 12C236B66C733A56E5C3BC74 /* Project object */;
+}

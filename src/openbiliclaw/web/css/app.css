@@ -71,7 +71,7 @@ body {
   flex: 1 1 0;
   overflow-y: auto;
   overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
+  -webkit-overflow-scrolling: auto;
   padding: 0 12px 12px;
 }
 
@@ -181,6 +181,8 @@ body {
     0 4px 14px rgba(52, 72, 110, 0.06);
   overflow: hidden;
   margin-bottom: 12px;
+  max-width: 100%;
+  width: 100%;
 }
 
 .card-cover-frame {
@@ -266,6 +268,14 @@ body {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ── Desktop constraint for Safari overflow ────────────── */
+@media (min-width: 768px) {
+  #app {
+    max-width: 640px;
+    margin: 0 auto;
+  }
 }
 
 /* ── Recommend Header ─────────────────────────────────────── */

@@ -262,6 +262,8 @@ daily_channel_budget = 10
 request_interval_seconds = 2
 # YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
 min_interval_minutes = 60
+# 是否在推荐接口中将 B 站外文搬运标题自动替换为 YouTube 原版（需安装 yt-dlp: pip install yt-dlp）
+replace_bilibili_reposts = false
 
 [scheduler]
 # Enable scheduled content discovery
