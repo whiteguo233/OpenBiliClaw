@@ -1,0 +1,4027 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenBiliClaw</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-base: #fffafc;
+      --bg-sky: #f2f8ff;
+      --surface: rgba(255, 255, 255, 0.84);
+      --surface-strong: rgba(255, 255, 255, 0.96);
+      --surface-soft: rgba(255, 255, 255, 0.72);
+      --line: rgba(217, 227, 242, 0.95);
+      --line-strong: rgba(247, 173, 202, 0.46);
+      --text-main: #20304a;
+      --text-secondary: #60708c;
+      --text-muted: #8f9bb0;
+      --brand: #fb7299;
+      --brand-strong: #f65788;
+      --brand-soft: rgba(251, 114, 153, 0.12);
+      --sky: #5aa9ff;
+      --sky-soft: rgba(90, 169, 255, 0.14);
+      --lime-soft: rgba(96, 204, 154, 0.16);
+      --warning-soft: rgba(255, 189, 110, 0.2);
+      --success: #30b980;
+      --danger: #ef7a86;
+      --shadow-lg: 0 20px 40px rgba(56, 76, 112, 0.12);
+      --shadow-sm: 0 10px 22px rgba(73, 93, 130, 0.08);
+      --focus-ring: 0 0 0 3px rgba(90, 169, 255, 0.28);
+    }
+
+    html {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    body {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 15% 12%, rgba(251, 114, 153, 0.2), transparent 30%),
+        radial-gradient(circle at 88% 18%, rgba(90, 169, 255, 0.24), transparent 26%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-sky) 100%);
+    }
+
+    button,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .shell {
+      position: relative;
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      width: 100%;
+      min-width: 0;
+      min-height: 100%;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .side-panel-shell {
+      width: 100%;
+      max-width: none;
+    }
+
+    .shell::before,
+    .shell::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      pointer-events: none;
+      filter: blur(6px);
+      opacity: 0.75;
+    }
+
+    .shell::before {
+      top: 34px;
+      right: 18px;
+      width: 102px;
+      height: 102px;
+      background: radial-gradient(circle, rgba(251, 114, 153, 0.24), transparent 64%);
+    }
+
+    .shell::after {
+      bottom: 90px;
+      left: 10px;
+      width: 118px;
+      height: 118px;
+      background: radial-gradient(circle, rgba(90, 169, 255, 0.2), transparent 68%);
+    }
+
+    .hero,
+    .tabs-shell,
+    .footer,
+    .recommendation-header-card,
+    .recommendation-card,
+    .profile-card,
+    .empty-state,
+    .chat-shell {
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero,
+    .tabs-shell,
+    .footer {
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .hero {
+      border-radius: 28px;
+      padding: 18px 18px 16px;
+    }
+
+    .hero-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(255, 239, 247, 0.94));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 12px 24px rgba(251, 114, 153, 0.18);
+      flex-shrink: 0;
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+    }
+
+    .brand-mark::before {
+      inset: 10px 9px 10px 11px;
+      border: 3px solid var(--brand);
+      border-top-color: transparent;
+      transform: rotate(18deg);
+    }
+
+    .brand-mark::after {
+      width: 10px;
+      height: 10px;
+      right: 7px;
+      top: 8px;
+      background: linear-gradient(145deg, var(--sky), #86c5ff);
+      box-shadow: 0 0 0 4px rgba(90, 169, 255, 0.14);
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      line-height: 1.3;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 700;
+    }
+
+    .hero h1 {
+      font-size: 23px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+
+    .hero-copy {
+      margin-top: 14px;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text-secondary);
+      max-width: 300px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      box-shadow: 0 8px 16px rgba(89, 111, 150, 0.06);
+      flex-shrink: 0;
+      justify-self: end;
+    }
+
+    .status-badge[data-tone="online"] {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 255, 250, 0.92));
+    }
+
+    .status-badge[data-tone="offline"] {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 245, 247, 0.92));
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(48, 185, 128, 0.14);
+      flex-shrink: 0;
+    }
+
+    .status-dot.offline {
+      background: var(--danger);
+      box-shadow: 0 0 0 4px rgba(239, 122, 134, 0.12);
+    }
+
+    .status-label {
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .tabs-shell {
+      border-radius: 22px;
+      padding: 6px;
+    }
+
+    .tab-bar {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .tab-button {
+      min-width: 0;
+      border: 0;
+      border-radius: 16px;
+      padding: 10px 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.3;
+      font-weight: 700;
+      transition:
+        background 180ms ease,
+        color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
+    }
+
+    .tab-button:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.52);
+    }
+
+    .tab-button.is-active {
+      color: var(--brand-strong);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 240, 246, 0.98));
+      box-shadow: 0 10px 18px rgba(251, 114, 153, 0.14);
+      transform: translateY(-1px);
+    }
+
+    .tab-button:focus-visible,
+    .recommendation-preview:focus-visible,
+    .action-button:focus-visible,
+    .chat-input:focus-visible,
+    .comment-input:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+
+    .content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+      margin-right: -4px;
+    }
+
+    .view {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      padding-bottom: 4px;
+    }
+
+    .view[hidden] {
+      display: none;
+    }
+
+    .view-intro {
+      padding: 2px 2px 0;
+    }
+
+    .view-kicker {
+      font-size: 11px;
+      line-height: 1.4;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 700;
+    }
+
+    .view-intro h2 {
+      margin-top: 4px;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .view-intro p {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .recommendation-header-card,
+    .recommendation-card,
+    .profile-card,
+    .empty-state,
+    .chat-shell {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .recommendation-header-card {
+      border-radius: 20px;
+      padding: 12px;
+      isolation: isolate;
+    }
+
+    .recommendation-header-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background:
+        radial-gradient(circle at top right, rgba(251, 114, 153, 0.12), transparent 38%),
+        radial-gradient(circle at left bottom, rgba(90, 169, 255, 0.12), transparent 34%);
+      pointer-events: none;
+    }
+
+    .recommendation-header-top {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .recommendation-header-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .recommendation-header-intro {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .recommendation-header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+
+    .recommendation-header-title .view-kicker {
+      margin: 0;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(251, 114, 153, 0.07);
+      line-height: 1;
+      color: var(--brand-strong);
+      font-size: 10px;
+    }
+
+    .recommendation-header-title h2 {
+      min-width: 0;
+      font-size: 16px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      font-weight: 800;
+    }
+
+    .recommendation-header-top .action-button {
+      flex-shrink: 0;
+      min-height: 34px;
+      padding: 0 11px;
+    }
+
+    .recommendation-summary-row {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .recommendation-status-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: 1fr;
+      gap: 6px;
+    }
+
+    .recommendation-status-chip {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+      min-height: 60px;
+      padding: 8px 9px;
+      border-radius: 16px;
+      border: 1px solid rgba(225, 232, 241, 0.96);
+      box-shadow: none;
+    }
+
+    .recommendation-status-chip[data-tone="neutral"] {
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .recommendation-status-chip[data-tone="brand"] {
+      background: rgba(255, 246, 249, 0.92);
+      border-color: rgba(245, 189, 209, 0.46);
+    }
+
+    .recommendation-status-chip[data-tone="info"] {
+      background: rgba(245, 249, 255, 0.94);
+      border-color: rgba(177, 207, 242, 0.58);
+    }
+
+    .recommendation-status-label {
+      font-size: 9px;
+      line-height: 1;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 800;
+    }
+
+    .recommendation-status-value {
+      min-width: 0;
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--text-main);
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    #delightSlot {
+      display: grid;
+      gap: 12px;
+    }
+
+    #delightSlot[hidden] {
+      display: none;
+    }
+
+    /* Compact banner version of the delight card.
+       Collapsed state is a single ~36px row that doesn't push the
+       recommendation feed down; click the row to expand. */
+    /* Delight banner — same visual language as .recommendation-card
+       (radius / background / inset highlight) so it feels like part of
+       the same family, but with pink-tinted accents (border, hover glow,
+       ✨ overlay on cover) so it instantly reads as a "surprise pick"
+       and not just another rec card. */
+    .delight-banner {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: stretch;
+      border-radius: 22px;
+      border: 1px solid rgba(251, 114, 153, 0.28);
+      background: linear-gradient(180deg, rgba(255, 252, 254, 0.98), rgba(252, 248, 255, 0.98));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.82),
+        0 4px 14px rgba(251, 114, 153, 0.1);
+      overflow: hidden;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .delight-banner:hover {
+      border-color: rgba(251, 114, 153, 0.5);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.82),
+        0 12px 28px rgba(251, 114, 153, 0.18);
+    }
+    .delight-banner.is-highlighted {
+      border-color: rgba(251, 114, 153, 0.55);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.82),
+        0 12px 28px rgba(251, 114, 153, 0.22);
+    }
+    .delight-banner.is-expanded {
+      grid-template-rows: auto auto;
+      grid-template-columns: 1fr auto;
+    }
+
+    .delight-banner-row {
+      grid-column: 1;
+      grid-row: 1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      min-width: 0;
+    }
+
+    /* 16:9 cover — same visual treatment as .recommendation-cover.
+       Inset highlight, pink/blue gradient backdrop, and a bottom
+       darkening scrim so a ✨ badge overlay reads in any light/dark
+       cover image. */
+    .delight-banner-thumb {
+      flex-shrink: 0;
+      position: relative;
+      width: 160px;
+      aspect-ratio: 16 / 9;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 248, 252, 0.94)),
+        linear-gradient(145deg, rgba(251, 114, 153, 0.18), rgba(168, 85, 247, 0.12));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        0 2px 8px rgba(251, 114, 153, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .delight-banner:hover .delight-banner-thumb {
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        0 6px 16px rgba(251, 114, 153, 0.2);
+    }
+    .delight-banner-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .delight-banner-thumb.is-fallback {
+      font-size: 36px;
+      color: var(--brand-strong);
+    }
+    /* ✨ overlay badge — instant "this one is special" marker. */
+    .delight-banner-thumb::before {
+      content: "✨";
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--brand-strong);
+      font-size: 13px;
+      line-height: 22px;
+      text-align: center;
+      box-shadow: 0 2px 6px rgba(251, 114, 153, 0.28);
+      pointer-events: none;
+      z-index: 2;
+    }
+    /* Bottom scrim to keep covers readable + match rec-card style */
+    .delight-banner-thumb::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0 0;
+      height: 32%;
+      background: linear-gradient(180deg, transparent, rgba(32, 48, 74, 0.16));
+      pointer-events: none;
+    }
+    .delight-banner-thumb.is-fallback::after {
+      display: none;
+    }
+
+    .delight-banner-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .delight-banner-kicker-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .delight-banner-kicker {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--brand-strong);
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(251, 114, 153, 0.1);
+      letter-spacing: 0.02em;
+    }
+
+    .delight-banner-counter {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      padding: 1px 5px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.04);
+    }
+
+    /* Nav buttons (‹ / ›). 28×28 visible target plus a transparent
+       ::before that extends the hit area to 36×36 — keeps the visual
+       compact in the kicker row while staying comfortably clickable
+       in a popup. */
+    .delight-banner-nav {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      border: 1px solid rgba(251, 114, 153, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--brand-strong);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+    }
+    .delight-banner-nav::before {
+      content: "";
+      position: absolute;
+      inset: -4px;
+    }
+    .delight-banner-nav:hover:not(:disabled) {
+      background: rgba(251, 114, 153, 0.14);
+      border-color: rgba(251, 114, 153, 0.45);
+    }
+    .delight-banner-nav:active:not(:disabled) {
+      transform: scale(0.94);
+    }
+    .delight-banner-nav:disabled {
+      opacity: 0.32;
+      cursor: default;
+    }
+
+    /* Inbox delight card — thumbnail + title row */
+    .message-delight-top {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 6px;
+    }
+    .message-delight-thumb {
+      flex-shrink: 0;
+      width: 56px;
+      height: 56px;
+      border-radius: 10px;
+      overflow: hidden;
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.18), rgba(90, 169, 255, 0.18));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.6);
+    }
+    .message-delight-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .message-delight-thumb.is-fallback {
+      font-size: 20px;
+      color: #6b21a8;
+    }
+    .message-delight-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .message-delight-hook {
+      font-size: 10px;
+      font-weight: 700;
+      color: #6b21a8;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(168, 85, 247, 0.12);
+      align-self: flex-start;
+    }
+    .message-delight-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #4c1d95;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .delight-banner-title {
+      min-width: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+      line-height: 1.45;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    /* Reveal full title once the user has chosen to expand the banner —
+       collapsed state still respects the row-height budget with a
+       3-line clamp, but the expanded state shouldn't hide content. */
+    .delight-banner.is-expanded .delight-banner-title {
+      -webkit-line-clamp: unset;
+      display: block;
+    }
+
+    .delight-banner-dismiss-all {
+      align-self: flex-start;
+      margin-top: 4px;
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 2px 4px;
+    }
+    .delight-banner-dismiss-all:hover {
+      color: var(--text-main);
+    }
+
+    .delight-banner-chevron {
+      flex-shrink: 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+      transition: transform 0.2s ease;
+    }
+
+    .delight-banner-dismiss {
+      grid-column: 2;
+      grid-row: 1;
+      width: 32px;
+      border: 0;
+      border-left: 1px solid rgba(237, 219, 233, 0.6);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .delight-banner-dismiss:hover {
+      background: rgba(0, 0, 0, 0.04);
+      color: var(--text-main);
+    }
+
+    .delight-banner-body {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      padding: 4px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-top: 1px solid rgba(237, 219, 233, 0.6);
+    }
+
+    .delight-banner-reason {
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      margin: 4px 0 0;
+    }
+
+    .delight-banner-response {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+    .delight-banner-response[data-tone="success"] { color: #1a7f37; }
+    .delight-banner-response[data-tone="error"] { color: #cf222e; }
+
+    .delight-banner-chat-reply {
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-main);
+      margin: 0;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.7);
+      border-radius: 10px;
+      border: 1px solid rgba(237, 219, 233, 0.6);
+    }
+
+    .delight-banner-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .delight-banner-action {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .delight-card {
+      border-radius: 20px;
+      border: 1px solid rgba(237, 219, 233, 0.96);
+      background:
+        radial-gradient(circle at top right, rgba(251, 114, 153, 0.16), transparent 38%),
+        linear-gradient(180deg, rgba(255, 252, 254, 0.98), rgba(246, 250, 255, 0.98));
+      box-shadow: 0 18px 34px rgba(251, 114, 153, 0.12);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .delight-card.is-highlighted {
+      border-color: rgba(251, 114, 153, 0.42);
+      box-shadow: 0 22px 38px rgba(251, 114, 153, 0.18);
+    }
+
+    .delight-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .delight-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(251, 114, 153, 0.1);
+      color: var(--brand-strong);
+      font-size: 10px;
+      line-height: 1;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+
+    .delight-score {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(90, 169, 255, 0.12);
+      color: #3279c7;
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 700;
+    }
+
+    .delight-hero {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      text-align: left;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .delight-cover {
+      position: relative;
+      overflow: hidden;
+      border-radius: 16px;
+      aspect-ratio: 16 / 10;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 249, 255, 0.92)),
+        linear-gradient(145deg, rgba(251, 114, 153, 0.16), rgba(90, 169, 255, 0.12));
+      border: 1px solid rgba(255, 255, 255, 0.94);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.5;
+      font-weight: 700;
+      text-align: center;
+      padding: 10px;
+    }
+
+    .delight-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .delight-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .delight-hook {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--text-secondary);
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 700;
+    }
+
+    .delight-title {
+      font-size: 17px;
+      line-height: 1.35;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text-main);
+      overflow-wrap: anywhere;
+    }
+
+    .delight-reason {
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-secondary);
+    }
+
+    .delight-response {
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(233, 237, 246, 0.96);
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-main);
+    }
+
+    .delight-response[data-tone="success"] {
+      background: rgba(241, 255, 248, 0.92);
+      border-color: rgba(150, 221, 185, 0.82);
+    }
+
+    .delight-chat-reply {
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(245, 249, 255, 0.9);
+      border: 1px solid rgba(210, 224, 242, 0.92);
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-main);
+    }
+
+    .delight-actions {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .delight-chat-composer {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(233, 237, 246, 0.96);
+    }
+
+    .delight-chat-status {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      min-height: 1.5em;
+    }
+
+    .recommendation-list,
+    .chat-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .recommendation-card {
+      padding: 10px;
+      transition:
+        border-color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
+    }
+
+    .recommendation-card:hover {
+      border-color: var(--line-strong);
+      box-shadow: 0 20px 36px rgba(251, 114, 153, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .recommendation-preview {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      border: 1px solid rgba(235, 240, 248, 0.98);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(250, 251, 255, 0.98));
+      border-radius: 22px;
+      padding: 12px;
+      text-align: left;
+      color: inherit;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+
+    .recommendation-cover {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.92);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 249, 255, 0.94)),
+        linear-gradient(145deg, rgba(251, 114, 153, 0.12), rgba(90, 169, 255, 0.1));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+      aspect-ratio: 16 / 9;
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+      font-weight: 700;
+      text-align: center;
+      padding: 10px;
+    }
+
+    .recommendation-cover::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0 0;
+      height: 34%;
+      background: linear-gradient(180deg, transparent, rgba(32, 48, 74, 0.18));
+      pointer-events: none;
+    }
+
+    .recommendation-cover.is-fallback::after {
+      display: none;
+    }
+
+    .recommendation-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .recommendation-content {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: space-between;
+    }
+
+    .recommendation-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+
+    .recommendation-copy-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .topic-badge,
+    .recommendation-state {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    .topic-badge {
+      background: var(--brand-soft);
+      color: var(--brand-strong);
+    }
+
+    .recommendation-state {
+      background: var(--sky-soft);
+      color: #3279c7;
+    }
+
+    .recommendation-state.is-presented {
+      background: var(--warning-soft);
+      color: #bb7a2d;
+    }
+
+    .recommendation-source-corner {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(18, 22, 32, 0.52);
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1.3;
+      letter-spacing: 0.02em;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .recommendation-cover.is-fallback .recommendation-source-corner {
+      background: rgba(18, 22, 32, 0.08);
+      color: var(--text-muted);
+    }
+
+    .recommendation-title {
+      font-size: 17px;
+      line-height: 1.38;
+      font-weight: 800;
+      color: var(--text-main);
+      letter-spacing: -0.02em;
+      overflow-wrap: anywhere;
+    }
+
+    .recommendation-expression {
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-secondary);
+    }
+
+    .recommendation-meta,
+    .recommendation-meta-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 10px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+    }
+
+    @media (max-width: 360px) {
+      .recommendation-header-top {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+      }
+
+      .recommendation-header-top .action-button {
+        width: 100%;
+      }
+
+      .recommendation-status-chip {
+        min-height: 0;
+      }
+
+      .recommendation-status-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 520px) {
+
+      .shell {
+        padding: 10px;
+        gap: 8px;
+      }
+
+      .hero {
+        padding: 10px 12px;
+      }
+
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+        border-radius: 10px;
+      }
+
+      .brand-mark::before {
+        inset: 7px 6px 7px 8px;
+        border-width: 2.5px;
+      }
+
+      .brand-mark::after {
+        width: 7px;
+        height: 7px;
+        right: 5px;
+        top: 6px;
+      }
+
+      .hero h1 {
+        font-size: 17px;
+      }
+
+      .hero-copy {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .recommendation-header-card {
+        padding: 8px;
+      }
+
+      .recommendation-summary-row {
+        margin-top: 6px;
+      }
+
+      .recommendation-status-chip {
+        min-height: 42px;
+        padding: 5px 7px;
+      }
+
+      .recommendation-status-label {
+        font-size: 8px;
+      }
+
+      .recommendation-status-value {
+        font-size: 10px;
+      }
+
+      .recommendation-list {
+        gap: 8px;
+      }
+
+      .delight-hero {
+        grid-template-columns: 1fr;
+      }
+
+      .recommendation-card {
+        padding: 6px;
+      }
+
+      .recommendation-preview {
+        gap: 10px;
+        padding: 8px;
+        border-radius: 16px;
+      }
+
+      .recommendation-cover {
+        border-radius: 12px;
+      }
+
+      .recommendation-content {
+        gap: 6px;
+      }
+
+      .recommendation-copy-block {
+        gap: 4px;
+      }
+
+      .recommendation-title {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .recommendation-expression {
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .topic-badge,
+      .recommendation-state {
+        min-height: 20px;
+        padding: 3px 7px;
+        font-size: 10px;
+      }
+
+      .recommendation-actions {
+        margin-top: 4px;
+        gap: 4px;
+        justify-content: space-between;
+      }
+
+      .delight-actions {
+        gap: 4px;
+      }
+
+      .action-button {
+        min-height: 30px;
+        padding: 6px 8px;
+        font-size: 11px;
+        border-radius: 10px;
+      }
+
+      .feedback-status {
+        margin-top: 4px;
+        min-height: 0;
+      }
+
+      .feedback-status:empty {
+        display: none;
+      }
+
+      .footer {
+        padding: 8px 10px;
+      }
+    }
+
+    .recommendation-actions {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .action-button {
+      border: 0;
+      border-radius: 14px;
+      min-height: 38px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.2;
+      transition:
+        background 180ms ease,
+        color 180ms ease,
+        box-shadow 180ms ease,
+        transform 180ms ease;
+    }
+
+    .action-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .action-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+      transform: none;
+    }
+
+    .action-primary {
+      background: linear-gradient(135deg, var(--brand), #ff8cb0);
+      color: #ffffff;
+      font-weight: 800;
+      box-shadow: 0 12px 20px rgba(251, 114, 153, 0.22);
+    }
+
+    .action-primary:hover {
+      background: linear-gradient(135deg, var(--brand-strong), #ff7ca7);
+    }
+
+    .action-secondary {
+      background: rgba(240, 246, 255, 0.9);
+      color: var(--text-secondary);
+    }
+
+    .action-secondary:hover {
+      background: rgba(230, 240, 255, 0.96);
+      color: var(--text-main);
+    }
+
+    .comment-composer {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 245, 249, 0.98), rgba(246, 251, 255, 0.98));
+      border: 1px solid rgba(234, 226, 240, 0.94);
+    }
+
+    .comment-input,
+    .chat-input {
+      width: 100%;
+      resize: vertical;
+      min-height: 48px;
+      padding: 10px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(223, 231, 244, 0.96);
+      background: rgba(255, 255, 255, 0.98);
+      color: var(--text-main);
+    }
+
+    .comment-input::placeholder,
+    .chat-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .feedback-status {
+      margin-top: 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--brand-strong);
+      min-height: 16px;
+    }
+
+    .feedback-status[data-tone="success"],
+    .chat-status[data-tone="success"] {
+      color: var(--success);
+    }
+
+    .feedback-status[data-tone="error"],
+    .chat-status[data-tone="error"] {
+      color: var(--danger);
+    }
+
+    .profile-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    /* v0.3.18+: simpler, cleaner profile portrait card.
+       Previously: heavy pink radial gradient + bordered box + an
+       UPPERCASE "这会儿的你" h3 badge that duplicated the section
+       header above ("我感觉你大概是这样的"). User feedback:「这会儿
+       的你 有点丑」.
+       Now: minimal off-white card, no redundant subheading, no
+       left-rail-quote effect on the first paragraph. */
+    .profile-summary {
+      padding: 18px 20px;
+      border-radius: 16px;
+      background: rgba(252, 250, 251, 0.96);
+      border: 1px solid rgba(228, 220, 232, 0.7);
+    }
+
+    .profile-summary h3 {
+      /* Kept hidden via screen-reader-only pattern — keep the heading
+         in the DOM for a11y / outline structure but visually
+         redundant since the section already labels itself. */
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .profile-copy {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-main);
+    }
+
+    /* Multi-paragraph portrait — auto-split on sentence boundaries
+       so the LLM's 600-1000 char prose blob breathes. */
+    .profile-portrait {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .profile-portrait-paragraph {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.85;
+      color: var(--text-main);
+      text-indent: 1.6em;
+    }
+
+    .profile-portrait-paragraph:first-child {
+      text-indent: 0;
+    }
+
+    .profile-phase-copy {
+      margin-top: 10px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+
+    .profile-group {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(231, 238, 248, 0.96);
+    }
+
+    .profile-group h3 {
+      font-size: 12px;
+      line-height: 1.4;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--text-secondary);
+      background: rgba(244, 247, 255, 0.92);
+      border: 1px solid rgba(230, 236, 245, 0.96);
+    }
+
+    .chip-list .chip:nth-child(3n + 1) {
+      background: rgba(255, 240, 246, 0.96);
+      color: var(--brand-strong);
+    }
+
+    .chip-list .chip:nth-child(3n + 2) {
+      background: rgba(240, 247, 255, 0.96);
+      color: #397fcb;
+    }
+
+    .chip-list .chip:nth-child(3n) {
+      background: rgba(241, 252, 246, 0.96);
+      color: #3b9f72;
+    }
+
+    .chip.is-fallback {
+      color: var(--text-muted);
+      background: rgba(245, 247, 252, 0.98);
+    }
+
+    /* ── Profile layer headers ── */
+    .profile-layer-header {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-top: 20px;
+      margin-bottom: 4px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(231, 238, 248, 0.6);
+    }
+
+    /* ── MBTI display ── */
+    .mbti-container {
+      margin-top: 10px;
+    }
+    .mbti-type-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .mbti-type-label {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--brand-strong);
+    }
+    .mbti-confidence {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: rgba(231, 238, 248, 0.96);
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .mbti-dimensions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .mbti-dim-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .mbti-dim-pole {
+      width: 24px;
+      text-align: center;
+      font-weight: 600;
+      color: var(--brand-strong);
+    }
+    .mbti-dim-bar {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(231, 238, 248, 0.96);
+      overflow: hidden;
+    }
+    .mbti-dim-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #f7828e, #c7698f);
+      transition: width 0.3s ease;
+    }
+    .mbti-dim-pct {
+      width: 32px;
+      text-align: right;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .mbti-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Interest tree (domain → specifics) ── */
+    .interest-tree {
+      margin-top: 10px;
+    }
+    .interest-domain {
+      margin-bottom: 10px;
+    }
+    .interest-domain-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .interest-domain-weight {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    .interest-specifics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding-left: 14px;
+    }
+    .interest-specific-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      color: var(--text-secondary);
+      background: rgba(244, 247, 255, 0.92);
+      border: 1px solid rgba(230, 236, 245, 0.96);
+    }
+    .interest-tree .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Style preference bars ── */
+    .style-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .style-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .style-bar-label {
+      width: 70px;
+      color: var(--text-secondary);
+      text-align: right;
+    }
+    .style-bar-track {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(231, 238, 248, 0.96);
+      overflow: hidden;
+    }
+    .style-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #397fcb, #5e9fd9);
+      transition: width 0.3s ease;
+    }
+    .style-bar-value {
+      width: 40px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+    .style-text-row {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .style-text-label {
+      color: var(--text-secondary);
+    }
+    .style-text-value {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+    .style-bars .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Context mode ── */
+    .context-info {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .context-row {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .context-label {
+      color: var(--text-secondary);
+      min-width: 60px;
+    }
+    .context-value {
+      color: var(--text-primary);
+    }
+    .context-info .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Exploration openness bar ── */
+    .exploration-bar-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .exploration-bar {
+      flex: 1;
+      height: 8px;
+      border-radius: 4px;
+      background: rgba(231, 238, 248, 0.96);
+      overflow: hidden;
+    }
+    .exploration-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #f7828e, #397fcb);
+      transition: width 0.4s ease;
+    }
+    .exploration-bar-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Speculative interests ── */
+    .speculative-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .speculative-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 248, 240, 0.96);
+      border: 1px solid rgba(245, 228, 210, 0.96);
+    }
+    .speculative-item .spec-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .speculative-item .spec-domain {
+      font-size: 12px;
+      font-weight: 600;
+      color: #c57b2e;
+    }
+    .speculative-item .spec-reason {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+    .speculative-item .spec-progress {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .speculative-item .spec-status {
+      font-size: 10px;
+      font-weight: 700;
+      color: #9a6420;
+      background: rgba(255, 228, 196, 0.96);
+      border: 1px solid rgba(235, 190, 140, 0.8);
+      padding: 1px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .speculative-item.is-status-deprecated,
+    .speculative-item.is-status-rejected {
+      opacity: 0.6;
+    }
+    .speculative-item .spec-confidence-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .speculative-item .spec-confidence-bar {
+      flex: 1;
+      height: 4px;
+      border-radius: 4px;
+      background: rgba(245, 228, 210, 0.8);
+      overflow: hidden;
+    }
+    .speculative-item .spec-confidence-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #f5b36b, #c57b2e);
+      transition: width 0.3s ease;
+    }
+    .speculative-item .spec-confidence-label {
+      font-size: 10px;
+      color: #9a6420;
+      white-space: nowrap;
+    }
+    .speculative-item .spec-specifics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+    .spec-specific-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      color: #9a6420;
+      background: rgba(255, 240, 220, 0.96);
+      border: 1px solid rgba(235, 210, 180, 0.8);
+    }
+    .spec-specific-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      font-size: 9px;
+      font-weight: 600;
+      color: #fff;
+      background: #c57b2e;
+    }
+    .speculative-list .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 6px 0;
+    }
+    .speculative-item .spec-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .speculative-item .spec-actions .probe-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    .speculative-item .spec-result {
+      margin: 0;
+      font-size: 11px;
+      color: #9a6420;
+      font-style: italic;
+    }
+
+    .probe-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(255, 244, 230, 0.98), rgba(255, 238, 215, 0.96));
+      border: 1.5px solid rgba(240, 136, 62, 0.35);
+      margin-bottom: 12px;
+      animation: probeSlideIn 0.3s ease-out;
+    }
+
+    @keyframes probeSlideIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .probe-question {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #3d2e1f;
+      margin-bottom: 10px;
+    }
+
+    .probe-specifics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .probe-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .probe-btn {
+      flex: 1;
+      padding: 8px 0;
+      border-radius: 12px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .probe-btn.is-confirm {
+      background: rgba(63, 185, 80, 0.15);
+      color: #1a7f37;
+      border-color: rgba(63, 185, 80, 0.3);
+    }
+    .probe-btn.is-confirm:hover {
+      background: rgba(63, 185, 80, 0.25);
+    }
+
+    .probe-btn.is-reject {
+      background: rgba(139, 148, 158, 0.1);
+      color: #57606a;
+      border-color: rgba(139, 148, 158, 0.2);
+    }
+    .probe-btn.is-reject:hover {
+      background: rgba(139, 148, 158, 0.2);
+    }
+
+    .probe-btn.is-chat {
+      background: rgba(88, 166, 255, 0.12);
+      color: #0969da;
+      border-color: rgba(88, 166, 255, 0.25);
+    }
+    .probe-btn.is-chat:hover {
+      background: rgba(88, 166, 255, 0.22);
+    }
+
+    .probe-result {
+      font-size: 13px;
+      color: #57606a;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    .cognition-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .cognition-card {
+      border-radius: 18px;
+      border: 1px solid rgba(231, 238, 248, 0.96);
+      background: linear-gradient(180deg, rgba(255, 249, 252, 0.98), rgba(247, 251, 255, 0.98));
+      overflow: hidden;
+    }
+
+    .cognition-card.is-expanded {
+      box-shadow: 0 12px 24px rgba(60, 87, 132, 0.08);
+    }
+
+    .cognition-card.is-summary-only {
+      background: linear-gradient(180deg, rgba(250, 251, 253, 0.98), rgba(245, 247, 251, 0.98));
+    }
+
+    .cognition-card.is-fallback {
+      padding: 12px 14px;
+      background: rgba(246, 248, 252, 0.98);
+    }
+
+    .cognition-toggle {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      padding: 14px;
+      text-align: left;
+    }
+
+    .cognition-toggle.is-static {
+      cursor: default;
+    }
+
+    .cognition-header {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cognition-summary {
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-main);
+      font-weight: 700;
+    }
+
+    .cognition-context {
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .cognition-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .cognition-source {
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+
+    .cognition-timestamp {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 500;
+      margin-left: auto;
+      margin-right: 8px;
+    }
+
+    .cognition-state {
+      color: var(--brand-strong);
+      font-weight: 800;
+    }
+
+    .cognition-details {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 14px 14px;
+      border-top: 1px solid rgba(236, 226, 240, 0.96);
+    }
+
+    .cognition-details[hidden] {
+      display: none;
+    }
+
+    .cognition-detail {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-top: 10px;
+    }
+
+    .cognition-detail-label {
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: 800;
+      color: var(--brand-strong);
+    }
+
+    .cognition-detail-value {
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+
+    .cognition-history-footer {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .cognition-history-status {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .cognition-history-more {
+      align-self: flex-start;
+      border: 0;
+      border-radius: 999px;
+      padding: 8px 14px;
+      background: rgba(58, 123, 213, 0.1);
+      color: var(--brand-strong);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .cognition-history-more:disabled {
+      opacity: 0.55;
+    }
+
+    /* ── Active insights ── */
+    .insight-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .insight-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(247, 251, 255, 0.98), rgba(240, 248, 255, 0.96));
+      border: 1px solid rgba(210, 228, 248, 0.9);
+    }
+
+    .insight-item.is-validated {
+      background: linear-gradient(180deg, rgba(244, 255, 250, 0.98), rgba(235, 252, 243, 0.96));
+      border-color: rgba(180, 230, 210, 0.9);
+    }
+
+    .insight-hypothesis {
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .insight-confidence-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .insight-confidence-bar {
+      flex: 1;
+      height: 4px;
+      border-radius: 4px;
+      background: rgba(210, 228, 248, 0.6);
+      overflow: hidden;
+    }
+
+    .insight-confidence-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--sky), #397fcb);
+      transition: width 0.3s ease;
+    }
+
+    .insight-confidence-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .insight-validated-badge {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--success);
+      border: 1px solid rgba(48, 185, 128, 0.3);
+      border-radius: 999px;
+      padding: 1px 7px;
+      align-self: flex-start;
+    }
+
+    .insight-evidence {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding-left: 8px;
+      border-left: 2px solid rgba(90, 169, 255, 0.3);
+      margin-top: 2px;
+    }
+
+    .insight-evidence-item {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+
+    .insight-timestamp {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    .insight-list .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 6px 0;
+    }
+
+    /* ── Recent awareness ── */
+    .awareness-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .awareness-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 13px;
+      border-radius: 14px;
+      background: rgba(255, 252, 247, 0.97);
+      border: 1px solid rgba(240, 230, 215, 0.9);
+    }
+
+    .awareness-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .awareness-date {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .awareness-emotion {
+      font-size: 10px;
+      color: var(--brand);
+      font-weight: 600;
+    }
+
+    .awareness-observation {
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-main);
+    }
+
+    .awareness-trend {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      padding-left: 8px;
+      border-left: 2px solid rgba(251, 114, 153, 0.25);
+    }
+
+    .awareness-list .is-fallback {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 6px 0;
+    }
+
+    .empty-state {
+      padding: 28px 20px;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .empty-state::before {
+      content: "";
+      display: block;
+      width: 68px;
+      height: 68px;
+      margin: 0 auto 14px;
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at 28% 28%, rgba(255, 255, 255, 0.96), transparent 38%),
+        linear-gradient(135deg, rgba(251, 114, 153, 0.2), rgba(90, 169, 255, 0.18));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    }
+
+    .empty-state h3 {
+      font-size: 16px;
+      line-height: 1.3;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .empty-state p {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+
+    .chat-shell {
+      padding: 14px;
+      min-height: 0;
+      flex-shrink: 0;
+    }
+
+    .chat-intro {
+      padding: 14px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 247, 250, 0.98), rgba(247, 251, 255, 0.98));
+      border: 1px solid rgba(236, 226, 240, 0.96);
+    }
+
+    .chat-intro h3 {
+      font-size: 14px;
+      line-height: 1.3;
+      font-weight: 800;
+    }
+
+    .chat-intro p {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--text-secondary);
+    }
+
+    .chat-messages {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 72px;
+      max-height: 220px;
+      overflow-y: auto;
+      padding-right: 4px;
+      margin-top: 12px;
+    }
+
+    /* Collapse the conversation surface entirely when no messages
+       have been added yet — otherwise the min-height + margin
+       leave an awkward blank slab above the input. */
+    .chat-messages:empty {
+      display: none;
+    }
+
+    .chat-message {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 92%;
+      padding: 12px 14px;
+      border-radius: 18px 18px 18px 8px;
+      background: rgba(247, 250, 255, 0.98);
+      border: 1px solid rgba(231, 238, 248, 0.96);
+    }
+
+    .chat-message.user {
+      align-self: flex-end;
+      border-radius: 18px 18px 8px 18px;
+      background: linear-gradient(180deg, rgba(255, 242, 247, 0.98), rgba(244, 249, 255, 0.98));
+      border-color: rgba(239, 221, 233, 0.96);
+    }
+
+    .chat-role {
+      font-size: 11px;
+      line-height: 1.3;
+      font-weight: 800;
+      color: var(--brand-strong);
+    }
+
+    .chat-content {
+      font-size: 12px;
+      line-height: 1.75;
+      color: var(--text-main);
+      white-space: pre-wrap;
+    }
+
+    .chat-thinking-content {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-soft, var(--text-main));
+      font-style: italic;
+    }
+
+    .chat-thinking-label {
+      letter-spacing: 0.02em;
+    }
+
+    /* In-card chat "thinking" indicator (probe / delight inbox + banner). */
+    .message-chat-thinking {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.7);
+      border-radius: 12px;
+      border: 1px solid rgba(237, 219, 233, 0.5);
+      animation: chat-thinking-fadein 0.18s ease-out;
+    }
+    .message-chat-thinking-label {
+      flex: 1;
+      min-width: 0;
+    }
+    @keyframes chat-thinking-fadein {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .chat-thinking-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding-bottom: 2px;
+    }
+
+    .chat-thinking-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background-color: currentColor;
+      opacity: 0.35;
+      animation: chat-thinking-bounce 1.2s infinite ease-in-out both;
+    }
+
+    .chat-thinking-dot:nth-child(1) { animation-delay: -0.32s; }
+    .chat-thinking-dot:nth-child(2) { animation-delay: -0.16s; }
+
+    @keyframes chat-thinking-bounce {
+      0%, 80%, 100% { opacity: 0.35; transform: translateY(0) scale(0.85); }
+      40% { opacity: 1; transform: translateY(-2px) scale(1); }
+    }
+
+    .chat-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .chat-input-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 18px;
+      border: 1px solid rgba(231, 238, 248, 0.96);
+      background: rgba(255, 255, 255, 0.96);
+    }
+
+    .chat-input-label {
+      font-size: 11px;
+      line-height: 1.4;
+      font-weight: 800;
+      color: var(--text-secondary);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .chat-input {
+      min-height: 88px;
+      border: 0;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: transparent;
+      line-height: 1.6;
+      resize: none;
+    }
+
+    .chat-status {
+      min-height: 16px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+
+    .footer {
+      margin-top: auto;
+      border-radius: 18px;
+      padding: 12px 14px;
+      flex-shrink: 0;
+      border: 1px solid rgba(223, 231, 243, 0.98);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 253, 0.96));
+      box-shadow: 0 12px 24px rgba(73, 93, 130, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .footer-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .footer-copy {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .footer-hint {
+      position: relative;
+      min-height: 20px;
+      padding-left: 22px;
+      font-size: 12px;
+      line-height: 1.6;
+      font-weight: 700;
+      color: #41506b;
+    }
+
+    .footer-headline {
+      position: relative;
+      min-height: 18px;
+      padding-left: 22px;
+      font-size: 11px;
+      line-height: 1.55;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .footer-hint::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      transform: translateY(-50%);
+      background: var(--sky);
+      box-shadow: 0 0 0 5px rgba(90, 169, 255, 0.12);
+    }
+
+    .footer-headline::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      transform: translateY(-50%);
+      background: rgba(251, 114, 153, 0.3);
+      box-shadow: 0 0 0 5px rgba(251, 114, 153, 0.08);
+    }
+
+    .footer-toggle {
+      flex-shrink: 0;
+      min-height: 32px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 0;
+      background: rgba(255, 255, 255, 0.86);
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      box-shadow: 0 8px 18px rgba(73, 93, 130, 0.08);
+    }
+
+    .footer-history {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      /* Cap the expanded history height and let it scroll internally so
+         the activity feed can hold many entries (or load more pages)
+         without pushing the popup body off-screen. */
+      max-height: 360px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(165, 180, 210, 0.6) transparent;
+    }
+
+    .footer-history[hidden] {
+      display: none;
+    }
+
+    /* WebKit scrollbar styling so the inner scroll feels intentional,
+       not janky-default */
+    .footer-history::-webkit-scrollbar {
+      width: 6px;
+    }
+    .footer-history::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .footer-history::-webkit-scrollbar-thumb {
+      background-color: rgba(165, 180, 210, 0.5);
+      border-radius: 999px;
+    }
+    .footer-history::-webkit-scrollbar-thumb:hover {
+      background-color: rgba(165, 180, 210, 0.8);
+    }
+
+    .footer-item {
+      border-radius: 16px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(223, 231, 243, 0.96);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .activity-load-more {
+      align-self: stretch;
+      margin-top: 4px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(165, 180, 210, 0.5);
+      background: rgba(255, 255, 255, 0.6);
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .activity-load-more:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(165, 180, 210, 0.85);
+      color: var(--text-main);
+    }
+    .activity-load-more:disabled {
+      cursor: progress;
+      opacity: 0.65;
+    }
+
+    .footer-item-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 10px;
+      line-height: 1.4;
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+
+    .footer-item-kind {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(223, 231, 243, 0.96);
+    }
+
+    .footer-item-summary {
+      font-size: 12px;
+      line-height: 1.5;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .footer-item-detail {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+
+    .footer[data-tone="success"] {
+      background: linear-gradient(180deg, rgba(247, 255, 251, 0.98), rgba(235, 250, 243, 0.96));
+      border-color: rgba(48, 185, 128, 0.28);
+    }
+
+    .footer[data-tone="success"] .footer-hint {
+      color: #236b52;
+    }
+
+    .footer[data-tone="success"] .footer-hint::before {
+      background: var(--success);
+      box-shadow: 0 0 0 5px rgba(48, 185, 128, 0.14);
+    }
+
+    .footer[data-tone="success"] .footer-headline {
+      color: #2b8d63;
+    }
+
+    .footer[data-tone="error"] {
+      background: linear-gradient(180deg, rgba(255, 248, 249, 0.98), rgba(255, 238, 241, 0.96));
+      border-color: rgba(239, 122, 134, 0.28);
+    }
+
+    .footer[data-tone="error"] .footer-hint {
+      color: #8f4b57;
+    }
+
+    .footer[data-tone="error"] .footer-hint::before {
+      background: var(--danger);
+      box-shadow: 0 0 0 5px rgba(239, 122, 134, 0.14);
+    }
+
+    .footer[data-tone="error"] .footer-headline {
+      color: #b65e69;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(165, 181, 208, 0.5);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    /* ── Messages button ─────────────────────────────────────── */
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .messages-button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      position: relative;
+      transition: background 0.15s, transform 0.15s;
+    }
+
+    .messages-button:hover {
+      background: var(--brand-soft);
+      transform: translateY(-1px);
+    }
+
+    .messages-button svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-secondary);
+    }
+
+    .message-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 16px;
+      height: 16px;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    .message-badge[hidden] { display: none; }
+
+    /* ── Messages overlay ─────────────────────────────────────── */
+
+    .messages-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      background:
+        radial-gradient(circle at 15% 12%, rgba(240, 136, 62, 0.12), transparent 30%),
+        radial-gradient(circle at 88% 18%, rgba(90, 169, 255, 0.14), transparent 26%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-sky) 100%);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .messages-overlay[hidden] { display: none; }
+
+    .messages-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .messages-header h2 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .messages-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .messages-empty-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      opacity: 0.5;
+    }
+
+    .message-item {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(255, 244, 230, 0.98), rgba(255, 238, 215, 0.96));
+      border: 1.5px solid rgba(240, 136, 62, 0.35);
+      animation: probeSlideIn 0.25s ease-out;
+      position: relative;
+    }
+
+    .message-item + .message-item { margin-top: 8px; }
+
+    .message-item.is-delight {
+      background: linear-gradient(135deg, rgba(243, 232, 255, 0.98), rgba(233, 218, 250, 0.96));
+      border-color: rgba(168, 85, 247, 0.35);
+    }
+    .message-item.is-delight .message-domain { color: #4c1d95; }
+    .message-item.is-delight .message-reason { color: #6b21a8; }
+
+    .probe-btn.is-view {
+      background: rgba(88, 166, 255, 0.12);
+      color: #0969da;
+      border-color: rgba(88, 166, 255, 0.25);
+    }
+    .probe-btn.is-view:hover { background: rgba(88, 166, 255, 0.22); }
+
+    .message-dismiss {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.06);
+      color: #8b7a6a;
+      font-size: 13px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .message-dismiss:hover {
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .message-domain {
+      font-size: 14px;
+      font-weight: 700;
+      color: #3d2e1f;
+      margin-bottom: 4px;
+      padding-right: 24px;
+    }
+
+    .message-chat-area {
+      margin-top: 10px;
+      display: flex;
+      gap: 6px;
+    }
+
+    .message-chat-input {
+      flex: 1;
+      padding: 7px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      background: rgba(255, 255, 255, 0.8);
+      font-size: 12px;
+      color: #3d2e1f;
+      outline: none;
+      resize: none;
+      font-family: inherit;
+    }
+
+    .message-chat-input:focus {
+      border-color: rgba(88, 166, 255, 0.5);
+    }
+
+    .message-chat-send {
+      padding: 7px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      background: rgba(88, 166, 255, 0.12);
+      color: #0969da;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+
+    .message-chat-send:hover {
+      background: rgba(88, 166, 255, 0.22);
+    }
+
+    .message-chat-send:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .message-chat-reply {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #3d2e1f;
+    }
+
+    .message-reason {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #6e5b44;
+      margin-bottom: 10px;
+    }
+
+    .message-specifics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .message-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .message-result {
+      font-size: 13px;
+      color: #57606a;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    /* ── Settings panel ─────────────────────────────────────── */
+
+    .settings-gear {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, transform 0.15s;
+    }
+
+    .settings-gear:hover {
+      background: var(--brand-soft);
+      transform: rotate(30deg);
+    }
+
+    .settings-gear svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-secondary);
+    }
+
+    .settings-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      background:
+        radial-gradient(circle at 15% 12%, rgba(251, 114, 153, 0.15), transparent 30%),
+        radial-gradient(circle at 88% 18%, rgba(90, 169, 255, 0.18), transparent 26%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-sky) 100%);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .settings-overlay[hidden] {
+      display: none;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .settings-header h2 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .settings-back {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      color: var(--text-secondary);
+    }
+
+    .settings-back:hover {
+      background: var(--brand-soft);
+    }
+
+    .settings-section {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .settings-section h3 {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-section h3 .section-icon {
+      font-size: 16px;
+    }
+
+    .settings-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .settings-field label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .settings-field input,
+    .settings-field select,
+    .settings-field textarea {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.8);
+      font-size: 13px;
+      color: var(--text-main);
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+
+    .settings-field input:focus,
+    .settings-field select:focus,
+    .settings-field textarea:focus {
+      outline: none;
+      border-color: var(--sky);
+      box-shadow: var(--focus-ring);
+    }
+
+    .settings-field textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    .settings-field input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--brand);
+    }
+
+    .settings-field-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-hint {
+      margin: 0 0 4px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(125, 211, 252, 0.12);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    .settings-field-row label {
+      text-transform: none;
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    .settings-provider-fields {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.5);
+      margin-top: 4px;
+    }
+
+    .settings-provider-fields.is-active {
+      display: flex;
+    }
+
+    .settings-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .settings-save {
+      flex: 1;
+      padding: 12px 20px;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      transition: opacity 0.15s;
+    }
+
+    .settings-save:hover {
+      opacity: 0.88;
+    }
+
+    .settings-save:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .settings-toast {
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .settings-toast[data-tone="success"] {
+      background: var(--lime-soft);
+      color: #1a7a4a;
+    }
+
+    .settings-toast[data-tone="error"] {
+      background: rgba(239, 122, 134, 0.15);
+      color: #c0404e;
+    }
+
+    .settings-toast[hidden] {
+      display: none;
+    }
+
+    .settings-issues {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .settings-issue {
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--warning-soft);
+      color: #8a6520;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .settings-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      font-style: italic;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="shell side-panel-shell">
+    <header class="hero">
+      <div class="hero-top">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-copy">
+            <p class="eyebrow">Bilibili Content Lens</p>
+            <div class="brand-title-row">
+              <h1>OpenBiliClaw</h1>
+              <div id="statusBadge" class="status-badge" data-tone="offline">
+                <div id="statusDot" class="status-dot offline"></div>
+                <span id="statusLabel" class="status-label">未连接</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button id="messagesButton" class="messages-button" type="button" title="消息" aria-label="查看消息">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span id="messageBadge" class="message-badge" hidden>0</span>
+          </button>
+          <button id="settingsGear" class="settings-gear" type="button" title="设置" aria-label="打开设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="hero-copy">首页先放一边，这里是你最近更可能点开的。</p>
+    </header>
+
+    <div class="tabs-shell">
+      <div class="tab-bar" role="tablist" aria-label="Popup views">
+        <button id="tabRecommend" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="viewRecommend">推荐</button>
+        <button id="tabProfile" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="viewProfile">我的画像</button>
+        <button id="tabChat" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="viewChat">聊聊最近在看啥</button>
+      </div>
+    </div>
+
+    <main class="content">
+      <section id="viewRecommend" class="view" role="tabpanel" aria-labelledby="tabRecommend">
+        <div class="recommendation-header-card">
+          <div class="recommendation-header-top">
+            <div class="recommendation-header-copy">
+              <div class="recommendation-header-intro">
+                <div class="recommendation-header-title">
+                  <p class="view-kicker">For You</p>
+                  <h2>这几条，你大概会点开</h2>
+                </div>
+              </div>
+            </div>
+            <button id="refreshRecommendationsButton" class="action-button action-secondary" type="button">换一批</button>
+          </div>
+          <div class="recommendation-summary-row">
+            <div id="poolStatus" class="recommendation-status-row" hidden>
+              <div class="recommendation-status-chip" data-tone="neutral">
+                <span class="recommendation-status-label">当前可换</span>
+                <span id="poolAvailable" class="recommendation-status-value">还有 0 条可换</span>
+              </div>
+              <div class="recommendation-status-chip" data-tone="brand">
+                <span class="recommendation-status-label">最近补进</span>
+                <span id="poolReplenished" class="recommendation-status-value">刚补进 0 条</span>
+              </div>
+              <div class="recommendation-status-chip" data-tone="info">
+                <span class="recommendation-status-label">现在在忙</span>
+                <span id="poolTopics" class="recommendation-status-value">还在继续摸你的口味</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="delightSlot" hidden></div>
+        <div id="emptyState" class="empty-state" hidden>
+          <h3 id="emptyTitle">还没刷出新东西</h3>
+          <p id="emptyText">稍等一下，新的推荐马上来。</p>
+        </div>
+        <div id="recommendationList" class="recommendation-list"></div>
+      </section>
+
+      <section id="viewProfile" class="view" role="tabpanel" aria-labelledby="tabProfile" hidden>
+        <div class="view-intro">
+          <p class="view-kicker">Profile</p>
+          <h2>我感觉你大概是这样的</h2>
+          <p>不是光看你点过啥，我主要在看你会为哪种东西停下来。</p>
+        </div>
+        <div id="profileEmpty" class="empty-state" hidden>
+          <h3 id="profileEmptyTitle">画像还没攒起来</h3>
+          <p id="profileEmptyText">先跑一遍 openbiliclaw init，再回来看看。</p>
+        </div>
+        <div id="profileCard" class="profile-card" hidden>
+          <!-- ── 综合叙事 ── -->
+          <div class="profile-summary">
+            <h3>这会儿的你</h3>
+            <div id="profilePortrait" class="profile-portrait"></div>
+          </div>
+
+          <!-- ── Core 层 ── -->
+          <div class="profile-layer-header">Core — 比较稳定的底色</div>
+          <div class="profile-group">
+            <h3>核心特质</h3>
+            <div id="profileTraits" class="chip-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>深层需求</h3>
+            <div id="profileNeeds" class="chip-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>MBTI</h3>
+            <div id="profileMBTI" class="mbti-container"></div>
+          </div>
+
+          <!-- ── Values 层 ── -->
+          <div class="profile-layer-header">Values — 你在内容里长期在找什么</div>
+          <div class="profile-group">
+            <h3>价值偏好</h3>
+            <div id="profileValues" class="chip-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>内在驱动力</h3>
+            <div id="profileMotivationalDrivers" class="chip-list"></div>
+          </div>
+
+          <!-- ── Interest 层 ── -->
+          <div class="profile-layer-header">Interest — 你最近在看什么</div>
+          <div class="profile-group">
+            <h3>感兴趣的方向</h3>
+            <div id="profileLikes" class="interest-tree"></div>
+          </div>
+          <div class="profile-group">
+            <h3>明显会避开</h3>
+            <div id="profileDislikes" class="interest-tree"></div>
+          </div>
+          <div class="profile-group">
+            <h3>常看的 UP 主</h3>
+            <div id="profileFavoriteUps" class="chip-list"></div>
+          </div>
+
+          <!-- ── Role 层 ── -->
+          <div class="profile-layer-header">Role — 这阵子的状态</div>
+          <div class="profile-group">
+            <h3>大致处在什么阶段</h3>
+            <p id="profileLifeStage" class="profile-phase-copy"></p>
+          </div>
+          <div class="profile-group">
+            <h3>这阵子更像在经历什么</h3>
+            <p id="profileCurrentPhase" class="profile-phase-copy"></p>
+          </div>
+
+          <!-- ── Surface 层 ── -->
+          <div class="profile-layer-header">Surface — 你怎么看内容</div>
+          <div class="profile-group">
+            <h3>认知风格</h3>
+            <div id="profileCognitiveStyle" class="chip-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>内容口味</h3>
+            <div id="profileStyle" class="style-bars"></div>
+          </div>
+          <div class="profile-group">
+            <h3>使用场景</h3>
+            <div id="profileContext" class="context-info"></div>
+          </div>
+          <div class="profile-group">
+            <h3>探索开放度</h3>
+            <div id="profileExplorationOpenness" class="exploration-bar-container">
+              <div class="exploration-bar">
+                <div class="exploration-bar-fill"></div>
+              </div>
+              <span class="exploration-bar-label"></span>
+            </div>
+          </div>
+
+          <!-- ── Cross-cutting ── -->
+          <div class="profile-layer-header">Speculate — 阿B 在试探的方向</div>
+          <div class="profile-group">
+            <h3>猜测兴趣</h3>
+            <div id="profileSpeculativeInterests" class="speculative-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>阿B 最近新记住了什么</h3>
+            <div id="profileRecentMemory" class="cognition-list"></div>
+            <div class="cognition-history-footer">
+              <p id="profileRecentMemoryStatus" class="cognition-history-status" hidden></p>
+              <button id="profileRecentMemoryMore" class="cognition-history-more" type="button" hidden>
+                加载更多
+              </button>
+            </div>
+          </div>
+
+          <!-- ── Signals ── -->
+          <div class="profile-layer-header">Signals — 正在推断中</div>
+          <div class="profile-group">
+            <h3>当前活跃的洞察</h3>
+            <div id="profileActiveInsights" class="insight-list"></div>
+          </div>
+          <div class="profile-group">
+            <h3>近期观察到的</h3>
+            <div id="profileRecentAwareness" class="awareness-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="viewChat" class="view" role="tabpanel" aria-labelledby="tabChat" hidden>
+        <div class="view-intro">
+          <p class="view-kicker">Chat</p>
+          <h2>最近你到底在看啥</h2>
+          <p>把你最近老点开的、会停下来的直接说说。</p>
+        </div>
+        <div class="chat-shell">
+          <div id="chatMessages" class="chat-messages"></div>
+          <form id="chatForm" class="chat-form">
+            <label class="chat-input-shell">
+              <span class="chat-input-label">写点你最近爱看的</span>
+              <textarea id="chatInput" class="chat-input" placeholder="比如：我最近老点开国际新闻和商业分析，想知道自己到底在找什么。"></textarea>
+            </label>
+            <button id="chatSendButton" class="action-button action-primary" type="submit">发出去</button>
+            <p id="chatStatus" class="chat-status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── Messages overlay ── -->
+    <div id="messagesOverlay" class="messages-overlay" hidden>
+      <div class="messages-header">
+        <h2>消息</h2>
+        <button id="messagesBack" class="settings-back" type="button" title="返回" aria-label="关闭消息">&larr;</button>
+      </div>
+      <div id="messagesList"></div>
+    </div>
+
+    <!-- ── Settings overlay ── -->
+    <div id="settingsOverlay" class="settings-overlay" hidden>
+      <div class="settings-header">
+        <h2>后端设置</h2>
+        <button id="settingsBack" class="settings-back" type="button" title="返回" aria-label="关闭设置">&larr;</button>
+      </div>
+
+      <div id="settingsToast" class="settings-toast" hidden></div>
+
+      <div id="settingsIssues" class="settings-issues"></div>
+
+      <!-- LLM Provider -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F916;</span> LLM 模型</h3>
+        <div class="settings-field">
+          <label for="cfgLlmProvider">默认 Provider</label>
+          <select id="cfgLlmProvider">
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama (本地)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容 (Groq/Together/Azure/vLLM)</option>
+          </select>
+        </div>
+        <!-- OpenAI -->
+        <div class="settings-provider-fields" data-provider="openai">
+          <div class="settings-field">
+            <label for="cfgOpenaiKey">OpenAI API Key</label>
+            <input id="cfgOpenaiKey" type="password" autocomplete="off" placeholder="sk-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiModel">Model</label>
+            <input id="cfgOpenaiModel" type="text" placeholder="gpt-5-nano">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiBaseUrl">Base URL (可选)</label>
+            <input id="cfgOpenaiBaseUrl" type="text" placeholder="留空使用默认">
+          </div>
+        </div>
+        <!-- Claude -->
+        <div class="settings-provider-fields" data-provider="claude">
+          <div class="settings-field">
+            <label for="cfgClaudeKey">Claude API Key</label>
+            <input id="cfgClaudeKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgClaudeModel">Model</label>
+            <input id="cfgClaudeModel" type="text" placeholder="claude-sonnet-4-6">
+          </div>
+        </div>
+        <!-- Gemini -->
+        <div class="settings-provider-fields" data-provider="gemini">
+          <div class="settings-field">
+            <label for="cfgGeminiKey">Gemini API Key</label>
+            <input id="cfgGeminiKey" type="password" autocomplete="off" placeholder="AI...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgGeminiModel">Model</label>
+            <input id="cfgGeminiModel" type="text" placeholder="gemini-2.5-flash">
+          </div>
+        </div>
+        <!-- DeepSeek -->
+        <div class="settings-provider-fields" data-provider="deepseek">
+          <div class="settings-field">
+            <label for="cfgDeepseekKey">DeepSeek API Key</label>
+            <input id="cfgDeepseekKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekModel">Model</label>
+            <input id="cfgDeepseekModel" type="text" placeholder="deepseek-v4-flash">
+          </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekBaseUrl">Base URL</label>
+            <input id="cfgDeepseekBaseUrl" type="text" placeholder="https://api.deepseek.com">
+          </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekReasoning">Reasoning Effort</label>
+            <select id="cfgDeepseekReasoning">
+              <option value="">关闭</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </div>
+        </div>
+        <!-- Ollama -->
+        <div class="settings-provider-fields" data-provider="ollama">
+          <div class="settings-field">
+            <label for="cfgOllamaModel">Model</label>
+            <input id="cfgOllamaModel" type="text" placeholder="qwen2.5:7b">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOllamaBaseUrl">Base URL</label>
+            <input id="cfgOllamaBaseUrl" type="text" placeholder="http://localhost:11434/v1">
+          </div>
+        </div>
+        <!-- OpenRouter -->
+        <div class="settings-provider-fields" data-provider="openrouter">
+          <div class="settings-field">
+            <label for="cfgOpenrouterKey">OpenRouter API Key</label>
+            <input id="cfgOpenrouterKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterModel">Model</label>
+            <input id="cfgOpenrouterModel" type="text" placeholder="openai/gpt-5-nano">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterBaseUrl">Base URL</label>
+            <input id="cfgOpenrouterBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterReferer">HTTP Referer</label>
+            <input id="cfgOpenrouterReferer" type="text" placeholder="https://example.com">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterTitle">X-Title</label>
+            <input id="cfgOpenrouterTitle" type="text" placeholder="OpenBiliClaw">
+          </div>
+        </div>
+        <!-- OpenAI Compatible -->
+        <div class="settings-provider-fields" data-provider="openai_compatible">
+          <p class="settings-hint">
+            适配 Groq / Together / Azure OpenAI / vLLM / 自建等任何走 OpenAI 协议的服务。<strong>Base URL 必填</strong>，否则等同于普通 OpenAI provider。
+          </p>
+          <div class="settings-field">
+            <label for="cfgOpenaiCompatibleKey">API Key</label>
+            <input id="cfgOpenaiCompatibleKey" type="password" autocomplete="off" placeholder="gsk-... / sk-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiCompatibleModel">Model</label>
+            <input id="cfgOpenaiCompatibleModel" type="text" placeholder="llama-3.1-70b-versatile">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiCompatibleBaseUrl">Base URL (必填)</label>
+            <input id="cfgOpenaiCompatibleBaseUrl" type="text" placeholder="https://api.groq.com/openai/v1">
+          </div>
+        </div>
+      </div>
+
+      <!-- Embedding -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F50D;</span> Embedding 模型</h3>
+        <p class="settings-hint">
+          Embedding 与 LLM 各自独立配置，互不共用 API Key。Claude / DeepSeek / OpenRouter 没有 embedding 接口，未在此列出。
+        </p>
+        <div class="settings-field">
+          <label for="cfgEmbeddingProvider">Provider</label>
+          <select id="cfgEmbeddingProvider">
+            <option value="">(跟随默认 LLM Provider)</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+            <option value="ollama">Ollama (本地)</option>
+            <option value="openai_compatible">OpenAI 协议兼容 (Together/vLLM/Azure 等)</option>
+          </select>
+        </div>
+        <div class="settings-field" data-embedding-field="api_key">
+          <label for="cfgEmbeddingApiKey">Embedding API Key</label>
+          <input id="cfgEmbeddingApiKey" type="password" autocomplete="off" placeholder="sk-...">
+        </div>
+        <div class="settings-field" data-embedding-field="base_url">
+          <label for="cfgEmbeddingBaseUrl">Base URL (可选)</label>
+          <input id="cfgEmbeddingBaseUrl" type="text" placeholder="留空使用默认">
+        </div>
+        <div class="settings-field">
+          <label for="cfgEmbeddingModel">Embedding Model</label>
+          <input id="cfgEmbeddingModel" type="text" placeholder="留空 = 自动选择">
+        </div>
+        <div class="settings-field">
+          <label for="cfgEmbeddingSimilarity">相似度阈值 (0~1)</label>
+          <input id="cfgEmbeddingSimilarity" type="number" min="0" max="1" step="0.01" placeholder="0.82">
+        </div>
+      </div>
+
+      <!-- Module LLM Overrides -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F9E0;</span> 模块模型覆盖</h3>
+        <p class="settings-hint">
+          留空时继承默认 Provider；只在需要给画像、发现、推荐表达或评估单独指定模型时填写。
+        </p>
+        <div class="settings-field">
+          <label for="cfgModuleSoulProvider">画像 Provider</label>
+          <select id="cfgModuleSoulProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleSoulModel">画像 Model</label>
+          <input id="cfgModuleSoulModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleDiscoveryProvider">发现 Provider</label>
+          <select id="cfgModuleDiscoveryProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleDiscoveryModel">发现 Model</label>
+          <input id="cfgModuleDiscoveryModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleRecommendationProvider">推荐表达 Provider</label>
+          <select id="cfgModuleRecommendationProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleRecommendationModel">推荐表达 Model</label>
+          <input id="cfgModuleRecommendationModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleEvaluationProvider">评估 Provider</label>
+          <select id="cfgModuleEvaluationProvider">
+            <option value="">继承默认</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai_compatible">OpenAI 协议兼容</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgModuleEvaluationModel">评估 Model</label>
+          <input id="cfgModuleEvaluationModel" type="text" placeholder="留空继承 provider 默认模型">
+        </div>
+      </div>
+
+      <!-- Bilibili -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F4FA;</span> Bilibili</h3>
+        <div class="settings-field">
+          <label for="cfgBiliAuth">认证方式</label>
+          <select id="cfgBiliAuth">
+            <option value="cookie">Cookie</option>
+            <option value="qrcode">二维码</option>
+            <option value="none">无</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgBiliCookie">Cookie</label>
+          <textarea id="cfgBiliCookie" placeholder="从浏览器复制 Cookie 字符串"></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="cfgBiliBrowserExecutable">agent-browser 路径</label>
+          <input id="cfgBiliBrowserExecutable" type="text" placeholder="留空使用全局安装">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgBiliBrowserHeaded" type="checkbox">
+          <label for="cfgBiliBrowserHeaded">B 站登录浏览器显示窗口</label>
+        </div>
+      </div>
+
+      <!-- Sources -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F310;</span> 多平台源</h3>
+        <div class="settings-field">
+          <label for="cfgSourcesBrowserCdp">通用网页 CDP URL</label>
+          <input id="cfgSourcesBrowserCdp" type="text" placeholder="http://localhost:9222">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgSourcesBrowserHeaded" type="checkbox">
+          <label for="cfgSourcesBrowserHeaded">通用网页回退浏览器显示窗口</label>
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgXhsEnabled" type="checkbox">
+          <label for="cfgXhsEnabled">启用小红书 discovery</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsDailySearchBudget">小红书每日搜索任务</label>
+          <input id="cfgXhsDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsDailyCreatorBudget">小红书每日创作者任务</label>
+          <input id="cfgXhsDailyCreatorBudget" type="number" min="0" step="1" placeholder="10">
+        </div>
+        <div class="settings-field">
+          <label for="cfgXhsTaskInterval">小红书任务间隔秒数</label>
+          <input id="cfgXhsTaskInterval" type="number" min="0" step="1" placeholder="45">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgDouyinEnabled" type="checkbox">
+          <label for="cfgDouyinEnabled">启用抖音 discovery</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinCookieEnv">抖音 Cookie 环境变量</label>
+          <input id="cfgDouyinCookieEnv" type="text" placeholder="OPENBILICLAW_DOUYIN_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailySearchBudget">抖音每日搜索任务</label>
+          <input id="cfgDouyinDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailyHotBudget">抖音每日热点任务</label>
+          <input id="cfgDouyinDailyHotBudget" type="number" min="0" step="1" placeholder="5">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinDailyFeedBudget">抖音每日推荐流任务</label>
+          <input id="cfgDouyinDailyFeedBudget" type="number" min="0" step="1" placeholder="30">
+        </div>
+        <div class="settings-field">
+          <label for="cfgDouyinRequestInterval">抖音 direct 请求间隔秒数</label>
+          <input id="cfgDouyinRequestInterval" type="number" min="0" step="1" placeholder="2">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgYoutubeEnabled" type="checkbox">
+          <label for="cfgYoutubeEnabled">启用 YouTube discovery</label>
+        </div>
+      </div>
+
+      <!-- General -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x2699;&#xFE0F;</span> 通用</h3>
+        <div class="settings-field">
+          <label for="cfgBackendPort">后端端口</label>
+          <input id="cfgBackendPort" type="number" min="1" max="65535" step="1" placeholder="8420">
+          <p class="settings-hint">
+            默认 8420。仅在本地端口被 Hyper-V / WSL / Docker 占用时修改，并用 <code>openbiliclaw start --port &lt;同一端口&gt;</code> 启动后端。
+          </p>
+        </div>
+        <div class="settings-field">
+          <label for="cfgLanguage">语言</label>
+          <select id="cfgLanguage">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgDataDir">数据目录</label>
+          <input id="cfgDataDir" type="text" placeholder="data">
+        </div>
+        <div class="settings-field">
+          <label for="cfgStorageDbPath">SQLite 数据库路径</label>
+          <input id="cfgStorageDbPath" type="text" placeholder="data/openbiliclaw.db">
+        </div>
+      </div>
+
+      <!-- Scheduler -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x23F0;</span> 调度</h3>
+        <div class="settings-field-row">
+          <input id="cfgSchedulerEnabled" type="checkbox">
+          <label for="cfgSchedulerEnabled">启用定时发现</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgDiscoveryCron">发现 Cron 表达式</label>
+          <input id="cfgDiscoveryCron" type="text" placeholder="0 */8 * * *">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolTarget">候选池目标数量</label>
+          <input id="cfgPoolTarget" type="number" min="1" max="600" placeholder="600">
+        </div>
+        <div class="settings-field">
+          <label for="cfgAccountSyncInterval">账户同步间隔小时</label>
+          <input id="cfgAccountSyncInterval" type="number" min="1" step="1" placeholder="6">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgAutoUpdate" type="checkbox">
+          <label for="cfgAutoUpdate">自动更新</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgAutoUpdateInterval">自动更新检查间隔小时</label>
+          <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
+          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareXhs">候选池小红书占比</label>
+          <input id="cfgPoolShareXhs" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareDouyin">候选池抖音占比</label>
+          <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
+          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-actions">
+          <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationInterval">猜测兴趣间隔分钟</label>
+          <input id="cfgSpeculationInterval" type="number" min="1" step="1" placeholder="10">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationTtl">猜测兴趣存活天数</label>
+          <input id="cfgSpeculationTtl" type="number" min="1" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationCooldown">猜测兴趣冷却天数</label>
+          <input id="cfgSpeculationCooldown" type="number" min="1" step="1" placeholder="7">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationThreshold">猜测确认阈值</label>
+          <input id="cfgSpeculationThreshold" type="number" min="1" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxActive">最大活跃猜测数</label>
+          <input id="cfgSpeculationMaxActive" type="number" min="1" step="1" placeholder="5">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxPrimary">主要兴趣域上限</label>
+          <input id="cfgSpeculationMaxPrimary" type="number" min="1" step="1" placeholder="15">
+        </div>
+        <div class="settings-field">
+          <label for="cfgSpeculationMaxSecondary">次要兴趣项上限</label>
+          <input id="cfgSpeculationMaxSecondary" type="number" min="1" step="1" placeholder="60">
+        </div>
+      </div>
+
+      <!-- Logging -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F4CB;</span> 日志</h3>
+        <div class="settings-field">
+          <label for="cfgLogLevel">控制台级别</label>
+          <select id="cfgLogLevel">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogFileLevel">文件级别</label>
+          <select id="cfgLogFileLevel">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogDirectory">日志目录</label>
+          <input id="cfgLogDirectory" type="text" placeholder="logs">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogFilename">日志文件名</label>
+          <input id="cfgLogFilename" type="text" placeholder="openbiliclaw.log">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogMaxFileSize">单日志文件上限 MB</label>
+          <input id="cfgLogMaxFileSize" type="number" min="0" step="1" placeholder="100">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogBackupCount">日志备份份数</label>
+          <input id="cfgLogBackupCount" type="number" min="0" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogAggregateBudget">日志目录预算 MB</label>
+          <input id="cfgLogAggregateBudget" type="number" min="0" step="1" placeholder="500">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogUnmanagedTruncate">单个非托管日志截断 MB</label>
+          <input id="cfgLogUnmanagedTruncate" type="number" min="0" step="1" placeholder="200">
+        </div>
+        <div class="settings-field">
+          <label for="cfgLogUnmanagedMaxAge">非托管日志保留天数</label>
+          <input id="cfgLogUnmanagedMaxAge" type="number" min="0" step="1" placeholder="30">
+        </div>
+      </div>
+
+      <p class="settings-note">保存后会尝试热重载；少数路径类设置仍建议重启后端确认。</p>
+
+      <div class="settings-actions">
+        <button id="settingsSave" class="settings-save" type="button">保存配置</button>
+      </div>
+    </div>
+
+    <footer id="footerHintBar" class="footer" data-tone="info">
+      <div class="footer-head">
+        <div class="footer-copy">
+          <p id="hintText" class="footer-hint" aria-live="polite">阿B 这会儿先替你盯着。</p>
+          <p id="headlineText" class="footer-headline">最近还没新动静，先多刷一阵。</p>
+        </div>
+        <button id="activityToggleButton" class="footer-toggle" type="button" aria-expanded="false">更多</button>
+      </div>
+      <div id="activityHistory" class="footer-history" hidden></div>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
