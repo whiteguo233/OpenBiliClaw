@@ -90,6 +90,7 @@
             <div class="delight-copy">
               <h3 id="delightTitle">你可能会意外喜欢：县域经济的债务齿轮</h3>
               <p id="delightReason">你最近的轨迹同时出现了宏观债务、地方财政和长叙事内容，这条把它们咬合得很清楚。</p>
+              <div class="delight-chat-turns" id="delightTurns" hidden></div>
             </div>
             <div class="delight-actions" aria-label="惊喜推荐操作">
               <div class="delight-main-actions" aria-label="打开或讨论这条推荐">
@@ -258,6 +259,7 @@
         <div class="settings-panel" data-settings-panel="models">
           <p class="settings-section-title">默认模型</p>
           <label class="settings-field"><span>默认 LLM Provider</span><select id="llmProvider"><option value="openai">openai</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="deepseek">deepseek</option><option value="openrouter">openrouter</option><option value="ollama">ollama</option><option value="openai_compatible">openai_compatible</option></select></label>
+          <label class="settings-field"><span>备选 LLM Provider</span><select id="llmFallbackProvider"><option value="">不启用 fallback</option><option value="openai">openai</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="deepseek">deepseek</option><option value="openrouter">openrouter</option><option value="ollama">ollama</option><option value="openai_compatible">openai_compatible</option></select></label>
           <label class="settings-field"><span>OpenAI 认证方式</span><select id="llmAuthMode"><option value="api_key">API Key</option><option value="codex_oauth">Codex OAuth</option></select></label>
           <label class="settings-field"><span>默认模型</span><input id="llmModel" value="gpt-5-nano"></label>
           <label class="settings-field"><span>当前 Provider API Key</span><input id="llmApiKey" autocomplete="off" placeholder="只保存当前选中的 Provider"></label>
@@ -267,6 +269,7 @@
 
           <p class="settings-section-title">Embedding 与模块覆盖</p>
           <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider"><option value="">跟随默认</option><option>ollama</option><option>openai</option><option>gemini</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>备选 Embedding Provider</span><select id="embeddingFallbackProvider"><option value="">不启用 fallback</option><option>openai</option><option>gemini</option><option>openai_compatible</option></select></label>
           <label class="settings-field"><span>Embedding 模型</span><input id="embeddingModel" value="bge-m3"></label>
           <label class="settings-field"><span>Embedding API Key</span><input id="embeddingApiKey" autocomplete="off"></label>
           <label class="settings-field"><span>Embedding Base URL</span><input id="embeddingBaseUrl"></label>

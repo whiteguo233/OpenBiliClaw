@@ -1183,6 +1183,156 @@
       }
     }
 
+    function createClientTurnId(prefix = "webui") {
+      const suffix = window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      return `${prefix}-${suffix}`;
+    }
+
+    function normalizeDelightTurn(turn) {
+      if (!turn) return null;
+      const message = String(turn.message ?? turn.user_message ?? "");
+      const reply = String(turn.reply ?? turn.assistant_message ?? "");
+      const status = String(turn.status || (reply ? "completed" : "pending"));
+      const turnId = String(turn.turn_id ?? turn.id ?? "");
+      if (!turnId && !message && !reply) return null;
+      return {
+        turn_id: turnId,
+        message,
+        reply,
+        status,
+        error: String(turn.error ?? "")
+      };
+    }
+
+    function delightTurnList(turns) {
+      return asArray(turns).map(normalizeDelightTurn).filter(Boolean);
+    }
+
+    function upsertDelightTurn(turns, nextTurn) {
+      const normalized = normalizeDelightTurn(nextTurn);
+      const existing = delightTurnList(turns);
+      if (!normalized) return existing;
+      const index = existing.findIndex((turn) => turn.turn_id && turn.turn_id === normalized.turn_id);
+      if (index < 0) return [...existing, normalized];
+      return existing.map((turn, turnIndex) => turnIndex === index ? normalized : turn);
+    }
+
+    function mergeDelightTurnLists(currentTurns, incomingTurns) {
+      let merged = delightTurnList(currentTurns);
+      for (const turn of delightTurnList(incomingTurns)) merged = upsertDelightTurn(merged, turn);
+      return merged;
+    }
+
+    function mergeDelightItem(current, incoming) {
+      if (!current) return incoming;
+      return {
+        ...current,
+        ...incoming,
+        chat_turn_id: incoming.chat_turn_id || current.chat_turn_id || "",
+        chat_reply: incoming.chat_reply || current.chat_reply || "",
+        chat_draft: incoming.chat_draft || current.chat_draft || "",
+        response_message: incoming.response_message || current.response_message || "",
+        turns: mergeDelightTurnLists(current.turns, incoming.turns)
+      };
+    }
+
+    function renderDelightTurns(delight) {
+      const area = $("#delightTurns");
+      if (!area) return;
+      area.replaceChildren();
+      const turns = delightTurnList(delight?.turns);
+      if (!turns.length && !delight?.chat_reply) {
+        area.hidden = true;
+        return;
+      }
+      area.hidden = false;
+      if (!turns.length && delight?.chat_reply) {
+        const bubble = document.createElement("div");
+        bubble.className = "delight-turn-bubble is-assistant";
+        bubble.textContent = delight.chat_reply;
+        area.append(bubble);
+        return;
+      }
+      for (const turn of turns) {
+        if (turn.message) {
+          const userBubble = document.createElement("div");
+          userBubble.className = "delight-turn-bubble is-user";
+          userBubble.textContent = turn.message;
+          area.append(userBubble);
+        }
+        const assistantBubble = document.createElement("div");
+        const status = String(turn.status || "pending");
+        assistantBubble.className = `delight-turn-bubble is-assistant${status === "pending" ? " is-thinking" : ""}${status === "failed" ? " is-error" : ""}`;
+        assistantBubble.textContent = status === "pending"
+          ? "阿B 正在品你这句话…"
+          : status === "failed"
+            ? turn.error || "这句还没发出去，稍后再试。"
+            : turn.reply || "后端已完成这轮聊天。";
+        area.append(assistantBubble);
+      }
+    }
+
+    function updateDelightState(bvid, updates) {
+      const key = String(bvid || "");
+      if (!key) return null;
+      let current = null;
+      state.delights = state.delights.map((item) => {
+        if (String(item.bvid || "") !== key) return item;
+        current = { ...item, ...updates };
+        return current;
+      });
+      if (state.delight && String(state.delight.bvid || "") === key) {
+        state.delight = { ...state.delight, ...updates };
+        current = state.delight;
+      }
+      state.messages = state.messages.map((msg) => messageType(msg) === "delight" && String(msg.bvid || "") === key ? { ...msg, ...updates } : msg);
+      if (current && state.delight && String(state.delight.bvid || "") === key) {
+        renderDelightTurns(state.delight);
+        if ($("#delightStatus")) $("#delightStatus").textContent = state.delight.response_message || "";
+      }
+      renderMessages();
+      return current;
+    }
+
+    function applyTurnToDelight(turn) {
+      const subjectId = String(turn?.subject_id || turn?.bvid || "");
+      if (!turn || (turn.scope && turn.scope !== "delight") || !subjectId) return null;
+      const existing = state.delights.find((item) => String(item.bvid || "") === subjectId)
+        || (state.delight && String(state.delight.bvid || "") === subjectId ? state.delight : null)
+        || state.messages.find((msg) => messageType(msg) === "delight" && String(msg.bvid || "") === subjectId);
+      const entry = normalizeDelightTurn(turn);
+      if (!entry) return null;
+      const status = String(entry.status || "pending");
+      const updates = {
+        chat_turn_id: entry.turn_id,
+        turns: upsertDelightTurn(existing?.turns, entry),
+        response_message: status === "completed" ? "这句已经记下，后面会更会试探。" : status === "failed" ? "这句还没发出去，稍后再试。" : "阿B 正在品你这句话。"
+      };
+      if (status === "completed") {
+        updates.chat_reply = entry.reply || existing?.chat_reply || "";
+        updates.chat_draft = "";
+      }
+      return updateDelightState(subjectId, updates);
+    }
+
+    function pollChatTurnUntilSettled(turnId, fallbackTurn) {
+      const startedAt = Date.now();
+      const poll = async () => {
+        const latest = await requestJson(`${ENDPOINTS.chatTurns}/${encodeURIComponent(turnId)}`);
+        if (latest) {
+          const scopedTurn = { ...fallbackTurn, ...latest, scope: latest.scope || "delight", subject_id: latest.subject_id || fallbackTurn.subject_id };
+          applyTurnToDelight(scopedTurn);
+          if (latest.status === "completed" || latest.status === "failed") return;
+        }
+        if (Date.now() - startedAt > 180000) {
+          applyTurnToDelight({ ...fallbackTurn, status: "failed", error: "聊天处理超时，稍后可以在历史里继续查看。" });
+          return;
+        }
+        window.setTimeout(poll, 1200);
+      };
+      window.setTimeout(poll, 1200);
+    }
+
     async function respondDelight(delight, response, el = null) {
       if (!delight) return;
       if (response === "chat") { openDelightComposer(); return; }
@@ -1190,11 +1340,27 @@
       if (response === "send-comment") {
         const input = $("#delightCommentInput");
         const note = input?.value?.trim() || "";
-        await requestJson(ENDPOINTS.delightRespond, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, response: "comment", title: delight.title, message: note }) });
+        if (!note) {
+          if ($("#delightStatus")) $("#delightStatus").textContent = "先写一句想聊的内容，再提交这轮对话。";
+          input?.focus();
+          return;
+        }
+        const turnId = createClientTurnId("delight");
+        const pendingTurn = { turn_id: turnId, session: "webui", scope: "delight", subject_id: delight.bvid, subject_title: delight.title || "", message: note, reply: "", status: "pending", error: "" };
+        applyTurnToDelight(pendingTurn);
         if (input) input.value = "";
         closeDelightComposer();
-        if ($("#delightStatus")) $("#delightStatus").textContent = note ? "已把这条聊天线索写回画像更新闭环。" : "已记录一次围绕这条惊喜推荐的聊天意图。";
-        showToast("已提交聊天线索");
+        try {
+          const turn = await requestJsonStrict(ENDPOINTS.chatTurns, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pendingTurn) });
+          const scopedTurn = { ...pendingTurn, ...(turn || {}), scope: turn?.scope || "delight", subject_id: turn?.subject_id || delight.bvid };
+          applyTurnToDelight(scopedTurn);
+          if (scopedTurn.turn_id && scopedTurn.status !== "completed" && scopedTurn.status !== "failed") pollChatTurnUntilSettled(scopedTurn.turn_id, scopedTurn);
+          showToast("已提交聊天线索");
+        } catch (error) {
+          applyTurnToDelight({ ...pendingTurn, status: "failed", error: error.message || "聊天提交失败，请稍后再试。" });
+          if (input) input.value = note;
+          showToast(`聊天提交失败：${error.message || "后端不可用"}`);
+        }
         return;
       }
       if (response === "view") {
@@ -1559,6 +1725,7 @@
       const llm = config.llm || {};
       const provider = llm.default_provider || llm.provider;
       setSelect("llmProvider", provider);
+      setSelect("llmFallbackProvider", llm.fallback_provider || "");
       setSelect("llmAuthMode", llm.openai?.auth_mode || "api_key");
       if (provider) {
         setInput("llmModel", llm[provider]?.model);
@@ -1568,6 +1735,7 @@
       setInput("openrouterReferer", llm.openrouter?.http_referer);
       setInput("openrouterTitle", llm.openrouter?.x_title);
       setSelect("embeddingProvider", llm.embedding?.provider || "");
+      setSelect("embeddingFallbackProvider", llm.embedding?.fallback_provider || "");
       setInput("embeddingModel", llm.embedding?.model);
       setInput("embeddingApiKey", llm.embedding?.api_key);
       setInput("embeddingBaseUrl", llm.embedding?.base_url);
@@ -1626,7 +1794,12 @@
         reason: String(item.delight_reason ?? item.reason ?? item.delight_hook ?? item.message ?? "这条来自后端高惊喜分候选。"),
         cover_url: normalizeImageUrl(item.cover_url ?? item.cover ?? item.pic ?? item.thumbnail_url ?? item.thumbnail ?? item.image_url),
         content_url: String(item.content_url ?? ""),
-        source_platform: String(item.source_platform ?? item.platform ?? "bilibili")
+        source_platform: String(item.source_platform ?? item.platform ?? "bilibili"),
+        chat_turn_id: String(item.chat_turn_id ?? ""),
+        chat_reply: String(item.chat_reply ?? item.reply ?? ""),
+        chat_draft: String(item.chat_draft ?? ""),
+        response_message: String(item.response_message ?? ""),
+        turns: delightTurnList(item.turns)
       };
     }
 
@@ -1655,6 +1828,7 @@
         state.delight = null;
         closeDelightComposer();
         renderDelightCover(null);
+        renderDelightTurns(null);
         $("#delightTitle").textContent = "暂无惊喜队列";
         $("#delightReason").textContent = "后端产生新的高惊喜候选后会通过实时流出现在这里。";
         if ($("#delightStatus")) $("#delightStatus").textContent = "";
@@ -1666,9 +1840,10 @@
       state.delight = state.delights[state.delightIndex];
       closeDelightComposer();
       renderDelightCover(state.delight);
+      renderDelightTurns(state.delight);
       $("#delightTitle").textContent = state.delight.title;
       $("#delightReason").textContent = state.delight.reason;
-      if ($("#delightStatus")) $("#delightStatus").textContent = "";
+      if ($("#delightStatus")) $("#delightStatus").textContent = state.delight.response_message || "";
       if ($("#delightCount")) $("#delightCount").textContent = `${state.delightIndex + 1}/${state.delights.length}`;
       controls.forEach((btn) => {
         const action = btn.dataset.delight;
@@ -1677,12 +1852,26 @@
     }
 
     function applyDelights(payload) {
-      const items = Array.isArray(payload?.items) ? payload.items : payload?.item ? [payload.item] : [];
+      const hasQueuePayload = Array.isArray(payload?.items) || Boolean(payload?.item);
+      if (!hasQueuePayload) return;
+      const items = Array.isArray(payload?.items) ? payload.items : payload.item ? [payload.item] : [];
       const normalized = items.map(normalizeDelight).filter(Boolean);
-      if (!normalized.length) return;
-      state.delights = normalized;
-      setActiveDelight(0);
-      mergeMessages(normalized);
+      const previousActiveBvid = String(state.delight?.bvid || "");
+      const existingByBvid = new Map(state.delights.map((item) => [String(item.bvid || ""), item]));
+      state.delights = [];
+      for (const item of normalized) {
+        const key = String(item.bvid || "");
+        if (!key) continue;
+        const existingIndex = state.delights.findIndex((current) => String(current.bvid || "") === key);
+        const merged = mergeDelightItem(existingByBvid.get(key) || state.delights[existingIndex], item);
+        if (existingIndex >= 0) state.delights[existingIndex] = merged;
+        else state.delights.push(merged);
+      }
+      const nextIndex = previousActiveBvid
+        ? Math.max(0, state.delights.findIndex((item) => String(item.bvid || "") === previousActiveBvid))
+        : 0;
+      setActiveDelight(nextIndex);
+      mergeMessages(state.delights);
     }
 
     function mergeMessages(items) {
@@ -1710,8 +1899,15 @@
       if (event.type === "delight.candidate" && event.bvid) {
         const delight = normalizeDelight(event);
         if (delight) {
-          state.delights.push(delight);
-          setActiveDelight(state.delights.length - 1);
+          const key = String(delight.bvid || "");
+          const existingIndex = state.delights.findIndex((item) => String(item.bvid || "") === key);
+          if (existingIndex >= 0) {
+            state.delights[existingIndex] = mergeDelightItem(state.delights[existingIndex], delight);
+            if (state.delight && String(state.delight.bvid || "") === key) setActiveDelight(existingIndex);
+          } else {
+            state.delights.push(delight);
+            setActiveDelight(state.delights.length - 1);
+          }
           mergeMessages([delight]);
         }
       }
@@ -1751,7 +1947,7 @@
     }
 
     async function hydrateFromBackend() {
-      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, config] = await Promise.all([
+      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config] = await Promise.all([
         requestJson(ENDPOINTS.health),
         requestJson(ENDPOINTS.recommendations),
         requestJson(ENDPOINTS.runtimeStatus),
@@ -1759,7 +1955,8 @@
         requestJson(ENDPOINTS.profile),
         requestJson(`${ENDPOINTS.delightBatch}?limit=5`),
         requestJson(ENDPOINTS.notificationPending),
-        requestJson(`${ENDPOINTS.chatTurns}?session=webui&limit=20`),
+        requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
+        requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
         requestJson(ENDPOINTS.config)
       ]);
       if (health) $("#statusLabel").textContent = "已连接本地后端";
@@ -1785,6 +1982,8 @@
       }
       applyRuntimeStatus(runtime?.status || runtime);
       applyDelights(delights);
+      const delightChatItems = Array.isArray(delightChatTurns) ? delightChatTurns : asArray(delightChatTurns?.items);
+      for (const turn of delightChatItems.filter(Boolean)) applyTurnToDelight({ ...turn, scope: turn.scope || "delight" });
       if (notification?.item) mergeMessages([{ ...notification.item, type: "notification" }]);
       applyConfig(config?.config || config);
       renderAll();
@@ -1806,6 +2005,7 @@
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
       const embedding = {
         provider: $("#embeddingProvider").value,
+        fallback_provider: getInput("embeddingFallbackProvider"),
         model: getInput("embeddingModel"),
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82)
       };
@@ -1815,6 +2015,7 @@
       const llm = {
         ...(state.config?.llm || {}),
         default_provider: provider,
+        fallback_provider: getInput("llmFallbackProvider"),
         [provider]: { ...(state.config?.llm?.[provider] || {}), ...llmProviderConfig },
         embedding: { ...(state.config?.llm?.embedding || {}), ...embedding },
         soul: { ...(state.config?.llm?.soul || {}), provider: getInput("moduleSoulProvider"), model: getInput("moduleSoulModel") },

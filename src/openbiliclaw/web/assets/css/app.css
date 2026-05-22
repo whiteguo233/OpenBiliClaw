@@ -197,6 +197,13 @@
     .delight-copy { min-width: 0; }
     .delight-copy h3 { max-width: 760px; overflow-wrap: normal; word-break: normal; text-wrap: balance; }
     .delight-copy p { margin: var(--space-2) 0 0; color: var(--muted); max-width: 720px; }
+    .delight-chat-turns { display: grid; gap: 8px; margin-top: var(--space-3); max-height: 220px; overflow: auto; padding-right: 2px; }
+    .delight-chat-turns[hidden] { display: none; }
+    .delight-turn-bubble { width: fit-content; max-width: min(100%, 520px); border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px; font-size: 13px; line-height: 1.45; background: var(--surface); color: var(--fg-2); }
+    .delight-turn-bubble.is-user { justify-self: end; background: var(--surface); border-color: var(--border-soft); }
+    .delight-turn-bubble.is-assistant { justify-self: start; background: color-mix(in oklab, var(--surface), var(--surface-warm) 55%); }
+    .delight-turn-bubble.is-thinking { color: var(--muted); font-style: italic; }
+    .delight-turn-bubble.is-error { color: var(--danger); border-color: color-mix(in oklab, var(--danger), var(--border-soft) 68%); }
     .delight-actions { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
     .delight-main-actions, .delight-feedback-actions { min-width: 0; align-items: center; }
     .delight-main-actions { order: 2; flex: 0 0 212px; display: grid; grid-template-columns: 116px 88px; gap: var(--space-2); transition: grid-template-columns var(--motion-base) var(--ease-standard), gap var(--motion-base) var(--ease-standard), flex-basis var(--motion-base) var(--ease-standard); }
