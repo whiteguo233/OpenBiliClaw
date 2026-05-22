@@ -8,6 +8,7 @@
 
 import { startCollector } from "./kernel.js";
 import { bilibiliAdapter, extractBvid } from "../shared/platforms/bilibili.js";
+import { installSpaWatcher } from "../shared/spa-watcher.js";
 
 startCollector(bilibiliAdapter);
 
@@ -351,41 +352,20 @@ async function checkForRepost(): Promise<void> {
 // Bilibili's video pages are an SPA: clicking a recommendation in the
 // right rail swaps the BVID in the URL via pushState/replaceState
 // without a page load, so a single DOMContentLoaded check would only
-// catch the first video. We re-run checkForRepost on every URL change.
+// catch the first video. We delegate the URL-change detection to the
+// shared SPA watcher (which is exercised in tests independently of
+// any actual content-script logic).
 
-let _lastCheckedUrl = "";
-function maybeCheckOnUrlChange(): void {
-  const url = window.location.href;
-  if (url === _lastCheckedUrl) return;
-  _lastCheckedUrl = url;
+function onUrlChange(_newUrl: string): void {
   // Remove any banner from a previous video before deciding on a new one.
   document.getElementById("obc-repost-banner")?.remove();
   void checkForRepost();
 }
 
-function installSpaWatcher(): void {
-  // popstate fires on back/forward
-  window.addEventListener("popstate", maybeCheckOnUrlChange);
-  // Bilibili uses history.pushState/replaceState for in-page navigation.
-  // Wrap them so we get notified.
-  const origPush = history.pushState.bind(history);
-  const origReplace = history.replaceState.bind(history);
-  history.pushState = function (...args: Parameters<typeof history.pushState>) {
-    const ret = origPush(...args);
-    queueMicrotask(maybeCheckOnUrlChange);
-    return ret;
-  };
-  history.replaceState = function (...args: Parameters<typeof history.replaceState>) {
-    const ret = origReplace(...args);
-    queueMicrotask(maybeCheckOnUrlChange);
-    return ret;
-  };
-}
-
 function bootRepostWatcher(): void {
-  _lastCheckedUrl = window.location.href;
-  installSpaWatcher();
-  void checkForRepost();
+  // createSpaWatcher fires onChange once on install with the current
+  // URL, so we get the initial check for free.
+  installSpaWatcher(onUrlChange);
 }
 
 if (document.readyState === "loading") {

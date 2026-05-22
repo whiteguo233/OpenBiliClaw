@@ -236,6 +236,80 @@
       line-height: 1.4;
       padding: 0 4px;
     }
+
+    /* ── Per-tab repost callout ──────────────────────────────────
+       Surfaces the QUERY_LAUNCHER_PENDING_STATUS reply when the
+       active B站 tab is flagged. .callout-known gets the brand
+       gradient (we have a destination, so it's an action); the
+       .callout-pending variant uses the same softer purple as
+       the content-script "pending" banner for visual consistency
+       across surfaces. */
+
+    .callout {
+      border-radius: 11px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .callout-known {
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .callout-pending {
+      background: linear-gradient(135deg, #b89cc7, #8d6da5);
+      color: #fff;
+      padding: 9px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 11.5px;
+      line-height: 1.35;
+    }
+
+    .callout-text {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .callout-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .callout-btn {
+      padding: 4px 11px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.65);
+      border-radius: 999px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .callout-btn:hover {
+      background: #fff;
+      color: var(--brand-strong);
+    }
+
+    .callout-btn:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: 1px;
+    }
   </style>
 </head>
 <body>
@@ -277,6 +351,32 @@
     </div>
   </div>
 
+  <!--
+    Per-tab repost callout. Hidden by default; popup-launcher.js
+    flips the [hidden] attribute when the active B站 tab has been
+    flagged via the QUERY_LAUNCHER_PENDING_STATUS protocol.
+
+    Three terminal states (the JS picks one and hides the others):
+      • #repost-known   — repost detected AND yt_url available → show jump button
+      • #repost-pending — repost detected but yt_url empty (server can't reach YT)
+                          → show a soft purple banner, no jump
+    Container itself is hidden when not on a B站 video page or
+    nothing was detected.
+  -->
+  <div id="repost-callout" class="callout" hidden>
+    <div class="callout-known" id="repost-known" hidden>
+      <div class="callout-text">
+        <span class="callout-icon" aria-hidden="true">📺</span>
+        <span>检测到搬运视频 · 已找到 YouTube 原版</span>
+      </div>
+      <button class="callout-btn" id="repost-jump" type="button">跳转</button>
+    </div>
+    <div class="callout-pending" id="repost-pending" hidden>
+      <span class="callout-icon" aria-hidden="true">📺</span>
+      <span>搬运视频 · 服务器暂时无法连接 YouTube</span>
+    </div>
+  </div>
+
   <button class="open-btn" id="open-full" type="button">
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path d="M3 3h5M3 3v5M3 3l5 5M13 13H8M13 13V8M13 13l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -286,6 +386,10 @@
 
   <div class="footnote">Safari 暂不支持侧边栏 · 已切换到独立标签页模式</div>
 
+  <!-- popup-launcher-protocol.js attaches the message-type constants
+       to window.OpenBiliClawLauncher before the launcher script runs.
+       Order matters: must load before popup-launcher.js. -->
+  <script src="popup-launcher-protocol.js"></script>
   <script src="popup-launcher.js"></script>
 </body>
 </html>

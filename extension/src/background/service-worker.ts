@@ -55,6 +55,12 @@ import {
 // bundles either extension, so production builds are unaffected.
 import { apiUrl, onBackendEndpointChange, wsUrl } from "../shared/backend-endpoint.ts";
 import type { BehaviorEvent } from "../shared/types.js";
+import {
+  PING_LAUNCHER_TO_BG,
+  QUERY_LAUNCHER_PENDING_STATUS,
+  type LauncherPendingStatus,
+  type PingReply,
+} from "../shared/popup-launcher-protocol.ts";
 
 let eventBuffer: BehaviorEvent[] = [];
 const BUFFER_FLUSH_INTERVAL = 30_000;
@@ -420,7 +426,97 @@ async function postXhsTokens(
   }
 }
 
+/**
+ * Implement the QUERY_LAUNCHER_PENDING_STATUS handshake.
+ *
+ * The popup launcher asks "is the user currently on a B站 video that
+ * the backend has flagged as a YT repost?" so it can surface a "📺
+ * 搬运视频 · 等待 YouTube 重连" row inline. We answer by:
+ *
+ *   1. Reading the active tab's URL (no permissions needed — the
+ *      launcher's host_permissions already cover bilibili.com).
+ *   2. Bailing fast if the tab isn't a B站 video page.
+ *   3. Calling the backend lookup endpoint and translating its
+ *      {repost, pending, yt_url} shape into the launcher's
+ *      LauncherPendingStatus.
+ *
+ * Failures (no tab, no backend, parse error) all collapse to the
+ * "nothing to show" status — the launcher is best-effort UI, not a
+ * correctness surface, so a silent fallback is preferable to surfacing
+ * a noisy error in a 320 px popup.
+ */
+async function handleLauncherPendingQuery(): Promise<LauncherPendingStatus> {
+  const empty: LauncherPendingStatus = { isRepost: false, isPending: false, ytUrl: "" };
+
+  let activeUrl = "";
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeUrl = tab?.url ?? "";
+  } catch {
+    return empty;
+  }
+  if (!activeUrl || !activeUrl.includes("bilibili.com/video/")) {
+    return empty;
+  }
+
+  // BV ID pattern: BV followed by exactly 10 alphanumeric chars.
+  // Inlined here rather than importing the platform adapter so this
+  // file's import graph stays small (the SW bundle is hot-path).
+  const bvidMatch = activeUrl.match(/\/video\/(BV[a-zA-Z0-9]{10})/);
+  if (!bvidMatch) return empty;
+  const bvid = bvidMatch[1];
+
+  try {
+    const resp = await fetch(
+      apiUrl(`/api/yt-replacer/lookup?bvid=${encodeURIComponent(bvid)}`),
+      { signal: AbortSignal.timeout(2500) },
+    );
+    if (!resp.ok) return empty;
+    const data = (await resp.json()) as {
+      repost?: boolean;
+      yt_url?: string;
+      pending?: boolean;
+    };
+    return {
+      isRepost: data.repost === true,
+      isPending: data.pending === true,
+      ytUrl: typeof data.yt_url === "string" ? data.yt_url : "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // ── Popup-launcher protocol ──────────────────────────────────────
+  // The launcher uses `type:` as its discriminator (rest of the
+  // codebase uses `action:` — different convention to make it
+  // obvious that these are out-of-band UI pings, not data events).
+  if (message && typeof message.type === "string") {
+    if (message.type === PING_LAUNCHER_TO_BG) {
+      const reply: PingReply = {
+        ok: true,
+        sw_version: chrome.runtime.getManifest().version,
+      };
+      sendResponse(reply);
+      return; // synchronous reply, no need to keep the port open
+    }
+    if (message.type === QUERY_LAUNCHER_PENDING_STATUS) {
+      void handleLauncherPendingQuery()
+        .then(sendResponse)
+        .catch((error: unknown) => {
+          const fallback: LauncherPendingStatus = {
+            isRepost: false,
+            isPending: false,
+            ytUrl: "",
+          };
+          console.warn("[OpenBiliClaw] pending query failed:", error);
+          sendResponse(fallback);
+        });
+      return true; // async reply
+    }
+  }
+
   if (message.action === "XHS_URLS_OBSERVED") {
     void postXhsObservedUrls(message.data as Record<string, unknown>);
     return;
