@@ -591,6 +591,55 @@ async def test_refresh_controller_backfills_pool_copy_after_replenishment() -> N
     assert all(call == ({"profile": "ok"}, 60) for call in recommendations.pool_copy_calls)
 
 
+async def test_refresh_controller_detaches_embedding_prewarm_from_refresh_completion() -> None:
+    class _SlowEmbeddingPrewarmRecommendationEngine(_FakeRecommendationEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.supergroup_started = asyncio.Event()
+            self.mmr_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def prewarm_supergroup_embeddings(self) -> int:
+            self.supergroup_started.set()
+            await self.release.wait()
+            return 1
+
+        async def prewarm_pool_mmr_embeddings(self, *, limit: int = 200) -> int:
+            self.mmr_started.set()
+            await self.release.wait()
+            return 1
+
+    database = _FakeDatabase(
+        [
+            {"id": 1, "event_type": "view"},
+            {"id": 2, "event_type": "search"},
+        ],
+        pool_count=20,
+    )
+    recommendations = _SlowEmbeddingPrewarmRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    try:
+        result = await asyncio.wait_for(controller.refresh_if_needed(), timeout=0.2)
+    finally:
+        recommendations.release.set()
+        await asyncio.sleep(0)
+
+    assert result["refreshed"] is True
+    assert recommendations.supergroup_started.is_set()
+    assert recommendations.mmr_started.is_set()
+    assert controller._refresh_lock.locked() is False
+
+
 async def test_refresh_controller_uses_shared_delight_threshold_for_runtime_queries() -> None:
     database = _FakeDatabase(
         [],

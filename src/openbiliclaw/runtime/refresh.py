@@ -672,6 +672,22 @@ class ContinuousRefreshController:
             logger.exception("precompute_pool_copy task failed")
             return 0
 
+    async def _safe_prewarm_pool_mmr_embeddings(self) -> int:
+        """Warm MMR embeddings without blocking refresh completion."""
+        try:
+            return int(await self.recommendation_engine.prewarm_pool_mmr_embeddings())
+        except Exception:
+            logger.exception("prewarm_pool_mmr_embeddings failed")
+            return 0
+
+    async def _safe_prewarm_supergroup_embeddings(self) -> int:
+        """Warm topic-supergroup embeddings without blocking refresh completion."""
+        try:
+            return int(await self.recommendation_engine.prewarm_supergroup_embeddings())
+        except Exception:
+            logger.exception("prewarm_supergroup_embeddings failed")
+            return 0
+
     async def run_forever(self) -> None:
         """Launch all background tasks as independent concurrent loops.
 
@@ -1252,19 +1268,19 @@ class ContinuousRefreshController:
             # Pre-warm supergroup-merge embeddings so the popup's "换一批"
             # hot path always hits the L1/L2 cache. New labels added by
             # this refresh round get warmed before the user clicks.
-            try:
-                await self.recommendation_engine.prewarm_supergroup_embeddings()
-            except Exception:
-                logger.exception("prewarm_supergroup_embeddings failed")
-            # Warm the MMR per-candidate embedding L2 cache so the next
-            # popup "换一批" doesn't have to pay the embedding round trip
-            # synchronously. Detached from the per-item warm hook in
-            # discovery — covers items that pre-date the hook and survives
-            # restart cycles.
-            try:
-                await self.recommendation_engine.prewarm_pool_mmr_embeddings()
-            except Exception:
-                logger.exception("prewarm_pool_mmr_embeddings failed")
+            # Warm embedding-derived caches in the background. They are
+            # latency optimizations for later serve() calls, not
+            # requirements for this refresh result to become visible.
+            # Keeping them off the refresh lock prevents slow local
+            # embedding backends from leaving the popup stuck at "正在补货".
+            self._track_task(
+                "prewarm_supergroup_embeddings",
+                self._safe_prewarm_supergroup_embeddings(),
+            )
+            self._track_task(
+                "prewarm_pool_mmr_embeddings",
+                self._safe_prewarm_pool_mmr_embeddings(),
+            )
             delight_count_after = self._safe_count_delight_candidates()
             net_new_delights = max(0, delight_count_after - delight_count_before)
             if net_new_delights > 0:
