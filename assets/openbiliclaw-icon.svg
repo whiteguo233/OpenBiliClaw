@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenBiliClaw — master app/extension icon.
+
+  This is the single source of truth for every PNG icon we ship:
+
+    extension/icons/icon{16,48,128}.png   (browser extension)
+    safari/App/Assets.xcassets/AppIcon.appiconset/icon_*.png  (host app)
+    safari/Extension/Resources/icons/icon{16,48,128}.png      (safari ext)
+
+  Regenerate the PNGs by running `scripts/regenerate-icons.mjs` from
+  the extension/ directory (or run the equivalent Python in the
+  build script).
+
+  Design notes:
+    – 1024×1024 viewBox so every macOS app-icon slot down to 16@1x
+      can be rendered at native resolution without resampling artefacts.
+    – Soft pink rounded-square background (Apple-style squircle
+      approximation via rx).
+    – Brand pink open ring with a sky-blue accent dot near the
+      ring's opening. The two-color silhouette stays legible at 16px.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Squircle background. rx ≈ 22% matches macOS Big Sur+ icon
+       geometry closely enough for the rest of the OS chrome to
+       blend in. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228"
+        fill="#FFEDF1"/>
+
+  <!-- Pink open ring. We render this as a single stroked circle
+       with stroke-dasharray, which keeps it as one geometric
+       primitive that scales cleanly at every rasterization size. -->
+  <g transform="translate(512 544)">
+    <!--
+      circle r=192 → circumference = 2πr ≈ 1206.4
+      We want an arc of about 290° visible (gap ≈ 70° in the upper
+      right). That's 1206.4 × (290/360) ≈ 971 visible, with a
+      ~236 unit gap. The starting offset places the gap in the
+      upper-right area (between +x axis and -y axis).
+    -->
+    <circle cx="0" cy="0" r="192"
+            fill="none" stroke="#FB7299" stroke-width="40"
+            stroke-linecap="round"
+            stroke-dasharray="971 236"
+            stroke-dashoffset="-786"
+            transform="rotate(-90)"/>
+  </g>
+
+  <!-- Blue accent dot, sitting near the ring opening. -->
+  <circle cx="696" cy="344" r="74" fill="#50A0F0"/>
+</svg>
