@@ -748,6 +748,7 @@ class ProfileUpdatePipeline:
                 preference_analyzer=self._preference_analyzer,
                 profile_builder=self._profile_builder,
                 embedding_service=self._embedding_service,
+                llm_service=getattr(self._preference_analyzer, "registry", None),
             )
         except Exception:
             logger.exception("Failed to update layer %s", layer.value)
