@@ -8,7 +8,7 @@ import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
 import { initRecommendView, onStreamEvent as recStreamEvent } from "./views/recommend.js";
 import { initProfileView, onStreamEvent as profileStreamEvent } from "./views/profile.js";
-import { initChatView, onStreamEvent as chatStreamEvent, toggleMessages } from "./views/chat.js";
+import { initChatView, onStreamEvent as chatStreamEvent, toggleMessages, loadNotifications } from "./views/chat.js";
 
 // ── DOM refs ─────────────────────────────────────────────────
 const $app = document.getElementById("app");
@@ -196,6 +196,7 @@ export function setUnreadCount(n) {
   }
 
   stream.connect();
+  loadNotifications(); // eagerly load badge count on all tabs
 
   window.addEventListener("hashchange", () => navigateToTab(readHash()));
   navigateToTab(readHash());

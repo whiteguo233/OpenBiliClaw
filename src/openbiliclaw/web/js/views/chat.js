@@ -426,7 +426,7 @@ async function refreshAfterChatTurn() {
   } catch { /* best-effort */ }
 }
 
-async function loadNotifications() {
+export async function loadNotifications() {
   try {
     const [notifData, delightData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
