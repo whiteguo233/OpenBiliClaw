@@ -379,6 +379,11 @@ def replace_recommendation_row(
     original_expr = str(row.get("expression", "") or "")
     yt_url = yt["yt_url"]
     yt_cover = yt.get("yt_cover_url", "")
+    # Fallback: construct cover from video ID if cache entry predates cover_url
+    if not yt_cover and "youtube.com/watch?v=" in yt_url:
+        vid_match = re.search(r"v=([a-zA-Z0-9_-]{11})", yt_url)
+        if vid_match:
+            yt_cover = f"https://i.ytimg.com/vi/{vid_match.group(1)}/hqdefault.jpg"
     expr_suffix = (
         f"\n💡 这是搬运，原视频在 YouTube：{yt_url}"
     )
