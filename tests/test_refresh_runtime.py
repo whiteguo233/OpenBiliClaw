@@ -3,9 +3,26 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import datetime
+from types import SimpleNamespace
+
+import pytest
 
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
+
+_MULTI_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class _FakeMemoryManager:
@@ -94,10 +111,7 @@ class _FakeDatabase:
         return dict(self.source_counts)
 
     def get_pool_distribution_counts(self) -> dict[str, dict[str, int]]:
-        return {
-            axis: dict(counts)
-            for axis, counts in self.distribution_counts.items()
-        }
+        return {axis: dict(counts) for axis, counts in self.distribution_counts.items()}
 
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
         return 0
@@ -214,6 +228,15 @@ class _FakeDouyinProducer:
         return {"discovered": 3, "reason": "ok"}
 
 
+class _FakeYoutubeProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"discovered": 3, "reason": "ok"}
+
+
 class _FakeRecommendationEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, object]], dict[str, object], int]] = []
@@ -250,6 +273,186 @@ class _FakeEventHub:
 
     async def publish(self, event: dict[str, object]) -> None:
         self.events.append(event)
+
+
+_LOOP_BODY_ATTRS = [
+    ("_loop_refresh", ("_on_profile_ready_if_first_time", "refresh_if_needed")),
+    ("_loop_pool_precompute", ("_drain_pool_precompute_backlog",)),
+    ("_loop_soul_pipeline", ("_tick_soul_pipeline",)),
+    ("_loop_xhs_producer", ("_tick_xhs_producer",)),
+    ("_loop_douyin_producer", ("_tick_douyin_producer",)),
+    ("_loop_youtube_producer", ("_tick_youtube_producer",)),
+    (
+        "_loop_proactive_push",
+        (
+            "prepare_delight_candidates",
+            "_publish_delight_if_available",
+            "_publish_interest_probe_if_available",
+        ),
+    ),
+]
+
+
+def _controller_with_gate(
+    *,
+    scheduler_config: object,
+    presence: PresenceTracker | None = None,
+) -> ContinuousRefreshController:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        scheduler_config=scheduler_config,
+        presence=presence or PresenceTracker(now=_FakeClock()),
+        check_interval_seconds=3600,
+        proactive_push_interval_seconds=3600,
+    )
+    controller._init_grace_consumed = True
+    return controller
+
+
+async def _run_one_loop_with_cancelled_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+    controller: ContinuousRefreshController,
+    loop_name: str,
+    body_attrs: tuple[str, ...],
+) -> int:
+    calls = 0
+
+    async def _body(*_args: object, **_kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return None
+
+    async def _cancel_sleep(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    for body_attr in body_attrs:
+        monkeypatch.setattr(controller, body_attr, _body)
+    monkeypatch.setattr(asyncio, "sleep", _cancel_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await getattr(controller, loop_name)()
+    return calls
+
+
+@pytest.mark.parametrize(("loop_name", "body_attrs"), _LOOP_BODY_ATTRS)
+async def test_refresh_loops_skip_body_when_scheduler_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    body_attrs: tuple[str, ...],
+) -> None:
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(enabled=False, pause_on_extension_disconnect=False),
+    )
+
+    calls = await _run_one_loop_with_cancelled_sleep(
+        monkeypatch,
+        controller,
+        loop_name,
+        body_attrs,
+    )
+
+    assert calls == 0
+
+
+@pytest.mark.parametrize(("loop_name", "body_attrs"), _LOOP_BODY_ATTRS)
+async def test_refresh_loops_skip_body_when_extension_presence_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    body_attrs: tuple[str, ...],
+) -> None:
+    clock = _FakeClock()
+    presence = PresenceTracker(now=clock)
+    clock.advance(11)
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=True,
+            extension_disconnect_grace_seconds=10,
+        ),
+        presence=presence,
+    )
+
+    calls = await _run_one_loop_with_cancelled_sleep(
+        monkeypatch,
+        controller,
+        loop_name,
+        body_attrs,
+    )
+
+    assert calls == 0
+
+
+@pytest.mark.parametrize(("loop_name", "body_attrs"), _LOOP_BODY_ATTRS)
+async def test_refresh_loops_run_body_when_extension_presence_is_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    body_attrs: tuple[str, ...],
+) -> None:
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=True,
+            extension_disconnect_grace_seconds=10,
+        ),
+    )
+
+    calls = await _run_one_loop_with_cancelled_sleep(
+        monkeypatch,
+        controller,
+        loop_name,
+        body_attrs,
+    )
+
+    assert calls >= 1
+
+
+async def test_profile_ready_classify_is_skipped_while_llm_work_blocked() -> None:
+    class _ClassifyingRecommendationEngine(_FakeRecommendationEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.classify_calls = 0
+
+        async def classify_pool_backlog(self, *, profile: object, limit: int) -> int:
+            self.classify_calls += 1
+            return limit
+
+    rec_engine = _ClassifyingRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=rec_engine,
+        scheduler_config=SimpleNamespace(enabled=False, pause_on_extension_disconnect=False),
+    )
+
+    await controller._on_profile_ready_if_first_time()
+
+    assert rec_engine.classify_calls == 0
+    assert controller._profile_ready_observed is False
+
+
+def test_refresh_controller_llm_work_allowed_delegates_to_shared_gate() -> None:
+    clock = _FakeClock()
+    presence = PresenceTracker(now=clock)
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(
+            enabled=True,
+            pause_on_extension_disconnect=True,
+            extension_disconnect_grace_seconds=5,
+        ),
+        presence=presence,
+    )
+
+    assert controller._llm_work_allowed() is True
+
+    clock.advance(6)
+
+    assert controller._llm_work_allowed() is False
 
 
 class _FakeSpeculation:
@@ -590,6 +793,7 @@ async def test_force_refresh_skips_bilibili_when_platform_quota_full() -> None:
         discovery_engine=discovery,
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=30,
     )
 
@@ -626,6 +830,7 @@ async def test_manual_refresh_skip_does_not_reuse_stale_replenishment_message() 
         recommendation_engine=_FakeRecommendationEngine(),
         event_hub=event_hub,
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=30,
     )
 
@@ -891,6 +1096,7 @@ async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
         discovery_engine=discovery,
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=4,
         trending_refresh_hours=999,
         explore_refresh_hours=999,
@@ -932,6 +1138,7 @@ async def test_refresh_controller_skips_bilibili_when_only_small_sources_underfi
         discovery_engine=discovery,
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=4,
         trending_refresh_hours=999,
         explore_refresh_hours=999,
@@ -1097,11 +1304,7 @@ def test_source_target_counts_use_platform_default_shares() -> None:
         pool_target_count=600,
     )
 
-    assert controller._source_target_counts() == {
-        "bilibili": 480,
-        "xiaohongshu": 60,
-        "douyin": 60,
-    }
+    assert controller._source_target_counts() == {"bilibili": 600}
 
 
 def test_source_target_counts_use_configured_platform_shares() -> None:
@@ -1141,8 +1344,27 @@ def test_source_replenishment_plan_maps_bilibili_deficit_to_bilibili_strategies(
     )
 
     assert controller._build_source_replenishment_plan() == [
-        (["search", "related_chain", "trending", "explore"], 180)
+        (["search", "related_chain", "trending", "explore"], 300)
     ]
+
+
+def test_disabled_bilibili_share_skips_bilibili_refresh_strategies() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [{"id": 1, "event_type": "click"}],
+            pool_count=600,
+            source_counts={"youtube": 600},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"youtube": 1},
+        signal_event_threshold=1,
+    )
+
+    assert controller._build_refresh_plan(_FakeMemoryManager().load_discovery_runtime_state()) == []
 
 
 async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() -> None:
@@ -1162,6 +1384,7 @@ async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() ->
         discovery_engine=discovery,
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=30,
     )
 
@@ -1193,12 +1416,13 @@ def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
     )
 
     assert controller._build_source_replenishment_plan() == []
 
 
-def test_source_replenishment_plan_maps_youtube_deficit_to_youtube_strategies() -> None:
+def test_source_replenishment_plan_leaves_youtube_deficit_to_youtube_producer() -> None:
     controller = ContinuousRefreshController(
         memory_manager=_FakeMemoryManager(),
         database=_FakeDatabase(
@@ -1216,9 +1440,34 @@ def test_source_replenishment_plan_maps_youtube_deficit_to_youtube_strategies() 
         pool_source_shares={"bilibili": 8, "youtube": 2},
     )
 
-    assert controller._build_source_replenishment_plan() == [
-        (["yt_search", "yt_trending", "yt_channel"], 20)
-    ]
+    assert controller._build_source_replenishment_plan() == []
+
+
+def test_warn_on_stranded_source_shares_checks_youtube_producer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("WARNING")
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=80,
+            source_counts={
+                "bilibili": 80,
+                "youtube": 0,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=100,
+        pool_source_shares={"bilibili": 8, "youtube": 2},
+        youtube_producer=None,
+    )
+
+    controller._warn_on_stranded_source_shares()
+
+    assert "youtube" in caplog.text
 
 
 async def test_xhs_producer_receives_source_deficit_limit() -> None:
@@ -1234,6 +1483,7 @@ async def test_xhs_producer_receives_source_deficit_limit() -> None:
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=30,
         xhs_producer=producer,
     )
@@ -1256,6 +1506,7 @@ async def test_douyin_producer_runs_when_douyin_under_quota() -> None:
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
         discovery_limit=30,
         douyin_producer=producer,
     )
@@ -1286,6 +1537,51 @@ async def test_douyin_producer_skips_when_douyin_at_quota() -> None:
     assert producer.calls == []
 
 
+async def test_youtube_producer_runs_when_youtube_under_quota() -> None:
+    producer = _FakeYoutubeProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "youtube": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "youtube": 2},
+        discovery_limit=30,
+        youtube_producer=producer,
+    )
+
+    await controller._tick_youtube_producer()
+
+    assert producer.calls == [30]
+
+
+async def test_youtube_producer_skips_when_youtube_at_quota() -> None:
+    producer = _FakeYoutubeProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "youtube": 120},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "youtube": 2},
+        youtube_producer=producer,
+    )
+
+    await controller._tick_youtube_producer()
+
+    assert producer.calls == []
+
+
 def test_pool_cap_trim_receives_xhs_family_quota() -> None:
     database = _FakeDatabase([], pool_count=650)
     controller = ContinuousRefreshController(
@@ -1295,6 +1591,7 @@ def test_pool_cap_trim_receives_xhs_family_quota() -> None:
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
     )
 
     assert controller._enforce_pool_cap() is True
@@ -1313,6 +1610,7 @@ def test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target() -> 
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
     )
 
     assert controller._enforce_pool_cap() is False
@@ -1332,6 +1630,7 @@ def test_pool_cap_reactivates_under_quota_sources_before_trim() -> None:
         discovery_engine=_FakeDiscoveryEngine(),
         recommendation_engine=_FakeRecommendationEngine(),
         pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
     )
 
     assert controller._enforce_pool_cap() is True

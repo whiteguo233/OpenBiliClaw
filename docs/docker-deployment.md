@@ -12,7 +12,7 @@
 
 `docker-compose.yml` 现在多了一个 `ollama` 服务：自动拉 `bge-m3` 模型，对外暴露 `http://ollama:11434`，用 Docker 网络和后端互通。第一次 `docker compose up -d --build` 会多花 2–4 分钟下载模型（~568MB），之后用 named volume `openbiliclaw_ollama` 持久化，重建容器不重拉。
 
-后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3"` + `[llm.ollama] base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`，所以你**只需要给一个 chat 模型的 Key**，embedding 完全免费 + 离线可用。
+后端容器首次启动时会自动把 `[llm.embedding] provider="ollama" model="bge-m3" base_url="http://ollama:11434/v1"` 写进生成的 `config.toml`，所以你**只需要给一个 chat 模型的 Key**，embedding 完全免费 + 离线可用。
 
 不需要这个 sidecar？删掉 `docker-compose.yml` 里 `ollama` 服务块和后端的 `OPENBILICLAW_SEED_OLLAMA_DEFAULTS` 环境变量即可。
 
@@ -41,7 +41,8 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 - **B 站**：浏览器里登录 https://www.bilibili.com 即可。v0.3.12+ 扩展会自动把 Cookie 推到容器里的 `/api/bilibili/cookie`，免 F12
 - **小红书**：必须在浏览器里登录 https://www.xiaohongshu.com。后端不直接抓小红书，所有发现/详情都通过扩展以你的登录态执行——大部分任务(search / creator 抓取)在隐藏 tab 里跑;但 v0.3.22+ 起 `init` 期间的 **bootstrap_profile 滚动任务会临时打开一个前台 tab**(后台 tab 在小红书上无法触发瀑布流懒加载),会抢一次焦点 10-30 秒,完成后自动关闭。**不登录 = 完全没有小红书内容**
 - **抖音**：如果要启用 `init --yes-douyin`、`fetch-douyin` 或 `discover --source douyin`，必须在装了扩展的宿主机浏览器里登录 https://www.douyin.com。后端不直接抓抖音；初始化只接收扩展回传的发布 / 收藏 / 点赞 / 关注信号。search / hot / feed discovery 优先走登录浏览器插件签名桥；Cookie 可用环境变量覆盖或由扩展同步到容器 volume 的 `data/douyin_cookie.json`。不登录或触发风控时会返回 0 条并让 init 继续。
-- **CDP 说明**：小红书和抖音当前都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
+- **YouTube**：如果要启用 `init --yes-youtube` 或 `fetch-youtube`，必须在装了扩展的宿主机浏览器里登录 https://www.youtube.com。后端不直接抓 YouTube；初始化只接收扩展回传的观看历史 / 订阅 / 点赞信号。不登录、页面布局变化或任务仍在后台跑时会返回 0 条并让 init 继续。
+- **CDP 说明**：小红书、抖音和 YouTube 当前都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
 
 详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
 
@@ -52,15 +53,19 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 git clone https://github.com/whiteguo233/OpenBiliClaw.git
 cd OpenBiliClaw
 
-# 2. 启动容器（首次会构建镜像，后续仅增量）
-docker compose up -d --build
+# 2. Docker 主路径：启动 compose、确认配置、等待 Cookie、自动运行 init
+python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie
 
-# 3. 一键初始化：交互式向导 + B 站认证 + 画像生成 + 首轮发现
-#    首次运行预计 2–5 分钟（拉历史 / LLM 调用 / 多策略发现）
-docker exec -it openbiliclaw-backend openbiliclaw init
-
-# 4. 健康状态：HEALTHCHECK 会让 docker compose ps 在容器真正可服务后才显示 healthy
+# 3. 健康状态：HEALTHCHECK 会让 docker compose ps 在容器真正可服务后才显示 healthy
 docker compose ps
+```
+
+`agent_bootstrap.py --mode docker` 是 Docker 部署的主入口：它会启动 compose，把宿主机确认后的 `config.toml` 同步到容器 `/app/runtime`，在 B 站 Cookie 通过扩展同步后继续自动运行 init。缺 LLM Key、缺 Cookie 或缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。
+
+**手动 fallback**：高级排查或重复初始化时，仍可直接运行：
+
+```bash
+docker exec -it openbiliclaw-backend openbiliclaw init
 ```
 
 `init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
@@ -70,18 +75,18 @@ docker compose ps
 3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
    - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）
    - **2) 云端 Gemini embedding**（质量略高 / 跨语言更稳 / 免费档每天 1500 次够用）
-   - **3) 跟随主 LLM**（最省事；主 LLM 是 Claude / DeepSeek / OpenRouter 时自动回退到选项 1）
+   - **3) 不启用 embedding**（可稍后在设置页或 `setup-embedding` 单独配置）
    - 高级：自定义 OpenAI 兼容服务 / 指定其他 provider（默认折叠）
 4. **Phase 4 — Per-module 覆盖（高级，默认跳过）**：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
 
-> 💡 **Embedding 选择**：交互式 `init` 会单独问；AI agent 一句话安装则必须在调用 `agent_bootstrap.py` 时显式传 `--embedding-provider ... --embedding-model ...`（默认推荐 `ollama` + `bge-m3`）。如果用户选择“跟随主 LLM”，传 `--embedding-provider ""`；主 LLM 是 Claude / DeepSeek / OpenRouter 时 bootstrap 会把它等价落到本地 Ollama bge-m3 并预拉模型。运行时 registry 仍有 `ollama → gemini → openai` 的 fallback 链兜底。
+> 💡 **Embedding 选择**：交互式 `init` 会单独问；AI agent 一句话安装则必须在调用 `agent_bootstrap.py` 时显式传 `--embedding-provider ... --embedding-model ...`（默认推荐 `ollama` + `bge-m3`）。Embedding 不再“跟随主 LLM”，传 `--embedding-provider ""` 表示不启用 embedding。运行时 embedding fallback 默认关闭；需要自动切 provider 或借用 chat-side 凭据时，在设置页打开 embedding fallback。
 
 接着 B 站登录态有 **2 种方式**（v0.3.12+）：
 
-- **A.** 装浏览器扩展（推荐，零配置）—— [下载](https://github.com/whiteguo233/OpenBiliClaw/releases) 装好登录 B 站后，扩展会几秒内把 Cookie 自动推到 `http://127.0.0.1:8420/api/bilibili/cookie`。这条路向导会先退出，等同步好再 `docker exec -it openbiliclaw-backend openbiliclaw init` 完成 init
+- **A.** 装浏览器扩展（推荐，零配置）—— [下载](https://github.com/whiteguo233/OpenBiliClaw/releases) 装好登录 B 站后，扩展会几秒内把 Cookie 自动推到 `http://127.0.0.1:8420/api/bilibili/cookie`。bootstrap 会等待 Cookie 到达并继续自动运行 init
 - **B.** 手动贴 Cookie —— 向导内附 F12 → Network 取 cookie 的 5 步教程
 
-最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
+最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏 / 关注默认各最多 300 条 / 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
 
 AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外输出
 `BOOTSTRAP_STATUS status=progress message=init_progress` 事件。Agent 应把
@@ -89,8 +94,8 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 最终 `init_complete` 后才汇报。
 
 > 🌸 **小红书数据是否加入(v0.3.27+)**:init 在 Docker 里跑时也会弹一个交互式问题——把小红书的收藏 / 点赞混进画像吗?
-> - 想加就回 Y(默认),会有准备清单提示你装扩展 + 登录小红书。注意 Docker 模式下扩展是装在你**宿主机**的浏览器里的,后端在容器内通过 8420 端口拉数据
-> - 不想加就回 N,只用 B 站数据建画像
+> - 想加就回 Y,会有准备清单提示你装扩展 + 登录小红书。注意 Docker 模式下扩展是装在你**宿主机**的浏览器里的,后端在容器内通过 8420 端口拉数据
+> - 直接回车或回 N 会跳过,只用 B 站数据建画像
 > - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-xhs` 跳过 / `--yes-xhs` 强制启用
 > - AI agent 的 `agent_bootstrap.py` auto-init 不会默认启用小红书；必须传 `--yes-xhs` 或 `--no-xhs`。没传会返回 `needs_decisions`，让 agent 先问用户
 > - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_XHS=1` 环境变量
@@ -101,6 +106,13 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 > - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-douyin` 跳过 / `--yes-douyin` 强制启用
 > - AI agent 的 `agent_bootstrap.py` auto-init 同样要求 `--yes-douyin` 或 `--no-douyin` 二选一
 > - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_DOUYIN=1` 环境变量
+
+> 🌐 **YouTube 数据是否加入**:init 也会单独问是否把 YouTube 观看历史 / 订阅 / 点赞混进画像。
+> - 想加就回 Y，会提示你装扩展 + 登录 YouTube。注意扩展仍在宿主机浏览器里执行，Docker 容器只通过 8420 端口收结果
+> - 不想加就回 N；非交互式终端默认跳过 YouTube
+> - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-youtube` 跳过 / `--yes-youtube` 强制启用
+> - AI agent 的 `agent_bootstrap.py` auto-init 同样要求 `--yes-youtube` 或 `--no-youtube` 二选一
+> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_YOUTUBE=1` 环境变量
 
 > 💡 **AI agent 一句话部署**：把下面这句粘到 Claude Code / Codex CLI / Cursor / OpenClaw：
 > ```
@@ -136,11 +148,11 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 
 | Provider | 是否要 Key | 适合谁 | 备注 |
 |---|---|---|---|
-| `deepseek` ★默认 | ✅ | 默认推荐 / 几乎免费 / 国内可直连 | ¥0.001/千 token，月费通常 ¥0.5-2，OpenAI 兼容协议。无 embedding 接口（v0.3.20+ 自动 fallback 到本地 Ollama bge-m3） |
+| `deepseek` ★默认 | ✅ | 默认推荐 / 几乎免费 / 国内可直连 | ¥0.001/千 token，月费通常 ¥0.5-2，OpenAI 兼容协议。无 embedding 接口；embedding 需在 `[llm.embedding]` 独立配置 |
 | `gemini` | ✅ | Google AI Studio 账户 | 免费档每天 1500 次够日常用；自带 embedding endpoint |
 | `openai` | ✅ | 已有 OpenAI 账户 | base_url 留空 = `https://api.openai.com/v1`；自带 embedding endpoint |
-| `claude` | ✅ | Anthropic 账户 | 高质量推理；无 embedding 接口（v0.3.20+ 自动 fallback） |
-| `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；embedding 不可靠（v0.3.20+ 自动 fallback） |
+| `claude` | ✅ | Anthropic 账户 | 高质量推理；无 embedding 接口，需独立配置 `[llm.embedding]` |
+| `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；embedding 不可靠，建议独立配置 Ollama / Gemini / OpenAI embedding |
 | `ollama` | ❌ | 完全离线 / 不要 Key / 16GB+ 内存 | CPU 推理首次响应慢（10-60s）。Docker 里 `[llm.ollama] base_url` 必须设成 `http://host.docker.internal:11434/v1` 才能从容器访问宿主机的 Ollama |
 | OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 写到 `[llm.openai]` 同段，关键是显式 `base_url` 字段。**普通用户不要选这个** |
 
@@ -158,7 +170,7 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 # B 站认证登录
 docker exec -it openbiliclaw-backend openbiliclaw auth login
 
-# 可选：启用本地 Ollama 作为 embedding 兜底（v0.3.3+ 真实生效）
+# 可选：启用本地 Ollama 作为独立 embedding provider
 docker exec -it openbiliclaw-backend openbiliclaw setup-embedding
 
 # 手动触发内容发现
@@ -263,7 +275,7 @@ model = "llama3"
 base_url = "http://host.docker.internal:11434"
 ```
 
-### 本地 embedding 兜底（Ollama + bge-m3）
+### 本地 embedding provider（Ollama + bge-m3）
 
 不想再多一份 embedding API Key、或想让系统在断网时仍能跑相似度计算，可以让 Ollama 同时承担 embedding 服务：
 
@@ -281,9 +293,10 @@ docker exec -it openbiliclaw-backend uv run openbiliclaw setup-embedding
 [llm.embedding]
 provider = "ollama"
 model = "bge-m3"
+base_url = "http://host.docker.internal:11434/v1"
 ```
 
-注意：容器需要能访问宿主机的 Ollama，确认 `[llm.ollama] base_url` 已经设到 `http://host.docker.internal:11434`，embedding 会自动复用同一连接。
+注意：容器需要能访问宿主机的 Ollama；embedding 现在读取 `[llm.embedding].base_url`，不会自动复用 `[llm.ollama].base_url`。
 
 ## 常见问题
 
@@ -312,3 +325,20 @@ ports:
 **Q: 数据库出现问题怎么修复？**
 
 如果数据库出现问题，可以在容器内运行 `docker exec openbiliclaw-backend openbiliclaw db-repair` 进行检查和修复。
+
+**Q: 后端启动了、健康检查也通过了，但插件里没有推荐？**
+
+最常见原因是没有执行过 `init`。容器启动只运行 API 服务器，用户画像需要通过 init 命令生成：
+
+```bash
+docker exec -it openbiliclaw-backend openbiliclaw init
+```
+
+也可以检查 health endpoint 确认画像状态：
+
+```bash
+curl -s http://127.0.0.1:8420/api/health | python -m json.tool
+# 看 "profile_ready" 字段：false 或缺失都表示还需要跑 init
+```
+
+v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。

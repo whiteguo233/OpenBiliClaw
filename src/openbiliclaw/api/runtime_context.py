@@ -10,6 +10,7 @@ required.
   - ``database`` — owns the SQLite connection
   - ``memory_manager`` — owns file-backed memory layers
   - ``event_hub`` — holds live WebSocket subscriber queues
+  - ``presence`` — tracks shared extension runtime-stream presence
 
 **Swappable components** (rebuilt on hot-reload):
   - ``llm_registry``, ``llm_service``, ``bilibili_client``
@@ -27,6 +28,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.runtime.presence import PresenceTracker
+from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
@@ -34,10 +37,174 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from openbiliclaw.config import Config
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
     return effective_pool_source_shares(config)
+
+
+def build_youtube_discovery_strategies(
+    *,
+    config: Any,
+    client: Any,
+    llm_service: Any,
+    memory: Any,
+    concurrency: Any,
+    database: Database | None = None,
+    strategy_unit_budget: dict[str, int] | None = None,
+) -> list[Any]:
+    """Build YouTube discovery strategies from `[sources.youtube]` config."""
+
+    from openbiliclaw.discovery.strategies.youtube import (
+        YoutubeChannelStrategy,
+        YoutubeSearchStrategy,
+        YoutubeTrendingStrategy,
+    )
+
+    yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
+    budgets = strategy_unit_budget or {}
+    search_budget = int(budgets.get("yt_search", getattr(yt_cfg, "daily_search_budget", 6)))
+    trending_budget = int(budgets.get("yt_trending", getattr(yt_cfg, "daily_trending_budget", 50)))
+    channel_budget = int(budgets.get("yt_channel", getattr(yt_cfg, "daily_channel_budget", 10)))
+    return [
+        YoutubeSearchStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            queries_per_run=max(0, search_budget),
+        ),
+        YoutubeTrendingStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            fetch_limit=max(0, trending_budget),
+        ),
+        YoutubeChannelStrategy(
+            client=client,
+            llm_service=llm_service,
+            memory=memory,
+            concurrency=concurrency,
+            database=database,
+            max_channels=max(0, channel_budget),
+        ),
+    ]
+
+
+def _youtube_strategy_units_used(strategy: Any, *, fallback: int) -> int:
+    """Return the execution units consumed by one YouTube strategy run."""
+    name = str(getattr(strategy, "name", ""))
+    intermediates = getattr(strategy, "last_intermediates", {}) or {}
+    if name == "yt_search":
+        queries = intermediates.get("queries")
+        if isinstance(queries, list):
+            return len(queries)
+    if name == "yt_trending":
+        fetched = intermediates.get("fetched")
+        if isinstance(fetched, int):
+            return fetched
+    if name == "yt_channel":
+        channel_ids = intermediates.get("channel_ids")
+        if isinstance(channel_ids, list):
+            return len(channel_ids)
+    return max(0, int(fallback))
+
+
+def _build_yt_scraper_client() -> Any:
+    from openbiliclaw.youtube.client import YtScraperClient
+
+    return YtScraperClient()
+
+
+def build_youtube_discovery_producer(
+    *,
+    config: Any,
+    database: Any,
+    soul_engine: Any,
+    discovery_engine: Any,
+    llm_service: Any,
+    memory: Any,
+    concurrency: Any,
+) -> Any | None:
+    """Build the runtime YouTube producer if YouTube discovery is enabled."""
+    yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
+    if yt_cfg is None or not bool(getattr(yt_cfg, "enabled", False)):
+        return None
+    scheduler = getattr(config, "scheduler", None)
+    if not bool(getattr(scheduler, "enabled", True)):
+        return None
+    if not hasattr(database, "conn"):
+        logger.info("youtube producer disabled: database does not expose sqlite connection")
+        return None
+
+    from openbiliclaw.runtime.youtube_producer import (
+        YoutubeDiscoveryProducer,
+        YoutubeStrategyRunResult,
+    )
+
+    try:
+        yt_client = _build_yt_scraper_client()
+    except ImportError as exc:
+        logger.info("youtube producer disabled: YouTube dependencies unavailable: %s", exc)
+        return None
+
+    async def _discover(
+        profile: Any,
+        *,
+        strategy: str,
+        unit_budget: int,
+        result_limit: int,
+    ) -> YoutubeStrategyRunResult:
+        strategies = build_youtube_discovery_strategies(
+            config=config,
+            client=yt_client,
+            llm_service=llm_service,
+            memory=memory,
+            concurrency=concurrency,
+            database=database,
+            strategy_unit_budget={strategy: unit_budget},
+        )
+        selected = [item for item in strategies if item.name == strategy]
+        if not selected:
+            return YoutubeStrategyRunResult(items=[], units_used=0, source_counts={})
+
+        selected_strategy = selected[0]
+        discovery_engine.register_strategy(selected_strategy)
+        raw_items = await discovery_engine.discover(
+            profile,
+            strategies=[strategy],
+            limit=max(1, int(result_limit)),
+        )
+        items = [
+            item
+            for item in raw_items
+            if str(getattr(item, "source_platform", "")) == "youtube"
+            or str(getattr(item, "source_strategy", "")).startswith("yt_")
+        ]
+        units_used = _youtube_strategy_units_used(
+            selected_strategy,
+            fallback=max(0, int(unit_budget)),
+        )
+        return YoutubeStrategyRunResult(
+            items=items,
+            units_used=units_used,
+            source_counts={strategy: len(items)},
+        )
+
+    return YoutubeDiscoveryProducer(
+        database=database,
+        soul_engine=soul_engine,
+        discover=_discover,
+        enabled=True,
+        min_interval_minutes=int(getattr(yt_cfg, "min_interval_minutes", 60)),
+        daily_search_budget=int(getattr(yt_cfg, "daily_search_budget", 6)),
+        daily_trending_budget=int(getattr(yt_cfg, "daily_trending_budget", 50)),
+        daily_channel_budget=int(getattr(yt_cfg, "daily_channel_budget", 10)),
+    )
 
 
 @dataclass
@@ -48,6 +215,7 @@ class RuntimeContext:
     database: Any = None
     memory_manager: Any = None
     event_hub: Any = None
+    presence: PresenceTracker = field(default_factory=PresenceTracker)
     # v0.3.63+: tracks every detached ``asyncio.create_task`` spawned by
     # the runtime (refresh manual / per-strategy precompute, recommendation
     # engine classify+delight, prewarm helpers, per-event triggers). On
@@ -58,6 +226,9 @@ class RuntimeContext:
 
     # ── Swappable (rebuilt on hot-reload) ───────────────────────────
     config: Any = None
+    degraded: bool = False
+    degraded_reason: str = ""
+    degraded_issues: list[Any] = field(default_factory=list)
     llm_registry: Any = None
     llm_service: Any = None
     bilibili_client: Any = None
@@ -68,6 +239,11 @@ class RuntimeContext:
     runtime_controller: Any = None
     account_sync_service: Any = None
     auto_update_service: Any = None
+
+    def background_llm_work_allowed(self) -> bool:
+        """Return whether daemon-owned background LLM / embedding work may run."""
+        scheduler = getattr(getattr(self, "config", None), "scheduler", None)
+        return _gate(scheduler, self.presence)
 
     async def rebuild_from_config(self, new_config: Config) -> None:
         """Rebuild all swappable components from *new_config*.
@@ -118,7 +294,7 @@ class RuntimeContext:
         )
         from openbiliclaw.llm import build_llm_registry
         from openbiliclaw.llm.registry import build_embedding_service
-        from openbiliclaw.llm.service import LLMService
+        from openbiliclaw.llm.service import LLMService, module_overrides_from_config
         from openbiliclaw.llm.usage_recorder import UsageRecorder
         from openbiliclaw.recommendation.engine import RecommendationEngine
         from openbiliclaw.runtime.account_sync import AccountSyncService
@@ -130,10 +306,12 @@ class RuntimeContext:
         # 1. LLM layer (with usage ledger so ``openbiliclaw cost`` has data)
         new_registry = build_llm_registry(new_config)
         new_usage_recorder = UsageRecorder(sink=self.database)
+        new_module_overrides = module_overrides_from_config(new_config)
         new_llm_service = LLMService(
             registry=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
+            module_overrides=new_module_overrides,
         )
 
         # 2. Bilibili client
@@ -162,10 +340,31 @@ class RuntimeContext:
             getattr(preference_cfg, "satisfaction_filter_enabled", True)
         )
         new_soul_engine = SoulEngine(
-            llm=new_registry,  # type: ignore[arg-type]
+            llm=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
+            module_overrides=new_module_overrides,
+            speculation_interval_minutes=int(
+                getattr(new_config.scheduler, "speculation_interval_minutes", 10)
+            ),
+            speculation_ttl_days=int(getattr(new_config.scheduler, "speculation_ttl_days", 3)),
+            speculation_cooldown_days=int(
+                getattr(new_config.scheduler, "speculation_cooldown_days", 7)
+            ),
+            speculation_confirmation_threshold=int(
+                getattr(new_config.scheduler, "speculation_confirmation_threshold", 3)
+            ),
+            speculation_max_active=int(getattr(new_config.scheduler, "speculation_max_active", 5)),
+            speculation_max_primary_interests=int(
+                getattr(new_config.scheduler, "speculation_max_primary_interests", 15)
+            ),
+            speculation_max_secondary_interests=int(
+                getattr(new_config.scheduler, "speculation_max_secondary_interests", 60)
+            ),
+            speculator_idle_interval_minutes=int(
+                getattr(new_config.scheduler, "speculator_idle_interval_minutes", 30)
+            ),
         )
 
         # 4. Embedding service
@@ -203,11 +402,13 @@ class RuntimeContext:
             llm_service=new_llm_service,
             bilibili_client=new_bilibili_client,
             concurrency=concurrency,
+            database=self.database,
         )
         trending_strategy = TrendingStrategy(
             bilibili_client=new_bilibili_client,
             llm_service=new_llm_service,
             concurrency=concurrency,
+            database=self.database,
         )
         related_strategy = RelatedChainStrategy(
             bilibili_client=new_bilibili_client,
@@ -216,6 +417,7 @@ class RuntimeContext:
             search_strategy=search_strategy,
             trending_strategy=trending_strategy,
             concurrency=concurrency,
+            database=self.database,
         )
         explore_strategy = ExploreStrategy(
             llm_service=new_llm_service,
@@ -249,55 +451,17 @@ class RuntimeContext:
         xiaohongshu_adapter = XiaohongshuAdapter()
         new_discovery_engine.register_adapter(xiaohongshu_adapter)
 
-        # 7c. YouTube discovery strategies — only registered when the user
-        # has YouTube follow events in the DB (i.e. has run init --yes-youtube
-        # or fetch-youtube at least once).  Registration is intentionally
-        # gated so the strategies don't fire for users who never set up YouTube.
-        try:
-            from openbiliclaw.discovery.strategies.youtube import (
-                YoutubeChannelStrategy,
-                YoutubeSearchStrategy,
-                YoutubeTrendingStrategy,
-            )
-            from openbiliclaw.youtube.client import YtScraperClient
-
-            yt_client = YtScraperClient()
-            yt_search = YoutubeSearchStrategy(
-                client=yt_client,
-                llm_service=new_llm_service,
-                concurrency=concurrency,
-            )
-            yt_trending = YoutubeTrendingStrategy(
-                client=yt_client,
-                llm_service=new_llm_service,
-                concurrency=concurrency,
-            )
-            yt_channel = YoutubeChannelStrategy(
-                client=yt_client,
-                llm_service=new_llm_service,
-                memory=cast("Any", self.memory_manager),
-                concurrency=concurrency,
-            )
-            new_discovery_engine.register_strategy(yt_search)
-            new_discovery_engine.register_strategy(yt_trending)
-            new_discovery_engine.register_strategy(yt_channel)
-            logger.info("YouTube discovery strategies registered")
-        except ImportError as _yt_import_err:
-            logger.info(
-                "YouTube discovery skipped (scrapetube/yt-dlp not installed): %s",
-                _yt_import_err,
-            )
-
         # 8. Continuous refresh controller
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
+        new_youtube_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 
             xhs_cfg = getattr(new_config.sources, "xiaohongshu", None)
             sched_cfg = getattr(new_config, "scheduler", None)
-            xhs_enabled = bool(getattr(xhs_cfg, "enabled", True)) and bool(
+            xhs_enabled = bool(getattr(xhs_cfg, "enabled", False)) and bool(
                 getattr(sched_cfg, "enabled", True)
             )
             new_xhs_producer = XhsTaskProducer(
@@ -315,6 +479,15 @@ class RuntimeContext:
                 soul_engine=new_soul_engine,
                 discovery_engine=new_discovery_engine,
             )
+            new_youtube_producer = build_youtube_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                discovery_engine=new_discovery_engine,
+                llm_service=new_llm_service,
+                memory=cast("Any", self.memory_manager),
+                concurrency=concurrency,
+            )
 
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
@@ -324,9 +497,22 @@ class RuntimeContext:
             recommendation_engine=new_recommendation_engine,
             pool_target_count=new_config.scheduler.pool_target_count,
             pool_source_shares=_pool_source_shares_from_config(new_config),
+            signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
+            trending_refresh_hours=int(getattr(new_config.scheduler, "trending_refresh_hours", 3)),
+            explore_refresh_hours=int(getattr(new_config.scheduler, "explore_refresh_hours", 12)),
+            check_interval_seconds=int(
+                getattr(new_config.scheduler, "refresh_check_interval_seconds", 60)
+            ),
+            proactive_push_interval_seconds=int(
+                getattr(new_config.scheduler, "proactive_push_interval_seconds", 120)
+            ),
+            discovery_limit=int(getattr(new_config.scheduler, "discovery_limit", 30)),
             event_hub=self.event_hub,
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
+            youtube_producer=new_youtube_producer,
+            scheduler_config=new_config.scheduler,
+            presence=self.presence,
             task_registry=self.task_registry,
         )
 
@@ -336,6 +522,7 @@ class RuntimeContext:
             bilibili_client=new_bilibili_client,
             soul_engine=new_soul_engine,
             sync_interval_hours=new_config.scheduler.account_sync_interval_hours,
+            llm_work_allowed=self.background_llm_work_allowed,
         )
 
         # 10. Dialogue (with source management tools)
@@ -413,8 +600,10 @@ class RuntimeContext:
             else None
         )
 
+        llm_work_allowed = self.background_llm_work_allowed()
+
         # Kick speculator to seed speculative interests
-        if self.soul_engine is not None:
+        if self.soul_engine is not None and llm_work_allowed:
             try:
                 profile = await self.soul_engine.get_profile()
                 speculator = getattr(self.soul_engine, "_speculator", None)
@@ -432,13 +621,15 @@ class RuntimeContext:
                                 "probe_feedback_history",
                                 [],
                             )
-                    try:
-                        await speculator.force_tick(
+                    self.task_registry.track(
+                        "post_reload_speculate",
+                        self._safe_post_reload_speculate(
+                            speculator,
                             profile,
-                            feedback_history=feedback_history,
-                        )
-                    except TypeError:
-                        await speculator.force_tick(profile)
+                            feedback_history,
+                        ),
+                    )
+                    logger.debug("post-reload speculator scheduled as background task")
             except Exception:
                 pass  # Profile not initialized yet — skip silently
 
@@ -448,13 +639,31 @@ class RuntimeContext:
         # first popup "换一批" pays a cold-fetch ~10-60s on day-1 of a
         # deploy. Detached so we don't block API readiness.
         prewarm_pool = getattr(self.recommendation_engine, "prewarm_pool_mmr_embeddings", None)
-        if callable(prewarm_pool):
+        if callable(prewarm_pool) and llm_work_allowed:
             self.task_registry.track(
                 "prewarm_pool_mmr_embeddings",
                 self._safe_prewarm_pool_mmr_embeddings(prewarm_pool),
             )
 
         logger.info("Background tasks restarted after hot-reload")
+
+    @staticmethod
+    async def _safe_post_reload_speculate(
+        speculator: Any,
+        profile: Any,
+        feedback_history: object,
+    ) -> None:
+        """Run post-reload speculation without blocking config PUT."""
+        try:
+            try:
+                await speculator.force_tick(
+                    profile,
+                    feedback_history=feedback_history,
+                )
+            except TypeError:
+                await speculator.force_tick(profile)
+        except Exception:
+            pass
 
     @staticmethod
     async def _safe_prewarm_pool_mmr_embeddings(prewarm_callable: Any) -> None:
@@ -565,3 +774,69 @@ def build_runtime_context(
     # no-op here because the registry was just created and is empty.
     ctx._rebuild_components(config)
     return ctx
+
+
+def build_degraded_runtime_context(
+    config: Config,
+    *,
+    memory_manager: Any | None = None,
+    database: Any | None = None,
+    event_hub: Any | None = None,
+    exc: Exception | None = None,
+) -> RuntimeContext:
+    """Construct a minimal context that can serve config recovery endpoints.
+
+    ``build_runtime_context`` intentionally stays strict. This degraded
+    constructor is used only by FastAPI startup after registry construction
+    fails, so the popup can still read and repair config.toml.
+    """
+    from openbiliclaw.config import ConfigIssue
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.runtime.events import RuntimeEventHub
+    from openbiliclaw.storage.database import Database
+
+    created_runtime_database = False
+    if database is None:
+        database = Database(config.data_path / "openbiliclaw.db")
+        database.initialize()
+        created_runtime_database = True
+    if memory_manager is None:
+        shared_database = database if created_runtime_database else None
+        memory_manager = MemoryManager(config.data_path, database=shared_database)
+        memory_manager.initialize()
+    if event_hub is None:
+        event_hub = RuntimeEventHub()
+
+    setter = getattr(memory_manager, "set_profile_change_callback", None)
+    if callable(setter):
+
+        async def _on_profile_changed() -> None:
+            publish = getattr(event_hub, "publish", None)
+            if callable(publish):
+                with suppress(Exception):
+                    await publish(
+                        {
+                            "type": "profile_updated",
+                            "phase": "ready",
+                            "message": "画像已更新",
+                        }
+                    )
+
+        setter(_on_profile_changed)
+
+    message = str(exc) if exc is not None else "LLM registry unavailable"
+    return RuntimeContext(
+        database=database,
+        memory_manager=memory_manager,
+        event_hub=event_hub,
+        config=config,
+        degraded=True,
+        degraded_reason="llm_registry_unavailable",
+        degraded_issues=[
+            ConfigIssue(
+                field="llm",
+                message=f"LLM registry unavailable: {message}",
+                severity="blocking",
+            )
+        ],
+    )

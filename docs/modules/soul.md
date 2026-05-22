@@ -27,15 +27,16 @@
 | 向后兼容垫片属性 | ✅ | OnionProfile 提供 `core_traits / deep_needs / cognitive_style / motivational_drivers / values` 等垫片属性，兼容旧代码渐进迁移 |
 | 自动格式迁移 | ✅ | `from_legacy()` 支持将 v1 flat SoulProfile 自动迁移到 v2 OnionProfile，SoulEngine 透明处理版本升级 |
 | SoulEngine.analyze_events() | ✅ | 事件 → PreferenceAnalyzer → 偏好层更新 |
-| PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据，但 prompt 明确禁止把它们提取为正向 interests |
+| SoulEngine module overrides | ✅ | 构造时可接收 `module_overrides` 并注入内部 `LLMService`，确保 preference / awareness / insight / profile_builder / speculator / dialogue_insight 都遵循 `[llm.soul]` 路由 |
+| PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据；偏好分析调用前有 prompt 预算保护，超长 chunk 会递归二分，单条超长事件会 compact，`n_keep >= n_ctx` / `context length` 等上下文错误会用更小 chunk 重试 |
 | filter_events_by_satisfaction | ✅ | `soul/event_filters.py` 中的纯函数，按 `inferred_satisfaction` 过滤事件，`"unknown"` 同时匹配缺失 / `None`，使 pre-migration 老行可被显式 opt-in 保留 |
-| recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 8 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch`，把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
+| recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 8 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像 |
 | ProfileBuilder | ✅ | 结构化 prompt + JSON 校验 + `OnionProfile` 构建 |
 | SoulEngine.build_initial_profile() | ✅ | 从 history + preference 生成并持久化 `soul.json` |
 | SoulEngine.get_profile() | ✅ | 从 soul 层读取画像，未初始化时抛明确异常 |
-| AwarenessAnalyzer | ✅ | 近期事件 → `AwarenessNote` 列表，支持同日去重；解析 LLM 响应时兼容 `results/items/notes/data/observations/recent_observations/latest/latest_observations` 等 object-wrapped array，也兼容 reasoning 模型常见的 bare singular-note dict（仅需 `observation` 字段）和 wrapper-key 下的单 note dict；prompt 按画像 → 偏好 → 近期事件排序以保留缓存前缀，并把近期 `dislike` / `thumbs_down` / negative 事件视为“最近开始避开 X”的保守观察信号 |
-| InsightAnalyzer | ✅ | 觉察 + 偏好 + 画像 → `InsightHypothesis` 列表，支持假设合并 |
+| AwarenessAnalyzer | ✅ | 近期事件 → `AwarenessNote` 列表，支持同日去重；解析 LLM 响应时复用 `llm.json_utils.extract_llm_json_list()`，兼容 `results/items/notes/data/observations/recent_observations/latest/latest_observations` 等 object-wrapped array、reasoning 模型 bare singular-note dict、wrapper-key 下单 note、fenced JSON、JSONL 和 MiMo malformed `{ [ ... ] }`；prompt 按画像 → 偏好 → 近期事件排序以保留缓存前缀，并把近期 `dislike` / `thumbs_down` / negative 事件视为“最近开始避开 X”的保守观察信号 |
+| InsightAnalyzer | ✅ | 觉察 + 偏好 + 画像 → `InsightHypothesis` 列表，支持假设合并；解析 LLM 响应时复用共享 JSON helper，能兼容 object wrapper、schema echo 后最终结果和 MiMo malformed array root |
 | CognitionCycle | ✅ | 半日节流生成 awareness + insight 并同步到 `OnionProfile`；仅在 preference 与 soul 都为空的早期初始化状态跳过，已有任一层时仍会运行，避免已初始化画像因 preference 暂空而长期不产出觉察；awareness 失败时单次重试（间隔 2s），仍失败则记 WARNING 且**不推进** `last_awareness_at`，下一 tick 立即重试而不是空等 12h |
 | SoulEngine.generate_awareness_note() | ✅ | 生成并持久化 `awareness.json` |
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
@@ -51,8 +52,9 @@
 | ToneProfile | ✅ | 从 `OnionProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
-| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并在入池前做画像/历史去重和体验多样性筛选；通过事件确认后转正为正式兴趣，未确认则拒绝并冷却 |
+| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并按 `[scheduler]` 的 generation interval、TTL、cooldown、确认阈值和上限运行；通过事件确认后转正为正式兴趣，未确认则拒绝并冷却 |
 | ROLE/VALUES/CORE 增量更新器 | ✅ | `_update_role`（`build_role_delta_prompt`，基于信号证据 + LLM diff-protection）、`_update_values`（LLM delta，每周期最多 add/remove 1 条，注入完整画像上下文）、`_update_core`（`build_core_delta_prompt`，更新 traits/needs/MBTI，强 diff-protection）均已完整实现 |
+| v0.3.74 Soul 结构化 JSON 容错统一 | ✅ | ProfileBuilder、PreferenceAnalyzer、DialogueInsightAnalyzer、AwarenessAnalyzer、InsightAnalyzer、LayerUpdaters 和 InterestSpeculator 都收敛到 `llm.json_utils`，每个任务用 predicate 约束自己需要的 schema；MiMo / 非 OpenAI wrapper 不再只修 awareness 一处 |
 
 ## 猜测兴趣系统 (Speculative Interest Lifecycle)
 
@@ -107,12 +109,13 @@
 | `scheduler.speculation_max_active` | 5 | 最大活跃猜测数 |
 | `scheduler.speculation_max_primary_interests` | 15 | 活跃猜测一级上限；不再把已确认兴趣计入，避免画像丰富后探针系统永久停摆 |
 | `scheduler.speculation_max_secondary_interests` | 60 | 活跃猜测二级上限；不再把已确认细项计入，避免画像丰富后探针系统永久停摆 |
+| `scheduler.speculator_idle_interval_minutes` | 30 | `ProfileUpdatePipeline` 空闲时检查猜测兴趣生命周期的间隔；`speculation_interval_minutes` 仍作为 speculator 内部生成间隔 gate |
 
 ### 触发时机
 
 | 场景 | 方法 | 说明 |
 |------|------|------|
-| 定时 | `tick()` via Pipeline | 每 10min 检查，受兴趣上限约束 |
+| 定时 | `tick()` via Pipeline | 空闲 pipeline 默认每 30min 检查一次猜测兴趣生命周期；真正生成新猜测还受 `speculation_interval_minutes` 默认 10min gate 和兴趣上限约束 |
 | Init | `force_tick()` via `build_initial_profile()` | 画像初始化后立即生成猜测 |
 | 进程启动 | `force_tick()` via `startup_refresh_loop()` | API 启动时确保有活跃猜测 |
 | 偏好分析 | `ingest_seeds()` via `_update_interest()` | PreferenceAnalyzer 附带的推测兴趣注入 |
@@ -293,7 +296,9 @@
 4. 返回结果会进入 `merge_preferences()`，与旧偏好合并。
 5. 合并后的偏好写回 `preference.json`。
 
-初始化这类大批量事件会按分片并发分析。若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 会递归拆小该分片；最终只有仍失败的单条事件会被跳过，其他事件继续参与偏好合并。网络错误、provider 错误仍会让调用失败，避免把服务不可用伪装成成功。
+初始化这类大批量事件会按分片并发分析。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
+
+若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 仍会递归拆小该分片；最终只有仍失败的单条事件会被跳过。若 provider 返回明确的 context-window 错误（例如 `n_keep >= n_ctx`、`context length`、`prompt is too long`），偏好分析会按同一套拆分 / compact 逻辑重试；认证、网络、限流、模型不存在等非上下文错误仍会让调用失败，避免把服务不可用伪装成成功。
 
 `satisfaction_filter_enabled` 默认开启后，偏好分析会先把 `quick_exit` 等被动 negative 事件从 prompt 中移除，避免误把标题党点击学成兴趣。显式负反馈不走这条丢弃路径：`feedback_type=dislike` 或 `reaction=thumbs_down` 会保留在 prompt 里，但只能贡献 `disliked_topics`、风格避让或置信度下调，不能贡献正向 `interests` / `favorite_up_users`。
 
@@ -599,8 +604,13 @@ system prompt 的核心约束是：
 
 ```python
 from openbiliclaw.soul.engine import SoulEngine
+from openbiliclaw.llm.service import module_overrides_from_config
 
-engine = SoulEngine(llm=registry, memory=memory_manager)
+engine = SoulEngine(
+    llm=registry,
+    memory=memory_manager,
+    module_overrides=module_overrides_from_config(config),
+)
 
 # 分析事件批次 → 更新偏好层
 await engine.analyze_events([
@@ -672,10 +682,14 @@ dialogue.clear_history()
 ```python
 from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
 
-analyzer = PreferenceAnalyzer(registry=llm_registry)
+analyzer = PreferenceAnalyzer(
+    registry=llm_registry,
+    max_prompt_chars=24_000,  # 默认值：发送 LLM 前的保守 prompt 字符预算
+)
 updated_pref = await analyzer.analyze_events(
     events=[...],
     existing_preference=current_pref,
+    event_chunk_size=200,  # 可选：先按条数粗分片，再由 prompt 预算继续拆
 )
 # 返回:
 # {

@@ -6,6 +6,7 @@ import pytest
 
 from openbiliclaw import config as config_module
 from openbiliclaw.config import (
+    ApiConfig,
     BilibiliConfig,
     Config,
     ConfigError,
@@ -77,6 +78,9 @@ class TestConfigDefaults:
     def test_default_config(self) -> None:
         config = Config()
         assert config.language == "zh"
+        assert isinstance(config.api, ApiConfig)
+        assert config.api.host == "0.0.0.0"
+        assert config.api.port == 8420
         assert config.llm.default_provider == "openai"
         assert config.bilibili.auth_method == "cookie"
         assert config.scheduler.enabled is True
@@ -98,6 +102,28 @@ class TestConfigDefaults:
             "youtube": 1,
         }
 
+    def test_bilibili_source_enabled_defaults_true(self) -> None:
+        config = Config()
+
+        assert config.sources.bilibili.enabled is True
+
+    def test_scheduler_pause_on_extension_disconnect_defaults(self) -> None:
+        config = Config()
+
+        assert config.scheduler.pause_on_extension_disconnect is False
+        assert config.scheduler.extension_disconnect_grace_seconds == 90
+
+    def test_scheduler_runtime_field_defaults(self) -> None:
+        config = Config()
+
+        assert config.scheduler.refresh_check_interval_seconds == 60
+        assert config.scheduler.signal_event_threshold == 6
+        assert config.scheduler.trending_refresh_hours == 3
+        assert config.scheduler.explore_refresh_hours == 12
+        assert config.scheduler.discovery_limit == 30
+        assert config.scheduler.proactive_push_interval_seconds == 120
+        assert config.scheduler.speculator_idle_interval_minutes == 30
+
     def test_build_from_empty_dict(self) -> None:
         config = _build_config({})
         assert config.language == "zh"
@@ -106,13 +132,32 @@ class TestConfigDefaults:
     def test_build_from_partial_dict(self) -> None:
         raw = {
             "general": {"language": "en"},
+            "api": {"host": "127.0.0.1", "port": 19090},
             "llm": {"default_provider": "claude"},
         }
         config = _build_config(raw)
         assert config.language == "en"
+        assert config.api.host == "127.0.0.1"
+        assert config.api.port == 19090
         assert config.llm.default_provider == "claude"
         # Other defaults should remain
         assert config.bilibili.auth_method == "cookie"
+
+    def test_api_config_round_trips_through_toml(self, tmp_path: Path) -> None:
+        config = Config()
+        config.api.host = "127.0.0.1"
+        config.api.port = 19090
+
+        target = tmp_path / "config.toml"
+        save_config(config, target)
+        rendered = target.read_text(encoding="utf-8")
+        loaded = load_config(target)
+
+        assert "[api]" in rendered
+        assert 'host = "127.0.0.1"' in rendered
+        assert "port = 19090" in rendered
+        assert loaded.api.host == "127.0.0.1"
+        assert loaded.api.port == 19090
 
     def test_data_path_relative(self) -> None:
         config = Config(data_dir="data")
@@ -131,9 +176,7 @@ class TestConfigDefaults:
         assert isinstance(config.soul.preference, SoulPreferenceConfig)
         assert config.soul.preference.satisfaction_filter_enabled is True
 
-    def test_soul_preference_satisfaction_filter_round_trips_false(
-        self, tmp_path: Path
-    ) -> None:
+    def test_soul_preference_satisfaction_filter_round_trips_false(self, tmp_path: Path) -> None:
         """save_config → load_config preserves an explicit opt-out."""
         cfg = Config()
         cfg.soul.preference.satisfaction_filter_enabled = False
@@ -358,6 +401,82 @@ def test_save_config_round_trips_openai_compatible(tmp_path: Path) -> None:
     assert loaded.llm.openai_compatible.base_url == "https://api.together.xyz/v1"
 
 
+def test_build_config_supports_openai_codex_auth_mode() -> None:
+    config = _build_config(
+        {
+            "llm": {
+                "default_provider": "openai",
+                "openai": {
+                    "api_key": "",
+                    "model": "gpt-5-nano",
+                    "auth_mode": "codex_oauth",
+                },
+            }
+        }
+    )
+
+    assert config.llm.openai.auth_mode == "codex_oauth"
+
+
+def test_save_config_round_trips_openai_auth_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.llm.openai.auth_mode = "codex_oauth"
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.llm.openai.auth_mode == "codex_oauth"
+
+
+def test_collect_issues_allows_codex_oauth_without_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    token_path = tmp_path / "codex_auth.json"
+    token_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_CODEX_AUTH_PATH", str(token_path))
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="", auth_mode="codex_oauth"),
+        )
+    )
+
+    fields = [issue.field for issue in _collect_config_issues(config)]
+
+    assert "llm.openai.api_key" not in fields
+    assert "llm.openai.codex_oauth" not in fields
+
+
+def test_collect_issues_blocks_codex_oauth_with_custom_base_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.config import _collect_config_issues
+
+    token_path = tmp_path / "codex_auth.json"
+    token_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_CODEX_AUTH_PATH", str(token_path))
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(
+                api_key="",
+                auth_mode="codex_oauth",
+                base_url="https://proxy.example.com/v1",
+            ),
+        )
+    )
+
+    issues = _collect_config_issues(config)
+
+    assert any(issue.field == "llm.openai.base_url" for issue in issues)
+    assert any(issue.severity == "blocking" for issue in issues)
+
+
 def test_collect_issues_flags_missing_base_url_for_openai_compatible() -> None:
     """openai_compatible without a base_url is meaningless — it would
     just hit api.openai.com with the wrong key. Surface a config issue
@@ -464,6 +583,160 @@ def test_build_config_supports_account_sync_interval() -> None:
     assert config.scheduler.account_sync_interval_hours == 12
 
 
+def test_load_config_reads_scheduler_pause_on_extension_disconnect(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[scheduler]
+pause_on_extension_disconnect = true
+extension_disconnect_grace_seconds = 123
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.pause_on_extension_disconnect is True
+    assert config.scheduler.extension_disconnect_grace_seconds == 123
+
+
+def test_load_config_defaults_scheduler_pause_on_extension_disconnect_when_absent(
+    tmp_path: Path,
+) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[scheduler]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.pause_on_extension_disconnect is False
+    assert config.scheduler.extension_disconnect_grace_seconds == 90
+
+
+@pytest.mark.parametrize("raw_grace", [-1, 0, "abc"])
+def test_load_config_defaults_invalid_scheduler_disconnect_grace(
+    tmp_path: Path,
+    raw_grace: object,
+) -> None:
+    toml_path = tmp_path / "c.toml"
+    grace_literal = f'"{raw_grace}"' if isinstance(raw_grace, str) else str(raw_grace)
+    toml_path.write_text(
+        f"""
+[scheduler]
+extension_disconnect_grace_seconds = {grace_literal}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.extension_disconnect_grace_seconds == 90
+
+
+def test_save_config_round_trips_scheduler_pause_on_extension_disconnect(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.scheduler.pause_on_extension_disconnect = True
+    config.scheduler.extension_disconnect_grace_seconds = 45
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.scheduler.pause_on_extension_disconnect is True
+    assert loaded.scheduler.extension_disconnect_grace_seconds == 45
+
+
+def test_load_config_reads_scheduler_runtime_fields(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[scheduler]
+refresh_check_interval_seconds = 75
+signal_event_threshold = 9
+trending_refresh_hours = 5
+explore_refresh_hours = 18
+discovery_limit = 17
+proactive_push_interval_seconds = 155
+speculator_idle_interval_minutes = 11
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.refresh_check_interval_seconds == 75
+    assert config.scheduler.signal_event_threshold == 9
+    assert config.scheduler.trending_refresh_hours == 5
+    assert config.scheduler.explore_refresh_hours == 18
+    assert config.scheduler.discovery_limit == 17
+    assert config.scheduler.proactive_push_interval_seconds == 155
+    assert config.scheduler.speculator_idle_interval_minutes == 11
+
+
+@pytest.mark.parametrize(
+    ("field", "literal", "expected"),
+    [
+        ("refresh_check_interval_seconds", "0", 60),
+        ("refresh_check_interval_seconds", '"abc"', 60),
+        ("signal_event_threshold", "-1", 6),
+        ("trending_refresh_hours", "0", 3),
+        ("explore_refresh_hours", "0", 12),
+        ("discovery_limit", "0", 30),
+        ("discovery_limit", "61", 30),
+        ("proactive_push_interval_seconds", "29", 120),
+        ("speculator_idle_interval_minutes", "4", 30),
+    ],
+)
+def test_load_config_defaults_invalid_scheduler_runtime_fields(
+    tmp_path: Path,
+    field: str,
+    literal: str,
+    expected: int,
+) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        f"""
+[scheduler]
+{field} = {literal}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert getattr(config.scheduler, field) == expected
+
+
+def test_save_config_round_trips_scheduler_runtime_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.scheduler.refresh_check_interval_seconds = 75
+    config.scheduler.signal_event_threshold = 9
+    config.scheduler.trending_refresh_hours = 5
+    config.scheduler.explore_refresh_hours = 18
+    config.scheduler.discovery_limit = 17
+    config.scheduler.proactive_push_interval_seconds = 155
+    config.scheduler.speculator_idle_interval_minutes = 11
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.scheduler.refresh_check_interval_seconds == 75
+    assert loaded.scheduler.signal_event_threshold == 9
+    assert loaded.scheduler.trending_refresh_hours == 5
+    assert loaded.scheduler.explore_refresh_hours == 18
+    assert loaded.scheduler.discovery_limit == 17
+    assert loaded.scheduler.proactive_push_interval_seconds == 155
+    assert loaded.scheduler.speculator_idle_interval_minutes == 11
+
+
 def test_scheduler_pool_source_shares_override(tmp_path: Path) -> None:
     toml_path = tmp_path / "c.toml"
     toml_path.write_text(
@@ -513,7 +786,7 @@ def test_sources_browser_defaults_are_empty() -> None:
 def test_sources_xiaohongshu_defaults() -> None:
     config = _build_config({})
 
-    assert config.sources.xiaohongshu.enabled is True
+    assert config.sources.xiaohongshu.enabled is False
     assert config.sources.xiaohongshu.daily_search_budget == 30
     assert config.sources.xiaohongshu.daily_creator_budget == 10
     assert config.sources.xiaohongshu.task_interval_seconds == 45
@@ -535,6 +808,11 @@ def test_sources_youtube_defaults() -> None:
     config = _build_config({})
 
     assert config.sources.youtube.enabled is False
+    assert config.sources.youtube.daily_search_budget == 6
+    assert config.sources.youtube.daily_trending_budget == 50
+    assert config.sources.youtube.daily_channel_budget == 10
+    assert config.sources.youtube.request_interval_seconds == 2
+    assert config.sources.youtube.min_interval_minutes == 60
 
 
 def test_build_config_supports_sources_xiaohongshu(tmp_path: Path) -> None:
@@ -591,6 +869,11 @@ def test_build_config_supports_sources_youtube(tmp_path: Path) -> None:
         """
 [sources.youtube]
 enabled = true
+daily_search_budget = 4
+daily_trending_budget = 40
+daily_channel_budget = 7
+request_interval_seconds = 3
+min_interval_minutes = 45
 """.strip(),
         encoding="utf-8",
     )
@@ -598,6 +881,32 @@ enabled = true
     config = load_config(toml_path)
 
     assert config.sources.youtube.enabled is True
+    assert config.sources.youtube.daily_search_budget == 4
+    assert config.sources.youtube.daily_trending_budget == 40
+    assert config.sources.youtube.daily_channel_budget == 7
+    assert config.sources.youtube.request_interval_seconds == 3
+    assert config.sources.youtube.min_interval_minutes == 45
+
+
+def test_save_config_round_trips_sources_youtube(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.sources.youtube.enabled = True
+    config.sources.youtube.daily_search_budget = 5
+    config.sources.youtube.daily_trending_budget = 42
+    config.sources.youtube.daily_channel_budget = 8
+    config.sources.youtube.request_interval_seconds = 4
+    config.sources.youtube.min_interval_minutes = 30
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.sources.youtube.enabled is True
+    assert loaded.sources.youtube.daily_search_budget == 5
+    assert loaded.sources.youtube.daily_trending_budget == 42
+    assert loaded.sources.youtube.daily_channel_budget == 8
+    assert loaded.sources.youtube.request_interval_seconds == 4
+    assert loaded.sources.youtube.min_interval_minutes == 30
 
 
 def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None:
@@ -609,6 +918,17 @@ def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None
     loaded = load_config(config_path)
 
     assert loaded.sources.browser_cdp_url == "http://127.0.0.1:9222"
+
+
+def test_save_config_round_trips_bilibili_source_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.sources.bilibili.enabled = False
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.sources.bilibili.enabled is False
 
 
 def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
@@ -674,8 +994,12 @@ def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:
     config.language = "en"
     config.data_dir = "runtime-data"
     config.llm.default_provider = "gemini"
+    config.llm.fallback_enabled = True
+    config.llm.fallback_provider = "openai"
     config.llm.gemini.api_key = "gemini-test-key"
     config.llm.gemini.model = "gemini-2.5-flash"
+    config.llm.embedding.fallback_enabled = True
+    config.llm.embedding.fallback_provider = "ollama"
 
     save_config(config, config_path)
     loaded = load_config(config_path)
@@ -683,8 +1007,21 @@ def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:
     assert loaded.language == "en"
     assert loaded.data_dir == "runtime-data"
     assert loaded.llm.default_provider == "gemini"
+    assert loaded.llm.fallback_enabled is True
+    assert loaded.llm.fallback_provider == "openai"
     assert loaded.llm.gemini.api_key == "gemini-test-key"
     assert loaded.llm.gemini.model == "gemini-2.5-flash"
+    assert loaded.llm.embedding.fallback_enabled is True
+    assert loaded.llm.embedding.fallback_provider == "ollama"
+
+
+def test_llm_and_embedding_fallback_defaults_are_disabled() -> None:
+    config = Config()
+
+    assert config.llm.fallback_enabled is False
+    assert config.llm.fallback_provider == ""
+    assert config.llm.embedding.fallback_enabled is False
+    assert config.llm.embedding.fallback_provider == ""
 
 
 def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:
@@ -698,6 +1035,7 @@ def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:
     config.llm.embedding.api_key = "sk-dedicated-embedding-xyz"
     config.llm.embedding.base_url = "https://embed.example.com/v1"
     config.llm.embedding.similarity_threshold = 0.91
+    config.llm.embedding.fallback_enabled = True
 
     save_config(config, config_path)
     loaded = load_config(config_path)
@@ -707,6 +1045,7 @@ def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:
     assert loaded.llm.embedding.api_key == "sk-dedicated-embedding-xyz"
     assert loaded.llm.embedding.base_url == "https://embed.example.com/v1"
     assert loaded.llm.embedding.similarity_threshold == 0.91
+    assert loaded.llm.embedding.fallback_enabled is True
 
 
 def test_load_config_accepts_legacy_embedding_section_without_api_key(

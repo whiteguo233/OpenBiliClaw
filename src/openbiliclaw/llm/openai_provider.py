@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 
@@ -22,6 +23,25 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+
+def _generic_json_schema_response_format() -> dict[str, Any]:
+    """OpenAI structured-output shape for arbitrary JSON object tasks."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "structured_response",
+            "strict": False,
+            "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+        },
+    }
 
 
 class OpenAIProvider(LLMProvider):
@@ -42,10 +62,12 @@ class OpenAIProvider(LLMProvider):
         model: str = "gpt-4o",
         base_url: str = "",
         provider_name: str = "openai",
+        token_provider: Callable[[bool], Awaitable[str]] | None = None,
     ) -> None:
         self._model = model
         self._provider_name = provider_name
         self.base_url = base_url or ""
+        self._token_provider = token_provider
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url or None,
@@ -64,19 +86,23 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # ``reasoning_effort`` is consumed by ``DeepSeekProvider``; the
         # base OpenAI provider accepts it for signature compatibility
         # but doesn't act on it (vanilla GPT-4o has no thinking knob).
         del reasoning_effort
+        effective_model = (model or "").strip() or self._model
         kwargs: dict[str, Any] = {
-            "model": self._model,
+            "model": effective_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+            fmt = self._json_response_format()
+            if fmt is not None:
+                kwargs["response_format"] = fmt
         extra_headers = self._extra_headers()
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
@@ -84,11 +110,44 @@ class OpenAIProvider(LLMProvider):
         if extra_body:
             kwargs["extra_body"] = extra_body
 
-        response = await self._request_with_retry(**kwargs)
+        try:
+            response = await self._request_with_retry(**kwargs)
+        except LLMProviderError as exc:
+            # Retry at most once: after replacement kwargs["response_format"]
+            # is no longer json_object, so _uses_json_object returns False.
+            if (
+                json_mode
+                and self._uses_json_object(kwargs.get("response_format"))
+                and self._json_object_response_format_rejected(exc)
+            ):
+                logger.info(
+                    "%s rejected json_object response_format; retrying with json_schema",
+                    self._provider_name,
+                )
+                kwargs["response_format"] = _generic_json_schema_response_format()
+                response = await self._request_with_retry(**kwargs)
+            else:
+                raise
         choice = response.choices[0]
         content = choice.message.content or ""
         if not content.strip():
-            raise LLMResponseError(f"{self._provider_name} returned empty content")
+            # Some OpenAI-compatible backends return HTTP 200 and report
+            # completion_tokens > 0, yet ``message.content`` is empty when
+            # ``response_format`` is set. Retry once without the constraint;
+            # the prompt itself already asks for JSON.
+            if json_mode and "response_format" in kwargs:
+                logger.warning(
+                    "%s returned empty content with response_format=%s; "
+                    "retrying without response_format constraint",
+                    self._provider_name,
+                    kwargs["response_format"].get("type", "?"),
+                )
+                kwargs.pop("response_format")
+                response = await self._request_with_retry(**kwargs)
+                choice = response.choices[0]
+                content = choice.message.content or ""
+            if not content.strip():
+                raise LLMResponseError(f"{self._provider_name} returned empty content")
 
         usage = None
         if response.usage:
@@ -129,8 +188,16 @@ class OpenAIProvider(LLMProvider):
 
         for attempt in range(1, self._MAX_RETRIES + 1):
             try:
+                await self._apply_dynamic_token(force_refresh=False)
                 return await self._client.chat.completions.create(**kwargs)
             except Exception as exc:
+                if self._is_unauthorized(exc) and self._token_provider is not None:
+                    try:
+                        await self._apply_dynamic_token(force_refresh=True)
+                        return await self._client.chat.completions.create(**kwargs)
+                    except Exception as refresh_exc:
+                        mapped_refresh = self._map_error(refresh_exc)
+                        raise mapped_refresh from refresh_exc
                 mapped = self._map_error(exc)
                 last_error = mapped
                 if not self._is_retryable(mapped) or attempt == self._MAX_RETRIES:
@@ -141,6 +208,27 @@ class OpenAIProvider(LLMProvider):
         if last_error is None:
             raise LLMProviderError(f"{self._provider_name} request failed")
         raise last_error
+
+    async def _apply_dynamic_token(self, *, force_refresh: bool) -> None:
+        if self._token_provider is None:
+            return
+        try:
+            token = await self._token_provider(force_refresh)
+        except Exception as exc:
+            raise LLMProviderError(
+                f"{self._provider_name} token refresh failed; run `openbiliclaw login codex` again."
+            ) from exc
+        if token:
+            self._client.api_key = token
+
+    @staticmethod
+    def _is_unauthorized(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code == 401
+        if isinstance(status_code, str):
+            return status_code.strip() == "401"
+        return False
 
     def _map_error(self, exc: Exception) -> LLMProviderError:
         """Map provider or network exceptions into shared provider errors."""
@@ -203,6 +291,47 @@ class OpenAIProvider(LLMProvider):
         if isinstance(exc, LLMRateLimitError):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))
+
+    def _json_response_format(self) -> dict[str, Any] | None:
+        if self._is_lm_studio():
+            # LM Studio's OpenAI-compat layer loses ``message.content``
+            # with both ``json_object`` and ``json_schema`` response
+            # formats (HTTP 200, completion_tokens > 0, but content is
+            # empty). Skip ``response_format`` entirely; the prompt
+            # already asks for JSON so the model still produces it.
+            return None
+        return {"type": "json_object"}
+
+    def _is_lm_studio(self) -> bool:
+        """Detect LM Studio by URL heuristics (name or default port)."""
+        raw_base_url = self.base_url.strip()
+        if not raw_base_url:
+            return False
+        normalized = raw_base_url.lower()
+        if "lmstudio" in normalized or "lm-studio" in normalized:
+            return True
+        parsed_url = raw_base_url if "://" in raw_base_url else f"http://{raw_base_url}"
+        parsed = urlparse(parsed_url)
+        host = (parsed.hostname or "").lower()
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        if host in {"localhost", "127.0.0.1", "::1"} and port == 1234:
+            logger.debug("treating %s as LM Studio (default port 1234)", raw_base_url)
+            return True
+        return False
+
+    @staticmethod
+    def _uses_json_object(response_format: object) -> bool:
+        return isinstance(response_format, dict) and response_format.get("type") == "json_object"
+
+    @staticmethod
+    def _json_object_response_format_rejected(exc: LLMProviderError) -> bool:
+        # The field path "response_format.type" is lowercase in all known
+        # OpenAI-protocol implementations, so .lower() + literal match is safe.
+        message = str(exc).lower()
+        return "response_format.type" in message and "json_schema" in message and "text" in message
 
     async def embed(self, text: str, *, model: str = "text-embedding-3-small") -> list[float]:
         """Get text embedding via OpenAI's ``/v1/embeddings`` endpoint.
@@ -295,6 +424,7 @@ class DeepSeekProvider(OpenAIProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # v0.3.51+: per-call ``reasoning_effort`` override. ``None`` =
         # use provider default (configured in config.toml). Empty
@@ -325,6 +455,7 @@ class DeepSeekProvider(OpenAIProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     json_mode=json_mode,
+                    model=model,
                 )
             except LLMResponseError:
                 if not effort:
@@ -334,6 +465,7 @@ class DeepSeekProvider(OpenAIProvider):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         json_mode=json_mode,
+                        model=model,
                     )
                 # Max-effort reasoning occasionally burns through the entire
                 # output budget before the model emits any ``content``. Retry
@@ -350,6 +482,7 @@ class DeepSeekProvider(OpenAIProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     json_mode=json_mode,
+                    model=model,
                 )
         finally:
             self._reasoning_effort = previous_effort

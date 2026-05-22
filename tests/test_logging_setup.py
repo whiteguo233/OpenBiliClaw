@@ -46,6 +46,25 @@ def test_configure_logging_replaces_existing_handlers(tmp_path: Path) -> None:
     assert first_count == second_count
 
 
+def test_configure_logging_quiets_noisy_http_libraries(tmp_path: Path) -> None:
+    config = Config(
+        logging=LoggingConfig(
+            level="INFO",
+            file_level="DEBUG",
+            directory=str(tmp_path / "logs"),
+            filename="openbiliclaw.log",
+        )
+    )
+
+    logging.getLogger("httpx").setLevel(logging.NOTSET)
+    logging.getLogger("httpcore").setLevel(logging.NOTSET)
+
+    configure_logging(config)
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
 def test_configure_logging_uses_rotating_handler_when_enabled(tmp_path: Path) -> None:
     config = Config(
         logging=LoggingConfig(
@@ -86,6 +105,64 @@ def test_configure_logging_disables_rotation_when_size_is_zero(tmp_path: Path) -
     assert len(file_handlers) == 1
     handler = file_handlers[0]
     assert not isinstance(handler, RotatingFileHandler)
+
+
+def test_rotating_file_handler_preserves_exception_traceback(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    config = Config(
+        logging=LoggingConfig(
+            level="INFO",
+            file_level="DEBUG",
+            directory=str(log_dir),
+            filename="app.log",
+            max_file_size_mb=5,
+            backup_count=1,
+        )
+    )
+
+    configure_logging(config)
+    try:
+        raise ValueError("sentinel")
+    except ValueError:
+        logging.getLogger("openbiliclaw.test").exception("sentinel exception")
+
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.flush()
+
+    text = (log_dir / "app.log").read_text(encoding="utf-8")
+    assert "sentinel exception" in text
+    assert "Traceback (most recent call last)" in text
+    assert "ValueError: sentinel" in text
+
+
+def test_plain_file_handler_preserves_exception_traceback(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    config = Config(
+        logging=LoggingConfig(
+            level="INFO",
+            file_level="DEBUG",
+            directory=str(log_dir),
+            filename="app.log",
+            max_file_size_mb=0,
+            backup_count=1,
+        )
+    )
+
+    configure_logging(config)
+    try:
+        raise ValueError("sentinel")
+    except ValueError:
+        logging.getLogger("openbiliclaw.test").exception("sentinel exception")
+
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.flush()
+
+    text = (log_dir / "app.log").read_text(encoding="utf-8")
+    assert "sentinel exception" in text
+    assert "Traceback (most recent call last)" in text
+    assert "ValueError: sentinel" in text
 
 
 def test_configure_logging_rotates_oversized_existing_file(tmp_path: Path) -> None:

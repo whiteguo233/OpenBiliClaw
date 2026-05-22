@@ -46,6 +46,7 @@ def bootstrap_runtime_root(
       * ``[llm.embedding] provider`` → ``ollama``
       * ``[llm.embedding] model`` → ``OPENBILICLAW_EMBEDDING_MODEL``
         (default ``bge-m3``)
+      * ``[llm.embedding] base_url`` → ``OPENBILICLAW_OLLAMA_BASE_URL``
 
     An existing ``config.toml`` is never overwritten — users who already
     set up their own embedding stack keep their choices.
@@ -88,6 +89,7 @@ def _seed_ollama_defaults(
     text = _set_toml_string(text, "llm.ollama", "base_url", ollama_base_url)
     text = _set_toml_string(text, "llm.embedding", "provider", "ollama")
     text = _set_toml_string(text, "llm.embedding", "model", embedding_model)
+    text = _set_toml_string(text, "llm.embedding", "base_url", ollama_base_url)
     config_path.write_text(text, encoding="utf-8")
 
 

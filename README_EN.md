@@ -17,12 +17,12 @@
 
 ---
 
-## 📌 v0.3.72 Highlights (2026-05-16)
+## 📌 v0.3.89 / extension v0.3.44 Highlights (2026-05-22)
 
-- **🧭 Fuller negative-feedback and profile context** — passive quick-exit clicks are filtered by default, while explicit `dislike` / `thumbs_down` feedback still feeds `disliked_topics` and avoidance evidence; discovery and candidate evaluation now also see cognitive style, values, current phase, MBTI, recent awareness, source mix, and long-term avoidances.
-- **🔌 Configurable extension backend port** — the settings page now has a "backend port" field (default `8420`, complete integers only, `1-65535`) for Windows Hyper-V / WSL / Docker setups where the default local port is already reserved. Pick a high port such as `18080` or `19090`, then start the backend with `openbiliclaw start --port <same port>`. Thanks to [@addtion99](https://github.com/addtion99) for proposing the need and implementation idea in [#8](https://github.com/whiteguo233/OpenBiliClaw/pull/8).
-- **🧩 One backend endpoint path across the extension** — popup requests, service worker requests, cookie sync, XHS / Douyin / YouTube task dispatchers, and debug relays all resolve the current port through shared helpers; local manifest permissions now cover `127.0.0.1/*` and `localhost/*`.
-- **🦊 Firefox release package included** — `extension-v*` releases now upload both the Chromium zip and `openbiliclaw-extension-v*-firefox.zip`, so Firefox 140+ users no longer need to package from source.
+- **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
+- **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
+- **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
+- **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -44,7 +44,7 @@ This is the core differentiator: the system **guesses domains you might enjoy bu
 
 ### 🔒 100% local, 100% yours
 
-All data lives in a single SQLite file on your disk. LLM calls use your own API key. No cloud, no accounts, no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, edit the database, whatever you want.
+All data lives in a single SQLite file on your disk. LLM calls use your own API key by default, with an experimental option to reuse local Codex CLI ChatGPT OAuth credentials. No cloud, no accounts, no one else can see your profile. How this Agent grows is entirely your call — send feedback, chat with it, swap LLMs, edit the database, whatever you want.
 
 > 💡 **How it compares**
 >
@@ -57,9 +57,58 @@ All data lives in a single SQLite file on your disk. LLM calls use your own API 
 > | Explains why | "Guess you'll like" | None | Friend-like explanations |
 > | Customizable | No | Low | Swap LLMs / edit profile / write Skills |
 
+## 🖥️ Desktop Web Preview
+
+After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://127.0.0.1:8420/`, which redirects automatically) for a full-screen recommendation dashboard.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/images/desktop-home.png" width="480" /><br/>
+      <b>Desktop Home</b><br/>
+      <sub>Runtime dashboard · delight carousel · profile sidebar</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/images/desktop-cards.png" width="480" /><br/>
+      <b>Horizontal Dual-Card Feed</b><br/>
+      <sub>Cover left + reason right · like / skip / chat</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="docs/images/desktop-profile.png" width="480" /><br/>
+      <b>Profile Detail Panel</b><br/>
+      <sub>Core traits · MBTI · interest tree · speculative interests · cognitive style</sub>
+    </td>
+  </tr>
+</table>
+
+## 📱 Mobile Web Preview
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/images/mobile-recommend.png" width="210" /><br/>
+      <b>Recommendations</b><br/>
+      <sub>Delight candidate · reason around cover</sub><br/>
+      <sub>View / like / not interested / chat</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/images/mobile-profile.png" width="210" /><br/>
+      <b>Profile</b><br/>
+      <sub>Core profile, interests, and cognition updates</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/images/mobile-chat.png" width="210" /><br/>
+      <b>Chat</b><br/>
+      <sub>Shared main chat history with the extension</sub>
+    </td>
+  </tr>
+</table>
+
 ## 🚀 Quick Start
 
-For most users, setup is three steps: install the extension, ask an AI coding agent to deploy the backend, then log in to the content platforms in the same browser.
+For most users, setup is four steps: install the extension, ask an AI coding agent to deploy the backend, log in to the content platforms in the same browser, and optionally open the Mobile Web app from your phone.
 
 ### 1. Install the browser extension
 
@@ -106,11 +155,28 @@ Paste this whole prompt into Claude Code, Codex CLI, Cursor, Windsurf, or anothe
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-The agent will clone the repo, install dependencies, start the backend, run a health check, and ask a few questions with defaults. If unsure, pick the default. Xiaohongshu, Douyin, and YouTube signals are used in the initial profile only when you explicitly opt in.
+The agent will clone the repo, install dependencies, start the backend with the LAN-accessible default bind (`0.0.0.0:8420`), run a health check, and ask a few questions with defaults. If unsure, pick the default. Xiaohongshu, Douyin, and YouTube signals are used in the initial profile only when you explicitly opt in.
+
+If the backend runs on another machine in your LAN, set the extension's "Backend host" field to that machine's LAN IP, for example `192.168.1.100`.
 
 ### 3. Log in to content platforms in the same browser
 
 At minimum, log in to [Bilibili](https://www.bilibili.com). OpenBiliClaw uses it to build the first profile and recommendations. If you want Xiaohongshu, Douyin, or YouTube, also log in to [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) in the same browser where the extension is installed.
+
+### 4. Open Desktop or Mobile Web
+
+The backend serves both a desktop and a mobile Web UI. Neither syncs cookies or crawls pages — they only call your local API.
+
+```bash
+openbiliclaw start
+```
+
+- **Desktop**: open `http://127.0.0.1:8420/web` (or `http://127.0.0.1:8420/`, auto-redirects). Two-column editorial layout with recommendations, profile, chat, messages, and settings all on one page.
+- **Mobile**: click the phone icon in the extension header to scan the QR code, or type `http://<your-LAN-IP>:8420/m/` manually. Best for browsing recommendations, profile, and chat on your phone.
+
+> During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable, `127.0.0.1` = local only).
+
+The app has three bottom tabs: Recommendations, Profile, and Chat. Recommendations support reshuffle, load more, like, not interested, comments, and contextual chat. Profile shows the core profile, interests, and cognition updates. Chat shares the main chat history with the extension.
 
 <details>
 <summary>No AI agent: run the one-line installer yourself</summary>
@@ -127,7 +193,7 @@ Native Windows (PowerShell, no Docker or WSL2 required):
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.ps1 -UseBasicParsing | iex
 ```
 
-The script needs `git` and Python 3.11+. It clones the repo, installs dependencies, starts the backend, runs a health check, then asks for LLM, embedding, Bilibili cookie, Xiaohongshu opt-in, Douyin opt-in, and YouTube opt-in choices. If unsure, press Enter or choose the default.
+The script needs `git` and Python 3.11+. It clones the repo, installs dependencies, starts the backend, runs a health check, then asks for LLM, embedding, Bilibili cookie, Xiaohongshu opt-in, Douyin opt-in, and YouTube opt-in choices. Once the confirmations are complete it automatically runs init to build the first profile and discovery pool. If unsure, press Enter or choose the default.
 
 </details>
 
@@ -140,7 +206,7 @@ Good if you already have Docker Desktop installed. v0.3.11+ includes an Ollama e
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/docker-deployment.md to deploy the OpenBiliClaw backend via Docker Compose (use Bash `curl` to fetch the document, NOT WebFetch).
 ```
 
-See the [Docker Deployment Guide](docs/docker-deployment.md).
+See the [Docker Deployment Guide](docs/docker-deployment.md). The primary Docker path also goes through `agent_bootstrap.py --mode docker`; after LLM, embedding, Bilibili cookie, and source opt-in confirmations it automatically runs init. `docker exec ... openbiliclaw init` remains an advanced manual fallback.
 
 </details>
 
@@ -220,7 +286,7 @@ vim config.toml
 # One-command init (fetch history · build profile · first discovery)
 openbiliclaw init
 
-# Optional: enable local Ollama as embedding fallback (no extra API key)
+# Optional: enable local Ollama as an independent embedding provider
 openbiliclaw setup-embedding
 
 # Manual content discovery
@@ -333,7 +399,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 🧩 **Browser Extension (Chrome / Edge / Brave / Arc and more)** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu + Douyin + YouTube), chat, and cognition update cards — install and go
 - 🔬 **Self-Optimizing Eval Loops** — Five modules each have an LLM-as-judge SGD/RL loop that automatically improves prompt quality over rounds — no manual tuning needed
 - 🔒 **Fully Private** — All data in local SQLite; LLM calls use your own key; each instance is built for exactly one person
-- 🔌 **Local Embedding Fallback** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
+- 🔌 **Local Embedding Provider** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
 - 🔧 **Fully Controllable** — Swap LLMs per module, edit your profile directly, write custom Skills to extend discovery
 
 ## 🏛️ Architecture Overview
@@ -341,19 +407,20 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Dwell Satisfaction · Recs · Chat · Cookies)│
-│      (XHS/DY/YT tasks · init-profile bridge)          │
+│      (Behavior · Recs · Chat · Runtime Toggles)       │
+│      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
-                         │ REST API / WebSocket cookie request
+                         │ REST API / WebSocket (presence + cookies)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
-│            (Skill System · Dialogue Mgmt)            │
+│       (Skills · Dialogue · Runtime Gate · Account Sync) │
 ├─────────┬──────────┬───────────┬────────────────────┤
 │  Soul   │ Memory   │ Discovery │  Recommendation    │
 │  Engine │ System   │  Engine   │     Engine          │
 │(Sat.filter)│(5-Layer)│(Neg.anchor)│  (Expression)   │
 ├─────────┴──────────┴───────────┴────────────────────┤
-│ LLM Adapters · Bilibili API · Extension Proxy · SQLite│
+│ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
+│ Runtime: Account sync + XHS/DY/YouTube producers           │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
 │         recommendations · chat_turns                    │
 └─────────────────────────────────────────────────────┘
@@ -361,7 +428,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 ### Content Discovery Engine
 
-Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals, plus Douyin init signals / plugin-signed search / hot / feed discovery:
+Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, and Douyin init signals / plugin-signed search / hot / feed discovery:
 
 | Strategy | Description | Quota |
 |----------|-------------|-------|
@@ -370,11 +437,13 @@ Four Bilibili strategies work in coordination, each with independent API quota, 
 | **Related Chain** | Expands from seed videos along recommendation chains | Fair share |
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
-Results go through multi-dimensional diversity selection: platform-family reservation (default Bilibili / Xiaohongshu / Douyin / YouTube = 8 / 1 / 1 / 1, configurable via `[scheduler.pool_source_shares]`) → topic deduplication → style balancing → ceiling caps, ensuring broad coverage in final recommendations. The four Bilibili strategies count as `bilibili`; XHS extension sources count as `xiaohongshu`; Douyin search / hot / feed count as `douyin`; YouTube `yt_search` / `yt_trending` / `yt_channel` count as `youtube`. Disabled platforms are removed from the effective runtime mix.
+Results go through multi-dimensional diversity selection: platform-family reservation (saved default Bilibili / Xiaohongshu / Douyin / YouTube = 8 / 1 / 1 / 1, configurable via `[scheduler.pool_source_shares]`; the effective default only includes Bilibili until XHS / Douyin / YouTube are explicitly enabled) → topic deduplication → style balancing → ceiling caps, ensuring broad coverage in final recommendations. The four Bilibili strategies count as `bilibili`; XHS extension sources count as `xiaohongshu`; Douyin search / hot / feed count as `douyin`; YouTube `yt_search` / `yt_trending` / `yt_channel` count as `youtube`. Disabled platforms are removed from the effective runtime mix.
 
-For first-run profiling, `openbiliclaw init` can enqueue XHS, Douyin, and YouTube `bootstrap_profile` tasks. XHS opens Xiaohongshu in the user's logged-in browser session, navigates to the profile, parses saved / liked / explicit history state, and returns `partial` batches; the backend reuses recent XHS bootstrap tasks by default and marks a task `in_progress` before returning it to the extension so the same foreground favorites / likes pull is not opened repeatedly. Douyin visits post / favorite / like / follow scopes in the logged-in Douyin session and combines DOM extraction with a MAIN-world API harvester. YouTube visits watch history / subscriptions / liked videos pages and reads rendered DOM items. The backend converts all three sources into normal `view / favorite / like / follow` events and still does not crawl or log in to those sites directly.
+For first-run profiling, `openbiliclaw init` can enqueue XHS, Douyin, and YouTube `bootstrap_profile` tasks. XHS opens Xiaohongshu in the user's logged-in browser session, navigates to the profile, parses saved / liked / explicit history state, and returns `partial` batches; the backend reuses recent XHS bootstrap tasks by default and marks a task `in_progress` before returning it to the extension so the same foreground favorites / likes pull is not opened repeatedly. Douyin visits post / favorite / like / follow scopes in the logged-in Douyin session and combines DOM extraction with a MAIN-world API harvester. YouTube visits watch history / subscriptions / liked videos pages and reads rendered DOM items. The backend converts all three sources into normal `view / favorite / like / follow` events, keeps full raw task results for diagnostics, and filters already-seen bootstrap keys through `source_bootstrap_state.json` before old items can re-enter memory or the profile pipeline. It still does not crawl or log in to those sites directly.
 
 For steady-state Douyin content discovery, `DouyinDiscoveryService` uses the extension-backed `DouyinPluginSearchClient` for search, hot, and feed candidates. Search signs the normal search API from a background tab and enters the pool as `dy-plugin-search`; hot reads hot-board `sentence_id`, opens `/hot/{sentence_id}` in a background tab, resolves the redirected seed aweme, signs the related API, and enters the pool as `dy-plugin-hot-related`; feed signs `/aweme/v1/web/tab/feed/` on a background logged-in homepage and enters the pool as `dy-plugin-feed`. Results either write through `ContentDiscoveryEngine` or preview via `discover-douyin --no-cache`. The cookie is resolved from `OPENBILICLAW_DOUYIN_COOKIE` first, then from the extension-synced `data/douyin_cookie.json`.
+
+For steady-state YouTube content discovery, `YoutubeDiscoveryProducer` runs in its own backend loop when the YouTube platform family is under quota. It calls `yt_search`, `yt_trending`, and `yt_channel` directly through `ContentDiscoveryEngine`, throttled by `min_interval_minutes` and per-strategy daily execution ledgers. `yt_tasks` remains only for bootstrap-profile extension imports and smoke checks.
 
 ### Soul Engine
 
@@ -397,10 +466,12 @@ OpenBiliClaw/
 │   ├── recommendation/        # Recommendation & expression engine
 │   ├── sources/               # Source adapters and XHS/Douyin/YouTube task bridges
 │   ├── youtube/               # Google Takeout import parser
+│   ├── api/                   # Local FastAPI (config rollback / degraded mode / popup API)
+│   ├── runtime/               # Refresh, presence gate, auto-update, degraded RuntimeContext
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
-│   ├── llm/                   # Multi-model LLM adapters
+│   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
 │   └── storage/               # Data storage layer
-├── extension/                 # Chrome browser extension (Bilibili + XHS + Douyin + YouTube)
+├── extension/                 # Chrome browser extension (Bilibili + XHS + Douyin + YouTube + degraded config recovery)
 ├── skills/                    # Built-in Skill definitions
 ├── docs/                      # Documentation
 └── tests/                     # Tests (650+)
@@ -412,7 +483,7 @@ OpenBiliClaw/
 |--------|-----------|
 | Backend | Python 3.11+ |
 | Browser Extension | TypeScript + Chrome Extension (Manifest V3) |
-| LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url |
+| LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url; OpenAI can experimentally reuse Codex CLI OAuth |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; scrolling init imports open `/explore` in the foreground, click the page's profile entry, then use bounded scrolling and partial batches; no backend crawling |
 | Douyin | Extension DOM + MAIN-world fetch/API harvester + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery use background tabs and the logged-in plugin signer; no backend crawling |
@@ -432,7 +503,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.72: configurable browser-extension backend port (2026-05-16)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
+Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 
@@ -449,7 +520,7 @@ Contributions welcome! See the [Contributing Guide](docs/contributing.md) to get
 
 ## 🙏 Acknowledgements
 
-- Thanks to [@addtion99](https://github.com/addtion99) for proposing configurable browser-extension backend ports and sharing the popup-side implementation idea in [#8](https://github.com/whiteguo233/OpenBiliClaw/pull/8).
+- Thanks to [@addtion99](https://github.com/addtion99) for proposing configurable browser-extension backend host / port settings and sharing the popup-side implementation idea in [#8](https://github.com/whiteguo233/OpenBiliClaw/pull/8).
 
 ## ⭐ Star History
 

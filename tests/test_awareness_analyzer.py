@@ -279,3 +279,32 @@ async def test_awareness_analyzer_consumes_singular_note_fixture() -> None:
     assert len(notes) == 1
     assert notes[0].observation.startswith("最近连续浏览")
     assert notes[0].date == "2026-03-08"
+
+
+@pytest.mark.asyncio
+async def test_awareness_analyzer_consumes_wrapped_notes_after_shared_parser_migration() -> None:
+    """Regression guard: wrapper parsing survives the shared-helper migration."""
+    from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
+
+    raw = json.dumps(
+        {
+            "observations": [
+                {
+                    "date": "2026-03-08",
+                    "observation": "最近连续浏览系统拆解内容。",
+                    "trend": "偏好结构化解释。",
+                    "emotion_guess": "专注",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    notes = await AwarenessAnalyzer(FakeStructuredService(raw)).analyze(
+        events=[{"event_type": "view", "title": "系统拆解"}],
+        preference={},
+        soul_profile={},
+    )
+
+    assert len(notes) == 1
+    assert notes[0].observation == "最近连续浏览系统拆解内容。"

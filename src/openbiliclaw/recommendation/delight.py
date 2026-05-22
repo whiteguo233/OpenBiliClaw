@@ -12,11 +12,11 @@ diversity.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from openbiliclaw.llm.json_utils import extract_llm_json_list
 from openbiliclaw.llm.prompts import build_delight_score_batch_prompt
 
 if TYPE_CHECKING:
@@ -282,56 +282,18 @@ def _extract_delight_entries(content: str, *, expected_count: int) -> list[dict[
         ``json.JSONDecodeError: Extra data``).
       - Some models echo the schema as a single object when batch=1.
 
-    This helper unifies all three: try tolerant parse → unwrap dict
-    keys → fall back to JSONL line-by-line. Returns an empty list only
-    if no valid entry could be extracted.
+    This helper delegates to the shared LLM JSON extractor so array
+    snippets, wrappers, singleton entries, and JSONL are handled the same
+    way as recommendation/discovery parsers. Returns an empty list only if
+    no valid entry could be extracted.
     """
-    from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
-
     text = content.strip()
     if not text:
         return []
 
-    parsed = parse_llm_json_tolerant(text)
-    entries = _coerce_to_entry_list(parsed)
-    if entries:
-        return entries
-
-    # JSONL fallback: parser failed or returned None — try splitting
-    # on newlines and parsing each line as a standalone JSON object.
-    # Handles mimo's "Extra data" mode where multiple roots are emitted.
-    salvaged: list[dict[str, Any]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            piece = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        sub = _coerce_to_entry_list(piece)
-        if sub:
-            salvaged.extend(sub)
-    if salvaged:
-        return salvaged[:expected_count] if expected_count > 0 else salvaged
-
-    return []
-
-
-def _coerce_to_entry_list(data: Any) -> list[dict[str, Any]]:
-    """Normalize parsed JSON into a flat list of entry dicts.
-
-    Accepts:
-      - ``list[dict]``: returned as-is (filtered to dicts only)
-      - ``dict`` with one of {results, items, delights, data, scores,
-        candidates, output, list, array}: unwrap that key
-      - single ``dict`` with a ``bvid`` field: wrap in a list
-      - anything else: empty list
-    """
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    if isinstance(data, dict):
-        for wrap_key in (
+    entries = extract_llm_json_list(
+        text,
+        wrapper_keys=(
             "results",
             "items",
             "delights",
@@ -341,13 +303,14 @@ def _coerce_to_entry_list(data: Any) -> list[dict[str, Any]]:
             "output",
             "list",
             "array",
-        ):
-            inner = data.get(wrap_key)
-            if isinstance(inner, list):
-                return [item for item in inner if isinstance(item, dict)]
-        if "bvid" in data:
-            return [data]
-    return []
+        ),
+        allow_singleton=True,
+        item_predicate=lambda item: "bvid" in item or "score" in item,
+    )
+    if not entries:
+        return []
+    result = [dict(item) for item in entries]
+    return result[:expected_count] if expected_count > 0 else result
 
 
 def _build_delight_profile_summary(profile: Any) -> dict[str, object]:

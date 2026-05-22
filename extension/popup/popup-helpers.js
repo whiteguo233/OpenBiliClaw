@@ -22,6 +22,19 @@ function normalizeCoverUrl(value) {
   return text;
 }
 
+export function buildImageProxyPath(value) {
+  const src = normalizeCoverUrl(value);
+  if (!src) {
+    return "";
+  }
+  try {
+    new URL(src);
+  } catch {
+    return "";
+  }
+  return `/api/image-proxy?url=${encodeURIComponent(src)}`;
+}
+
 export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }
@@ -89,6 +102,11 @@ export function normalizeDelightCandidate(item) {
     state: normalizedState,
     response_message: normalizeText(item?.response_message),
     chat_reply: normalizeText(item?.chat_reply),
+    // Local UI fields preserved across re-normalizations
+    turns: Array.isArray(item?.turns) ? item.turns : [],
+    composer_open: Boolean(item?.composer_open),
+    chat_draft: normalizeText(item?.chat_draft),
+    chat_turn_id: normalizeText(item?.chat_turn_id),
   };
 }
 
@@ -111,6 +129,10 @@ export function mergeDelightCandidate(current, incoming, dismissedBvids = []) {
     chat_reply: normalizeText(current?.chat_reply) || normalizedIncoming.chat_reply,
     composer_open: Boolean(current?.composer_open),
     chat_draft: normalizeText(current?.chat_draft),
+    turns: Array.isArray(current?.turns) && current.turns.length > 0
+      ? current.turns
+      : normalizedIncoming.turns,
+    chat_turn_id: normalizeText(current?.chat_turn_id) || normalizedIncoming.chat_turn_id,
   };
 }
 

@@ -14,6 +14,23 @@ test("popup header keeps compact status inline with brand row", () => {
   assert.doesNotMatch(popupMarkup, /id="statusText"/);
 });
 
+test("popup header exposes a local mobile web QR entry", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const popupMarkup = popupHtml.match(/<header class="hero">[\s\S]*?<\/header>/)?.[0] ?? "";
+  const overlayMarkup =
+    popupHtml.match(/<div id="mobileQrOverlay"[\s\S]*?<!-- ── Messages overlay ── -->/)?.[0] ?? "";
+
+  assert.match(popupMarkup, /id="mobileQrButton"/);
+  assert.match(popupMarkup, /aria-label="显示移动端二维码"/);
+  assert.match(popupMarkup, /id="mobileQrButton"[\s\S]*id="messagesButton"[\s\S]*id="settingsGear"/);
+  assert.match(overlayMarkup, /id="mobileQrCode"/);
+  assert.match(overlayMarkup, /id="mobileQrCopy"/);
+  assert.match(overlayMarkup, /id="mobileQrOpen"/);
+  assert.match(popupJs, /createQrSvgMarkup/);
+  assert.doesNotMatch(popupHtml, /api\.qrserver|chart\.googleapis/);
+});
+
 test("recommendation header uses a compact top row with status chips", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const headerCardBlock =
@@ -130,6 +147,25 @@ test("popup page is structured for side panel browsing", () => {
   assert.match(shellBlock, /min-width:\s*0;/);
   assert.doesNotMatch(bodyBlock, /width:\s*392px;/);
   assert.doesNotMatch(bodyBlock, /height:\s*560px;/);
+});
+
+test("settings tabs use stable compact panels", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const tabsBlock = popupHtml.match(/\.settings-tabs\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const tabBlock = popupHtml.match(/\.settings-tab\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const activeTabBlock = popupHtml.match(/\.settings-tab\.is-active\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const panelBlock = popupHtml.match(/\.settings-panel\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const hiddenPanelBlock =
+    popupHtml.match(/\.settings-panel\[hidden\]\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  assert.match(tabsBlock, /display:\s*grid;/);
+  assert.match(tabsBlock, /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(tabBlock, /min-height:\s*36px;/);
+  assert.match(tabBlock, /cursor:\s*pointer;/);
+  assert.match(activeTabBlock, /background:/);
+  assert.match(panelBlock, /display:\s*flex;/);
+  assert.match(panelBlock, /flex-direction:\s*column;/);
+  assert.match(hiddenPanelBlock, /display:\s*none;/);
 });
 
 test("recommendation card layout reserves a media cover slot", () => {

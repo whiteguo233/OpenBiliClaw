@@ -36,6 +36,7 @@ from openbiliclaw.youtube.client import YtScraperClient, normalize_yt_video
 
 if TYPE_CHECKING:
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     client: YtScraperClient
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     queries_per_run: int = 6
     results_per_query: int = 15
     score_threshold: float = 0.65
@@ -93,10 +95,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
             return []
 
         raw_batches = await asyncio.gather(
-            *[
-                self.client.search_videos(q, limit=self.results_per_query)
-                for q in queries
-            ],
+            *[self.client.search_videos(q, limit=self.results_per_query) for q in queries],
             return_exceptions=True,
         )
 
@@ -157,6 +156,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     ) -> list[DiscoveredContent]:
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
@@ -183,6 +183,7 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
     client: YtScraperClient
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     fetch_limit: int = 50
     score_threshold: float = 0.60
     llm_evaluation: bool = True
@@ -214,6 +215,7 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
@@ -255,6 +257,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
     llm_service: SupportsStructuredTask
     memory: SupportsYtFollowQuery
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     max_channels: int = 10
     videos_per_channel: int = 5
     score_threshold: float = 0.65
@@ -293,9 +296,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
                 seen.add(content.content_id)
                 candidates.append(content)
 
-        logger.info(
-            "yt_channel: %d channels → %d candidates", len(channel_ids), len(candidates)
-        )
+        logger.info("yt_channel: %d channels → %d candidates", len(channel_ids), len(candidates))
         if not candidates:
             return []
 
@@ -304,6 +305,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)

@@ -473,10 +473,22 @@ def test_extract_delight_entries_handles_dict_wrapped() -> None:
     """mimo-v2.5-pro default: ``{"results": [...]}``."""
     from openbiliclaw.recommendation.delight import _extract_delight_entries
 
-    for wrap in ("results", "items", "delights", "data", "scores", "candidates"):
+    for wrap in ("results", "items", "delights", "data", "scores", "candidates", "output"):
         payload = f'{{"{wrap}": [{{"bvid":"BV1","score":0.7}}]}}'
         entries = _extract_delight_entries(payload, expected_count=1)
         assert len(entries) == 1, f"failed to unwrap {wrap}"
+
+
+def test_extract_delight_entries_handles_fenced_wrapper() -> None:
+    """Some gateways fence the wrapped batch result instead of the raw list."""
+    from openbiliclaw.recommendation.delight import _extract_delight_entries
+
+    payload = """```json
+{"output":[{"bvid":"BV1","score":0.72,"rationale":"r","hook":"h"}]}
+```"""
+    entries = _extract_delight_entries(payload, expected_count=1)
+    assert len(entries) == 1
+    assert entries[0]["bvid"] == "BV1"
 
 
 def test_extract_delight_entries_handles_jsonl_extra_data() -> None:

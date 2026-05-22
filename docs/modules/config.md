@@ -6,7 +6,7 @@
 
 ```bash
 cp config.example.toml config.toml
-# 编辑 config.toml，填入 LLM API Key
+# 编辑 config.toml，填入 LLM API Key；或对 OpenAI 实验性启用 Codex OAuth
 ```
 
 ## 配置段落
@@ -18,11 +18,22 @@ cp config.example.toml config.toml
 | `language` | string | `"zh"` | Agent 输出语言（`zh` / `en`） |
 | `data_dir` | string | `"data"` | 数据目录（记忆、Cookie、数据库） |
 
+### `[api]`
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `host` | string | `"0.0.0.0"` | 后端 API 监听地址。默认绑定所有网卡，方便同局域网手机访问 `/m/`；如只允许本机访问可改为 `"127.0.0.1"` |
+| `port` | int | `8420` | 后端 API 监听端口 |
+
+`openbiliclaw start` 默认读取这里的 host / port。浏览器插件的手机二维码入口会在后端地址仍是 loopback 时读取 `/api/health.lan_ip`，用局域网 IP 生成 `/m/` 二维码；但后端仍需要绑定 `0.0.0.0`，手机才能连上。
+
 ### `[llm]`
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `default_provider` | string | `"openai"` | 默认 Provider：`openai` / `claude` / `gemini` / `deepseek` / `ollama` / `openrouter` / `openai_compatible` |
+| `fallback_enabled` | bool | `false` | 旧兼容开关；当前实际 fallback 只在 `fallback_provider` 非空时发生 |
+| `fallback_provider` | string | `""` | 第二个备选 Provider。留空 = 不 fallback；非空时只按 `default_provider → fallback_provider` 尝试，不再自动遍历其它 provider |
 
 ### `[llm.openai]`
 
@@ -31,12 +42,15 @@ cp config.example.toml config.toml
 | `api_key` | string | `""` | API Key（default_provider=openai 时必填，OpenAI 兼容服务也填这里） |
 | `model` | string | `"gpt-5-nano"` | 模型名称（按 `base_url` 后端实际部署的模型填，例如 vLLM 上是 `meta-llama/Llama-3.1-70B-Instruct`） |
 | `base_url` | string | `""` | 留空使用 OpenAI 官方 `https://api.openai.com/v1`；指向任何 OpenAI 兼容服务的 `/v1` 端点：Azure OpenAI / vLLM / LMStudio / OneAPI / Cloudflare AI Gateway / 自建 LLM 网关 |
+| `auth_mode` | string | `""` | 认证模式：`""` / `"api_key"` 使用 `api_key`；`"codex_oauth"` 使用 `openbiliclaw login codex` 导入的 Codex CLI ChatGPT OAuth 凭据 |
 
 > **「openai」是协议家族，不是厂商。** v0.3.5 起 `init` 向导会显式说明这一点。任何兼容 `POST /v1/chat/completions` 的服务都填到这一段，区别只在 `base_url`。
 > 例如：
 > - Azure OpenAI → `base_url = "https://your-resource.openai.azure.com/openai/deployments/your-deployment"`
 > - 本地 vLLM → `base_url = "http://localhost:8000/v1"`，`api_key` 任填或留空
 > - OneAPI 网关 → `base_url = "https://your-oneapi.example.com/v1"`
+
+> `auth_mode = "codex_oauth"` 是实验性 / 非官方路径：OpenAI 官方 API 认证仍以 Platform API key 为稳定入口。启用前先运行 `openbiliclaw login codex`，OpenBiliClaw 会从官方 Codex CLI 登录态导入 token 到 `~/.openbiliclaw/codex_auth.json`。该模式下 `api_key` 会被忽略，并且 `base_url` 只能留空或指向 `https://api.openai.com`，避免把 ChatGPT OAuth token 发给第三方 OpenAI-compatible 代理。自定义代理仍请使用 `api_key` 模式或 `[llm.openai_compatible]`。
 
 ### `[llm.claude]`
 
@@ -113,16 +127,18 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `provider` | string | `""` | 留空 = 跟随 `[llm].default_provider`；填 `"openai"` / `"gemini"` / `"ollama"` / `"openai_compatible"`。Claude / DeepSeek / OpenRouter 没有 embedding 接口 |
+| `provider` | string | `""` | 留空 = 不启用 embedding；不会跟随 `[llm].default_provider`。可填 `"openai"` / `"gemini"` / `"ollama"` / `"openai_compatible"`。Claude / DeepSeek / OpenRouter 没有 embedding 接口 |
 | `model` | string | `"gemini-embedding-001"` | embedding 模型名；按 provider 自动填合理默认：`gemini → gemini-embedding-001` / `openai → text-embedding-3-small` / `ollama → bge-m3` |
-| `api_key` | string | `""` | v0.3.32+ embedding 专属 API Key。留空走向后兼容路径（借用 `[llm.<provider>].api_key`，并打一条一次性 WARNING）。Ollama 不需要 |
+| `api_key` | string | `""` | v0.3.32+ embedding 专属 API Key。默认不会借用 `[llm.<provider>].api_key`；只有 `fallback_enabled=true` 时才允许旧配置借用 chat-side 凭据并打一条 WARNING。Ollama 不需要 |
 | `base_url` | string | `""` | v0.3.32+ embedding 专属 base URL。留空使用 provider 默认值（OpenAI → `api.openai.com/v1`、Ollama → `localhost:11434/v1`）。Gemini SDK 忽略此字段 |
 | `similarity_threshold` | float | `0.82` | 余弦相似度阈值，超过即视为"同主题" |
+| `fallback_enabled` | bool | `false` | 旧兼容开关；插件设置页选择 `fallback_provider` 时会同步写成 `true`，用于允许借用对应 chat provider 凭据 |
+| `fallback_provider` | string | `""` | 第二个 embedding 备选 Provider。留空 = 不 fallback；可填 `openai` / `gemini` / `ollama` / `openai_compatible`，不会再自动走 `ollama → gemini → openai` 链 |
 
 #### 启用本地 Ollama embedding（v0.3.0+，**v0.3.3 起真实生效**）
 
 > ⚠️ **如果你装的是 v0.3.0~v0.3.2**：`setup-embedding` 当时虽然写了 `[llm.embedding] provider="ollama"`，但 LLM 注册表静默回退到 default provider，embedding 实际仍走 Gemini。
-> **升级到 v0.3.3+ 重启 backend** 即可生效，不需要改配置；想"零悬念"的话可以再跑一次 `openbiliclaw setup-embedding`，向导会顺手补上 `[llm.ollama] base_url`。
+> **升级到 v0.3.3+ 重启 backend** 即可生效，不需要改配置；当前版本可再跑一次 `openbiliclaw setup-embedding`，向导会把 provider / model / base_url 写入独立的 `[llm.embedding]` 段。
 
 不想再多一份 embedding API Key、或要支持离线，可以用 Ollama + bge-m3 跑本地 embedding：
 
@@ -165,6 +181,13 @@ CPU 即可跑（~100-200ms/次），跨 Mac / Win / Linux 一致。
 | `[llm.discovery]` | 关键词生成、候选评估，调用频次最高 | 廉价模型，例如 DeepSeek Chat / GPT-4o-mini / Gemini Flash |
 | `[llm.recommendation]` | 朋友式解释生成，影响最终用户体感 | 平衡型，例如 Claude Haiku / GPT-4o-mini |
 | `[llm.evaluation]` | 池子打分、相关度评估，高频后台调用 | 廉价模型 |
+
+运行时路由（v0.3.75+）：
+
+- `LLMService` 不再用 caller 第一段朴素判断模块，而是内置 caller bucket。例：`soul.*` → soul，`discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` → discovery，`recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` → evaluation，其他 `recommendation.*` → recommendation。
+- `provider` 非空时走 `LLMRegistry.complete_provider(provider, ...)` 精确调用该 provider，不走 fallback 链；该 provider 被 rate-limit 或返回错误时会直接报错，避免用户指定贵模型给画像却被静默改用默认便宜模型。
+- `model` 非空时作为单次调用的 `model=` 参数传给 provider，不会修改 provider 实例的默认模型；`provider` 留空但 `model` 非空时，使用当前 default provider + 该 per-call model。
+- `provider` 拼错或目标 provider 不是 chat-capable（例如 embedding-only Ollama）时，不会让保存配置失败；运行时会按模块 + provider 只 INFO 一次，然后降级到默认 provider 链。
 
 例：发现/评估走 DeepSeek，画像走 Claude：
 
@@ -234,13 +257,21 @@ model    = "deepseek-v4-flash"
 >
 > `127.0.0.1` 与 `localhost` 并非总是等价：macOS 上 Chrome 常只绑定 IPv6 `::1:9222`，而 Python urllib 默认走 IPv4。用 `localhost` 最稳妥（`getaddrinfo` 会同时尝试两边）。
 
+### `[sources.bilibili]`
+
+Bilibili discovery 的平台级开关。B 站账号登录 / Cookie 获取仍由 `[bilibili.auth]` 和 `[bilibili.browser]` 控制；本段只决定后台候选池是否继续调度 B 站 `search` / `related_chain` / `trending` / `explore` 策略。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `true` | 是否启用 Bilibili discovery。设为 `false` 后，B 站候选池占比会从运行时有效配比中剔除，已保存的 `scheduler.pool_source_shares.bilibili` 数值仍保留，重新开启后继续使用 |
+
 ### `[sources.xiaohongshu]`
 
 小红书专用配置。内容发现和元数据提取都由浏览器扩展在真实登录态下完成：被动收集、后台标签页搜索和创作者订阅都会通过扩展任务桥回写后端。主后端不主动爬取小红书，也不再依赖 `sidecar_url`。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `enabled` | bool | `true` | 是否启用小红书 discovery 和 init bootstrap；`init` 选 No、`--no-xhs` 或 `OPENBILICLAW_NO_XHS=1` 会写回 `false` |
+| `enabled` | bool | `false` | 是否启用小红书 discovery 和 init bootstrap；默认关闭，`init` 选 Yes、`--yes-xhs` 或插件设置页打开后才会写回 `true` |
 | `daily_search_budget` | int | `30` | 每天后端允许入队的 Soul 驱动搜索任务数上限。由 `XhsTaskProducer`（`runtime/xhs_producer.py`）在持续刷新循环里使用，搭配内部 4h 最小间隔避免反复抢配额 |
 | `daily_creator_budget` | int | `10` | 每天每位订阅创作者的抓取任务上限 |
 | `task_interval_seconds` | int | `45` | 扩展分发器两次任务之间的最小间隔（秒） |
@@ -265,20 +296,34 @@ model    = "deepseek-v4-flash"
 
 ### `[sources.youtube]`
 
-YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 走 `yt_search` / `yt_trending` / `yt_channel` 三个策略。
+YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 / 订阅 / 点赞，也可通过 `import-youtube` 导入 Google Takeout；steady-state discovery 由后端 `YoutubeDiscoveryProducer` 独立调度 `yt_search` / `yt_trending` / `yt_channel` 三个策略。这里的预算是每日执行预算，按实际 strategy work 写入 SQLite ledger；不依赖 `content_cache` 统计，也不是扩展任务队列的每日入队数。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `false` | 是否让 YouTube 参与候选池配比和后台 discovery；`init --yes-youtube` 会写回 `true`，`--no-youtube` 或 `OPENBILICLAW_NO_YOUTUBE=1` 会写回 `false` |
+| `daily_search_budget` | int | `6` | `yt_search` 每天最多生成 / 执行的 YouTube 搜索 query 数，对应 `YoutubeSearchStrategy.queries_per_run` 的日预算上限 |
+| `daily_trending_budget` | int | `50` | `yt_trending` 每天最多拉取的热门候选数，对应 `YoutubeTrendingStrategy.fetch_limit` 的日预算上限 |
+| `daily_channel_budget` | int | `10` | `yt_channel` 每天最多选择的订阅频道数，对应 `YoutubeChannelStrategy.max_channels` 的日预算上限 |
+| `request_interval_seconds` | int | `2` | 预留的 YouTube 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
+| `min_interval_minutes` | int | `60` | `YoutubeDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
 
 ### `[scheduler]`
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `enabled` | bool | `true` | 是否启用定时发现 |
-| `discovery_cron` | string | `"0 */8 * * *"` | 发现任务 cron 表达式；想更频繁刷新可改回 `"0 */4 * * *"` |
+| `enabled` | bool | `true` | 后台 LLM / embedding 工作总开关；插件设置页显示为「停止后台 LLM 请求」。关闭后 runtime 的刷新、补池预计算、账户同步、猜测兴趣和主动推送等 daemon-owned 后台任务都会跳过；手动 CLI / API 请求仍按显式操作执行。若候选池为空，推荐页可能暂时没有内容 |
+| `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
+| `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |
+| `discovery_cron` | string | `"0 */8 * * *"` | 兼容旧配置的保留字段；当前 runtime 不消费这个 cron，发现补池由轮询、候选池缺口、行为阈值和下方策略间隔驱动 |
 | `pool_target_count` | int | `600` | discovery pool 的硬上限，同时作为期望保有的可换候选数量；允许范围 `1..600`。pool < 目标时会持续补货；pool ≥ 目标时任何 refresh（含 `force_refresh`）都直接返回 `pool_at_cap` 不再 discover；pool > 目标时会先按 `relevance_score` / 时间 / `explore` 优先顺序把溢出部分降为 `suppressed` |
 | `account_sync_interval_hours` | int | `6` | 账户侧长期信号同步间隔；运行时会低频拉取 history / favorites / following |
+| `refresh_check_interval_seconds` | int | `60` | `ContinuousRefreshController` 主循环轮询间隔；小于 `15` 或无法解析时回退默认值 |
+| `signal_event_threshold` | int | `6` | 累计多少条新行为事件后触发 `search + related_chain` 补池；小于 `1` 时回退默认值 |
+| `trending_refresh_hours` | int | `3` | `trending` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
+| `explore_refresh_hours` | int | `12` | `explore` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
+| `discovery_limit` | int | `30` | 单轮 discovery wave 的候选上限；允许范围 `1..60` |
+| `proactive_push_interval_seconds` | int | `120` | 主动推荐 / probe 推送循环间隔；小于 `30` 时回退默认值 |
+| `speculator_idle_interval_minutes` | int | `30` | `ProfileUpdatePipeline` 空闲时检查猜测兴趣生命周期的间隔；小于 `5` 时回退默认值 |
 | `speculation_interval_minutes` | int | `10` | 猜测兴趣推测的运行间隔（分钟） |
 | `speculation_ttl_days` | int | `3` | 猜测兴趣的默认存活天数 |
 | `speculation_cooldown_days` | int | `7` | 猜测兴趣被否定后的冷却天数 |
@@ -290,11 +335,12 @@ YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 /
 | `auto_update_check_interval_hours` | int | `6` | 自动更新检查间隔（小时） |
 
 > 运行时护栏：
-> 即使 `pool_target_count` 设得较高，单次 refresh 里的单轮 discover 补货请求也会封顶在 `60`，避免一次性把全部缺口都打满。
+> 即使 `pool_target_count` 设得较高，单次 refresh 里的 discover wave 也由 `discovery_limit` 控制（默认 `30`，最大 `60`），避免一次性把全部缺口都打满。
+> `pause_on_extension_disconnect` 只约束后端 daemon 自己发起的后台 LLM / embedding 工作；用户手动点击刷新、CLI 显式命令、配置保存和普通读取接口不因为插件离线而被拦截。`runtime-stream` 连接断开由后端 receive-side detector 记录，浏览器 idle disconnect 后不会让 presence 状态卡住。
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin:youtube = 8:1:1:1`。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里 YouTube / Douyin 关闭，所以不会因为默认 share 留空池子。
+候选池按平台族做保底配比，默认保存的 share 仍是 `bilibili:xiaohongshu:douyin:youtube = 8:1:1:1`。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里小红书 / 抖音 / YouTube 都关闭，所以默认有效配比只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -303,9 +349,9 @@ YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 /
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
 | `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
 
-运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，runtime 会调度 `yt_search` / `yt_trending` / `yt_channel` 补池。
+运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标且 `[sources.bilibili].enabled=true` 时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，后台 `YoutubeDiscoveryProducer` 会在独立 loop 中触发 `yt_search` / `yt_trending` / `yt_channel`，主 refresh replenishment plan 不再 inline 调度 YouTube。
 
-`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube 写回对应 `enabled`；交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关平台、编辑四个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
+`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube 写回对应 `enabled`；Bilibili 默认启用，也可在插件设置页或 `config.toml` 里手动关闭。交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关四个平台、编辑四个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
 
 ### `[storage]`
 
@@ -335,17 +381,44 @@ YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 /
 
 启动时如果现有日志文件已经超过 `max_file_size_mb`，会被重命名为 `<filename>.1`（覆盖旧的 `.1`）并重新开始写入——这样意外堆积的大日志不会在下次启动时继续增长。运行时到达上限则由 `RotatingFileHandler` 正常轮转：`app.log` → `app.log.1` → `app.log.2` → …，超出 `backup_count` 的旧份自动丢弃。
 
+文件日志使用标准 formatter 写入异常 traceback；`RotatingFileHandler`、plain `FileHandler` 和 `/api/config` 热重载异常路径都有回归测试覆盖，避免 Windows / 非轮转配置下只留下错误摘要而丢失 stack trace。
+
+`GET /api/config` 会额外返回只读字段 `logging.file_path`，即后端按项目根目录解析后的完整日志文件路径；`config.toml` 仍只保存 `directory` 和 `filename`。插件设置页展示和编辑「完整日志路径」时会在保存前拆回这两个字段，因此现有配置文件结构保持兼容。
+
 ## 插件设置页覆盖范围
 
 浏览器插件的设置页通过后端 `/api/config` 读取和保存配置。当前 UI 已覆盖常用和高风险易漏项：
 
 - 基础：`language`、`data_dir`、`storage.db_path`
-- LLM：默认 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
-- B 站与多源：`bilibili.browser.*`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.enabled`
-- 调度：`scheduler.enabled`、`discovery_cron`、`pool_target_count`、`account_sync_interval_hours`、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
-- 日志：控制台 / 文件级别、日志目录和文件名、轮转与非托管日志清理参数
+- LLM：默认 provider、显式备选 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
+- B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.*`
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 
 保留但不单独暴露的字段主要是目前只有一个有效值的内部兼容项，例如 `[sources.douyin].mode = "direct"`；保存时插件会继续按当前支持值写回，不会删除其他高级字段。
+
+## `/api/config` 保存与恢复语义
+
+设置页和外部调用方都走同一条配置 API。`GET /api/config` 默认会 mask API Key；`PUT /api/config` 只更新请求体里出现的字段，并遵循以下安全规则：
+
+- masked key（例如 `sk-****abcd`）不会写回 `config.toml`，避免把真实密钥覆盖成星号。
+- 已有非空的 `model`、`base_url`、OpenRouter headers、DeepSeek `reasoning_effort` 和 embedding `model/base_url/api_key` 不会被空字符串覆盖；空值只在旧值本来为空时写入。
+- 需要真正清空 API Key 时，调用方必须传 `reset_fields`。当前允许值为 `llm.openai.api_key`、`llm.claude.api_key`、`llm.gemini.api_key`、`llm.deepseek.api_key`、`llm.openrouter.api_key`、`llm.openai_compatible.api_key`、`llm.embedding.api_key`；未知字段返回 400。
+- 写盘前会先用新配置构建 LLM registry；blocking issue 会返回 400 且不写入 `config.toml`。
+- 写盘前会生成 `config.toml.bak`。正常模式下热重载失败会尝试恢复备份，并在响应里设置 `rollback_applied=true`；如果备份恢复也失败，接口返回 500 和人工恢复提示。
+
+`PUT /api/config` 返回 `ConfigUpdateResponse`：
+
+| 字段 | 说明 |
+|------|------|
+| `ok` | 请求是否完成。校验失败时为 `false`。 |
+| `reloaded` | 是否已热重载运行时组件。 |
+| `rollback_applied` | 热重载失败后是否已从 `config.toml.bak` 回滚。 |
+| `restart_required` | 新配置是否已写入但需要重启 daemon 才能生效。降级模式保存会返回 `true`。 |
+| `config` | 保存后或回滚后的配置快照，API Key 仍默认 masked。 |
+| `message` | 给 UI 展示的人类可读状态。 |
+
+当 daemon 因 LLM registry 配置错误进入降级模式时，`GET /api/config` 会返回 `degraded=true`、`degraded_reason="llm_registry_unavailable"` 和 blocking issues；`PUT /api/config` 会保存修复配置但不尝试热重载，返回 `restart_required=true`，要求用户重启 daemon。
 
 ## 环境变量
 
@@ -366,9 +439,11 @@ YouTube discovery 开关。初始化画像由浏览器扩展读取观看历史 /
 | `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-xhs` 的小红书每个 scope 最大滚动轮数，默认 `15` |
 | `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` | `init --yes-xhs` 的小红书每个 scope 最多采集条目数，默认 `300` |
 | `OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS` | `init --yes-douyin` 收集抖音扩展任务结果的最大等待秒数，默认 `180`；`fetch-douyin --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS` | 抖音 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用 |
 | `OPENBILICLAW_DY_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-douyin` 的抖音每个 scope 最大滚动轮数，默认 `15` |
 | `OPENBILICLAW_DY_BOOTSTRAP_MAX_ITEMS` | `init --yes-douyin` 的抖音每个 scope 最多采集条目数，默认 `300` |
 | `OPENBILICLAW_YT_BOOTSTRAP_WAIT_SECONDS` | `init --yes-youtube` 收集 YouTube 扩展任务结果的最大等待秒数，默认 `240`；`fetch-youtube --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS` | YouTube `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用 |
 | `OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS` | `init --yes-youtube` 的 YouTube 每个 scope 最大滚动轮数，默认 `10` |
 | `OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS` | `init --yes-youtube` 的 YouTube 每个 scope 最多采集条目数，默认 `300` |
 
@@ -413,8 +488,9 @@ cookie = ""
 
 建议：
 
-- Docker 模式下的首选入口是 `docker exec -it openbiliclaw-backend openbiliclaw init`
-- 如果缺少 provider API Key 或 B 站 Cookie，`init` 会直接在终端里引导并写回 Docker volume
+- Docker 模式下的首选入口是 `python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie`；它会确认配置、同步到容器 `/app/runtime`，并自动运行 init
+- `docker exec -it openbiliclaw-backend openbiliclaw init` 是高级手动 fallback，用于重复初始化或排查
+- 如果缺少 provider API Key 或 B 站 Cookie，bootstrap / init 会直接在终端里引导并写回 Docker volume
 - provider 和 API Key 会写入 `/app/runtime/config.toml`
 - B 站 cookie 会写入 `/app/runtime/data/bilibili_cookie.json`
 - 首轮 `init` 和后续 `discover` 可能持续几分钟，因为它们会真实访问 B 站和当前 LLM provider

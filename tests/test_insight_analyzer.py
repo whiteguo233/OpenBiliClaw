@@ -151,6 +151,119 @@ async def test_insight_analyzer_can_use_unified_service() -> None:
     assert service.calls
 
 
+@pytest.mark.asyncio
+async def test_insight_analyzer_accepts_results_wrapper() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    raw = json.dumps(
+        {
+            "results": [
+                {
+                    "hypothesis": "用户在通过系统化内容寻找掌控感。",
+                    "evidence": ["连续浏览系统拆解类内容。"],
+                    "confidence": 0.6,
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    insights = await InsightAnalyzer(FakeStructuredService(raw)).analyze(
+        awareness_notes=[],
+        preference={},
+        soul_profile={},
+    )
+
+    assert len(insights) == 1
+    assert insights[0].hypothesis == "用户在通过系统化内容寻找掌控感。"
+    assert insights[0].confidence == 0.6
+
+
+@pytest.mark.asyncio
+async def test_insight_analyzer_accepts_jsonl_hypotheses() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "hypothesis": "用户偏好可复盘的知识密度。",
+                    "evidence": ["最近收藏结构化教程。"],
+                    "confidence": 0.61,
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "hypothesis": "用户会被跨领域类比触发兴趣。",
+                    "evidence": ["最近点击多个跨学科解释视频。"],
+                    "confidence": 0.58,
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    insights = await InsightAnalyzer(FakeStructuredService(raw)).analyze(
+        awareness_notes=[],
+        preference={},
+        soul_profile={},
+    )
+
+    assert [item.hypothesis for item in insights] == [
+        "用户偏好可复盘的知识密度。",
+        "用户会被跨领域类比触发兴趣。",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_insight_analyzer_ignores_echoed_schema_before_final_fenced_array() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    raw = (
+        '{"type":"object","properties":{"hypothesis":{"type":"string"}}}\n'
+        "```json\n"
+        '[{"hypothesis":"用户正在寻找系统解释。","evidence":["连续观看结构拆解内容。"],'
+        '"confidence":0.63}]\n'
+        "```"
+    )
+
+    insights = await InsightAnalyzer(FakeStructuredService(raw)).analyze(
+        awareness_notes=[],
+        preference={},
+        soul_profile={},
+    )
+
+    assert len(insights) == 1
+    assert insights[0].hypothesis == "用户正在寻找系统解释。"
+
+
+@pytest.mark.asyncio
+async def test_insight_analyzer_accepts_malformed_mimo_array_root() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+
+    raw = """
+{
+  [
+    {
+      "hypothesis": "用户对系统结构有持续兴趣。",
+      "evidence": ["连续浏览系统思维内容。"],
+      "confidence": 0.6
+    }
+  ]
+}
+"""
+
+    insights = await InsightAnalyzer(FakeStructuredService(raw)).analyze(
+        awareness_notes=[],
+        preference={},
+        soul_profile={},
+    )
+
+    assert len(insights) == 1
+    assert insights[0].hypothesis == "用户对系统结构有持续兴趣。"
+
+
 def test_insight_analyzer_requires_core_memory_task_service() -> None:
     from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
 

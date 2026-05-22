@@ -44,11 +44,13 @@ class ClaudeProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # ``reasoning_effort`` is DeepSeek-specific; Claude has its own
         # ``thinking`` mode controlled separately. Accept the kwarg for
         # signature compatibility but don't act on it here.
         del reasoning_effort
+        effective_model = (model or "").strip() or self._model
         # Extract system message if present
         system = ""
         chat_messages = []
@@ -75,7 +77,7 @@ class ClaudeProvider(LLMProvider):
         response = cast(
             "Message",
             await self._request_with_retry(
-                model=self._model,
+                model=effective_model,
                 max_tokens=max_tokens,
                 system=system_param,
                 messages=chat_messages,

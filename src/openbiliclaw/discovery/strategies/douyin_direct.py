@@ -18,6 +18,7 @@ from openbiliclaw.sources.douyin_direct import normalize_aweme_item
 
 if TYPE_CHECKING:
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
     client: SupportsDouyinDirectClient
     llm_service: SupportsStructuredTask | None = None
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     sources: tuple[str, ...] = ("search", "hot", "feed")
     seed_keywords: tuple[str, ...] = ()
     creator_sec_uids: tuple[str, ...] = ()
@@ -110,6 +112,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         eval_candidates = trim_candidates_for_llm(

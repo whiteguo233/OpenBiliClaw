@@ -1,10 +1,20 @@
-"""Auto-update service — periodically check for and apply new versions."""
+"""Auto-update service — periodically check for and apply backend source tags.
+
+Release contract:
+- backend source updates are git tags named ``backend-vX.Y.Z``;
+- legacy ``vX.Y.Z`` / bare ``X.Y.Z`` tags are tolerated for old installs;
+- extension artifacts use ``extension-vX.Y.Z`` and MUST be ignored here;
+- GitHub ``/releases/latest`` is not authoritative for backend updates because
+  current Releases are extension artifacts. ``_fetch_latest_version`` therefore
+  queries ``/tags`` directly and filters for backend tags.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -18,12 +28,12 @@ import openbiliclaw
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_API_LATEST = (
-    "https://api.github.com/repos/whiteguo233/OpenBiliClaw/releases/latest"
-)
 _GITHUB_TAGS = (
     "https://api.github.com/repos/whiteguo233/OpenBiliClaw/tags"
 )
+_BACKEND_TAG_PREFIX = "backend-v"
+_MAX_TAG_PAGES = 5
+_TAGS_PER_PAGE = 100
 
 
 def _project_root() -> Path:
@@ -49,6 +59,28 @@ def _parse_version(v: str) -> tuple[int, ...]:
         except ValueError:
             break
     return tuple(parts) or (0,)
+
+
+def _parse_backend_version(tag: str) -> tuple[int, ...] | None:
+    """Parse backend release tags and ignore extension/non-backend tags."""
+    raw = tag.strip()
+    if not raw:
+        return None
+    if raw.startswith(_BACKEND_TAG_PREFIX):
+        version_text = raw.removeprefix(_BACKEND_TAG_PREFIX)
+    elif raw[:1] in {"v", "V"} and len(raw) > 1 and raw[1].isdigit():
+        version_text = raw[1:]
+    elif raw[0].isdigit():
+        version_text = raw
+    elif raw[0].isalpha():
+        return None
+    else:
+        version_text = raw
+
+    match = re.match(r"^(\d+(?:\.\d+)*)", version_text)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
 
 
 def _string_from_mapping_field(
@@ -93,9 +125,15 @@ class AutoUpdateService:
 
         self._latest_remote_version = remote_version
         if not remote_version:
-            return {"checked": True, "updated": False, "reason": "no_remote_version"}
+            logger.info("Auto-update check found no_backend_tag_yet")
+            return {"checked": True, "updated": False, "reason": "no_backend_tag_yet"}
 
-        if _parse_version(remote_version) <= _parse_version(current):
+        remote_parsed = _parse_backend_version(remote_version)
+        if remote_parsed is None:
+            logger.info("Auto-update check found no_backend_tag_yet")
+            return {"checked": True, "updated": False, "reason": "no_backend_tag_yet"}
+
+        if remote_parsed <= _parse_version(current):
             logger.info(
                 "Already up-to-date: current=%s, remote=%s", current, remote_version
             )
@@ -169,36 +207,37 @@ class AutoUpdateService:
         return elapsed >= timedelta(hours=self.check_interval_hours)
 
     async def _fetch_latest_version(self) -> str:
-        """Query GitHub API for the latest release or tag version."""
+        """Query GitHub tags for the newest backend version tag."""
         async with httpx.AsyncClient(timeout=30) as client:
-            # Try releases/latest first
-            try:
-                resp = await client.get(
-                    _GITHUB_API_LATEST,
-                    headers={"Accept": "application/vnd.github.v3+json"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if not isinstance(data, Mapping):
-                        data = {}
-                    tag = _string_from_mapping_field(data, "tag_name")
-                    if tag:
-                        return tag
-            except Exception:
-                pass
-
-            # Fallback: fetch tags
-            resp = await client.get(
-                _GITHUB_TAGS,
-                headers={"Accept": "application/vnd.github.v3+json"},
-            )
-            if resp.status_code == 200:
+            candidates: list[tuple[tuple[int, ...], str]] = []
+            for page in range(1, _MAX_TAG_PAGES + 1):
+                try:
+                    resp = await client.get(
+                        _GITHUB_TAGS,
+                        headers={"Accept": "application/vnd.github.v3+json"},
+                        params={"per_page": _TAGS_PER_PAGE, "page": page},
+                    )
+                except Exception as exc:
+                    logger.warning("Auto-update tag check failed: %s", exc)
+                    return ""
+                if resp.status_code != 200:
+                    logger.warning("Auto-update tag check failed: HTTP %s", resp.status_code)
+                    return ""
                 tags = resp.json()
-                if tags and isinstance(tags, list):
-                    # Tags are returned newest first
-                    first_tag = tags[0]
-                    if isinstance(first_tag, Mapping):
-                        return _string_from_mapping_field(first_tag, "name")
+                if not tags:
+                    break
+                if not isinstance(tags, list):
+                    logger.warning("Auto-update tag check failed: unexpected tags payload")
+                    return ""
+                for tag_payload in tags:
+                    if not isinstance(tag_payload, Mapping):
+                        continue
+                    tag = _string_from_mapping_field(tag_payload, "name")
+                    parsed = _parse_backend_version(tag)
+                    if parsed is not None:
+                        candidates.append((parsed, tag))
+            if candidates:
+                return max(candidates, key=lambda item: item[0])[1]
         return ""
 
     async def _apply_update(self) -> None:

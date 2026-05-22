@@ -4,6 +4,224 @@
 
 ---
 
+## v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）
+
+- 浏览器插件版本提升到 extension v0.3.44，准备发布 `extension-v0.3.44`；后端源码版本仍为 v0.3.89，不发布新的后端 tag。
+- 移动 Web 惊喜推荐的「聊一聊」不再切到对话 tab，而是在当前惊喜卡片内展开 16px textarea composer，提交后就地显示用户气泡、AI thinking、完成回复或失败提示。
+- 移动 Web 和插件的惊喜推荐内聊统一走 durable `/api/chat/turns`，按 `scope=delight` + `subject_id` 归并历史；pending turn 会轮询恢复，reload 后可重新 hydrate。
+- 移动 Web 推荐列表新增封面预热和接近底部自动续页：首屏推荐封面用 eager/high priority 加载，后续封面通过 `/api/image-proxy` URL best-effort 预热；滚到列表底部附近会自动调用 `append` 续下一批，底部「加载更多」按钮保留为兜底。
+- 插件惊喜推荐卡片从单个 `chat_reply` 升级为 per-delight `turns` 多轮气泡，`chat_reply` 仅保留为兼容 last reply；切换候选和 side panel reload 不再覆盖旧回合。
+- Discovery / recommendation 的批量内容评估统一透传近期 negative exemplars：B 站、抖音、YouTube 策略和 OpenClaw bootstrap 都会把共享 database 传给内部 evaluator；推荐层的未分类池子补评估也会带上 `negative_examples`，让短期话术避让与长期 `disliked_topics` 一起生效。
+- 补充移动端回归测试，锁定 delight inline chat 复用 `session=popup` 契约、`chatted` 状态继续保留「聊一聊」入口，同时 viewed/liked/rejected 等永久处理态不泄漏通用动作按钮。
+
+## v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）
+
+- 后端源码版本提升到 v0.3.89，准备发布 `backend-v0.3.89`；浏览器插件版本提升到 extension v0.3.43，准备发布 `extension-v0.3.43`。
+- LLM provider 限流 / cooldown 时，discovery eval batch 和 recommendation copy batch 不再退回逐条 LLM 调用，避免一次 Gemini 429 放大成整批 traceback；XHS / 抖音 / YouTube task claim 改用短生命周期 SQLite 连接，修复并发 `/next-task` poll 的嵌套事务错误；`httpx` / `httpcore` 文件日志默认降到 WARNING。
+- 插件设置页将 LLM / embedding fallback 从“自动尝试其它 provider”改成显式“备选 Provider”下拉框；`fallback_provider = ""` 时完全不 fallback，非空时只尝试这一个备选 provider。
+- `/api/image-proxy` 不再把 redirect 白名单失败、非图片 Content-Type、超过 10MB 和超时统一折叠成 502；校验类错误保留 403 / 400 / 413，网络超时返回 504，缓存回退只用于上游网络失败或 5xx 类错误。
+
+## v0.3.88 / extension v0.3.42: 局域网二维码与封面代理合并发布（2026-05-21）
+
+- 浏览器插件版本提升到 extension v0.3.42，合入 extension v0.3.41 的封面代理发布内容，并补齐 main 上的移动端二维码局域网 IP 自动检测逻辑；当插件后端仍配置为 `127.0.0.1` / `localhost` 时，会读取 `/api/health.lan_ip` 生成手机可访问的 `/m/` 二维码。
+- 一句话安装和 agent bootstrap 默认绑定 `0.0.0.0:8420`，健康检查仍使用 `127.0.0.1` URL；`/api/health.lan_ip` 优先返回 RFC1918 网卡地址并排除 `198.18.0.0/15` VPN / TUN 地址，避免二维码显示手机不可达 IP。
+- `openbiliclaw init` 的 B 站收藏和关注初始化信号默认各限制为 300 条 / 人，并新增 `--bilibili-favorite-limit` / `--bilibili-follow-limit` 覆盖项；人类安装流程的 `agent_bootstrap.py --interactive-confirm` 会让用户确认这两个上限后再自动 init，避免大收藏夹和长关注列表把初始画像事件量拉得过高；B 站观看历史仍保持 300 条。
+
+---
+
+## v0.3.88 / extension v0.3.41: 插件封面代理发布（2026-05-21）
+
+- 浏览器插件版本提升到 extension v0.3.41，推荐、惊喜推荐和消息封面统一走配置的本地后端 `/api/image-proxy`，不再直接暴露第三方 CDN 图片请求；本次仅发布插件包，后端源码版本仍为 v0.3.88。
+
+---
+
+## v0.3.88 / extension v0.3.40: 移动端视觉优化与局域网默认可达（2026-05-21）
+
+- 移动 Web 惊喜推荐卡片视觉优化：封面图加 `shape-outside` 圆角环绕让文字沿圆角自然流动；推荐理由字号从 12px 提升到 12.5px、行高从 1.48 提到 1.68 并增加字距提升阅读舒适度；「推荐原因」标签改为品牌粉蓝渐变底 + 细描边；卡片圆角从 14px 加大到 18px 并增加右上角径向渐变光晕与多层阴影增强纵深感；小屏移除理由文本截断改为字号微缩。
+- 移动 Web 推荐页 header 和推荐卡片视觉优化：For You 标签改为品牌渐变胶囊 + 阴影；标题字号 15→17px；换一批按钮加圆角描边；活动行加独立边框；pool chip 改为圆角方块；推荐卡片标题加粗至 15px、card-source 改为胶囊形态、表达文字行高提升、卡片加内发光和分层阴影。
+- 新增 `[api]` 配置节：`host`（默认 `0.0.0.0`）和 `port`（默认 `8420`），`openbiliclaw start` 读取配置决定监听地址，不再硬编码 `127.0.0.1`。手机扫码即可直接访问移动端 Web。
+- `openbiliclaw init` 新增网络绑定确认：交互式引导中会询问用户是否允许局域网设备访问（默认 Y），选择结果持久化到 `config.toml [api].host`。
+- 健康检查端点 `/api/health` 新增 `lan_ip` 字段：通过 UDP connect trick 检测本机局域网 IP 并返回。
+- 浏览器插件移动端二维码自动检测局域网 IP：当插件配置的后端地址是 127.0.0.1 时，自动从 `/api/health` 获取 `lan_ip` 并用局域网 IP 生成二维码，手机扫码直接可用。
+- 修复 `[api]` 配置 round-trip：`load_config()` 现在会读取 `[api].host` / `[api].port`，`save_config()` 会写回 `[api]`；一句话安装脚本和 `agent_bootstrap.py` 默认绑定 `0.0.0.0`，健康检查仍使用 `127.0.0.1` URL，避免把 `0.0.0.0` 当作浏览器访问地址。
+- 修复局域网 IP 检测优先级：`/api/health.lan_ip` 现在优先选择网卡上的 RFC1918 地址（如 `192.168.x.x`），并排除 VPN / TUN 常见的 `198.18.0.0/15` benchmark 地址，避免二维码显示手机不可达的虚拟网卡 IP。
+
+---
+
+## v0.3.88 / extension v0.3.39: 移动端 Web 主入口与 fallback 默认关闭（2026-05-21）
+
+- 新增 `/api/image-proxy` 后端图片代理，移动 Web 和浏览器插件的推荐、惊喜推荐、消息封面统一经本地后端加载；代理限制白名单 CDN、逐跳校验 redirect、校验 `image/*` 类型和 10MB 实际字节，前端加载失败时保留固定比例占位。
+- `[llm].fallback_enabled` 新增为默认关闭的 LLM 请求 fallback 开关；关闭时 `LLMRegistry.complete()` 只调用默认 provider，失败直接暴露。
+- `[llm.embedding].fallback_enabled` 新增为默认关闭的 embedding fallback 开关；关闭时不切 provider、不借用 `[llm.<provider>]` 凭据，且 embedding provider 留空表示不启用，不再跟随默认 LLM。
+- 浏览器插件设置页「模型」tab 增加 LLM fallback 与 embedding fallback 两个开关，并更新文案说明 embedding 与 LLM 独立配置。
+- 移动 Web 新增轻量 view-model 适配层，推荐页池状态会读取 `/api/runtime-status` 的 `pool_available_count` / `last_replenished_count` / `recent_pool_topics`，画像页 MBTI 可渲染后端返回的 `{EI: {pole, strength}}` 对象形态；对话页兼容 `/api/chat/turns` 返回的 `reply` 字段，不再因字段形态不一致空白或漏显回复。
+- 移动 Web 资源噪声收敛：根路径 `/favicon.ico` 现在复用 PWA 图标返回 PNG；推荐页封面会过滤直接 403 的小红书 CDN URL、把 B 站 `http` / protocol-relative 封面升到 HTTPS，并用 `no-referrer` 加载外链图片，避免浏览器控制台残留 favicon / hotlink 错误。
+- 移动 Web 推荐页的惊喜推荐动作对齐浏览器插件：底部按钮改为「看看 / 喜欢 / 不感兴趣 / 聊一聊」，「稍后看」收进右上角关闭控件，并把「喜欢」写入 `/api/delight/respond` 的 `like` 反馈。
+- 移动 Web 推荐页头部对齐插件：新增 `For You / 这几条，你大概会点开` 紧凑 header，把「换一批」放回首屏主操作位，池状态三枚 chip 改为「当前可换 / 最近补进 / 现在在忙」，活动状态降级为 header 内辅助行，「加载更多」移动到推荐列表底部。
+- 移动 Web 推荐页头部再次压缩移动端状态区：三枚池状态从大卡片改成横向轻量 pill，活动摘要改成单行；`xhs-extension-*`、`dy-plugin-*`、`yt-*` 等内部来源名会在移动端显示为用户可读的中文短标签。README 移动端预览说明同步使用「不感兴趣」文案。
+- 移动 Web 惊喜推荐改为接近插件的 compact banner：封面从全宽大图收敛为左侧小缩略图，右侧展示标签、标题、理由和来源，翻页控件并入标签行，减少首屏占用并保留「看看 / 喜欢 / 不感兴趣 / 聊一聊」动作。
+- 移动 Web 惊喜推荐 compact banner 恢复独立推荐原因描述：`delight_hook` 作为短标签展示，`delight_reason` 带「推荐原因」标记并围绕左侧头图排版，右上角保留「稍后看」关闭入口，避免只剩标题和 hook 看不到推荐理由，同时让这张卡明显区别于普通推荐卡。
+- README / README_EN 的移动端预览截图已刷新为当前 `/m/` 推荐页实际渲染图，展示惊喜推荐 compact banner、推荐原因环绕头图和插件一致的动作区。
+- 移动 Web 画像页补齐与插件一致的画像细节：MBTI 显示可信度，使用场景显示“模式”，内容口味把 `long/slow` 等 raw 值本地化为中文标签，认知更新卡片保留后端 `context_line` 与 `source_label`。
+- 移动 Web 对话页对齐插件主聊天会话：读取和提交都使用 `session=popup&scope=chat`，聊天回复完成后会刷新画像和活动流；消息 overlay 内的兴趣探测动作改为「喜欢 / 不喜欢 / 多聊聊」，惊喜推荐动作补齐「喜欢」，聊天输入框固定在底部并以两行高度起步，保留更多历史上下文可视空间。
+- 新增移动 Web 原生重设计 spec，明确 `/m/` 与浏览器插件在推荐、画像、对话、消息和 delight 工作流上的功能对齐范围，以及手机端独立信息架构。
+- 插件顶部功能区新增移动端二维码入口：点击手机图标会按当前插件后端地址生成 `/m/` 本地二维码，手机可直接扫码打开移动端 Web；若仍是 `127.0.0.1` / `localhost` 会提示先切到电脑局域网 IP。README 同步补充移动端推荐 / 画像 / 对话截图和扫码使用方式。
+- 后端源码版本记录为 v0.3.88，并通过 `backend-v0.3.88` source tag 标记；不发布 backend GitHub Release / 桌面包，远端 `backend-v*` workflow 改为只校验 tag 与 `pyproject.toml` 版本一致。浏览器插件版本提升到 extension v0.3.39，准备发布 `extension-v0.3.39`。
+
+---
+
+## v0.3.87 / extension v0.3.38: runtime 配置真实生效（2026-05-20）
+
+- Runtime: YouTube steady-state discovery now runs through an independent backend producer loop with per-strategy daily execution budgets, `min_interval_minutes` throttling, and source-deficit gating.
+- `AccountSyncService` 现在会持久化同秒历史 bvid 集合、收藏 bvid 集合和关注 mid 集合；B 站账号同步只把新增历史 / 收藏 / 关注送进画像分析，避免消息推荐期间重复重放旧账号信号并浪费 LLM tokens。
+- XHS / 抖音 / YouTube bootstrap task-result 新增跨任务 seen-key 过滤：任务表仍保留完整 partial / final 原始结果，但进入 memory / 增量画像前会跳过 `source_bootstrap_state.json` 里已见的 note / video / item key；抖音和 YouTube 队列也补齐 `in_progress` claim 与 6 小时近期任务复用，避免反复打开前台 tab 全量扫描。
+- `[scheduler]` 新增真实 runtime 调度参数：refresh 轮询、行为触发阈值、trending / explore 间隔、单轮 discovery 上限、主动推送间隔和 speculator idle tick；这些字段已接入 `/api/config`、daemon runtime、OpenClaw direct bootstrap 和插件设置页。
+- `scheduler.speculation_*` 现在会传入 `SoulEngine` / `InterestSpeculator`，配置页里的猜测兴趣间隔、TTL、冷却、确认阈值和上限不再只是保存到 TOML。
+- 插件设置页调度区移除无效的 `discovery_cron` 输入，补上 `extension_disconnect_grace_seconds` 和实际生效的 runtime 频率控件；`discovery_cron` 仍作为 legacy 字段保留在配置/API 中但 runtime 不消费。
+- README 快速开始保留插件安装、AI 部署后端和平台登录三步展开；后端其他部署路径继续折叠展示。
+- 后端源码版本记录为 v0.3.87，但不发布 backend GitHub Release；浏览器插件版本提升到 v0.3.38，准备发布 `extension-v0.3.38`。
+
+---
+
+## v0.3.86 / extension v0.3.37: 小红书默认改为显式开启（2026-05-20）
+
+- `[sources.xiaohongshu].enabled` 默认改为 `false`；小红书 discovery / init bootstrap 现在必须由用户在初始化时选择 Yes、传 `--yes-xhs`，或在插件设置页打开后才会启用。
+- `openbiliclaw init` 的小红书交互提示默认从 Yes 改为 No；非交互环境也不再静默启用小红书 bootstrap，避免未安装扩展或未登录时自动排队任务。
+- runtime 候选池默认有效配比改为只包含 Bilibili；`[scheduler.pool_source_shares]` 仍保存 Bilibili / 小红书 / 抖音 / YouTube = `8 / 1 / 1 / 1`，显式启用可选平台后才参与 quota。
+- 插件设置页读取缺省配置时不再默认勾选「启用小红书 discovery」，保存和配比建议都以用户当前开关为准。
+- 后端源码版本记录为 v0.3.86，但不发布 backend GitHub Release；浏览器插件版本提升到 v0.3.37，准备发布 `extension-v0.3.37`。
+
+---
+
+## v0.3.85 / extension v0.3.36: 插件配置页来源与日志整理（2026-05-20）
+
+- `[sources.bilibili].enabled` 新增 Bilibili discovery 开关；关闭后 B 站 search / related_chain / trending / explore 不再参与后台补池，`pool_source_shares.bilibili` 会保留但从运行时有效配比中剔除。
+- 插件设置页「平台源」tab 按 Bilibili / 小红书 / 抖音 / YouTube / 通用网页 / 候选池配比拆成独立分块，并把 B 站登录调试项文案改成「调试：B 站登录时显示浏览器窗口」。
+- `/api/config` 的 logging 响应新增只读 `file_path`，返回由 `directory` + `filename` 解析后的完整日志文件路径。
+- 浏览器插件设置页「日志」tab 将原来的「日志目录」+「日志文件名」收敛为单个「完整日志路径」输入；保存时仍拆回 `logging.directory` / `logging.filename` 写入 `config.toml`，兼容现有后端配置结构。
+- 后端包版本提升到 v0.3.85，准备发布 `backend-v0.3.85`；浏览器插件版本提升到 v0.3.36，准备发布 `extension-v0.3.36`。
+
+---
+
+## extension v0.3.35: 插件聊天页贴底布局修复（2026-05-20）
+
+- 浏览器插件聊天 tab 激活时会隐藏底部活动栏，让聊天输入框成为 side panel 底部固定区域；聊天记录区改为独立 flex 滚动，优先占用输入框上方空间。
+- 压缩聊天消息、状态提示和输入区间距，空状态提示不再占位；textarea 保留两行起步并限制最大高度，长内容在输入框内部滚动。
+- 浏览器插件版本提升到 v0.3.35，准备发布 `extension-v0.3.35`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.35.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.35-firefox.zip`。本次不发布后端包。
+
+---
+
+## v0.3.84: 安装渠道自动 init 收敛（2026-05-20）
+
+- `agent_bootstrap.py` 新增交互确认模式和扩展 Cookie 等待流程：Bash / PowerShell / Docker / AI agent 安装渠道会在确认 embedding、B 站 Cookie 来源和小红书 / 抖音 / YouTube opt-in 后自动运行 init，不再把手动 `openbiliclaw init` 作为主路径。
+- Docker bootstrap 会把宿主机确认后的 `config.toml` 与 Cookie 文件同步到容器 `/app/runtime`，并用容器 runtime config 判断是否具备 init 条件；`docker exec ... openbiliclaw init` 保留为高级手动 fallback。
+- 后端包版本提升到 v0.3.84，准备发布 `backend-v0.3.84`。
+
+---
+
+## v0.3.83: 插件设置页分组与 YouTube 配置补齐（2026-05-19）
+
+- 浏览器插件设置页按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab，候选池来源占比移入平台源区，避免所有配置挤在同一个长列表里。
+- `[sources.youtube]` 补齐 `daily_search_budget` / `daily_trending_budget` / `daily_channel_budget` / `request_interval_seconds`，并通过 `/api/config` 与插件设置页 round-trip；runtime 会把前三个预算传给 `yt_search` / `yt_trending` / `yt_channel` 对应策略。
+- 后端包版本提升到 v0.3.83，准备发布 `backend-v0.3.83`；浏览器插件版本提升到 v0.3.34，准备发布 `extension-v0.3.34`。
+
+---
+
+## v0.3.82: 一句话安装合约对齐（2026-05-19）
+
+- 一句话安装合约补齐 YouTube opt-in：`agent_bootstrap.py` 现在像小红书 / 抖音一样要求 `--yes-youtube` / `--no-youtube`，并把该选择传给自动 `openbiliclaw init`；`install.sh` / `install.ps1` 状态块和 agent/Docker/CLI 文档同步打印 YouTube 决策，同时统一 LLM 默认推荐为 DeepSeek 并修正安装文档的模型菜单编号。
+- 后端包版本提升到 v0.3.82，准备发布 `backend-v0.3.82`。
+
+---
+
+## v0.3.81: 推荐理由错位修复（2026-05-19）
+
+- 批量推荐文案、discovery batch 评估和源无关内容分类现在都携带并按 `bvid/content_id` 绑定 LLM 结果；provider 乱序、漏项或返回部分数组时不再把推荐理由 / 评估理由写到错误视频。
+- 后端包版本提升到 v0.3.81，准备发布 `backend-v0.3.81`。
+
+---
+
+## v0.3.80: Docker 部署体验补强（2026-05-19）
+
+- 后台 `AccountSyncService` 首次同步账号行为并完成 preference 分析后，如果 soul 画像层为空（典型场景：Docker 部署未跑 init），会自动触发 `build_initial_profile([])` 生成初始画像；每进程生命周期最多尝试一次，失败不影响后续同步。
+- `/api/health` 新增可选 `profile_ready` 字段，返回 soul 画像是否已生成；字段缺失时保持旧响应兼容，不影响 HTTP 状态码和 Docker healthcheck 判定。
+- Docker 部署文档和 README 补充 init 步骤提示，并新增「后端启动但无推荐」排查说明。
+- 浏览器插件 Chat 入口文案拓宽为“想法 / 口味 / 自我描述 / 近期状态”方向，保留已有 placeholder 轮播机制，不再只暗示用户聊最近爱看的内容。
+- 浏览器插件版本提升到 v0.3.33，准备发布 `extension-v0.3.33`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.33.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.33-firefox.zip`。
+- 后端包版本提升到 v0.3.80，准备发布 `backend-v0.3.80`。
+
+---
+
+## v0.3.79: Popup 聊天输入体验补强（2026-05-19）
+
+- 浏览器插件聊天 tab 新增多场景 placeholder 轮播，覆盖纪录片、测评、健身、怀旧动画、注意力、自我描述和近期状态等入口；输入框 focus 时暂停轮播，blur 且内容为空时恢复，避免用户正在输入时被提示语打断。
+- 聊天历史区域高度从固定 `220px` 改为 `clamp(220px, 45vh, 420px)`：小窗口保持原有保底高度，侧栏拉高时可展示更多长回复，最高限制在 420px，避免挤压输入区。
+- 偏好分析新增 prompt 预算保护：初始化 / bootstrap / feedback batch 不再只按事件条数分片，超长 chunk 会在本地继续拆分，单条超长事件会保守 compact，provider 返回 `n_keep >= n_ctx` 等 context-window 错误时会用更小 chunk 重试，避免一个巨大事件批次中断整轮画像初始化。
+- 浏览器插件版本提升到 v0.3.32，准备发布 `extension-v0.3.32`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.32.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.32-firefox.zip`。
+
+---
+
+## v0.3.78: Codex OAuth 实验认证（2026-05-19）
+
+- 新增实验性 `[llm.openai].auth_mode = "codex_oauth"`：OpenAI provider 仍复用现有 `OpenAIProvider`，但 token 来源改为本机 Codex CLI 的 ChatGPT OAuth 凭据；`codex_auth.py` 负责导入 `~/.codex/auth.json`、写入 `~/.openbiliclaw/codex_auth.json`、临期刷新和 401 后强制刷新重试。
+- 新增 `openbiliclaw login codex`：支持默认导入 / 调用官方 `codex login` 后导入、`--import`、`--source`、`--status`、`--logout`；状态输出只展示账号和过期时间，不泄露 token。
+- 配置和本地 API 增加 `auth_mode` round-trip；`codex_oauth` 下 `api_key` 会被忽略，且 `base_url` 只允许留空或指向 OpenAI 官方 API 域名，避免把 ChatGPT OAuth token 发给第三方 OpenAI-compatible 代理。
+- 浏览器插件设置页同步支持 OpenAI `API Key` / `Codex OAuth` 认证方式选择，保存配置时会写入 `[llm.openai].auth_mode`；插件版本提升到 v0.3.31，准备发布 `extension-v0.3.31`。
+- 明确风险边界：该功能是非官方实验集成，OpenAI 官方 API 认证稳定入口仍是 Platform API key，Codex CLI token 格式、权限和刷新行为可能随上游变化失效。
+
+---
+
+## v0.3.77: 浏览器插件局域网后端地址配置（2026-05-18）
+
+- 浏览器插件设置页的后端 endpoint 从“仅端口可改”扩展为“后端地址 + 端口”一起配置：Chrome / Firefox manifest 都加入 `http://*/*` 权限，用户可把后端运行在局域网另一台机器上（`openbiliclaw start --host 0.0.0.0 --port 8420`），再在插件设置页填写该机器的局域网 IP；新增 host 校验、endpoint 持久化和 manifest 权限回归测试。
+- 插件推荐页移除「停止后台 LLM 请求」和「关闭浏览器后停止后台」快捷开关，只在设置页调度区保留；弃用“省钱模式”旧称，并补充说明开启后不会自动补货，候选池为空时可能暂时没有推荐。`config-show` 同步显示「停止后台 LLM 请求」。
+- 修复 [#27](https://github.com/whiteguo233/OpenBiliClaw/issues/27)：LM Studio 在 `json_object` / `json_schema` response format 下可能返回 HTTP 200 且后台 UI 可见模型输出，但 OpenAI-compatible API 的 `message.content` 为空；`OpenAIProvider` 现在识别本地 LM Studio 后从第一次结构化请求起不发送 `response_format`，依赖 prompt 约束 JSON，避免先浪费一整次 LLM 调用再重试。
+- 浏览器插件版本提升到 v0.3.30，准备发布 `extension-v0.3.30`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.30.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.30-firefox.zip`。
+
+---
+
+## v0.3.76: 推荐卡片 hover 抖动修复（2026-05-18）
+
+- 移除推荐卡片（`.recommendation-card`）hover 时的 `transform: translateY(-1px)`，消除大面积元素整体位移 + 内部按钮二次位移导致的视觉抖动；保留 `border-color` 与 `box-shadow` 过渡作为 hover 反馈。
+- 浏览器插件版本提升到 v0.3.28，准备发布 `extension-v0.3.28`。
+
+---
+
+## v0.3.75: 配置保存生效与 LLM 路由修复（2026-05-18）
+
+- `/api/config` 热重载后的 speculator tick 改为受 `BackgroundTaskRegistry` 管理的 detached task，保存配置不再等待一次可能很慢的 `force_tick()`；异常由 helper 记录并吞掉，避免后台补货失败反向影响配置保存响应。
+- 浏览器插件配置保存请求新增 60s AbortController 超时，超时时显示 amber toast，提示“请求可能已写入，热重载可能仍在后台进行”，不再错误断言配置一定已落盘。
+- 修复 [#12](https://github.com/whiteguo233/OpenBiliClaw/issues/12)：LM Studio 的 OpenAI-compatible `/v1/chat/completions` 不接受 `response_format={"type":"json_object"}`；v0.3.75 先对 LM Studio 默认本地端口改用通用 `json_schema`，并在其它兼容服务明确拒绝 `json_object` 时自动用通用 JSON schema 重试，避免初始化偏好分析阶段 400 后再误导性 fallback 到模板里的 Ollama `qwen2.5:7b`。v0.3.77 起 LM Studio 路径进一步调整为首次跳过 `response_format`，普通兼容服务仍保留 `json_schema` 重试。
+- `[llm.soul]` / `[llm.discovery]` / `[llm.recommendation]` / `[llm.evaluation]` 覆盖现在真正进入运行时路由：`LLMService` 按内置 caller bucket（如 `recommendation.delight_score` → evaluation、`sources.xhs.*` → discovery）调用 `LLMRegistry.complete_provider()`，并用 per-call `model=` 覆盖 provider 模型而不污染 provider 实例默认值；override provider rate-limit / 错误不会偷偷 spill 到 default，未知或 embedding-only provider 只 INFO 一次后走默认链。
+- `RuntimeContext`、`SoulEngine`、CLI builder、OpenClaw bootstrap 和 `SocraticDialogue` fallback 均接入 config-backed `module_overrides`，避免只在部分入口生效导致“配置保存了但实际调用没换模型”。
+- 后端包版本提升到 v0.3.75；浏览器插件版本提升到 v0.3.27，准备发布 `extension-v0.3.27`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.27.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.27-firefox.zip`。
+
+---
+
+## v0.3.74: Config deadlock recovery（2026-05-17）
+
+- `/api/config` 保存改为先校验再写盘，写入前生成 `config.toml.bak`，热重载失败时自动回滚；响应新增 `rollback_applied` / `restart_required`，避免错误配置把 daemon 卡进无法从 popup 修复的死锁。
+- 配置保存会保留后端返回的 masked key、非空 `model/base_url/http_referer/x_title/reasoning_effort` 与 embedding 凭据；只有显式 `reset_fields` 才会清空允许列表里的 API Key，避免 settings UI 把真实 key 或模型名写成空值。
+- FastAPI 生产启动遇到 `RegistryBuildError` 时进入降级模式：`/api/health`、`/api/config`、`/api/runtime-status` 和 `/api/runtime-stream` 仍可用，非配置接口返回 503；popup 可在离线缓存或降级配置页中保存修复配置，降级保存会提示重启。
+- Popup 设置页缓存最近一次成功的配置快照；后端离线时可用缓存填表，后端降级时展示具体配置问题并把保存按钮切到“保存并提示重启”。
+- 后端自动更新改为直接查询 GitHub `/tags` 并只接受 `backend-v*`（兼容 legacy `v*` / 裸 semver）作为后端版本来源，明确忽略 `extension-v*`；当 tag 列表里暂时没有 backend tag 时返回 `no_backend_tag_yet`，不再把扩展 release 误判成 "Already up-to-date"。
+- LLM 结构化输出解析收敛到共享 helper，recommendation、delight、discovery eval-batch、awareness、insight、dialogue insight、profile builder 和 speculator 都能兼容 MiMo / 非 OpenAI provider 常见的 object wrapper、fenced JSON、JSONL、schema echo 与 malformed `{ [ ... ] }` 数组包裹。
+- `embedding.provider="ollama"` 且 embedding `api_key/base_url` 为空时直接使用本地 Ollama 默认地址，不再发出向后兼容 credential fallback WARNING；远端 provider 仍保留一次性 warning。
+- 文件日志 traceback 保留加回归测试锁定：rotating file handler、plain file handler 和配置热重载异常都会把 stack trace 写进文件日志。
+- 后端包版本提升到 v0.3.74；浏览器插件版本提升到 v0.3.26，准备发布 `extension-v0.3.26`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.26.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.26-firefox.zip`。
+
+---
+
+## v0.3.73: Popup 运行时省钱开关（2026-05-17）
+
+- Popup 顶部新增两个运行时开关：`暂停后台 LLM` 直接写入 `scheduler.enabled=false`，`关浏览器后暂停后台` 写入 `scheduler.pause_on_extension_disconnect=true`；设置页同步暴露后者。后端 `/api/config`、`config-show`、`start` / `serve-api` WARN 和 `config.example.toml` 都同步展示新字段。
+- 后端新增 `PresenceTracker` 与共享 `background_llm_work_allowed()` gate：`scheduler.enabled` 是后台 LLM / embedding 总开关，`pause_on_extension_disconnect` 开启后还要求浏览器插件 `runtime-stream` 在线或处于断开宽限窗口。gate 覆盖 refresh、pool precompute、soul pipeline、xhs/dy producer、proactive push、AccountSyncService、startup one-shot 和 OpenClaw direct bootstrap；手动 CLI / API 操作不被隐式拦截。
+- `/api/runtime-stream` 增加 reader / receive-side disconnect detector，浏览器 idle disconnect 后会正确触发 presence decrement，避免后端误以为插件一直在线；最后一个连接断开后按 `extension_disconnect_grace_seconds` 进入宽限。
+- 浏览器插件版本提升到 v0.3.25，准备发布 `extension-v0.3.25`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.25.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.25-firefox.zip`。
+- 文档同步更新 `docs/modules/config.md`、`docs/modules/cli.md`、`docs/modules/extension.md`、`docs/modules/integrations.md`、`docs/architecture.md`、`docs/spec.md`、README / README_EN 和配置样例，明确 pause gate 的范围是 daemon-owned background LLM / embedding work。
+
+---
+
 ## v0.3.72: 浏览器插件后端端口可配置（2026-05-16）
 
 - 负反馈消费链路收敛：`satisfaction_filter_enabled` 默认开启后只过滤 `quick_exit` 等被动 negative 事件，显式 `dislike` / `thumbs_down` 会保留给 `PreferenceAnalyzer` 作为 `disliked_topics` / 避让证据且禁止提取为正向兴趣；discovery 共享 `profile_summary`、推荐画像摘要和单条 / 批量推荐表达 prompt 现在都会带 `disliked_topics`，让 search / explore / trending query 生成、batch 内容评估和推荐文案都能避开长期雷点；awareness prompt 可生成“最近开始避开 X”的保守观察；B 站 content script 新增“不感兴趣 / 不喜欢 / 减少此类推荐”识别并规范化为 `feedback_type=dislike` 强信号。

@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
+from openbiliclaw.config import SchedulerConfig
 from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
 if TYPE_CHECKING:
@@ -22,12 +24,9 @@ logger = logging.getLogger(__name__)
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
 _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "bilibili": 8,
-    "xiaohongshu": 1,
-    "douyin": 1,
 }
 _PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
-_YOUTUBE_DISCOVERY_SOURCES = ("yt_search", "yt_trending", "yt_channel")
 
 
 def _call_accepts_limit(fn: Any) -> bool:
@@ -177,6 +176,9 @@ class ContinuousRefreshController:
     event_hub: Any | None = None
     xhs_producer: Any | None = None
     douyin_producer: Any | None = None
+    youtube_producer: Any | None = None
+    scheduler_config: Any = field(default_factory=SchedulerConfig)
+    presence: PresenceTracker = field(default_factory=PresenceTracker)
     signal_event_threshold: int = 6
     event_refresh_minutes: int = 0
     trending_refresh_hours: int = 3
@@ -254,6 +256,7 @@ class ContinuousRefreshController:
     # v_voucher storm. One refresh tick of grace = much fewer
     # exhausted retries on the first half-hour.
     _init_grace_consumed: bool = False
+    _last_llm_gate_allowed: bool = field(default=True, init=False)
 
     _signal_event_types = [
         "view",
@@ -264,6 +267,17 @@ class ContinuousRefreshController:
         "comment",
         "feedback",
     ]
+
+    def _llm_work_allowed(self) -> bool:
+        """Return whether daemon-owned background LLM / embedding work can run."""
+        allowed = background_llm_work_allowed(self.scheduler_config, self.presence)
+        if allowed != self._last_llm_gate_allowed:
+            logger.info(
+                "Background LLM work gate %s",
+                "allowed" if allowed else "blocked",
+            )
+            self._last_llm_gate_allowed = allowed
+        return allowed
 
     def get_runtime_status(self) -> dict[str, object]:
         """Build a lightweight runtime summary for popup or diagnostics."""
@@ -673,10 +687,12 @@ class ContinuousRefreshController:
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
+            ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
             └─ _loop_proactive_push()    60s   delight + interest probe
         """
-        with suppress(Exception):
-            await self.prepare_delight_candidates()
+        if self._llm_work_allowed():
+            with suppress(Exception):
+                await self.prepare_delight_candidates()
         self._warn_on_stranded_source_shares()
         tasks = [
             asyncio.create_task(self._loop_refresh()),
@@ -684,6 +700,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_soul_pipeline()),
             asyncio.create_task(self._loop_xhs_producer()),
             asyncio.create_task(self._loop_douyin_producer()),
+            asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_proactive_push()),
         ]
         try:
@@ -696,8 +713,6 @@ class ContinuousRefreshController:
     async def _loop_refresh(self) -> None:
         """Discovery refresh — fills the candidate pool."""
         while True:
-            with suppress(Exception):
-                await self._on_profile_ready_if_first_time()
             # v0.3.61+: 30s init grace period. The very first refresh
             # tick after daemon start lands while Bilibili's WBI
             # rate-limit bucket is still saturated from init's history
@@ -711,7 +726,12 @@ class ContinuousRefreshController:
                     "Init grace period — skipping first refresh tick to let "
                     "Bilibili WBI bucket cool down (next tick will run normally)"
                 )
+            elif not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             else:
+                with suppress(Exception):
+                    await self._on_profile_ready_if_first_time()
                 with suppress(Exception):
                     await self.refresh_if_needed()
             await asyncio.sleep(self.check_interval_seconds)
@@ -734,6 +754,9 @@ class ContinuousRefreshController:
         by ``_run_refresh_plan`` so no LLM token double-spend.
         """
         while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             with suppress(Exception):
                 await self._drain_pool_precompute_backlog()
             await asyncio.sleep(self.check_interval_seconds)
@@ -777,6 +800,8 @@ class ContinuousRefreshController:
         fallback ``topic_group=title[:N]`` (the ugly "屎屎/165/三花"
         debug we saw on 2026-05-05).
         """
+        if not self._llm_work_allowed():
+            return
         if self._profile_ready_observed:
             return
         if not self._is_initialized():
@@ -804,6 +829,9 @@ class ContinuousRefreshController:
     async def _loop_soul_pipeline(self) -> None:
         """Soul profile pipeline — buffer flushes, speculator, cognition."""
         while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             with suppress(Exception):
                 await self._tick_soul_pipeline()
             await asyncio.sleep(self.check_interval_seconds)
@@ -811,6 +839,9 @@ class ContinuousRefreshController:
     async def _loop_xhs_producer(self) -> None:
         """XHS keyword production — Soul-driven search task generation."""
         while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             with suppress(Exception):
                 await self._tick_xhs_producer()
             await asyncio.sleep(self.check_interval_seconds)
@@ -818,8 +849,21 @@ class ContinuousRefreshController:
     async def _loop_douyin_producer(self) -> None:
         """Douyin production — plugin/direct discovery when Douyin is below quota."""
         while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
             with suppress(Exception):
                 await self._tick_douyin_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_youtube_producer(self) -> None:
+        """YouTube production — backend-direct discovery when YouTube is below quota."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_youtube_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_proactive_push(self) -> None:
@@ -831,6 +875,9 @@ class ContinuousRefreshController:
         contribute notification fatigue.
         """
         while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.proactive_push_interval_seconds)
+                continue
             # Score un-scored pool items even when the discovery refresh
             # tick early-exits (pool_at_cap or below_threshold). Without
             # this, a steady-state pool that sits at cap silently starves
@@ -904,6 +951,25 @@ class ContinuousRefreshController:
         else:
             await produce_fn()
 
+    async def _tick_youtube_producer(self) -> None:
+        """Invoke the YouTube discovery producer if YouTube is under quota."""
+        producer = self.youtube_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("youtube")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
     async def _tick_soul_pipeline(self) -> None:
         """Invoke ProfileUpdatePipeline.tick() if the soul engine exposes one.
 
@@ -939,9 +1005,12 @@ class ContinuousRefreshController:
             if source_plan:
                 return source_plan
             # When Bilibili is already at its platform quota, the missing
-            # capacity belongs to smaller platform producers (xhs/douyin).
+            # capacity belongs to enabled non-Bilibili platform producers.
             # Running the Bilibili fallback here would immediately violate
             # the configured pool-source ratio.
+            return []
+
+        if "bilibili" not in self._normalized_pool_source_shares():
             return []
 
         plan: list[tuple[list[str], int]] = []
@@ -1236,8 +1305,8 @@ class ContinuousRefreshController:
         suppressed items or trimming overflow — a path that doesn't go
         through the end-of-refresh ``refresh.pool_updated`` event. Without
         this hook, the popup's pool-count UI only refreshes when a full
-        refresh tick completes (every 8h cron); now it stays in sync
-        within seconds of any pool-state change.
+        refresh wave completes; now it stays in sync within seconds of any
+        pool-state change.
 
         Only emits when the count is different from the last emit, so
         steady-state ticks don't spam the WebSocket stream.
@@ -1407,8 +1476,6 @@ class ContinuousRefreshController:
                 # Bilibili is a platform quota now, but its implementation
                 # still fans out through four established strategy names.
                 plan.append((list(_BILIBILI_DISCOVERY_SOURCES), deficit))
-            elif source == "youtube":
-                plan.append((list(_YOUTUBE_DISCOVERY_SOURCES), deficit))
         return plan
 
     def _source_target_counts(self) -> dict[str, int]:
@@ -1463,9 +1530,7 @@ class ContinuousRefreshController:
                 stranded.append("xiaohongshu")
             elif source == "douyin" and self.douyin_producer is None:
                 stranded.append("douyin")
-            elif source == "youtube" and not self._has_registered_discovery_sources(
-                _YOUTUBE_DISCOVERY_SOURCES
-            ):
+            elif source == "youtube" and self.youtube_producer is None:
                 stranded.append("youtube")
             elif source not in {"bilibili", "xiaohongshu", "douyin", "youtube"}:
                 # Unknown source family with an explicit share.
@@ -1478,13 +1543,6 @@ class ContinuousRefreshController:
                 stranded,
                 {s: shares.get(s) for s in stranded},
             )
-
-    def _has_registered_discovery_sources(self, names: tuple[str, ...]) -> bool:
-        strategies = getattr(self.discovery_engine, "_strategies", None)
-        if strategies is None:
-            return True
-        registered = {str(getattr(strategy, "name", "")) for strategy in strategies}
-        return any(name in registered for name in names)
 
     def _normalized_pool_source_shares(self) -> dict[str, int]:
         raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES

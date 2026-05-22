@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ from openbiliclaw.discovery.engine import (
     llm_eval_candidate_limit,
 )
 from openbiliclaw.discovery.pool_snapshot import PoolDistributionSnapshot
+from openbiliclaw.llm.service import LLMProviderExecutionError
 from openbiliclaw.soul.profile import SoulProfile
 from openbiliclaw.storage.database import Database
 
@@ -1416,6 +1418,42 @@ async def test_evaluate_batch_accepts_fenced_json_without_single_eval_fallback()
 
 
 @pytest.mark.asyncio
+async def test_evaluate_batch_skips_single_fallback_during_provider_cooldown() -> None:
+    class _CooldownLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            raise LLMProviderExecutionError(
+                "All providers failed (gemini). Last error: "
+                "Provider gemini is cooling down after rate limit."
+            )
+
+    llm_service = _CooldownLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BV_COOL_A", title="A", source_strategy="trending"),
+        DiscoveredContent(bvid="BV_COOL_B", title="B", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.0, 0.0]
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_evaluate_batch_ignores_echoed_prompt_before_result_array() -> None:
     """Some JSON-mode providers echo input JSON before the actual scored array."""
 
@@ -1461,6 +1499,67 @@ async def test_evaluate_batch_ignores_echoed_prompt_before_result_array() -> Non
 
     assert scores == [0.81, 0.74]
     assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_matches_results_by_bvid_when_response_reorders() -> None:
+    class _ReorderedBatchLLMService:
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            return _SlowResponse(
+                json.dumps(
+                    [
+                        {
+                            "bvid": "BV_EVAL_C",
+                            "score": 0.33,
+                            "reason": "C 自己的理由",
+                            "topic_group": "C 类",
+                            "style_key": "story_doc",
+                        },
+                        {
+                            "bvid": "BV_EVAL_A",
+                            "score": 0.71,
+                            "reason": "A 自己的理由",
+                            "topic_group": "A 类",
+                            "style_key": "deep_dive",
+                        },
+                        {
+                            "bvid": "BV_EVAL_B",
+                            "score": 0.52,
+                            "reason": "B 自己的理由",
+                            "topic_group": "B 类",
+                            "style_key": "light_chat",
+                        },
+                    ],
+                    ensure_ascii=False,
+                )
+            )
+
+    engine = ContentDiscoveryEngine(llm_service=_ReorderedBatchLLMService())
+    batch = [
+        DiscoveredContent(bvid="BV_EVAL_A", title="A 视频", source_strategy="trending"),
+        DiscoveredContent(bvid="BV_EVAL_B", title="B 视频", source_strategy="trending"),
+        DiscoveredContent(bvid="BV_EVAL_C", title="C 视频", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.71, 0.52, 0.33]
+    assert batch[0].relevance_reason == "A 自己的理由"
+    assert batch[0].topic_group == "A 类"
+    assert batch[1].relevance_reason == "B 自己的理由"
+    assert batch[1].topic_group == "B 类"
+    assert batch[2].relevance_reason == "C 自己的理由"
+    assert batch[2].topic_group == "C 类"
 
 
 @pytest.mark.asyncio

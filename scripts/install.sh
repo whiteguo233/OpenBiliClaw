@@ -14,7 +14,7 @@
 #     SKIP_START       Set to any non-empty value to skip starting the backend
 #     MODE             auto | docker | local (default: auto)
 #     PORT             API port (default: 8420)
-#     HOST             API host  (default: 127.0.0.1)
+#     HOST             API host  (default: 0.0.0.0)
 #
 # Examples:
 #     INSTALL_DIR=$HOME/obc curl -fsSL .../install.sh | bash
@@ -49,7 +49,7 @@ fi
 SKIP_START="${SKIP_START:-}"
 MODE="${MODE:-auto}"
 PORT="${PORT:-8420}"
-HOST="${HOST:-127.0.0.1}"
+HOST="${HOST:-0.0.0.0}"
 
 extend_no_proxy_for_localhost() {
     local current="${NO_PROXY:-${no_proxy:-}}"
@@ -239,6 +239,13 @@ run_bootstrap() {
     if [ -n "$SKIP_START" ]; then
         args+=(--skip-start)
     fi
+    local interactive_bootstrap=0
+    if [ -z "${OPENBILICLAW_NONINTERACTIVE:-}" ] && [ -z "${CI:-}" ]; then
+        if [ -t 0 ] || [ -r /dev/tty ]; then
+            args+=(--interactive-confirm --wait-for-extension-cookie)
+            interactive_bootstrap=1
+        fi
+    fi
 
     BOOTSTRAP_LOG=$(mktemp -t openbiliclaw-bootstrap.XXXXXX)
     log "Running bootstrap: python3 $bootstrap ${args[*]}"
@@ -246,7 +253,11 @@ run_bootstrap() {
     # Stream stdout to the terminal AND capture it for post-run parsing.
     # Use PIPESTATUS so `set -e` still sees the real bootstrap exit code.
     set +e
-    python3 "$bootstrap" "${args[@]}" 2>&1 | tee "$BOOTSTRAP_LOG"
+    if [ "$interactive_bootstrap" = "1" ] && [ -r /dev/tty ]; then
+        python3 "$bootstrap" "${args[@]}" </dev/tty 2>&1 | tee "$BOOTSTRAP_LOG"
+    else
+        python3 "$bootstrap" "${args[@]}" 2>&1 | tee "$BOOTSTRAP_LOG"
+    fi
     local rc=${PIPESTATUS[0]}
     set -e
 
@@ -288,31 +299,41 @@ init_decisions = details.get("init_decisions") or {}
 decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
 douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
+youtube_flag = ((init_decisions.get("youtube") or {}).get("flag") or "")
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
 print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
 print(f"DOUYIN_FLAG={douyin_flag}")
+print(f"YOUTUBE_FLAG={youtube_flag}")
 PY
 )
     # Parse the KEY=VALUE lines back into shell variables.
-    local status health_url missing decisions xhs_flag douyin_flag
+    local status health_url missing decisions xhs_flag douyin_flag youtube_flag
     status=$(echo "$summary" | awk -F= '/^STATUS=/{sub(/^STATUS=/, ""); print; exit}')
     health_url=$(echo "$summary" | awk -F= '/^HEALTH_URL=/{sub(/^HEALTH_URL=/, ""); print; exit}')
     missing=$(echo "$summary" | awk -F= '/^MISSING=/{sub(/^MISSING=/, ""); print; exit}')
     decisions=$(echo "$summary" | awk -F= '/^DECISIONS=/{sub(/^DECISIONS=/, ""); print; exit}')
     xhs_flag=$(echo "$summary" | awk -F= '/^XHS_FLAG=/{sub(/^XHS_FLAG=/, ""); print; exit}')
     douyin_flag=$(echo "$summary" | awk -F= '/^DOUYIN_FLAG=/{sub(/^DOUYIN_FLAG=/, ""); print; exit}')
+    youtube_flag=$(echo "$summary" | awk -F= '/^YOUTUBE_FLAG=/{sub(/^YOUTUBE_FLAG=/, ""); print; exit}')
     if [ -z "$xhs_flag" ]; then
         xhs_flag="--no-xhs"
     fi
     if [ -z "$douyin_flag" ]; then
         douyin_flag="--no-douyin"
     fi
+    if [ -z "$youtube_flag" ]; then
+        youtube_flag="--no-youtube"
+    fi
 
     if [ -z "$health_url" ]; then
-        health_url="http://${HOST}:${PORT}/api/health"
+        if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "[::]" ]; then
+            health_url="http://127.0.0.1:${PORT}/api/health"
+        else
+            health_url="http://${HOST}:${PORT}/api/health"
+        fi
     fi
 
     # Distinguish "only Bilibili cookie missing" (the expected state for
@@ -378,7 +399,8 @@ PY
         echo ""
         echo "  2. Source bootstrap data (privacy choice):"
         echo "       Ask whether to include Xiaohongshu likes/favorites and"
-        echo "       Douyin post/favorite/like/follow in the initial profile."
+        echo "       Douyin post/favorite/like/follow and YouTube history/"
+        echo "       subscriptions/likes in the initial profile."
         echo "       Default is NO unless they explicitly opt in per source."
         echo ""
         echo "  3. Re-run bootstrap with explicit choices (DO NOT add --skip-init):"
@@ -393,10 +415,11 @@ PY
         esac
         echo "         $xhs_flag \\"
         echo "         $douyin_flag \\"
+        echo "         $youtube_flag \\"
         echo "         --port $PORT --host $HOST"
         echo ""
-        echo "     Use --yes-xhs / --yes-douyin only after the user says yes;"
-        echo "     otherwise keep --no-xhs / --no-douyin."
+        echo "     Use --yes-xhs / --yes-douyin / --yes-youtube only after"
+        echo "     the user says yes; otherwise keep the matching --no-* flag."
         echo "     This then runs init: B站 history, soul profile, first discovery."
     elif [ "$missing_only_cookie" = "1" ]; then
         echo "Next step — get your B站 Cookie to the backend (pick ONE):"
@@ -412,6 +435,7 @@ PY
         echo "        - Embedding model/service (default: Ollama bge-m3)"
         echo "        - Xiaohongshu likes/favorites? (default: no; yes only on opt-in)"
         echo "        - Douyin post/favorite/like/follow? (default: no; yes only on opt-in)"
+        echo "        - YouTube history/subscriptions/likes? (default: no; yes only on opt-in)"
         echo ""
         echo "  (B) [manual fallback]"
         echo "      F12 → Network → copy the 'Cookie' header from any"
@@ -427,17 +451,18 @@ PY
         esac
         echo "            $xhs_flag \\"
         echo "            $douyin_flag \\"
+        echo "            $youtube_flag \\"
         echo "            --port $PORT --host $HOST"
-        echo "      Use --yes-xhs / --yes-douyin only after the user opts in;"
-        echo "      otherwise keep --no-xhs / --no-douyin."
+        echo "      Use --yes-xhs / --yes-douyin / --yes-youtube only after"
+        echo "      the user opts in; otherwise keep the matching --no-* flag."
         echo ""
         echo "  Verify the backend is healthy any time:"
         echo "      curl -sS $health_url"
     elif [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
-        echo "  1. Choose your LLM provider (default: openai):"
-        echo "     Supported: openai | gemini | claude | deepseek | openrouter | ollama"
+        echo "  1. Choose your LLM provider (default: deepseek):"
+        echo "     Supported: deepseek | openai | gemini | claude | openrouter | ollama"
         echo ""
         echo "  2. Ask which embedding service to use:"
         echo "     Default: local Ollama bge-m3 (free/offline/no extra API key)."
@@ -445,8 +470,9 @@ PY
         echo "     or a custom OpenAI-compatible embedding endpoint."
         echo ""
         echo "  3. Ask whether to include source bootstrap data:"
-        echo "     Xiaohongshu likes/favorites and Douyin post/favorite/like/follow."
-        echo "     Default: no. Use --yes-xhs / --yes-douyin only after explicit opt-in."
+        echo "     Xiaohongshu likes/favorites, Douyin post/favorite/like/follow,"
+        echo "     and YouTube history/subscriptions/likes."
+        echo "     Default: no. Use --yes-* flags only after explicit opt-in."
         echo ""
         echo "  4. Prepare the missing values:"
         case "$missing" in
@@ -498,6 +524,7 @@ PY
         esac
         echo "         $xhs_flag \\"
         echo "         $douyin_flag \\"
+        echo "         $youtube_flag \\"
         case "$missing" in
             *bilibili.cookie*) echo "         --bilibili-cookie '<YOUR_COOKIE>' \\" ;;
         esac

@@ -76,6 +76,7 @@ async def update_layer(
     preference_analyzer: PreferenceAnalyzer,
     profile_builder: ProfileBuilder,
     embedding_service: Any | None = None,
+    llm_service: Any | None = None,
 ) -> LayerUpdateResult:
     """Dispatch to the appropriate layer updater."""
     updater: LayerUpdater | None = _LAYER_UPDATERS.get(layer)
@@ -88,6 +89,7 @@ async def update_layer(
         preference_analyzer=preference_analyzer,
         profile_builder=profile_builder,
         embedding_service=embedding_service,
+        llm_service=llm_service,
     )
 
 
@@ -150,6 +152,7 @@ async def _update_interest(
     memory: MemoryManager,
     preference_analyzer: PreferenceAnalyzer,
     embedding_service: Any | None = None,
+    llm_service: Any | None = None,
     **_: Any,
 ) -> LayerUpdateResult:
     """Update interest layer by delegating to PreferenceAnalyzer."""
@@ -233,25 +236,43 @@ async def _update_interest(
         except Exception:
             logger.exception("Failed to purge pool candidates by new dislikes")
 
-        # Pass 2: embedding-based semantic match. Catches candidates where
-        # the literal word is absent but the topic is semantically close
-        # (e.g. "沙雕视频合集" ~ "鬼畜"). Only runs if an embedding service
-        # was provided to the pipeline.
+        # Pass 2: embedding recall → LLM precision (preferred), or
+        # standalone embedding purge (fallback when LLM unavailable).
         if embedding_service is not None and database is not None:
-            try:
-                from openbiliclaw.soul.pool_purge import (
-                    semantic_purge_pool_by_disliked_topics,
-                )
+            if llm_service is not None:
+                # Full pipeline: low-threshold recall + LLM judge.
+                try:
+                    from openbiliclaw.soul.pool_purge import (
+                        recall_and_llm_purge_pool,
+                    )
 
-                semantic_purged = await semantic_purge_pool_by_disliked_topics(
-                    database=database,
-                    topics=list(newly_added_dislikes),
-                    embedding_service=embedding_service,
-                )
-                if semantic_purged:
-                    changes.append(f"从候选池语义清除 {semantic_purged} 条相关内容")
-            except Exception:
-                logger.exception("Failed to semantic-purge pool candidates")
+                    smart_purged = await recall_and_llm_purge_pool(
+                        database=database,
+                        topics=list(newly_added_dislikes),
+                        all_disliked_topics=list(new_dislikes),
+                        embedding_service=embedding_service,
+                        llm_service=llm_service,
+                    )
+                    if smart_purged:
+                        changes.append(f"从候选池召回+LLM 清除 {smart_purged} 条相关内容")
+                except Exception:
+                    logger.exception("Failed to recall+LLM purge pool candidates")
+            else:
+                # Fallback: high-threshold embedding purge only.
+                try:
+                    from openbiliclaw.soul.pool_purge import (
+                        semantic_purge_pool_by_disliked_topics,
+                    )
+
+                    semantic_purged = await semantic_purge_pool_by_disliked_topics(
+                        database=database,
+                        topics=list(newly_added_dislikes),
+                        embedding_service=embedding_service,
+                    )
+                    if semantic_purged:
+                        changes.append(f"从候选池语义清除 {semantic_purged} 条相关内容")
+                except Exception:
+                    logger.exception("Failed to semantic-purge pool candidates")
 
     # Feed speculative_interests to speculator as seed candidates
     speculative_seeds = updated_preference.get("speculative_interests")

@@ -1,0 +1,384 @@
+<!doctype html>
+ <html lang="zh-CN">
+ <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenBiliClaw 推荐首页</title>
+  <link rel="stylesheet" href="assets/css/app.css">
+ </head>
+ <body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#home" aria-label="OpenBiliClaw 首页">
+        <span class="brand-mark">B</span>
+        <span class="brand-copy"><span class="brand-title">OpenBiliClaw</span><span class="brand-sub">你的本地全网推荐入口</span></span>
+      </a>
+      <form class="search" id="searchForm">
+        <input id="searchInput" type="search" placeholder="搜索推荐、UP 主、兴趣方向或解释文本">
+        <button type="submit">搜索</button>
+      </form>
+      <nav class="nav-actions" aria-label="全局操作" data-od-id="path-0-0-2">
+        <button class="pill-btn nav-action" id="profileBtn" type="button" aria-label="我的画像">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="8" r="4"/></svg>
+          <span class="nav-action-text">我的画像</span>
+        </button>
+        <button class="pill-btn nav-action" id="chatBtn" type="button" aria-label="聊聊口味">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-8.5 8.5 9.4 9.4 0 0 1-3.7-.76L3 21l1.28-4.64A8.5 8.5 0 1 1 21 12Z"/><path d="M8 11.8h.01M12 11.8h.01M16 11.8h.01" stroke-linecap="round"/></svg>
+          <span class="nav-action-text">聊聊口味</span>
+        </button>
+        <button class="pill-btn nav-action" id="messagesBtn" type="button" aria-label="消息">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v8A2.5 2.5 0 0 1 17.5 18H9l-5 3v-13.5Z"/><path d="M8 10h8M8 14h5" stroke-linecap="round"/></svg>
+          <span class="message-dot" id="messagesDot" hidden></span>
+          <span class="nav-action-text">消息</span>
+        </button>
+        <button class="pill-btn nav-action" id="settingsBtn" type="button" aria-label="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6l-.04.06a2 2 0 0 1-3.42 0L10.5 20a1.65 1.65 0 0 0-1-.6 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1l-.06-.04a2 2 0 0 1 0-3.42L4 10.5a1.65 1.65 0 0 0 .6-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-.6l.04-.06a2 2 0 0 1 3.42 0L13.5 4a1.65 1.65 0 0 0 1 .6 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.37.35.71.6 1l.06.04a2 2 0 0 1 0 3.42L20 13.5a1.65 1.65 0 0 0-.6 1.5Z"/></svg>
+          <span class="nav-action-text">设置</span>
+        </button>
+      </nav>
+      <button class="icon-btn mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="打开手机菜单">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <div class="fatal-banner" id="fatalBanner" role="alert"></div>
+
+    <main class="layout" id="home">
+      <section class="main-col" aria-label="推荐首页" data-od-id="recommendation-home">
+        <section class="hero" data-od-id="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Personal discovery agent</p>
+            <h1>跨平台推荐首页</h1>
+            <p class="lead">左侧阅读 AI 推荐的视频流，右侧关注画像和后台动态；顶部看板直接同步候选池、补货状态和待处理信号。</p>
+            <div class="hero-actions">
+              <button class="pill-btn primary" id="refreshBtn" type="button">开始补货</button>
+              <button class="pill-btn dark" id="loadMoreTopBtn" type="button">加载更多推荐</button>
+              <button class="pill-btn" id="openSettingsHero" type="button"><span class="badge-dot"></span><span id="statusLabel">已连接本地后端</span></button>
+            </div>
+          </div>
+          <aside class="hero-panel" aria-label="实时运行摘要">
+            <p class="eyebrow">Runtime</p>
+            <h3>推荐池实时看板</h3>
+            <p id="runtimeSummary">连接 FastAPI 后，这里会显示候选池、补货和待处理行为信号。</p>
+            <div class="hero-status-grid" aria-label="推荐池实时状态">
+              <div><span>可换库存</span><strong id="poolAvailable">—</strong></div>
+              <div><span>最近补货</span><strong id="poolReplenished">—</strong></div>
+              <div><span>补货状态</span><strong id="poolRefreshState">—</strong></div>
+            </div>
+            <div class="metric-row">
+              <div class="metric"><strong id="metricPool">—</strong><span>候选池</span></div>
+              <div class="metric"><strong id="metricUnread">—</strong><span>待处理消息</span></div>
+              <div class="metric"><strong id="metricSources">—</strong><span>内容源</span></div>
+            </div>
+            <p class="hero-topics">最近主题：<span id="poolTopics">等待后端同步</span></p>
+          </aside>
+        </section>
+
+        <section class="delight" id="delightBanner" data-od-id="delight-banner">
+          <div class="thumb" id="delightThumb" role="button" tabindex="0" aria-label="打开当前惊喜推荐"></div>
+          <div class="delight-body">
+            <div class="delight-meta">
+              <p class="eyebrow">惊喜推荐</p>
+              <div class="delight-queue-tools" aria-label="惊喜推荐队列管理">
+                <div class="delight-nav" aria-label="惊喜推荐队列导航">
+                  <button class="icon-btn" data-delight="prev" type="button" aria-label="上一条惊喜推荐">‹</button>
+                  <span id="delightCount">1/1</span>
+                  <button class="icon-btn" data-delight="next" type="button" aria-label="下一条惊喜推荐">›</button>
+                </div>
+              </div>
+            </div>
+            <div class="delight-copy">
+              <h3 id="delightTitle">你可能会意外喜欢：县域经济的债务齿轮</h3>
+              <p id="delightReason">你最近的轨迹同时出现了宏观债务、地方财政和长叙事内容，这条把它们咬合得很清楚。</p>
+            </div>
+            <div class="delight-actions" aria-label="惊喜推荐操作">
+              <div class="delight-main-actions" aria-label="打开或讨论这条推荐">
+                <button class="small-btn" data-delight="view" type="button">去看看</button>
+                <div class="comment-field"><input id="delightCommentInput" placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
+                <button class="small-btn chat-action" data-delight="chat" type="button">聊一聊</button>
+              </div>
+              <div class="delight-feedback-actions card-feedback-icons" aria-label="反馈这条推荐">
+                <button class="feedback-icon-btn" data-delight="like" type="button" aria-label="喜欢" title="喜欢">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg>
+                </button>
+                <span class="feedback-separator" aria-hidden="true">/</span>
+                <button class="feedback-icon-btn" data-delight="dislike" type="button" aria-label="不感兴趣" title="不感兴趣">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg>
+                </button>
+                <span class="feedback-separator" aria-hidden="true">/</span>
+                <button class="feedback-icon-btn" data-delight="dismiss" type="button" aria-label="忽略" title="忽略">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M9.84 9.91A3 3 0 0 0 12 15c.82 0 1.57-.33 2.11-.87M6.5 6.65A10.45 10.45 0 0 0 2.46 12C3.73 16.06 7.52 19 12 19c1.99 0 3.84-.58 5.4-1.58M11 5.05c.33-.03.66-.05 1-.05 4.48 0 8.27 2.94 9.54 7a10.5 10.5 0 0 1-1.19 2.5"/></svg>
+                </button>
+              </div>
+            </div>
+            <p class="status-line" id="delightStatus"></p>
+          </div>
+        </section>
+
+        <section data-od-id="recommendations">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Recommendations</p>
+              <h2>为你推荐的内容</h2>
+              <p>阿B 根据你的近期兴趣筛选的内容，有任何意见尽管和我聊~</p>
+            </div>
+            <div class="drawer-actions recommendation-actions">
+              <label class="reshuffle-toggle" title="开启后，换一批前会把当前显示的推荐标记为忽略">
+                <input id="dismissOnReshuffleToggle" type="checkbox">
+                <span class="reshuffle-switch" aria-hidden="true"></span>
+                <span>换一批时忽略当前</span>
+              </label>
+              <button class="icon-btn" id="reshuffleBtn" type="button" aria-label="换一批" title="换一批">↻</button>
+              <button class="pill-btn" id="resetFiltersBtn" type="button" hidden="">重置筛选</button>
+            </div>
+          </div>
+          <div class="filter-row" id="filterRow" aria-label="推荐筛选"></div>
+          <div class="card-grid" id="videoGrid"></div>
+          <div class="load-row"><button class="pill-btn dark" id="loadMoreBtn" type="button">加载更多推荐</button></div>
+        </section>
+      </section>
+
+      <aside class="rail" aria-label="侧栏摘要">
+        <button class="rail-toggle" id="railToggle" type="button" aria-label="收起侧栏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <section class="panel" data-od-id="profile-rail">
+          <p class="eyebrow">Profile</p>
+          <h3>阿B 眼里的你</h3>
+          <div class="profile-chip-row" id="profileChips" style="font-size: 16px;"></div>
+          <p class="video-meta" id="profilePortrait">偏好结构化解释、长视频和跨学科桥接，对“为什么”比“是什么”更敏感。</p>
+          <div class="kv">
+            <div class="kv-row"><span>MBTI 推断</span><strong id="railMbti">INTJ</strong></div>
+            <div class="kv-row"><span>探索开放度</span><strong id="railOpenness">78%</strong></div>
+            <div class="kv-row"><span>深度偏好</span><strong id="railDepth">92%</strong></div>
+          </div>
+        </section>
+        <section class="panel" data-od-id="activity-rail">
+          <p class="eyebrow">Activity</p>
+          <h3>后台刚记住的事</h3>
+          <div class="activity-list" id="activityList"></div>
+          <div class="drawer-actions"><button class="small-btn" id="activityBtn" type="button">查看全部动态</button></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <section class="mobile-menu" id="mobileMenu" aria-label="手机菜单">
+    <div class="mobile-menu-panel">
+      <div class="mobile-menu-head">
+        <div><p class="eyebrow">OpenBiliClaw</p><h2>菜单</h2></div>
+        <button class="icon-btn" id="mobileMenuClose" type="button" aria-label="关闭手机菜单">×</button>
+      </div>
+      <form class="mobile-search" id="mobileSearchForm">
+        <input id="mobileSearchInput" type="search" placeholder="搜索推荐、UP 主、兴趣方向或解释文本">
+        <button class="pill-btn dark" type="submit">搜索</button>
+      </form>
+      <div class="mobile-menu-list" aria-label="手机功能入口">
+        <button class="mobile-menu-item" data-mobile-panel="profileDrawer" type="button"><span>我的画像</span><small id="mobileProfileHint">查看完整画像和近期记忆</small></button>
+        <button class="mobile-menu-item" data-mobile-panel="chatDrawer" type="button"><span>聊聊口味</span><small>告诉阿B你的偏好和边界</small></button>
+        <button class="mobile-menu-item" data-mobile-panel="messagesDrawer" type="button"><span>消息</span><small><span id="mobileMessageCount">0</span> 条待处理</small></button>
+        <button class="mobile-menu-item" data-mobile-panel="settingsModal" data-settings="models" type="button"><span>设置</span><small>模型、平台源和调度配置</small></button>
+      </div>
+      <section class="mobile-summary-card" aria-label="阿B 眼里的你">
+        <div class="mobile-summary-head"><p class="eyebrow">Profile</p><button class="small-btn" data-mobile-panel="profileDrawer" type="button">查看画像</button></div>
+        <h3>阿B 眼里的你</h3>
+        <div class="profile-chip-row" id="mobileProfileChips"></div>
+        <p class="video-meta" id="mobileProfilePortrait">偏好结构化解释、长视频和跨学科桥接。</p>
+        <div class="kv">
+          <div class="kv-row"><span>MBTI 推断</span><strong id="mobileRailMbti">—</strong></div>
+          <div class="kv-row"><span>探索开放度</span><strong id="mobileRailOpenness">—</strong></div>
+          <div class="kv-row"><span>深度偏好</span><strong id="mobileRailDepth">—</strong></div>
+        </div>
+      </section>
+      <section class="mobile-summary-card" aria-label="后台刚记住的事">
+        <div class="mobile-summary-head"><p class="eyebrow">Activity</p><button class="small-btn" data-mobile-panel="activityDrawer" type="button">查看全部</button></div>
+        <h3>后台刚记住的事</h3>
+        <div class="activity-list" id="mobileActivityList"></div>
+      </section>
+    </div>
+  </section>
+
+  <section class="drawer" id="profileDrawer" aria-label="画像详情" data-od-id="profile-drawer">
+    <div class="scrim" data-close="profileDrawer"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Soul profile</p><h2>我的画像</h2></div><button class="icon-btn" data-close="profileDrawer" type="button">×</button></div>
+      <div class="profile-list" id="profileDetails"></div>
+      <div class="drawer-actions"><button class="pill-btn dark" id="profileMemoryMoreBtn" type="button" hidden="">加载更多近期记忆</button></div>
+    </div>
+  </section>
+
+  <section class="drawer" id="chatDrawer" aria-label="聊天调教" data-od-id="chat-drawer">
+    <div class="scrim" data-close="chatDrawer"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Dialogue</p><h2>聊聊口味</h2></div><button class="icon-btn" data-close="chatDrawer" type="button">×</button></div>
+      <div class="chat-log" id="chatLog"></div>
+      <form class="chat-input" id="chatForm"><input id="chatInput" placeholder="说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。"><button class="pill-btn primary" type="submit">发送</button></form>
+    </div>
+  </section>
+
+  <section class="drawer" id="messagesDrawer" aria-label="消息中心" data-od-id="messages-drawer">
+    <div class="scrim" data-close="messagesDrawer"></div>
+    <div class="drawer-panel" id="messagesPanel">
+      <div class="drawer-head" id="messagesHead"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Inbox</p><h2>消息</h2></div><button class="icon-btn" data-close="messagesDrawer" type="button">×</button></div>
+      <div class="message-list" id="messageList"></div>
+      <div class="message-chat-view" id="messageChatView" hidden>
+        <div class="drawer-head message-chat-head">
+          <button class="small-btn" id="messageChatBackBtn" type="button">← 返回消息</button>
+          <button class="icon-btn" data-close="messagesDrawer" type="button">×</button>
+        </div>
+        <p class="eyebrow">Taste dialogue</p>
+        <h2 id="messageChatTitle">聊聊这个兴趣</h2>
+        <p class="video-meta" id="messageChatContext">这轮对话会沿用同一个后端聊天会话。</p>
+        <div class="chat-log" id="messageChatLog"></div>
+        <form class="chat-input" id="messageChatForm"><input id="messageChatInput" placeholder="继续补充你的口味、边界或例子"><button class="pill-btn primary" type="submit">发送</button></form>
+      </div>
+    </div>
+  </section>
+
+  <section class="drawer" id="activityDrawer" aria-label="动态历史" data-od-id="activity-drawer">
+    <div class="scrim" data-close="activityDrawer"></div>
+    <div class="drawer-panel">
+      <div class="drawer-head"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Activity history</p><h2>动态历史</h2></div><button class="icon-btn" data-close="activityDrawer" type="button">×</button></div>
+      <div class="activity-list" id="activityHistory"></div>
+      <div class="drawer-actions"><button class="pill-btn dark" id="activityMoreBtn" type="button">加载更早动态</button></div>
+    </div>
+  </section>
+
+  <section class="overlay" id="settingsModal" aria-label="后端设置" data-od-id="settings-modal">
+    <div class="scrim" data-close="settingsModal"></div>
+    <div class="modal-panel">
+      <div class="modal-head"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Settings</p><h2>后端与模型设置</h2></div><button class="icon-btn" data-close="settingsModal" type="button">×</button></div>
+      <form id="settingsForm" class="settings-grid">
+        <div class="settings-tabs" role="tablist" aria-label="后端设置分类">
+          <button class="settings-tab is-active" type="button" data-settings-tab="models">模型</button>
+          <button class="settings-tab" type="button" data-settings-tab="sources">平台源</button>
+          <button class="settings-tab" type="button" data-settings-tab="scheduler">调度</button>
+          <button class="settings-tab" type="button" data-settings-tab="general">通用</button>
+          <button class="settings-tab" type="button" data-settings-tab="logging">日志</button>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="models">
+          <p class="settings-section-title">默认模型</p>
+          <label class="settings-field"><span>默认 LLM Provider</span><select id="llmProvider"><option value="openai">openai</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="deepseek">deepseek</option><option value="openrouter">openrouter</option><option value="ollama">ollama</option><option value="openai_compatible">openai_compatible</option></select></label>
+          <label class="settings-field"><span>OpenAI 认证方式</span><select id="llmAuthMode"><option value="api_key">API Key</option><option value="codex_oauth">Codex OAuth</option></select></label>
+          <label class="settings-field"><span>默认模型</span><input id="llmModel" value="gpt-5-nano"></label>
+          <label class="settings-field"><span>当前 Provider API Key</span><input id="llmApiKey" autocomplete="off" placeholder="只保存当前选中的 Provider"></label>
+          <label class="settings-field"><span>当前 Provider Base URL</span><input id="llmBaseUrl" placeholder="OpenAI-compatible / DeepSeek / Ollama 等"></label>
+          <label class="settings-field"><span>OpenRouter Referer</span><input id="openrouterReferer" placeholder="https://example.com"></label>
+          <label class="settings-field"><span>OpenRouter X-Title</span><input id="openrouterTitle" placeholder="OpenBiliClaw"></label>
+
+          <p class="settings-section-title">Embedding 与模块覆盖</p>
+          <label class="settings-field"><span>Embedding Provider</span><select id="embeddingProvider"><option value="">跟随默认</option><option>ollama</option><option>openai</option><option>gemini</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>Embedding 模型</span><input id="embeddingModel" value="bge-m3"></label>
+          <label class="settings-field"><span>Embedding API Key</span><input id="embeddingApiKey" autocomplete="off"></label>
+          <label class="settings-field"><span>Embedding Base URL</span><input id="embeddingBaseUrl"></label>
+          <label class="settings-field"><span>相似度阈值</span><input id="embeddingSimilarity" inputmode="decimal" placeholder="0.82"></label>
+          <label class="settings-field"><span>画像 Provider</span><select id="moduleSoulProvider"><option value="">继承默认</option><option>openai</option><option>claude</option><option>gemini</option><option>deepseek</option><option>ollama</option><option>openrouter</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>画像 Model</span><input id="moduleSoulModel" placeholder="留空继承"></label>
+          <label class="settings-field"><span>发现 Provider</span><select id="moduleDiscoveryProvider"><option value="">继承默认</option><option>openai</option><option>claude</option><option>gemini</option><option>deepseek</option><option>ollama</option><option>openrouter</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>发现 Model</span><input id="moduleDiscoveryModel" placeholder="留空继承"></label>
+          <label class="settings-field"><span>推荐表达 Provider</span><select id="moduleRecommendationProvider"><option value="">继承默认</option><option>openai</option><option>claude</option><option>gemini</option><option>deepseek</option><option>ollama</option><option>openrouter</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>推荐表达 Model</span><input id="moduleRecommendationModel" placeholder="留空继承"></label>
+          <label class="settings-field"><span>评估 Provider</span><select id="moduleEvaluationProvider"><option value="">继承默认</option><option>openai</option><option>claude</option><option>gemini</option><option>deepseek</option><option>ollama</option><option>openrouter</option><option>openai_compatible</option></select></label>
+          <label class="settings-field"><span>评估 Model</span><input id="moduleEvaluationModel" placeholder="留空继承"></label>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="sources" hidden>
+          <p class="settings-section-title">Bilibili 与多平台源</p>
+          <div class="inline-row">
+            <label class="settings-field"><span>Bilibili discovery</span><select id="bilibiliEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+            <label class="settings-field"><span>小红书</span><select id="xhsEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+            <label class="settings-field"><span>抖音</span><select id="douyinEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+            <label class="settings-field"><span>YouTube</span><select id="youtubeEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+          </div>
+          <label class="settings-field"><span>B 站认证</span><select id="biliAuth"><option value="cookie">Cookie</option><option value="qrcode">二维码</option><option value="none">无</option></select></label>
+          <label class="settings-field full"><span>B 站 Cookie</span><textarea id="biliCookie" rows="2" placeholder="保留空值表示不覆盖现有 cookie"></textarea></label>
+          <label class="settings-field"><span>agent-browser 路径</span><input id="biliBrowserExecutable" placeholder="留空使用全局安装"></label>
+          <label class="settings-field"><span>B 站登录窗口</span><select id="biliBrowserHeaded"><option value="off">隐藏</option><option value="on">显示</option></select></label>
+          <label class="settings-field"><span>通用网页 CDP URL</span><input id="sourcesBrowserCdp" placeholder="http://localhost:9222"></label>
+          <label class="settings-field"><span>回退浏览器窗口</span><select id="sourcesBrowserHeaded"><option value="off">隐藏</option><option value="on">显示</option></select></label>
+          <div class="inline-row">
+            <label class="settings-field"><span>小红书每日搜索</span><input id="xhsDailySearchBudget" inputmode="numeric" placeholder="30"></label>
+            <label class="settings-field"><span>小红书每日创作者</span><input id="xhsDailyCreatorBudget" inputmode="numeric" placeholder="10"></label>
+            <label class="settings-field"><span>小红书间隔秒数</span><input id="xhsTaskInterval" inputmode="numeric" placeholder="45"></label>
+            <label class="settings-field"><span>抖音 Cookie 环境变量</span><input id="douyinCookieEnv" placeholder="OPENBILICLAW_DOUYIN_COOKIE"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>抖音每日搜索</span><input id="douyinDailySearchBudget" inputmode="numeric" placeholder="30"></label>
+            <label class="settings-field"><span>抖音每日热点</span><input id="douyinDailyHotBudget" inputmode="numeric" placeholder="5"></label>
+            <label class="settings-field"><span>抖音每日推荐流</span><input id="douyinDailyFeedBudget" inputmode="numeric" placeholder="30"></label>
+            <label class="settings-field"><span>抖音请求间隔秒数</span><input id="douyinRequestInterval" inputmode="numeric" placeholder="2"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>YouTube 搜索预算</span><input id="youtubeDailySearchBudget" inputmode="numeric" placeholder="6"></label>
+            <label class="settings-field"><span>YouTube 热门预算</span><input id="youtubeDailyTrendingBudget" inputmode="numeric" placeholder="50"></label>
+            <label class="settings-field"><span>YouTube 频道预算</span><input id="youtubeDailyChannelBudget" inputmode="numeric" placeholder="10"></label>
+            <label class="settings-field"><span>YouTube 请求间隔秒数</span><input id="youtubeRequestInterval" inputmode="numeric" placeholder="2"></label>
+          </div>
+          <p class="settings-note-inline">YouTube 预算限制 yt_search / yt_trending / yt_channel 三个 discovery 策略的单轮规模。</p>
+          <p class="settings-section-title">候选池来源占比</p>
+          <p class="settings-note-inline">下面是候选池来源占比/权重，不是每日抓取任务数。例如 8 / 1 / 1 / 1 表示 B 站候选约占 8 份，其余来源各 1 份。</p>
+          <div class="inline-row">
+            <label class="settings-field"><span>B 站占比</span><input id="shareBilibili" value="8" inputmode="numeric"></label>
+            <label class="settings-field"><span>小红书占比</span><input id="shareXhs" value="1" inputmode="numeric"></label>
+            <label class="settings-field"><span>抖音占比</span><input id="shareDouyin" value="1" inputmode="numeric"></label>
+            <label class="settings-field"><span>YouTube 占比</span><input id="shareYoutube" value="1" inputmode="numeric"></label>
+          </div>
+          <div class="drawer-actions" style="grid-column: 1 / -1"><button class="pill-btn" id="suggestSharesBtn" type="button">按历史行为建议占比</button></div>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="scheduler" hidden>
+          <p class="settings-section-title">调度</p>
+          <label class="settings-field"><span>后台 LLM 请求</span><select id="schedulerEnabled"><option value="on">开启</option><option value="off">暂停</option></select></label>
+          <label class="settings-field"><span>浏览器关闭后</span><select id="pauseDisconnect"><option value="pause">暂停后台</option><option value="keep">继续运行</option></select></label>
+          <label class="settings-field"><span>Discovery Cron</span><input id="discoveryCron" placeholder="0 */8 * * *"></label>
+          <label class="settings-field"><span>候选池目标数</span><input id="poolTarget" value="600" inputmode="numeric"></label>
+          <label class="settings-field"><span>账户同步间隔小时</span><input id="accountSyncInterval" inputmode="numeric" placeholder="6"></label>
+          <label class="settings-field"><span>自动更新</span><select id="autoUpdate"><option value="off">关闭</option><option value="on">开启</option></select></label>
+          <label class="settings-field"><span>自动更新检查小时</span><input id="autoUpdateInterval" inputmode="numeric" placeholder="6"></label>
+          <div class="inline-row">
+            <label class="settings-field"><span>猜测兴趣间隔分钟</span><input id="speculationInterval" inputmode="numeric" placeholder="10"></label>
+            <label class="settings-field"><span>猜测兴趣存活天数</span><input id="speculationTtl" inputmode="numeric" placeholder="3"></label>
+            <label class="settings-field"><span>猜测兴趣冷却天数</span><input id="speculationCooldown" inputmode="numeric" placeholder="7"></label>
+            <label class="settings-field"><span>猜测确认阈值</span><input id="speculationThreshold" inputmode="numeric" placeholder="3"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>最大活跃猜测数</span><input id="speculationMaxActive" inputmode="numeric" placeholder="5"></label>
+            <label class="settings-field"><span>主要兴趣域上限</span><input id="speculationMaxPrimary" inputmode="numeric" placeholder="15"></label>
+            <label class="settings-field"><span>次要兴趣项上限</span><input id="speculationMaxSecondary" inputmode="numeric" placeholder="60"></label>
+            <span></span>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="general" hidden>
+          <p class="settings-section-title">通用</p>
+          <label class="settings-field"><span>后端地址</span><input id="backendHost" value="127.0.0.1"></label>
+          <label class="settings-field"><span>后端端口</span><input id="backendPort" value="8420" inputmode="numeric"></label>
+          <label class="settings-field"><span>语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
+          <label class="settings-field"><span>数据目录</span><input id="dataDir" placeholder="data"></label>
+          <label class="settings-field full"><span>SQLite 数据库路径</span><input id="storageDbPath" placeholder="data/openbiliclaw.db"></label>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="logging" hidden>
+          <p class="settings-section-title">日志</p>
+          <label class="settings-field"><span>控制台级别</span><select id="logLevel"><option>DEBUG</option><option selected="">INFO</option><option>WARNING</option><option>ERROR</option></select></label>
+          <label class="settings-field"><span>文件级别</span><select id="logFileLevel"><option selected="">DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></label>
+          <label class="settings-field full"><span>完整日志路径</span><input id="logPath" placeholder="logs/openbiliclaw.log"></label>
+          <div class="inline-row">
+            <label class="settings-field"><span>单日志文件上限 MB</span><input id="logMaxFileSize" inputmode="numeric" placeholder="100"></label>
+            <label class="settings-field"><span>日志备份份数</span><input id="logBackupCount" inputmode="numeric" placeholder="1"></label>
+            <label class="settings-field"><span>日志目录预算 MB</span><input id="logAggregateBudget" inputmode="numeric" placeholder="500"></label>
+            <label class="settings-field"><span>非托管日志保留天数</span><input id="logUnmanagedMaxAge" inputmode="numeric" placeholder="30"></label>
+          </div>
+          <label class="settings-field"><span>非托管日志截断 MB</span><input id="logUnmanagedTruncate" inputmode="numeric" placeholder="200"></label>
+        </div>
+
+        <label class="settings-field full"><span>配置状态</span><textarea id="configStatus" rows="3" readonly="">可连接 FastAPI：/api/health、/api/config、/api/runtime-status。保存后调用 PUT /api/config，并热重载运行时。</textarea></label>
+        <div class="drawer-actions" style="grid-column: 1 / -1"><button class="pill-btn primary" type="submit">保存配置</button></div>
+      </form>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="assets/js/app.js" defer></script>
+</body></html>

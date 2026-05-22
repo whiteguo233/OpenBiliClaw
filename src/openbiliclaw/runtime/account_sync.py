@@ -6,7 +6,11 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, ClassVar, Protocol
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,8 @@ class AccountSyncService:
     max_items_per_folder: int = 50
     following_page_size: int = 100
     check_interval_seconds: int = 300
+    llm_work_allowed: Callable[[], bool] | None = None
+    _auto_bootstrap_attempted: bool = False
     # v0.3.57+: tracks the cookie-not-ready → ready transition so
     # ``sync_if_due`` only emits the "auth ready" INFO log once per
     # session. Reset path is via fresh AccountSyncService instance,
@@ -88,6 +94,12 @@ class AccountSyncService:
                 "account_sync: bilibili cookie now ready — first history "
                 "fetch will run on this tick"
             )
+        if self.llm_work_allowed is not None and not self.llm_work_allowed():
+            return {
+                "synced": False,
+                "new_event_count": 0,
+                "reason": "llm_paused",
+            }
         state = self.memory_manager.load_account_sync_state()
         if not self._is_due(str(state.get("last_account_sync_at", ""))):
             return {
@@ -118,14 +130,27 @@ class AccountSyncService:
 
         try:
             history = await self.bilibili_client.get_user_history(max_items=self.history_max_items)
+            previous_history_view_at = self._to_int(state.get("last_history_view_at", 0))
+            previous_history_bvids = self._string_set(
+                state.get("history_bvids_at_last_view_at", [])
+            )
             new_history, last_view_at, last_bvid = self._filter_new_history(
                 history,
-                last_view_at=self._to_int(state.get("last_history_view_at", 0)),
+                last_view_at=previous_history_view_at,
                 last_bvid=str(state.get("last_history_bvid", "")),
+                seen_bvids_at_last_view_at=previous_history_bvids,
             )
             events.extend(self._history_events(new_history))
             state["last_history_view_at"] = last_view_at
             state["last_history_bvid"] = last_bvid
+            state["history_bvids_at_last_view_at"] = self._history_cursor_bvids(
+                history,
+                last_view_at,
+                fallback_bvid=last_bvid,
+                previous_seen=(
+                    previous_history_bvids if last_view_at == previous_history_view_at else set()
+                ),
+            )
         except Exception as exc:
             errors.append(str(exc))
 
@@ -136,10 +161,15 @@ class AccountSyncService:
             )
             current_signature = self._favorite_signature(favorites)
             previous_signature = str(state.get("favorite_signature", ""))
+            previous_bvids = self._favorite_bvids_from_state(state)
             if current_signature and current_signature != previous_signature:
-                events.extend(self._favorite_events(favorites))
+                new_favorites = self._filter_favorite_folders(favorites, previous_bvids)
+                events.extend(self._favorite_events(new_favorites))
                 state["favorite_signature"] = current_signature
+                state["favorite_bvids"] = self._favorite_bvids(favorites)
                 state["last_favorites_sync_at"] = self._now().isoformat()
+            elif current_signature and not state.get("favorite_bvids"):
+                state["favorite_bvids"] = self._favorite_bvids(favorites)
         except Exception as exc:
             errors.append(str(exc))
 
@@ -150,10 +180,15 @@ class AccountSyncService:
             )
             current_signature = self._following_signature(following)
             previous_signature = str(state.get("following_signature", ""))
+            previous_mids = self._following_mids_from_state(state)
             if current_signature and current_signature != previous_signature:
-                events.extend(self._following_events(following))
+                new_following = self._filter_following(following, previous_mids)
+                events.extend(self._following_events(new_following))
                 state["following_signature"] = current_signature
+                state["following_mids"] = self._following_mids(following)
                 state["last_following_sync_at"] = self._now().isoformat()
+            elif current_signature and not state.get("following_mids"):
+                state["following_mids"] = self._following_mids(following)
         except Exception as exc:
             errors.append(str(exc))
 
@@ -161,6 +196,7 @@ class AccountSyncService:
             for event in events:
                 await self.memory_manager.propagate_event(event)
             await self.soul_engine.analyze_events(events)
+            await self._auto_bootstrap_soul_profile(len(events))
 
         state["last_account_sync_at"] = self._now().isoformat()
         state["last_sync_error"] = " | ".join(errors)
@@ -178,6 +214,43 @@ class AccountSyncService:
             "last_account_sync_at": str(state.get("last_account_sync_at", "")),
             "last_account_sync_error": str(state.get("last_sync_error", "")),
         }
+
+    async def _auto_bootstrap_soul_profile(self, event_count: int) -> None:
+        """Build the first soul profile after account sync learns preferences."""
+        if self._auto_bootstrap_attempted:
+            return
+
+        is_ready_candidate = getattr(self.soul_engine, "is_profile_ready", None)
+        if not callable(is_ready_candidate):
+            return
+        is_ready_fn = cast("Callable[[], bool]", is_ready_candidate)
+
+        try:
+            if is_ready_fn():
+                return
+        except Exception:
+            logger.debug("Auto-bootstrap soul profile readiness check failed", exc_info=True)
+            return
+
+        build_candidate = getattr(self.soul_engine, "build_initial_profile", None)
+        if not callable(build_candidate):
+            self._auto_bootstrap_attempted = True
+            return
+        build_fn = cast("Callable[[list[dict[str, Any]]], Awaitable[Any]]", build_candidate)
+
+        self._auto_bootstrap_attempted = True
+        try:
+            logger.info(
+                "Auto-bootstrapping soul profile after account sync (%d new events)",
+                event_count,
+            )
+            await build_fn([])
+        except Exception:
+            logger.warning(
+                "Auto-bootstrap of soul profile failed; run 'openbiliclaw init' "
+                "manually for a richer profile",
+                exc_info=True,
+            )
 
     # v0.3.57+: tighter retry while cookie hasn't arrived. The default
     # ``check_interval_seconds`` of 300 is right for steady-state polling
@@ -207,9 +280,13 @@ class AccountSyncService:
         *,
         last_view_at: int,
         last_bvid: str,
+        seen_bvids_at_last_view_at: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int, str]:
         newest_view_at = last_view_at
         newest_bvid = last_bvid
+        seen_at_cursor = set(seen_bvids_at_last_view_at or set())
+        if last_bvid:
+            seen_at_cursor.add(last_bvid)
         accepted: list[dict[str, Any]] = []
         for item in items:
             history_meta = item.get("history", {})
@@ -219,7 +296,7 @@ class AccountSyncService:
             bvid = str(history_meta.get("bvid", "")).strip()
             if view_at < last_view_at:
                 continue
-            if view_at == last_view_at and bvid and bvid == last_bvid:
+            if view_at == last_view_at and bvid and bvid in seen_at_cursor:
                 continue
             accepted.append(item)
             if view_at > newest_view_at:
@@ -253,18 +330,82 @@ class AccountSyncService:
             )
         return events
 
+    def _history_cursor_bvids(
+        self,
+        items: list[dict[str, Any]],
+        view_at: int,
+        *,
+        fallback_bvid: str = "",
+        previous_seen: set[str] | None = None,
+    ) -> list[str]:
+        bvids: set[str] = set()
+        if view_at > 0:
+            for item in items:
+                history_meta = item.get("history", {})
+                if not isinstance(history_meta, dict):
+                    history_meta = {}
+                item_view_at = self._to_int(history_meta.get("view_at", item.get("view_at", 0)))
+                if item_view_at != view_at:
+                    continue
+                bvid = str(history_meta.get("bvid", "")).strip()
+                if bvid:
+                    bvids.add(bvid)
+        if previous_seen:
+            bvids.update(str(item).strip() for item in previous_seen if str(item).strip())
+        if fallback_bvid:
+            bvids.add(fallback_bvid)
+        return sorted(bvids)
+
     def _favorite_signature(self, folders: list[Any]) -> str:
         parts: list[str] = []
         for folder in folders:
             folder_id = str(getattr(getattr(folder, "folder", None), "media_id", ""))
-            item_ids = [
+            item_ids = sorted(
                 str(item.get("bvid", "")).strip()
                 for item in getattr(folder, "items", [])
                 if isinstance(item, dict) and str(item.get("bvid", "")).strip()
-            ]
+            )
             if folder_id and item_ids:
                 parts.append(f"{folder_id}:{','.join(item_ids)}")
-        return "|".join(parts)
+        return "|".join(sorted(parts))
+
+    def _favorite_bvids(self, folders: list[Any]) -> list[str]:
+        bvids = {
+            str(item.get("bvid", "")).strip()
+            for folder in folders
+            for item in getattr(folder, "items", [])
+            if isinstance(item, dict) and str(item.get("bvid", "")).strip()
+        }
+        return sorted(bvids)
+
+    def _favorite_bvids_from_state(self, state: dict[str, object]) -> set[str]:
+        stored = self._string_set(state.get("favorite_bvids", []))
+        if stored:
+            return stored
+        return self._bvids_from_signature(str(state.get("favorite_signature", "")))
+
+    def _filter_favorite_folders(self, folders: list[Any], seen_bvids: set[str]) -> list[Any]:
+        if not seen_bvids:
+            return folders
+        filtered: list[Any] = []
+        for folder in folders:
+            items = [
+                item
+                for item in getattr(folder, "items", [])
+                if isinstance(item, dict)
+                and str(item.get("bvid", "")).strip()
+                and str(item.get("bvid", "")).strip() not in seen_bvids
+            ]
+            if not items:
+                continue
+            filtered.append(
+                SimpleNamespace(
+                    folder=getattr(folder, "folder", None),
+                    items=items,
+                    truncated=bool(getattr(folder, "truncated", False)),
+                )
+            )
+        return filtered
 
     def _favorite_events(self, folders: list[Any]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -296,12 +437,35 @@ class AccountSyncService:
         return events
 
     def _following_signature(self, following: list[Any]) -> str:
-        mids = sorted(
+        return ",".join(self._following_mids(following))
+
+    def _following_mids(self, following: list[Any]) -> list[str]:
+        mids = {
             str(getattr(user, "mid", "")).strip()
             for user in following
             if str(getattr(user, "mid", "")).strip()
-        )
-        return ",".join(mids)
+        }
+        return sorted(mids)
+
+    def _following_mids_from_state(self, state: dict[str, object]) -> set[str]:
+        stored = self._string_set(state.get("following_mids", []))
+        if stored:
+            return stored
+        return {
+            item.strip()
+            for item in str(state.get("following_signature", "")).split(",")
+            if item.strip()
+        }
+
+    def _filter_following(self, following: list[Any], seen_mids: set[str]) -> list[Any]:
+        if not seen_mids:
+            return following
+        return [
+            user
+            for user in following
+            if str(getattr(user, "mid", "")).strip()
+            and str(getattr(user, "mid", "")).strip() not in seen_mids
+        ]
 
     def _following_events(self, following: list[Any]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -360,3 +524,19 @@ class AccountSyncService:
             except ValueError:
                 return 0
         return 0
+
+    @staticmethod
+    def _string_set(value: object) -> set[str]:
+        if not isinstance(value, list):
+            return set()
+        return {str(item).strip() for item in value if str(item).strip()}
+
+    @staticmethod
+    def _bvids_from_signature(signature: str) -> set[str]:
+        bvids: set[str] = set()
+        for folder_part in signature.split("|"):
+            _, sep, item_part = folder_part.partition(":")
+            if not sep:
+                continue
+            bvids.update(item.strip() for item in item_part.split(",") if item.strip())
+        return bvids

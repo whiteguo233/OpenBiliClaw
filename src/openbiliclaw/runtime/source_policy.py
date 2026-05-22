@@ -7,7 +7,12 @@ from collections.abc import Mapping
 from typing import Any
 
 SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
-OPTIONAL_SOURCES = frozenset({"xiaohongshu", "douyin", "youtube"})
+DEFAULT_SOURCE_ENABLED = {
+    "bilibili": True,
+    "xiaohongshu": False,
+    "douyin": False,
+    "youtube": False,
+}
 DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 8,
     "xiaohongshu": 1,
@@ -20,26 +25,22 @@ def source_enabled_map(config: Any) -> dict[str, bool]:
     """Return enabled state for pool-accounted discovery sources."""
 
     sources_cfg = getattr(config, "sources", None)
-    enabled = {"bilibili": True}
-    for source in OPTIONAL_SOURCES:
+    enabled: dict[str, bool] = {}
+    for source in SOURCE_ORDER:
         source_cfg = getattr(sources_cfg, source, None) if sources_cfg is not None else None
-        default = source == "xiaohongshu"
+        default = DEFAULT_SOURCE_ENABLED[source]
         enabled[source] = bool(getattr(source_cfg, "enabled", default))
     return {source: enabled.get(source, False) for source in SOURCE_ORDER}
 
 
 def effective_pool_source_shares(config: Any) -> dict[str, int]:
-    """Return configured source shares after disabled optional sources are removed."""
+    """Return configured source shares after disabled sources are removed."""
 
     scheduler = getattr(config, "scheduler", None)
     raw_shares = getattr(scheduler, "pool_source_shares", None)
     shares = _normalize_shares(raw_shares)
     enabled = source_enabled_map(config)
-    return {
-        source: share
-        for source, share in shares.items()
-        if source == "bilibili" or enabled.get(source, False)
-    }
+    return {source: share for source, share in shares.items() if enabled.get(source, False)}
 
 
 def suggest_pool_source_shares(
@@ -91,15 +92,10 @@ def suggest_pool_source_shares(
 
 def _normalize_enabled_sources(enabled_sources: Mapping[str, bool] | None) -> dict[str, bool]:
     if enabled_sources is None:
-        return {
-            "bilibili": True,
-            "xiaohongshu": True,
-            "douyin": False,
-            "youtube": False,
-        }
-    enabled = {"bilibili": True}
-    for source in OPTIONAL_SOURCES:
-        enabled[source] = bool(enabled_sources.get(source, False))
+        return dict(DEFAULT_SOURCE_ENABLED)
+    enabled: dict[str, bool] = {}
+    for source in SOURCE_ORDER:
+        enabled[source] = bool(enabled_sources.get(source, DEFAULT_SOURCE_ENABLED[source]))
     return {source: enabled.get(source, False) for source in SOURCE_ORDER}
 
 

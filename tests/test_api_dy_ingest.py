@@ -29,6 +29,7 @@ class RecordingMemoryManager:
         self.events: list[dict[str, object]] = []
         self.profile_signals: list[object] = []
         self._discovery_runtime_state: dict[str, object] = {}
+        self._source_bootstrap_state: dict[str, object] = {}
 
     async def propagate_event(self, event: dict[str, object]) -> None:
         self.events.append(event)
@@ -38,6 +39,12 @@ class RecordingMemoryManager:
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         self._discovery_runtime_state = dict(state)
+
+    def load_source_bootstrap_state(self) -> dict[str, object]:
+        return dict(self._source_bootstrap_state)
+
+    def save_source_bootstrap_state(self, state: dict[str, object]) -> None:
+        self._source_bootstrap_state = dict(state)
 
 
 class RecordingProfilePipeline:
@@ -264,7 +271,7 @@ class TestDyTaskResult:
         queue = DyTaskQueue(db)
         task = queue.get(task_id)
         assert task is not None
-        assert task["status"] == "pending"  # NOT completed yet
+        assert task["status"] == "pending"  # direct POST did not claim it first
 
     def test_dy_scope_partials_then_empty_final_preserve_videos_and_dedup_events(
         self,
@@ -386,6 +393,40 @@ class TestDyTaskResult:
         result = json.loads(str(task["result_json"]))
         assert result["scope_counts"]["dy_search"] == 1
         assert result["videos"][0]["aweme_id"] == "search-1"
+
+    def test_dy_bootstrap_skips_videos_already_seen_in_previous_task(
+        self,
+        dy_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        """A later bootstrap task must only propagate source items that
+        have not already fed the profile update path."""
+        client, db, memory = dy_task_client
+
+        for _ in range(2):
+            task_id = _enqueue_dy_bootstrap_task(db)
+            response = client.post(
+                "/api/sources/dy/task-result",
+                json={
+                    "task_id": task_id,
+                    "status": "ok",
+                    "videos": [
+                        {
+                            "scope": "dy_collect",
+                            "title": "重复抖音收藏",
+                            "url": "https://www.douyin.com/video/repeated-dy",
+                            "aweme_id": "repeated-dy",
+                        }
+                    ],
+                    "scope_counts": {"dy_collect": 1},
+                },
+            )
+            assert response.status_code == 200
+
+        assert [event["title"] for event in memory.events] == ["重复抖音收藏"]
+        assert len(memory.profile_signals) == 1
+        assert memory.load_source_bootstrap_state()["dy_seen_video_keys"] == [
+            "dy_collect:repeated-dy"
+        ]
 
 
 class TestDyTaskKick:

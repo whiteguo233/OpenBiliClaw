@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
 
 from openbiliclaw.api.app import create_app
+
+
+def _wait_for_presence_count(ctx: object, expected: int) -> None:
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        snapshot = ctx.presence.snapshot()
+        if snapshot["active_count"] == expected:
+            return
+        time.sleep(0.01)
+    assert ctx.presence.snapshot()["active_count"] == expected
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +43,210 @@ def _isolate_runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
 class TestBackendAPI:
     """Route-level tests for the plugin backend API."""
+
+    @pytest.mark.asyncio
+    async def test_runtime_context_presence_survives_rebuild(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        ctx = RuntimeContext()
+        original_presence = ctx.presence
+
+        def _fake_rebuild_components(self: RuntimeContext, new_config: Config) -> None:
+            self.config = new_config
+
+        monkeypatch.setattr(RuntimeContext, "_rebuild_components", _fake_rebuild_components)
+
+        await ctx.rebuild_from_config(Config())
+
+        assert ctx.presence is original_presence
+
+    @pytest.mark.asyncio
+    async def test_runtime_context_skips_startup_one_shots_when_llm_work_blocked(self) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.force_tick_calls = 0
+
+            async def force_tick(self, *_args: object, **_kwargs: object) -> None:
+                self.force_tick_calls += 1
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self._speculator = FakeSpeculator()
+                self.profile_calls = 0
+
+            async def get_profile(self) -> dict[str, object]:
+                self.profile_calls += 1
+                return {"profile": "ok"}
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self.prewarm_calls = 0
+
+            async def prewarm_pool_mmr_embeddings(self) -> int:
+                self.prewarm_calls += 1
+                return 1
+
+        cfg = Config()
+        cfg.scheduler.enabled = False
+        soul = FakeSoulEngine()
+        rec = FakeRecommendationEngine()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=soul,
+            recommendation_engine=rec,
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        await ctx.restart_background_tasks(app)
+
+        assert soul._speculator.force_tick_calls == 0
+        assert rec.prewarm_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_restart_tasks_detaches_speculator_tick(self) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class HangingSpeculator:
+            async def force_tick(self, *_args: object, **_kwargs: object) -> None:
+                await asyncio.sleep(60)
+
+        class FakeSoulEngine:
+            _speculator = HangingSpeculator()
+
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        cfg = Config()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=object(),
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        try:
+            await asyncio.wait_for(ctx.restart_background_tasks(app), timeout=0.5)
+            assert ctx.task_registry.stats().get("post_reload_speculate") == 1
+        finally:
+            await ctx.task_registry.cancel_all()
+
+    @pytest.mark.asyncio
+    async def test_restart_tasks_swallows_detached_speculator_failure(self) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class BrokenSpeculator:
+            async def force_tick(self, *_args: object, **_kwargs: object) -> None:
+                raise RuntimeError("boom")
+
+        class FakeSoulEngine:
+            _speculator = BrokenSpeculator()
+
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        cfg = Config()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=object(),
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+        captured_tasks: list[asyncio.Task[object]] = []
+        original_track = ctx.task_registry.track
+
+        def _track(name: str, coro):
+            task = original_track(name, coro)
+            if name == "post_reload_speculate":
+                captured_tasks.append(task)
+            return task
+
+        ctx.task_registry.track = _track  # type: ignore[method-assign]
+
+        await ctx.restart_background_tasks(app)
+        assert len(captured_tasks) == 1
+        await asyncio.wait_for(captured_tasks[0], timeout=0.5)
+        assert captured_tasks[0].exception() is None
+
+    @pytest.mark.asyncio
+    async def test_put_config_does_not_block_on_speculator(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from types import SimpleNamespace
+
+        import httpx
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config, save_config
+
+        config_path = tmp_path / "config.toml"
+        cfg = Config()
+        cfg.llm.default_provider = "openai"
+        cfg.llm.openai.api_key = "sk-test-openai"
+        save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+
+        class HangingSpeculator:
+            async def force_tick(self, *_args: object, **_kwargs: object) -> None:
+                await asyncio.sleep(60)
+
+        class FakeSoulEngine:
+            _speculator = HangingSpeculator()
+
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        async def _fake_rebuild(self: RuntimeContext, new_config: Config) -> None:
+            self.config = new_config
+            self.memory_manager = SimpleNamespace(load_discovery_runtime_state=lambda: {})
+            self.runtime_controller = object()
+            self.account_sync_service = object()
+            self.auto_update_service = object()
+            self.soul_engine = FakeSoulEngine()
+            self.recommendation_engine = object()
+
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await asyncio.wait_for(
+                client.put("/api/config", json={"language": "zh"}),
+                timeout=0.5,
+            )
+
+        assert response.status_code == 200
+        assert response.json()["reloaded"] is True
 
     def test_create_app_bootstrap_shares_database_with_memory_manager(
         self,
@@ -74,10 +289,12 @@ class TestBackendAPI:
                 registry: object,
                 memory: object,
                 usage_recorder: object | None = None,
+                module_overrides: object | None = None,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                self.module_overrides = module_overrides
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -109,6 +326,23 @@ class TestBackendAPI:
         assert len(created_memories) == 1
         assert created_memories[0].initialized == 1
         assert created_memories[0].database is created_databases[0]
+
+    def test_runtime_context_wires_llm_module_overrides(self, tmp_path: Path) -> None:
+        from openbiliclaw.api.runtime_context import build_runtime_context
+        from openbiliclaw.config import Config
+
+        config = Config(data_dir=str(tmp_path / "data"))
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "llama3"
+        config.llm.soul.provider = "ollama"
+        config.llm.soul.model = "llama3-soul"
+        config.llm.discovery.model = "llama3-discovery"
+
+        ctx = build_runtime_context(config)
+
+        assert ctx.llm_service.module_overrides["soul"].model == "llama3-soul"
+        assert ctx.llm_service.module_overrides["discovery"].model == "llama3-discovery"
+        assert ctx.soul_engine._llm_service.module_overrides["soul"].provider == "ollama"
 
     def test_create_app_bootstrap_wires_discovery_concurrency_controller(
         self,
@@ -186,10 +420,12 @@ class TestBackendAPI:
                 registry: object,
                 memory: object,
                 usage_recorder: object | None = None,
+                module_overrides: object | None = None,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                self.module_overrides = module_overrides
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -207,6 +443,7 @@ class TestBackendAPI:
                 self.llm = llm
                 self.memory = memory
                 self.usage_recorder = usage_recorder
+                captured["soul_engine_kwargs"] = _extras
 
         class FakeRecommendationEngine:
             def __init__(
@@ -229,6 +466,7 @@ class TestBackendAPI:
         class FakeAccountSyncService:
             def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
+                captured["account_sync_kwargs"] = kwargs
 
         class FakeRuntimeEventHub:
             pass
@@ -261,7 +499,26 @@ class TestBackendAPI:
                     task_interval_seconds=45,
                 ),
             ),
-            scheduler=SimpleNamespace(pool_target_count=300, account_sync_interval_hours=24),
+            scheduler=SimpleNamespace(
+                enabled=True,
+                pause_on_extension_disconnect=False,
+                pool_target_count=300,
+                account_sync_interval_hours=24,
+                refresh_check_interval_seconds=77,
+                signal_event_threshold=9,
+                trending_refresh_hours=5,
+                explore_refresh_hours=18,
+                discovery_limit=17,
+                proactive_push_interval_seconds=155,
+                speculation_interval_minutes=22,
+                speculation_ttl_days=8,
+                speculation_cooldown_days=9,
+                speculation_confirmation_threshold=4,
+                speculation_max_active=6,
+                speculation_max_primary_interests=17,
+                speculation_max_secondary_interests=66,
+                speculator_idle_interval_minutes=11,
+            ),
         )
 
         monkeypatch.setattr("openbiliclaw.config.load_config", lambda: fake_config)
@@ -292,12 +549,31 @@ class TestBackendAPI:
         monkeypatch.setattr(runtime_events_module, "RuntimeEventHub", FakeRuntimeEventHub)
         monkeypatch.setattr(dialogue_module, "SocraticDialogue", FakeDialogue)
 
-        app_module.create_app()
+        app = app_module.create_app()
 
         assert captured["bilibili_request_concurrency"] == 2
         assert captured["llm_evaluation_concurrency"] == 2
         assert captured["engine_concurrency"] is captured["controller"]
         assert all(item is captured["controller"] for item in captured["strategy_concurrency"])
+        assert captured["runtime_controller_kwargs"]["scheduler_config"] is fake_config.scheduler
+        assert (
+            captured["runtime_controller_kwargs"]["presence"] is app.state.runtime_context.presence
+        )
+        assert captured["runtime_controller_kwargs"]["check_interval_seconds"] == 77
+        assert captured["runtime_controller_kwargs"]["signal_event_threshold"] == 9
+        assert captured["runtime_controller_kwargs"]["trending_refresh_hours"] == 5
+        assert captured["runtime_controller_kwargs"]["explore_refresh_hours"] == 18
+        assert captured["runtime_controller_kwargs"]["discovery_limit"] == 17
+        assert captured["runtime_controller_kwargs"]["proactive_push_interval_seconds"] == 155
+        assert captured["soul_engine_kwargs"]["speculation_interval_minutes"] == 22
+        assert captured["soul_engine_kwargs"]["speculation_ttl_days"] == 8
+        assert captured["soul_engine_kwargs"]["speculation_cooldown_days"] == 9
+        assert captured["soul_engine_kwargs"]["speculation_confirmation_threshold"] == 4
+        assert captured["soul_engine_kwargs"]["speculation_max_active"] == 6
+        assert captured["soul_engine_kwargs"]["speculation_max_primary_interests"] == 17
+        assert captured["soul_engine_kwargs"]["speculation_max_secondary_interests"] == 66
+        assert captured["soul_engine_kwargs"]["speculator_idle_interval_minutes"] == 11
+        assert callable(captured["account_sync_kwargs"]["llm_work_allowed"])
 
     def test_cap_by_franchise_keeps_at_most_n_per_franchise(self) -> None:
         """Regression for the 'one popup full of 原神' bug. The API
@@ -347,7 +623,53 @@ class TestBackendAPI:
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "service": "openbiliclaw-api"}
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["service"] == "openbiliclaw-api"
+
+    def test_favicon_endpoint_serves_mobile_web_icon(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/favicon.ico")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/png")
+        assert response.content
+
+    def test_health_endpoint_reports_profile_ready_when_available(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class ReadySoulEngine:
+            def is_profile_ready(self) -> bool:
+                return True
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=ReadySoulEngine())
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["service"] == "openbiliclaw-api"
+        assert body["profile_ready"] is True
+
+    def test_detect_lan_ip_prefers_rfc1918_interface_over_benchmark_tun(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from openbiliclaw.api import app as app_module
+
+        monkeypatch.setattr(app_module, "_default_route_ip", lambda: "198.18.0.1")
+        monkeypatch.setattr(
+            app_module,
+            "_interface_ipv4_candidates",
+            lambda: ["198.18.0.1", "192.168.31.98"],
+        )
+
+        assert app_module._detect_lan_ip() == "192.168.31.98"
 
     def test_bilibili_cookie_endpoint_persists_and_validates(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -984,6 +1306,70 @@ class TestBackendAPI:
                 "message": "开始给你补候选了",
             }
 
+    def test_runtime_stream_websocket_updates_shared_presence(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+        ctx = app.state.runtime_context
+
+        with client.websocket_connect("/api/runtime-stream"):
+            _wait_for_presence_count(ctx, 1)
+
+        _wait_for_presence_count(ctx, 0)
+
+    def test_runtime_stream_websocket_keeps_presence_for_second_client(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+        ctx = app.state.runtime_context
+
+        with client.websocket_connect("/api/runtime-stream"):
+            _wait_for_presence_count(ctx, 1)
+            with client.websocket_connect("/api/runtime-stream"):
+                _wait_for_presence_count(ctx, 2)
+            _wait_for_presence_count(ctx, 1)
+            assert ctx.presence.is_present(grace_seconds=1) is True
+
+        _wait_for_presence_count(ctx, 0)
+
+    def test_runtime_stream_idle_disconnect_decrements_presence_promptly(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+        ctx = app.state.runtime_context
+
+        with client.websocket_connect("/api/runtime-stream") as websocket:
+            _wait_for_presence_count(ctx, 1)
+            websocket.close()
+            _wait_for_presence_count(ctx, 0)
+
     def test_runtime_stream_requests_cookie_sync_for_background_client(
         self, monkeypatch, tmp_path: Path
     ) -> None:
@@ -1235,6 +1621,7 @@ class TestBackendAPI:
                     "expression": "先给你捞一条新的。",
                     "topic_label": "刚补进来的新东西",
                     "presented": False,
+                    "feedback_type": "",
                     "content_id": "BV1NEW",
                     "content_url": "https://www.bilibili.com/video/BV1NEW",
                     "source_platform": "bilibili",
@@ -1307,6 +1694,7 @@ class TestBackendAPI:
                     "expression": "这条接在你刚刚看的后面也顺。",
                     "topic_label": "下一条",
                     "presented": False,
+                    "feedback_type": "",
                     "content_id": "BV1NEXT",
                     "content_url": "https://www.bilibili.com/video/BV1NEXT",
                     "source_platform": "bilibili",
@@ -2535,11 +2923,13 @@ class TestBackendAPI:
         cfg = Config(
             llm=LLMConfig(
                 default_provider="gemini",
+                fallback_enabled=True,
                 gemini=LLMProviderConfig(api_key="test-gemini-key", model="gemini-2.5-flash"),
                 embedding=EmbeddingConfig(
                     provider="gemini",
                     model="gemini-embedding-001",
                     similarity_threshold=0.85,
+                    fallback_enabled=True,
                 ),
             ),
         )
@@ -2559,6 +2949,7 @@ class TestBackendAPI:
 
         # LLM provider fields
         assert data["llm"]["default_provider"] == "gemini"
+        assert data["llm"]["fallback_enabled"] is True
         assert data["llm"]["gemini"]["api_key"] == "test-gemini-key"
         assert data["llm"]["gemini"]["model"] == "gemini-2.5-flash"
 
@@ -2566,6 +2957,7 @@ class TestBackendAPI:
         assert data["llm"]["embedding"]["provider"] == "gemini"
         assert data["llm"]["embedding"]["model"] == "gemini-embedding-001"
         assert data["llm"]["embedding"]["similarity_threshold"] == 0.85
+        assert data["llm"]["embedding"]["fallback_enabled"] is True
 
     def test_get_config_masks_api_keys_by_default(
         self,
@@ -2625,6 +3017,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         # Patch load_config to return our config
         monkeypatch.setattr(
@@ -2651,10 +3044,12 @@ class TestBackendAPI:
             json={
                 "llm": {
                     "default_provider": "ollama",
+                    "fallback_enabled": True,
                     "embedding": {
                         "provider": "openai",
                         "model": "text-embedding-3-small",
                         "similarity_threshold": 0.78,
+                        "fallback_enabled": True,
                     },
                 },
             },
@@ -2663,6 +3058,8 @@ class TestBackendAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
+        assert data["config"]["llm"]["fallback_enabled"] is True
+        assert data["config"]["llm"]["embedding"]["fallback_enabled"] is True
 
         # Verify the embedding was updated on the config object
         assert cfg.llm.embedding.provider == "openai"
@@ -2696,6 +3093,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         monkeypatch.setattr(
             "openbiliclaw.config.load_config",
@@ -2776,6 +3174,7 @@ class TestBackendAPI:
             ),
         )
         save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
         monkeypatch.setattr(
             "openbiliclaw.config.load_config",
             lambda *_a, **_kw: cfg,
@@ -2842,6 +3241,7 @@ class TestEmbeddingAndCompatProviderE2E:
 
         config_path = tmp_path / "config.toml"
         save_config(initial_cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
 
         # `cfg` is a single mutable instance that both load_config and
         # save_config see — that mirrors how the FastAPI lifecycle reads
@@ -3261,6 +3661,7 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.bilibili.browser_headed = True
         cfg.sources.browser_cdp_url = "http://localhost:9222"
         cfg.sources.browser_headed = True
+        cfg.sources.bilibili.enabled = False
         cfg.sources.xiaohongshu.enabled = False
         cfg.sources.xiaohongshu.daily_search_budget = 11
         cfg.sources.xiaohongshu.daily_creator_budget = 3
@@ -3272,6 +3673,10 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.sources.douyin.daily_feed_budget = 13
         cfg.sources.douyin.request_interval_seconds = 5
         cfg.sources.youtube.enabled = True
+        cfg.sources.youtube.daily_search_budget = 4
+        cfg.sources.youtube.daily_trending_budget = 44
+        cfg.sources.youtube.daily_channel_budget = 8
+        cfg.sources.youtube.request_interval_seconds = 3
         cfg.scheduler.pool_source_shares = {
             "bilibili": 6,
             "xiaohongshu": 2,
@@ -3279,11 +3684,20 @@ class TestEmbeddingAndCompatProviderE2E:
             "youtube": 1,
         }
         cfg.scheduler.account_sync_interval_hours = 9
+        cfg.scheduler.refresh_check_interval_seconds = 75
+        cfg.scheduler.signal_event_threshold = 9
+        cfg.scheduler.trending_refresh_hours = 5
+        cfg.scheduler.explore_refresh_hours = 18
+        cfg.scheduler.discovery_limit = 17
+        cfg.scheduler.proactive_push_interval_seconds = 155
+        cfg.scheduler.speculator_idle_interval_minutes = 11
         cfg.scheduler.speculation_interval_minutes = 21
         cfg.scheduler.speculation_ttl_days = 8
         cfg.scheduler.auto_update_enabled = True
         cfg.scheduler.auto_update_check_interval_hours = 10
         cfg.logging.file_level = "WARNING"
+        cfg.logging.directory = "runtime-logs"
+        cfg.logging.filename = "backend.log"
         cfg.logging.max_file_size_mb = 123
         cfg.logging.aggregate_budget_mb = 456
         cfg.logging.unmanaged_truncate_mb = 78
@@ -3303,11 +3717,16 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["bilibili"]["browser_headed"] is True
         assert data["sources"]["browser"]["cdp_url"] == "http://localhost:9222"
         assert data["sources"]["browser"]["headed"] is True
+        assert data["sources"]["bilibili"]["enabled"] is False
         assert data["sources"]["xiaohongshu"]["enabled"] is False
         assert data["sources"]["xiaohongshu"]["daily_search_budget"] == 11
         assert data["sources"]["douyin"]["enabled"] is True
         assert data["sources"]["douyin"]["daily_feed_budget"] == 13
         assert data["sources"]["youtube"]["enabled"] is True
+        assert data["sources"]["youtube"]["daily_search_budget"] == 4
+        assert data["sources"]["youtube"]["daily_trending_budget"] == 44
+        assert data["sources"]["youtube"]["daily_channel_budget"] == 8
+        assert data["sources"]["youtube"]["request_interval_seconds"] == 3
         assert data["scheduler"]["pool_source_shares"] == {
             "bilibili": 6,
             "xiaohongshu": 2,
@@ -3315,15 +3734,106 @@ class TestEmbeddingAndCompatProviderE2E:
             "youtube": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
+        assert data["scheduler"]["refresh_check_interval_seconds"] == 75
+        assert data["scheduler"]["signal_event_threshold"] == 9
+        assert data["scheduler"]["trending_refresh_hours"] == 5
+        assert data["scheduler"]["explore_refresh_hours"] == 18
+        assert data["scheduler"]["discovery_limit"] == 17
+        assert data["scheduler"]["proactive_push_interval_seconds"] == 155
+        assert data["scheduler"]["speculator_idle_interval_minutes"] == 11
         assert data["scheduler"]["speculation_interval_minutes"] == 21
         assert data["scheduler"]["speculation_ttl_days"] == 8
         assert data["scheduler"]["auto_update_enabled"] is True
         assert data["scheduler"]["auto_update_check_interval_hours"] == 10
         assert data["logging"]["file_level"] == "WARNING"
+        assert data["logging"]["directory"] == "runtime-logs"
+        assert data["logging"]["filename"] == "backend.log"
+        assert data["logging"]["file_path"] == str(tmp_path / "runtime-logs" / "backend.log")
         assert data["logging"]["max_file_size_mb"] == 123
         assert data["logging"]["aggregate_budget_mb"] == 456
         assert data["logging"]["unmanaged_truncate_mb"] == 78
         assert data["logging"]["unmanaged_max_age_days"] == 9
+
+    def test_get_config_exposes_scheduler_pause_on_extension_disconnect(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+        cfg.scheduler.pause_on_extension_disconnect = True
+        cfg.scheduler.extension_disconnect_grace_seconds = 45
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.get("/api/config")
+
+        assert response.status_code == 200
+        scheduler = response.json()["scheduler"]
+        assert scheduler["pause_on_extension_disconnect"] is True
+        assert scheduler["extension_disconnect_grace_seconds"] == 45
+
+    @pytest.mark.parametrize(("raw_bool", "bad_grace"), [("true", -1), ("on", 0), ("true", "abc")])
+    def test_put_config_updates_scheduler_pause_on_extension_disconnect(
+        self,
+        monkeypatch,
+        tmp_path,
+        raw_bool: str,
+        bad_grace: object,
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "scheduler": {
+                    "pause_on_extension_disconnect": raw_bool,
+                    "extension_disconnect_grace_seconds": bad_grace,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert cfg.scheduler.pause_on_extension_disconnect is True
+        assert cfg.scheduler.extension_disconnect_grace_seconds == 90
+        scheduler = response.json()["config"]["scheduler"]
+        assert scheduler["pause_on_extension_disconnect"] is True
+        assert scheduler["extension_disconnect_grace_seconds"] == 90
+
+    def test_put_config_rebuilds_runtime_with_pause_on_disconnect(
+        self,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+
+        async def _fake_rebuild(self: RuntimeContext, config: Config) -> None:
+            self.config = config
+            self.runtime_controller = SimpleNamespace(scheduler_config=config.scheduler)
+
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "scheduler": {
+                    "pause_on_extension_disconnect": True,
+                    "extension_disconnect_grace_seconds": 12,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        runtime_scheduler = client.app.state.runtime_context.runtime_controller.scheduler_config
+        assert runtime_scheduler.pause_on_extension_disconnect is True
+        assert runtime_scheduler.extension_disconnect_grace_seconds == 12
 
     def test_put_config_updates_sources_and_advanced_settings(self, monkeypatch, tmp_path) -> None:
         """PUT /api/config should update the same advanced fields that the
@@ -3354,6 +3864,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 },
                 "sources": {
                     "browser": {"cdp_url": "http://localhost:9222", "headed": True},
+                    "bilibili": {"enabled": False},
                     "xiaohongshu": {
                         "enabled": False,
                         "daily_search_budget": 11,
@@ -3369,7 +3880,14 @@ class TestEmbeddingAndCompatProviderE2E:
                         "daily_feed_budget": 13,
                         "request_interval_seconds": 5,
                     },
-                    "youtube": {"enabled": True},
+                    "youtube": {
+                        "enabled": True,
+                        "daily_search_budget": 5,
+                        "daily_trending_budget": 41,
+                        "daily_channel_budget": 9,
+                        "request_interval_seconds": 4,
+                        "min_interval_minutes": 30,
+                    },
                 },
                 "scheduler": {
                     "account_sync_interval_hours": 9,
@@ -3379,6 +3897,13 @@ class TestEmbeddingAndCompatProviderE2E:
                         "douyin": 2,
                         "youtube": 1,
                     },
+                    "refresh_check_interval_seconds": 75,
+                    "signal_event_threshold": 9,
+                    "trending_refresh_hours": 5,
+                    "explore_refresh_hours": 18,
+                    "discovery_limit": 17,
+                    "proactive_push_interval_seconds": 155,
+                    "speculator_idle_interval_minutes": 11,
                     "speculation_interval_minutes": 21,
                     "speculation_ttl_days": 8,
                     "speculation_cooldown_days": 9,
@@ -3416,18 +3941,32 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.bilibili.browser_headed is True
         assert cfg.sources.browser_cdp_url == "http://localhost:9222"
         assert cfg.sources.browser_headed is True
+        assert cfg.sources.bilibili.enabled is False
         assert cfg.sources.xiaohongshu.enabled is False
         assert cfg.sources.xiaohongshu.daily_search_budget == 11
         assert cfg.sources.douyin.enabled is True
         assert cfg.sources.douyin.cookie_env == "CUSTOM_DY_COOKIE"
         assert cfg.sources.douyin.daily_feed_budget == 13
         assert cfg.sources.youtube.enabled is True
+        assert cfg.sources.youtube.daily_search_budget == 5
+        assert cfg.sources.youtube.daily_trending_budget == 41
+        assert cfg.sources.youtube.daily_channel_budget == 9
+        assert cfg.sources.youtube.request_interval_seconds == 4
+        assert cfg.sources.youtube.min_interval_minutes == 30
+        assert response.json()["config"]["sources"]["youtube"]["min_interval_minutes"] == 30
         assert cfg.scheduler.pool_source_shares == {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
         }
+        assert cfg.scheduler.refresh_check_interval_seconds == 75
+        assert cfg.scheduler.signal_event_threshold == 9
+        assert cfg.scheduler.trending_refresh_hours == 5
+        assert cfg.scheduler.explore_refresh_hours == 18
+        assert cfg.scheduler.discovery_limit == 17
+        assert cfg.scheduler.proactive_push_interval_seconds == 155
+        assert cfg.scheduler.speculator_idle_interval_minutes == 11
         assert cfg.scheduler.speculation_interval_minutes == 21
         assert cfg.scheduler.auto_update_enabled is True
         assert cfg.scheduler.auto_update_check_interval_hours == 10
@@ -3437,6 +3976,41 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.logging.aggregate_budget_mb == 456
         assert cfg.logging.unmanaged_truncate_mb == 78
         assert cfg.logging.unmanaged_max_age_days == 9
+
+    def test_put_config_normalizes_invalid_scheduler_runtime_fields(
+        self,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "scheduler": {
+                    "refresh_check_interval_seconds": "abc",
+                    "signal_event_threshold": -1,
+                    "trending_refresh_hours": 0,
+                    "explore_refresh_hours": 0,
+                    "discovery_limit": 61,
+                    "proactive_push_interval_seconds": 29,
+                    "speculator_idle_interval_minutes": 4,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        scheduler = response.json()["config"]["scheduler"]
+        assert scheduler["refresh_check_interval_seconds"] == 60
+        assert scheduler["signal_event_threshold"] == 6
+        assert scheduler["trending_refresh_hours"] == 3
+        assert scheduler["explore_refresh_hours"] == 12
+        assert scheduler["discovery_limit"] == 30
+        assert scheduler["proactive_push_interval_seconds"] == 120
+        assert scheduler["speculator_idle_interval_minutes"] == 30
 
     def test_source_share_suggestion_uses_event_counts(self, monkeypatch, tmp_path) -> None:
         """GET /api/config/source-share-suggestion should suggest ratios

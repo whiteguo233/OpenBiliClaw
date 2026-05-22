@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
 import logging
+import os
+import re
+import shutil
+import socket
+import subprocess
+import tempfile
 import uuid
 from contextlib import suppress
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -18,6 +28,7 @@ from openbiliclaw.api.models import (
     BilibiliConfigOut,
     BilibiliCookieIn,
     BilibiliCookieResponse,
+    BilibiliSourceConfigOut,
     ChatIn,
     ChatTurnIn,
     ChatTurnListResponse,
@@ -70,7 +81,12 @@ from openbiliclaw.api.models import (
     YoutubeSourceConfigOut,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
+_CONFIG_SAVE_LOCK = asyncio.Lock()
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -79,6 +95,170 @@ SOURCE_LABELS = {
 }
 
 _SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+_BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+_IMAGE_PROXY_ALLOWED_SUFFIXES = (
+    "hdslb.com",
+    "xhscdn.com",
+    "pstatp.com",
+    "douyinpic.com",
+    "douyinvod.com",
+    "ytimg.com",
+    "ggpht.com",
+)
+_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
+_IMAGE_PROXY_SPOOL_MEMORY_BYTES = 1024 * 1024
+_IMAGE_PROXY_TIMEOUT_SECONDS = 10.0
+_IMAGE_PROXY_MAX_REDIRECTS = 3
+_IMAGE_CACHE_MAX_AGE_DAYS = 30
+_IMAGE_PROXY_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_IMAGE_PROXY_UPSTREAM_HEADERS = {
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+    ),
+}
+
+
+def _default_route_ip() -> str | None:
+    """Return the IPv4 address selected for outbound traffic, if usable."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.1)
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            return str(ip) if ip else None
+    except Exception:
+        return None
+
+
+def _interface_ipv4_candidates() -> list[str]:
+    """Best-effort local IPv4 enumeration without extra dependencies."""
+    commands: list[list[str]]
+    if os.name == "nt":
+        commands = [["ipconfig"]]
+    else:
+        commands = [["ifconfig"], ["ip", "-4", "addr", "show", "scope", "global"]]
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for command in commands:
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode != 0:
+            continue
+        for ip in re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", proc.stdout):
+            if ip not in seen:
+                candidates.append(ip)
+                seen.add(ip)
+        if candidates:
+            break
+    return candidates
+
+
+def _is_rfc1918_ipv4(addr: ipaddress.IPv4Address) -> bool:
+    return any(addr in network for network in _RFC1918_NETWORKS)
+
+
+def _usable_lan_candidate(ip: str) -> tuple[bool, bool]:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return (False, False)
+    if not isinstance(addr, ipaddress.IPv4Address):
+        return (False, False)
+    if (
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+        or addr in _BENCHMARK_NETWORK
+    ):
+        return (False, False)
+    return (True, _is_rfc1918_ipv4(addr))
+
+
+def _detect_lan_ip() -> str | None:
+    """Return a likely phone-reachable LAN IPv4 address.
+
+    UDP default-route detection can return VPN/TUN addresses such as
+    198.18.0.1 on macOS. Prefer RFC1918 interface addresses and only use
+    the default-route result when it is not a benchmark / loopback address.
+    """
+    candidates = _interface_ipv4_candidates()
+    route_ip = _default_route_ip()
+    if route_ip:
+        candidates.append(route_ip)
+
+    fallback: str | None = None
+    for candidate in candidates:
+        usable, rfc1918 = _usable_lan_candidate(candidate)
+        if not usable:
+            continue
+        if rfc1918:
+            return candidate
+        if fallback is None:
+            fallback = candidate
+    return fallback
+
+
+_RESETTABLE_CONFIG_FIELDS = {
+    "llm.openai.api_key": ("llm", "openai", "api_key"),
+    "llm.claude.api_key": ("llm", "claude", "api_key"),
+    "llm.gemini.api_key": ("llm", "gemini", "api_key"),
+    "llm.deepseek.api_key": ("llm", "deepseek", "api_key"),
+    "llm.openrouter.api_key": ("llm", "openrouter", "api_key"),
+    "llm.openai_compatible.api_key": ("llm", "openai_compatible", "api_key"),
+    "llm.embedding.api_key": ("llm", "embedding", "api_key"),
+}
+
+
+def _config_backup_path(config_path: Path) -> Path:
+    return config_path.with_name(f"{config_path.name}.bak")
+
+
+def _snapshot_config_file(config_path: Path) -> Path | None:
+    if not config_path.exists():
+        return None
+    backup_path = _config_backup_path(config_path)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(config_path, backup_path)
+    return backup_path
+
+
+def _restore_config_snapshot(backup_path: Path, config_path: Path) -> None:
+    shutil.copy2(backup_path, config_path)
+
+
+def _validate_llm_buildable(cfg: Any, base_issues: list[Any]) -> list[Any]:
+    from openbiliclaw.config import ConfigIssue
+    from openbiliclaw.llm.registry import RegistryBuildError, build_llm_registry
+
+    issues = list(base_issues)
+    try:
+        build_llm_registry(cfg)
+    except RegistryBuildError as exc:
+        issues.append(
+            ConfigIssue(
+                field="llm",
+                message=f"LLM registry would fail to build: {exc}",
+                severity="blocking",
+            )
+        )
+    return issues
 
 
 def _count_events_by_source_platform(database: Any) -> dict[str, int]:
@@ -192,6 +372,160 @@ def _normalize_cognition_update(item: dict[str, object]) -> CognitionUpdateSumma
     )
 
 
+def _is_image_proxy_host_allowed(hostname: str) -> bool:
+    host = hostname.rstrip(".").lower()
+    return any(
+        host == suffix or host.endswith(f".{suffix}") for suffix in _IMAGE_PROXY_ALLOWED_SUFFIXES
+    )
+
+
+def _parse_image_proxy_url(raw_url: str) -> httpx.URL:
+    try:
+        parsed = httpx.URL(raw_url)
+    except httpx.InvalidURL as exc:
+        raise HTTPException(status_code=400, detail="Invalid URL") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.host:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    if parsed.userinfo:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    if not _is_image_proxy_host_allowed(parsed.host):
+        raise HTTPException(status_code=403, detail="Domain not in whitelist")
+    return parsed
+
+
+def _validate_image_proxy_content_headers(headers: httpx.Headers) -> str:
+    content_type = str(headers.get("content-type", "")).strip()
+    if not content_type.lower().startswith("image/"):
+        raise HTTPException(status_code=400, detail="Not an image")
+    content_length = headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Invalid upstream content length") from exc
+        if size > _IMAGE_PROXY_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large")
+    return content_type
+
+
+def _iter_spooled_file(file_obj: BinaryIO) -> Iterator[bytes]:
+    try:
+        while True:
+            chunk = file_obj.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        file_obj.close()
+
+
+def _image_cache_dir() -> Path:
+    from pathlib import Path
+
+    d = Path("data/image-cache")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _image_cache_key(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()
+
+
+def _image_cache_lookup(url: str) -> tuple[Path, str] | None:
+    """Return (path, content_type) if a cached copy exists."""
+    key = _image_cache_key(url)
+    cache_dir = _image_cache_dir()
+    for candidate in cache_dir.glob(f"{key}.*"):
+        ext = candidate.suffix.lstrip(".")
+        content_type = f"image/{ext}" if ext else "image/jpeg"
+        if candidate.stat().st_size > 0:
+            return candidate, content_type
+    return None
+
+
+def _image_cache_save(url: str, data: bytes, content_type: str) -> None:
+    """Persist image bytes to disk cache."""
+    key = _image_cache_key(url)
+    ext = content_type.split("/")[-1].split(";")[0].strip()
+    if ext not in {"jpeg", "jpg", "png", "webp", "avif", "gif"}:
+        ext = "jpg"
+    path = _image_cache_dir() / f"{key}.{ext}"
+    with suppress(Exception):
+        path.write_bytes(data)
+
+
+def _image_cache_response(url: str) -> FileResponse | None:
+    cached = _image_cache_lookup(url)
+    if not cached:
+        return None
+    cache_path, cache_ct = cached
+    return FileResponse(
+        cache_path,
+        media_type=cache_ct,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+            "X-Image-Cache": "hit",
+        },
+    )
+
+
+def _image_cache_cleanup() -> int:
+    """Remove cached images older than _IMAGE_CACHE_MAX_AGE_DAYS. Returns count removed."""
+    import time
+
+    cache_dir = _image_cache_dir()
+    cutoff = time.time() - _IMAGE_CACHE_MAX_AGE_DAYS * 86400
+    removed = 0
+    with suppress(Exception):
+        for f in cache_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+                removed += 1
+    return removed
+
+
+async def _send_image_proxy_request(client: httpx.AsyncClient, url: httpx.URL) -> httpx.Response:
+    current = url
+    seen: set[str] = set()
+    for _ in range(_IMAGE_PROXY_MAX_REDIRECTS + 1):
+        current = _parse_image_proxy_url(str(current))
+        current_key = str(current)
+        if current_key in seen:
+            raise HTTPException(status_code=502, detail="Redirect loop")
+        seen.add(current_key)
+        request = client.build_request("GET", current_key, headers=_IMAGE_PROXY_UPSTREAM_HEADERS)
+        response = await client.send(request, stream=True)
+        if response.status_code in _IMAGE_PROXY_REDIRECT_STATUSES:
+            location = response.headers.get("location", "").strip()
+            await response.aclose()
+            if not location:
+                raise HTTPException(status_code=502, detail="Invalid redirect")
+            current = current.join(location)
+            continue
+        return response
+    raise HTTPException(status_code=502, detail="Too many redirects")
+
+
+async def _read_image_proxy_body(response: httpx.Response) -> BinaryIO:
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - returned after validation.
+        max_size=_IMAGE_PROXY_SPOOL_MEMORY_BYTES,
+        mode="w+b",
+    )
+    total = 0
+    try:
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > _IMAGE_PROXY_MAX_BYTES:
+                raise HTTPException(status_code=413, detail="Image too large")
+            spool.write(chunk)
+        spool.seek(0)
+        return cast("BinaryIO", spool)
+    except Exception:
+        spool.close()
+        raise
+
+
 def create_app(
     *,
     memory_manager: Any | None = None,
@@ -205,10 +539,13 @@ def create_app(
     auto_update_service: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
-    from fastapi.responses import JSONResponse
-
-    from openbiliclaw.api.runtime_context import RuntimeContext, build_runtime_context
+    from openbiliclaw.api.runtime_context import (
+        RuntimeContext,
+        build_degraded_runtime_context,
+        build_runtime_context,
+    )
     from openbiliclaw.config import load_config
+    from openbiliclaw.llm.registry import RegistryBuildError
 
     app = FastAPI(title="OpenBiliClaw API", default_response_class=JSONResponse)
 
@@ -279,12 +616,64 @@ def create_app(
             ctx.auto_update_service = AutoUpdateService(enabled=True)
     else:
         # Production path: build everything from config.
-        ctx = build_runtime_context(
-            config,
-            memory_manager=memory_manager,
-            database=database,
-            event_hub=runtime_event_hub,
+        try:
+            ctx = build_runtime_context(
+                config,
+                memory_manager=memory_manager,
+                database=database,
+                event_hub=runtime_event_hub,
+            )
+        except RegistryBuildError as exc:
+            ctx = build_degraded_runtime_context(
+                config,
+                memory_manager=memory_manager,
+                database=database,
+                event_hub=runtime_event_hub,
+                exc=exc,
+            )
+            logger.warning(
+                "FastAPI started in degraded mode (%s): %s",
+                ctx.degraded_reason,
+                "; ".join(str(getattr(issue, "message", issue)) for issue in ctx.degraded_issues),
+            )
+    app.state.runtime_context = ctx
+    app.state.degraded = bool(getattr(ctx, "degraded", False))
+    app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
+    app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
+
+    def _degraded_issues_payload() -> list[dict[str, str]]:
+        return [
+            {
+                "field": str(getattr(issue, "field", "")),
+                "message": str(getattr(issue, "message", issue)),
+                "severity": str(getattr(issue, "severity", "warning")),
+            }
+            for issue in getattr(ctx, "degraded_issues", [])
+        ]
+
+    def _degraded_body() -> dict[str, object]:
+        return {
+            "status": "degraded",
+            "reason": str(getattr(ctx, "degraded_reason", "")),
+            "issues": _degraded_issues_payload(),
+        }
+
+    @app.middleware("http")
+    async def _degraded_mode_guard(request: Request, call_next: Any) -> Any:
+        if not bool(getattr(ctx, "degraded", False)):
+            return await call_next(request)
+        path = request.url.path
+        method = request.method.upper()
+        allowed = (
+            method == "OPTIONS"
+            or path == "/api/health"
+            or path == "/api/runtime-status"
+            or (path == "/api/config" and method in {"GET", "PUT"})
+            or path.startswith("/m")
         )
+        if allowed:
+            return await call_next(request)
+        return JSONResponse(status_code=503, content=_degraded_body())
 
     async def _run_post_feedback_tasks() -> None:
         with suppress(Exception):
@@ -330,6 +719,79 @@ def create_app(
                     await ingest(signal)
         except Exception:
             logger.exception("Failed to ingest source task events into profile pipeline")
+
+    def _load_source_bootstrap_state() -> dict[str, object]:
+        from openbiliclaw.sources.bootstrap_state import (
+            default_source_bootstrap_state,
+            normalize_source_bootstrap_state,
+        )
+
+        load_state = getattr(ctx.memory_manager, "load_source_bootstrap_state", None)
+        if not callable(load_state):
+            return default_source_bootstrap_state()
+        with suppress(Exception):
+            return normalize_source_bootstrap_state(load_state())
+        return default_source_bootstrap_state()
+
+    def _save_source_bootstrap_state(state: dict[str, object]) -> None:
+        from openbiliclaw.sources.bootstrap_state import normalize_source_bootstrap_state
+
+        save_state = getattr(ctx.memory_manager, "save_source_bootstrap_state", None)
+        if not callable(save_state):
+            return
+        with suppress(Exception):
+            save_state(normalize_source_bootstrap_state(state))
+
+    def _filter_new_source_bootstrap_items(
+        source: str,
+        items: list[dict[str, Any]],
+        key_func: Callable[[dict[str, Any]], str],
+    ) -> tuple[list[dict[str, Any]], dict[int, str]]:
+        """Filter bootstrap items that already propagated from an older task."""
+        from openbiliclaw.sources.bootstrap_state import (
+            as_string_list,
+            source_bootstrap_state_key,
+        )
+
+        state = _load_source_bootstrap_state()
+        state_key = source_bootstrap_state_key(source)
+        seen = set(as_string_list(state.get(state_key, [])))
+        batch_seen: set[str] = set()
+        fresh: list[dict[str, Any]] = []
+        fresh_keys_by_index: dict[int, str] = {}
+        for item in items:
+            key = key_func(item)
+            if not key or key in seen or key in batch_seen:
+                continue
+            batch_seen.add(key)
+            fresh_keys_by_index[len(fresh)] = key
+            fresh.append(item)
+        return fresh, fresh_keys_by_index
+
+    def _mark_source_bootstrap_keys(source: str, keys: list[str]) -> None:
+        """Persist bootstrap keys that already entered the source event path."""
+        if not keys:
+            return
+        from datetime import UTC, datetime
+
+        from openbiliclaw.sources.bootstrap_state import (
+            as_string_list,
+            source_bootstrap_state_key,
+        )
+
+        state = _load_source_bootstrap_state()
+        state_key = source_bootstrap_state_key(source)
+        merged = as_string_list(state.get(state_key, []))
+        seen = set(merged)
+        for key in keys:
+            normalized = str(key).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+        state[state_key] = merged
+        state["last_source_bootstrap_sync_at"] = datetime.now(UTC).isoformat()
+        _save_source_bootstrap_state(state)
 
     chat_turn_lock = asyncio.Lock()
     fallback_chat_turns: dict[str, dict[str, Any]] = {}
@@ -457,9 +919,96 @@ def create_app(
                 }
             )
 
-    @app.get("/api/health", response_model=HealthResponse)
-    def health() -> HealthResponse:
-        return HealthResponse(status="ok", service="openbiliclaw-api")
+    def _health_profile_ready() -> bool | None:
+        soul_engine = getattr(ctx, "soul_engine", None)
+        if soul_engine is None:
+            return None
+        is_ready_candidate = getattr(soul_engine, "is_profile_ready", None)
+        if not callable(is_ready_candidate):
+            return None
+        is_ready_fn = cast("Callable[[], bool]", is_ready_candidate)
+        try:
+            return bool(is_ready_fn())
+        except Exception:
+            logger.debug("Health profile readiness check failed", exc_info=True)
+            return None
+
+    @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
+    def health() -> HealthResponse | JSONResponse:
+        profile_ready = _health_profile_ready()
+        lan_ip = _detect_lan_ip()
+        if bool(getattr(ctx, "degraded", False)):
+            body: dict[str, object] = {
+                "status": "degraded",
+                "service": "openbiliclaw-api",
+                "reason": str(getattr(ctx, "degraded_reason", "")),
+                "issues": _degraded_issues_payload(),
+            }
+            if profile_ready is not None:
+                body["profile_ready"] = profile_ready
+            if lan_ip is not None:
+                body["lan_ip"] = lan_ip
+            return JSONResponse(status_code=200, content=body)
+        return HealthResponse(
+            status="ok",
+            service="openbiliclaw-api",
+            profile_ready=profile_ready,
+            lan_ip=lan_ip,
+        )
+
+    @app.get("/api/image-proxy", response_model=None)
+    async def image_proxy(
+        url: str = Query(..., description="URL-encoded image URL to proxy"),
+    ) -> StreamingResponse | FileResponse:
+        """Proxy whitelisted remote cover images through the local backend.
+
+        Successfully fetched images are cached to ``data/image-cache/``.
+        When the upstream fails (e.g. expired XHS CDN tokens), the cached
+        copy is served instead.
+        """
+
+        parsed = _parse_image_proxy_url(url)
+        try:
+            async with httpx.AsyncClient(
+                timeout=_IMAGE_PROXY_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ) as client:
+                response = await _send_image_proxy_request(client, parsed)
+                try:
+                    if response.status_code < 200 or response.status_code >= 300:
+                        raise HTTPException(status_code=502, detail="Upstream request failed")
+                    content_type = _validate_image_proxy_content_headers(response.headers)
+                    spool = await _read_image_proxy_body(response)
+                finally:
+                    await response.aclose()
+        except httpx.TimeoutException as exc:
+            # Network-level upstream failures may use a cached copy.
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=504, detail="Upstream request timed out") from exc
+        except httpx.HTTPError as exc:
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
+        except HTTPException as exc:
+            if exc.status_code >= 500 and (cached := _image_cache_response(url)):
+                return cached
+            raise
+
+        # Cache the successfully fetched image.
+        spool.seek(0)
+        image_bytes = spool.read()
+        spool.seek(0)
+        _image_cache_save(url, image_bytes, content_type)
+
+        return StreamingResponse(
+            _iter_spooled_file(spool),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.post("/api/bilibili/cookie", response_model=BilibiliCookieResponse)
     async def sync_bilibili_cookie(payload: BilibiliCookieIn) -> BilibiliCookieResponse:
@@ -685,6 +1234,7 @@ def create_app(
                 expression=str(item.expression),
                 topic_label=str(item.topic_label),
                 presented=bool(item.presented),
+                feedback_type=str(getattr(item, "feedback_type", "") or ""),
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
@@ -695,57 +1245,123 @@ def create_app(
     @app.websocket("/api/runtime-stream")
     async def runtime_stream(websocket: WebSocket) -> None:
         await websocket.accept()
+        if bool(getattr(ctx, "degraded", False)):
+            connected = False
+            try:
+                ctx.presence.on_connect()
+                connected = True
+                await websocket.send_json(
+                    {
+                        "type": "degraded",
+                        "reason": str(getattr(ctx, "degraded_reason", "")),
+                        "issues": _degraded_issues_payload(),
+                    }
+                )
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        raise WebSocketDisconnect
+            except WebSocketDisconnect:
+                pass
+            finally:
+                if connected:
+                    ctx.presence.on_disconnect()
+            return
+
         subscribe = getattr(ctx.event_hub, "subscribe", None)
         unsubscribe = getattr(ctx.event_hub, "unsubscribe", None)
         if not callable(subscribe) or not callable(unsubscribe):
             await websocket.close()
             return
         queue = await subscribe()
-        client_name = str(websocket.query_params.get("client", "") or "").strip().lower()
-        if client_name in {"background", "extension", "service-worker"}:
-            from openbiliclaw.bilibili.auth import resolve_runtime_cookie
-            from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        connected = False
 
-            runtime_config = getattr(ctx, "config", None) or config
-            with suppress(Exception):
-                cookie = resolve_runtime_cookie(
-                    data_dir=runtime_config.data_path,
-                    configured_cookie=runtime_config.bilibili.cookie,
-                )
-                if not str(cookie or "").strip():
-                    await websocket.send_json(
-                        {
-                            "type": "bilibili_cookie_sync_requested",
-                            "reason": "missing_cookie",
-                            "source": "runtime-stream",
-                        }
-                    )
-            with suppress(Exception):
-                dy_cfg = getattr(runtime_config.sources, "douyin", None)
-                if dy_cfg is not None and bool(getattr(dy_cfg, "enabled", False)):
-                    dy_cookie = resolve_douyin_cookie(
+        async def _send_runtime_events() -> None:
+            while True:
+                event = await queue.get()
+                await websocket.send_json(event)
+
+        async def _receive_until_disconnect() -> None:
+            while True:
+                message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect
+
+        try:
+            ctx.presence.on_connect()
+            connected = True
+            client_name = str(websocket.query_params.get("client", "") or "").strip().lower()
+            if client_name in {"background", "extension", "service-worker"}:
+                from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+                from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+
+                runtime_config = getattr(ctx, "config", None) or config
+                with suppress(Exception):
+                    cookie = resolve_runtime_cookie(
                         data_dir=runtime_config.data_path,
-                        cookie_env=str(getattr(dy_cfg, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")),
+                        configured_cookie=runtime_config.bilibili.cookie,
                     )
-                    if not str(dy_cookie or "").strip():
+                    if not str(cookie or "").strip():
                         await websocket.send_json(
                             {
-                                "type": "douyin_cookie_sync_requested",
+                                "type": "bilibili_cookie_sync_requested",
                                 "reason": "missing_cookie",
                                 "source": "runtime-stream",
                             }
                         )
-        try:
-            while True:
-                event = await queue.get()
-                await websocket.send_json(event)
+                with suppress(Exception):
+                    dy_cfg = getattr(runtime_config.sources, "douyin", None)
+                    if dy_cfg is not None and bool(getattr(dy_cfg, "enabled", False)):
+                        dy_cookie = resolve_douyin_cookie(
+                            data_dir=runtime_config.data_path,
+                            cookie_env=str(
+                                getattr(dy_cfg, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")
+                            ),
+                        )
+                        if not str(dy_cookie or "").strip():
+                            await websocket.send_json(
+                                {
+                                    "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+
+            writer = asyncio.create_task(_send_runtime_events())
+            reader = asyncio.create_task(_receive_until_disconnect())
+            done, pending = await asyncio.wait(
+                {writer, reader},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with suppress(asyncio.CancelledError):
+                    await task
+            for task in done:
+                with suppress(WebSocketDisconnect):
+                    task.result()
         except WebSocketDisconnect:
             pass
+        except Exception:
+            logger.debug("runtime-stream closed after handler exception", exc_info=True)
         finally:
+            if connected:
+                ctx.presence.on_disconnect()
             await unsubscribe(queue)
 
     @app.on_event("startup")
     async def startup_refresh_loop() -> None:
+        # Clean up expired image cache on startup.
+        try:
+            removed = _image_cache_cleanup()
+            if removed:
+                logger.info("Image cache cleanup: removed %d expired files", removed)
+        except Exception:
+            logger.debug("Image cache cleanup failed", exc_info=True)
+
+        if bool(getattr(ctx, "degraded", False)):
+            return
         await ctx.restart_background_tasks(app)
 
     @app.on_event("shutdown")
@@ -1088,6 +1704,7 @@ def create_app(
                     expression=str(row.get("expression", "")),
                     topic_label=str(row.get("topic", "")),
                     presented=bool(row.get("presented", 0)),
+                    feedback_type=str(row.get("feedback_type", "") or ""),
                     content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                     content_url=str(row.get("content_url", "") or ""),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
@@ -2799,6 +3416,7 @@ def create_app(
     from openbiliclaw.sources.xhs_tasks import (
         XhsCreatorStore,
         XhsTaskQueue,
+        xhs_bootstrap_note_key,
         xhs_bootstrap_notes_to_events,
     )
 
@@ -2890,21 +3508,31 @@ def create_app(
             if added_notes:
                 _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
             if task_type == "bootstrap_profile" and added_notes:
+                fresh_notes, note_keys_by_index = _filter_new_source_bootstrap_items(
+                    "xhs",
+                    added_notes,
+                    xhs_bootstrap_note_key,
+                )
                 # Filter self-authored notes from event propagation —
                 # otherwise the user's own posts get treated as their
                 # own "favorite/like" signals and warp the soul profile.
                 propagated = 0
                 skipped_self = 0
                 profile_events: list[dict[str, Any]] = []
-                for note in added_notes:
+                propagated_keys: list[str] = []
+                for index, note in enumerate(fresh_notes):
                     if _is_self_authored_note(note, self_info_now):
                         skipped_self += 1
                         continue
                     for event in xhs_bootstrap_notes_to_events([note]):
                         await ctx.memory_manager.propagate_event(event)
                         profile_events.append(event)
+                        key = note_keys_by_index.get(index, "")
+                        if key:
+                            propagated_keys.append(key)
                         propagated += 1
                 await _ingest_profile_update_events(profile_events)
+                _mark_source_bootstrap_keys("xhs", propagated_keys)
                 if skipped_self > 0:
                     logger.info(
                         "xhs bootstrap propagate: dropped %d self-authored note(s) (%d propagated)",
@@ -2963,6 +3591,7 @@ def create_app(
 
     from openbiliclaw.sources.dy_tasks import (
         DyTaskQueue,
+        dy_bootstrap_video_key,
         dy_bootstrap_videos_to_events,
     )
 
@@ -3040,12 +3669,22 @@ def create_app(
                 complete=is_final,
             )
             if task_type == "bootstrap_profile" and added_videos:
+                fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
+                    "dy",
+                    added_videos,
+                    dy_bootstrap_video_key,
+                )
                 profile_events: list[dict[str, Any]] = []
-                for video in added_videos:
+                propagated_keys: list[str] = []
+                for index, video in enumerate(fresh_videos):
                     for event in dy_bootstrap_videos_to_events([video]):
                         await ctx.memory_manager.propagate_event(event)
                         profile_events.append(event)
+                        key = video_keys_by_index.get(index, "")
+                        if key:
+                            propagated_keys.append(key)
                 await _ingest_profile_update_events(profile_events)
+                _mark_source_bootstrap_keys("dy", propagated_keys)
         else:
             _dy_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
 
@@ -3099,6 +3738,7 @@ def create_app(
     # ── YouTube bootstrap endpoints ────────────────────────────────
     from openbiliclaw.sources.yt_tasks import (
         YtTaskQueue,
+        yt_bootstrap_item_key,
         yt_bootstrap_items_to_events,
     )
 
@@ -3160,11 +3800,22 @@ def create_app(
                 complete=is_final,
             )
             if task_type == "bootstrap_profile" and added_items:
+                fresh_items, item_keys_by_index = _filter_new_source_bootstrap_items(
+                    "yt",
+                    added_items,
+                    yt_bootstrap_item_key,
+                )
                 profile_events: list[dict[str, Any]] = []
-                for event in yt_bootstrap_items_to_events(added_items):
-                    await ctx.memory_manager.propagate_event(event)
-                    profile_events.append(event)
+                propagated_keys: list[str] = []
+                for index, item in enumerate(fresh_items):
+                    for event in yt_bootstrap_items_to_events([item]):
+                        await ctx.memory_manager.propagate_event(event)
+                        profile_events.append(event)
+                        key = item_keys_by_index.get(index, "")
+                        if key:
+                            propagated_keys.append(key)
                 await _ingest_profile_update_events(profile_events)
+                _mark_source_bootstrap_keys("yt", propagated_keys)
         else:
             _yt_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
 
@@ -3200,6 +3851,8 @@ def create_app(
         issues: list[Any] | None = None,
         *,
         mask_keys: bool = True,
+        degraded: bool = False,
+        degraded_reason: str = "",
     ) -> ConfigResponse:
         """Convert a Config dataclass to a ConfigResponse, optionally masking API keys."""
 
@@ -3215,18 +3868,30 @@ def create_app(
                 api_key=_mask(p.api_key),
                 model=p.model,
                 base_url=p.base_url,
+                auth_mode=getattr(p, "auth_mode", ""),
                 http_referer=getattr(p, "http_referer", ""),
                 x_title=getattr(p, "x_title", ""),
                 reasoning_effort=getattr(p, "reasoning_effort", ""),
             )
 
-        issue_list = [ConfigIssueOut(field=i.field, message=i.message) for i in (issues or [])]
+        issue_list = [
+            ConfigIssueOut(
+                field=i.field,
+                message=i.message,
+                severity=getattr(i, "severity", "warning"),
+            )
+            for i in (issues or [])
+        ]
 
         return ConfigResponse(
             language=cfg.language,
             data_dir=cfg.data_dir,
+            degraded=degraded,
+            degraded_reason=degraded_reason,
             llm=LLMConfigOut(
                 default_provider=cfg.llm.default_provider,
+                fallback_enabled=cfg.llm.fallback_enabled,
+                fallback_provider=cfg.llm.fallback_provider,
                 openai=_provider_out(cfg.llm.openai),
                 claude=_provider_out(cfg.llm.claude),
                 gemini=_provider_out(cfg.llm.gemini),
@@ -3240,6 +3905,8 @@ def create_app(
                     api_key=_mask(cfg.llm.embedding.api_key),
                     base_url=cfg.llm.embedding.base_url,
                     similarity_threshold=cfg.llm.embedding.similarity_threshold,
+                    fallback_enabled=cfg.llm.embedding.fallback_enabled,
+                    fallback_provider=cfg.llm.embedding.fallback_provider,
                 ),
                 soul=ModuleLLMConfigOut(
                     provider=cfg.llm.soul.provider,
@@ -3269,6 +3936,9 @@ def create_app(
                     cdp_url=cfg.sources.browser_cdp_url,
                     headed=cfg.sources.browser_headed,
                 ),
+                bilibili=BilibiliSourceConfigOut(
+                    enabled=cfg.sources.bilibili.enabled,
+                ),
                 xiaohongshu=XiaohongshuSourceConfigOut(
                     enabled=cfg.sources.xiaohongshu.enabled,
                     daily_search_budget=cfg.sources.xiaohongshu.daily_search_budget,
@@ -3286,14 +3956,28 @@ def create_app(
                 ),
                 youtube=YoutubeSourceConfigOut(
                     enabled=cfg.sources.youtube.enabled,
+                    daily_search_budget=cfg.sources.youtube.daily_search_budget,
+                    daily_trending_budget=cfg.sources.youtube.daily_trending_budget,
+                    daily_channel_budget=cfg.sources.youtube.daily_channel_budget,
+                    request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                 ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
+                pause_on_extension_disconnect=cfg.scheduler.pause_on_extension_disconnect,
+                extension_disconnect_grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
                 discovery_cron=cfg.scheduler.discovery_cron,
                 pool_target_count=cfg.scheduler.pool_target_count,
                 pool_source_shares=dict(cfg.scheduler.pool_source_shares),
                 account_sync_interval_hours=cfg.scheduler.account_sync_interval_hours,
+                refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
+                signal_event_threshold=cfg.scheduler.signal_event_threshold,
+                trending_refresh_hours=cfg.scheduler.trending_refresh_hours,
+                explore_refresh_hours=cfg.scheduler.explore_refresh_hours,
+                discovery_limit=cfg.scheduler.discovery_limit,
+                proactive_push_interval_seconds=cfg.scheduler.proactive_push_interval_seconds,
+                speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
                 speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
                 speculation_ttl_days=cfg.scheduler.speculation_ttl_days,
                 speculation_cooldown_days=cfg.scheduler.speculation_cooldown_days,
@@ -3301,9 +3985,7 @@ def create_app(
                     cfg.scheduler.speculation_confirmation_threshold
                 ),
                 speculation_max_active=cfg.scheduler.speculation_max_active,
-                speculation_max_primary_interests=(
-                    cfg.scheduler.speculation_max_primary_interests
-                ),
+                speculation_max_primary_interests=(cfg.scheduler.speculation_max_primary_interests),
                 speculation_max_secondary_interests=(
                     cfg.scheduler.speculation_max_secondary_interests
                 ),
@@ -3316,6 +3998,7 @@ def create_app(
                 file_level=cfg.logging.file_level,
                 directory=cfg.logging.directory,
                 filename=cfg.logging.filename,
+                file_path=str(cfg.logging.file_path),
                 max_file_size_mb=cfg.logging.max_file_size_mb,
                 backup_count=cfg.logging.backup_count,
                 aggregate_budget_mb=cfg.logging.aggregate_budget_mb,
@@ -3334,11 +4017,19 @@ def create_app(
         )
 
         cfg = load_config()
-        issues = _collect_config_issues(cfg)
-        return _config_to_response(cfg, issues, mask_keys=not reveal_keys)
+        issues = list(_collect_config_issues(cfg))
+        if bool(getattr(ctx, "degraded", False)):
+            issues.extend(getattr(ctx, "degraded_issues", []))
+        return _config_to_response(
+            cfg,
+            issues,
+            mask_keys=not reveal_keys,
+            degraded=bool(getattr(ctx, "degraded", False)),
+            degraded_reason=str(getattr(ctx, "degraded_reason", "")),
+        )
 
     @app.put("/api/config", response_model=ConfigUpdateResponse)
-    async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse:
+    async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse | JSONResponse:
         """Update configuration, persist to config.toml, and hot-reload runtime.
 
         Only the fields included in the request body are modified.
@@ -3346,14 +4037,36 @@ def create_app(
         runtime components so the new settings take effect immediately.
         """
         from openbiliclaw.config import (
+            _DEFAULT_DISCOVERY_LIMIT,
+            _DEFAULT_EXPLORE_REFRESH_HOURS,
+            _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
+            _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS,
+            _DEFAULT_SIGNAL_EVENT_THRESHOLD,
+            _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES,
+            _DEFAULT_TRENDING_REFRESH_HOURS,
             _collect_config_issues,
+            _default_config_path,
+            _normalize_extension_disconnect_grace,
             _normalize_pool_source_shares,
+            _normalize_scheduler_int,
             load_config,
             save_config,
         )
 
         cfg = load_config()
         update = payload.model_dump(exclude_none=True)
+        reset_fields = [str(field) for field in update.pop("reset_fields", [])]
+        unknown_reset_fields = [
+            field for field in reset_fields if field not in _RESETTABLE_CONFIG_FIELDS
+        ]
+        if unknown_reset_fields:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_reset_fields",
+                    "fields": unknown_reset_fields,
+                },
+            )
 
         def _as_bool(value: object) -> bool:
             if isinstance(value, bool):
@@ -3373,6 +4086,10 @@ def create_app(
             llm_data = update["llm"]
             if "default_provider" in llm_data:
                 cfg.llm.default_provider = str(llm_data["default_provider"])
+            if "fallback_enabled" in llm_data:
+                cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
+            if "fallback_provider" in llm_data:
+                cfg.llm.fallback_provider = str(llm_data["fallback_provider"]).strip()
             for provider_name in (
                 "openai",
                 "claude",
@@ -3385,22 +4102,45 @@ def create_app(
                 if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
                     provider_cfg = getattr(cfg.llm, provider_name)
                     pdata = llm_data[provider_name]
+                    skipped_fields: list[str] = []
                     for field_name in (
                         "api_key",
                         "model",
                         "base_url",
+                        "auth_mode",
                         "http_referer",
                         "x_title",
                         "reasoning_effort",
                     ):
                         if field_name in pdata:
-                            setattr(provider_cfg, field_name, str(pdata[field_name]))
+                            new_value = str(pdata[field_name])
+                            if field_name == "api_key" and "*" in new_value:
+                                skipped_fields.append(f"{field_name}=masked")
+                                continue
+                            existing = getattr(provider_cfg, field_name, "")
+                            if (
+                                field_name != "auth_mode"
+                                and not new_value.strip()
+                                and isinstance(existing, str)
+                                and existing.strip()
+                            ):
+                                skipped_fields.append(f"{field_name}=empty_skip")
+                                continue
+                            setattr(provider_cfg, field_name, new_value)
+                    if skipped_fields:
+                        logger.debug(
+                            "PUT /api/config: provider %s skipped fields: %s",
+                            provider_name,
+                            ", ".join(skipped_fields),
+                        )
             if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
                 emb = llm_data["embedding"]
                 if "provider" in emb:
                     cfg.llm.embedding.provider = str(emb["provider"])
                 if "model" in emb:
-                    cfg.llm.embedding.model = str(emb["model"])
+                    new_model = str(emb["model"])
+                    if new_model.strip() or not cfg.llm.embedding.model.strip():
+                        cfg.llm.embedding.model = new_model
                 # v0.3.32+ — embedding owns api_key/base_url. Skip the
                 # api_key write when the payload echoes back the masked
                 # value (e.g. ``sk-d****a826``) so we don't overwrite the
@@ -3408,12 +4148,20 @@ def create_app(
                 # contains ``*``.
                 if "api_key" in emb:
                     new_key = str(emb["api_key"])
-                    if "*" not in new_key:
+                    if "*" not in new_key and (
+                        new_key.strip() or not cfg.llm.embedding.api_key.strip()
+                    ):
                         cfg.llm.embedding.api_key = new_key
                 if "base_url" in emb:
-                    cfg.llm.embedding.base_url = str(emb["base_url"])
+                    new_base_url = str(emb["base_url"])
+                    if new_base_url.strip() or not cfg.llm.embedding.base_url.strip():
+                        cfg.llm.embedding.base_url = new_base_url
                 if "similarity_threshold" in emb:
                     cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
+                if "fallback_enabled" in emb:
+                    cfg.llm.embedding.fallback_enabled = _as_bool(emb["fallback_enabled"])
+                if "fallback_provider" in emb:
+                    cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             for module_name in ("soul", "discovery", "recommendation", "evaluation"):
                 if module_name in llm_data and isinstance(llm_data[module_name], dict):
                     mod_cfg = getattr(cfg.llm, module_name)
@@ -3446,6 +4194,10 @@ def create_app(
                     if "headed" in browser_data:
                         cfg.sources.browser_headed = _as_bool(browser_data["headed"])
 
+                bilibili_data = sources_data.get("bilibili")
+                if isinstance(bilibili_data, dict) and "enabled" in bilibili_data:
+                    cfg.sources.bilibili.enabled = _as_bool(bilibili_data["enabled"])
+
                 xhs_data = sources_data.get("xiaohongshu")
                 if isinstance(xhs_data, dict):
                     if "enabled" in xhs_data:
@@ -3476,17 +4228,57 @@ def create_app(
                             setattr(cfg.sources.douyin, key, int(dy_data[key]))
 
                 yt_data = sources_data.get("youtube")
-                if isinstance(yt_data, dict) and "enabled" in yt_data:
-                    cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
+                if isinstance(yt_data, dict):
+                    if "enabled" in yt_data:
+                        cfg.sources.youtube.enabled = _as_bool(yt_data["enabled"])
+                    for key in (
+                        "daily_search_budget",
+                        "daily_trending_budget",
+                        "daily_channel_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in yt_data:
+                            setattr(cfg.sources.youtube, key, int(yt_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:
             sdata = update["scheduler"]
+            scheduler_int_limits = {
+                "refresh_check_interval_seconds": (
+                    _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS,
+                    15,
+                    None,
+                ),
+                "signal_event_threshold": (_DEFAULT_SIGNAL_EVENT_THRESHOLD, 1, None),
+                "trending_refresh_hours": (_DEFAULT_TRENDING_REFRESH_HOURS, 1, None),
+                "explore_refresh_hours": (_DEFAULT_EXPLORE_REFRESH_HOURS, 1, None),
+                "discovery_limit": (_DEFAULT_DISCOVERY_LIMIT, 1, 60),
+                "proactive_push_interval_seconds": (
+                    _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
+                    30,
+                    None,
+                ),
+                "speculator_idle_interval_minutes": (
+                    _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES,
+                    5,
+                    None,
+                ),
+            }
             for key in (
                 "enabled",
+                "pause_on_extension_disconnect",
+                "extension_disconnect_grace_seconds",
                 "discovery_cron",
                 "pool_target_count",
                 "account_sync_interval_hours",
+                "refresh_check_interval_seconds",
+                "signal_event_threshold",
+                "trending_refresh_hours",
+                "explore_refresh_hours",
+                "discovery_limit",
+                "proactive_push_interval_seconds",
+                "speculator_idle_interval_minutes",
                 "speculation_interval_minutes",
                 "speculation_ttl_days",
                 "speculation_cooldown_days",
@@ -3499,7 +4291,25 @@ def create_app(
             ):
                 if key in sdata:
                     current_val = getattr(cfg.scheduler, key)
-                    if isinstance(current_val, bool):
+                    if key == "extension_disconnect_grace_seconds":
+                        setattr(
+                            cfg.scheduler,
+                            key,
+                            _normalize_extension_disconnect_grace(sdata[key]),
+                        )
+                    elif key in scheduler_int_limits:
+                        default, min_value, max_value = scheduler_int_limits[key]
+                        setattr(
+                            cfg.scheduler,
+                            key,
+                            _normalize_scheduler_int(
+                                sdata[key],
+                                default=default,
+                                min_value=min_value,
+                                max_value=max_value,
+                            ),
+                        )
+                    elif isinstance(current_val, bool):
                         setattr(cfg.scheduler, key, _as_bool(sdata[key]))
                     elif isinstance(current_val, int):
                         setattr(cfg.scheduler, key, int(sdata[key]))
@@ -3532,38 +4342,136 @@ def create_app(
                 if key in ldata:
                     setattr(cfg.logging, key, int(ldata[key]))
 
-        # Save to disk
-        saved_path = save_config(cfg)
-        issues = _collect_config_issues(cfg)
-        logger.info("Configuration saved to %s", saved_path)
+        for field in reset_fields:
+            target = _RESETTABLE_CONFIG_FIELDS[field]
+            section = getattr(cfg, target[0])
+            subsection = getattr(section, target[1])
+            setattr(subsection, target[2], "")
 
-        # ── Hot-reload: rebuild runtime components ──────────────────
-        reloaded = False
-        reload_message = f"配置已保存到 {saved_path}。"
-        try:
-            await ctx.rebuild_from_config(cfg)
-            await ctx.restart_background_tasks(app)
-            reloaded = True
-            reload_message += " 运行时组件已热重载，新配置立即生效。"
-            logger.info("Config hot-reload succeeded")
-            # Notify WebSocket subscribers so the extension re-fetches data
-            with suppress(Exception):
-                await ctx.event_hub.publish(
-                    {
-                        "type": "config_reloaded",
-                        "message": "配置已热重载，运行时组件已重建。",
-                    }
+        issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if any(getattr(issue, "severity", "warning") == "blocking" for issue in issues):
+            response = ConfigUpdateResponse(
+                ok=False,
+                config=_config_to_response(
+                    cfg,
+                    issues,
+                    mask_keys=True,
+                    degraded=bool(getattr(ctx, "degraded", False)),
+                    degraded_reason=str(getattr(ctx, "degraded_reason", "")),
+                ),
+                message="配置校验失败，未写入 config.toml。",
+                reloaded=False,
+                rollback_applied=False,
+                restart_required=False,
+            )
+            return JSONResponse(
+                status_code=400,
+                content=response.model_dump(mode="json"),
+            )
+
+        async with _CONFIG_SAVE_LOCK:
+            config_path = _default_config_path()
+            try:
+                backup_path = _snapshot_config_file(config_path)
+            except Exception as exc:
+                logger.exception("Config snapshot failed — refusing to overwrite config.toml")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error": "config_snapshot_failed",
+                        "message": f"couldn't snapshot config, refusing to risk overwrite: {exc}",
+                    },
                 )
-        except Exception as exc:
-            logger.exception("Config hot-reload failed — old components remain active")
-            reload_message += f" 热重载失败（{exc}），旧组件仍在运行，重启后端可完全生效。"
 
-        return ConfigUpdateResponse(
-            ok=True,
-            config=_config_to_response(cfg, issues, mask_keys=True),
-            message=reload_message,
-            reloaded=reloaded,
-        )
+            saved_path = save_config(cfg)
+            logger.info("Configuration saved to %s", saved_path)
+
+            if bool(getattr(ctx, "degraded", False)):
+                return ConfigUpdateResponse(
+                    ok=True,
+                    config=_config_to_response(
+                        cfg,
+                        issues,
+                        mask_keys=True,
+                        degraded=True,
+                        degraded_reason=str(getattr(ctx, "degraded_reason", "")),
+                    ),
+                    message=(
+                        f"配置已保存到 {saved_path}。当前后端处于降级模式，"
+                        "请 restart daemon 后让新配置生效。"
+                    ),
+                    reloaded=False,
+                    rollback_applied=False,
+                    restart_required=True,
+                )
+
+            # ── Hot-reload: rebuild runtime components ──────────────
+            reload_message = f"配置已保存到 {saved_path}。"
+            try:
+                await ctx.rebuild_from_config(cfg)
+                await ctx.restart_background_tasks(app)
+                reload_message += " 运行时组件已热重载，新配置立即生效。"
+                logger.info("Config hot-reload succeeded")
+                # Notify WebSocket subscribers so the extension re-fetches data
+                with suppress(Exception):
+                    await ctx.event_hub.publish(
+                        {
+                            "type": "config_reloaded",
+                            "message": "配置已热重载，运行时组件已重建。",
+                        }
+                    )
+                return ConfigUpdateResponse(
+                    ok=True,
+                    config=_config_to_response(cfg, issues, mask_keys=True),
+                    message=reload_message,
+                    reloaded=True,
+                    rollback_applied=False,
+                    restart_required=False,
+                )
+            except Exception as exc:
+                logger.exception("Config hot-reload failed — attempting config rollback")
+                if backup_path is None:
+                    rollback_message = (
+                        f" 热重载失败（{str(exc)[:200]}），未找到可回滚的 config.toml.bak。"
+                    )
+                    rollback_cfg = cfg
+                    rollback_applied = False
+                else:
+                    try:
+                        _restore_config_snapshot(backup_path, saved_path)
+                    except Exception as restore_exc:
+                        logger.critical(
+                            "Config rollback failed after hot-reload exception",
+                            exc_info=True,
+                        )
+                        return JSONResponse(
+                            status_code=500,
+                            content={
+                                "error": "config_persistence_corrupted",
+                                "message": (
+                                    "config.toml may be in inconsistent state after hot-reload "
+                                    f"failure and rollback failure: {restore_exc}"
+                                ),
+                                "manual_recovery": (
+                                    "config.toml may be in inconsistent state; if "
+                                    "config.toml.bak exists, manually copy it back."
+                                ),
+                            },
+                        )
+                    rollback_cfg = load_config(saved_path)
+                    rollback_message = (
+                        f" 热重载失败（{str(exc)[:200]}），已从 config.toml.bak 回滚。"
+                    )
+                    rollback_applied = True
+
+                return ConfigUpdateResponse(
+                    ok=True,
+                    config=_config_to_response(rollback_cfg, _collect_config_issues(rollback_cfg)),
+                    message=reload_message + rollback_message,
+                    reloaded=False,
+                    rollback_applied=rollback_applied,
+                    restart_required=False,
+                )
 
     def _normalize_enabled_sources_override(
         raw_enabled: dict[str, bool] | None,
@@ -3571,11 +4479,9 @@ def create_app(
     ) -> dict[str, bool]:
         if raw_enabled is None:
             return fallback
-        enabled = {"bilibili": True}
+        enabled: dict[str, bool] = {}
         for source in _SOURCE_SHARE_ORDER:
-            if source == "bilibili":
-                continue
-            enabled[source] = bool(raw_enabled.get(source, False))
+            enabled[source] = bool(raw_enabled.get(source, fallback.get(source, False)))
         return {source: enabled.get(source, False) for source in _SOURCE_SHARE_ORDER}
 
     def _build_source_share_suggestion_response(
@@ -3641,5 +4547,33 @@ def create_app(
                 _purged,
                 _existing_self_info.get("nickname", ""),
             )
+
+    # ── Mobile Web UI ───────────────────────────────────────────
+    from pathlib import Path as _Path
+
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+    _web_dir = _Path(__file__).resolve().parent.parent / "web"
+    if _web_dir.is_dir():
+        _favicon_path = _web_dir / "icon-192.png"
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        def _favicon() -> FileResponse:
+            if not _favicon_path.is_file():
+                raise HTTPException(status_code=404, detail="favicon not found")
+            return FileResponse(_favicon_path, media_type="image/png")
+
+        app.mount("/m", _StaticFiles(directory=_web_dir, html=True), name="mobile-web")
+
+    # ── Desktop Web UI ───────────────────────────────────────────
+    _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
+    if _desktop_dir.is_dir():
+        app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
+
+        @app.get("/", include_in_schema=False)
+        def _root_redirect():
+            from fastapi.responses import RedirectResponse as _Redirect
+
+            return _Redirect(url="/web", status_code=302)
 
     return app

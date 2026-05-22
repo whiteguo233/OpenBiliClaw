@@ -26,6 +26,7 @@ from .service import (
     LLMResponseContentError,
     LLMService,
     LLMServiceError,
+    is_llm_rate_limit_error,
 )
 
 __all__ = [
@@ -50,5 +51,6 @@ __all__ = [
     "LLMServiceError",
     "LLMResponseContentError",
     "build_llm_registry",
+    "is_llm_rate_limit_error",
     "summarize_registry",
 ]

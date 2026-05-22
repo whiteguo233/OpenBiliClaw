@@ -1,4 +1,5 @@
 import {
+  buildImageProxyPath,
   getActivityCardState,
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
@@ -28,9 +29,16 @@ import {
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
   getBackendEndpointConfig,
+  getBackendOrigin,
+  isValidBackendHost,
   isValidBackendPort,
-  updateBackendPort,
+  updateBackendEndpoint,
 } from "./popup-backend-config.js";
+import {
+  createQrSvgMarkup,
+  getMobileQrViewState,
+  isLoopbackMobileHost,
+} from "./popup-qr.js";
 import {
   appendRecommendations,
   checkBackendStatus,
@@ -45,6 +53,7 @@ import {
   fetchRuntimeStatus,
   fetchSourceShareSuggestion,
   markDelightSent,
+  readCachedConfigSnapshot,
   reportRecommendationClick,
   reshuffleRecommendations,
   refreshRecommendations,
@@ -73,6 +82,7 @@ const state = {
   expandedCognitionIndex: null,
   runtimeStatus: null,
   runtimeEvent: null,
+  runtimeConfig: null,
   activityFeed: null,
   activityExpanded: false,
   activityLoadingMore: false,
@@ -149,6 +159,14 @@ const elements = {
   chatInput: document.getElementById("chatInput"),
   chatSendButton: document.getElementById("chatSendButton"),
   chatStatus: document.getElementById("chatStatus"),
+  mobileQrButton: document.getElementById("mobileQrButton"),
+  mobileQrOverlay: document.getElementById("mobileQrOverlay"),
+  mobileQrBack: document.getElementById("mobileQrBack"),
+  mobileQrCode: document.getElementById("mobileQrCode"),
+  mobileQrUrl: document.getElementById("mobileQrUrl"),
+  mobileQrHint: document.getElementById("mobileQrHint"),
+  mobileQrCopy: document.getElementById("mobileQrCopy"),
+  mobileQrOpen: document.getElementById("mobileQrOpen"),
   messagesButton: document.getElementById("messagesButton"),
   messageBadge: document.getElementById("messageBadge"),
   messagesOverlay: document.getElementById("messagesOverlay"),
@@ -156,12 +174,52 @@ const elements = {
   messagesList: document.getElementById("messagesList"),
 };
 
+async function setProxyImageSrc(image, coverUrl) {
+  const path = buildImageProxyPath(coverUrl);
+  if (!path) return false;
+  const origin = await getBackendOrigin();
+  image.src = `${origin}${path}`;
+  return true;
+}
+
 let recommendationLoadCheckTimer = null;
 let runtimeStreamClient = null;
 const CHAT_SESSION = "popup";
 const CHAT_POLL_INTERVAL_MS = 1200;
 const CHAT_POLL_DEADLINE_MS = 180_000;
 const activeChatPolls = new Map();
+
+const CHAT_PLACEHOLDERS = [
+  // 想法与内容判断类
+  "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党；最近总想看能帮我理清问题的内容。",
+  "说说你怎么看内容：我想看有观点、有证据的分析，不太想刷纯情绪输出。",
+  "说说你怎么看内容：我喜欢创作者把过程讲明白，哪怕节奏慢一点也没关系。",
+  // 观看行为类
+  "比如：我最近老点开国际新闻和商业分析，想知道自己到底在找什么。",
+  "比如：最近迷上了做饭视频，但每次都只看不动手。",
+  "比如：一到深夜就开始刷纪录片，越冷门越上头。",
+  "比如：我连着看了十几个测评视频，但最后什么也没买。",
+  "比如：最近总是搜同一个UP主，可能是因为声音好听？",
+  "比如：这周突然开始看健身视频了，也不知道能坚持多久。",
+  "比如：我经常刷到一半就退出去了，好像注意力很难集中。",
+  "比如：最近看了好多怀旧动画剪辑，可能是想回到小时候吧。",
+  // 自我描述类
+  "聊聊你自己：我是个容易三分钟热度的人，什么都想试但很难坚持。",
+  "聊聊你自己：我算是个i人，喜欢一个人安静看东西，不太爱凑热闹。",
+  "聊聊你自己：我对画面和音乐特别敏感，好看的封面就忍不住点进去。",
+  // 喜好与厌恶类
+  "聊聊喜好：我喜欢有深度的长视频，受不了标题党和故意搞悬念的。",
+  "聊聊喜好：我讨厌那种假装真实的摆拍日常，一眼就能看出来。",
+  "聊聊喜好：我偏爱小众冷门内容，热门排行榜上的反而不太想看。",
+  // 近期状态类
+  "最近在想：换工作的事情想了很久，刷视频可能就是在逃避。",
+  "最近在想：马上要考试了，但就是控制不住打开B站。",
+  "最近的状态：这阵子心情一般，老看一些治愈系的东西。",
+  "最近在做：在学一门新技能，想看看有没有靠谱的教程。",
+];
+let chatPlaceholderIndex = 0;
+let chatPlaceholderTimer = null;
+let currentMobileWebUrl = "";
 
 function setRefreshButtonState(loading, message = "") {
   state.refreshStatusMessage = message;
@@ -201,6 +259,28 @@ function setStatus(online) {
   elements.statusDot.classList.toggle("offline", badgeState.tone === "offline");
   elements.statusLabel.textContent = badgeState.label;
 }
+
+function renderRuntimeToggles(config = state.runtimeConfig) {
+  const scheduler = config?.scheduler || {};
+  const pauseLlm = scheduler.enabled === false;
+  const pauseOnDisconnect = scheduler.pause_on_extension_disconnect === true;
+
+  const schedEnabled = document.getElementById("cfgSchedulerEnabled");
+  if (schedEnabled instanceof HTMLInputElement) {
+    schedEnabled.checked = pauseLlm;
+  }
+  const pauseDisconnect = document.getElementById("cfgPauseOnDisconnect");
+  if (pauseDisconnect instanceof HTMLInputElement) {
+    pauseDisconnect.checked = pauseOnDisconnect;
+  }
+}
+
+function applyRuntimeConfig(config) {
+  if (!config) return;
+  state.runtimeConfig = config;
+  renderRuntimeToggles(config);
+}
+
 
 function queueRecommendationLoadCheck() {
   if (recommendationLoadCheckTimer !== null) {
@@ -451,9 +531,9 @@ function connectRuntimeStream() {
       // Discovery refresh tick produced new pool items — silently refetch
       // the recommendation list so the popup doesn't show stale content
       // when the daemon's been quietly replenishing the pool. No setHint
-      // (event happens on a cron, not user-initiated, so a banner would
-      // be intrusive). No DOM jump because top-N items mostly persist
-      // across pool replenishments.
+      // (event happens from the background refresh loop, not a user action,
+      // so a banner would be intrusive). No DOM jump because top-N items
+      // mostly persist across pool replenishments.
       if (event.type === "refresh.pool_updated") {
         void initializeRecommendations();
       }
@@ -1009,6 +1089,131 @@ function closeMessagesPanel() {
   if (overlay instanceof HTMLElement) overlay.hidden = true;
 }
 
+// ── Mobile QR panel ───────────────────────────────────────────
+
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  return ok;
+}
+
+function openMobileWebUrl(url) {
+  if (!url) return;
+  try {
+    if (globalThis.chrome?.tabs?.create) {
+      void globalThis.chrome.tabs.create({ url });
+      return;
+    }
+  } catch {
+    // Fall back to window.open below.
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+async function renderMobileQrPanel() {
+  const endpoint = await getBackendEndpointConfig();
+
+  // When the configured host is loopback, try to get the server's
+  // detected LAN IP from the health endpoint so the QR code shows
+  // an address that mobile devices can actually reach.
+  let effectiveEndpoint = endpoint;
+  if (isLoopbackMobileHost(endpoint.host)) {
+    try {
+      const base = `http://${endpoint.host}:${endpoint.port}`;
+      const resp = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.lan_ip && !isLoopbackMobileHost(data.lan_ip)) {
+          effectiveEndpoint = { ...endpoint, host: data.lan_ip };
+        }
+      }
+    } catch {
+      // Health fetch failed — fall through with original endpoint.
+    }
+  }
+
+  const view = getMobileQrViewState(effectiveEndpoint);
+  currentMobileWebUrl = view.url;
+
+  if (elements.mobileQrCode instanceof HTMLElement) {
+    try {
+      elements.mobileQrCode.innerHTML = createQrSvgMarkup(view.url);
+    } catch (err) {
+      elements.mobileQrCode.textContent = "二维码生成失败";
+      console.error("Failed to render mobile QR:", err);
+    }
+  }
+  if (elements.mobileQrUrl instanceof HTMLElement) {
+    elements.mobileQrUrl.textContent = view.url;
+  }
+  if (elements.mobileQrHint instanceof HTMLElement) {
+    elements.mobileQrHint.textContent = view.hint;
+    elements.mobileQrHint.dataset.tone = view.tone;
+  }
+}
+
+async function openMobileQrPanel() {
+  const overlay = elements.mobileQrOverlay;
+  if (!(overlay instanceof HTMLElement)) return;
+  overlay.hidden = false;
+  await renderMobileQrPanel();
+}
+
+function closeMobileQrPanel() {
+  const overlay = elements.mobileQrOverlay;
+  if (overlay instanceof HTMLElement) overlay.hidden = true;
+}
+
+function bindMobileQr() {
+  if (elements.mobileQrButton instanceof HTMLElement) {
+    elements.mobileQrButton.addEventListener("click", () => {
+      void openMobileQrPanel();
+    });
+  }
+  if (elements.mobileQrBack instanceof HTMLElement) {
+    elements.mobileQrBack.addEventListener("click", closeMobileQrPanel);
+  }
+  if (elements.mobileQrCopy instanceof HTMLButtonElement) {
+    elements.mobileQrCopy.addEventListener("click", async () => {
+      if (!currentMobileWebUrl) await renderMobileQrPanel();
+      const original = elements.mobileQrCopy.textContent || "复制链接";
+      try {
+        const ok = await writeClipboardText(currentMobileWebUrl);
+        elements.mobileQrCopy.textContent = ok ? "已复制" : "复制失败";
+      } catch {
+        elements.mobileQrCopy.textContent = "复制失败";
+      } finally {
+        setTimeout(() => {
+          if (elements.mobileQrCopy instanceof HTMLButtonElement) {
+            elements.mobileQrCopy.textContent = original;
+          }
+        }, 1200);
+      }
+    });
+  }
+  if (elements.mobileQrOpen instanceof HTMLButtonElement) {
+    elements.mobileQrOpen.addEventListener("click", async () => {
+      if (!currentMobileWebUrl) await renderMobileQrPanel();
+      openMobileWebUrl(currentMobileWebUrl);
+    });
+  }
+}
+
 function renderMessagesList() {
   const container = elements.messagesList;
   if (!(container instanceof HTMLElement)) return;
@@ -1130,9 +1335,8 @@ function buildDelightCard(delight) {
   thumb.className = "message-delight-thumb";
   if (delight.cover_url) {
     const image = document.createElement("img");
-    image.src = delight.cover_url;
+    void setProxyImageSrc(image, delight.cover_url);
     image.alt = "";
-    image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
       image.remove();
       thumb.classList.add("is-fallback");
@@ -2225,6 +2429,7 @@ const DELIGHT_PERSIST_FIELDS = [
   "response_message",
   "expanded",
   "composer_open",
+  "turns",
 ];
 
 function persistDelightLocalState(bvid, updates) {
@@ -2304,9 +2509,26 @@ function applyTurnToDelight(turn) {
   if (!turn || turn.scope !== "delight" || !turn.subject_id) return;
   const idx = state.activeDelights.findIndex((item) => item?.bvid === turn.subject_id);
   if (idx < 0) return;
+
+  // Maintain per-delight turns array
+  const existing = state.activeDelights[idx];
+  const prevTurns = Array.isArray(existing.turns) ? existing.turns : [];
+  const turnEntry = {
+    turn_id: turn.turn_id,
+    message: turn.message || "",
+    reply: turn.reply || "",
+    status: turn.status || "pending",
+    error: turn.error || "",
+  };
+  const turnIdx = prevTurns.findIndex((t) => t.turn_id === turn.turn_id);
+  const updatedTurns = turnIdx >= 0
+    ? prevTurns.map((t, i) => i === turnIdx ? turnEntry : t)
+    : [...prevTurns, turnEntry];
+
   const updates = {
     chat_turn_id: turn.turn_id,
     expanded: true,
+    turns: updatedTurns,
   };
   if (turn.status === "completed") {
     Object.assign(updates, {
@@ -2595,9 +2817,8 @@ function renderDelightSlot() {
   thumb.className = "delight-banner-thumb";
   if (delight.cover_url) {
     const image = document.createElement("img");
-    image.src = delight.cover_url;
+    void setProxyImageSrc(image, delight.cover_url);
     image.alt = "";
-    image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
       image.remove();
       thumb.classList.add("is-fallback");
@@ -2704,7 +2925,32 @@ function renderDelightSlot() {
       body.append(response);
     }
 
-    if (delight.chat_reply) {
+    // Multi-turn chat bubbles (turns is the authority; chat_reply is compat)
+    const turns = Array.isArray(delight.turns) ? delight.turns : [];
+    if (turns.length > 0) {
+      const bubbleArea = document.createElement("div");
+      bubbleArea.className = "delight-chat-turns";
+      for (const t of turns) {
+        const userBubble = document.createElement("div");
+        userBubble.className = "delight-turn-bubble is-user";
+        userBubble.textContent = t.message;
+        bubbleArea.append(userBubble);
+        const aiBubble = document.createElement("div");
+        if (t.status === "pending") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-thinking";
+          aiBubble.textContent = "阿B 正在品你这句话…";
+        } else if (t.status === "failed") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-error";
+          aiBubble.textContent = t.error || "这句还没发出去，稍后再试。";
+        } else {
+          aiBubble.className = "delight-turn-bubble is-assistant";
+          aiBubble.textContent = t.reply || "";
+        }
+        bubbleArea.append(aiBubble);
+      }
+      body.append(bubbleArea);
+    } else if (delight.chat_reply) {
+      // Fallback: show single chat_reply for backward compat
       const reply = document.createElement("p");
       reply.className = "delight-banner-chat-reply";
       reply.textContent = delight.chat_reply;
@@ -2819,6 +3065,8 @@ function renderDelightSlot() {
           }
           submit.disabled = true;
           const turnId = createClientTurnId("delight");
+          // Optimistically append to turns array
+          const prevTurns = Array.isArray(delight.turns) ? delight.turns : [];
           updateDelightHead({
             state: "chatting",
             response_message: "阿B 正在品你这句话。",
@@ -2826,6 +3074,7 @@ function renderDelightSlot() {
             chat_draft: draft,
             composer_open: false,
             expanded: true,
+            turns: [...prevTurns, { turn_id: turnId, message: draft, reply: "", status: "pending", error: "" }],
           });
           renderDelightSlot();
           status.replaceChildren();
@@ -3047,9 +3296,8 @@ function renderRecommendations(items, { append = false } = {}) {
     cover.className = "recommendation-cover";
     if (item.cover_url) {
       const image = document.createElement("img");
-      image.src = item.cover_url;
+      void setProxyImageSrc(image, item.cover_url);
       image.alt = `${item.title} 的封面`;
-      image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => {
         image.remove();
         cover.classList.add("is-fallback");
@@ -3527,23 +3775,30 @@ async function initializeRecommendations() {
 
   if (!online) {
     state.runtimeStatus = null;
+    state.runtimeConfig = null;
     state.recommendations = [];
     clearDelightQueue();
     state.hasMoreRecommendations = false;
     state.loadingMore = false;
+    renderRuntimeToggles();
     renderDelightSlot();
     renderRecommendationState(getPopupState({ online, items: [], runtimeStatus: null }));
     renderProfileSummary(normalizeProfileSummary({ initialized: false }));
     return;
   }
 
-  const [runtimeResult, recommendationResult, delightResult] = await Promise.allSettled([
-    fetchRuntimeStatus(),
-    fetchRecommendations(),
-    fetchPendingDelightBatch(20),
-  ]);
+  const [runtimeResult, recommendationResult, delightResult, configResult] =
+    await Promise.allSettled([
+      fetchRuntimeStatus(),
+      fetchRecommendations(),
+      fetchPendingDelightBatch(20),
+      fetchConfig(),
+    ]);
 
   state.runtimeStatus = runtimeResult.status === "fulfilled" ? runtimeResult.value : null;
+  if (configResult.status === "fulfilled") {
+    applyRuntimeConfig(configResult.value);
+  }
   if (delightResult.status === "fulfilled" && Array.isArray(delightResult.value)) {
     // Reset queue then re-push all from server so dismissed items in
     // memory are still respected (pushDelightCandidate filters them).
@@ -3700,6 +3955,31 @@ function bindChat() {
     return;
   }
 
+  // ── Rotating placeholder hints ──
+  function rotatePlaceholder() {
+    chatPlaceholderIndex = (chatPlaceholderIndex + 1) % CHAT_PLACEHOLDERS.length;
+    elements.chatInput.setAttribute("placeholder", CHAT_PLACEHOLDERS[chatPlaceholderIndex]);
+  }
+  function startPlaceholderRotation() {
+    if (!chatPlaceholderTimer) {
+      chatPlaceholderTimer = window.setInterval(rotatePlaceholder, 5000);
+    }
+  }
+  function stopPlaceholderRotation() {
+    if (chatPlaceholderTimer) {
+      clearInterval(chatPlaceholderTimer);
+      chatPlaceholderTimer = null;
+    }
+  }
+  // Start rotating when chat tab is visible; pause when user is typing.
+  elements.chatInput.addEventListener("focus", stopPlaceholderRotation);
+  elements.chatInput.addEventListener("blur", () => {
+    if (!elements.chatInput.value.trim()) {
+      startPlaceholderRotation();
+    }
+  });
+  startPlaceholderRotation();
+
   let slowStatusTimer = null;
 
   function clearSlowStatusTimer() {
@@ -3727,7 +4007,7 @@ function bindChat() {
     event.preventDefault();
     const message = elements.chatInput.value.trim();
     if (!message) {
-      setHint("先说一句你最近老点开什么。", "error");
+      setHint("先说一句你的想法、偏好或者最近状态。", "error");
       elements.chatInput.focus();
       return;
     }
@@ -3804,15 +4084,51 @@ function bindSettings() {
   const toast = document.getElementById("settingsToast");
   const issuesContainer = document.getElementById("settingsIssues");
   const providerSelect = document.getElementById("cfgLlmProvider");
+  const backendHostInput = document.getElementById("cfgBackendHost");
   const backendPortInput = document.getElementById("cfgBackendPort");
+  const bannerOffline = document.getElementById("cfgBannerOffline");
+  const bannerDegraded = document.getElementById("cfgBannerDegraded");
+  const bannerNoCache = document.getElementById("cfgBannerNoCache");
 
   if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
 
+  const settingsTabs = [
+    ["models", document.getElementById("settingsTabModels")],
+    ["sources", document.getElementById("settingsTabSources")],
+    ["scheduler", document.getElementById("settingsTabScheduler")],
+    ["general", document.getElementById("settingsTabGeneral")],
+    ["logging", document.getElementById("settingsTabLogging")],
+  ];
+
+  function setActiveSettingsPanel(activePanel = "models") {
+    for (const [name, tab] of settingsTabs) {
+      const isActive = name === activePanel;
+      if (tab instanceof HTMLButtonElement) {
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      }
+      const panel = overlay.querySelector(`[data-settings-panel="${name}"]`);
+      if (panel instanceof HTMLElement) {
+        panel.hidden = !isActive;
+      }
+    }
+  }
+
+  for (const [name, tab] of settingsTabs) {
+    if (tab instanceof HTMLButtonElement) {
+      tab.addEventListener("click", () => setActiveSettingsPanel(name));
+    }
+  }
+
   async function populateBackendEndpoint() {
-    if (!(backendPortInput instanceof HTMLInputElement)) return;
     try {
       const endpoint = await getBackendEndpointConfig();
-      backendPortInput.value = String(endpoint.port);
+      if (backendHostInput instanceof HTMLInputElement) {
+        backendHostInput.value = endpoint.host || "";
+      }
+      if (backendPortInput instanceof HTMLInputElement) {
+        backendPortInput.value = String(endpoint.port);
+      }
     } catch {
       // Fall back to the placeholder default if storage is unavailable.
     }
@@ -3886,6 +4202,53 @@ function bindSettings() {
     setTimeout(() => { toast.hidden = true; }, 4000);
   }
 
+  function setSaveButtonMode(mode = "") {
+    saveBtn.dataset.tone = mode === "warning" ? "warning" : "";
+    saveBtn.textContent = mode === "degraded" ? "保存并提示重启" : "保存配置";
+  }
+
+  function hideConfigBanners() {
+    for (const banner of [bannerOffline, bannerDegraded, bannerNoCache]) {
+      if (banner instanceof HTMLElement) {
+        banner.hidden = true;
+        banner.textContent = "";
+      }
+    }
+  }
+
+  function showConfigBanner(banner, message, tone = "warning") {
+    if (!(banner instanceof HTMLElement)) return;
+    banner.textContent = message;
+    banner.dataset.tone = tone;
+    banner.hidden = false;
+  }
+
+  function formatCachedAt(cachedAt) {
+    if (!cachedAt) return "未知时间";
+    const parsed = new Date(cachedAt);
+    if (Number.isNaN(parsed.getTime())) return String(cachedAt);
+    return parsed.toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function renderDegradedBanner(cfg) {
+    if (!cfg?.degraded) {
+      if (bannerDegraded instanceof HTMLElement) bannerDegraded.hidden = true;
+      return;
+    }
+    const issues = Array.isArray(cfg.issues) ? cfg.issues : [];
+    const issueText = issues
+      .map((issue) => `${issue.field || "config"}: ${issue.message || ""}`.trim())
+      .filter(Boolean)
+      .slice(0, 3)
+      .join("；");
+    showConfigBanner(
+      bannerDegraded,
+      `后端处于降级模式，保存修复后需要 restart daemon。${issueText}`,
+      "warning",
+    );
+    setSaveButtonMode("degraded");
+  }
+
   function renderIssues(issues) {
     issuesContainer.innerHTML = "";
     if (!Array.isArray(issues) || issues.length === 0) return;
@@ -3897,6 +4260,15 @@ function bindSettings() {
     }
   }
 
+  function renderStructuredConfigError(err) {
+    if (!Array.isArray(err.details?.config?.issues)) return false;
+    applyRuntimeConfig(err.details.config);
+    renderIssues(err.details.config.issues);
+    renderDegradedBanner(err.details.config);
+    showToast(err.details.message || "配置未保存，请先修正高亮问题。", "error");
+    return true;
+  }
+
   const setVal = (id, val) => {
     const el = document.getElementById(id);
     if (el) el.value = val ?? "";
@@ -3906,6 +4278,40 @@ function bindSettings() {
     const el = document.getElementById(id);
     return el ? el.value : "";
   };
+
+  function joinLogPath(directory, filename) {
+    const dir = String(directory || "").trim();
+    const name = String(filename || "").trim();
+    if (!dir) return name;
+    if (!name) return dir;
+    return dir.endsWith("/") || dir.endsWith("\\") ? `${dir}${name}` : `${dir}/${name}`;
+  }
+
+  function resolveLogPathFromConfig(loggingConfig) {
+    if (loggingConfig?.file_path) return loggingConfig.file_path;
+    return joinLogPath(loggingConfig?.directory || "logs", loggingConfig?.filename || "openbiliclaw.log");
+  }
+
+  function splitLogPath(rawPath, currentLogging) {
+    const fallback = { directory: "logs", filename: "openbiliclaw.log" };
+    const trimmed = String(rawPath || "").trim();
+    if (!trimmed) return fallback;
+    if (currentLogging && trimmed === resolveLogPathFromConfig(currentLogging)) {
+      return {
+        directory: currentLogging.directory || fallback.directory,
+        filename: currentLogging.filename || fallback.filename,
+      };
+    }
+    const normalized = trimmed.replaceAll("\\", "/").replace(/\/+$/, "");
+    const slashIndex = normalized.lastIndexOf("/");
+    if (slashIndex === -1) {
+      return { directory: fallback.directory, filename: normalized || fallback.filename };
+    }
+    return {
+      directory: normalized.slice(0, slashIndex) || "/",
+      filename: normalized.slice(slashIndex + 1) || fallback.filename,
+    };
+  }
 
   const getInt = (id, fallback) => {
     const raw = getVal(id);
@@ -3927,10 +4333,13 @@ function bindSettings() {
   };
 
   function populateForm(cfg) {
+    applyRuntimeConfig(cfg);
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
+    setVal("cfgLlmFallbackProvider", cfg.llm?.fallback_provider);
 
+    setVal("cfgOpenaiAuthMode", cfg.llm?.openai?.auth_mode || "api_key");
     setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
     setVal("cfgOpenaiModel", cfg.llm?.openai?.model);
     setVal("cfgOpenaiBaseUrl", cfg.llm?.openai?.base_url);
@@ -3966,6 +4375,7 @@ function bindSettings() {
     // Embedding (v0.3.32+ — owns its own api_key/base_url)
     const embProvider = document.getElementById("cfgEmbeddingProvider");
     if (embProvider) embProvider.value = cfg.llm?.embedding?.provider || "";
+    setVal("cfgEmbeddingFallbackProvider", cfg.llm?.embedding?.fallback_provider);
     setVal("cfgEmbeddingApiKey", cfg.llm?.embedding?.api_key);
     setVal("cfgEmbeddingBaseUrl", cfg.llm?.embedding?.base_url);
     setVal("cfgEmbeddingModel", cfg.llm?.embedding?.model);
@@ -3979,6 +4389,8 @@ function bindSettings() {
     setVal("cfgBiliBrowserExecutable", cfg.bilibili?.browser_executable);
     const biliBrowserHeaded = document.getElementById("cfgBiliBrowserHeaded");
     if (biliBrowserHeaded) biliBrowserHeaded.checked = cfg.bilibili?.browser_headed === true;
+    const bilibiliEnabled = document.getElementById("cfgBilibiliEnabled");
+    if (bilibiliEnabled) bilibiliEnabled.checked = cfg.sources?.bilibili?.enabled !== false;
 
     // Sources
     setVal("cfgSourcesBrowserCdp", cfg.sources?.browser?.cdp_url);
@@ -3987,7 +4399,7 @@ function bindSettings() {
       sourcesBrowserHeaded.checked = cfg.sources?.browser?.headed === true;
     }
     const xhsEnabled = document.getElementById("cfgXhsEnabled");
-    if (xhsEnabled) xhsEnabled.checked = cfg.sources?.xiaohongshu?.enabled !== false;
+    if (xhsEnabled) xhsEnabled.checked = cfg.sources?.xiaohongshu?.enabled === true;
     setVal("cfgXhsDailySearchBudget", cfg.sources?.xiaohongshu?.daily_search_budget);
     setVal("cfgXhsDailyCreatorBudget", cfg.sources?.xiaohongshu?.daily_creator_budget);
     setVal("cfgXhsTaskInterval", cfg.sources?.xiaohongshu?.task_interval_seconds);
@@ -4000,6 +4412,11 @@ function bindSettings() {
     setVal("cfgDouyinRequestInterval", cfg.sources?.douyin?.request_interval_seconds);
     const youtubeEnabled = document.getElementById("cfgYoutubeEnabled");
     if (youtubeEnabled) youtubeEnabled.checked = cfg.sources?.youtube?.enabled === true;
+    setVal("cfgYoutubeDailySearchBudget", cfg.sources?.youtube?.daily_search_budget);
+    setVal("cfgYoutubeDailyTrendingBudget", cfg.sources?.youtube?.daily_trending_budget);
+    setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
+    setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
+    setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -4009,10 +4426,21 @@ function bindSettings() {
 
     // Scheduler
     const schedEnabled = document.getElementById("cfgSchedulerEnabled");
-    if (schedEnabled) schedEnabled.checked = cfg.scheduler?.enabled !== false;
-    setVal("cfgDiscoveryCron", cfg.scheduler?.discovery_cron);
+    if (schedEnabled) schedEnabled.checked = cfg.scheduler?.enabled === false;
+    const pauseOnDisconnect = document.getElementById("cfgPauseOnDisconnect");
+    if (pauseOnDisconnect) {
+      pauseOnDisconnect.checked = cfg.scheduler?.pause_on_extension_disconnect === true;
+    }
+    setVal("cfgExtensionDisconnectGrace", cfg.scheduler?.extension_disconnect_grace_seconds);
     setVal("cfgPoolTarget", cfg.scheduler?.pool_target_count);
     setVal("cfgAccountSyncInterval", cfg.scheduler?.account_sync_interval_hours);
+    setVal("cfgRefreshCheckInterval", cfg.scheduler?.refresh_check_interval_seconds);
+    setVal("cfgSignalEventThreshold", cfg.scheduler?.signal_event_threshold);
+    setVal("cfgTrendingRefreshHours", cfg.scheduler?.trending_refresh_hours);
+    setVal("cfgExploreRefreshHours", cfg.scheduler?.explore_refresh_hours);
+    setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
+    setVal("cfgProactivePushInterval", cfg.scheduler?.proactive_push_interval_seconds);
+    setVal("cfgSpeculatorIdleInterval", cfg.scheduler?.speculator_idle_interval_minutes);
     const autoUpdate = document.getElementById("cfgAutoUpdate");
     if (autoUpdate) autoUpdate.checked = cfg.scheduler?.auto_update_enabled === true;
     setVal("cfgAutoUpdateInterval", cfg.scheduler?.auto_update_check_interval_hours);
@@ -4033,8 +4461,7 @@ function bindSettings() {
     if (logLevel) logLevel.value = cfg.logging?.level || "INFO";
     const logFileLevel = document.getElementById("cfgLogFileLevel");
     if (logFileLevel) logFileLevel.value = cfg.logging?.file_level || "DEBUG";
-    setVal("cfgLogDirectory", cfg.logging?.directory);
-    setVal("cfgLogFilename", cfg.logging?.filename);
+    setVal("cfgLogPath", resolveLogPathFromConfig(cfg.logging));
     setVal("cfgLogMaxFileSize", cfg.logging?.max_file_size_mb);
     setVal("cfgLogBackupCount", cfg.logging?.backup_count);
     setVal("cfgLogAggregateBudget", cfg.logging?.aggregate_budget_mb);
@@ -4042,15 +4469,22 @@ function bindSettings() {
     setVal("cfgLogUnmanagedMaxAge", cfg.logging?.unmanaged_max_age_days);
 
     renderIssues(cfg.issues);
+    renderDegradedBanner(cfg);
   }
 
   function collectForm() {
+    const logPath = splitLogPath(getVal("cfgLogPath"), state.runtimeConfig?.logging);
+    const llmFallbackProvider = getVal("cfgLlmFallbackProvider");
+    const embeddingFallbackProvider = getVal("cfgEmbeddingFallbackProvider");
     return {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
         default_provider: providerSelect.value,
+        fallback_enabled: Boolean(llmFallbackProvider),
+        fallback_provider: llmFallbackProvider,
         openai: {
+          auth_mode: getVal("cfgOpenaiAuthMode") || "api_key",
           api_key: getVal("cfgOpenaiKey"),
           model: getVal("cfgOpenaiModel"),
           base_url: getVal("cfgOpenaiBaseUrl"),
@@ -4091,6 +4525,8 @@ function bindSettings() {
           base_url: getVal("cfgEmbeddingBaseUrl"),
           model: getVal("cfgEmbeddingModel"),
           similarity_threshold: getFloat("cfgEmbeddingSimilarity", 0.82),
+          fallback_enabled: Boolean(embeddingFallbackProvider),
+          fallback_provider: embeddingFallbackProvider,
         },
         soul: {
           provider: getVal("cfgModuleSoulProvider"),
@@ -4120,8 +4556,11 @@ function bindSettings() {
           cdp_url: getVal("cfgSourcesBrowserCdp"),
           headed: checked("cfgSourcesBrowserHeaded"),
         },
+        bilibili: {
+          enabled: checked("cfgBilibiliEnabled", true),
+        },
         xiaohongshu: {
-          enabled: checked("cfgXhsEnabled", true),
+          enabled: checked("cfgXhsEnabled"),
           daily_search_budget: getInt("cfgXhsDailySearchBudget", 30),
           daily_creator_budget: getInt("cfgXhsDailyCreatorBudget", 10),
           task_interval_seconds: getInt("cfgXhsTaskInterval", 45),
@@ -4137,13 +4576,26 @@ function bindSettings() {
         },
         youtube: {
           enabled: checked("cfgYoutubeEnabled"),
+          daily_search_budget: getInt("cfgYoutubeDailySearchBudget", 6),
+          daily_trending_budget: getInt("cfgYoutubeDailyTrendingBudget", 50),
+          daily_channel_budget: getInt("cfgYoutubeDailyChannelBudget", 10),
+          request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
+          min_interval_minutes: getInt("cfgYoutubeMinInterval", 60),
         },
       },
       scheduler: {
-        enabled: checked("cfgSchedulerEnabled", true),
-        discovery_cron: getVal("cfgDiscoveryCron"),
+        enabled: !checked("cfgSchedulerEnabled"),
+        pause_on_extension_disconnect: checked("cfgPauseOnDisconnect"),
+        extension_disconnect_grace_seconds: getInt("cfgExtensionDisconnectGrace", 90),
         pool_target_count: getInt("cfgPoolTarget", 600),
         account_sync_interval_hours: getInt("cfgAccountSyncInterval", 6),
+        refresh_check_interval_seconds: getInt("cfgRefreshCheckInterval", 60),
+        signal_event_threshold: getInt("cfgSignalEventThreshold", 6),
+        trending_refresh_hours: getInt("cfgTrendingRefreshHours", 3),
+        explore_refresh_hours: getInt("cfgExploreRefreshHours", 12),
+        discovery_limit: getInt("cfgDiscoveryLimit", 30),
+        proactive_push_interval_seconds: getInt("cfgProactivePushInterval", 120),
+        speculator_idle_interval_minutes: getInt("cfgSpeculatorIdleInterval", 30),
         pool_source_shares: {
           bilibili: getInt("cfgPoolShareBilibili", 8),
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
@@ -4166,8 +4618,8 @@ function bindSettings() {
       logging: {
         level: getVal("cfgLogLevel"),
         file_level: getVal("cfgLogFileLevel"),
-        directory: getVal("cfgLogDirectory"),
-        filename: getVal("cfgLogFilename"),
+        directory: logPath.directory,
+        filename: logPath.filename,
         max_file_size_mb: getInt("cfgLogMaxFileSize", 100),
         backup_count: getInt("cfgLogBackupCount", 1),
         aggregate_budget_mb: getInt("cfgLogAggregateBudget", 500),
@@ -4181,6 +4633,9 @@ function bindSettings() {
     overlay.hidden = false;
     toast.hidden = true;
     issuesContainer.innerHTML = "";
+    hideConfigBanners();
+    setSaveButtonMode("");
+    setActiveSettingsPanel("models");
     // Backend port is stored in chrome.storage, not on the backend, so it
     // populates even when the backend is unreachable — which is the whole
     // point of changing it.
@@ -4189,6 +4644,23 @@ function bindSettings() {
       const cfg = await fetchConfig();
       populateForm(cfg);
     } catch {
+      const cached = await readCachedConfigSnapshot();
+      if (cached?.config) {
+        populateForm(cached.config);
+        showConfigBanner(
+          bannerOffline,
+          `后端不可达，已使用 ${formatCachedAt(cached.cached_at)} 的缓存配置。`,
+          "warning",
+        );
+        setSaveButtonMode("warning");
+        showToast("后端不可达，当前显示缓存配置。", "error");
+        return;
+      }
+      showConfigBanner(
+        bannerNoCache,
+        "后端不可达且没有缓存配置。请先启动 daemon 后再打开设置。",
+        "error",
+      );
       showToast("无法加载配置，请确认后端已启动。", "error");
     }
   });
@@ -4205,8 +4677,8 @@ function bindSettings() {
       try {
         const suggestion = await fetchSourceShareSuggestion({
           enabled_sources: {
-            bilibili: true,
-            xiaohongshu: checked("cfgXhsEnabled", true),
+            bilibili: checked("cfgBilibiliEnabled", true),
+            xiaohongshu: checked("cfgXhsEnabled"),
             douyin: checked("cfgDouyinEnabled"),
             youtube: checked("cfgYoutubeEnabled"),
           },
@@ -4236,36 +4708,54 @@ function bindSettings() {
     saveBtn.textContent = "保存中...";
     toast.hidden = true;
     try {
-      // Backend port lives in chrome.storage, not the backend's
+      // Backend endpoint lives in chrome.storage, not the backend's
       // config.toml — persist it locally first so the subsequent
-      // updateConfig() PUT targets the new origin (if the user
-      // restarted the daemon with --port <newPort>).
-      let portChanged = false;
-      let newPort = null;
-      if (backendPortInput instanceof HTMLInputElement) {
-        const portRaw = backendPortInput.value.trim();
-        if (!isValidBackendPort(portRaw)) {
-          showToast("后端端口必须是 1-65535 的整数。", "error");
-          return;
-        }
+      // updateConfig() PUT targets the new origin.
+      let endpointChanged = false;
+      let newEndpointLabel = null;
+      const hostRaw = backendHostInput instanceof HTMLInputElement
+        ? backendHostInput.value.trim() : "";
+      const portRaw = backendPortInput instanceof HTMLInputElement
+        ? backendPortInput.value.trim() : "";
+      if (hostRaw !== "" && !isValidBackendHost(hostRaw)) {
+        showToast("后端地址必须是有效的 IP 地址或主机名。", "error");
+        return;
+      }
+      if (portRaw !== "" && !isValidBackendPort(portRaw)) {
+        showToast("后端端口必须是 1-65535 的整数。", "error");
+        return;
+      }
+      {
         const previous = await getBackendEndpointConfig();
-        const next = await updateBackendPort(portRaw);
-        newPort = next.port;
-        portChanged = next.port !== previous.port;
+        const next = await updateBackendEndpoint(hostRaw, portRaw || "8420");
+        newEndpointLabel = `${next.host}:${next.port}`;
+        endpointChanged = next.host !== previous.host || next.port !== previous.port;
       }
 
       const data = collectForm();
       try {
         const result = await updateConfig(data);
         if (result.config) {
+          applyRuntimeConfig(result.config);
           renderIssues(result.config.issues);
+          renderDegradedBanner(result.config);
         }
-        const tone = result.reloaded ? "success" : "warning";
+        const tone = result.restart_required ? "warning" : result.reloaded ? "success" : "warning";
         showToast(result.message || "配置已保存。", tone);
       } catch (err) {
-        if (portChanged) {
+        if (err?.name === "AbortError") {
           showToast(
-            `端口已切换为 ${newPort}，但保存其余配置失败。请用 openbiliclaw start --port ${newPort} 启动后端后重试。`,
+            "后端处理超时，保存请求可能已写入；热重载可能仍在后台进行。请稍后刷新设置确认。",
+            "warning",
+          );
+          return;
+        }
+        if (renderStructuredConfigError(err)) {
+          return;
+        }
+        if (endpointChanged) {
+          showToast(
+            `后端已切换为 ${newEndpointLabel}，但保存其余配置失败。请确认后端已在该地址运行后重试。`,
             "warning",
           );
         } else {
@@ -4273,7 +4763,7 @@ function bindSettings() {
         }
       }
 
-      if (portChanged) {
+      if (endpointChanged) {
         // Rebind the runtime stream against the new origin and refresh
         // the online indicator. If the backend isn't yet running on the
         // new port these will retry per the WS backoff and the popup
@@ -4284,10 +4774,12 @@ function bindSettings() {
         setStatus(state.online);
       }
     } catch (err) {
-      showToast(`保存失败: ${err.message}`, "error");
+      if (!renderStructuredConfigError(err)) {
+        showToast(`保存失败: ${err.message}`, "error");
+      }
     } finally {
       saveBtn.disabled = false;
-      saveBtn.textContent = "保存配置";
+      setSaveButtonMode(state.runtimeConfig?.degraded ? "degraded" : "");
     }
   });
 }
@@ -4301,7 +4793,9 @@ async function initializePopup() {
   bindRefreshButton();
   bindActivityToggle();
   bindChat();
+  bindMobileQr();
   bindSettings();
+
   bindMessages();
   setActiveTab(
     requestedTab === "profile" || requestedTab === "chat" || requestedTab === "recommend"

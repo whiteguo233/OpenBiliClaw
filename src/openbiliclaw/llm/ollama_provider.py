@@ -54,6 +54,7 @@ class OllamaProvider(OpenAIProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         """Chat completion with extended retry for Ollama startup hiccups.
 
@@ -74,6 +75,7 @@ class OllamaProvider(OpenAIProvider):
                     max_tokens=max_tokens,
                     json_mode=json_mode,
                     reasoning_effort=reasoning_effort,
+                    model=model,
                 )
             except (LLMProviderError, LLMTimeoutError, httpx.TransportError) as exc:
                 last_error = exc

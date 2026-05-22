@@ -6,9 +6,10 @@
  * sides read & write the same chrome.storage.local key, so a change in
  * the popup is picked up by the service worker via chrome.storage.onChanged.
  *
- * Default port is 8420 (unchanged). Users can override to dodge port
- * conflicts on Windows (Hyper-V / WSL / Docker reserve random local
- * ports — 18080, 19090, 13000 are common safe choices).
+ * Default endpoint is 127.0.0.1:8420. Users can override the host to reach a
+ * LAN daemon, or override the port to dodge local port conflicts on Windows
+ * (Hyper-V / WSL / Docker reserve random local ports — 18080, 19090, 13000
+ * are common safe choices).
  */
 
 export const DEFAULT_BACKEND_HOST = "127.0.0.1";
@@ -149,6 +150,56 @@ export async function getBackendBaseUrl() {
 export async function getBackendWsBaseUrl() {
   const ep = await ensureLoaded();
   return `ws://${ep.host}:${ep.port}/api`;
+}
+
+export function isValidBackendHost(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "localhost") return true;
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(trimmed)) {
+    return trimmed.split(".").every((p) => {
+      const n = Number(p);
+      return n >= 0 && n <= 255;
+    });
+  }
+  if (/^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+export async function updateBackendEndpoint(host, port) {
+  if (!isValidBackendPort(port)) {
+    throw new Error("端口必须是 1-65535 的整数");
+  }
+  const hostStr = typeof host === "string" ? host.trim() : "";
+  if (hostStr !== "" && !isValidBackendHost(hostStr)) {
+    throw new Error("后端地址必须是有效的 IP 地址或主机名");
+  }
+  const endpoint = {
+    host: hostStr || DEFAULT_BACKEND_HOST,
+    port: coercePort(port),
+  };
+  cached = endpoint;
+  initialized = true;
+  const storage = getStorageLocal();
+  if (typeof storage?.set === "function") {
+    await new Promise((resolve) => {
+      try {
+        storage.set({ [BACKEND_ENDPOINT_STORAGE_KEY]: endpoint }, () => resolve(undefined));
+      } catch {
+        resolve(undefined);
+      }
+    });
+  }
+  for (const cb of subscribers) {
+    try {
+      cb(endpoint);
+    } catch {
+      // ignore
+    }
+  }
+  return endpoint;
 }
 
 export async function updateBackendPort(value) {

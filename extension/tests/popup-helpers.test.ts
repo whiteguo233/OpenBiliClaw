@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
+  buildImageProxyPath,
   getActivityCardState,
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
@@ -98,6 +101,26 @@ test("normalizeRecommendation upgrades protocol-relative and http covers to http
   );
 });
 
+test("buildImageProxyPath returns encoded backend proxy path for valid cover urls", () => {
+  assert.equal(
+    buildImageProxyPath("https://i1.hdslb.com/bfs/archive/demo.jpg"),
+    "/api/image-proxy?url=https%3A%2F%2Fi1.hdslb.com%2Fbfs%2Farchive%2Fdemo.jpg",
+  );
+  assert.equal(
+    buildImageProxyPath("https://sns-webpic-qc.xhscdn.com/demo.jpg"),
+    "/api/image-proxy?url=https%3A%2F%2Fsns-webpic-qc.xhscdn.com%2Fdemo.jpg",
+  );
+  assert.equal(buildImageProxyPath("not-a-url"), "");
+});
+
+test("popup image rendering uses backend proxy without referrerPolicy", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.doesNotMatch(popupJs, /referrerPolicy = "no-referrer"/);
+  assert.match(popupJs, /setProxyImageSrc/);
+  assert.doesNotMatch(popupJs, /image\.src = (item|delight)\.cover_url/);
+});
+
 test("normalizeRecommendation does not fall back to relevance_reason when expression is missing", () => {
   const item = normalizeRecommendation({
     id: 8,
@@ -133,6 +156,10 @@ test("normalizeDelightCandidate fills stable fallbacks and upgrades cover urls",
     state: "pending",
     response_message: "",
     chat_reply: "",
+    turns: [],
+    composer_open: false,
+    chat_draft: "",
+    chat_turn_id: "",
   });
 });
 
