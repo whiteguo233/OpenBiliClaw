@@ -15,6 +15,16 @@
   // with the rest of the codebase.
   var api = typeof chrome !== "undefined" ? chrome : null;
 
+  // Message-type constants come from the generated mirror at
+  // popup-launcher-protocol.js, which itself is generated from
+  // src/shared/popup-launcher-protocol.ts so the launcher and the
+  // service worker can never drift. We fall back to inline literals
+  // if the mirror somehow failed to load (defensive — in real
+  // extension contexts the <script> tag has already run).
+  var proto = (typeof window !== "undefined" && window.OpenBiliClawLauncher) || {};
+  var PING_TYPE = proto.PING_LAUNCHER_TO_BG || "openbiliclaw/popup-launcher/ping";
+  var QUERY_PENDING_TYPE = proto.QUERY_LAUNCHER_PENDING_STATUS || "openbiliclaw/popup-launcher/query-pending";
+
   function buildFullUiUrl() {
     var base = "popup/popup.html";
     if (api && api.runtime && typeof api.runtime.getURL === "function") {
@@ -96,7 +106,7 @@
     }, 250);
 
     try {
-      api.runtime.sendMessage({ type: "openbiliclaw/popup-launcher/ping" }, function () {
+      api.runtime.sendMessage({ type: PING_TYPE }, function () {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -113,10 +123,84 @@
     }
   }
 
+  /**
+   * Ask the service worker whether the active tab is a B站 video the
+   * backend has flagged as a YT repost. Renders the per-tab callout
+   * row when so, and leaves it hidden otherwise.
+   *
+   * Errors are swallowed: this is decorative UI for the launcher, not
+   * a correctness surface. A failed query just means the row stays
+   * hidden, which is also what we'd show if the tab isn't a B站
+   * video at all — so the user can't tell the difference between
+   * "no data" and "nothing to show", which is fine here.
+   */
+  function queryRepostStatus() {
+    if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") {
+      return;
+    }
+    try {
+      api.runtime.sendMessage({ type: QUERY_PENDING_TYPE }, function (reply) {
+        // Touch lastError so chrome doesn't log "unchecked runtime.lastError".
+        var _ = api.runtime && api.runtime.lastError;
+        if (!reply || typeof reply !== "object") return;
+        renderRepostCallout({
+          isRepost: reply.isRepost === true,
+          isPending: reply.isPending === true,
+          ytUrl: typeof reply.ytUrl === "string" ? reply.ytUrl : "",
+        });
+      });
+    } catch (_) {
+      // SW unreachable — leave the callout hidden.
+    }
+  }
+
+  function renderRepostCallout(status) {
+    var container = document.getElementById("repost-callout");
+    var known = document.getElementById("repost-known");
+    var pending = document.getElementById("repost-pending");
+    var jumpBtn = document.getElementById("repost-jump");
+    if (!container || !known || !pending) return;
+
+    // Hide everything by default; only flip the relevant pane on.
+    container.hidden = true;
+    known.hidden = true;
+    pending.hidden = true;
+
+    if (!status.isRepost) return;
+
+    if (status.ytUrl) {
+      container.hidden = false;
+      known.hidden = false;
+      if (jumpBtn) {
+        // Replace any previous listener by reassigning onclick — the
+        // launcher popup is a one-shot DOM, but be defensive.
+        jumpBtn.onclick = function () {
+          if (api && api.tabs && typeof api.tabs.update === "function") {
+            // Navigate the active tab to the YT URL in-place, then
+            // close the popup. tabs.create would orphan the B站 tab.
+            api.tabs.update({ url: status.ytUrl }, function () {
+              var _ = api.runtime && api.runtime.lastError;
+              if (typeof window.close === "function") window.close();
+            });
+          } else {
+            window.open(status.ytUrl, "_blank");
+          }
+        };
+      }
+      return;
+    }
+
+    if (status.isPending) {
+      container.hidden = false;
+      pending.hidden = false;
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     var btn = document.getElementById("open-full");
     if (btn) btn.addEventListener("click", openFullUi);
     reportVersion();
     pingBackground();
+    queryRepostStatus();
   });
 })();
