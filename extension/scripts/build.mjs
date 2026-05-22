@@ -4,6 +4,12 @@ import { build } from "esbuild";
 
 const root = resolve(import.meta.dirname, "..");
 
+// Regenerate the popup-launcher protocol constants mirror from the TS
+// source before doing anything else. Idempotent. Keeps the JS-side
+// constants in lock-step with src/shared/popup-launcher-protocol.ts
+// without forcing popup-launcher.js to become a bundled entrypoint.
+await import("./sync-launcher-protocol.mjs");
+
 const targetEnv = process.env.TARGET ?? "chrome";
 const isFirefox = targetEnv === "firefox";
 const isSafari = targetEnv === "safari";
