@@ -409,6 +409,7 @@
               </button>
             </div>
             <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
+            <button class="small-btn composer-cancel" data-action="cancel-comment" type="button" aria-label="返回" title="返回">‹</button>
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
           <p class="status-line"></p>`;
@@ -490,8 +491,10 @@
 
     function openDelightComposer() {
       const actions = document.querySelector(".delight-main-actions");
+      const shell = actions?.closest(".delight-actions");
       const button = actions?.querySelector(".chat-action");
       if (!actions || !button || !state.delight) return;
+      shell?.classList.add("is-composing");
       actions.classList.add("is-composing");
       button.classList.add("is-send");
       button.dataset.delight = "send-comment";
@@ -503,8 +506,10 @@
 
     function closeDelightComposer() {
       const actions = document.querySelector(".delight-main-actions");
+      const shell = actions?.closest(".delight-actions");
       const button = actions?.querySelector(".chat-action");
       if (!actions || !button) return;
+      shell?.classList.remove("is-composing");
       actions.classList.remove("is-composing");
       button.classList.remove("is-send");
       button.dataset.delight = "chat";
@@ -518,6 +523,7 @@
       if (card.dataset.feedbackPending === "true") return;
       if (action === "open") return openRecommendation(item, card);
       if (action === "comment") { openCardComposer(card); return; }
+      if (action === "cancel-comment") { closeCardComposer(card); return; }
       card.dataset.feedbackPending = "true";
       card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = true; });
       try {
@@ -1180,6 +1186,7 @@
     async function respondDelight(delight, response, el = null) {
       if (!delight) return;
       if (response === "chat") { openDelightComposer(); return; }
+      if (response === "cancel-comment") { closeDelightComposer(); return; }
       if (response === "send-comment") {
         const input = $("#delightCommentInput");
         const note = input?.value?.trim() || "";

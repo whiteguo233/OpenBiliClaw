@@ -247,6 +247,7 @@
     .video-card .small-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-on); }
     .video-card .chat-action.is-send { width: 38px; min-width: 38px; padding: 0; }
     .video-card .chat-action.is-send svg { width: 17px; height: 17px; stroke-width: 2.2; }
+    .composer-cancel { display: none; }
     .small-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
     .small-btn:disabled, .icon-btn:disabled { cursor: not-allowed; opacity: 0.42; }
     .delight-queue-tools .icon-btn,
@@ -472,19 +473,31 @@
       .layout { padding: var(--space-4) var(--space-3) var(--section-y-phone); }
       .brand-title { font-size: var(--text-lg); }
       .hero { border-radius: 24px; padding: var(--space-5); }
-      .delight { padding: var(--space-3); border-radius: 22px; }
-      .delight-meta { align-items: start; flex-direction: column; }
-      .delight-queue-tools { justify-content: start; }
-      .delight-actions { flex-direction: column; align-items: stretch; gap: var(--space-3); }
-      .delight-main-actions { order: 1; flex: 0 0 auto; grid-template-columns: 1fr; }
-      .delight-feedback-actions.card-feedback-icons { order: 2; flex: 0 0 auto; width: 128px; max-width: 128px; min-height: 34px; margin-left: 0; align-self: flex-start; justify-content: center; padding: 3px 6px; }
-      .delight-main-actions .small-btn { width: 100%; }
-      .delight-main-actions.is-composing { flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) 38px; align-items: center; min-height: 38px; }
+      .delight { padding: 20px; border-radius: 22px; }
+      .delight-meta { align-items: center; flex-direction: row; }
+      .delight-queue-tools { justify-content: end; margin-left: auto; }
+      .delight-actions { flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+      .delight-actions.is-composing { gap: 0; }
+      .delight-main-actions { order: 2; flex: 1 1 auto; grid-template-columns: minmax(72px, .82fr) minmax(76px, .88fr); gap: 6px; transition: none; }
+      .delight-feedback-actions.card-feedback-icons { order: 1; flex: 0 1 116px; width: 116px; max-width: 116px; min-height: 34px; margin-left: 0; align-self: center; justify-content: center; padding: 3px 5px; transition: none; }
+      .delight-actions .delight-main-actions .small-btn,
+      .delight-actions .delight-main-actions [data-delight="view"],
+      .delight-actions .delight-main-actions .comment-field,
+      .delight-actions .delight-main-actions .chat-action,
+      .delight-actions .delight-feedback-actions.card-feedback-icons { transition: none; }
+      .delight-main-actions .small-btn { width: 100%; padding-inline: 10px; }
+      .delight-main-actions [data-delight="view"] { padding-inline: 10px; }
+      .delight-actions.is-composing .delight-feedback-actions.card-feedback-icons { display: none; }
+      .delight-main-actions.is-composing { flex: 1 1 auto; grid-template-columns: minmax(0, 1fr) 38px 38px; align-items: center; min-height: 38px; }
       .delight-main-actions.is-composing .comment-field { grid-column: 1; grid-row: 1; align-self: center; }
       .delight-main-actions.is-composing .comment-field input { height: 38px; }
-      .delight-main-actions.is-composing .chat-action { grid-column: 2; grid-row: 1; width: 38px; min-width: 38px; align-self: center; }
+      .delight-main-actions.is-composing .composer-cancel { display: inline-flex; grid-column: 2; grid-row: 1; width: 38px; min-width: 38px; padding: 0; align-self: center; background: var(--surface); border-color: var(--border-soft); color: var(--fg-2); font-size: 22px; line-height: 1; }
+      .delight-main-actions.is-composing .chat-action { grid-column: 3; grid-row: 1; width: 38px; min-width: 38px; align-self: center; }
       .delight-main-actions.is-composing .small-btn { width: auto; min-height: 38px; }
       .metric-row { grid-template-columns: 1fr; }
+      .video-card .card-actions.is-composing { grid-template-columns: minmax(0, 1fr) 38px 38px; gap: var(--space-2); }
+      .video-card .card-actions.is-composing .composer-cancel { display: inline-flex; grid-column: 2; grid-row: 1; width: 38px; min-width: 38px; padding: 0; background: var(--surface); border-color: var(--border-soft); color: var(--fg-2); font-size: 22px; line-height: 1; }
+      .video-card .card-actions.is-composing .chat-action { grid-column: 3; grid-row: 1; }
       .card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .small-btn { width: 100%; }
       .mobile-back-btn, .mobile-search .pill-btn, .mobile-summary-head .small-btn { width: auto; }
