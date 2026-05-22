@@ -74,3 +74,4 @@ output/
 *.log
 logs/
 extension/dist-firefox/
+extension/dist-safari/

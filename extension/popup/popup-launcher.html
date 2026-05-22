@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenBiliClaw</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-base: #fffafc;
+      --surface: rgba(255, 255, 255, 0.96);
+      --line: rgba(217, 227, 242, 0.95);
+      --text-main: #20304a;
+      --text-secondary: #60708c;
+      --brand: #fb7299;
+      --brand-strong: #f65788;
+      --shadow-sm: 0 8px 18px rgba(73, 93, 130, 0.10);
+    }
+
+    html, body {
+      width: 320px;
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background: var(--bg-base);
+    }
+
+    body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header img {
+      width: 32px;
+      height: 32px;
+    }
+
+    .header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    .header .tagline {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    .status {
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .status .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status .row + .row {
+      margin-top: 4px;
+    }
+
+    .status .label {
+      color: var(--text-secondary);
+    }
+
+    .status .value {
+      color: var(--text-main);
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .open-btn {
+      width: 100%;
+      padding: 11px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.08s ease, box-shadow 0.15s ease;
+      box-shadow: 0 6px 14px rgba(251, 114, 153, 0.30);
+    }
+
+    .open-btn:hover {
+      box-shadow: 0 8px 18px rgba(251, 114, 153, 0.38);
+    }
+
+    .open-btn:active {
+      transform: translateY(1px);
+    }
+
+    .open-btn:focus-visible {
+      outline: 2px solid var(--brand-strong);
+      outline-offset: 2px;
+    }
+
+    .footnote {
+      font-size: 10.5px;
+      color: var(--text-secondary);
+      text-align: center;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="../icons/icon48.png" alt="OpenBiliClaw">
+    <div>
+      <h1>OpenBiliClaw</h1>
+      <div class="tagline">跨平台内容发现 AI Agent</div>
+    </div>
+  </div>
+
+  <div class="status">
+    <div class="row">
+      <span class="label">后台</span>
+      <span class="value" id="bg-status">检查中…</span>
+    </div>
+    <div class="row">
+      <span class="label">版本</span>
+      <span class="value" id="version">—</span>
+    </div>
+  </div>
+
+  <button class="open-btn" id="open-full" type="button">在新标签页中打开</button>
+
+  <div class="footnote">Safari 暂不支持侧边栏，已切换到独立标签页模式。</div>
+
+  <script src="popup-launcher.js"></script>
+</body>
+</html>

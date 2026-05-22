@@ -4,11 +4,32 @@ import { build } from "esbuild";
 
 const root = resolve(import.meta.dirname, "..");
 
-const isFirefox = process.env.TARGET === "firefox";
-const buildTarget = isFirefox ? "firefox140" : "chrome120";
-const outDir = isFirefox ? "dist-firefox" : "dist";
+const targetEnv = process.env.TARGET ?? "chrome";
+const isFirefox = targetEnv === "firefox";
+const isSafari = targetEnv === "safari";
 
-console.log(`\n🔨 Building for ${isFirefox ? "Firefox" : "Chrome/Edge"} (target: ${buildTarget})\n`);
+// esbuild --target flags. Safari uses MV3 only on 17.4+, so we target Safari 17.
+const buildTarget = isFirefox
+  ? "firefox140"
+  : isSafari
+    ? "safari17"
+    : "chrome120";
+
+// Output directory per target. Safari mirrors the Firefox layout
+// (no `dist/` prefix in manifest paths) so the bundle drops directly into
+// the extension's resource root.
+const outDir = isFirefox
+  ? "dist-firefox"
+  : isSafari
+    ? "dist-safari"
+    : "dist";
+
+const labelMap = {
+  chrome: "Chrome/Edge",
+  firefox: "Firefox",
+  safari: "Safari",
+};
+console.log(`\n🔨 Building for ${labelMap[targetEnv] ?? targetEnv} (target: ${buildTarget})\n`);
 
 const entrypoints = [
   {
@@ -59,18 +80,21 @@ for (const target of entrypoints) {
   });
 }
 
-// For Firefox builds, write the Firefox manifest with version injected from
-// the Chrome manifest (single source of truth), and stage popup/icons.
-if (isFirefox) {
+// For non-Chrome builds (Firefox / Safari) we lay out a self-contained
+// resource directory: write the appropriate manifest with the version
+// injected from manifest.json (single source of truth), and stage popup/
+// and icons/ alongside the bundled scripts.
+if (isFirefox || isSafari) {
   const chromeManifest = JSON.parse(
     await readFile(resolve(root, "manifest.json"), "utf-8"),
   );
-  const firefoxManifest = JSON.parse(
-    await readFile(resolve(root, "manifest.firefox.json"), "utf-8"),
+  const sourceManifestName = isFirefox ? "manifest.firefox.json" : "manifest.safari.json";
+  const sourceManifest = JSON.parse(
+    await readFile(resolve(root, sourceManifestName), "utf-8"),
   );
-  // Preserve Firefox manifest field order: insert version right after `name`.
+  // Preserve source manifest field order: insert version right after `name`.
   const merged = {};
-  for (const [key, value] of Object.entries(firefoxManifest)) {
+  for (const [key, value] of Object.entries(sourceManifest)) {
     merged[key] = value;
     if (key === "name") merged.version = chromeManifest.version;
   }
@@ -82,7 +106,8 @@ if (isFirefox) {
     `\n📄 Wrote ${outDir}/manifest.json (version ${chromeManifest.version} from manifest.json)`,
   );
 
-  // Firefox loads the extension from dist-firefox/, so popup/ and icons/ must be present there
+  // popup/ and icons/ must be present alongside the manifest at the
+  // resource root for the extension to load.
   await cp(resolve(root, "popup"), resolve(root, `${outDir}/popup`), { recursive: true });
   await cp(resolve(root, "icons"), resolve(root, `${outDir}/icons`), { recursive: true });
   console.log(`📁 Copied popup/ → ${outDir}/popup/`);

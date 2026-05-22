@@ -1,0 +1,19 @@
+# XcodeGen output — regenerate from project.yml
+OpenBiliClawSafari.xcodeproj/
+*.xcworkspace/
+
+# Build products
+build/
+DerivedData/
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Staged extension bundle — populated by extension/scripts/package-safari.mjs
+Extension/Resources/manifest.json
+Extension/Resources/background/
+Extension/Resources/content/
+Extension/Resources/main/
+Extension/Resources/popup/
+Extension/Resources/icons/
