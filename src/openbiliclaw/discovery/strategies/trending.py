@@ -27,6 +27,7 @@ from openbiliclaw.discovery.strategies._utils import (
 
 if TYPE_CHECKING:
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class TrendingStrategy(DiscoveryStrategy):
     bilibili_client: SupportsRankingClient
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     score_threshold: float = 0.70
     max_related_rids: int = 4
     # Broader default RIDs covering more top-level categories:
@@ -98,6 +100,7 @@ class TrendingStrategy(DiscoveryStrategy):
         """
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         rids = await self._select_rids(profile)

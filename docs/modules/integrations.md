@@ -21,7 +21,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| OpenClaw bootstrap | ✅ | 新增 `build_openclaw_adapter_services()`，复用现有 API bootstrap 的依赖装配顺序；direct controller 会接入同一份 scheduler pause gate、独立 `PresenceTracker` 和 config-backed LLM module overrides |
+| OpenClaw bootstrap | ✅ | 新增 `build_openclaw_adapter_services()`，复用现有 API bootstrap 的依赖装配顺序；B 站四个 discovery strategy 共用 adapter database，保证内部 evaluator 能读取近期 negative exemplars；direct controller 会接入同一份 scheduler pause gate、独立 `PresenceTracker` 和 config-backed LLM module overrides |
 | OpenClaw adapter operations | ✅ | 已提供 `sync_account / get_profile / recommend / submit_feedback / get_runtime_status` |
 | OpenClaw skill descriptors | ✅ | 已提供协议中立的 skill descriptor 列表与 async handler |
 | OpenClaw CLI bridge | ✅ | 已提供 `python -m openbiliclaw.integrations.openclaw.cli`，输出稳定 JSON |

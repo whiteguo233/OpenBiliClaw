@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from openbiliclaw.config import Config
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def build_youtube_discovery_strategies(
     llm_service: Any,
     memory: Any,
     concurrency: Any,
+    database: Database | None = None,
     strategy_unit_budget: dict[str, int] | None = None,
 ) -> list[Any]:
     """Build YouTube discovery strategies from `[sources.youtube]` config."""
@@ -72,12 +74,14 @@ def build_youtube_discovery_strategies(
             client=client,
             llm_service=llm_service,
             concurrency=concurrency,
+            database=database,
             queries_per_run=max(0, search_budget),
         ),
         YoutubeTrendingStrategy(
             client=client,
             llm_service=llm_service,
             concurrency=concurrency,
+            database=database,
             fetch_limit=max(0, trending_budget),
         ),
         YoutubeChannelStrategy(
@@ -85,6 +89,7 @@ def build_youtube_discovery_strategies(
             llm_service=llm_service,
             memory=memory,
             concurrency=concurrency,
+            database=database,
             max_channels=max(0, channel_budget),
         ),
     ]
@@ -160,6 +165,7 @@ def build_youtube_discovery_producer(
             llm_service=llm_service,
             memory=memory,
             concurrency=concurrency,
+            database=database,
             strategy_unit_budget={strategy: unit_budget},
         )
         selected = [item for item in strategies if item.name == strategy]
@@ -396,11 +402,13 @@ class RuntimeContext:
             llm_service=new_llm_service,
             bilibili_client=new_bilibili_client,
             concurrency=concurrency,
+            database=self.database,
         )
         trending_strategy = TrendingStrategy(
             bilibili_client=new_bilibili_client,
             llm_service=new_llm_service,
             concurrency=concurrency,
+            database=self.database,
         )
         related_strategy = RelatedChainStrategy(
             bilibili_client=new_bilibili_client,
@@ -409,6 +417,7 @@ class RuntimeContext:
             search_strategy=search_strategy,
             trending_strategy=trending_strategy,
             concurrency=concurrency,
+            database=self.database,
         )
         explore_strategy = ExploreStrategy(
             llm_service=new_llm_service,

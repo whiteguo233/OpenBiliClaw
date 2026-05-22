@@ -30,6 +30,7 @@ from openbiliclaw.llm.prompts import build_search_queries_prompt
 
 if TYPE_CHECKING:
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class SearchStrategy(DiscoveryStrategy):
     llm_service: SupportsStructuredTask
     bilibili_client: SupportsSearchClient
     concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
     queries_per_run: int = 8
     page_size: int = 10
     max_pages: int = 1
@@ -165,6 +167,7 @@ class SearchStrategy(DiscoveryStrategy):
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
+            database=self.database,
             concurrency=self.concurrency,
         )
         eval_candidates = self._interleave_query_candidates(candidates_by_query)

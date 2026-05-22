@@ -544,11 +544,13 @@ def _build_discovery_engine() -> Any:
         llm_service=llm_service,
         bilibili_client=bilibili_client,
         concurrency=concurrency,
+        database=database,
     )
     trending_strategy = TrendingStrategy(
         bilibili_client=bilibili_client,
         llm_service=llm_service,
         concurrency=concurrency,
+        database=database,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,
@@ -557,6 +559,7 @@ def _build_discovery_engine() -> Any:
         search_strategy=search_strategy,
         trending_strategy=trending_strategy,
         concurrency=concurrency,
+        database=database,
     )
     explore_strategy = ExploreStrategy(
         llm_service=llm_service,

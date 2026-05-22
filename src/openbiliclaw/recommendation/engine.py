@@ -1008,6 +1008,16 @@ class RecommendationEngine:
             }
             for c in batch
         ]
+        # Fetch recent negative exemplars so Rule 11 pattern-matching
+        # applies equally to non-bilibili pool items (e.g. xiaohongshu).
+        negative_examples: list[dict[str, object]] | None = None
+        try:
+            from openbiliclaw.soul.negative_exemplars import recent_negative_exemplars
+
+            negative_examples = recent_negative_exemplars(self._database) or None
+        except Exception:
+            logger.debug("classify_batch: negative_exemplars unavailable", exc_info=True)
+
         # Determine the dominant platform for prompt context
         platform = (batch[0].source_platform or "bilibili") if batch else "bilibili"
         messages = build_batch_content_evaluation_prompt(
@@ -1015,6 +1025,7 @@ class RecommendationEngine:
             content_items=content_items,
             source_context=batch[0].source_strategy if batch else "",
             source_platform=platform,
+            negative_examples=negative_examples,
         )
 
         response = await self._llm.complete_structured_task(

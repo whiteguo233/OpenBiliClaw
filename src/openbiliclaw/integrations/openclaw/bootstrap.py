@@ -113,11 +113,13 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         llm_service=llm_service,
         bilibili_client=bilibili_client,
         concurrency=concurrency,
+        database=database,
     )
     trending_strategy = TrendingStrategy(
         bilibili_client=bilibili_client,
         llm_service=llm_service,
         concurrency=concurrency,
+        database=database,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,
@@ -126,6 +128,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         search_strategy=search_strategy,
         trending_strategy=trending_strategy,
         concurrency=concurrency,
+        database=database,
     )
     explore_strategy = ExploreStrategy(
         llm_service=llm_service,

@@ -606,6 +606,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     created_databases: list[object] = []
     created_memories: list[object] = []
     registered_strategies: list[str] = []
+    created_strategy_kwargs: list[dict[str, object]] = []
 
     class FakeDatabase:
         def __init__(self, path: str) -> None:
@@ -675,6 +676,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.args = args
             self.kwargs = kwargs
             self.name = self.__class__.__name__
+            created_strategy_kwargs.append(kwargs)
 
     class FakeRuntimeController:
         def __init__(self, **kwargs) -> None:
@@ -753,6 +755,12 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     assert created_memories[0].database is created_databases[0]
     assert services.database is created_databases[0]
     assert services.memory_manager is created_memories[0]
+    assert [kwargs.get("database") for kwargs in created_strategy_kwargs] == [
+        created_databases[0],
+        created_databases[0],
+        created_databases[0],
+        created_databases[0],
+    ]
     assert services.soul_engine.module_overrides["soul"].provider == "claude"
     assert services.soul_engine.kwargs["speculation_interval_minutes"] == 22
     assert services.soul_engine.kwargs["speculation_ttl_days"] == 8

@@ -595,6 +595,7 @@ engine.register_strategy(
     SearchStrategy(
         llm_service=service,
         bilibili_client=bilibili_client,
+        database=db,
     )
 )
 
@@ -617,6 +618,7 @@ assert 0.0 <= score <= 1.0
 - batch 评估结果解析会优先选择包含 `score` 的结果数组或 object 序列；如果 provider 回显输入 JSON、包 Markdown fence、或返回 NDJSON，仍按一次 batch 处理，不再拆成 N 次单条评估
 - batch prompt 和响应都带 `bvid/content_id`；只要响应里有可识别 ID，引擎会按 ID 而不是数组下标写回评分和理由。没有 ID 且结果数量不完整时会回退到单条评估，避免 LLM 漏项导致后续候选整体错位
 - 如果 batch 调用失败被识别为 LLM provider 限流或 cooldown，本轮不会再触发逐条 fallback；这些候选按 0 分处理，下一轮 refresh 在 provider 恢复后重新发现 / 评估
+- `SearchStrategy` / `TrendingStrategy` / `RelatedChainStrategy` / `ExploreStrategy`、YouTube 三策略和 `DouyinDirectStrategy` 在内部临时构造 evaluator 时都会透传 `database`。因此 CLI、daemon runtime、YouTube producer、Douyin producer 和 OpenClaw bootstrap 路径都能读取同一份近期 negative exemplars，避免只有外层 engine 能看到短期负反馈样本。
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
 
@@ -645,6 +647,7 @@ async with DouyinDirectClient(cookie=cookie) as direct_client:
     service = DouyinDiscoveryService(
         client=client,
         discovery_engine=engine,  # 传入时会注册 douyin_direct 并写 content_cache
+        database=database,        # 可选；未传时会从 discovery_engine._database 兜底
     )
     result = await service.discover(
         profile,
