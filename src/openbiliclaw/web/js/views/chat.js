@@ -310,7 +310,7 @@ function renderOverlay() {
     const card = document.createElement("div");
     card.className = "message-card";
     card.innerHTML = `
-      <div class="message-card-type">\u{1F50D} \u5174\u8DA3\u63A2\u6D4B</div>
+      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>兴趣探测</div>
       <div class="message-card-title">${esc(n.domain || n.title || "")}</div>
       <div class="message-card-body">${esc(n.description || n.reason || n.message || "")}</div>
       <div class="message-card-actions">
@@ -328,7 +328,7 @@ function renderOverlay() {
     const card = document.createElement("div");
     card.className = "message-card";
     card.innerHTML = `
-      <div class="message-card-type">\u2728 \u60CA\u559C\u63A8\u8350</div>
+      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>惊喜推荐</div>
       ${cover ? `<div class="message-cover-frame"><img src="${esc(cover.src)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>` : `<div class="message-cover-frame is-error"></div>`}
       <div class="message-card-title">${esc(nd.title)}</div>
       <div class="message-card-body">${esc(nd.delight_hook || nd.delight_reason)}</div>
@@ -344,7 +344,7 @@ function renderOverlay() {
   }
 
   if (notifications.length === 0 && delightMsgs.length === 0) {
-    panel.innerHTML += `<div class="empty-state" style="padding:24px"><div class="empty-state-text">\u6CA1\u6709\u65B0\u6D88\u606F</div></div>`;
+    panel.innerHTML += `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:48px 24px;color:var(--text-muted)"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span style="font-size:14px">暂时没有新消息</span><span style="font-size:12px;opacity:0.7">兴趣探测和惊喜推荐会在这里出现</span></div>`;
   }
 
   overlay.innerHTML = "";
@@ -471,10 +471,15 @@ export function initChatView(root) {
   loadHistory();
 }
 
-export function toggleMessages() {
+export async function toggleMessages() {
   overlayOpen = !overlayOpen;
-  if (overlayOpen) loadNotifications();
-  renderOverlay();
+  if (overlayOpen) {
+    renderOverlay();          // show panel immediately (loading state)
+    await loadNotifications();
+    renderOverlay();          // re-render with actual data
+  } else {
+    renderOverlay();
+  }
 }
 
 export function updateBadge() {
