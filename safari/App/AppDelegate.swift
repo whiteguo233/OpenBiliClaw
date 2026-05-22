@@ -105,18 +105,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func aboutCredits() -> NSAttributedString {
         // NSAboutPanel renders .credits as RTF. We hand it a small
         // attributed string so we don't need a separate Credits.rtf in
-        // the bundle.
-        let body = """
-        跨平台内容发现 AI Agent
-        行为采集 · 画像 · 智能推荐
+        // the bundle. The GitHub URL is a real NSLink — macOS opens it
+        // in the default browser when clicked.
+        let intro = "跨平台内容发现 AI Agent\n行为采集 · 画像 · 智能推荐\n\nSource: "
+        let url = "github.com/whiteguo233/OpenBiliClaw"
+        let outro = "\nLicense: see LICENSE in the repository"
 
-        Source: github.com/whiteguo233/OpenBiliClaw
-        License: see LICENSE in the repository
-        """
-        let attrs: [NSAttributedString.Key: Any] = [
+        let bodyAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
-        return NSAttributedString(string: body, attributes: attrs)
+        let linkAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.linkColor,
+            .link: URL(string: "https://\(url)") as Any,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+
+        let credits = NSMutableAttributedString()
+        credits.append(NSAttributedString(string: intro, attributes: bodyAttrs))
+        credits.append(NSAttributedString(string: url, attributes: linkAttrs))
+        credits.append(NSAttributedString(string: outro, attributes: bodyAttrs))
+        return credits
     }
 }
