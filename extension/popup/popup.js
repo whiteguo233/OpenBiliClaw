@@ -2429,6 +2429,7 @@ const DELIGHT_PERSIST_FIELDS = [
   "response_message",
   "expanded",
   "composer_open",
+  "turns",
 ];
 
 function persistDelightLocalState(bvid, updates) {
@@ -2508,9 +2509,26 @@ function applyTurnToDelight(turn) {
   if (!turn || turn.scope !== "delight" || !turn.subject_id) return;
   const idx = state.activeDelights.findIndex((item) => item?.bvid === turn.subject_id);
   if (idx < 0) return;
+
+  // Maintain per-delight turns array
+  const existing = state.activeDelights[idx];
+  const prevTurns = Array.isArray(existing.turns) ? existing.turns : [];
+  const turnEntry = {
+    turn_id: turn.turn_id,
+    message: turn.message || "",
+    reply: turn.reply || "",
+    status: turn.status || "pending",
+    error: turn.error || "",
+  };
+  const turnIdx = prevTurns.findIndex((t) => t.turn_id === turn.turn_id);
+  const updatedTurns = turnIdx >= 0
+    ? prevTurns.map((t, i) => i === turnIdx ? turnEntry : t)
+    : [...prevTurns, turnEntry];
+
   const updates = {
     chat_turn_id: turn.turn_id,
     expanded: true,
+    turns: updatedTurns,
   };
   if (turn.status === "completed") {
     Object.assign(updates, {
@@ -2907,7 +2925,32 @@ function renderDelightSlot() {
       body.append(response);
     }
 
-    if (delight.chat_reply) {
+    // Multi-turn chat bubbles (turns is the authority; chat_reply is compat)
+    const turns = Array.isArray(delight.turns) ? delight.turns : [];
+    if (turns.length > 0) {
+      const bubbleArea = document.createElement("div");
+      bubbleArea.className = "delight-chat-turns";
+      for (const t of turns) {
+        const userBubble = document.createElement("div");
+        userBubble.className = "delight-turn-bubble is-user";
+        userBubble.textContent = t.message;
+        bubbleArea.append(userBubble);
+        const aiBubble = document.createElement("div");
+        if (t.status === "pending") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-thinking";
+          aiBubble.textContent = "阿B 正在品你这句话…";
+        } else if (t.status === "failed") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-error";
+          aiBubble.textContent = t.error || "这句还没发出去，稍后再试。";
+        } else {
+          aiBubble.className = "delight-turn-bubble is-assistant";
+          aiBubble.textContent = t.reply || "";
+        }
+        bubbleArea.append(aiBubble);
+      }
+      body.append(bubbleArea);
+    } else if (delight.chat_reply) {
+      // Fallback: show single chat_reply for backward compat
       const reply = document.createElement("p");
       reply.className = "delight-banner-chat-reply";
       reply.textContent = delight.chat_reply;
@@ -3022,6 +3065,8 @@ function renderDelightSlot() {
           }
           submit.disabled = true;
           const turnId = createClientTurnId("delight");
+          // Optimistically append to turns array
+          const prevTurns = Array.isArray(delight.turns) ? delight.turns : [];
           updateDelightHead({
             state: "chatting",
             response_message: "阿B 正在品你这句话。",
@@ -3029,6 +3074,7 @@ function renderDelightSlot() {
             chat_draft: draft,
             composer_open: false,
             expanded: true,
+            turns: [...prevTurns, { turn_id: turnId, message: draft, reply: "", status: "pending", error: "" }],
           });
           renderDelightSlot();
           status.replaceChildren();

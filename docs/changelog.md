@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）
+
+- 浏览器插件版本提升到 extension v0.3.44，准备发布 `extension-v0.3.44`；后端源码版本仍为 v0.3.89，不发布新的后端 tag。
+- 移动 Web 惊喜推荐的「聊一聊」不再切到对话 tab，而是在当前惊喜卡片内展开 16px textarea composer，提交后就地显示用户气泡、AI thinking、完成回复或失败提示。
+- 移动 Web 和插件的惊喜推荐内聊统一走 durable `/api/chat/turns`，按 `scope=delight` + `subject_id` 归并历史；pending turn 会轮询恢复，reload 后可重新 hydrate。
+- 插件惊喜推荐卡片从单个 `chat_reply` 升级为 per-delight `turns` 多轮气泡，`chat_reply` 仅保留为兼容 last reply；切换候选和 side panel reload 不再覆盖旧回合。
+- 补充移动端回归测试，锁定 delight inline chat 复用 `session=popup` 契约、`chatted` 状态继续保留「聊一聊」入口，同时 viewed/liked/rejected 等永久处理态不泄漏通用动作按钮。
+
 ## v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）
 
 - 后端源码版本提升到 v0.3.89，准备发布 `backend-v0.3.89`；浏览器插件版本提升到 extension v0.3.43，准备发布 `extension-v0.3.43`。

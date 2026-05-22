@@ -221,6 +221,10 @@ class TestMobileWebViewModels:
             assert.equal(liked.handled, true);
             assert.equal(liked.response_tone, "success");
 
+            const chatted = getDelightUiState({ bvid: "BV1", state: "chatted", delight_score: 0.7 });
+            assert.equal(chatted.handled, false);
+            assert.equal(chatted.response_tone, "info");
+
             const empty = getDelightUiState({});
             assert.equal(empty.visible, false);
         """)

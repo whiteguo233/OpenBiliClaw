@@ -19,12 +19,12 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.43 重要更新（2026-05-22）
+## 📌 v0.3.89 / extension v0.3.44 重要更新（2026-05-22）
 
-- **🔀 fallback 改为显式备选 Provider** —— 插件设置页现在分别为 LLM 和 embedding 提供“备选 Provider”下拉框，默认空；只有显式选择时才会 fallback。
-- **🧯 429 / cooldown 不再放大** —— discovery eval batch 和 recommendation copy batch 遇到 provider 限流时不再退回逐条 LLM 调用，避免一次 429 扩散成整批 traceback。
-- **🧵 平台任务领取更稳** —— 小红书、抖音、YouTube 的 `/next-task` claim 改用短生命周期 SQLite 连接，收敛并发插件轮询时的嵌套事务错误。
-- **📉 后台日志更安静** —— `httpx` / `httpcore` 文件日志默认降到 WARNING，减少模型服务请求噪声。
+- **💬 惊喜推荐原地聊** —— 移动端 Web 和插件的「聊一聊」现在都在惊喜推荐卡片内展开 composer，不再把你丢到对话 tab。
+- **🧵 多轮历史不串线** —— 每条惊喜推荐都有自己的多轮气泡历史，左右切换候选、side panel reload 或 pending 回复完成后都能按内容恢复。
+- **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
+- **📱 iOS 输入不缩放** —— 内联 composer 输入框保持 16px 字号，避免 iOS Safari focus 时自动放大页面。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -541,7 +541,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

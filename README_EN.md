@@ -17,12 +17,12 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.43 Highlights (2026-05-22)
+## 📌 v0.3.89 / extension v0.3.44 Highlights (2026-05-22)
 
-- **🔀 Fallback is now an explicit backup provider** — the extension settings page has separate backup-provider dropdowns for LLM and embedding, both empty by default; fallback only runs when one is selected.
-- **🧯 429 / cooldown no longer fans out** — discovery eval batches and recommendation copy batches stop retrying item-by-item when a provider is rate-limited, avoiding one 429 turning into a full batch of tracebacks.
-- **🧵 Source task claiming is steadier** — Xiaohongshu, Douyin, and YouTube `/next-task` claim paths now use short-lived SQLite connections to avoid nested transaction errors under concurrent extension polling.
-- **📉 Backend logs are quieter** — `httpx` / `httpcore` file logs default to WARNING to reduce model-service request noise.
+- **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
+- **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
+- **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
+- **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -478,7 +478,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.89 / extension v0.3.43: explicit fallback and rate-limit noise reduction release (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 

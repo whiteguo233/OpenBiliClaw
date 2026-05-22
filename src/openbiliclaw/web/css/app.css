@@ -1394,6 +1394,94 @@ body {
   color: var(--text-secondary);
 }
 
+/* ── Delight Inline Chat ─────────────────────────────────────── */
+.delight-chat-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 0;
+}
+
+.delight-chat-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.delight-chat-bubble.user {
+  background: var(--brand);
+  color: #fff;
+  margin-left: auto;
+  border-bottom-right-radius: 4px;
+}
+
+.delight-chat-bubble.assistant {
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgba(52, 72, 110, 0.06);
+  border-bottom-left-radius: 4px;
+}
+
+.delight-chat-bubble.thinking {
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.delight-chat-bubble.error {
+  background: rgba(239, 122, 134, 0.1);
+  color: var(--danger);
+}
+
+.delight-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.delight-composer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 16px;  /* ≥16px prevents iOS Safari auto-zoom on focus */
+  line-height: 1.4;
+  resize: none;
+  min-height: 44px;
+  max-height: 88px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.delight-composer-input:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: rgba(90, 169, 255, 0.4);
+}
+
+.delight-composer-input::placeholder {
+  color: var(--text-muted);
+}
+
+.delight-composer-send {
+  flex: 0 0 auto;
+  min-width: 60px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 14px;
+}
+
 /* ── Card Actions ─────────────────────────────────────────── */
 .card-actions {
   display: flex;

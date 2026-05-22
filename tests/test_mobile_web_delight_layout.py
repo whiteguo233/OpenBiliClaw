@@ -41,3 +41,23 @@ def test_mobile_delight_tray_uses_featured_reason_wrap() -> None:
     assert "overflow: hidden" not in reason_block
     assert "float: left" in thumb_block
     assert "position: absolute" in later_block
+
+
+def test_mobile_delight_inline_chat_uses_shared_session_helper() -> None:
+    """Inline delight chat must use the same mobile chat session contract as chat.js."""
+
+    js = RECOMMEND_JS.read_text()
+
+    assert "getMobileChatSession" in js
+    assert 'session: "mobile"' not in js
+    assert 'fetchChatTurns({ session: "mobile"' not in js
+
+
+def test_mobile_delight_actions_stay_hidden_for_permanent_handled_states() -> None:
+    """Viewed/liked/rejected delights should not keep generic action buttons visible."""
+
+    js = RECOMMEND_JS.read_text()
+
+    assert 'class="delight-result-state"' in js
+    assert "always rendered" not in js
+    assert "} else {\n    // Action buttons" in js

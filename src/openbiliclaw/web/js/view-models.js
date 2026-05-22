@@ -224,6 +224,11 @@ export function normalizeDelightCandidate(item) {
     state: normalizeText(item?.state) || "pending",
     response_message: normalizeText(item?.response_message),
     chat_reply: normalizeText(item?.chat_reply),
+    // Local UI fields preserved across re-normalizations
+    turns: Array.isArray(item?.turns) ? item.turns : [],
+    composer_open: Boolean(item?.composer_open),
+    draft: normalizeText(item?.draft),
+    chat_turn_id: normalizeText(item?.chat_turn_id),
   };
 }
 
@@ -265,7 +270,7 @@ export function getDelightUiState(delight, { highlightBvid = "" } = {}) {
   }
   if (normalized.state === "chatted" || normalized.state === "chatting") {
     return {
-      visible: true, highlighted: highlight, handled: normalized.state === "chatted",
+      visible: true, highlighted: highlight, handled: false,
       score_label: scoreLabel, response_tone: "info",
       response_message: normalized.response_message || "这句已经记下，后面会更会试探。",
     };

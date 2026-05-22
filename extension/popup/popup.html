@@ -864,6 +864,48 @@
       border: 1px solid rgba(237, 219, 233, 0.6);
     }
 
+    .delight-chat-turns {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 2px 0;
+    }
+
+    .delight-turn-bubble {
+      max-width: 88%;
+      padding: 7px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .delight-turn-bubble.is-user {
+      background: var(--brand);
+      color: #fff;
+      margin-left: auto;
+      border-bottom-right-radius: 3px;
+    }
+
+    .delight-turn-bubble.is-assistant {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(237, 219, 233, 0.6);
+      border-bottom-left-radius: 3px;
+    }
+
+    .delight-turn-bubble.is-thinking {
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+
+    .delight-turn-bubble.is-error {
+      background: rgba(239, 122, 134, 0.1);
+      color: #cf222e;
+      border-color: rgba(239, 122, 134, 0.2);
+    }
+
     .delight-banner-actions {
       display: flex;
       gap: 6px;

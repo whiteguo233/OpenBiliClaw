@@ -156,6 +156,10 @@ test("normalizeDelightCandidate fills stable fallbacks and upgrades cover urls",
     state: "pending",
     response_message: "",
     chat_reply: "",
+    turns: [],
+    composer_open: false,
+    chat_draft: "",
+    chat_turn_id: "",
   });
 });
 

@@ -14,7 +14,7 @@
 |------|------|------|
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
-| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
+| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐和兴趣猜测的内联聊天也会按 `scope=delight/probe` 恢复 pending/completed/failed turn；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
@@ -287,8 +287,9 @@ CLI 入口：
   - refresh 还在跑时，状态 chip 会优先显示 `正在补货`，不再先落成 `这轮还没补进`
   - 点击 `换一批` 时，进行中的文案会直接进入“现在在忙” chip，而不是再额外挤出一条独立状态行
 - 推荐卡片现已进一步改成更偏编辑式的内容流：封面、标题、推荐理由和操作区的层级被重新拉开，头部信息不会再和首张内容卡抢视觉主角
-- 惊喜推荐卡会直接展示封面、hook、标题和惊喜理由，并提供 `看看 / 不感兴趣 / 聊一聊 / 稍后看` 四个动作
-- `看看` 会打开对应内容并把这次点击保留成稳定的本地已处理态；`聊一聊` 会在卡内直接发送一条带上下文的聊天消息，不再强制把用户切去聊天 tab
+- 惊喜推荐卡会直接展示封面、hook、标题和惊喜理由，并提供 `看看 / 喜欢 / 不感兴趣 / 聊一聊 / 稍后看` 动作
+- `看看` 会打开对应内容并把这次点击保留成稳定的本地已处理态；`聊一聊` 会在卡内展开 composer，通过 durable `/api/chat/turns` 写入 `scope=delight` turn，不再强制把用户切去聊天 tab
+- 惊喜推荐内聊使用 per-delight `turns` 作为权威 UI 历史，提交后乐观追加用户气泡和 thinking 气泡，后端完成后就地替换为 AI 回复；`chat_reply` 仅保留为兼容 last reply 字段
 - 画像 tab：调用 `/api/profile-summary` 展示轻量人格画像、核心特质、深层需求、更完整的近期兴趣关键词，以及单独的“最近明显会避开”分组
 - 画像 tab 现在还会单独展示 `cognitive_style / motivational_drivers / current_phase` 三层认知摘要，让“这会儿的你”更像对用户的理解，而不是兴趣标签润色
 - 画像 tab 会额外展示“阿B 最近新记住了什么”，让用户能看到最近几次高置信度认知变化
@@ -305,7 +306,7 @@ CLI 入口：
 - 聊天 tab：调用 `/api/chat/turns` 创建 durable turn，后端先写入 `pending`，再后台生成回复；side panel reload 后会从 `/api/chat/turns?scope=chat` 重新 hydrate 用户消息、thinking 占位和已完成回复
 - 聊天输入框内置多场景 placeholder 轮播，提示用户可以描述自己怎么看内容、喜欢 / 讨厌什么、近期观看行为、自我状态或注意力变化；输入框 focus 时暂停轮播，blur 且内容为空时恢复。聊天 tab 激活时隐藏底部活动栏，聊天历史区域改为 flex 填满输入框上方空间并独立滚动，输入框固定在 side panel 底部，窄屏下也能优先展示更多历史消息
 - 惊喜推荐和兴趣猜测卡片内的 `聊一聊` 也会用 `scope=delight/probe` 写入 durable turn，回复完成后同步刷新对应卡片状态、画像摘要和最近动态；旧的 `/api/chat` 仍保留给兼容入口
-- durable chat turn 写入 SQLite `chat_turns`，不再依赖 DOM、JS 内存或 `sessionStorage` 保留主聊天历史；惊喜推荐只保留少量 `localStorage` UI 草稿/展开态作为本地兜底，权威回复状态以后端为准
+- durable chat turn 写入 SQLite `chat_turns`，不再依赖 DOM、JS 内存或 `sessionStorage` 保留主聊天历史；惊喜推荐保留 `localStorage` UI 草稿、展开态和 per-delight `turns` 作为本地兜底，权威回复状态以后端为准
 - 推荐、画像和聊天文案共享后端的 `ToneProfile`，基础风格是“老B友”，但会根据画像和近期反馈在信息密度、温度和梗感上动态调整
 - 推荐、画像、聊天三个 tab 已统一为同一套浅色卡片语言，推荐内容被提升为侧边栏首屏视觉重心
 
