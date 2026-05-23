@@ -19,12 +19,15 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.44 重要更新（2026-05-22）
+## 📌 v0.3.89 / extension v0.3.44 重要更新（2026-05-23）
 
 - **💬 惊喜推荐原地聊** —— 移动端 Web 和插件的「聊一聊」现在都在惊喜推荐卡片内展开 composer，不再把你丢到对话 tab。
 - **🧵 多轮历史不串线** —— 每条惊喜推荐都有自己的多轮气泡历史，左右切换候选、side panel reload 或 pending 回复完成后都能按内容恢复。
 - **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
 - **📱 iOS 输入不缩放** —— 内联 composer 输入框保持 16px 字号，避免 iOS Safari focus 时自动放大页面。
+- **🎯 搬运视频新增 AI 配音检测** —— 在原有拉丁字符比例 + 搬运关键词 + 外文品牌等多信号基础上，新增标题纯英文 + 中文关键词混合判定（Signal 5）和 B 站评论识别搬运反馈（Signal 6），减少 AI 配音搬运视频的漏检率。中文原创零误判。
+- **🌐 新增 Chrome CI 构建** —— CI 流水线新增 `Smoke-build Chrome extension` job，Firefox 与 Chrome 扩展均在 PR/推送时自动构建验证。
+- **🌈 Safari 弹窗面板化** —— Safari 点击工具栏按钮不再打开新标签页+道歉脚注。弹窗加宽到 420px，直接嵌入推荐 / 画像 / 聊天三个完整视图，与 Chrome side panel 保持 1:1 一致。
 - **🎯 B 站 YouTube 搬运视频自动替换** —— 推荐接口（`GET /api/recommendations`）自动识别 B 站的外文搬运内容，将标题、链接和来源替换为 YouTube 原版。支持多层检测（拉丁字符比例 + 搬运关键词 + 外文品牌 + 英文短语）；中文原创零误判；替换失败仅记日志，不阻塞推荐响应。配置开关 `[sources.youtube].replace_bilibili_reposts`。
 - **⭐ 稍后再看** —— 推荐卡片新增 ☆/★ 收藏按钮，点击即可加入「稍后再看」列表，跨刷新保持选中状态。后端通过 `/api/watch-later` 暴露 `POST` / `DELETE` / `GET (?limit&offset)` / `GET /{bvid}` 四个端点，独立于点赞/不喜欢/评论之外，可与任意 feedback 共存。表 schema 自动迁移，0.3.44 及更早版本升级即用。
 - **🛑 营销号识别与降权** —— 新增基于标题启发式的营销号识别（震惊/突发/居然/真相/某地等关键词、连续标点、emoji 密度、标题过长、描述复读标题等多重信号叠加置信度）。在推荐打分阶段做软性降权（curator demote），主动推送通道做硬过滤——你仍能在 feed 中看到边缘内容（相关性高时会上来），但永远不会被推送通知打扰。`[recommendation]` 三个 knob 控制阈值、降权权重和推送阻断，详见 `config.example.toml`。

@@ -8,399 +8,747 @@
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      /* Light theme — soft pastel, matches the brand pink without
-         shouting. The 0.96 surface alpha keeps a hint of the base
-         background showing through for depth. */
-      --bg-base: linear-gradient(160deg, #fff5f8 0%, #fffafc 60%);
-      --surface: rgba(255, 255, 255, 0.86);
+      --bg-base: #fffafc;
+      --bg-sky: #f2f8ff;
+      --surface: rgba(255, 255, 255, 0.84);
       --surface-strong: rgba(255, 255, 255, 0.96);
-      --line: rgba(217, 227, 242, 0.65);
-      --line-strong: rgba(217, 227, 242, 1);
-      --text-main: #1d2a3e;
-      --text-secondary: #6a7689;
-      --text-muted: #9ba6b8;
+      --surface-soft: rgba(255, 255, 255, 0.72);
+      --line: rgba(217, 227, 242, 0.95);
+      --line-strong: rgba(247, 173, 202, 0.46);
+      --text-main: #20304a;
+      --text-secondary: #60708c;
+      --text-muted: #8f9bb0;
       --brand: #fb7299;
       --brand-strong: #f65788;
-      --ok: #22c08a;
-      --ok-bg: rgba(34, 192, 138, 0.12);
-      --warn: #e29036;
-      --warn-bg: rgba(226, 144, 54, 0.14);
-      --err: #e25c5c;
-      --err-bg: rgba(226, 92, 92, 0.14);
-      --shadow-sm: 0 4px 14px rgba(73, 93, 130, 0.08);
+      --brand-soft: rgba(251, 114, 153, 0.12);
+      --sky: #5aa9ff;
+      --sky-soft: rgba(90, 169, 255, 0.14);
+      --lime-soft: rgba(96, 204, 154, 0.16);
+      --warning-soft: rgba(255, 189, 110, 0.2);
+      --success: #30b980;
+      --danger: #ef7a86;
+      --shadow-lg: 0 20px 40px rgba(56, 76, 112, 0.12);
+      --shadow-sm: 0 10px 22px rgba(73, 93, 130, 0.08);
       --shadow-brand: 0 6px 18px rgba(251, 114, 153, 0.30);
       --shadow-brand-hover: 0 9px 22px rgba(251, 114, 153, 0.40);
+      --focus-ring: 0 0 0 3px rgba(90, 169, 255, 0.28);
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg-base: linear-gradient(160deg, #1a1822 0%, #221a25 100%);
+        --bg-base: #1a1822;
+        --bg-sky: #1f1e2c;
         --surface: rgba(46, 41, 54, 0.78);
         --surface-strong: rgba(56, 49, 66, 0.92);
+        --surface-soft: rgba(46, 41, 54, 0.82);
         --line: rgba(255, 255, 255, 0.08);
         --line-strong: rgba(255, 255, 255, 0.16);
         --text-main: #f0eef5;
         --text-secondary: #b8b1c2;
         --text-muted: #807988;
         --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.35);
+        --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.45);
         --shadow-brand: 0 6px 18px rgba(251, 114, 153, 0.42);
         --shadow-brand-hover: 0 9px 24px rgba(251, 114, 153, 0.55);
-        --ok-bg: rgba(34, 192, 138, 0.22);
-        --warn-bg: rgba(226, 144, 54, 0.22);
-        --err-bg: rgba(226, 92, 92, 0.22);
+        --lime-soft: rgba(96, 204, 154, 0.22);
+        --warning-soft: rgba(255, 189, 110, 0.25);
+        --sky-soft: rgba(90, 169, 255, 0.2);
+        --brand-soft: rgba(251, 114, 153, 0.2);
       }
     }
 
     html, body {
-      width: 320px;
+      width: 420px;
       font-family: -apple-system, BlinkMacSystemFont, "Avenir Next",
                    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
                    sans-serif;
       color: var(--text-main);
-      background: var(--bg-base);
+      background:
+        radial-gradient(circle at 15% 12%, rgba(251, 114, 153, 0.2), transparent 30%),
+        radial-gradient(circle at 88% 18%, rgba(90, 169, 255, 0.24), transparent 26%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-sky) 100%);
       -webkit-font-smoothing: antialiased;
+      overflow: hidden;
     }
 
     body {
-      padding: 16px 16px 14px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      min-height: 100vh;
     }
 
-    /* ── Header ───────────────────────────────────────────────── */
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
 
-    .header {
+    /* ── Shell ──────────────────────────────────────────────────── */
+    .shell {
       display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .header .icon-wrap {
-      width: 40px;
-      height: 40px;
-      border-radius: 11px;
-      background: var(--surface-strong);
-      box-shadow: var(--shadow-sm);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .header img {
-      width: 32px;
-      height: 32px;
-      display: block;
-    }
-
-    .header .title-block {
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
       flex: 1;
-      min-width: 0;
+      min-height: 0;
     }
 
-    .header h1 {
-      font-size: 14.5px;
-      font-weight: 700;
-      letter-spacing: 0.1px;
-      line-height: 1.2;
-    }
-
-    .header .tagline {
-      font-size: 11px;
-      color: var(--text-secondary);
-      margin-top: 3px;
-      line-height: 1.35;
-    }
-
-    /* ── Status card ──────────────────────────────────────────── */
-
-    .status {
-      padding: 11px 13px;
-      background: var(--surface);
+    /* ── Hero ────────────────────────────────────────────────────── */
+    .hero {
       border: 1px solid var(--line);
-      border-radius: 11px;
-      font-size: 12px;
-      line-height: 1.45;
+      background: var(--surface);
+      backdrop-filter: blur(10px);
       box-shadow: var(--shadow-sm);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      border-radius: 20px;
+      padding: 12px 14px;
     }
 
-    .status .row {
+    .hero-top {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
     }
 
-    .status .row + .row {
-      margin-top: 7px;
-      padding-top: 7px;
-      border-top: 1px dashed var(--line);
-    }
-
-    .status .label {
-      color: var(--text-secondary);
+    .brand {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 10px;
+      min-width: 0;
     }
 
-    .status .value {
-      color: var(--text-main);
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
+    .brand-mark {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      flex-shrink: 0;
+      background: linear-gradient(145deg, rgba(255,255,255,0.96), rgba(255,239,247,0.94));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 8px 16px rgba(251,114,153,0.18);
+    }
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+    }
+    .brand-mark::before {
+      inset: 7px 6px 7px 8px;
+      border: 2.5px solid var(--brand);
+      border-top-color: transparent;
+      transform: rotate(18deg);
+    }
+    .brand-mark::after {
+      width: 8px;
+      height: 8px;
+      right: 5px;
+      top: 6px;
+      background: linear-gradient(145deg, var(--sky), #86c5ff);
+      box-shadow: 0 0 0 3px rgba(90, 169, 255, 0.14);
+    }
+
+    .brand-copy { min-width: 0; }
+    .brand-title-row {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      min-width: 0;
+    }
+    .brand-title-row h1 {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
     }
 
-    /* Status pill — colored dot + monospace text */
-    .pill {
-      display: inline-flex;
+    .status-badge {
+      display: flex;
       align-items: center;
       gap: 5px;
-      padding: 3px 9px;
+      padding: 4px 8px;
       border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
-    }
-
-    .pill .dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
+      background: rgba(255,255,255,0.76);
+      border: 1px solid rgba(230,237,248,0.92);
+      box-shadow: 0 4px 8px rgba(89,111,150,0.06);
       flex-shrink: 0;
     }
-
-    .pill.pending { background: var(--warn-bg); color: var(--warn); }
-    .pill.pending .dot { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
-
-    .pill.ok      { background: var(--ok-bg);   color: var(--ok); }
-    .pill.ok .dot { background: var(--ok); }
-
-    .pill.err     { background: var(--err-bg);  color: var(--err); }
-    .pill.err .dot { background: var(--err); }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%      { opacity: 0.35; }
+    .status-badge[data-tone="online"] {
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(244,255,250,0.92));
     }
-
-    /* ── Primary action ───────────────────────────────────────── */
-
-    .open-btn {
-      width: 100%;
-      padding: 11px 14px;
-      font-size: 13px;
-      font-weight: 600;
-      color: #fff;
-      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
-      border: none;
-      border-radius: 11px;
-      cursor: pointer;
-      transition: transform 0.08s ease, box-shadow 0.15s ease;
-      box-shadow: var(--shadow-brand);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
+    .status-badge[data-tone="offline"] {
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,245,247,0.92));
     }
-
-    .open-btn:hover {
-      box-shadow: var(--shadow-brand-hover);
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--success);
+      box-shadow: 0 0 0 3px rgba(48,185,128,0.14);
+      flex-shrink: 0;
     }
+    .status-dot.offline { background: var(--danger); box-shadow: 0 0 0 3px rgba(239,122,134,0.12); }
+    .status-label { font-size: 10px; line-height: 1; font-weight: 800; color: var(--text-main); }
 
-    .open-btn:active {
-      transform: translateY(1px);
-    }
-
-    .open-btn:focus-visible {
-      outline: 2px solid var(--brand-strong);
-      outline-offset: 2px;
-    }
-
-    .open-btn svg {
-      width: 13px;
-      height: 13px;
-    }
-
-    /* ── Footnote ─────────────────────────────────────────────── */
-
-    .footnote {
-      font-size: 10.5px;
-      color: var(--text-muted);
-      text-align: center;
-      line-height: 1.4;
-      padding: 0 4px;
-    }
-
-    /* ── Per-tab repost callout ──────────────────────────────────
-       Surfaces the QUERY_LAUNCHER_PENDING_STATUS reply when the
-       active B站 tab is flagged. .callout-known gets the brand
-       gradient (we have a destination, so it's an action); the
-       .callout-pending variant uses the same softer purple as
-       the content-script "pending" banner for visual consistency
-       across surfaces. */
-
-    .callout {
-      border-radius: 11px;
-      overflow: hidden;
+    /* ── Tabs ────────────────────────────────────────────────────── */
+    .tabs-shell {
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      backdrop-filter: blur(10px);
       box-shadow: var(--shadow-sm);
+      border-radius: 16px;
+      padding: 4px;
+    }
+    .tab-bar {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .tab-button {
+      border: 0;
+      border-radius: 12px;
+      padding: 8px 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      font-weight: 700;
+      transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+    }
+    .tab-button:hover { color: var(--text-main); background: rgba(255,255,255,0.52); }
+    .tab-button.is-active {
+      color: var(--brand-strong);
+      background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,240,246,0.98));
+      box-shadow: 0 6px 12px rgba(251,114,153,0.14);
     }
 
-    .callout-known {
-      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
-      color: #fff;
-      padding: 10px 12px;
+    /* ── Content ─────────────────────────────────────────────────── */
+    .content {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 2px;
+    }
+    .view { display: flex; flex-direction: column; gap: 8px; }
+    .view[hidden] { display: none; }
+
+    /* ── Status card (保留原有样式但更紧凑) ───── */
+    .status-card {
+      padding: 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      font-size: 11.5px;
+      line-height: 1.4;
+      box-shadow: var(--shadow-sm);
+      backdrop-filter: blur(8px);
+    }
+    .status-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      font-size: 12px;
-      line-height: 1.35;
+    }
+    .status-row + .status-row {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--line);
+    }
+    .status-label { color: var(--text-secondary); display: flex; align-items: center; gap: 5px; }
+    .status-value { color: var(--text-main); font-weight: 600; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 5px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .pill .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+    .pill.pending { background: var(--warning-soft); color: #8a6520; }
+    .pill.pending .dot { background: #e29036; animation: pulse 1.4s ease-in-out infinite; }
+    .pill.ok { background: var(--lime-soft); color: #1a7a4a; }
+    .pill.ok .dot { background: var(--success); }
+    .pill.err { background: rgba(239,122,134,0.15); color: #c0404e; }
+    .pill.err .dot { background: var(--danger); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
     }
 
+    /* ── Repost callout ──────────────────────────────────────────── */
+    .callout { border-radius: 14px; overflow: hidden; box-shadow: var(--shadow-sm); }
+    .callout-known {
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      padding: 9px 11px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      line-height: 1.3;
+    }
     .callout-pending {
       background: linear-gradient(135deg, #b89cc7, #8d6da5);
       color: #fff;
-      padding: 9px 12px;
+      padding: 8px 11px;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      font-size: 11.5px;
-      line-height: 1.35;
-    }
-
-    .callout-text {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      flex: 1;
-      min-width: 0;
-    }
-
-    .callout-icon {
-      font-size: 13px;
-      flex-shrink: 0;
-    }
-
-    .callout-btn {
-      padding: 4px 11px;
       font-size: 11px;
+      line-height: 1.3;
+    }
+    .callout-text { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+    .callout-icon { font-size: 12px; flex-shrink: 0; }
+    .callout-btn {
+      padding: 3px 10px;
+      font-size: 10px;
       font-weight: 700;
       color: #fff;
-      background: rgba(255, 255, 255, 0.18);
-      border: 1px solid rgba(255, 255, 255, 0.65);
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.65);
       border-radius: 999px;
       cursor: pointer;
       flex-shrink: 0;
-      transition: background 0.15s, color 0.15s;
+    }
+    .callout-btn:hover { background: #fff; color: var(--brand-strong); }
+
+    /* ── Recommendation card ─────────────────────────────────────── */
+    .rec-card {
+      display: flex;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.15s;
+      cursor: pointer;
+    }
+    .rec-card:hover {
+      box-shadow: var(--shadow-lg);
     }
 
-    .callout-btn:hover {
-      background: #fff;
+    .rec-cover {
+      flex-shrink: 0;
+      width: 100px;
+      aspect-ratio: 16 / 10;
+      border-radius: 10px;
+      overflow: hidden;
+      background: linear-gradient(145deg, rgba(251,114,153,0.10), rgba(168,85,247,0.08));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      border: 1px solid rgba(255,255,255,0.92);
+    }
+    .rec-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .rec-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .rec-title {
+      font-size: 12.5px;
+      font-weight: 700;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .rec-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .rec-source {
+      padding: 1px 6px;
+      border-radius: 99px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .rec-source[data-source="bilibili"] { background: var(--brand-soft); color: var(--brand-strong); }
+    .rec-source[data-source="youtube"] { background: var(--sky-soft); color: #3a7bd5; }
+    .rec-source[data-source="xiaohongshu"] { background: rgba(255,100,100,0.12); color: #d44; }
+    .rec-source[data-source="douyin"] { background: rgba(20,20,20,0.08); color: #333; }
+    .rec-desc {
+      font-size: 10.5px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .rec-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .rec-action-btn {
+      padding: 3px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: rgba(255,255,255,0.6);
+      transition: background 0.12s, color 0.12s;
+    }
+    .rec-action-btn:hover { background: var(--brand-soft); color: var(--brand-strong); border-color: var(--brand-strong); }
+
+    /* ── Empty state ─────────────────────────────────────────────── */
+    .empty-state {
+      padding: 20px;
+      text-align: center;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+    }
+    .empty-state h3 { font-size: 14px; font-weight: 800; margin-bottom: 4px; }
+    .empty-state p { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+    .empty-state .action-button {
+      margin-top: 10px;
+      padding: 6px 16px;
+      border: 0;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      box-shadow: var(--shadow-brand);
+    }
+
+    /* ── Profile tab ─────────────────────────────────────────────── */
+    .profile-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+      box-shadow: var(--shadow-sm);
+    }
+    .profile-card h3 {
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .profile-portrait {
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+    }
+    .profile-bio {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .memory-card {
+      margin-top: 8px;
+      padding: 8px;
+      border-radius: 12px;
+      background: var(--brand-soft);
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--text-main);
+    }
+    .memory-card .memory-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
       color: var(--brand-strong);
+      margin-bottom: 2px;
+    }
+    .profile-empty {
+      padding: 20px;
+      text-align: center;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+    }
+    .profile-empty h3 { font-size: 14px; font-weight: 800; }
+    .profile-empty p { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; }
+
+    .profile-stat-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .profile-stat {
+      padding: 8px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      text-align: center;
+    }
+    .profile-stat .num {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--brand-strong);
+      line-height: 1.2;
+    }
+    .profile-stat .label {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 700;
+      margin-top: 2px;
     }
 
-    .callout-btn:focus-visible {
-      outline: 2px solid #fff;
-      outline-offset: 1px;
+    /* ── Chat tab ────────────────────────────────────────────────── */
+    .chat-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
     }
+    .chat-messages {
+      flex: 1;
+      min-height: 100px;
+      max-height: 260px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .chat-msg {
+      max-width: 85%;
+      padding: 7px 10px;
+      border-radius: 14px;
+      font-size: 11.5px;
+      line-height: 1.45;
+    }
+    .chat-msg.user {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .chat-msg.agent {
+      align-self: flex-start;
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-bottom-left-radius: 4px;
+    }
+    .chat-msg.system {
+      align-self: center;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      max-width: 100%;
+    }
+    .chat-input-row {
+      display: flex;
+      gap: 6px;
+    }
+    .chat-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.8);
+      font-size: 12px;
+      color: var(--text-main);
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .chat-input:focus { border-color: var(--sky); box-shadow: var(--focus-ring); }
+    .chat-send {
+      padding: 8px 14px;
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: var(--shadow-brand);
+      flex-shrink: 0;
+    }
+    .chat-send:hover { opacity: 0.9; }
+    .chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .chat-status {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 2px;
+    }
+
+    /* ── Loading spinner ─────────────────────────────────────────── */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--line);
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="icon-wrap">
-      <img src="../icons/icon48.png" alt="OpenBiliClaw">
-    </div>
-    <div class="title-block">
-      <h1>OpenBiliClaw</h1>
-      <div class="tagline">跨平台内容发现 AI Agent</div>
-    </div>
-  </div>
-
-  <div class="status" role="status" aria-live="polite">
-    <div class="row">
-      <span class="label">
-        <!-- Inline SVG: signal/wifi icon -->
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M2 7a8.5 8.5 0 0 1 12 0M4.5 9.5a5 5 0 0 1 7 0M7 12a1.5 1.5 0 0 1 2 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-        </svg>
-        后台
-      </span>
-      <span class="value" id="bg-status-wrap">
-        <span class="pill pending" id="bg-pill">
-          <span class="dot"></span>
-          <span id="bg-status">检查中…</span>
-        </span>
-      </span>
-    </div>
-    <div class="row">
-      <span class="label">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-        </svg>
-        版本
-      </span>
-      <span class="value" id="version">—</span>
-    </div>
-    <div class="row">
-      <span class="label">
-        <!-- bookmark/star outline -->
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M8 1.5l1.95 4.27 4.55.5-3.4 3.13.93 4.6L8 11.7l-4.03 2.3.94-4.6-3.41-3.13 4.55-.5L8 1.5z"
-                stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
-        </svg>
-        稍后再看
-      </span>
-      <span class="value" id="watch-later-count">—</span>
-    </div>
-  </div>
-
-  <!--
-    Per-tab repost callout. Hidden by default; popup-launcher.js
-    flips the [hidden] attribute when the active B站 tab has been
-    flagged via the QUERY_LAUNCHER_PENDING_STATUS protocol.
-
-    Three terminal states (the JS picks one and hides the others):
-      • #repost-known   — repost detected AND yt_url available → show jump button
-      • #repost-pending — repost detected but yt_url empty (server can't reach YT)
-                          → show a soft purple banner, no jump
-    Container itself is hidden when not on a B站 video page or
-    nothing was detected.
-  -->
-  <div id="repost-callout" class="callout" hidden>
-    <div class="callout-known" id="repost-known" hidden>
-      <div class="callout-text">
-        <span class="callout-icon" aria-hidden="true">📺</span>
-        <span>检测到搬运视频 · 已找到 YouTube 原版</span>
+  <div class="shell">
+    <!-- Hero: brand + status badge (matches popup.html) -->
+    <header class="hero">
+      <div class="hero-top">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-copy">
+            <div class="brand-title-row">
+              <h1>OpenBiliClaw</h1>
+              <div id="statusBadge" class="status-badge" data-tone="offline">
+                <div id="statusDot" class="status-dot offline"></div>
+                <span id="statusLabel" class="status-label">未连接</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <button class="callout-btn" id="repost-jump" type="button">跳转</button>
+    </header>
+
+    <!-- Tab bar (1-to-1 with popup.html) -->
+    <div class="tabs-shell">
+      <div class="tab-bar" role="tablist" aria-label="Popup views">
+        <button id="tabRecommend" class="tab-button is-active" type="button" role="tab" aria-selected="true" aria-controls="viewRecommend">推荐</button>
+        <button id="tabProfile" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="viewProfile">我的画像</button>
+        <button id="tabChat" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="viewChat">聊聊想法</button>
+      </div>
     </div>
-    <div class="callout-pending" id="repost-pending" hidden>
-      <span class="callout-icon" aria-hidden="true">📺</span>
-      <span>搬运视频 · 服务器暂时无法连接 YouTube</span>
-    </div>
+
+    <!-- Scrollable content area -->
+    <main class="content">
+      <!-- 推荐 view (default, visible) -->
+      <section id="viewRecommend" class="view" role="tabpanel" aria-labelledby="tabRecommend">
+        <!-- Status card (from original launcher, now in Recommend tab) -->
+        <div class="status-card" role="status" aria-live="polite">
+          <div class="status-row">
+            <span class="status-label">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 7a8.5 8.5 0 0 1 12 0M4.5 9.5a5 5 0 0 1 7 0M7 12a1.5 1.5 0 0 1 2 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              后台
+            </span>
+            <span class="status-value" id="bg-status-wrap">
+              <span class="pill pending" id="bg-pill">
+                <span class="dot"></span>
+                <span id="bg-status">检查中…</span>
+              </span>
+            </span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              版本
+            </span>
+            <span class="status-value" id="version">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 1.5l1.95 4.27 4.55.5-3.4 3.13.93 4.6L8 11.7l-4.03 2.3.94-4.6-3.41-3.13 4.55-.5L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="none"/>
+              </svg>
+              稍后再看
+            </span>
+            <span class="status-value" id="watch-later-count">—</span>
+          </div>
+        </div>
+
+        <!-- Repost callout (retained from original) -->
+        <div id="repost-callout" class="callout" hidden>
+          <div class="callout-known" id="repost-known" hidden>
+            <div class="callout-text">
+              <span class="callout-icon" aria-hidden="true">📺</span>
+              <span>检测到搬运视频 · 已找到原版</span>
+            </div>
+            <button class="callout-btn" id="repost-jump" type="button">跳转</button>
+          </div>
+          <div class="callout-pending" id="repost-pending" hidden>
+            <span class="callout-icon" aria-hidden="true">📺</span>
+            <span>搬运视频 · 服务器暂无法连接 YouTube</span>
+          </div>
+        </div>
+
+        <!-- Refresh button row (from popup.html) -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 2px;">
+          <span style="font-size:10.5px;color:var(--text-muted);font-weight:600;">为你推荐</span>
+          <button id="refreshBtn" class="rec-action-btn" type="button" style="font-size:10px;">换一批</button>
+        </div>
+
+        <!-- Recommendation list -->
+        <div id="recommendationList" style="display:flex;flex-direction:column;gap:6px;"></div>
+
+        <!-- Loading state -->
+        <div id="recLoading" class="loading" hidden>
+          <div class="spinner"></div>
+          <span>正在获取推荐…</span>
+        </div>
+
+        <!-- Empty state -->
+        <div id="recEmpty" class="empty-state" hidden>
+          <h3 id="recEmptyTitle">还没刷出新东西</h3>
+          <p id="recEmptyText">稍等一下，新的推荐马上来。</p>
+          <button id="recRefreshBtn" class="action-button" type="button">现在就刷</button>
+        </div>
+      </section>
+
+      <!-- 个人 view -->
+      <section id="viewProfile" class="view" role="tabpanel" aria-labelledby="tabProfile" hidden>
+        <div id="profileCard" class="profile-card"></div>
+        <div id="profileEmpty" class="profile-empty" hidden>
+          <h3>画像还没攒起来</h3>
+          <p>先跑一遍 openbiliclaw init，再回来看看。</p>
+        </div>
+        <div id="profileLoading" class="loading" hidden>
+          <div class="spinner"></div>
+          <span>正在读取画像…</span>
+        </div>
+      </section>
+
+      <!-- 聊一聊 view -->
+      <section id="viewChat" class="view" role="tabpanel" aria-labelledby="tabChat" hidden>
+        <div class="chat-shell">
+          <div id="chatMessages" class="chat-messages"></div>
+          <div id="chatStatus" class="chat-status" hidden></div>
+          <div class="chat-input-row">
+            <input id="chatInput" class="chat-input" type="text" placeholder="说说你的想法…" autocomplete="off">
+            <button id="chatSend" class="chat-send" type="button">发送</button>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
 
-  <button class="open-btn" id="open-full" type="button">
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3 3h5M3 3v5M3 3l5 5M13 13H8M13 13V8M13 13l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-    </svg>
-    在新标签页中打开完整界面
-  </button>
-
-  <div class="footnote">Safari 暂不支持侧边栏 · 已切换到独立标签页模式</div>
-
-  <!-- popup-launcher-protocol.js attaches the message-type constants
-       to window.OpenBiliClawLauncher before the launcher script runs.
-       Order matters: must load before popup-launcher.js. -->
   <script src="popup-launcher-protocol.js"></script>
-  <script src="popup-launcher.js"></script>
+  <script type="module" src="popup-launcher.js"></script>
 </body>
 </html>
