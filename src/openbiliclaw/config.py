@@ -796,7 +796,11 @@ def _normalize_llm_concurrency(value: object) -> int:
 
 
 def _normalize_pool_source_shares(value: object) -> dict[str, int]:
-    """Normalize scheduler pool source shares from TOML into positive ints."""
+    """Normalize scheduler pool source shares from TOML into non-negative ints.
+
+    A share of ``0`` is a legitimate value meaning "do not surface this
+    source in recommendations". Negatives and non-numeric values are dropped.
+    """
     if not isinstance(value, dict):
         return dict(_DEFAULT_POOL_SOURCE_SHARES)
 
@@ -809,10 +813,17 @@ def _normalize_pool_source_shares(value: object) -> dict[str, int]:
             share = int(raw_share)
         except (TypeError, ValueError):
             continue
-        if share <= 0:
+        if share < 0:
             continue
         shares[source] = share
-    return shares or dict(_DEFAULT_POOL_SOURCE_SHARES)
+    if not shares:
+        return dict(_DEFAULT_POOL_SOURCE_SHARES)
+    # All zeros would compute total_share=0 downstream. Fall back to
+    # defaults; users who want to silence everything should toggle each
+    # source's ``enabled`` flag instead.
+    if all(share == 0 for share in shares.values()):
+        return dict(_DEFAULT_POOL_SOURCE_SHARES)
+    return shares
 
 
 def _normalize_extension_disconnect_grace(value: object) -> int:

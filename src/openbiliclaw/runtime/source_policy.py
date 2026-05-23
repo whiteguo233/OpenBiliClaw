@@ -130,6 +130,18 @@ def _normalize_shares(value: Mapping[str, int] | Any) -> dict[str, int]:
             share = int(raw_share)
         except (TypeError, ValueError):
             continue
-        if share > 0:
+        # Allow 0 so a user can keep a source enabled (data still collected)
+        # while excluding it from recommendations. Reject negatives and
+        # non-numeric values.
+        if share >= 0:
             shares[source] = share
-    return shares or dict(DEFAULT_POOL_SOURCE_SHARES)
+    if not shares:
+        return dict(DEFAULT_POOL_SOURCE_SHARES)
+    # If every configured share is zero, we'd have nothing to recommend
+    # from any enabled source. Fall back to defaults so the system
+    # remains functional. A user who explicitly disables all sources
+    # via `enabled=False` is a different code path (effective_pool_source_shares
+    # returns {} in that case, which the caller handles).
+    if all(share == 0 for share in shares.values()):
+        return dict(DEFAULT_POOL_SOURCE_SHARES)
+    return shares

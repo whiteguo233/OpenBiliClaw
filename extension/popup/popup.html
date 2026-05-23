@@ -4213,21 +4213,22 @@
 
       <div class="settings-section settings-source-card" data-source-card="pool">
         <h3><span class="section-icon">&#x1F4E6;</span> 候选池来源占比</h3>
+        <p class="settings-hint">设为 0 表示完全不推荐该平台的内容（数据仍会按需采集，仅在推荐时被排除）。</p>
         <div class="settings-field">
           <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
-          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
+          <input id="cfgPoolShareBilibili" type="number" min="0" step="1" placeholder="8">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareXhs">候选池小红书占比</label>
-          <input id="cfgPoolShareXhs" type="number" min="1" step="1" placeholder="1">
+          <input id="cfgPoolShareXhs" type="number" min="0" step="1" placeholder="1">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareDouyin">候选池抖音占比</label>
-          <input id="cfgPoolShareDouyin" type="number" min="1" step="1" placeholder="1">
+          <input id="cfgPoolShareDouyin" type="number" min="0" step="1" placeholder="1">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
-          <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+          <input id="cfgPoolShareYoutube" type="number" min="0" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

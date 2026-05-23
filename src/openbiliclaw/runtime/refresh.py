@@ -1596,12 +1596,19 @@ class ContinuousRefreshController:
 
     def _source_target_counts(self) -> dict[str, int]:
         shares = self._normalized_pool_source_shares()
-        total_share = sum(shares.values())
+        targets: dict[str, int] = {source: 0 for source, share in shares.items() if share == 0}
+        positive = [(source, share) for source, share in shares.items() if share > 0]
+        if not positive:
+            # _normalized_pool_source_shares falls back to defaults when all
+            # shares are 0, so this branch is just defensive belt-and-braces.
+            return targets
+        total_share = sum(share for _source, share in positive)
         remaining = self.pool_target_count
-        targets: dict[str, int] = {}
-        items = list(shares.items())
-        for index, (source, share) in enumerate(items):
-            if index == len(items) - 1:
+        for index, (source, share) in enumerate(positive):
+            if index == len(positive) - 1:
+                # Last positive-share source gets the rounding leftover.
+                # Zero-share sources never get it, even if they appear
+                # last in the original iteration order.
                 targets[source] = remaining
                 break
             count = round(self.pool_target_count * share / total_share)
@@ -1668,7 +1675,9 @@ class ContinuousRefreshController:
                 share = int(raw.get(source, 0))
             except (TypeError, ValueError):
                 share = 0
-            if share > 0:
+            # Accept 0 as a legitimate "do not recommend from this source"
+            # signal. Negatives are rejected.
+            if share >= 0:
                 normalized[source] = share
         for source, raw_share in raw.items():
             source_key = str(source).strip().lower()
@@ -1678,9 +1687,15 @@ class ContinuousRefreshController:
                 share = int(raw_share)
             except (TypeError, ValueError):
                 continue
-            if share > 0:
+            if share >= 0:
                 normalized[source_key] = share
-        return normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+        # If every share is zero we'd compute total_share = 0 in
+        # _source_target_counts and divide by zero. Fall back to defaults
+        # so the pool keeps refilling. A user who really wants to disable
+        # everything should toggle enabled=False on each source.
+        if not normalized or all(value == 0 for value in normalized.values()):
+            return dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+        return normalized
 
     def _requested_refresh_limit(
         self,
