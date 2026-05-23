@@ -14,6 +14,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -34,6 +35,14 @@ logger = logging.getLogger(__name__)
 _LOCK_RETRY_ATTEMPTS = 8
 _LOCK_RETRY_SLEEP_SECONDS = 0.02
 _BVID_PATTERN = re.compile(r"(BV[0-9A-Za-z]+)")
+_VIEW_CONTENT_ID_METADATA_KEYS = (
+    "content_id",
+    "bvid",
+    "note_id",
+    "aweme_id",
+    "video_id",
+    "yt_video_id",
+)
 _XHS_SOURCE_FAMILY = "xiaohongshu"
 _XHS_SOURCE_PREFIXES = ("xhs-", "xhs_", "xiaohongshu")
 _DOUYIN_SOURCE_FAMILY = "douyin"
@@ -208,6 +217,20 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
     if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
         return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
+
+
+def _normalize_source_platform_key(source_platform: object) -> str:
+    """Return the canonical source key used in cross-source content IDs."""
+    raw = str(source_platform or "").strip().lower()
+    if raw in {_XHS_SOURCE_FAMILY, "xhs"}:
+        return _XHS_SOURCE_FAMILY
+    if raw in {_DOUYIN_SOURCE_FAMILY, "dy"}:
+        return _DOUYIN_SOURCE_FAMILY
+    if raw in {_YOUTUBE_SOURCE_FAMILY, "yt"}:
+        return _YOUTUBE_SOURCE_FAMILY
+    if raw in {_BILIBILI_SOURCE_FAMILY, "bili"}:
+        return _BILIBILI_SOURCE_FAMILY
+    return raw
 
 
 def _is_linkable_pool_source(
@@ -1010,7 +1033,11 @@ class Database:
             (max(limit * 5, 50),),
         )
         rows = [dict(row) for row in cursor.fetchall()]
-        rows = self._exclude_viewed_rows(rows, self.get_recent_viewed_bvids(), limit=len(rows))
+        rows = self._exclude_viewed_rows(
+            rows,
+            self.get_recent_viewed_content_keys(),
+            limit=len(rows),
+        )
         return self._balance_pool_rows(rows, limit=limit)
 
     def get_pool_candidates(
@@ -1119,7 +1146,11 @@ class Database:
             params = (max_per_topic_group, fetch_limit)
         cursor = self.conn.execute(sql, params)
         rows = [dict(row) for row in cursor.fetchall()]
-        rows = self._exclude_viewed_rows(rows, self.get_recent_viewed_bvids(), limit=len(rows))
+        rows = self._exclude_viewed_rows(
+            rows,
+            self.get_recent_viewed_content_keys(),
+            limit=len(rows),
+        )
         return self._balance_pool_rows(rows, limit=limit)
 
     def count_pool_candidates(self) -> int:
@@ -1145,12 +1176,12 @@ class Database:
               )
             """
         )
-        viewed_bvids = self.get_recent_viewed_bvids()
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         return sum(
             1
             for row in cursor.fetchall()
             if str(row["bvid"]).strip()
-            and str(row["bvid"]).strip() not in viewed_bvids
+            and not self._is_viewed_row(dict(row), viewed_content_keys)
             and _is_linkable_pool_source(
                 row["source"],
                 row["source_platform"],
@@ -1173,11 +1204,12 @@ class Database:
               )
             """
         )
-        viewed_bvids = self.get_recent_viewed_bvids()
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, int] = defaultdict(int)
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
-            if not bvid or bvid in viewed_bvids:
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -1206,7 +1238,7 @@ class Database:
               )
             """
         )
-        viewed_bvids = self.get_recent_viewed_bvids()
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, dict[str, int]] = {
             "topic_group": defaultdict(int),
             "style_key": defaultdict(int),
@@ -1214,7 +1246,8 @@ class Database:
         }
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
-            if not bvid or bvid in viewed_bvids:
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -1570,10 +1603,12 @@ class Database:
               )
             """
         )
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         rows = [
             dict(row)
             for row in cursor.fetchall()
-            if _is_linkable_pool_source(
+            if not self._is_viewed_row(dict(row), viewed_content_keys)
+            and _is_linkable_pool_source(
                 row["source"],
                 row["source_platform"],
                 row["content_url"],
@@ -1703,11 +1738,12 @@ class Database:
               )
             """
         )
-        viewed_bvids = self.get_recent_viewed_bvids()
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
-            if not bvid or bvid in viewed_bvids:
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -1809,14 +1845,15 @@ class Database:
                 bvid ASC
             """
         )
-        viewed_bvids = self.get_recent_viewed_bvids()
+        viewed_content_keys = self.get_recent_viewed_content_keys()
         selected_bvids: list[str] = []
         selected_counts: dict[str, int] = defaultdict(int)
         target_selection_count = sum(deficits.values())
 
         for row in cursor.fetchall():
             bvid = str(row["bvid"]).strip()
-            if not bvid or bvid in viewed_bvids:
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
                 continue
             if not _is_linkable_pool_source(
                 row["source"],
@@ -1909,6 +1946,27 @@ class Database:
             if bvid:
                 viewed_bvids.add(bvid)
         return viewed_bvids
+
+    def get_recent_viewed_content_keys(self, limit: int = 2000) -> set[str]:
+        """Return recently viewed content identities across supported sources.
+
+        Keys are source-aware (``source_platform:content_id``) and include
+        raw BVIDs for legacy Bilibili callers.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT url, metadata
+            FROM events
+            WHERE event_type = 'view'
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        viewed_keys: set[str] = set()
+        for row in cursor.fetchall():
+            viewed_keys.update(self._extract_content_keys_from_view_event(dict(row)))
+        return viewed_keys
 
     @staticmethod
     def _explore_risk_cluster(row: dict[str, Any]) -> str:
@@ -2105,7 +2163,11 @@ class Database:
             (limit,),
         )
         rows = [dict(row) for row in cursor.fetchall()]
-        rows = self._exclude_viewed_rows(rows, self.get_recent_viewed_bvids(), limit=len(rows))
+        rows = self._exclude_viewed_rows(
+            rows,
+            self.get_recent_viewed_content_keys(),
+            limit=len(rows),
+        )
         return rows[:limit]
 
     def get_pool_candidates_needing_copy(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -2136,7 +2198,11 @@ class Database:
             (limit,),
         )
         rows = [dict(row) for row in cursor.fetchall()]
-        rows = self._exclude_viewed_rows(rows, self.get_recent_viewed_bvids(), limit=len(rows))
+        rows = self._exclude_viewed_rows(
+            rows,
+            self.get_recent_viewed_content_keys(),
+            limit=len(rows),
+        )
         return rows[:limit]
 
     def update_pool_copy(
@@ -3130,7 +3196,7 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
 
     @staticmethod
-    def _extract_bvid_from_view_event(row: dict[str, Any]) -> str:
+    def _decode_event_metadata(row: dict[str, Any]) -> dict[str, Any]:
         metadata_raw = row.get("metadata", "")
         if isinstance(metadata_raw, str) and metadata_raw:
             try:
@@ -3138,9 +3204,98 @@ class Database:
             except json.JSONDecodeError:
                 metadata = {}
             if isinstance(metadata, dict):
-                bvid = str(metadata.get("bvid", "")).strip()
-                if bvid:
-                    return bvid
+                return metadata
+        if isinstance(metadata_raw, dict):
+            return metadata_raw
+        return {}
+
+    @classmethod
+    def _extract_content_keys_from_view_event(cls, row: dict[str, Any]) -> set[str]:
+        metadata = cls._decode_event_metadata(row)
+        url = str(row.get("url", "")).strip()
+
+        platform = _normalize_source_platform_key(metadata.get("source_platform", ""))
+        if not platform:
+            platform = cls._infer_source_platform_from_url(url)
+
+        content_ids: set[str] = set()
+        for key in _VIEW_CONTENT_ID_METADATA_KEYS:
+            raw_value = metadata.get(key, "")
+            if isinstance(raw_value, (str, int)):
+                value = str(raw_value).strip()
+                if value:
+                    content_ids.add(value)
+
+        url_content_id = cls._extract_content_id_from_url(platform, url)
+        if url_content_id:
+            content_ids.add(url_content_id)
+
+        bvid = cls._extract_bvid_from_view_event(row)
+        if bvid:
+            content_ids.add(bvid)
+            platform = platform or _BILIBILI_SOURCE_FAMILY
+
+        keys: set[str] = set()
+        for content_id in content_ids:
+            if content_id.startswith("BV"):
+                keys.add(content_id)
+            if platform:
+                keys.add(f"{platform}:{content_id}")
+        return keys
+
+    @staticmethod
+    def _infer_source_platform_from_url(url: str) -> str:
+        if not url:
+            return ""
+        host = urlparse(url).netloc.lower()
+        if "bilibili.com" in host or host == "b23.tv":
+            return _BILIBILI_SOURCE_FAMILY
+        if "xiaohongshu.com" in host or "xhslink.com" in host:
+            return _XHS_SOURCE_FAMILY
+        if "douyin.com" in host:
+            return _DOUYIN_SOURCE_FAMILY
+        if "youtube.com" in host or host == "youtu.be":
+            return _YOUTUBE_SOURCE_FAMILY
+        return ""
+
+    @staticmethod
+    def _extract_content_id_from_url(platform: str, url: str) -> str:
+        if not url:
+            return ""
+        parsed = urlparse(url)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if platform == _XHS_SOURCE_FAMILY:
+            if len(path_parts) >= 2 and path_parts[0] == "explore":
+                return path_parts[1]
+            if len(path_parts) >= 3 and path_parts[:2] == ["discovery", "item"]:
+                return path_parts[2]
+        if platform == _DOUYIN_SOURCE_FAMILY and "video" in path_parts:
+            video_index = path_parts.index("video")
+            if len(path_parts) > video_index + 1:
+                return path_parts[video_index + 1]
+        if platform == _YOUTUBE_SOURCE_FAMILY:
+            query_video_id = parse_qs(parsed.query).get("v", [""])[0].strip()
+            if query_video_id:
+                return query_video_id
+            if parsed.netloc.lower() == "youtu.be" and path_parts:
+                return path_parts[0]
+            for prefix in ("shorts", "embed", "live"):
+                if prefix in path_parts:
+                    prefix_index = path_parts.index(prefix)
+                    if len(path_parts) > prefix_index + 1:
+                        return path_parts[prefix_index + 1]
+        if platform == _BILIBILI_SOURCE_FAMILY:
+            match = _BVID_PATTERN.search(url)
+            if match:
+                return match.group(1)
+        return ""
+
+    @staticmethod
+    def _extract_bvid_from_view_event(row: dict[str, Any]) -> str:
+        metadata = Database._decode_event_metadata(row)
+        bvid = str(metadata.get("bvid", "")).strip()
+        if bvid:
+            return bvid
 
         url = str(row.get("url", "")).strip()
         match = _BVID_PATTERN.search(url)
@@ -3149,13 +3304,41 @@ class Database:
         return ""
 
     @staticmethod
+    def _content_row_view_keys(row: dict[str, Any]) -> set[str]:
+        platform = _normalize_source_platform_key(row.get("source_platform", ""))
+        if not platform:
+            platform = _pool_source_family(row.get("source", ""), row.get("source_platform", ""))
+            if platform == "unknown":
+                platform = ""
+
+        keys: set[str] = set()
+        raw_bvid = str(row.get("bvid", "") or "").strip()
+        content_id = str(row.get("content_id", "") or "").strip() or raw_bvid
+        for value in {raw_bvid, content_id}:
+            if not value:
+                continue
+            if value.startswith("BV"):
+                keys.add(value)
+            if platform:
+                keys.add(f"{platform}:{value}")
+        return keys
+
+    @staticmethod
+    def _is_viewed_row(row: dict[str, Any], viewed_content_keys: set[str]) -> bool:
+        if not viewed_content_keys:
+            return False
+        return bool(Database._content_row_view_keys(row) & viewed_content_keys)
+
+    @staticmethod
     def _exclude_viewed_rows(
         rows: list[dict[str, Any]],
-        viewed_bvids: set[str],
+        viewed_content_keys: set[str],
         *,
         limit: int,
     ) -> list[dict[str, Any]]:
-        if not viewed_bvids:
+        if not viewed_content_keys:
             return rows[:limit]
-        filtered = [row for row in rows if str(row.get("bvid", "")).strip() not in viewed_bvids]
+        filtered = [
+            row for row in rows if not Database._is_viewed_row(row, viewed_content_keys)
+        ]
         return filtered[:limit]

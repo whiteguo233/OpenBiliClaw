@@ -45,6 +45,7 @@
 | SoulEngine.record_immediate_feedback_cognition() | ✅ | 单条 `dislike/comment` 可即时写入结构化 cognition card，供插件画像页展示；评论类更新会带上对应内容标题，避免脱离上下文 |
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
 | SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate；单条 `interest/value/goal/dislike` 聊天信号到中高置信度时会先写入轻量 cognition update，达阈值后再驱动偏好/画像更新 |
+| 兴趣探针聊天情绪判断 | ✅ | `/api/interest-probes/respond` 的 chat 分支会先让对话引擎回复，再用非 JSON 的单词分类 LLM 调用判断 `positive / negative / neutral`，失败时回退关键词，避免把标量分类请求错误发送成 `json_object` |
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
 | 抖音初始化画像信号 | ✅ | `openbiliclaw init --yes-douyin` 会把插件解析到的抖音 `dy_post/dy_collect/dy_like/dy_follow` 转成 `view/favorite/like/follow` 事件，并进入偏好分析和初始画像 history |
@@ -153,7 +154,7 @@
 - runtime push 和 OpenClaw `get_next_probe()` 共用同一套 probe selection 规则
 - `confirmation_count` 仍然是第一优先级；当验证压力相同，会优先选择最近没推过的 `experience_mode + entry_load` 组合
 - probe 去重状态写入并持久化到 `discovery_runtime_state["probed_domains"]` 和 `discovery_runtime_state["probed_axes"]`
-- `/api/interest-probes/respond` 会把 confirm / reject / chat sentiment 写入 `discovery_runtime_state["probe_feedback_history"]`；后续生成会降低 reject / chat_negative 体验轴的入池优先级，选择会跳过明显重复的 domain，并在同等压力下避开负向反馈过的体验轴
+- `/api/interest-probes/respond` 会把 confirm / reject / chat sentiment 写入 `discovery_runtime_state["probe_feedback_history"]`；chat sentiment 是 `positive / negative / neutral` 标量判断，走普通文本 LLM 调用而不是 structured JSON 模式，失败时使用关键词兜底；后续生成会降低 reject / chat_negative 体验轴的入池优先级，选择会跳过明显重复的 domain，并在同等压力下避开负向反馈过的体验轴
 - runtime push 与 OpenClaw `get_next_probe()` 成功选择后都会记录本次 domain / axis，连续调用不会重复返回同一条 active probe
 
 ### 关键文件
@@ -906,23 +907,24 @@ tone = build_tone_profile(
 ## 设计决策
 
 1. **偏好提取用 json_mode**：确保 LLM 返回结构化 JSON，便于程序处理
-2. **对话错误优雅降级**：LLM 调用失败时返回友好中文提示，不崩溃
-3. **`_build_service()` 回退**：未注入 LLMService 时从 SoulEngine 自动构建
-4. **历史格式转换**：`agent` → `assistant` 角色映射，适配 OpenAI 消息格式
-5. **画像生成独立为 `ProfileBuilder`**：避免把 prompt/JSON 校验逻辑塞进 `SoulEngine`
-6. **认知变化解释由 soul 层生成**：`impact / reasoning / evidence` 都在后端认知链路里一次性产出，前端只负责展示，不在 UI 层脑补推理
-7. **默认态上下文也由 soul 层负责**：`context_line / source_label / expand_hint` 由后端统一生成，保证“这是对哪条内容或哪组信号的判断”与详情口径一致
-8. **评论型认知必须带内容上下文**：用户对“这条内容”的评论如果不带标题，认知卡片会失去可读性，因此即时反馈路径优先把标题写进 `summary`、`context_line` 和 `evidence`
-9. **聚合判断宁可保守也不伪造对象**：拿不到可信标题时，回退为“基于最近几条相关内容”，避免看起来丰富但实际不准
-10. **灵魂层失败不覆盖旧画像**：坏 JSON、空响应、缺字段时直接报错，已有 `soul.json` 保留
-11. **觉察层保守去重**：同日 observation 标准化后相同则跳过，避免流水账堆积
-12. **洞察层按假设文本合并**：相同 hypothesis 合并 evidence，confidence 取较高值
-13. **验证状态只由代码更新**：LLM 只生成 hypothesis/evidence/confidence，`validated` 不信任模型输出
-14. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
-15. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`
-16. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新
-17. **语气不单独持久化**：`ToneProfile` 是从画像、偏好和近期反馈实时推断出的派生层，避免把易调参的表达风格绑死在 `soul.json`
-18. **“老B友”是基础人格，不是固定模板**：聊天、推荐和画像总结共用同一套语气维度，但会随着用户画像和近期反馈在信息密度、温度、梗感和直给程度上细调
-19. **认知变化只在关键时刻生成**：只有新增高权重兴趣、明确避雷方向或画像明显转向时，才会形成 `cognition update`，避免把普通波动都做成提醒
-20. **账户同步只补事件，不单独改画像**：history / favorites / following 统一先转成事件，再复用现有偏好分析与画像更新链，避免出现第二套理解逻辑
-21. **画像先写“怎么理解世界”，再写“看了什么”**：`personality_portrait` 必须先围绕认知风格、驱动力和当前阶段组织，兴趣 topic 最多只作为少量证据出现，避免退化成偏好标签润色稿
+2. **标量分类不用 json_mode**：兴趣探针聊天情绪只需要 `positive / negative / neutral` 单词，走普通文本调用；只有真正返回 JSON 的任务才启用 structured task
+3. **对话错误优雅降级**：LLM 调用失败时返回友好中文提示，不崩溃
+4. **`_build_service()` 回退**：未注入 LLMService 时从 SoulEngine 自动构建
+5. **历史格式转换**：`agent` → `assistant` 角色映射，适配 OpenAI 消息格式
+6. **画像生成独立为 `ProfileBuilder`**：避免把 prompt/JSON 校验逻辑塞进 `SoulEngine`
+7. **认知变化解释由 soul 层生成**：`impact / reasoning / evidence` 都在后端认知链路里一次性产出，前端只负责展示，不在 UI 层脑补推理
+8. **默认态上下文也由 soul 层负责**：`context_line / source_label / expand_hint` 由后端统一生成，保证“这是对哪条内容或哪组信号的判断”与详情口径一致
+9. **评论型认知必须带内容上下文**：用户对“这条内容”的评论如果不带标题，认知卡片会失去可读性，因此即时反馈路径优先把标题写进 `summary`、`context_line` 和 `evidence`
+10. **聚合判断宁可保守也不伪造对象**：拿不到可信标题时，回退为“基于最近几条相关内容”，避免看起来丰富但实际不准
+11. **灵魂层失败不覆盖旧画像**：坏 JSON、空响应、缺字段时直接报错，已有 `soul.json` 保留
+12. **觉察层保守去重**：同日 observation 标准化后相同则跳过，避免流水账堆积
+13. **洞察层按假设文本合并**：相同 hypothesis 合并 evidence，confidence 取较高值
+14. **验证状态只由代码更新**：LLM 只生成 hypothesis/evidence/confidence，`validated` 不信任模型输出
+15. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
+16. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`
+17. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新
+18. **语气不单独持久化**：`ToneProfile` 是从画像、偏好和近期反馈实时推断出的派生层，避免把易调参的表达风格绑死在 `soul.json`
+19. **“老B友”是基础人格，不是固定模板**：聊天、推荐和画像总结共用同一套语气维度，但会随着用户画像和近期反馈在信息密度、温度、梗感和直给程度上细调
+20. **认知变化只在关键时刻生成**：只有新增高权重兴趣、明确避雷方向或画像明显转向时，才会形成 `cognition update`，避免把普通波动都做成提醒
+21. **账户同步只补事件，不单独改画像**：history / favorites / following 统一先转成事件，再复用现有偏好分析与画像更新链，避免出现第二套理解逻辑
+22. **画像先写“怎么理解世界”，再写“看了什么”**：`personality_portrait` 必须先围绕认知风格、驱动力和当前阶段组织，兴趣 topic 最多只作为少量证据出现，避免退化成偏好标签润色稿

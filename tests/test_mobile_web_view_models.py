@@ -110,6 +110,7 @@ class TestMobileWebViewModels:
               "getPoolStatusSummary", "normalizeRuntimeStatus", "mergeRuntimeStatusEvent",
               "getReadyRecommendationHint",
               "getRecommendationCoverPreloadUrls", "getRecommendationImageLoadingAttrs",
+              "shouldAutoAppendRecommendations",
               "formatRelativeTimestamp",
               "normalizeSourcePlatform", "getSourceLabel",
               "normalizeCoverUrl", "getCoverImageAttrs",
@@ -131,11 +132,9 @@ class TestMobileWebViewModels:
         assert '? `<img class="card-cover"' not in recommend_js
         assert 'onerror="this.remove()"' not in recommend_js
         assert "card-cover-frame" in recommend_js
-        assert "message-cover-frame" in chat_js
+        assert "card-cover-frame" in app_css
         assert ".card-cover-frame.is-error" in app_css
-        assert ".message-cover-frame.is-error" in app_css
         assert ".card-cover::after" not in app_css
-        assert ".message-cover-frame img" in app_css
 
     def test_recommendation_cover_preload_helpers(self) -> None:
         _assert_js(
@@ -145,6 +144,11 @@ class TestMobileWebViewModels:
               getRecommendationCoverPreloadUrls,
               getRecommendationImageLoadingAttrs,
             } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const tenItems = Array.from({ length: 10 }, (_, index) => ({
+              cover_url: `https://i${index}.hdslb.com/bfs/archive/${index}.jpg`,
+            }));
+            assert.equal(getRecommendationCoverPreloadUrls(tenItems).length, 10);
 
             const urls = getRecommendationCoverPreloadUrls([
               { cover_url: "http://i0.hdslb.com/bfs/archive/a.jpg" },
@@ -171,6 +175,14 @@ class TestMobileWebViewModels:
             );
             assert.deepEqual(
               getRecommendationImageLoadingAttrs(2),
+              { loading: "eager", fetchPriority: "auto" },
+            );
+            assert.deepEqual(
+              getRecommendationImageLoadingAttrs(11),
+              { loading: "eager", fetchPriority: "auto" },
+            );
+            assert.deepEqual(
+              getRecommendationImageLoadingAttrs(12),
               { loading: "lazy", fetchPriority: "auto" },
             );
         """)
@@ -184,6 +196,9 @@ class TestMobileWebViewModels:
         assert "function warmRecommendationCovers" in recommend_js
         assert "new Image()" in recommend_js
         assert ".decode()" in recommend_js
+        assert "waitForDecode" in recommend_js
+        assert "await warmRecommendationCovers(newItems," in recommend_js
+        assert "waitForDecode: true" in recommend_js
         assert 'loading="${esc(imageAttrs.loading)}"' in recommend_js
         assert 'fetchpriority="${esc(imageAttrs.fetchPriority)}"' in recommend_js
         assert "AUTO_APPEND_ROOT_MARGIN" in recommend_js
@@ -191,6 +206,64 @@ class TestMobileWebViewModels:
         assert "observeAutoAppendSentinel" in recommend_js
         assert ".load-more-row" in recommend_js
         assert "handleAppend();" in recommend_js
+        assert "shouldAutoAppendRecommendations" in recommend_js
+        assert "autoAppendUserArmed" in recommend_js
+
+    def test_mobile_auto_append_requires_user_scroll_intent(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              shouldAutoAppendRecommendations,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: false,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              true,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: true,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: true,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "profile",
+                userArmed: true,
+              }),
+              false,
+            );
+        """)
+        )
 
     def test_normalize_recommendation_defaults(self) -> None:
         _assert_js(

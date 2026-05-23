@@ -290,11 +290,13 @@ class TestBackendAPI:
                 memory: object,
                 usage_recorder: object | None = None,
                 module_overrides: object | None = None,
+                concurrency: int = 1,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
                 self.module_overrides = module_overrides
+                self.concurrency = concurrency
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -421,11 +423,13 @@ class TestBackendAPI:
                 memory: object,
                 usage_recorder: object | None = None,
                 module_overrides: object | None = None,
+                concurrency: int = 1,
             ) -> None:
                 self.registry = registry
                 self.memory = memory
                 self.usage_recorder = usage_recorder
                 self.module_overrides = module_overrides
+                self.concurrency = concurrency
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str) -> None:
@@ -490,6 +494,7 @@ class TestBackendAPI:
         fake_config = SimpleNamespace(
             data_path=Path("/tmp/openbiliclaw-test-data"),
             bilibili=SimpleNamespace(cookie="", browser_executable="", browser_headed=False),
+            llm=SimpleNamespace(concurrency=3),
             sources=SimpleNamespace(
                 browser_cdp_url="",
                 browser_headed=False,
@@ -3710,6 +3715,7 @@ class TestEmbeddingAndCompatProviderE2E:
         data = response.json()
 
         assert data["data_dir"] == "runtime-data"
+        assert data["llm"]["concurrency"] == 3
         assert data["llm"]["deepseek"]["reasoning_effort"] == "high"
         assert data["llm"]["openrouter"]["http_referer"] == "https://example.com"
         assert data["llm"]["openrouter"]["x_title"] == "Example App"
@@ -3848,6 +3854,7 @@ class TestEmbeddingAndCompatProviderE2E:
             json={
                 "data_dir": "runtime-data",
                 "llm": {
+                    "concurrency": 5,
                     "deepseek": {"reasoning_effort": "high"},
                     "openrouter": {
                         "http_referer": "https://example.com",
@@ -3930,6 +3937,8 @@ class TestEmbeddingAndCompatProviderE2E:
 
         assert response.status_code == 200
         assert cfg.data_dir == "runtime-data"
+        assert cfg.llm.concurrency == 5
+        assert response.json()["config"]["llm"]["concurrency"] == 5
         assert cfg.llm.deepseek.reasoning_effort == "high"
         assert cfg.llm.openrouter.http_referer == "https://example.com"
         assert cfg.llm.openrouter.x_title == "Example App"
@@ -4254,3 +4263,80 @@ def test_events_endpoint_skips_activity_added_for_empty_batch() -> None:
 
     activity_events = [e for e in hub.events if e["type"] == "activity.added"]
     assert activity_events == []
+
+
+def test_probe_chat_sentiment_uses_plain_text_llm_call() -> None:
+    """Probe chat sentiment asks for one scalar word, not a JSON object.
+
+    DeepSeek rejects ``response_format=json_object`` for this prompt because
+    it intentionally does not ask for JSON. The API should therefore call the
+    plain core-memory LLM path with ``json_mode=False``.
+    """
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    class FakeLLM:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def complete_structured_task(self, **kwargs: object) -> SimpleNamespace:
+            self.calls.append(("structured", kwargs))
+            return SimpleNamespace(content="positive")
+
+        async def complete_with_core_memory(self, **kwargs: object) -> SimpleNamespace:
+            self.calls.append(("core", kwargs))
+            return SimpleNamespace(content="positive")
+
+    class FakeDialogue:
+        async def respond(self, _message: str) -> str:
+            return "懂，你更喜欢和 VOCALOID 相关的部分。"
+
+    class FakeSpeculator:
+        def __init__(self) -> None:
+            self.observed: list[object] = []
+
+        def observe(self, events: object) -> None:
+            self.observed.append(events)
+
+        def user_reject_speculation(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+    class FakeSoulEngine:
+        def __init__(self, speculator: FakeSpeculator) -> None:
+            self._speculator = speculator
+
+    class FakeMemoryManager:
+        def load_cognition_updates(self) -> list[object]:
+            return []
+
+        def save_cognition_updates(self, _updates: list[object]) -> None:
+            return None
+
+    llm = FakeLLM()
+    speculator = FakeSpeculator()
+    app = create_app(
+        memory_manager=FakeMemoryManager(),
+        database=object(),
+        soul_engine=FakeSoulEngine(speculator),
+        dialogue=FakeDialogue(),
+        recommendation_engine=SimpleNamespace(_llm=llm),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/interest-probes/respond",
+        json={
+            "domain": "电子音乐制作",
+            "response": "chat",
+            "message": "我更喜欢与vocaloid有关系的部分",
+        },
+    )
+
+    assert response.status_code == 200
+    assert llm.calls
+    method, kwargs = llm.calls[0]
+    assert method == "core"
+    assert kwargs["caller"] == "api.sentiment"
+    assert kwargs["max_tokens"] == 8
+    assert kwargs["json_mode"] is False

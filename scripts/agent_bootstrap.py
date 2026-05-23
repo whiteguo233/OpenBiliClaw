@@ -65,7 +65,7 @@ LOCAL_NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")
 DOCKER_CONTAINER_NAME = "openbiliclaw-backend"
 DOCKER_RUNTIME_ROOT = "/app/runtime"
 DEFAULT_BILIBILI_FAVORITE_LIMIT = 300
-DEFAULT_BILIBILI_FOLLOW_LIMIT = 300
+DEFAULT_BILIBILI_FOLLOW_LIMIT = 100
 
 SUPPORTED_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "ollama", "openrouter")
 REMOTE_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "openrouter")
@@ -258,7 +258,10 @@ def collect_interactive_confirmations(input_func: Any | None = input) -> InitCon
     )
 
     print("")
-    print("Bilibili init signal limits default to 300 each; enter 0 to skip one signal.")
+    print(
+        "Bilibili init signal limits default to 300 favorites / 100 follows; "
+        "enter 0 to skip one signal."
+    )
     bilibili_favorite_limit = _ask_non_negative_int(
         input_func,
         "Max Bilibili favorites to import during init",

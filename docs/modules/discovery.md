@@ -92,7 +92,7 @@
    - **字段归一**：例如都整理成 `bvid / title / up_name / duration / description / source_strategy / topic_key / style_key`
    - **相关性评估**：`TrendingStrategy`、`RelatedChainStrategy`、`ExploreStrategy` 会调用 `ContentDiscoveryEngine.evaluate_content()`，把内容标题、简介、来源和画像摘要一起交给 LLM，得到 `relevance_score` 和 `relevance_reason`
 
-   当前四个策略都会走 LLM 评估：`SearchStrategy` 在本地启发式打分后对候选统一调用 `evaluate_content()`，`TrendingStrategy`、`RelatedChainStrategy`、`ExploreStrategy` 也各自在 discover 流程中调用 `evaluate_content()`。只有通过 `score_threshold`（默认 0.65）的内容才会被保留。
+   当前四个策略都会走 LLM 评估：`SearchStrategy` 在本地启发式打分后对候选统一调用 `evaluate_content()`，`TrendingStrategy`、`RelatedChainStrategy`、`ExploreStrategy` 也各自在 discover 流程中调用 `evaluate_content()`。进入批量 LLM 评估前，`ContentDiscoveryEngine.evaluate_content_batch()` 会读取 `Database.get_recent_viewed_content_keys()`，用 `source_platform:content_id` 判断最近看过的 B 站 / 小红书 / 抖音 / YouTube 候选；命中项直接记为 0 分并从 prompt 中剔除，避免为已看内容消耗 discovery token。老 BVID 也保留 raw key 兼容旧数据。只有通过 `score_threshold`（默认 0.65）的内容才会被保留。
 
    之后引擎会合并所有策略返回的列表，并通过 `_merge_duplicates()` 按跨源内容身份去重：B 站内容使用 `bvid`，YouTube / 小红书 / 抖音等多源内容使用 `source_platform + content_id`，缺失时再退到 URL / 标题。这样同一个视频被多个策略同时找到时，会保留 `relevance_score` 更高的那个版本，同时不会把多个非 B 站候选因为空 `bvid` 误合并。
 
@@ -137,7 +137,7 @@
    - `style_key`
    - `source_strategy`
 
-   这样推荐层在后续 `reshuffle`、`append`、常规推荐排序时，就不必重新跑一遍 discovery，也能直接利用这些结构化信号做多样性控制和快速选片。
+   最近看过的内容即使被上游策略再次找到，也会用 `source_platform:content_id` 在 `_cache_results()` 写库前跳过，不再进入 `content_cache` 候选池。这样推荐层在后续 `reshuffle`、`append`、常规推荐排序时，就不必重新跑一遍 discovery，也能直接利用这些结构化信号做多样性控制和快速选片。
 
    换句话说，discovery 的产出不是“一次性的返回值”，而是一份会进入候选池、影响后续多轮推荐的中间资产。
 
@@ -685,8 +685,8 @@ from openbiliclaw.discovery.pool_snapshot import (
 
 snapshot = build_pool_distribution_snapshot(
     database,
-    pool_target_count=600,
-    source_targets={"bilibili": 480, "xiaohongshu": 60, "douyin": 60},
+    pool_target_count=300,
+    source_targets={"bilibili": 240, "xiaohongshu": 30, "douyin": 30},
 )
 hints = snapshot.to_prompt_hints()
 ```
@@ -694,7 +694,7 @@ hints = snapshot.to_prompt_hints()
 行为说明：
 
 - `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`。
-- 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以 `pool_target_count=600` 为例，topic 30 条、style 75 条、franchise 10 条即进入软避让。
+- 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以默认 `pool_target_count=300` 为例，topic 15 条、style 37 条、franchise 10 条即进入软避让。
 - `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin`、`youtube` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
 - `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
 - 当前 runtime 构建的 snapshot 不会把平台缺口自动合成内容 `prefer_axes`；`undercovered_axes` / `prefer_axes` 保留给手动传入或未来更细的内容轴缺口判断。

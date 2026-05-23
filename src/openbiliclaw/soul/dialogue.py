@@ -218,4 +218,5 @@ class SocraticDialogue:
             registry=self._llm,
             memory=memory,
             module_overrides=module_overrides or {},
+            concurrency=int(getattr(self._soul_engine, "_llm_concurrency", 3)),
         )

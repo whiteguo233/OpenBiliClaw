@@ -301,7 +301,11 @@ function renderOverlay() {
   const closeBtn = document.createElement("button");
   closeBtn.className = "messages-close";
   closeBtn.textContent = "\u2715";
-  closeBtn.addEventListener("click", toggleMessages);
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    overlayOpen = false;
+    renderOverlay();
+  });
   header.appendChild(closeBtn);
   panel.appendChild(header);
 
@@ -310,7 +314,7 @@ function renderOverlay() {
     const card = document.createElement("div");
     card.className = "message-card";
     card.innerHTML = `
-      <div class="message-card-type">\u{1F50D} \u5174\u8DA3\u63A2\u6D4B</div>
+      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>兴趣探测</div>
       <div class="message-card-title">${esc(n.domain || n.title || "")}</div>
       <div class="message-card-body">${esc(n.description || n.reason || n.message || "")}</div>
       <div class="message-card-actions">
@@ -321,30 +325,8 @@ function renderOverlay() {
     panel.appendChild(card);
   }
 
-  // Delight notifications
-  for (const d of delightMsgs) {
-    const nd = normalizeDelightCandidate(d);
-    const cover = getCoverImageAttrs(nd.cover_url);
-    const card = document.createElement("div");
-    card.className = "message-card";
-    card.innerHTML = `
-      <div class="message-card-type">\u2728 \u60CA\u559C\u63A8\u8350</div>
-      ${cover ? `<div class="message-cover-frame"><img src="${esc(cover.src)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>` : `<div class="message-cover-frame is-error"></div>`}
-      <div class="message-card-title">${esc(nd.title)}</div>
-      <div class="message-card-body">${esc(nd.delight_hook || nd.delight_reason)}</div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-        <span class="card-source" data-source="${nd.source_platform}">${esc(getSourceLabel(nd.source_platform))}</span>
-      </div>
-      <div class="message-card-actions">
-        ${getDelightMessageActions().map((item) => `
-          <button class="message-action-btn ${item.primary ? "primary" : "secondary"}" data-delight="${esc(item.action)}" data-bvid="${esc(nd.bvid)}" data-title="${esc(nd.title)}">${esc(item.label)}</button>
-        `).join("")}
-      </div>`;
-    panel.appendChild(card);
-  }
-
-  if (notifications.length === 0 && delightMsgs.length === 0) {
-    panel.innerHTML += `<div class="empty-state" style="padding:24px"><div class="empty-state-text">\u6CA1\u6709\u65B0\u6D88\u606F</div></div>`;
+  if (notifications.length === 0) {
+    panel.innerHTML += `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:48px 24px;color:var(--text-muted)"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span style="font-size:14px">暂时没有新消息</span><span style="font-size:12px;opacity:0.7">兴趣探测会在这里出现</span></div>`;
   }
 
   overlay.innerHTML = "";
@@ -409,9 +391,9 @@ function renderOverlay() {
 }
 
 function updateBadgeCount() {
-  const msgs = { notifications: [...notifications], delights: [...delightMsgs] };
+  const msgs = { notifications: [...notifications], delights: [] };
   patchState({ messages: msgs });
-  setUnreadCount(notifications.length + delightMsgs.length);
+  setUnreadCount(notifications.length);
 }
 
 // ── Load ─────────────────────────────────────────────────────
@@ -448,7 +430,7 @@ async function refreshAfterChatTurn() {
   } catch { /* best-effort */ }
 }
 
-async function loadNotifications() {
+export async function loadNotifications() {
   try {
     const [notifData, delightData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
@@ -459,6 +441,8 @@ async function loadNotifications() {
     delightMsgs = delightData;
     updateBadgeCount();
   } catch { /* ignore */ }
+  // Re-render if overlay is visible so first-click shows real data
+  if (overlayOpen) renderOverlay();
 }
 
 // ── Public API ───────────────────────────────────────────────
@@ -471,10 +455,15 @@ export function initChatView(root) {
   loadHistory();
 }
 
-export function toggleMessages() {
+export async function toggleMessages() {
   overlayOpen = !overlayOpen;
-  if (overlayOpen) loadNotifications();
-  renderOverlay();
+  if (overlayOpen) {
+    renderOverlay();          // show panel immediately (loading state)
+    await loadNotifications();
+    renderOverlay();          // re-render with actual data
+  } else {
+    renderOverlay();
+  }
 }
 
 export function updateBadge() {
@@ -489,20 +478,13 @@ export function onStreamEvent(payload) {
       notifications.push(item);
       updateBadgeCount();
     }
-  } else if (type === "delight.candidate") {
-    const item = payload.data || payload;
-    if (item.title && item.bvid) {
-      delightMsgs.push(item);
-      updateBadgeCount();
-    }
   } else if (type === "delight.liked" || type === "delight.disliked") {
-    // Another client dismissed this delight — remove from messages overlay
+    // Delight dismissed by another client — no longer shown in messages
     const bvid = (payload.data || payload)?.bvid;
     if (bvid) {
       const before = delightMsgs.length;
       delightMsgs = delightMsgs.filter((d) => d.bvid !== bvid);
       if (delightMsgs.length !== before) {
-        updateBadgeCount();
         if (overlayOpen) renderOverlay();
       }
     }

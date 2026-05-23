@@ -140,7 +140,8 @@
 
       <aside class="rail" aria-label="侧栏摘要">
         <button class="rail-toggle" id="railToggle" type="button" aria-label="收起侧栏">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M15 18l-6-6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="rail-toggle-label">收起侧栏</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M9 18l6-6-6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <section class="panel" data-od-id="profile-rail">
           <p class="eyebrow">Profile</p>
@@ -260,6 +261,7 @@
         <div class="settings-panel" data-settings-panel="models">
           <p class="settings-section-title">默认模型</p>
           <label class="settings-field"><span>默认 LLM Provider</span><select id="llmProvider"><option value="openai">openai</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="deepseek">deepseek</option><option value="openrouter">openrouter</option><option value="ollama">ollama</option><option value="openai_compatible">openai_compatible</option></select></label>
+          <label class="settings-field"><span>LLM 并发数</span><input id="llmConcurrency" type="number" min="1" max="16" step="1" value="3"></label>
           <label class="settings-field"><span>OpenAI 认证方式</span><select id="llmAuthMode"><option value="api_key">API Key</option><option value="codex_oauth">Codex OAuth</option></select></label>
           <label class="settings-field"><span>默认模型</span><input id="llmModel" value="gpt-5-nano"></label>
           <label class="settings-field"><span>当前 Provider API Key</span><input id="llmApiKey" autocomplete="off" placeholder="只保存当前选中的 Provider"></label>
@@ -332,7 +334,7 @@
           <label class="settings-field"><span>后台 LLM 请求</span><select id="schedulerEnabled"><option value="on">开启</option><option value="off">暂停</option></select></label>
           <label class="settings-field"><span>浏览器关闭后</span><select id="pauseDisconnect"><option value="pause">暂停后台</option><option value="keep">继续运行</option></select></label>
           <label class="settings-field"><span>Discovery Cron</span><input id="discoveryCron" placeholder="0 */8 * * *"></label>
-          <label class="settings-field"><span>候选池目标数</span><input id="poolTarget" value="600" inputmode="numeric"></label>
+          <label class="settings-field"><span>候选池目标数</span><input id="poolTarget" value="300" inputmode="numeric"></label>
           <label class="settings-field"><span>账户同步间隔小时</span><input id="accountSyncInterval" inputmode="numeric" placeholder="6"></label>
           <label class="settings-field"><span>自动更新</span><select id="autoUpdate"><option value="off">关闭</option><option value="on">开启</option></select></label>
           <label class="settings-field"><span>自动更新检查小时</span><input id="autoUpdateInterval" inputmode="numeric" placeholder="6"></label>

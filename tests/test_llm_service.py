@@ -409,8 +409,8 @@ async def test_priority_semaphore_orders_waiters_by_priority() -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_with_core_memory_serialises_calls_through_priority_gate() -> None:
-    """write_expression should hold the slot exclusively and waiters serialise behind it."""
+async def test_complete_with_core_memory_defaults_to_three_concurrent_calls() -> None:
+    """The shared LLM gate should allow three requests by default and queue the fourth."""
     memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
     in_flight = 0
     peak = 0
@@ -437,31 +437,24 @@ async def test_complete_with_core_memory_serialises_calls_through_priority_gate(
 
     service = LLMService(registry=TrackingRegistry(), memory=memory)  # type: ignore[arg-type]
 
-    first = asyncio.create_task(
-        service.complete_with_core_memory(
-            system_instruction="A",
-            user_input="A",
-            caller="recommendation.write_expression",
+    tasks = [
+        asyncio.create_task(
+            service.complete_with_core_memory(
+                system_instruction=str(index),
+                user_input=str(index),
+                caller="recommendation.write_expression",
+            )
         )
-    )
-    # Wait until the first call has acquired the slot.
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+        for index in range(4)
+    ]
 
-    second = asyncio.create_task(
-        service.complete_with_core_memory(
-            system_instruction="B",
-            user_input="B",
-            caller="recommendation.delight_score",
-        )
-    )
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        observed = in_flight
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Second call must NOT have started yet — the gate is held.
-    assert in_flight == 1
-
-    release.set()
-    await asyncio.gather(first, second)
-    # capacity=1 means only one provider call ever ran at a time.
-    assert peak == 1
+    assert observed == 3
+    assert peak == 3

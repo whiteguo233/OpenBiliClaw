@@ -17,6 +17,7 @@ from .base import LLMProviderError, LLMRateLimitError
 from .prompts import build_socratic_dialogue_prompt
 
 logger = logging.getLogger(__name__)
+DEFAULT_LLM_CONCURRENCY = 3
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -137,8 +138,7 @@ class PrioritySemaphore:
     contention — if the slot is free the caller acquires immediately.
 
     Concurrency is bounded by ``capacity``: only ``capacity`` callers
-    may hold a slot at once. The default of 1 turns the semaphore into
-    a strict priority queue.
+    may hold a slot at once.
     """
 
     def __init__(self, capacity: int = 1) -> None:
@@ -195,8 +195,24 @@ class PrioritySemaphore:
             self.release()
 
 
-def _build_priority_semaphore() -> PrioritySemaphore:
-    return PrioritySemaphore(capacity=1)
+def _coerce_concurrency(value: object) -> int:
+    """Return a positive LLM concurrency value, falling back to the default."""
+    if isinstance(value, bool):
+        return DEFAULT_LLM_CONCURRENCY
+    if isinstance(value, int | float):
+        normalized = int(value)
+    elif isinstance(value, str):
+        try:
+            normalized = int(value.strip())
+        except ValueError:
+            return DEFAULT_LLM_CONCURRENCY
+    else:
+        return DEFAULT_LLM_CONCURRENCY
+    return normalized if normalized >= 1 else DEFAULT_LLM_CONCURRENCY
+
+
+def _build_priority_semaphore(capacity: int = DEFAULT_LLM_CONCURRENCY) -> PrioritySemaphore:
+    return PrioritySemaphore(capacity=_coerce_concurrency(capacity))
 
 
 @dataclass
@@ -245,18 +261,17 @@ class LLMService:
     # don't care about cost tracking.
     usage_recorder: object | None = None
     module_overrides: Mapping[str, ModuleOverride] = field(default_factory=dict)
-    # v0.3.63+: lazy-initialised priority gate. ``init=False`` so existing
-    # callers ``LLMService(registry=..., memory=...)`` continue to work
-    # without passing this in. The semaphore must be constructed inside
-    # the running loop's thread, so we instantiate at field default time
-    # (which is fine — PrioritySemaphore doesn't grab the loop until the
-    # first acquire).
-    _priority_sem: PrioritySemaphore = field(
-        default_factory=_build_priority_semaphore, init=False, repr=False
-    )
+    concurrency: int = DEFAULT_LLM_CONCURRENCY
+    # v0.3.63+: lazy-initialised priority gate. ``init=False`` keeps the
+    # semaphore private while ``concurrency`` remains configurable.
+    _priority_sem: PrioritySemaphore = field(init=False, repr=False)
     _logged_unknown_override_keys: set[tuple[str, str]] = field(
         default_factory=set, init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        self.concurrency = _coerce_concurrency(self.concurrency)
+        self._priority_sem = _build_priority_semaphore(self.concurrency)
 
     @classmethod
     def _resolve_priority(cls, caller: str) -> int:

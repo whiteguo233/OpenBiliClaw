@@ -115,21 +115,28 @@ body {
   display: flex; align-items: center; justify-content: center;
   border-radius: 50%;
   cursor: pointer;
+  color: var(--text-secondary);
+  border: none;
+  background: none;
+  -webkit-tap-highlight-color: transparent;
 }
+
+.badge-btn svg { display: block; }
 
 .badge-btn:active { background: var(--brand-soft); }
 
 .badge-count {
   position: absolute;
-  top: 2px; right: 2px;
-  min-width: 16px; height: 16px;
-  border-radius: 8px;
+  top: 4px; right: 4px;
+  min-width: 18px; height: 18px;
+  border-radius: 9px;
   background: var(--brand);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
   display: flex; align-items: center; justify-content: center;
-  padding: 0 4px;
+  padding: 0 5px;
+  box-shadow: 0 0 0 2px var(--bg-base);
 }
 
 .badge-count:empty, .badge-count[data-count="0"] { display: none; }
@@ -198,9 +205,6 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
-  background:
-    linear-gradient(135deg, rgba(251, 114, 153, 0.08), rgba(90, 169, 255, 0.08)),
-    var(--surface-soft);
 }
 
 .card-cover-frame.is-error,
@@ -1127,7 +1131,7 @@ body {
 .messages-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.35);
   z-index: 100;
   display: none;
   align-items: flex-end;
@@ -1140,71 +1144,83 @@ body {
 
 .messages-panel {
   width: 100%;
-  max-height: 75vh;
+  max-height: 88vh;
   background: var(--bg-base);
   border-radius: 20px 20px 0 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 16px;
-  padding-bottom: max(16px, var(--safe-bottom));
+  padding: 20px 16px;
+  padding-bottom: max(20px, var(--safe-bottom));
 }
 
 .messages-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 
 .messages-title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
+  color: var(--text-main);
 }
 
 .messages-close {
-  width: 44px; height: 44px;
+  width: 32px; height: 32px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
   color: var(--text-muted);
+  background: var(--surface-soft);
+  border: none;
 }
 
-.messages-close:active { background: var(--surface-soft); }
+.messages-close:active { background: var(--line); }
 
 .message-card {
-  background: var(--surface);
-  border-radius: 14px;
-  padding: 12px;
-  margin-bottom: 10px;
-  box-shadow: var(--shadow-sm);
+  background: var(--surface-strong);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
 }
 
 .message-card-type {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--brand);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
+.message-card-type svg { width: 14px; height: 14px; flex-shrink: 0; }
+
 .message-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 6px;
+  color: var(--text-main);
 }
 
 .message-card-body {
   font-size: 13px;
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .message-cover-frame {
   width: 100%;
   aspect-ratio: 16 / 9;
-  border-radius: 8px;
-  margin-bottom: 6px;
+  border-radius: 10px;
+  margin: 8px 0;
   background: var(--surface-soft);
   overflow: hidden;
 }
@@ -1219,19 +1235,21 @@ body {
 .message-card-actions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .message-action-btn {
   flex: 1;
-  padding: 8px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   text-align: center;
-  min-height: 36px;
+  min-height: 40px;
   display: flex; align-items: center; justify-content: center;
+  border: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .message-action-btn:active { opacity: 0.7; }
@@ -1244,6 +1262,7 @@ body {
 .message-action-btn.secondary {
   background: var(--surface-soft);
   color: var(--text-secondary);
+  border: 1px solid var(--line);
 }
 
 /* ── Empty States ─────────────────────────────────────────── */

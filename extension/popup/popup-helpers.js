@@ -52,6 +52,20 @@ export function getTabButtonState(activeTab, tabName) {
   };
 }
 
+export function shouldAutoLoadRecommendations({
+  activeTab = "recommend",
+  loadingMore = false,
+  hasMoreRecommendations = false,
+  userArmed = false,
+} = {}) {
+  return Boolean(
+    userArmed &&
+      activeTab === "recommend" &&
+      !loadingMore &&
+      hasMoreRecommendations,
+  );
+}
+
 export function getConnectionBadgeState(online) {
   if (online) {
     return {

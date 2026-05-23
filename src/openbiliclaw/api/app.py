@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, cast
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -478,8 +478,22 @@ def _image_cache_dir() -> Path:
     return d
 
 
+def _normalize_cache_url(url: str) -> str:
+    """Normalize URLs with expiring tokens so the same image always maps to the same cache key.
+
+    XHS CDN URLs: ``https://sns-webpic-qc.xhscdn.com/{timestamp}/{token}/{path}``
+    — the ``{timestamp}/{token}`` changes on every regeneration but ``{path}`` is stable.
+    """
+    import re
+
+    m = re.match(r"(https?://[^/]*xhscdn\.com)/\d{12}/[0-9a-f]+/(.*)", url)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return url
+
+
 def _image_cache_key(url: str) -> str:
-    return hashlib.sha256(url.encode()).hexdigest()
+    return hashlib.sha256(_normalize_cache_url(url).encode()).hexdigest()
 
 
 def _image_cache_lookup(url: str) -> tuple[Path, str] | None:
@@ -2468,7 +2482,7 @@ def create_app(
             return "neutral"
         try:
             response = await asyncio.wait_for(
-                llm.complete_structured_task(
+                llm.complete_with_core_memory(
                     system_instruction=(
                         "任务：判断用户对一个兴趣方向的态度。\n\n"
                         "规则：\n"
@@ -2482,6 +2496,7 @@ def create_app(
                     user_input=f"方向：{domain}\n用户：{user_message}",
                     max_tokens=8,
                     temperature=0.0,
+                    json_mode=False,
                     caller="api.sentiment",
                 ),
                 timeout=15,
@@ -4063,6 +4078,7 @@ def create_app(
             degraded_reason=degraded_reason,
             llm=LLMConfigOut(
                 default_provider=cfg.llm.default_provider,
+                concurrency=int(getattr(cfg.llm, "concurrency", 3)),
                 fallback_enabled=cfg.llm.fallback_enabled,
                 fallback_provider=cfg.llm.fallback_provider,
                 openai=_provider_out(cfg.llm.openai),
@@ -4223,6 +4239,7 @@ def create_app(
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
+            _normalize_llm_concurrency,
             _normalize_pool_source_shares,
             _normalize_scheduler_int,
             load_config,
@@ -4262,6 +4279,8 @@ def create_app(
             llm_data = update["llm"]
             if "default_provider" in llm_data:
                 cfg.llm.default_provider = str(llm_data["default_provider"])
+            if "concurrency" in llm_data:
+                cfg.llm.concurrency = _normalize_llm_concurrency(llm_data["concurrency"])
             if "fallback_enabled" in llm_data:
                 cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
             if "fallback_provider" in llm_data:
@@ -4838,9 +4857,7 @@ def create_app(
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 
         @app.get("/", include_in_schema=False)
-        def _root_redirect():
-            from fastapi.responses import RedirectResponse as _Redirect
-
-            return _Redirect(url="/web", status_code=302)
+        def _root_redirect() -> RedirectResponse:
+            return RedirectResponse(url="/web", status_code=302)
 
     return app

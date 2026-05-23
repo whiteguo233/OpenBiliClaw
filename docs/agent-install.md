@@ -696,7 +696,7 @@ events to the user instead of staying silent until `init_complete`.
 ### Init 期间会问用户:B 站上限与小红书 / 抖音 / YouTube 数据是否加入
 
 `openbiliclaw init` 在拉 B 站数据前会确认 B 站收藏 / 关注初始化上限：
-默认收藏最多 300 条、关注 UP 最多 300 人；用户直接回车即接受默认，输入
+默认收藏最多 300 条、关注 UP 最多 100 人；用户直接回车即接受默认，输入
 自定义数字会透传到 `--bilibili-favorite-limit` / `--bilibili-follow-limit`，
 输入 `0` 可跳过对应信号。
 

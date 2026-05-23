@@ -64,7 +64,7 @@ export function getCoverImageAttrs(value) {
   return { src: `/api/image-proxy?url=${encodeURIComponent(src)}` };
 }
 
-export function getRecommendationCoverPreloadUrls(items, { start = 0, limit = 8 } = {}) {
+export function getRecommendationCoverPreloadUrls(items, { start = 0, limit = 12 } = {}) {
   const safeStart = Math.max(0, Math.trunc(coerceNumber(start) ?? 0));
   const safeLimit = Math.max(0, Math.trunc(coerceNumber(limit) ?? 0));
   if (!Array.isArray(items) || safeLimit <= 0) return [];
@@ -81,13 +81,34 @@ export function getRecommendationCoverPreloadUrls(items, { start = 0, limit = 8 
   return urls;
 }
 
-export function getRecommendationImageLoadingAttrs(index, { eagerCount = 2 } = {}) {
+export function getRecommendationImageLoadingAttrs(
+  index,
+  { eagerCount = 12, highPriorityCount = 2 } = {},
+) {
   const safeIndex = Math.max(0, Math.trunc(coerceNumber(index) ?? 0));
   const safeEagerCount = Math.max(0, Math.trunc(coerceNumber(eagerCount) ?? 0));
+  const safeHighPriorityCount = Math.max(0, Math.trunc(coerceNumber(highPriorityCount) ?? 0));
   if (safeIndex < safeEagerCount) {
-    return { loading: "eager", fetchPriority: "high" };
+    return {
+      loading: "eager",
+      fetchPriority: safeIndex < safeHighPriorityCount ? "high" : "auto",
+    };
   }
   return { loading: "lazy", fetchPriority: "auto" };
+}
+
+export function shouldAutoAppendRecommendations({
+  loading = false,
+  autoAppendExhausted = false,
+  activeTab = "recommend",
+  userArmed = false,
+} = {}) {
+  return Boolean(
+    userArmed &&
+      !loading &&
+      !autoAppendExhausted &&
+      activeTab === "recommend",
+  );
 }
 
 // ── Source Platform ──────────────────────────────────────────

@@ -591,6 +591,55 @@ async def test_refresh_controller_backfills_pool_copy_after_replenishment() -> N
     assert all(call == ({"profile": "ok"}, 60) for call in recommendations.pool_copy_calls)
 
 
+async def test_refresh_controller_detaches_embedding_prewarm_from_refresh_completion() -> None:
+    class _SlowEmbeddingPrewarmRecommendationEngine(_FakeRecommendationEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.supergroup_started = asyncio.Event()
+            self.mmr_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def prewarm_supergroup_embeddings(self) -> int:
+            self.supergroup_started.set()
+            await self.release.wait()
+            return 1
+
+        async def prewarm_pool_mmr_embeddings(self, *, limit: int = 200) -> int:
+            self.mmr_started.set()
+            await self.release.wait()
+            return 1
+
+    database = _FakeDatabase(
+        [
+            {"id": 1, "event_type": "view"},
+            {"id": 2, "event_type": "search"},
+        ],
+        pool_count=20,
+    )
+    recommendations = _SlowEmbeddingPrewarmRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    try:
+        result = await asyncio.wait_for(controller.refresh_if_needed(), timeout=0.2)
+    finally:
+        recommendations.release.set()
+        await asyncio.sleep(0)
+
+    assert result["refreshed"] is True
+    assert recommendations.supergroup_started.is_set()
+    assert recommendations.mmr_started.is_set()
+    assert controller._refresh_lock.locked() is False
+
+
 async def test_refresh_controller_uses_shared_delight_threshold_for_runtime_queries() -> None:
     database = _FakeDatabase(
         [],
@@ -635,6 +684,45 @@ async def test_refresh_controller_prepares_delight_candidates_without_refresh() 
 
     assert prepared == 0
     assert recommendations.pool_copy_calls == [({"profile": "ok"}, 0)]
+
+
+async def test_periodic_pool_precompute_reports_newly_available_inventory() -> None:
+    memory = _FakeMemoryManager({"last_discovered_count": 21, "last_replenished_count": 0})
+    database = _FakeDatabase([], pool_count=0)
+    recommendations = _FakeRecommendationEngine()
+    event_hub = _FakeEventHub()
+
+    async def precompute_then_fill(**kwargs):
+        recommendations.pool_copy_calls.append((kwargs["profile"], kwargs["limit"]))
+        database.pool_count = 16
+        return 16
+
+    recommendations.precompute_pool_copy = precompute_then_fill  # type: ignore[assignment]
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        event_hub=event_hub,
+    )
+
+    await controller._drain_pool_precompute_backlog()
+
+    assert memory.state["last_replenished_count"] == 16
+    assert memory.state["last_discovered_count"] == 21
+    pool_updated = [event for event in event_hub.events if event["type"] == "refresh.pool_updated"]
+    assert pool_updated == [
+        {
+            "type": "refresh.pool_updated",
+            "phase": "done",
+            "message": "刚补进 16 条新的",
+            "pool_available_count": 16,
+            "last_discovered_count": 21,
+            "last_replenished_count": 16,
+            "recent_pool_topics": [],
+        }
+    ]
 
 
 async def test_refresh_controller_reports_zero_replenishment_without_false_positive_copy() -> None:

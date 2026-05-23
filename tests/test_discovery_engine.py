@@ -69,6 +69,46 @@ class _SlowLLMService:
         return _SlowResponse('{"score": 0.88, "reason": "still relevant"}')
 
 
+class _RecentViewedDatabase:
+    def __init__(
+        self,
+        viewed_bvids: set[str],
+        *,
+        viewed_content_keys: set[str] | None = None,
+    ) -> None:
+        self.viewed_bvids = set(viewed_bvids)
+        self.viewed_content_keys = set(viewed_content_keys or viewed_bvids)
+
+    def get_recent_viewed_bvids(self) -> set[str]:
+        return set(self.viewed_bvids)
+
+    def get_recent_viewed_content_keys(self) -> set[str]:
+        return set(self.viewed_content_keys)
+
+    def get_latest_event_id(self) -> int:
+        return 0
+
+    def query_events(
+        self,
+        *,
+        satisfaction_modes: frozenset[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        return []
+
+
+class _RecordingCacheDatabase(_RecentViewedDatabase):
+    def __init__(self, viewed_bvids: set[str]) -> None:
+        super().__init__(viewed_bvids)
+        self.cached_bvids: list[str] = []
+
+    def count_pool_by_franchise(self) -> dict[str, int]:
+        return {}
+
+    def cache_content(self, bvid: str, **kwargs: object) -> None:
+        self.cached_bvids.append(bvid)
+
+
 async def _contend_llm_semaphore(
     controller: DiscoveryConcurrencyController,
     *,
@@ -182,6 +222,130 @@ async def test_evaluate_content_passes_disliked_topics_to_prompt() -> None:
     assert '"disliked_topics": [' in user_input
     assert "标题党" in user_input
     assert "低质混剪" in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_batch_skips_recently_viewed_before_llm() -> None:
+    llm_service = FakeLLMService(
+        json.dumps(
+            [
+                {
+                    "bvid": "BV1FRESH",
+                    "score": 0.88,
+                    "reason": "fresh match",
+                    "topic_group": "AI工具",
+                    "style_key": "practical_guide",
+                }
+            ],
+            ensure_ascii=False,
+        )
+    )
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        database=_RecentViewedDatabase({"BV1VIEWED"}),  # type: ignore[arg-type]
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(bvid="BV1VIEWED", title="已经看过", source_strategy="trending"),
+            DiscoveredContent(bvid="BV1FRESH", title="新内容", source_strategy="trending"),
+        ],
+        _build_profile(),
+    )
+
+    assert scores == [0.0, 0.88]
+    assert len(llm_service.calls) == 1
+    user_input = str(llm_service.calls[0]["user_input"])
+    assert "BV1FRESH" in user_input
+    assert "BV1VIEWED" not in user_input
+    assert "已经看过" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_llm() -> None:
+    llm_service = FakeLLMService(
+        json.dumps(
+            [
+                {
+                    "content_id": "fresh-yt",
+                    "score": 0.82,
+                    "reason": "fresh youtube match",
+                    "topic_group": "AI工具",
+                    "style_key": "practical_guide",
+                }
+            ],
+            ensure_ascii=False,
+        )
+    )
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        database=_RecentViewedDatabase(
+            set(),
+            viewed_content_keys={"youtube:seen-yt"},
+        ),  # type: ignore[arg-type]
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id="seen-yt",
+                source_platform="youtube",
+                title="已经看过的 YouTube",
+                source_strategy="youtube_search",
+            ),
+            DiscoveredContent(
+                content_id="fresh-yt",
+                source_platform="youtube",
+                title="新的 YouTube",
+                source_strategy="youtube_search",
+            ),
+        ],
+        _build_profile(),
+    )
+
+    assert scores == [0.0, 0.82]
+    assert len(llm_service.calls) == 1
+    user_input = str(llm_service.calls[0]["user_input"])
+    assert "fresh-yt" in user_input
+    assert "seen-yt" not in user_input
+    assert "已经看过的 YouTube" not in user_input
+
+
+def test_cache_results_skips_recently_viewed_items() -> None:
+    database = _RecordingCacheDatabase({"BV1VIEWED"})
+    engine = ContentDiscoveryEngine(database=database)  # type: ignore[arg-type]
+
+    engine._cache_results(
+        [
+            DiscoveredContent(bvid="BV1VIEWED", title="已经看过"),
+            DiscoveredContent(bvid="BV1FRESH", title="新内容"),
+        ]
+    )
+
+    assert database.cached_bvids == ["BV1FRESH"]
+
+
+def test_cache_results_skips_recently_viewed_non_bilibili_items() -> None:
+    database = _RecordingCacheDatabase(set())
+    database.viewed_content_keys = {"xiaohongshu:note-seen"}
+    engine = ContentDiscoveryEngine(database=database)  # type: ignore[arg-type]
+
+    engine._cache_results(
+        [
+            DiscoveredContent(
+                content_id="note-seen",
+                source_platform="xiaohongshu",
+                title="已经看过的小红书",
+            ),
+            DiscoveredContent(
+                content_id="note-fresh",
+                source_platform="xiaohongshu",
+                title="新小红书",
+            ),
+        ]
+    )
+
+    assert database.cached_bvids == ["note-fresh"]
 
 
 @pytest.mark.asyncio

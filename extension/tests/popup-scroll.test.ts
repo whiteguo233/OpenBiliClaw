@@ -17,6 +17,9 @@ test("recommendation auto-load checks again after render and append", () => {
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
   assert.match(popupJs, /function queueRecommendationLoadCheck\(\)/);
+  assert.match(popupJs, /recommendationAutoLoadUserArmed/);
+  assert.match(popupJs, /initRecommendationAutoLoadIntent\(\)/);
+  assert.match(popupJs, /shouldAutoLoadRecommendations/);
   assert.match(popupJs, /queueRecommendationLoadCheck\(\);\n\s*return;\n\s*}/);
   assert.match(popupJs, /finally \{\n\s*state\.loadingMore = false;\n\s*queueRecommendationLoadCheck\(\);/);
 });

@@ -86,7 +86,7 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 - **A.** 装浏览器扩展（推荐，零配置）—— [下载](https://github.com/whiteguo233/OpenBiliClaw/releases) 装好登录 B 站后，扩展会几秒内把 Cookie 自动推到 `http://127.0.0.1:8420/api/bilibili/cookie`。bootstrap 会等待 Cookie 到达并继续自动运行 init
 - **B.** 手动贴 Cookie —— 向导内附 F12 → Network 取 cookie 的 5 步教程
 
-最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏 / 关注默认各最多 300 条 / 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
+最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏默认最多 300 条，关注默认最多 100 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
 
 AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外输出
 `BOOTSTRAP_STATUS status=progress message=init_progress` 事件。Agent 应把

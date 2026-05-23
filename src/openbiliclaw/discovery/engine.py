@@ -916,14 +916,40 @@ class ContentDiscoveryEngine:
             )
             contents = contents[: self._EVALUATE_BATCH_HARD_CAP]
 
+        scores: list[float] = [0.0] * len(contents)
+        viewed_content_keys = self._recent_viewed_content_keys()
+        if viewed_content_keys:
+            eval_pairs = [
+                (index, content)
+                for index, content in enumerate(contents)
+                if self._candidate_view_keys(content).isdisjoint(viewed_content_keys)
+            ]
+            skipped_viewed = len(contents) - len(eval_pairs)
+            if skipped_viewed > 0:
+                logger.info(
+                    "eval_batch skipped %d recently viewed candidate(s) before LLM "
+                    "(source=%s)",
+                    skipped_viewed,
+                    source_context or "mixed",
+                )
+        else:
+            eval_pairs = list(enumerate(contents))
+
+        if not eval_pairs:
+            if len(scores) < original_len:
+                scores = scores + [0.0] * (original_len - len(scores))
+            return scores
+
+        eval_indices = [index for index, _content in eval_pairs]
+        eval_contents = [content for _index, content in eval_pairs]
+
         # Split into cached vs uncached. Batch eval consumes recent negative
         # exemplars, so the in-memory score cache is versioned by latest event
         # id. Otherwise a newly recorded quick-exit cannot affect candidates
         # scored earlier in the same process.
         negative_revision = self._negative_exemplar_revision()
         uncached_indices: list[int] = []
-        scores: list[float] = [0.0] * len(contents)
-        for i, content in enumerate(contents):
+        for i, content in enumerate(eval_contents):
             cache_key = self._batch_eval_cache_key(
                 content,
                 profile,
@@ -948,11 +974,13 @@ class ContentDiscoveryEngine:
                     content.style_key = style_key
                 if franchise_key:
                     content.franchise_key = franchise_key
-                scores[i] = score
+                scores[eval_indices[i]] = score
             else:
                 uncached_indices.append(i)
 
         if not uncached_indices:
+            if len(scores) < original_len:
+                scores = scores + [0.0] * (original_len - len(scores))
             return scores
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
@@ -961,7 +989,7 @@ class ContentDiscoveryEngine:
             source_context or "mixed",
             len(uncached_indices),
             total_batches,
-            len(contents) - len(uncached_indices),
+            len(eval_contents) - len(uncached_indices),
         )
 
         # Fan every batch out concurrently. The ``run_llm`` wrapper
@@ -973,7 +1001,7 @@ class ContentDiscoveryEngine:
             batch_idx: int,
             batch_indices: list[int],
         ) -> tuple[list[int], list[float]]:
-            batch_contents = [contents[i] for i in batch_indices]
+            batch_contents = [eval_contents[i] for i in batch_indices]
             t0 = time.monotonic()
             batch_scores = await self._evaluate_batch(
                 batch_contents,
@@ -1031,7 +1059,7 @@ class ContentDiscoveryEngine:
 
         for batch_indices, batch_scores in await asyncio.gather(*tasks):
             for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
-                scores[idx] = batch_score
+                scores[eval_indices[idx]] = batch_score
 
         # Pad for any items dropped by the hard cap above so callers
         # that ``zip(candidates, scores, strict=True)`` still line up.
@@ -1039,6 +1067,44 @@ class ContentDiscoveryEngine:
             scores = scores + [0.0] * (original_len - len(scores))
 
         return scores
+
+    def _recent_viewed_content_keys(self) -> set[str]:
+        database = getattr(self, "_database", None)
+        get_recent = getattr(database, "get_recent_viewed_content_keys", None)
+        log_name = "get_recent_viewed_content_keys"
+        if not callable(get_recent):
+            get_recent = getattr(database, "get_recent_viewed_bvids", None)
+            log_name = "get_recent_viewed_bvids"
+        if not callable(get_recent):
+            return set()
+        try:
+            raw = get_recent()
+        except Exception:
+            logger.debug("%s failed", log_name, exc_info=True)
+            return set()
+        return {str(item).strip() for item in raw if str(item).strip()}
+
+    @staticmethod
+    def _candidate_view_keys(content: DiscoveredContent) -> set[str]:
+        platform = (content.source_platform or ("bilibili" if content.bvid else "")).strip().lower()
+        if platform == "xhs":
+            platform = "xiaohongshu"
+        elif platform == "dy":
+            platform = "douyin"
+        elif platform == "yt":
+            platform = "youtube"
+        elif platform == "bili":
+            platform = "bilibili"
+
+        keys: set[str] = set()
+        for value in {content.bvid, content.content_id}:
+            content_id = str(value or "").strip()
+            if not content_id:
+                continue
+            keys.add(content_id)
+            if platform:
+                keys.add(f"{platform}:{content_id}")
+        return keys
 
     def _negative_exemplar_revision(self) -> int | None:
         """Return the event-log revision used for negative-aware eval cache keys."""
@@ -2084,8 +2150,16 @@ class ContentDiscoveryEngine:
 
         persisted: list[DiscoveredContent] = []
         skipped_franchise: dict[str, int] = {}
+        skipped_viewed = 0
         round_franchise_counts: dict[str, int] = {}
+        viewed_content_keys = self._recent_viewed_content_keys()
         for item in results:
+            if (
+                viewed_content_keys
+                and not self._candidate_view_keys(item).isdisjoint(viewed_content_keys)
+            ):
+                skipped_viewed += 1
+                continue
             franchise_key = (item.franchise_key or "").strip().lower()
             if franchise_key and _POOL_FRANCHISE_QUOTA > 0:
                 pool_existing = existing_franchise_counts.get(franchise_key, 0)
@@ -2102,6 +2176,12 @@ class ContentDiscoveryEngine:
                     )
             except Exception:
                 logger.exception("Failed to cache discovered content: %s", item.bvid)
+
+        if skipped_viewed:
+            logger.info(
+                "pool cache skipped %d recently viewed item(s) before writing content_cache",
+                skipped_viewed,
+            )
 
         if skipped_franchise:
             logger.info(
