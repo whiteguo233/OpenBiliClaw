@@ -689,6 +689,7 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     fake_config = SimpleNamespace(
         data_path=Path("/tmp/openclaw-data"),
         llm=SimpleNamespace(
+            concurrency=3,
             soul=SimpleNamespace(provider="claude", model="claude-sonnet"),
             discovery=SimpleNamespace(provider="deepseek", model="deepseek-chat"),
             recommendation=SimpleNamespace(provider="", model=""),
