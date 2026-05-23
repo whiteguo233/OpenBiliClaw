@@ -4755,7 +4755,7 @@ def create_app(
             return {"ok": False, "message": f"清除失败: {exc}"}
 
     @app.get("/api/yt-replacer/lookup")
-    async def yt_replacer_lookup(bvid: str = Query("")) -> dict:
+    async def yt_replacer_lookup(bvid: str = Query("")) -> dict[str, Any]:
         """Check if a Bilibili video is a repost and get the YouTube original.
 
         Called by the extension content script when a user views a

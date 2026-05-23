@@ -19,11 +19,12 @@ import socket
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ── In-memory cache ────────────────────────────────────────────────
-_yt_cache: dict[str, dict | None] = {}  # bvid -> {yt_url, yt_title, yt_author} or None
+_yt_cache: dict[str, dict[str, Any] | None] = {}  # bvid -> {yt_url, yt_title, yt_author} or None
 _yt_cache_mtime: float = 0.0
 _CACHE_TTL = 86400  # 24h
 
@@ -261,9 +262,9 @@ def is_likely_repost(title: str, description: str = "", comments: list[str] | No
 # ── YouTube search via yt-dlp ─────────────────────────────────────
 
 
-def _search_yt(query: str, max_results: int = 5) -> list[dict]:
+def _search_yt(query: str, max_results: int = 5) -> list[dict[str, Any]]:
     """Search YouTube via yt-dlp and return raw result entries."""
-    import yt_dlp
+    import yt_dlp  # type: ignore[import-untyped]
 
     ydl_opts = {
         "quiet": True,
@@ -305,7 +306,7 @@ def _build_search_query(title: str) -> str:
     return title[:200]
 
 
-def find_original(title: str, author: str = "", description: str = "") -> dict | None:
+def find_original(title: str, author: str = "", description: str = "") -> dict[str, Any] | None:
     """Search YouTube for the original of a video described by *title*
     (and optionally *author*). Returns ``{url, title, uploader, cover_url}``
     on match, or ``None``.
@@ -379,7 +380,7 @@ def _cache_path(data_dir: str = "") -> Path:
     return base / "yt_replacer_cache.json"
 
 
-def _load_cache(data_dir: str = "") -> dict:
+def _load_cache(data_dir: str = "") -> dict[str, Any]:
     global _yt_cache, _yt_cache_mtime
     p = _cache_path(data_dir)
     if p.exists():
@@ -419,7 +420,7 @@ def replace_if_foreign(
     *,
     data_dir: str = "",
     force: bool = False,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Check if a Bilibili video is a foreign repost and return the
     original YouTube URL + metadata.
 
@@ -490,10 +491,10 @@ def replace_if_foreign(
 
 
 def replace_recommendation_row(
-    row: dict,
+    row: dict[str, Any],
     *,
     data_dir: str = "",
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Take a recommendation row dict (from ``get_recommendations()``) and
     return the YT replacement data if applicable.
 
