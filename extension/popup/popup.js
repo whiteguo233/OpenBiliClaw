@@ -3494,11 +3494,19 @@ function renderRecommendations(items, { append = false } = {}) {
     // flip a moment after the card appears, which is acceptable.
     const renderWatchLaterIcon = (saved) => (saved ? "★ 已收藏" : "☆ 稍后再看");
     let watchLaterSaved = false;
+    // Tracks whether the user has clicked this card's star at least once.
+    // Used to suppress the lazy-lookup result if it would clobber an
+    // in-flight or already-applied user action — without this, the
+    // unsave race (lookup says "still saved" but the user just clicked
+    // to unsave it) would flip the star back on after the user
+    // explicitly turned it off.
+    let watchLaterUserInteracted = false;
     const watchLaterBtn = createActionButton(
       renderWatchLaterIcon(false),
       "action-button action-secondary",
       async () => {
         if (!item.bvid) return;
+        watchLaterUserInteracted = true;
         const wasSaved = watchLaterSaved;
         const nextSaved = !wasSaved;
         // Optimistic flip for immediate feedback.
@@ -3529,9 +3537,13 @@ function renderRecommendations(items, { append = false } = {}) {
       },
     );
     // Lazy-check the saved state. Decorative — fine if it lags by a beat.
+    // If the user has clicked the star before this lookup returns, skip
+    // the update — the user's click already determined the correct
+    // state and the lookup is necessarily stale.
     if (item.bvid) {
       void (async () => {
         const status = await watchLaterStatus(item.bvid);
+        if (watchLaterUserInteracted) return;
         if (status && status.saved === true) {
           watchLaterSaved = true;
           watchLaterBtn.textContent = renderWatchLaterIcon(true);

@@ -437,17 +437,20 @@
         });
         // Lazy-check 稍后再看 saved state. Decorative — fine if it lags
         // by a tick. Star flips ☆ → ★ silently if the bvid is already saved.
+        // We track user-interaction on the button via data-user-touched
+        // so the unsave race is closed: if the user clicked the star
+        // before this lookup returns, skip applying the (now stale)
+        // server snapshot — the user's click is the source of truth.
         if (item.bvid) {
           fetch(`/api/watch-later/${encodeURIComponent(item.bvid)}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
               if (!d || d.saved !== true) return;
               const btn = card.querySelector(".watch-later-btn");
-              const glyph = btn?.querySelector(".watch-later-glyph");
-              if (btn) {
-                btn.dataset.saved = "true";
-                btn.setAttribute("aria-pressed", "true");
-              }
+              if (!btn || btn.dataset.userTouched === "true") return;
+              const glyph = btn.querySelector(".watch-later-glyph");
+              btn.dataset.saved = "true";
+              btn.setAttribute("aria-pressed", "true");
               if (glyph) glyph.textContent = "★";
             })
             .catch(() => { /* non-critical lookup */ });
@@ -554,6 +557,10 @@
         const btn = card.querySelector(".watch-later-btn");
         const glyph = btn?.querySelector(".watch-later-glyph");
         if (!btn || !item.bvid) return;
+        // Mark as touched so a pending lazy state-lookup won't clobber
+        // this click's result. The lookup checks this flag before
+        // applying its response.
+        btn.dataset.userTouched = "true";
         const wasSaved = btn.dataset.saved === "true";
         const nextSaved = !wasSaved;
         btn.dataset.saved = String(nextSaved);

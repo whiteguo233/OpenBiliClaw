@@ -12,7 +12,9 @@ import {
   fetchRuntimeStatus,
   startChatTurn,
   fetchChatTurns,
+  submitFeedback,
 } from "./popup-api.js";
+import { buildFeedbackPayload } from "./popup-helpers.js";
 
 /* ── Protocol constants ─────────────────────────────────────────- */
 const proto = window.OpenBiliClawLauncher || {};
@@ -340,10 +342,38 @@ function renderRecommendations(items) {
     });
   });
   el.recList.querySelectorAll(".like-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      btn.textContent = "✅ 已标记";
+      // Was a UI-only stub for months — clicking would change the
+      // button text and disable it, but no feedback ever reached the
+      // backend. Wire it up to submitFeedback (same path as the full
+      // popup's 多来点 action). Optimistic UI: mark as 'submitting'
+      // immediately, swap to '已标记' on success, restore + show
+      // hint on failure.
+      const index = Number(btn.dataset.index);
+      const item = Number.isFinite(index) ? state.recommendations[index] : null;
+      if (!item || !item.id) {
+        // No recommendation_id — can't submit. Treat like the old stub
+        // so the UI still gives some feedback, but mark visibly that
+        // it's local-only.
+        btn.textContent = "⚠️ 暂时无法记录";
+        btn.disabled = true;
+        return;
+      }
+      const originalLabel = btn.textContent;
       btn.disabled = true;
+      btn.textContent = "⏳ 记录中…";
+      try {
+        await submitFeedback(buildFeedbackPayload(item.id, "like"));
+        btn.textContent = "✅ 已记下";
+        // keep disabled — feedback is one-shot per card
+      } catch (err) {
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+        // Surface error in the empty-text slot if available; otherwise
+        // just log. We don't have a status pill in the launcher card.
+        console.warn("[launcher] feedback submission failed:", err);
+      }
     });
   });
 }
