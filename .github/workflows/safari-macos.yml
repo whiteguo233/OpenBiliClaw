@@ -1,0 +1,189 @@
+name: Safari (macOS)
+
+# Smoke-build the macOS host app + Safari Web Extension bundle.
+#
+# What this does:
+#   1. Build the JS extension into dist-safari/
+#   2. Generate the Xcode project from safari/project.yml
+#   3. Stage dist-safari/ into the Xcode project's Resources folder
+#   4. Build the app with xcodebuild (ad-hoc signed, no notarization)
+#   5. Upload the resulting .app as a workflow artifact
+#
+# What this does NOT do:
+#   - Sign with a Developer ID
+#   - Notarize / staple
+#   - Submit to the App Store
+#
+# To produce a distributable build, see safari/README.md — that path
+# needs repo secrets for the signing identity + a paid Apple Developer
+# account, and is intentionally kept out of this smoke workflow.
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+    paths:
+      - "extension/**"
+      - "safari/**"
+      - ".github/workflows/safari-macos.yml"
+  pull_request:
+    paths:
+      - "extension/**"
+      - "safari/**"
+      - ".github/workflows/safari-macos.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Safari Web Extension app
+    # macos-14 is Apple silicon (arm64) on GitHub-hosted runners and
+    # ships with Xcode 15.x by default. We pin the runner image rather
+    # than `macos-latest` so a runner upgrade can't silently break the
+    # build; bump deliberately when Apple ships an Xcode that introduces
+    # SDK / signing changes we want.
+    runs-on: macos-14
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Pick the Xcode version explicitly so the build is reproducible.
+      # The runner has multiple Xcode installs side-by-side; xcode-select
+      # picks which one xcodebuild sees.
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          # List what's available for diagnostics, then pick the newest
+          # 15.x that ships on this runner image.
+          ls /Applications | grep -E '^Xcode' || true
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install XcodeGen
+        # Pin to a recent stable. brew is the canonical install path on
+        # GitHub macOS runners; the runner has it preinstalled.
+        run: brew install xcodegen
+
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+
+      - name: Build extension for Safari
+        working-directory: extension
+        run: npm run build:safari
+
+      - name: Stage extension into Xcode project
+        working-directory: extension
+        # --no-build because we already built above; we just want the
+        # rsync-into-Resources side effect.
+        run: npm run package:safari:only
+
+      - name: Verify extension bundle is present
+        run: |
+          set -euo pipefail
+          test -f safari/Extension/Resources/manifest.json || {
+            echo "::error::manifest.json missing from safari/Extension/Resources — package:safari did not run"
+            exit 1
+          }
+          echo "manifest.json size: $(wc -c < safari/Extension/Resources/manifest.json) bytes"
+          ls -la safari/Extension/Resources/
+
+      - name: Generate Xcode project
+        working-directory: safari
+        run: xcodegen generate
+
+      - name: Build host app
+        working-directory: safari
+        # Ad-hoc sign (matches project.yml default) — fine for smoke
+        # builds, would need a Developer ID for distribution. The
+        # -derivedDataPath puts artifacts in a predictable spot so the
+        # next step can find the .app.
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project OpenBiliClawSafari.xcodeproj \
+            -scheme OpenBiliClaw \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            build | xcpretty || true
+          # xcpretty filters noise but swallows the exit code; check
+          # that the .app actually exists, otherwise fail.
+          test -d build/Build/Products/Release/OpenBiliClaw.app
+
+      - name: Verify extension is embedded
+        working-directory: safari
+        run: |
+          set -euo pipefail
+          APPEX="build/Build/Products/Release/OpenBiliClaw.app/Contents/PlugIns"
+          ls -la "$APPEX"
+          # Resolve whichever .appex was produced (productName can have a
+          # space depending on Xcode/XcodeGen — handle both spellings).
+          APPEX_PATH=$(find "$APPEX" -maxdepth 1 -name "*.appex" -print -quit)
+          test -n "$APPEX_PATH" || { echo "::error::no .appex embedded"; exit 1; }
+          echo "Embedded extension: $APPEX_PATH"
+          # The whole reason the previous bundle-layout bug was invisible
+          # in CI: Resources/Resources nesting. Assert manifest.json
+          # lives directly in Contents/Resources, not one level deeper.
+          test -f "$APPEX_PATH/Contents/Resources/manifest.json" || {
+            echo "::error::manifest.json not at Contents/Resources/manifest.json — bundle is wrapped wrong"
+            find "$APPEX_PATH/Contents/Resources" -name manifest.json
+            exit 1
+          }
+          echo "manifest.json is at the right path ✓"
+
+      - name: Verify code signing
+        working-directory: safari
+        run: |
+          set -euo pipefail
+          codesign -dv --verbose=2 build/Build/Products/Release/OpenBiliClaw.app 2>&1 | head -20
+          # Even ad-hoc signing should produce a valid signature; this
+          # catches the "DEVELOPMENT_TEAM empty + Automatic signing" trap.
+          codesign --verify --deep --strict --verbose=2 \
+            build/Build/Products/Release/OpenBiliClaw.app
+
+      - name: Compute artifact name
+        id: artifact
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./extension/package.json').version")
+          SHA=$(git rev-parse --short HEAD)
+          echo "name=OpenBiliClaw-safari-v${VERSION}-${SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Package .app into a zip
+        run: |
+          set -euo pipefail
+          cd safari/build/Build/Products/Release
+          # ditto preserves macOS metadata (resource forks, xattrs) that
+          # plain `zip` strips. The codesigning seal depends on these.
+          ditto -c -k --sequesterRsrc --keepParent \
+            OpenBiliClaw.app \
+            "${{ runner.temp }}/${{ steps.artifact.outputs.name }}.zip"
+          ls -lh "${{ runner.temp }}/${{ steps.artifact.outputs.name }}.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/${{ steps.artifact.outputs.name }}.zip
+          # Smoke builds aren't shipped to users; 14 days is plenty.
+          retention-days: 14
+          if-no-files-found: error
