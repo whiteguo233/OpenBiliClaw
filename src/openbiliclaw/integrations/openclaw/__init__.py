@@ -13,6 +13,10 @@ from .errors import (
 )
 from .operations import OpenClawAdapter
 from .schemas import (
+    AvoidanceProbeFeedbackRequest,
+    AvoidanceProbeFeedbackResponse,
+    AvoidanceProbeItem,
+    AvoidanceProbeResponse,
     ChatRequest,
     ChatResponse,
     DelightItem,
@@ -36,6 +40,10 @@ __all__ = [
     "build_openclaw_adapter",
     "build_openclaw_adapter_services",
     "build_openclaw_skills",
+    "AvoidanceProbeFeedbackRequest",
+    "AvoidanceProbeFeedbackResponse",
+    "AvoidanceProbeItem",
+    "AvoidanceProbeResponse",
     "ChatRequest",
     "ChatResponse",
     "DelightItem",

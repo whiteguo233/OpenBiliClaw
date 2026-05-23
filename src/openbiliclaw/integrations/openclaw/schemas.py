@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from .errors import AdapterValidationError
 
 _VALID_FEEDBACK_TYPES = {"like", "dislike", "comment", "dismiss"}
+_VALID_AVOIDANCE_RESPONSES = {"confirm", "reject", "chat"}
 
 
 @dataclass(slots=True)
@@ -160,3 +161,57 @@ class InterestProbeResponse:
     """Next interest-confirmation probe returned to OpenClaw."""
 
     probe: InterestProbeItem | None = None
+
+
+@dataclass(slots=True)
+class AvoidanceProbeItem:
+    """One speculative avoidance hypothesis the agent wants the user to confirm."""
+
+    domain: str
+    reason: str = ""
+    confidence: float = 0.0
+    weight: float = 0.0
+    source_mode: str = ""
+    source_signal: str = ""
+    experience_mode: str = ""
+    entry_load: str = ""
+    specifics: list[str] = field(default_factory=list)
+    question: str = ""
+
+
+@dataclass(slots=True)
+class AvoidanceProbeResponse:
+    """Next avoidance-confirmation probe returned to OpenClaw."""
+
+    probe: AvoidanceProbeItem | None = None
+
+
+@dataclass(slots=True)
+class AvoidanceProbeFeedbackRequest:
+    """User response to a speculative avoidance probe."""
+
+    domain: str
+    response: str
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        self.domain = self.domain.strip()
+        self.response = self.response.strip().lower()
+        self.message = self.message.strip()
+        if not self.domain:
+            raise AdapterValidationError("avoidance probe domain must not be empty.")
+        if self.response not in _VALID_AVOIDANCE_RESPONSES:
+            allowed = ", ".join(sorted(_VALID_AVOIDANCE_RESPONSES))
+            raise AdapterValidationError(
+                f"avoidance probe response must be one of: {allowed}."
+            )
+
+
+@dataclass(slots=True)
+class AvoidanceProbeFeedbackResponse:
+    """Result of recording user feedback for a speculative avoidance probe."""
+
+    ok: bool
+    action: str
+    domain: str
+    reply: str = ""

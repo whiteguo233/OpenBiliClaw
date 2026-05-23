@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 from .errors import AdapterOperationError, AdapterValidationError
-from .schemas import ChatRequest, FeedbackRequest
+from .schemas import AvoidanceProbeFeedbackRequest, ChatRequest, FeedbackRequest
 
 
 @dataclass(slots=True)
@@ -112,6 +112,21 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
         del payload
         return await _run_handler(adapter.get_next_probe)
 
+    async def get_next_avoidance_probe_handler(payload: dict[str, object]) -> dict[str, object]:
+        del payload
+        return await _run_handler(adapter.get_next_avoidance_probe)
+
+    async def respond_avoidance_probe_handler(payload: dict[str, object]) -> dict[str, object]:
+        async def action() -> Any:
+            request = AvoidanceProbeFeedbackRequest(
+                domain=str(payload.get("domain", "")),
+                response=str(payload.get("response", "")),
+                message=str(payload.get("message", "")),
+            )
+            return await adapter.respond_avoidance_probe(request)
+
+        return await _run_handler(action)
+
     return [
         OpenClawSkillDescriptor(
             name="openbiliclaw_sync_account",
@@ -190,5 +205,32 @@ def build_openclaw_skills(adapter: Any) -> list[OpenClawSkillDescriptor]:
             ),
             input_schema={"type": "object", "properties": {}},
             handler=get_next_probe_handler,
+        ),
+        OpenClawSkillDescriptor(
+            name="openbiliclaw_next_avoidance_probe",
+            description=(
+                "Get the next speculative avoidance hypothesis that the agent "
+                "wants the user to confirm or reject. Returns a ready-to-ask "
+                "question plus raw avoidance data."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=get_next_avoidance_probe_handler,
+        ),
+        OpenClawSkillDescriptor(
+            name="openbiliclaw_respond_avoidance_probe",
+            description="Submit a user response to a speculative avoidance probe.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string", "minLength": 1},
+                    "response": {
+                        "type": "string",
+                        "enum": ["confirm", "reject", "chat"],
+                    },
+                    "message": {"type": "string"},
+                },
+                "required": ["domain", "response"],
+            },
+            handler=respond_avoidance_probe_handler,
         ),
     ]

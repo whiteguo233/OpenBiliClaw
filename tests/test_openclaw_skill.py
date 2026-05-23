@@ -11,6 +11,9 @@ from openbiliclaw.integrations.openclaw.errors import (
     AdapterValidationError,
 )
 from openbiliclaw.integrations.openclaw.schemas import (
+    AvoidanceProbeFeedbackResponse,
+    AvoidanceProbeItem,
+    AvoidanceProbeResponse,
     ChatResponse,
     DelightItem,
     DelightResponse,
@@ -131,6 +134,34 @@ class _FakeAdapter:
             )
         )
 
+    async def get_next_avoidance_probe(self) -> AvoidanceProbeResponse:
+        self.calls.append(("get_next_avoidance_probe",))
+        return AvoidanceProbeResponse(
+            probe=AvoidanceProbeItem(
+                domain="浅层热点复读",
+                reason="用户可能想避开无信息增量的热点复读内容。",
+                source_mode="negative_signal",
+                source_signal="thumbs_down",
+                confidence=0.55,
+                weight=0.5,
+                specifics=["标题党热点解读", "无信息增量复读"],
+                question=(
+                    "我猜【浅层热点复读】（比如：标题党热点解读、无信息增量复读）"
+                    "可能是你想避开的方向。"
+                ),
+            )
+        )
+
+    async def respond_avoidance_probe(self, request) -> AvoidanceProbeFeedbackResponse:  # noqa: ANN001
+        self.calls.append(
+            ("respond_avoidance_probe", request.domain, request.response, request.message)
+        )
+        return AvoidanceProbeFeedbackResponse(
+            ok=True,
+            action="confirmed",
+            domain=request.domain,
+        )
+
 
 def test_build_openclaw_skills_returns_expected_names() -> None:
     adapter = _FakeAdapter()
@@ -146,6 +177,8 @@ def test_build_openclaw_skills_returns_expected_names() -> None:
         "openbiliclaw_get_runtime_status",
         "openbiliclaw_chat",
         "openbiliclaw_next_probe",
+        "openbiliclaw_next_avoidance_probe",
+        "openbiliclaw_respond_avoidance_probe",
     ]
 
 
@@ -304,3 +337,38 @@ async def test_next_probe_skill_delegates_to_adapter() -> None:
     assert payload["data"]["probe"]["domain"] == "建筑美学"
     assert "参数化设计" in payload["data"]["probe"]["specifics"]
     assert adapter.calls == [("get_next_probe",)]
+
+
+@pytest.mark.asyncio
+async def test_next_avoidance_probe_skill_delegates_to_adapter() -> None:
+    adapter = _FakeAdapter()
+    skills = build_openclaw_skills(adapter)
+    skill = next(item for item in skills if item.name == "openbiliclaw_next_avoidance_probe")
+
+    payload = await skill.handler({})
+
+    assert payload["ok"] is True
+    assert payload["data"]["probe"]["domain"] == "浅层热点复读"
+    assert "标题党热点解读" in payload["data"]["probe"]["specifics"]
+    assert adapter.calls == [("get_next_avoidance_probe",)]
+
+
+@pytest.mark.asyncio
+async def test_respond_avoidance_probe_skill_builds_request_and_delegates() -> None:
+    adapter = _FakeAdapter()
+    skills = build_openclaw_skills(adapter)
+    skill = next(item for item in skills if item.name == "openbiliclaw_respond_avoidance_probe")
+
+    payload = await skill.handler(
+        {
+            "domain": "浅层热点复读",
+            "response": "confirm",
+            "message": "对，就是不想看",
+        }
+    )
+
+    assert payload["ok"] is True
+    assert payload["data"]["action"] == "confirmed"
+    assert adapter.calls == [
+        ("respond_avoidance_probe", "浅层热点复读", "confirm", "对，就是不想看")
+    ]

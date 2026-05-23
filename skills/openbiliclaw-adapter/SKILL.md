@@ -67,6 +67,8 @@ Supported commands:
 - `get-profile`
 - `get-delight` — check for a proactive surprise recommendation
 - `next-probe` — get the next speculative-interest hypothesis to ask the user about
+- `next-avoidance-probe` — get the next speculative avoidance hypothesis to ask about
+- `respond-avoidance-probe --domain "..." --response confirm|reject|chat [--message "..."]`
 - `chat --message "..." [--session openclaw]` — send one Socratic dialogue turn, returns agent reply
 - `runtime-status`
 - `recommend --limit 5`
@@ -85,16 +87,17 @@ uv run python -m openbiliclaw.integrations.openclaw.cli listen
 This connects to the runtime stream and outputs one JSON line per event:
 
 ```json
-{"ok": true, "data": {"status": "connected", "ws_url": "ws://127.0.0.1:8420/api/runtime-stream", "event_types": ["delight.candidate", "interest.probe"]}}
+{"ok": true, "data": {"status": "connected", "ws_url": "ws://127.0.0.1:8420/api/runtime-stream", "event_types": ["avoidance.probe", "delight.candidate", "interest.probe"]}}
 {"ok": true, "data": {"type": "delight.candidate", "bvid": "BV1xxx", "title": "...", "delight_reason": "...", "delight_score": 0.92, "delight_hook": "深层共鸣"}}
 {"ok": true, "data": {"type": "interest.probe", "domain": "建筑美学", "reason": "...", "question": "我从你最近的轨迹里嗅到你可能对【建筑美学】感兴趣——... 这个方向你自己认不认？"}}
+{"ok": true, "data": {"type": "avoidance.probe", "domain": "浅层热点复读", "reason": "...", "question": "我猜【浅层热点复读】可能是你想避开的方向——... 这个判断准吗？"}}
 ```
 
-Default event types: `delight.candidate` (surprise recommendation) and `interest.probe` (interest hypothesis to confirm). The command auto-reconnects on disconnection. Press Ctrl-C to stop.
+Default event types: `delight.candidate` (surprise recommendation), `interest.probe` (interest hypothesis to confirm), and `avoidance.probe` (avoidance hypothesis to confirm). The command auto-reconnects on disconnection. Press Ctrl-C to stop.
 
 Options:
 - `--ws-url <url>` — override the WebSocket endpoint
-- `--events <types>` — comma-separated event types to forward (default: `delight.candidate,interest.probe`)
+- `--events <types>` — comma-separated event types to forward (default: `avoidance.probe,delight.candidate,interest.probe`)
 
 ## Socratic Dialogue & Interest Probing
 
@@ -107,6 +110,21 @@ uv run python -m openbiliclaw.integrations.openclaw.cli next-probe
 ```
 
 Returns a ready-to-ask `question` plus raw hypothesis data (`domain`, `reason`, `specifics`, `confidence`). If no active hypothesis exists, `probe` is `null`.
+
+### Get or answer the next avoidance hypothesis
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli next-avoidance-probe
+```
+
+If the user confirms the hypothesis:
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli respond-avoidance-probe \
+  --domain "浅层热点复读" \
+  --response confirm \
+  --message "对，这类我不想看"
+```
 
 ### Relay the user's answer via Socratic dialogue
 
@@ -123,11 +141,12 @@ Use this order for routine work:
 
 1. `get-profile`
 2. `next-probe` — if a hypothesis is pending, ask the user and relay via `chat`
-3. `recommend --limit <n>`
-4. `submit-feedback`
-5. `runtime-status`
-6. `get-delight` or `listen` for proactive surprise recommendations and interest probes
-7. `sync-account` when long-term signals need refreshing
+3. `next-avoidance-probe` — if a hypothesis is pending, ask and relay via `respond-avoidance-probe`
+4. `recommend --limit <n>`
+5. `submit-feedback`
+6. `runtime-status`
+7. `get-delight` or `listen` for proactive surprise recommendations and probes
+8. `sync-account` when long-term signals need refreshing
 
 ## Working Rules
 
@@ -164,6 +183,16 @@ uv run python -m openbiliclaw.integrations.openclaw.cli get-delight
 
 ```bash
 uv run python -m openbiliclaw.integrations.openclaw.cli next-probe
+```
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli next-avoidance-probe
+```
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli respond-avoidance-probe \
+  --domain "浅层热点复读" \
+  --response confirm
 ```
 
 ```bash

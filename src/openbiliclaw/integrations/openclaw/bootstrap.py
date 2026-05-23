@@ -73,15 +73,21 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         speculation_max_active=config.scheduler.speculation_max_active,
         speculation_max_primary_interests=config.scheduler.speculation_max_primary_interests,
         speculation_max_secondary_interests=config.scheduler.speculation_max_secondary_interests,
-        avoidance_speculation_interval_minutes=(
-            config.scheduler.avoidance_speculation_interval_minutes
+        avoidance_speculation_interval_minutes=int(
+            getattr(config.scheduler, "avoidance_speculation_interval_minutes", 10)
         ),
-        avoidance_speculation_ttl_days=config.scheduler.avoidance_speculation_ttl_days,
-        avoidance_speculation_cooldown_days=config.scheduler.avoidance_speculation_cooldown_days,
-        avoidance_speculation_confirmation_threshold=(
-            config.scheduler.avoidance_speculation_confirmation_threshold
+        avoidance_speculation_ttl_days=int(
+            getattr(config.scheduler, "avoidance_speculation_ttl_days", 3)
         ),
-        avoidance_speculation_max_active=config.scheduler.avoidance_speculation_max_active,
+        avoidance_speculation_cooldown_days=int(
+            getattr(config.scheduler, "avoidance_speculation_cooldown_days", 7)
+        ),
+        avoidance_speculation_confirmation_threshold=int(
+            getattr(config.scheduler, "avoidance_speculation_confirmation_threshold", 3)
+        ),
+        avoidance_speculation_max_active=int(
+            getattr(config.scheduler, "avoidance_speculation_max_active", 5)
+        ),
         speculator_idle_interval_minutes=config.scheduler.speculator_idle_interval_minutes,
     )
     llm_service = LLMService(
