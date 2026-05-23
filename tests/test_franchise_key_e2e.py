@@ -352,7 +352,9 @@ async def test_evaluate_content_batch_default_size_30_uses_single_llm_call(
 # ---------------------------------------------------------------------------
 
 
-def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_user_reported_scenario_5_genshin_in_popup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Recreates the community-reported popup case:
 
     The user clicks one "AI 重绘原神地图" video. Then related_chain
@@ -361,11 +363,12 @@ def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path, monkeypatch: 
     five in a single 20-row response. With v0.3.18 the API caps at
     2 同 franchise per response.
     """
+    from types import SimpleNamespace
+
     from fastapi.testclient import TestClient
 
     from openbiliclaw.api.app import create_app
     from openbiliclaw.storage.database import Database
-    from types import SimpleNamespace
 
     monkeypatch.setattr(
         "openbiliclaw.config.load_config",
