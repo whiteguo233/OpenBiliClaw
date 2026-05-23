@@ -23,6 +23,7 @@ from openbiliclaw.discovery.strategies._utils import (
     _gather_bounded,
     clean_text,
     parse_duration,
+    search_cooldown_remaining,
     to_int,
 )
 
@@ -317,6 +318,15 @@ class RelatedChainStrategy(DiscoveryStrategy):
         return seed_pairs
 
     async def _preference_seed_bvids(self, profile: SoulProfile) -> list[str]:
+        cooldown_remaining = search_cooldown_remaining(self.bilibili_client)
+        if cooldown_remaining > 0:
+            logger.info(
+                "related_chain: Bilibili search cooldown active (%.0fs left); "
+                "skipping preference seed search",
+                cooldown_remaining,
+            )
+            return []
+
         queries: list[str] = []
         queries.extend(
             interest_item.name.strip()

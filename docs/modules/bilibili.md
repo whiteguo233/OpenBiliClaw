@@ -19,6 +19,7 @@
 | 3.2 核心 API | ✅ | 10+ API 方法 + 限流 + 统一错误处理 |
 | `/nav` 登录态诊断 | ✅ | `/x/web-interface/nav` 返回 `-101` 时抛 `BilibiliAuthExpiredError`，日志明确提示 session expired / 重新登录或保持扩展在线同步 Cookie |
 | 搜索 WBI 化与 412 软降级 | ✅ | `search()` 现会先从 `nav` 获取 WBI key，走 `/x/web-interface/wbi/search/type`；遇到 `412 Precondition Failed` 时会记录 warning 并返回空结果，避免拖垮整轮 discover |
+| 搜索风控冷却 | ✅ | 连续 `v_voucher` 重试耗尽或 412 后启用进程级 search cooldown；所有 BilibiliAPIClient 实例共享冷却状态，避免 dedicated search client 在下一轮继续撞风控 |
 | 账户侧同步来源 | ✅ | 已支持 history / favorites / following 三类长期信号，供后台低频同步使用 |
 | 3.3 agent-browser 集成 | ✅ | navigate / get_page_content + CLI browser 命令 |
 
@@ -73,7 +74,9 @@ history = await client.get_user_history(max_items=200)
 # 搜索
 results = await client.search("纪录片", page=1, order="pubdate")
 # search 请求会使用 WBI 签名 + 搜索页 Referer；
-# 若 B 站返回 412，则这里会保守返回 []
+# 若 B 站返回 412 或连续 v_voucher，则这里会保守返回 []，
+# 并让进程内后续 search 短期冷却。
+remaining = client.search_cooldown_remaining()
 
 # 收藏
 folders = await client.get_favorite_folders()  # list[FavoriteFolder]
@@ -141,5 +144,6 @@ headed = false     # 调试时设为 true
 5. **运行时优先级**：命令和本地服务优先使用显式配置的 cookie；若未配置，则自动回退到 `auth login` 已保存的 cookie，避免首次登录后还要重复把 cookie 写进 `config.toml`
 6. **后端可主动请求扩展同步**：`/api/runtime-stream?client=background` 连接建立时，如果 `resolve_runtime_cookie()` 解析不到有效 Cookie，后端会先发 `bilibili_cookie_sync_requested`，扩展收到后立即 POST 当前浏览器 Cookie 到 `/api/bilibili/cookie`
 7. **账户侧长期信号分层**：`history / favorites / following` 作为低频同步来源，用来补插件实时事件看不到的长期偏好变化
-8. **搜索 WBI 对齐 + 保守降级**：B 站搜索已切到 WBI 路径；客户端现在会复用 `nav` 的 WBI key 对齐浏览器搜索链路，剩余 `412` 再降级为空结果，避免把单次 search 失败放大成整轮 refresh 错误
+8. **搜索 WBI 对齐 + 保守降级**：B 站搜索已切到 WBI 路径；客户端现在会复用 `nav` 的 WBI key 对齐浏览器搜索链路，剩余 `412` / `v_voucher` 再降级为空结果，避免把单次 search 失败放大成整轮 refresh 错误
 9. **Cookie 过期显式化**：`/nav` 的 `-101` 与普通业务错误分开处理，日志和异常文本都包含 session expired / re-auth 提示；上层仍可按 `BilibiliAPIError` 统一兜底
+10. **进程级 search 冷却**：`BilibiliAPIClient.search()` 在连续 `v_voucher` 重试耗尽或 412 时会设置共享 cooldown；dedicated search clients 和主 runtime client 都会通过 `search_cooldown_remaining()` 看到同一状态，避免一分钟一轮持续打穿 B 站风控桶

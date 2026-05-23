@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import quote
 
 import httpx
@@ -16,6 +17,12 @@ from openbiliclaw.bilibili.api import (
     FavoriteFolderWithItems,
     FollowingUser,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_bilibili_search_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0)
 
 
 class FakeResponse:
@@ -293,6 +300,52 @@ async def test_search_returns_empty_on_412() -> None:
     results = await client.search("纪录片", page=1, page_size=10, order="totalrank")
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_enters_global_cooldown_after_v_voucher_storm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0, raising=False)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0, raising=False)
+    nav_payload = {
+        "code": 0,
+        "data": {
+            "wbi_img": {
+                "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+            }
+        },
+    }
+    first_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    first_client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [nav_payload, nav_payload, nav_payload],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"v_voucher": "a", "result": None}},
+                {"code": 0, "data": {"v_voucher": "b", "result": None}},
+                {"code": 0, "data": {"v_voucher": "c", "result": None}},
+            ],
+        }
+    )
+
+    assert await first_client.search("纪录片") == []
+
+    second_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    second_http = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [nav_payload],
+            "/x/web-interface/wbi/search/type": [{"code": 0, "data": {"result": []}}],
+        }
+    )
+    second_client._client = second_http
+
+    assert await second_client.search("摄影") == []
+    assert second_http.calls == []
 
 
 @pytest.mark.asyncio

@@ -270,6 +270,29 @@ async def test_search_strategy_uses_llm_queries_and_searches_each_query() -> Non
 
 
 @pytest.mark.asyncio
+async def test_search_strategy_skips_llm_query_generation_during_search_cooldown() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    class CoolingSearchClient(FakeBilibiliClient):
+        def search_cooldown_remaining(self) -> float:
+            return 120.0
+
+    llm_service = FakeLLMService('{"queries": ["纪录片 原理"]}')
+    bilibili_client = CoolingSearchClient({})
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(_build_profile(), limit=20)
+
+    assert results == []
+    assert llm_service.calls == []
+    assert bilibili_client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_search_strategy_passes_style_preferences_to_query_prompt() -> None:
     from openbiliclaw.discovery.strategies.strategies import SearchStrategy
 

@@ -349,6 +349,7 @@ class LLMService:
         json_mode: bool = False,
         caller: str = "",
         reasoning_effort: str | None = None,
+        bypass_semaphore: bool = False,
     ) -> LLMResponse:
         """Execute a task with automatically injected core memory context.
 
@@ -360,6 +361,10 @@ class LLMService:
         provider's thinking mode for tasks that don't benefit from it
         (structured eval / classify / write-expression). ``None`` keeps
         the provider default; ``""`` explicitly disables for this call.
+
+        ``bypass_semaphore`` (v0.3.64+) skips the global concurrency
+        gate entirely. Use for user-initiated interactive requests
+        (e.g. chat dialogue) that must never queue behind background work.
         """
         core_memory_block = ""
         if self.memory is not None:
@@ -375,28 +380,34 @@ class LLMService:
             messages.extend(history)
         messages.append({"role": "user", "content": user_input})
         priority = self._resolve_priority(caller)
+
+        async def _do_llm_call() -> LLMResponse:
+            routed = self._resolve_module_override(caller)
+            if routed is None:
+                return await self.registry.complete(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=json_mode,
+                    reasoning_effort=reasoning_effort,
+                )
+            provider, model = routed
+            return await self.registry.complete_provider(
+                provider,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            )
+
         try:
-            async with self._priority_sem.slot(priority):
-                routed = self._resolve_module_override(caller)
-                if routed is None:
-                    response = await self.registry.complete(
-                        messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        json_mode=json_mode,
-                        reasoning_effort=reasoning_effort,
-                    )
-                else:
-                    provider, model = routed
-                    response = await self.registry.complete_provider(
-                        provider,
-                        messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        json_mode=json_mode,
-                        reasoning_effort=reasoning_effort,
-                        model=model,
-                    )
+            if bypass_semaphore:
+                response = await _do_llm_call()
+            else:
+                async with self._priority_sem.slot(priority):
+                    response = await _do_llm_call()
         except LLMProviderError as exc:
             raise LLMProviderExecutionError(str(exc)) from exc
         if not response.content.strip():
@@ -452,6 +463,7 @@ class LLMService:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         caller: str = "",
+        bypass_semaphore: bool = False,
     ) -> LLMResponse:
         """Execute a completion that may include tool/function calls.
 
@@ -483,6 +495,7 @@ class LLMService:
             max_tokens=max_tokens,
             json_mode=False,
             caller=caller,
+            bypass_semaphore=bypass_semaphore,
         )
 
         # Try to parse tool calls from the response
@@ -525,6 +538,7 @@ class LLMService:
             user_input=user_message,
             history=history,
             caller=caller,
+            bypass_semaphore=True,
         )
 
     def _build_dialogue_tone_profile(self) -> ToneProfile:

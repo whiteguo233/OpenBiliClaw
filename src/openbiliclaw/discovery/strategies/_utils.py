@@ -55,6 +55,17 @@ class SupportsSearchClient(Protocol):
     ) -> list[dict[str, object]]: ...
 
 
+def search_cooldown_remaining(client: object) -> float:
+    """Return process/client search cooldown seconds when the client exposes it."""
+    remaining = getattr(client, "search_cooldown_remaining", None)
+    if not callable(remaining):
+        return 0.0
+    try:
+        return max(0.0, float(remaining()))
+    except Exception:
+        return 0.0
+
+
 class SupportsRankingClient(Protocol):
     async def get_ranking(self, rid: int = 0) -> list[dict[str, object]]: ...
 

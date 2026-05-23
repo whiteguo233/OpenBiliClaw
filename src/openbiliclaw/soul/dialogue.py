@@ -10,6 +10,7 @@ The dialogue style is inspired by the Socratic method:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -104,16 +105,20 @@ class SocraticDialogue:
             reply = "我刚刚思路断了一下，你可以换个说法再告诉我一次吗？"
 
         self._history.append(DialogueTurn(role="agent", content=reply))
-        learn_from_dialogue = getattr(self._soul_engine, "learn_from_dialogue", None)
-        if callable(learn_from_dialogue):
-            try:
-                await learn_from_dialogue(
-                    user_message=user_message,
-                    assistant_reply=reply,
-                    session=self._session,
-                )
-            except Exception:
-                logger.exception("Failed to learn from dialogue turn.")
+        learn_fn = getattr(self._soul_engine, "learn_from_dialogue", None)
+        if callable(learn_fn):
+
+            async def _background_learn() -> None:
+                try:
+                    await learn_fn(
+                        user_message=user_message,
+                        assistant_reply=reply,
+                        session=self._session,
+                    )
+                except Exception:
+                    logger.exception("Failed to learn from dialogue turn.")
+
+            asyncio.create_task(_background_learn())
         return reply
 
     async def _respond_with_tools(self, service: Any, user_message: str) -> str:
@@ -148,6 +153,7 @@ class SocraticDialogue:
             tools=self._tools,
             history=self._history_to_messages(),
             caller="soul.dialogue.tools",
+            bypass_semaphore=True,
         )
 
         # If the LLM returned a tool call, execute and continue

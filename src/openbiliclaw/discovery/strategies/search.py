@@ -24,6 +24,7 @@ from openbiliclaw.discovery.strategies._utils import (
     interest_anchors,
     normalize_match_text,
     parse_duration,
+    search_cooldown_remaining,
     to_int,
 )
 from openbiliclaw.llm.prompts import build_search_queries_prompt
@@ -77,6 +78,20 @@ class SearchStrategy(DiscoveryStrategy):
         Returns:
             Discovered content list.
         """
+        cooldown_remaining = search_cooldown_remaining(self.bilibili_client)
+        if cooldown_remaining > 0:
+            self.last_intermediates = {
+                "queries": [],
+                "skipped": "search_cooldown",
+                "cooldown_remaining_seconds": int(cooldown_remaining),
+            }
+            logger.info(
+                "Search: Bilibili search cooldown active (%.0fs left); "
+                "skipping query generation",
+                cooldown_remaining,
+            )
+            return []
+
         queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
         self.last_intermediates = {"queries": list(queries)}
         anchor_list = interest_anchors(profile)
@@ -276,6 +291,16 @@ class SearchStrategy(DiscoveryStrategy):
             if storm_aborted:
                 gathered.append([])
                 continue
+            cooldown_remaining = search_cooldown_remaining(client)
+            if cooldown_remaining > 0:
+                logger.info(
+                    "Search: Bilibili search cooldown active (%.0fs left); "
+                    "skipping remaining %d query(ies)",
+                    cooldown_remaining,
+                    len(request_plan) - i,
+                )
+                gathered.extend([] for _ in range(len(request_plan) - i))
+                break
             if i > 0:
                 # Jitter 0.5–1.0s. Steady-state cost: ~0.75s/query;
                 # under storm: backoff already happens inside client.search,
@@ -298,6 +323,16 @@ class SearchStrategy(DiscoveryStrategy):
             # consumed = IP is being rate-limited *now*. Burning the
             # remaining queries just deepens the hole.
             if isinstance(result, list) and not result:
+                cooldown_remaining = search_cooldown_remaining(client)
+                if cooldown_remaining > 0:
+                    logger.warning(
+                        "v_voucher search cooldown detected (%.0fs left) — "
+                        "aborting remaining %d query(ies) this round",
+                        cooldown_remaining,
+                        len(request_plan) - (i + 1),
+                    )
+                    storm_aborted = True
+                    continue
                 consecutive_empty += 1
                 if consecutive_empty >= storm_trigger:
                     logger.warning(

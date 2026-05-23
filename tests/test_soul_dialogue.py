@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -59,6 +60,7 @@ async def test_dialogue_respond_appends_user_and_agent_turns() -> None:
     )
 
     reply = await dialogue.respond("我最近很喜欢看讲得很透的纪录片。")
+    await asyncio.sleep(0)  # let background learn task run
 
     assert "讲述方式" in reply
     assert len(dialogue.history) == 2
@@ -101,6 +103,7 @@ async def test_dialogue_respond_returns_graceful_fallback_on_service_error() -> 
     )
 
     reply = await dialogue.respond("我有点说不清自己最近为什么总在刷同一类视频。")
+    await asyncio.sleep(0)  # let background learn task run
 
     assert "换个说法" in reply
     assert len(dialogue.history) == 2

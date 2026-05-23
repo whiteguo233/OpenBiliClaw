@@ -15,6 +15,7 @@
 - embedding 预热从 refresh 收尾主路径改为后台 task；慢本地 embedding 后端只影响后续 MMR cache / topic supergroup cache 命中率，不再让 `manual_refresh_state` 长时间停在 `running` 或占住 refresh lock。
 - `[scheduler].pool_target_count` 默认从 600 降到 300；B 站初始化关注默认从 300 收敛到 100，减少长关注列表对首次画像的事件量。XHS / Douyin / YouTube `bootstrap_profile` 的 `max_items_per_scope` 仍默认 300。
 - 移动 Web 与插件 / side panel 推荐列表的自动续页新增用户滚动意图门闩；后台 `refresh.pool_updated` 或列表重渲染不会在加载更多哨兵仍可见时连续调用 `append`，避免候选刚补进就被空转消费到 0。
+- B 站 search 连续命中 `v_voucher` / `412` 后会进入进程级冷却（10 分钟起，连续风控逐步延长到 30 分钟）；Search / Explore / RelatedChain 的搜索路径在冷却期直接跳过 query/domain 生成，避免每 60 秒继续撞风控并浪费 LLM token。
 - Discovery 批量 LLM 评估前会跳过最近看过的内容，判断从单一 BVID 扩展为 `source_platform:content_id`；B 站保留 raw BVID 兼容，小红书 / 抖音 / YouTube 等来源也会在 LLM 前、写入候选池前和 pool 读取时被过滤，减少重复发现带来的 token 浪费。
 - 移动 Web 推荐列表新增封面预热和接近底部自动续页：首屏推荐封面用 eager/high priority 加载，后续封面通过 `/api/image-proxy` URL best-effort 预热；滚到列表底部附近会自动调用 `append` 续下一批，底部「加载更多」按钮保留为兜底。
 - 移动 Web 推荐列表的高速滑动封面体验继续收敛：当前批次默认预热 12 张封面，前 12 张用 eager 加载，追加批次会先等待封面预热/解码或短超时再插入卡片；封面图加载和 decode 完成前保持透明，让粉蓝渐变骨架先显示，decode 完成后淡入，减少快速下滑时的白屏闪烁。

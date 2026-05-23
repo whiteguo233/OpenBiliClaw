@@ -12,7 +12,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from urllib.parse import quote, urlencode, urlparse
 
 import httpx
@@ -128,6 +128,10 @@ class BilibiliAPIClient:
 
     _BASE_URL = "https://api.bilibili.com"
     _SEARCH_WEB_LOCATION = 1430654
+    _SEARCH_COOLDOWN_BASE_SECONDS: ClassVar[float] = 600.0
+    _SEARCH_COOLDOWN_MAX_SECONDS: ClassVar[float] = 1800.0
+    _search_cooldown_until: ClassVar[float] = 0.0
+    _search_cooldown_level: ClassVar[int] = 0
     _WBI_MIXIN_KEY_ENC_TAB = [
         46,
         47,
@@ -229,6 +233,30 @@ class BilibiliAPIClient:
         if remaining > 0:
             await asyncio.sleep(remaining)
         self._last_request_at = time.monotonic()
+
+    @classmethod
+    def search_cooldown_remaining(cls) -> float:
+        """Seconds remaining in the process-wide Bilibili search cooldown."""
+        return max(0.0, cls._search_cooldown_until - time.monotonic())
+
+    @classmethod
+    def _activate_search_cooldown(cls) -> float:
+        """Back off all search clients after repeated v_voucher/412 blocks."""
+        cls._search_cooldown_level = min(cls._search_cooldown_level + 1, 3)
+        duration = min(
+            cls._SEARCH_COOLDOWN_BASE_SECONDS * cls._search_cooldown_level,
+            cls._SEARCH_COOLDOWN_MAX_SECONDS,
+        )
+        cls._search_cooldown_until = max(
+            cls._search_cooldown_until,
+            time.monotonic() + duration,
+        )
+        return duration
+
+    @classmethod
+    def _reset_search_cooldown_backoff(cls) -> None:
+        """Reset escalation once search succeeds again."""
+        cls._search_cooldown_level = 0
 
     async def _get_json(
         self,
@@ -388,6 +416,15 @@ class BilibiliAPIClient:
         Returns:
             List of search result dicts.
         """
+        cooldown_remaining = self.search_cooldown_remaining()
+        if cooldown_remaining > 0:
+            logger.info(
+                "Bilibili search cooldown active (%.0fs left) — skipping query=%r",
+                cooldown_remaining,
+                keyword,
+            )
+            return []
+
         # v0.3.55+: 3 attempts with exponential backoff (was 2 with 1.5s
         # linear). Production logs (2026-05-05) showed 141 v_voucher
         # challenges in 43 minutes; with only 1 retry, ~9 full search
@@ -425,7 +462,13 @@ class BilibiliAPIClient:
             except BilibiliAPIError as exc:
                 cause = exc.__cause__
                 if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 412:
-                    logger.warning("Bilibili search blocked with 412 for query=%r", keyword)
+                    duration = self._activate_search_cooldown()
+                    logger.warning(
+                        "Bilibili search blocked with 412 for query=%r — "
+                        "cooling down search for %.0fs",
+                        keyword,
+                        duration,
+                    )
                     return []
                 raise
 
@@ -445,15 +488,19 @@ class BilibiliAPIClient:
                     await asyncio.sleep(delay)
                     continue
                 # Final attempt also got v_voucher — give up cleanly.
+                duration = self._activate_search_cooldown()
                 logger.warning(
                     "Search exhausted %d v_voucher retries for query=%r — "
-                    "giving up (likely WBI storm or IP rate limit)",
+                    "giving up and cooling down search for %.0fs "
+                    "(likely WBI storm or IP rate limit)",
                     max_attempts,
                     keyword,
+                    duration,
                 )
                 return []
 
             results = _json_list(data.get("result", []))
+            self._reset_search_cooldown_backoff()
             if not results:
                 logger.debug("Search returned empty result for query=%r", keyword)
             return results
