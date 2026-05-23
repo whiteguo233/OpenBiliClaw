@@ -469,6 +469,12 @@ class WatchLaterItem(BaseModel):
     the cache still surfaces here with empty metadata. The bvid
     itself is always present — it's the user's intent that we're
     preserving, not the cache snapshot at save time.
+
+    ``source_platform`` and ``content_url`` are exposed so the
+    saved-list UI can show a platform badge (B站/YouTube/抖音/小红书)
+    and open the canonical URL — particularly important for xhs
+    items whose ``content_url`` carries the ``xsec_token`` that a
+    constructed-from-bvid URL would miss.
     """
 
     bvid: str
@@ -481,6 +487,8 @@ class WatchLaterItem(BaseModel):
     cover_url: str = ""
     view_count: int = 0
     like_count: int = 0
+    source_platform: str = ""
+    content_url: str = ""
 
 
 class WatchLaterListResponse(BaseModel):

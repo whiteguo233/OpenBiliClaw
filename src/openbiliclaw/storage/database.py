@@ -2401,6 +2401,22 @@ class Database:
         ``franchise_key`` (v0.3.18) is exposed so /api/recommendations
         can apply a final per-IP cap before returning to the client —
         otherwise five 原神 / 提瓦特 items can land in one popup view.
+
+        Already-acted-upon items are filtered out so they don't
+        resurface after a popup reload:
+          - ``r.feedback_type`` any non-empty value: the user already
+            clicked thumbs-up / 忽略 (dismiss→dislike) / 留个想法
+            (comment) on this recommendation row. Once you've
+            interacted, the card is done.
+          - ``c.feedback_type`` IN like/dislike: the user already
+            clicked 推荐 / 不推荐 on the same bvid in the delight banner.
+          - ``c.delight_notified = 1``: the user clicked 忽略 on the
+            delight banner for this bvid (and so should not see it
+            again in the regular feed either, per the fork's
+            "delight feedback excludes from main list" semantic).
+          - ``c.pool_status = 'purged_by_dislike'``: defensive — the
+            pool layer already suppresses these, but recommendations
+            written before the purge still have a stale history row.
         """
         self._ensure_fresh_read()
         cursor = self.conn.execute(
@@ -2421,6 +2437,10 @@ class Database:
                 COALESCE(c.source_platform, '') != 'xiaohongshu'
                 OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
             )
+              AND COALESCE(r.feedback_type, '') = ''
+              AND COALESCE(c.feedback_type, '') NOT IN ('like', 'dislike')
+              AND COALESCE(c.delight_notified, 0) = 0
+              AND COALESCE(c.pool_status, 'fresh') != 'purged_by_dislike'
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
@@ -2921,16 +2941,18 @@ class Database:
         cursor = self.conn.execute(
             """
             SELECT
-                w.bvid               AS bvid,
-                w.added_at           AS added_at,
-                w.note               AS note,
-                COALESCE(c.title, '')       AS title,
-                COALESCE(c.up_name, '')     AS up_name,
-                COALESCE(c.up_mid, 0)       AS up_mid,
-                COALESCE(c.duration, 0)     AS duration,
-                COALESCE(c.cover_url, '')   AS cover_url,
-                COALESCE(c.view_count, 0)   AS view_count,
-                COALESCE(c.like_count, 0)   AS like_count
+                w.bvid                       AS bvid,
+                w.added_at                   AS added_at,
+                w.note                       AS note,
+                COALESCE(c.title, '')        AS title,
+                COALESCE(c.up_name, '')      AS up_name,
+                COALESCE(c.up_mid, 0)        AS up_mid,
+                COALESCE(c.duration, 0)      AS duration,
+                COALESCE(c.cover_url, '')    AS cover_url,
+                COALESCE(c.view_count, 0)    AS view_count,
+                COALESCE(c.like_count, 0)    AS like_count,
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.content_url, '')  AS content_url
             FROM watch_later w
             LEFT JOIN content_cache c ON c.bvid = w.bvid
             ORDER BY w.added_at DESC

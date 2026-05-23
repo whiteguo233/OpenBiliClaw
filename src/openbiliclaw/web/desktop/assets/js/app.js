@@ -31,6 +31,14 @@
       activityItems: [],
       activityCursor: "",
       activityHasMore: false,
+      // 稍后再看 list state — persists across drawer close so reopening
+      // doesn't refetch from scratch. Total is the server's authoritative
+      // count for the nav badge, separate from items.length since we
+      // paginate.
+      watchLaterItems: [],
+      watchLaterOffset: 0,
+      watchLaterTotal: 0,
+      watchLaterHasMore: false,
       profileCognitionCursor: "",
       profileCognitionHasMore: false,
       delights: [],
@@ -618,6 +626,14 @@
             btn.setAttribute("aria-pressed", String(data.saved));
             if (glyph) glyph.textContent = data.saved ? "★" : "☆";
           }
+          // Keep the nav badge in sync — the server returns the
+          // authoritative total in WatchLaterStateResponse. Without
+          // this, the count drifts when the user toggles stars on
+          // cards but never opens the watch-later drawer.
+          if (data && typeof data.total === "number") {
+            state.watchLaterTotal = data.total;
+            updateWatchLaterCount();
+          }
           status.textContent = nextSaved ? "已加入稍后再看。" : "已从稍后再看里移除。";
         } catch {
           // Revert.
@@ -818,6 +834,112 @@
       state.activityHasMore = Boolean(payload.has_more && state.activityCursor);
       renderRail();
       renderActivityHistory();
+    }
+
+    // ── 稍后再看 (watch-later) list ──────────────────────────────
+    // The fork added a star button on rec / delight cards that adds
+    // bvids to /api/watch-later, but no UI to actually browse the
+    // saved list — items went into the void. This drawer pulls
+    // /api/watch-later in pages of 20, lets the user open the
+    // bilibili URL and remove items. State lives on `state` so
+    // pagination survives drawer close + reopen.
+    function renderWatchLaterList() {
+      const list = $("#watchLaterList");
+      const empty = $("#watchLaterEmpty");
+      const more = $("#watchLaterMoreBtn");
+      if (!list) return;
+      if (!state.watchLaterItems.length) {
+        list.innerHTML = "";
+        if (empty) empty.hidden = false;
+        if (more) more.hidden = true;
+        return;
+      }
+      if (empty) empty.hidden = true;
+      list.innerHTML = state.watchLaterItems.map((item) => {
+        const bvid = String(item.bvid || "");
+        const title = String(item.title || bvid);
+        const up = String(item.up_name || "");
+        const added = String(item.added_at || "").replace("T", " ").slice(0, 16);
+        const cover = String(item.cover_url || "");
+        const coverProxied = cover ? `/api/image-proxy?url=${encodeURIComponent(cover)}` : "";
+        const platform = String(item.source_platform || "bilibili").toLowerCase();
+        const platformText = platformLabel[platform] || platform;
+        const contentUrl = String(item.content_url || "");
+        // Prefer the cached content_url (carries xsec_token for xhs,
+        // canonical youtube URL after manual mark-as-repost, etc.).
+        // Only construct a bilibili URL when nothing better is cached
+        // AND the bvid looks like a bilibili identifier.
+        const url = contentUrl
+          || ((bvid && (platform === "bilibili" || !platform))
+              ? `https://www.bilibili.com/video/${encodeURIComponent(bvid)}`
+              : "");
+        return `
+          <article class="watch-later-item" data-bvid="${escapeHtml(bvid)}">
+            ${coverProxied ? `<img class="watch-later-cover" src="${escapeHtml(coverProxied)}" alt="" loading="lazy">` : `<div class="watch-later-cover watch-later-cover-placeholder"></div>`}
+            <div class="watch-later-body">
+              <h3 class="watch-later-title">${escapeHtml(title)}</h3>
+              <p class="video-meta"><span class="platform-badge platform-${escapeHtml(platform)}">${escapeHtml(platformText)}</span>${up ? ` · ${escapeHtml(up)}` : ""}${added ? ` · ${escapeHtml(added)}` : ""}</p>
+            </div>
+            <div class="watch-later-actions">
+              ${url ? `<a class="small-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">去看看</a>` : ""}
+              <button class="small-btn" data-watch-later-remove="${escapeHtml(bvid)}" type="button">移除</button>
+            </div>
+          </article>`;
+      }).join("");
+      if (more) more.hidden = !state.watchLaterHasMore;
+      list.querySelectorAll("[data-watch-later-remove]").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          const target = e.currentTarget;
+          const bvid = target.getAttribute("data-watch-later-remove");
+          if (!bvid) return;
+          target.disabled = true;
+          try {
+            await fetch(`/api/watch-later/${encodeURIComponent(bvid)}`, { method: "DELETE" });
+            state.watchLaterItems = state.watchLaterItems.filter((x) => x.bvid !== bvid);
+            // Decrement total + any nav badge.
+            state.watchLaterTotal = Math.max(0, (state.watchLaterTotal || 1) - 1);
+            updateWatchLaterCount();
+            renderWatchLaterList();
+            showToast("已从稍后再看里移除");
+          } catch {
+            target.disabled = false;
+            showToast("移除失败，看看本地后端是不是开着");
+          }
+        });
+      });
+    }
+
+    function updateWatchLaterCount() {
+      const badge = $("#watchLaterCount");
+      if (!badge) return;
+      const n = state.watchLaterTotal || 0;
+      if (n > 0) {
+        badge.textContent = n > 99 ? "99+" : String(n);
+        badge.hidden = false;
+      } else {
+        badge.textContent = "";
+        badge.hidden = true;
+      }
+    }
+
+    async function loadWatchLaterPage() {
+      const offset = Number(state.watchLaterOffset || 0);
+      const limit = 20;
+      let payload = null;
+      try {
+        const resp = await fetch(`/api/watch-later?limit=${limit}&offset=${offset}`);
+        if (resp.ok) payload = await resp.json();
+      } catch {
+        // fall through to error toast
+      }
+      if (!payload) { showToast("稍后再看加载失败：后端不可用"); return; }
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.watchLaterItems = (state.watchLaterItems || []).concat(items);
+      state.watchLaterOffset = offset + items.length;
+      state.watchLaterTotal = Number(payload.total) || state.watchLaterItems.length;
+      state.watchLaterHasMore = state.watchLaterItems.length < state.watchLaterTotal && items.length > 0;
+      updateWatchLaterCount();
+      renderWatchLaterList();
     }
 
     function formatPercent(value) {
@@ -1411,6 +1533,10 @@
             btn.dataset.saved = String(data.saved);
             btn.setAttribute("aria-pressed", String(data.saved));
             if (glyph) glyph.textContent = data.saved ? "★" : "☆";
+          }
+          if (data && typeof data.total === "number") {
+            state.watchLaterTotal = data.total;
+            updateWatchLaterCount();
           }
           if ($("#delightStatus")) $("#delightStatus").textContent = nextSaved
             ? "已加入稍后再看。"
@@ -2333,6 +2459,13 @@
     });
     safeBind("#activityBtn", "click", () => { renderActivityHistory(); openPanel("activityDrawer"); });
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
+    safeBind("#watchLaterBtn", "click", () => {
+      state.watchLaterOffset = 0;
+      state.watchLaterItems = [];
+      loadWatchLaterPage();
+      openPanel("watchLaterDrawer");
+    });
+    safeBind("#watchLaterMoreBtn", "click", () => loadWatchLaterPage());
     safeBind("#settingsBtn", "click", () => { setActiveSettingsPanel("models"); openPanel("settingsModal"); });
     safeBind("#openSettingsHero", "click", () => { setActiveSettingsPanel("models"); openPanel("settingsModal"); });
     safeBind("#refreshBtn", "click", refreshRecommendations);
@@ -2418,6 +2551,19 @@
 
     restoreBackendEndpoint();
     startChatPlaceholderRotation();
+    // Prime the 稍后再看 count so the nav badge is accurate from
+    // first render. Fire-and-forget — if the request fails the badge
+    // just stays hidden, no UX harm. Uses head-only (limit=1) to
+    // avoid pulling the whole list when we only want the total.
+    void (async () => {
+      try {
+        const resp = await fetch("/api/watch-later?limit=1&offset=0");
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        state.watchLaterTotal = Number(payload.total) || 0;
+        updateWatchLaterCount();
+      } catch { /* startup priming is best-effort */ }
+    })();
     try {
       renderAll();
     } catch (error) {

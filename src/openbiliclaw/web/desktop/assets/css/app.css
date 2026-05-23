@@ -132,6 +132,31 @@
     .nav-action-text { line-height: 1; }
     .message-dot { position: absolute; top: 7px; left: 27px; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--danger); box-shadow: 0 0 0 2px var(--surface); }
     .message-dot[hidden] { display: none; }
+    /* 稍后再看 badge: numeric, sits in the same upper-right slot
+       as message-dot. min-width so single-digit and 2-digit
+       counts visually balance. */
+    .watch-later-count { position: absolute; top: 4px; left: 22px; min-width: 14px; height: 14px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--accent, #4f46e5); color: #fff; font-size: 10px; font-weight: 700; line-height: 14px; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+    .watch-later-count[hidden] { display: none; }
+    /* nav-action needs positioning for the absolute badge */
+    .nav-action { position: relative; }
+    /* Watch-later list cards — horizontal layout: cover left,
+       title/meta middle, actions right. Cover proxied through
+       /api/image-proxy so xhs/youtube covers work behind referer
+       checks. Falls back to a placeholder div when no cover. */
+    .watch-later-list { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+    .watch-later-empty { text-align: center; padding: var(--space-6) var(--space-3); color: var(--muted); }
+    .watch-later-item { display: grid; grid-template-columns: 120px 1fr auto; gap: var(--space-3); align-items: center; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); padding: var(--space-3); }
+    .watch-later-cover { width: 120px; height: 68px; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface); }
+    .watch-later-cover-placeholder { display: block; }
+    .watch-later-body { min-width: 0; }
+    .watch-later-title { font-size: 14px; line-height: 1.4; margin: 0 0 4px 0; font-weight: 650; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .watch-later-actions { display: flex; flex-direction: column; gap: var(--space-2); }
+    .watch-later-actions .small-btn { white-space: nowrap; }
+    @media (max-width: 640px) {
+      .watch-later-item { grid-template-columns: 96px 1fr; }
+      .watch-later-cover { width: 96px; height: 54px; }
+      .watch-later-actions { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+    }
     [hidden] { display: none !important; }
     .icon-btn, .pill-btn { border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); min-height: 40px; padding: 0 var(--space-4); box-shadow: var(--elev-ring); }
     .icon-btn { min-width: 40px; padding: 0; }
@@ -211,7 +236,7 @@
     .delight-main-actions.is-composing .comment-field { max-width: 100%; opacity: 1; transform: translateX(0); pointer-events: auto; }
     .delight-main-actions .chat-action.is-send { width: 38px; min-width: 38px; padding: 0; }
     .delight-main-actions .chat-action.is-send svg { width: 17px; height: 17px; stroke-width: 2.2; }
-    .delight-feedback-actions.card-feedback-icons { order: 1; flex: 0 0 128px; justify-self: auto; justify-content: center; max-width: none; width: 128px; padding: 3px 6px; gap: 5px; }
+    .delight-feedback-actions.card-feedback-icons { order: 1; flex: 0 0 172px; justify-self: auto; justify-content: center; max-width: none; width: 172px; padding: 3px 6px; gap: 5px; }
     .delight-actions .small-btn { min-width: 0; }
     .delight-feedback-actions .feedback-icon-btn { flex: 0 0 26px; width: 26px; height: 26px; min-height: 26px; }
     .delight-feedback-actions .feedback-icon-btn svg { width: 14px; height: 14px; }
@@ -229,6 +254,15 @@
     .cover-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: inherit; }
     .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .platform { position: absolute; right: var(--space-2); top: var(--space-2); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--fg), transparent 8%); color: var(--surface); padding: 4px 9px; font-size: 12px; }
+    /* Inline platform badge — used in the watch-later list meta
+       line. Smaller than the absolute-positioned cover badge above.
+       Color-coded by platform-* class so the user can tell at a
+       glance which platform a saved item came from. */
+    .platform-badge { display: inline-block; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--surface); color: var(--fg-2); font-size: 11px; font-weight: 600; margin-right: 4px; vertical-align: 1px; }
+    .platform-badge.platform-bilibili { background: #fb7299; color: #fff; }
+    .platform-badge.platform-youtube { background: #ff0000; color: #fff; }
+    .platform-badge.platform-douyin { background: #161823; color: #fff; }
+    .platform-badge.platform-xiaohongshu, .platform-badge.platform-xhs { background: #ff2442; color: #fff; }
     .video-title { font-family: var(--font-body); font-weight: 650; font-size: var(--text-base); line-height: 1.4; margin: 0; color: var(--fg); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .video-meta { color: var(--muted); font-size: var(--text-sm); margin: 0; }
     .reason { margin: 0; padding: 0; color: var(--meta); font-size: 13px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: help; }

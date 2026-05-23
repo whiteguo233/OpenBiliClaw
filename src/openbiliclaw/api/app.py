@@ -2321,11 +2321,16 @@ def create_app(
             # User marks this delight as liked WITHOUT having opened the
             # video. Treat as a strong positive feedback signal: boost
             # the row's relevance score and record a cognition update so
-            # downstream scoring + UI both reflect the preference.
+            # downstream scoring + UI both reflect the preference. Also
+            # mark delight_notified so the same bvid doesn't resurface
+            # as another delight (the dismiss path already does this;
+            # like/dislike were inconsistent before this fork's change).
             try:
                 ctx.database._execute_write(
                     "UPDATE content_cache SET feedback_type='like', "
                     "feedback_at=CURRENT_TIMESTAMP, "
+                    "delight_notified=1, "
+                    "delight_notified_at=CURRENT_TIMESTAMP, "
                     "relevance_score=MIN(1.0, COALESCE(relevance_score, 0.5) + 0.15) "
                     "WHERE bvid = ?",
                     (bvid,),
@@ -2348,7 +2353,11 @@ def create_app(
         if response_type == "dislike":
             try:
                 ctx.database._execute_write(
-                    "UPDATE content_cache SET pool_status = 'purged_by_dislike' "
+                    "UPDATE content_cache SET pool_status = 'purged_by_dislike', "
+                    "feedback_type='dislike', "
+                    "feedback_at=CURRENT_TIMESTAMP, "
+                    "delight_notified=1, "
+                    "delight_notified_at=CURRENT_TIMESTAMP "
                     "WHERE bvid = ? AND COALESCE(pool_status, 'fresh') = 'fresh'",
                     (bvid,),
                 )
@@ -3157,6 +3166,8 @@ def create_app(
                 cover_url=str(r.get("cover_url", "") or ""),
                 view_count=int(r.get("view_count", 0) or 0),
                 like_count=int(r.get("like_count", 0) or 0),
+                source_platform=str(r.get("source_platform", "") or ""),
+                content_url=str(r.get("content_url", "") or ""),
             )
             for r in rows
         ]
