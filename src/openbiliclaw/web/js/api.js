@@ -192,6 +192,11 @@ export async function refreshRecommendations() {
 }
 
 // ── Interest Probes ─────────────────────────────────────────
+export async function fetchPendingProbes() {
+  const data = await requestJson("/interest-probes/pending");
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
 export async function respondToProbe(domain, responseType, message = "") {
   return requestJson("/interest-probes/respond", {
     ...json({ domain, response: responseType, message }),

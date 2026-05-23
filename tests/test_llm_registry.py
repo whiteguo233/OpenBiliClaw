@@ -790,6 +790,86 @@ def test_openai_embedding_chat_credential_fallback_still_warns_once(
     assert "[llm.openai]" in compat[0].getMessage()
 
 
+# ---------------------------------------------------------------------------
+# v0.3.46+ — explicit ``[llm.embedding].provider = "openrouter"`` must
+# build a working embedding provider. Pre-fix the requested provider was
+# silently dropped because ``openrouter`` was missing from
+# ``_EMBEDDING_CAPABLE_PROVIDERS``, leaving the fallback chain empty and
+# logging "No embedding-capable provider available".
+
+
+def test_build_embedding_service_supports_openrouter_when_requested_explicitly(
+    tmp_path,
+) -> None:
+    from openbiliclaw.config import EmbeddingConfig
+    from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openrouter",
+            openrouter=LLMProviderConfig(
+                api_key="openrouter-chat-key",
+                model="openai/gpt-5-nano",
+                base_url="https://openrouter.ai/api/v1",
+                http_referer="https://openbiliclaw.local",
+                x_title="OpenBiliClaw",
+            ),
+            embedding=EmbeddingConfig(
+                provider="openrouter",
+                model="google/gemini-embedding-2-preview",
+                api_key="dedicated-openrouter-embedding-key",
+                base_url="https://openrouter.ai/api/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None, (
+        "openrouter must build when explicitly requested via [llm.embedding]"
+    )
+    assert isinstance(service._provider, OpenRouterProvider)
+    assert service._provider.name == "openrouter"
+    assert service._model == "google/gemini-embedding-2-preview"
+    # Dedicated embedding key wins over the chat-side key.
+    assert service._provider._client.api_key == "dedicated-openrouter-embedding-key"
+    # Attribution headers from [llm.openrouter] flow into the embedding
+    # provider so dashboard accounting matches chat traffic.
+    assert service._provider._extra_headers() == {
+        "HTTP-Referer": "https://openbiliclaw.local",
+        "X-Title": "OpenBiliClaw",
+    }
+
+
+def test_build_embedding_service_openrouter_requires_explicit_model(
+    tmp_path,
+) -> None:
+    """OpenRouter routes embeddings by ``<vendor>/<model>`` slug — there
+    is no safe default. Refuse to build (and log the standard "no
+    embedding-capable provider" WARNING) instead of 404ing at first
+    embed call."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            embedding=EmbeddingConfig(
+                provider="openrouter",
+                model="",  # no model — must refuse
+                api_key="openrouter-embedding-key",
+                base_url="https://openrouter.ai/api/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is None
+
+
 def test_emit_embedding_compat_warning_fires_once_per_provider(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1134,12 +1214,12 @@ async def test_ollama_with_explicit_chat_model_is_chat_capable() -> None:
     didn't accidentally exclude every Ollama from chat.)
     """
     cfg = Config(
-            llm=LLMConfig(
-                default_provider="openai",
-                fallback_enabled=True,
-                fallback_provider="ollama",
-                openai=LLMProviderConfig(api_key="openai-key"),
-                ollama=LLMProviderConfig(
+        llm=LLMConfig(
+            default_provider="openai",
+            fallback_enabled=True,
+            fallback_provider="ollama",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            ollama=LLMProviderConfig(
                 api_key="ollama",
                 model="llama3",  # ← explicit chat model
                 base_url="http://localhost:11434/v1",

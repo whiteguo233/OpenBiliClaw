@@ -170,6 +170,13 @@ def test_feedback_request_normalizes_valid_payload() -> None:
     assert payload.note == "很对胃口"
 
 
+def test_feedback_request_accepts_dismiss_without_note() -> None:
+    payload = FeedbackRequest(recommendation_id=7, feedback_type="dismiss", note="")
+
+    assert payload.feedback_type == "dismiss"
+    assert payload.note == ""
+
+
 class _FakeSpeculativeInterest:
     """Minimal stand-in for ``speculator.SpeculativeInterest``."""
 

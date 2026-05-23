@@ -1,118 +1,37 @@
-name: Release Extension Package
+name: Validate Backend Source Tag
 
 on:
   push:
     tags:
-      - "extension-v*"
+      - "backend-v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    name: Build extension package
+  validate:
+    name: Validate backend source tag
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
-
-      - name: Verify extension version matches release tag
+      - name: Verify backend version matches source tag
+        shell: python
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          # GitHub Actions does not accept `shell: node` — use bash + jq
-          # (preinstalled on ubuntu-latest) for a portable version check.
-          expected="${RELEASE_TAG#extension-v}"
-          manifest_version=$(jq -r .version extension/manifest.json)
-          pkg_version=$(jq -r .version extension/package.json)
-          if [ "$manifest_version" != "$expected" ]; then
-            echo "extension release tag $RELEASE_TAG does not match manifest version $manifest_version"
-            exit 1
-          fi
-          if [ "$pkg_version" != "$expected" ]; then
-            echo "extension release tag $RELEASE_TAG does not match package version $pkg_version"
-            exit 1
-          fi
+          import os
+          import tomllib
+          from pathlib import Path
 
-      - name: Install extension dependencies
-        run: npm ci
-        working-directory: extension
+          release_tag = os.environ["RELEASE_TAG"]
+          expected_version = release_tag.removeprefix("backend-v")
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          actual_version = str(pyproject["project"]["version"])
 
-      - name: Build Chrome-compatible extension release archive
-        run: npm run package
-        working-directory: extension
-
-      - name: Build Firefox extension release archive
-        run: npm run package:firefox
-        working-directory: extension
-
-      - name: Verify extension release archives
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          expected="${RELEASE_TAG#extension-v}"
-          chrome_archive="extension/openbiliclaw-extension-v${expected}.zip"
-          firefox_archive="extension/openbiliclaw-extension-v${expected}-firefox.zip"
-          if [ ! -f "$chrome_archive" ]; then
-            echo "missing Chrome-compatible extension archive: $chrome_archive"
-            exit 1
-          fi
-          if [ ! -f "$firefox_archive" ]; then
-            echo "missing Firefox extension archive: $firefox_archive"
-            exit 1
-          fi
-          echo "verified Chrome-compatible release archive: $chrome_archive"
-          echo "verified Firefox release archive: $firefox_archive"
-
-      - name: Upload packaged extension artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: extension-package
-          path: extension/openbiliclaw-extension-v*.zip
-          if-no-files-found: error
-
-  publish-release:
-    name: Publish extension release
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Download packaged extension artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: extension-package
-          path: release-artifacts
-
-      - name: Verify downloaded extension artifacts
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          expected="${RELEASE_TAG#extension-v}"
-          chrome_archive="release-artifacts/openbiliclaw-extension-v${expected}.zip"
-          firefox_archive="release-artifacts/openbiliclaw-extension-v${expected}-firefox.zip"
-          if [ ! -f "$chrome_archive" ]; then
-            echo "missing Chrome-compatible extension archive: $chrome_archive"
-            exit 1
-          fi
-          if [ ! -f "$firefox_archive" ]; then
-            echo "missing Firefox extension archive: $firefox_archive"
-            exit 1
-          fi
-          echo "Chrome-compatible release artifact ready: $chrome_archive"
-          echo "Firefox release artifact ready: $firefox_archive"
-
-      - name: Create GitHub Release and upload extension package
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-artifacts/openbiliclaw-extension-v*.zip
-          generate_release_notes: true
+          if actual_version != expected_version:
+              raise SystemExit(
+                  f"backend source tag {release_tag} does not match pyproject version {actual_version}"
+              )
