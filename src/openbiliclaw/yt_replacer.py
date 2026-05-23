@@ -528,6 +528,150 @@ def replace_if_foreign(
     return entry
 
 
+# ── Bilibili search for YouTube→B站 reverse detection ──────────
+_BILI_CACHE: dict[str, dict[str, Any] | None] = {}
+_BILI_CACHE_MTIME: float = 0.0
+_BILI_CACHE_TTL = 86400  # 24h
+
+
+def _has_chinese_content(title: str, description: str = "") -> bool:
+    """Return True if the title or description contains Chinese characters."""
+    if re.search(r"[\u4e00-\u9fff\u3400-\u4dbf]", title):
+        return True
+    if description and re.search(r"[\u4e00-\u9fff\u3400-\u4dbf]", description):
+        return True
+    return False
+
+
+def _search_bilibili(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Search Bilibili for videos matching *query*. Returns raw result entries."""
+    import urllib.request
+    import urllib.parse
+
+    url = f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={urllib.parse.quote(query)}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.bilibili.com",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        result_list = (data.get("data", {}) or {}).get("result", []) or []
+        return result_list[:max_results]
+    except Exception:
+        logger.debug("B站 search failed for query=%r", query, exc_info=True)
+        return []
+
+
+def find_on_bilibili(title: str, author: str = "", description: str = "") -> dict[str, Any] | None:
+    """Search Bilibili for a video matching *title*. Returns ``{bvid, url, title, up_name, cover_url}`` on match."""
+    query = _build_search_query(title)
+    if not query or len(query) < 5:
+        return None
+
+    results = _search_bilibili(query, max_results=10)
+    if not results:
+        return None
+
+    scored = []
+    for entry in results:
+        bv_title = str(entry.get("title", "") or "")
+        # Strip HTML tags from B站 search results
+        clean_title = re.sub(r"<[^>]+>", "", bv_title)
+        sim = _title_similarity(title, clean_title)
+        if author and entry.get("author"):
+            author_sim = _title_similarity(author, str(entry.get("author", "")))
+            sim = max(sim, sim * 0.8 + author_sim * 0.2)
+        scored.append((sim, entry, clean_title))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best_sim, best, best_clean = scored[0]
+
+    if best_sim < 0.30:
+        logger.debug("B站: no good match for %r (best=%.2f %s)", title, best_sim, best_clean)
+        return None
+
+    bvid = str(best.get("bvid", "") or "")
+    arcurl = str(best.get("arcurl", "") or "")
+    # Construct B站 URL
+    if arcurl:
+        url = arcurl
+    elif bvid:
+        url = f"https://www.bilibili.com/video/{bvid}"
+    else:
+        return None
+
+    pic_url = str(best.get("pic", "") or "")
+    return {
+        "bvid": bvid,
+        "url": url,
+        "title": best_clean,
+        "up_name": str(best.get("author", "") or ""),
+        "cover_url": pic_url if pic_url.startswith("http") else f"https:{pic_url}" if pic_url else "",
+    }
+
+
+def replace_if_from_bilibili(
+    bvid: str,
+    title: str,
+    author: str = "",
+    description: str = "",
+    *,
+    data_dir: str = "",
+    force: bool = False,
+    skip_detection: bool = False,
+) -> dict[str, Any] | None:
+    """Check if a YouTube video is originally from Bilibili (reverse of ``replace_if_foreign``).
+
+    Returns ``None`` if:
+      - The video doesn't have Chinese content signals (unless ``skip_detection=True``)
+      - No good B站 match is found
+      - The result is cached as ``None`` (unless ``force=True``)
+
+    Returns a dict with ``bvid`` (B站), ``url`` (B站 URL), ``title``, ``up_name``, ``cover_url`` on match.
+    """
+    _load_cache(data_dir)
+
+    # Use the B站 cache keyed with a prefix to avoid colliding with the YT cache
+    cache_key = f"bili:{bvid}"
+    if cache_key in _yt_cache and not force:
+        cached = _yt_cache[cache_key]
+        if cached is None:
+            return None
+        return dict(cached)
+
+    # Detection — check if the content has Chinese signals
+    if not skip_detection and not _has_chinese_content(title, description):
+        _yt_cache[cache_key] = None
+        logger.debug("B站 reverse: no Chinese content in %r", title)
+        return None
+
+    logger.info("B站 reverse: searching Bilibili for %r (author=%r)", title, author)
+    result = find_on_bilibili(title, author=author, description=description)
+
+    if result is None:
+        _yt_cache[cache_key] = None
+        _save_cache(data_dir)
+        logger.info("B站 reverse: no match for bvid=%s title=%r", bvid, title)
+        return None
+
+    entry = {
+        "bvid": result["bvid"],
+        "url": result["url"],
+        "title": result["title"],
+        "up_name": result.get("up_name", ""),
+        "cover_url": result.get("cover_url", ""),
+    }
+    _yt_cache[cache_key] = entry
+    _save_cache(data_dir)
+    logger.info("B站 reverse: %s → %s (%.2f) %r", bvid, result["url"],
+                SequenceMatcher(None, title.lower(), result["title"].lower()).ratio(),
+                result["title"])
+    return entry
+
+
+
 def replace_recommendation_row(
     row: dict[str, Any],
     *,

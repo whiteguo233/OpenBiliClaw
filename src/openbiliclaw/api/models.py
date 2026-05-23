@@ -422,9 +422,10 @@ class EventIngestResponse(BaseModel):
 class FeedbackIn(BaseModel):
     """Feedback payload submitted from CLI-compatible clients."""
 
-    recommendation_id: int
+    recommendation_id: int | None = None
     feedback_type: str
     note: str = ""
+    bvid: str | None = None
 
 
 class FeedbackResponse(BaseModel):
@@ -459,6 +460,7 @@ class YtReplacerMarkAsRepostIn(BaseModel):
 
     bvid: str
     recommendation_id: int | None = None
+    source_platform: str = "bilibili"
 
 
 class WatchLaterItem(BaseModel):

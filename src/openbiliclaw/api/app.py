@@ -3051,7 +3051,12 @@ def create_app(
         if feedback_type == "comment" and not note:
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
-        recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
+        if payload.recommendation_id is not None:
+            recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
+        elif payload.bvid:
+            recommendation = ctx.database.get_recommendation_by_bvid(payload.bvid)
+        else:
+            raise HTTPException(status_code=422, detail="recommendation_id or bvid is required.")
         if recommendation is None:
             raise HTTPException(status_code=404, detail="Recommendation not found.")
 
@@ -5109,9 +5114,8 @@ def create_app(
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required")
         recommendation_id = payload.recommendation_id
+        is_youtube = payload.source_platform.strip().lower() == "youtube"
         try:
-            from openbiliclaw.yt_replacer import replace_if_foreign
-
             cursor = ctx.database.conn.execute(
                 "SELECT c.title, c.up_name, c.description "
                 "FROM content_cache c WHERE c.bvid = ?",
@@ -5128,63 +5132,98 @@ def create_app(
             description = str(row["description"] or "")
             data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
 
-            # force=True bypasses any stale "no match" cache entry.
-            # skip_detection=True bypasses the heuristic — the user has
-            # already said this IS a repost, no need to re-confirm.
-            result = replace_if_foreign(
-                bvid,
-                title,
-                author,
-                description=description,
-                data_dir=data_dir,
-                force=True,
-                skip_detection=True,
-            )
-
-            if result is None:
-                # YT search ran but found no match. The cache has been
-                # updated to None so subsequent marks return the same.
-                return {"ok": False, "reason": "no_match"}
-
-            yt_url = str(result.get("yt_url") or "")
-            yt_cover = str(result.get("yt_cover_url") or "")
-            pending = bool(result.get("repost_detected") and not yt_url)
-
-            # Persist the override on the content_cache row so it survives
-            # restarts and applies even with replace_bilibili_reposts=off.
-            if yt_url:
-                ctx.database.mark_content_as_youtube_repost(
-                    bvid,
-                    yt_url=yt_url,
-                    yt_cover_url=yt_cover,
+            if is_youtube:
+                from openbiliclaw.yt_replacer import replace_if_from_bilibili
+                result = replace_if_from_bilibili(
+                    bvid, title, author,
+                    description=description,
+                    data_dir=data_dir,
+                    force=True,
+                    skip_detection=True,
                 )
+                if result is None:
+                    return {"ok": False, "reason": "no_match"}
+                source_url = str(result.get("url") or "")
+                source_title = str(result.get("title") or "")
+                source_up = str(result.get("up_name") or "")
+                source_bvid = str(result.get("bvid") or "")
+                pending = False
 
-            # Update the recommendation's expression to surface the mark
-            # if a recommendation_id was supplied.
-            new_expression: str | None = None
-            if recommendation_id is not None and yt_url:
-                rec = ctx.database.get_recommendation_by_id(recommendation_id)
-                if rec is not None:
-                    original_expr = str(rec.get("expression") or "")
-                    suffix = f"\n💡 用户标记为搬运，原视频在 YouTube：{yt_url}"
-                    new_expression = (
-                        (original_expr + suffix) if original_expr
-                        else f"用户标记为搬运，原视频在 YouTube：{yt_url}"
-                    )
-                    ctx.database.update_recommendation_content(
-                        recommendation_id,
-                        expression=new_expression,
-                        topic=str(rec.get("topic") or ""),
+                if source_url:
+                    ctx.database.mark_content_as_youtube_repost(
+                        bvid,
+                        yt_url=source_url,
+                        yt_cover_url=str(result.get("cover_url") or ""),
                     )
 
-            return {
-                "ok": True,
-                "yt_url": yt_url,
-                "yt_title": str(result.get("yt_title") or ""),
-                "yt_uploader": str(result.get("yt_uploader") or ""),
-                "pending": pending,
-                "expression": new_expression,
-            }
+                new_expression: str | None = None
+                if recommendation_id is not None and source_url:
+                    rec = ctx.database.get_recommendation_by_id(recommendation_id)
+                    if rec is not None:
+                        original_expr = str(rec.get("expression") or "")
+                        suffix = f"\n💡 用户标记为搬运，原视频在 Bilibili：{source_url}"
+                        new_expression = (
+                            (original_expr + suffix) if original_expr
+                            else f"用户标记为搬运，原视频在 Bilibili：{source_url}"
+                        )
+                        ctx.database.update_recommendation_content(
+                            recommendation_id,
+                            expression=new_expression,
+                            topic=str(rec.get("topic") or ""),
+                        )
+
+                return {
+                    "ok": True,
+                    "source_url": source_url,
+                    "source_title": source_title,
+                    "source_up": source_up,
+                    "source_bvid": source_bvid,
+                    "pending": pending,
+                    "expression": new_expression,
+                    "direction": "youtube_to_bilibili",
+                }
+            else:
+                from openbiliclaw.yt_replacer import replace_if_foreign
+                result = replace_if_foreign(
+                    bvid, title, author,
+                    description=description,
+                    data_dir=data_dir,
+                    force=True,
+                    skip_detection=True,
+                )
+                if result is None:
+                    return {"ok": False, "reason": "no_match"}
+                yt_url = str(result.get("yt_url") or "")
+                yt_cover = str(result.get("yt_cover_url") or "")
+                pending = bool(result.get("repost_detected") and not yt_url)
+                if yt_url:
+                    ctx.database.mark_content_as_youtube_repost(
+                        bvid, yt_url=yt_url, yt_cover_url=yt_cover,
+                    )
+                new_expression = None
+                if recommendation_id is not None and yt_url:
+                    rec = ctx.database.get_recommendation_by_id(recommendation_id)
+                    if rec is not None:
+                        original_expr = str(rec.get("expression") or "")
+                        suffix = f"\n💡 用户标记为搬运，原视频在 YouTube：{yt_url}"
+                        new_expression = (
+                            (original_expr + suffix) if original_expr
+                            else f"用户标记为搬运，原视频在 YouTube：{yt_url}"
+                        )
+                        ctx.database.update_recommendation_content(
+                            recommendation_id,
+                            expression=new_expression,
+                            topic=str(rec.get("topic") or ""),
+                        )
+                return {
+                    "ok": True,
+                    "yt_url": yt_url,
+                    "yt_title": str(result.get("yt_title") or ""),
+                    "yt_uploader": str(result.get("yt_uploader") or ""),
+                    "pending": pending,
+                    "expression": new_expression,
+                    "direction": "bilibili_to_youtube",
+                }
         except HTTPException:
             raise
         except Exception:

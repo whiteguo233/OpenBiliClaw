@@ -873,18 +873,31 @@
           || ((bvid && (platform === "bilibili" || !platform))
               ? `https://www.bilibili.com/video/${encodeURIComponent(bvid)}`
               : "");
+        const likeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg>';
+        const dislikeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg>';
+        const chatIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+        const trashIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+        const repostSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+        const coverUrl = coverProxied || "";
+        const href = escapeHtml(url);
         return `
-          <article class="watch-later-item" data-bvid="${escapeHtml(bvid)}">
-            ${coverProxied ? `<img class="watch-later-cover" src="${escapeHtml(coverProxied)}" alt="" loading="lazy">` : `<div class="watch-later-cover watch-later-cover-placeholder"></div>`}
+          <article class="watch-later-item" data-bvid="${escapeHtml(bvid)}" data-platform="${escapeHtml(platform)}">
+            <a class="watch-later-link" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="打开 ${escapeHtml(title)}">
+              ${coverProxied ? `<img class="watch-later-cover" src="${escapeHtml(coverProxied)}" alt="" loading="lazy">` : `<div class="watch-later-cover watch-later-cover-placeholder"></div>`}
+            </a>
             <div class="watch-later-body">
-              <h3 class="watch-later-title">${escapeHtml(title)}</h3>
-              <p class="video-meta"><span class="platform-badge platform-${escapeHtml(platform)}">${escapeHtml(platformText)}</span>${up ? ` · ${escapeHtml(up)}` : ""}${added ? ` · ${escapeHtml(added)}` : ""}</p>
+              <h3 class="watch-later-title"><a class="watch-later-title-link" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a></h3>
+              <p class="video-meta"><span class="platform-badge platform-${escapeHtml(platform)}">${escapeHtml(platformText)}</span>${up ? ` · ${escapeHtml(up)}` : ""}${added ? ` · ${escapeHtml(added)}` : ""} <button class="mark-repost-btn-sm" data-wl-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="检测是否为搬运内容">${repostSvg}</button></p>
             </div>
-            <div class="watch-later-actions">
-              ${url ? `<a class="small-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">去看看</a>` : ""}
-              <button class="small-btn" data-watch-later-remove="${escapeHtml(bvid)}" type="button">移除</button>
+            <div class="wl-feedback-grid" aria-label="推荐反馈操作">
+              <button class="wl-feedback-btn" data-wl-action="like" type="button" aria-label="推荐" title="推荐">${likeIcon}</button>
+              <button class="wl-feedback-btn" data-wl-action="dislike" type="button" aria-label="不推荐" title="不推荐">${dislikeIcon}</button>
+              <button class="wl-feedback-btn" data-wl-action="comment" type="button" aria-label="聊一聊" title="聊一聊">${chatIcon}</button>
+              <button class="wl-feedback-btn wl-feedback-trash" data-watch-later-remove="${escapeHtml(bvid)}" type="button" aria-label="移除" title="移除">${trashIcon}</button>
             </div>
-          </article>`;
+            <div class="comment-field"><input placeholder="想说点什么？（仅作为反馈记录，不会触发对话）" aria-label="想说点什么？"></div>
+            <p class="status-line"></p>
+          </article>\`;
       }).join("");
       if (more) more.hidden = !state.watchLaterHasMore;
       list.querySelectorAll("[data-watch-later-remove]").forEach((btn) => {
@@ -907,6 +920,137 @@
           }
         });
       });
+      // Watch-later feedback & mark-as-repost actions.
+      list.querySelectorAll("[data-wl-action]").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          const card = e.currentTarget.closest(".watch-later-item");
+          const bvid = card?.dataset.bvid;
+          if (!bvid) return;
+          const action = e.currentTarget.dataset.wlAction;
+          const status = card.querySelector(".status-line");
+          if (action === "like" || action === "dislike" || action === "dismiss") {
+            if (card.dataset.feedbackPending === "true") return;
+            card.dataset.feedbackPending = "true";
+            card.querySelectorAll(".watch-later-card-actions button, .watch-later-card-actions input").forEach((c) => { c.disabled = true; });
+            try {
+              const feedbackType = action === "like" ? "like" : "dislike";
+              await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bvid, feedback_type: feedbackType }),
+              });
+              const labels = { like: ["已记录喜欢", "已记录喜欢"], dislike: action === "dismiss" ? ["已忽略", "已忽略"] : ["已记录不感兴趣", "已记录不感兴趣"] };
+              const label = labels[feedbackType][0];
+              if (status) status.textContent = label;
+              showToast(label);
+              // Remove from watch-later since feedback is recorded.
+              state.watchLaterItems = state.watchLaterItems.filter((x) => x.bvid !== bvid);
+              state.watchLaterTotal = Math.max(0, (state.watchLaterTotal || 1) - 1);
+              updateWatchLaterCount();
+              renderWatchLaterList();
+            } catch {
+              if (status) status.textContent = "反馈失败，看看本地后端是不是开着。";
+            }
+            return;
+          }
+          if (action === "comment") {
+            // Show comment field and switch button to send mode.
+            const field = card.querySelector(".comment-field");
+            const btn = e.currentTarget;
+            if (field) field.hidden = false;
+            btn.dataset.wlAction = "send-comment";
+            btn.innerHTML = sendIcon;
+            btn.setAttribute("aria-label", "发送");
+            btn.setAttribute("title", "发送");
+            requestAnimationFrame(() => card.querySelector(".comment-field input")?.focus());
+            return;
+          }
+          if (action === "send-comment") {
+            const input = card.querySelector(".comment-field input");
+            const note = input?.value?.trim();
+            if (!note) { if (status) status.textContent = "写下你的想法再提交。"; input?.focus(); return; }
+            card.dataset.feedbackPending = "true";
+            card.querySelectorAll(".wl-feedback-btn, .comment-field input").forEach((c) => { c.disabled = true; });
+            try {
+              await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bvid, feedback_type: "comment", note }),
+              });
+              if (input) input.value = "";
+              const chatBtn = card.querySelector("[data-wl-action=\"send-comment\"]");
+              if (chatBtn) {
+                const field = card.querySelector(".comment-field");
+                if (field) field.hidden = true;
+                chatBtn.dataset.wlAction = "comment";
+                chatBtn.innerHTML = chatIcon;
+              }
+              if (status) status.textContent = "已记录你的想法。";
+              showToast("已记录想法");
+              state.watchLaterItems = state.watchLaterItems.filter((x) => x.bvid !== bvid);
+              state.watchLaterTotal = Math.max(0, (state.watchLaterTotal || 1) - 1);
+              updateWatchLaterCount();
+              renderWatchLaterList();
+            } catch { card.dataset.feedbackPending = ""; }
+            return;
+          }
+          if (action === "mark-as-repost") {
+            const btn = card.querySelector(".mark-repost-btn");
+            const glyph = btn?.querySelector(".mark-repost-glyph");
+            if (!btn || !glyph || !bvid) return;
+            const platform = (card.dataset.platform || "bilibili").toLowerCase();
+            const isYoutube = platform === "youtube";
+            btn.disabled = true;
+            setMarkRepostState(btn, glyph, "pending");
+            if (status) status.textContent = isYoutube ? "搜索 Bilibili 原版中…" : "搜索 YouTube 原版中…";
+            try {
+              const resp = await fetch("/api/yt-replacer/mark-as-repost", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bvid, recommendation_id: null, source_platform: platform }),
+              });
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              const data = await resp.json();
+              if (!data.ok) {
+                btn.disabled = false;
+                setMarkRepostState(btn, glyph, "idle");
+                if (status) status.textContent = "没搜到匹配的原版视频。";
+                return;
+              }
+              if (data.direction === "youtube_to_bilibili") {
+                const srcUrl = data.source_url || "";
+                if (srcUrl) {
+                  setMarkRepostState(btn, glyph, "done");
+                  btn.setAttribute("title", `已在 Bilibili 找到原版：${srcUrl}`);
+                  if (status) status.textContent = `已在 Bilibili 找到原版：${srcUrl}`;
+                  showToast("已找到 Bilibili 原版");
+                }
+              } else {
+                const ytUrl = data.yt_url || "";
+                if (ytUrl) {
+                  setMarkRepostState(btn, glyph, "done");
+                  btn.setAttribute("title", `已重定向到 YouTube：${ytUrl}`);
+                  if (status) status.textContent = `已记录搬运。原视频：${ytUrl}`;
+                  showToast("已重定向到 YouTube 原版");
+                } else if (data.pending) {
+                  btn.disabled = false;
+                  setMarkRepostState(btn, glyph, "idle");
+                  if (status) status.textContent = "服务器暂时连不上 YouTube；网络恢复后请再点一次。";
+                } else {
+                  btn.disabled = false;
+                  setMarkRepostState(btn, glyph, "idle");
+                  if (status) status.textContent = "没搜到匹配的原版视频。";
+                }
+              }
+            } catch {
+              btn.disabled = false;
+              setMarkRepostState(btn, glyph, "idle");
+              if (status) status.textContent = "标记失败，看看本地后端是不是开着。";
+            }
+            return;
+          }
+        });
+      });
     }
 
     function updateWatchLaterCount() {
@@ -925,6 +1069,8 @@
     async function loadWatchLaterPage() {
       const offset = Number(state.watchLaterOffset || 0);
       const limit = 20;
+      // Show empty/loading state immediately — don't wait for the fetch.
+      renderWatchLaterList();
       let payload = null;
       try {
         const resp = await fetch(`/api/watch-later?limit=${limit}&offset=${offset}`);
@@ -932,7 +1078,7 @@
       } catch {
         // fall through to error toast
       }
-      if (!payload) { showToast("稍后再看加载失败：后端不可用"); return; }
+      if (!payload) { showToast("稍后再看加载失败：后端不可用"); renderWatchLaterList(); return; }
       const items = Array.isArray(payload.items) ? payload.items : [];
       state.watchLaterItems = (state.watchLaterItems || []).concat(items);
       state.watchLaterOffset = offset + items.length;
@@ -2086,7 +2232,11 @@
       const items = Array.isArray(payload?.items) ? payload.items : payload?.item ? [payload.item] : [];
       const normalized = items.map(normalizeDelight).filter(Boolean);
       if (!normalized.length) return;
-      state.delights = normalized;
+      // Deduplicate: skip delights whose bvid already appears in recommendations.
+      const recBvids = new Set((state.videos || []).map((v) => v.bvid).filter(Boolean));
+      const deduped = normalized.filter((d) => !recBvids.has(d.bvid));
+      if (!deduped.length) { state.delights = []; setActiveDelight(0); return; }
+      state.delights = deduped;
       setActiveDelight(0);
       mergeMessages(normalized);
     }
