@@ -17,6 +17,28 @@
 
 ---
 
+## 📌 v0.3.89 / extension v0.3.44 Highlights (2026-05-22)
+
+- **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
+- **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
+- **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
+- **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
+
+Full changelog: [docs/changelog.md](docs/changelog.md).
+
+---
+
+## 🍴 What this fork adds on top of upstream
+
+This fork adds a handful of independent extensions to [whiteguo233/OpenBiliClaw](https://github.com/whiteguo233/OpenBiliClaw), aimed at making the cross-platform recommendation surface reach more places:
+
+- **🍎 Native Safari (macOS) packaging** — Reuses the same MV3 codebase as Chrome / Firefox; an XcodeGen-generated Safari Web Extension host app, ad-hoc signed locally, can be loaded directly in Safari.
+- **⭐ Watch-later** — Star button on both recommendation cards and delight cards, persisted locally in SQLite, with state synced across the popup, mobile web, and desktop web surfaces.
+- **🔁 Manual mark-as-repost** — A "标记为搬运" button on rec cards that bypasses the `is_likely_repost` heuristic and searches YouTube for the original directly. Useful for AI-dubbed reposts whose title is fully Chinese and gives no obvious signal.
+- **🚫 Strict platform-share enforcement** — `pool_source_shares` now accepts `share=0` as an explicit "exclude this platform" signal; the pool cap actually trims existing items of that source rather than just stopping new discovery.
+- **🧠 Comment-assisted repost detection** (opt-in) — With `sources.youtube.use_comments_for_detection`, "borderline" candidates whose title/description give no signal get their top comments fetched, so commenters mentioning "original on YouTube" can participate in detection. Requests run concurrently within one response and are capped to avoid burning through cookie quota.
+
+---
 
 ## Why OpenBiliClaw?
 
