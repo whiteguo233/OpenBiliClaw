@@ -59,6 +59,13 @@
 
     html, body {
       width: 420px;
+      /* Safari extension popups don't have a stable viewport for 100vh —
+         it often collapses to the natural content height, leaving the
+         popup short. Pin an explicit pixel height instead so the popup
+         is always tall and the scroll container has room to work. The
+         actual macOS upper bound is ~800px depending on screen size and
+         Safari chrome; 600 stays comfortably under that on every Mac. */
+      height: 600px;
       font-family: -apple-system, BlinkMacSystemFont, "Avenir Next",
                    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
                    sans-serif;
@@ -74,7 +81,6 @@
     body {
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
     }
 
     button, textarea { font: inherit; }
@@ -224,6 +230,16 @@
       overflow-y: auto;
       overflow-x: hidden;
       padding-right: 2px;
+      /* Stop scroll momentum from "escaping" the popup when the user
+         reaches the top or bottom edge — without this, Safari forwards
+         leftover momentum to the host page's window, which feels like
+         the popup briefly stops responding. `contain` keeps the scroll
+         event inside this container. */
+      overscroll-behavior: contain;
+      /* Force the touchpad momentum/inertia path Safari uses for
+         document scrolling; otherwise nested flex+overflow can fall
+         back to a coarser line-by-line wheel mode that feels jerky. */
+      -webkit-overflow-scrolling: touch;
     }
     .view { display: flex; flex-direction: column; gap: 8px; }
     .view[hidden] { display: none; }
@@ -521,6 +537,11 @@
       min-height: 100px;
       max-height: 260px;
       overflow-y: auto;
+      /* Match .content — keep scroll inside this box, even when at the
+         top/bottom edge. Without this, momentum from scrolling chat
+         would leak into the parent .content and pull the popup around. */
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
       display: flex;
       flex-direction: column;
       gap: 6px;
