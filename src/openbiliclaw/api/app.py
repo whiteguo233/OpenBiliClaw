@@ -2218,7 +2218,7 @@ def create_app(
             concurrency.chat_active = True
             await asyncio.sleep(3)
         try:
-            reply = await asyncio.wait_for(ctx.dialogue.respond(contextual_message), timeout=30)
+            reply = await asyncio.wait_for(ctx.dialogue.respond(contextual_message), timeout=120)
         except TimeoutError:
             return JSONResponse(
                 content={
@@ -2784,7 +2784,7 @@ def create_app(
         try:
             reply = await asyncio.wait_for(
                 ctx.dialogue.respond(contextual_message),
-                timeout=30,
+                timeout=120,
             )
             # Judge sentiment while discovery is still paused
             sentiment = await _judge_probe_sentiment(raw_message, reply, domain)
