@@ -261,6 +261,25 @@ class YoutubeSourceConfig:
     # with the original YouTube URL.  Detection is title-based heuristic
     # + yt-dlp search.  Results cached in <data_dir>/yt_replacer_cache.json.
     replace_bilibili_reposts: bool = False
+    # When True (and replace_bilibili_reposts is also True), the endpoint
+    # additionally fetches the top ~20 comments for each bilibili row
+    # whose title/description didn't already trip signals 1-5, and feeds
+    # them into the comment-keyword detector (signal 6). Catches AI-dubbed
+    # reposts where the title is fully Chinese and the description is
+    # empty but commenters complain "原视频在YouTube" / "AI配音".
+    #
+    # Defaults to False because it consumes ~20 extra Bilibili API calls
+    # per /api/recommendations response (one per borderline row, up to
+    # comment_detection_max_rows). Requires a healthy Bilibili cookie —
+    # if -101 fires here, the entire repost-detection pass silently
+    # falls back to the title-only path.
+    use_comments_for_detection: bool = False
+    # Cap on how many rows per /api/recommendations response will be
+    # comment-checked, to bound the API quota burn. With 20 recs/page
+    # and a 5-row cap, the worst case is 100 Bilibili comment calls per
+    # popup-open (vs unbounded). 0 disables the cap (= every borderline
+    # row gets fetched).
+    comment_detection_max_rows: int = 5
     # Cache TTL for yt_replacer results in hours (default 24).
     yt_replacer_cache_ttl: int = 24
     # When True, the Bilibili content script will automatically redirect
@@ -632,6 +651,10 @@ def _build_config(raw: dict[str, Any]) -> Config:
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 60))),
             replace_bilibili_reposts=bool(youtube_raw.get("replace_bilibili_reposts", False)),
+            use_comments_for_detection=bool(youtube_raw.get("use_comments_for_detection", False)),
+            comment_detection_max_rows=max(
+                0, int(youtube_raw.get("comment_detection_max_rows", 5))
+            ),
             yt_replacer_cache_ttl=int(youtube_raw.get("yt_replacer_cache_ttl", 24)),
             auto_redirect_youtube=bool(youtube_raw.get("auto_redirect_youtube", False)),
         ),
@@ -1158,6 +1181,10 @@ def _render_config_toml(config: Config) -> str:
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             "replace_bilibili_reposts = "
             f"{_toml_bool(config.sources.youtube.replace_bilibili_reposts)}",
+            "use_comments_for_detection = "
+            f"{_toml_bool(config.sources.youtube.use_comments_for_detection)}",
+            "comment_detection_max_rows = "
+            f"{config.sources.youtube.comment_detection_max_rows}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
