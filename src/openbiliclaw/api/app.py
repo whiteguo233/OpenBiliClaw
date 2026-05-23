@@ -1657,6 +1657,36 @@ def create_app(
             recent_awareness=recent_awareness_out,
         )
 
+    @app.get("/api/events")
+    async def describe_events_endpoint() -> dict[str, object]:
+        """Self-documenting GET so curl/browser hits don't return a bare 405.
+
+        Event ingestion is POST-only — the extension/service-worker batches
+        behavior events and posts them. Returning a schema hint on GET
+        makes the endpoint discoverable for anyone poking around with a
+        browser tab or testing with curl.
+        """
+        return {
+            "ok": False,
+            "detail": "events ingest is POST-only",
+            "accepts": "POST application/json",
+            "schema": {
+                "events": [
+                    {
+                        "type": "click | watch | dwell | …",
+                        "url": "https://…",
+                        "title": "…",
+                        "timestamp": "ms epoch",
+                        "source_platform": "bilibili | youtube | xiaohongshu | douyin",
+                        "context": {"…": "…"},
+                        "metadata": {"…": "…"},
+                        "watch_seconds": "float or null",
+                        "video_duration_seconds": "float or null",
+                    }
+                ]
+            },
+        }
+
     @app.post("/api/events", response_model=EventIngestResponse)
     async def ingest_events(payload: BehaviorEventBatchIn) -> EventIngestResponse:
         from openbiliclaw.sources.event_format import build_event
@@ -3145,9 +3175,63 @@ def create_app(
 
     @app.get("/api/sources")
     def list_sources() -> dict[str, Any]:
-        """Return all source recipes."""
+        """Return source state — user recipes AND platform-level summary.
+
+        Pre-v0.3.x this returned just the ``source_recipes`` rows, which
+        most users never populate (it's a power-user feature for custom
+        discovery recipes). Result: a default install always returned
+        ``{"items": []}`` and users couldn't see "is xhs enabled? what's
+        my bilibili share? how many items are in the pool from each?"
+        via this endpoint.
+
+        Now adds a ``platforms`` field with the four pool-accounted
+        sources, each carrying enabled flag, effective share (after
+        the ``replace_bilibili_reposts`` boost), and current pool count.
+        Backward-compatible — old clients reading ``items`` still work.
+        """
         recipes = ctx.database.get_all_recipes()
-        return {"items": recipes}
+        platforms: dict[str, dict[str, Any]] = {}
+        try:
+            from openbiliclaw.runtime.source_policy import (
+                effective_pool_source_shares,
+                source_enabled_map,
+            )
+
+            enabled = source_enabled_map(ctx.config)
+            shares = effective_pool_source_shares(ctx.config)
+            pool_counts: dict[str, int] = {}
+            count_fn = getattr(ctx.database, "count_pool_candidates_by_source", None)
+            if callable(count_fn):
+                try:
+                    raw_counts = count_fn() or {}
+                    # Collapse bilibili sub-sources (search/related_chain/
+                    # trending/explore) under the "bilibili" family —
+                    # they're all the same platform from the user's
+                    # perspective.
+                    pool_counts = {}
+                    bilibili_total = 0
+                    for src, count in raw_counts.items():
+                        src_str = str(src)
+                        if src_str in ("xiaohongshu", "douyin", "youtube"):
+                            pool_counts[src_str] = int(count)
+                        else:
+                            # bilibili family — search, related_chain, trending,
+                            # explore, or literal "bilibili"
+                            bilibili_total += int(count)
+                    pool_counts["bilibili"] = bilibili_total
+                except Exception:
+                    pool_counts = {}
+            for source in ("bilibili", "xiaohongshu", "douyin", "youtube"):
+                platforms[source] = {
+                    "enabled": bool(enabled.get(source, False)),
+                    "share": int(shares.get(source, 0)),
+                    "pool_count": int(pool_counts.get(source, 0)),
+                }
+        except Exception as exc:
+            # Never break the recipes view if platform enrichment fails —
+            # the caller still gets ``items``.
+            platforms = {"_error": str(exc)}
+        return {"items": recipes, "platforms": platforms}
 
     @app.post("/api/sources", status_code=201)
     def create_source(payload: dict[str, Any]) -> dict[str, Any]:

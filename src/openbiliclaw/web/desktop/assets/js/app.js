@@ -425,8 +425,8 @@
               ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<span class="feedback-separator" aria-hidden="true">/</span>
               <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" type="button" aria-label="标记为搬运" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向"><span class="mark-repost-glyph" aria-hidden="true">🔁</span></button>` : ""}
             </div>
-            <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
-            <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
+            <div class="comment-field"><input placeholder="想说点什么？（仅作为反馈记录，不会触发对话）" aria-label="想说点什么？"></div>
+            <button class="small-btn chat-action" data-action="comment" type="button">留个想法</button>
           </div>
           <p class="status-line"></p>`;
         card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
@@ -508,7 +508,7 @@
       actions.classList.remove("is-composing");
       button.classList.remove("is-send");
       button.dataset.action = "comment";
-      button.textContent = "聊一聊";
+      button.textContent = "留个想法";
       button.removeAttribute("aria-label");
       button.removeAttribute("title");
     }
@@ -674,15 +674,15 @@
           if (!note) {
             delete card.dataset.feedbackPending;
             card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = false; });
-            status.textContent = "先写一句想聊的内容，再提交这条反馈。";
+            status.textContent = "写下你的想法再提交，留空就当没填。";
             input?.focus();
             return;
           }
           await submitFeedback(item, "comment", note);
           if (input) input.value = "";
           closeCardComposer(card);
-          status.textContent = "已提交聊天线索，几秒后从当前列表移除。";
-          removeRecommendationCard(item, card, "已提交聊天线索");
+          status.textContent = "已记录你的想法，几秒后从当前列表移除。";
+          removeRecommendationCard(item, card, "已记录想法");
           return;
         }
         const feedbackType = action === "like" ? "like" : action === "dismiss" ? "dismiss" : "dislike";

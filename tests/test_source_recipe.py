@@ -150,7 +150,10 @@ class TestSourceRecipeAPI:
 
         response = client.get("/api/sources")
         assert response.status_code == 200
-        assert response.json() == {"items": []}
+        # v0.3.x+: response also includes a "platforms" enrichment; check
+        # only that the recipe list is empty (the contract this test was
+        # verifying) rather than strict-equality on the whole payload.
+        assert response.json()["items"] == []
 
     def test_create_and_list_source(self, tmp_path) -> None:
         from fastapi.testclient import TestClient
