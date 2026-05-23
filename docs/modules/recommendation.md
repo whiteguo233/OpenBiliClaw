@@ -212,17 +212,19 @@ Recommendation(
 
 ### Unified Feedback Entry
 
-当前支持三种反馈信号：
+当前支持四种反馈信号：
 
 - `like`
 - `dislike`
-- `comment`
+- `comment`（必须带 `note`）
+- `dismiss`（v0.3.89+）：软移除单条推荐，不更新画像也不下调话题/作者权重。`update_recommendation_feedback` 会把 `content_cache.pool_status` 标记为 `feedbacked`，所以同一条候选不会再次进入发现池；前端按 `feedback_type` 非空过滤掉已忽略卡片。`/api/feedback` 不要求 dismiss 携带 `note`；事件层照常上报 `feedback` 事件，但 `inferred_satisfaction` 维持 `unknown` 以避免把单次软忽略误读为话题级负反馈。
 
 统一入口包括：
 
-- CLI：`openbiliclaw feedback <id> <like|dislike|comment> [--note ...]`
+- CLI：`openbiliclaw feedback <id> <like|dislike|comment|dismiss> [--note ...]`
 - API：`POST /api/feedback`
 - 插件 popup：卡片上的 `喜欢` / `不喜欢` / `写一句`
+- 桌面 Web：推荐卡片底部「喜欢 / 不感兴趣 / 忽略」三连按钮，「忽略」走 `dismiss` 通道
 - 移动 Web：推荐卡片反馈与惊喜推荐「喜欢 / 不感兴趣」共用后端反馈语义，惊喜推荐直接写入 `/api/delight/respond`
 
 ### PoolCurator

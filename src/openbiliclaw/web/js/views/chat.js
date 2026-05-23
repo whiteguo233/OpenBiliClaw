@@ -11,6 +11,7 @@ import {
   fetchProfileSummary,
   fetchActivityFeed,
   fetchPendingNotifications,
+  fetchPendingProbes,
   ackNotification,
   fetchDelightBatch,
   respondToDelight,
@@ -432,12 +433,21 @@ async function refreshAfterChatTurn() {
 
 export async function loadNotifications() {
   try {
-    const [notifData, delightData] = await Promise.all([
+    const [notifData, probeData, delightData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
+      fetchPendingProbes().catch(() => []),
       fetchDelightBatch(10).catch(() => []),
     ]);
-    const raw = notifData?.items || notifData?.pending || (notifData?.domain ? [notifData] : []);
-    notifications = Array.isArray(raw) ? raw : [];
+    // Start with persisted probes from backend
+    const probes = Array.isArray(probeData) ? probeData : [];
+    // Merge any WebSocket-received probes not yet in the persisted list
+    const persistedDomains = new Set(probes.map((p) => p.domain));
+    for (const n of notifications) {
+      if (n.domain && !persistedDomains.has(n.domain)) {
+        probes.push(n);
+      }
+    }
+    notifications = probes;
     delightMsgs = delightData;
     updateBadgeCount();
   } catch { /* ignore */ }

@@ -2831,6 +2831,31 @@ def create_app(
         await publish()
         return {"ok": True, "action": "probe_triggered"}
 
+    @app.get("/api/interest-probes/pending")
+    async def pending_interest_probes() -> dict[str, Any]:
+        """Return active speculative interests that the user hasn't responded to.
+
+        The mobile web UI polls this on page load / bell-click so probes
+        survive page refreshes (unlike WebSocket-only delivery).
+        """
+        try:
+            from openbiliclaw.soul.speculator import load_speculative_state
+
+            spec_state = load_speculative_state(ctx.config.data_path)
+            active = [item for item in spec_state.active if item.status == "active"]
+            items = [
+                {
+                    "domain": item.domain,
+                    "reason": item.reason,
+                    "confidence": item.confidence,
+                    "status": item.status,
+                }
+                for item in active[:6]
+            ]
+            return {"items": items}
+        except Exception:
+            return {"items": []}
+
     @app.post("/api/interest-probes/respond")
     async def respond_to_interest_probe(payload: dict[str, Any]) -> Any:
         """User responds to a speculated interest probe.
@@ -3021,7 +3046,7 @@ def create_app(
     async def feedback(payload: FeedbackIn) -> FeedbackResponse:
         feedback_type = payload.feedback_type.strip().lower()
         note = payload.note.strip()
-        if feedback_type not in {"like", "dislike", "comment"}:
+        if feedback_type not in {"like", "dislike", "comment", "dismiss"}:
             raise HTTPException(status_code=422, detail="Unsupported feedback type.")
         if feedback_type == "comment" and not note:
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
@@ -3048,6 +3073,7 @@ def create_app(
             "like": "点赞了",
             "dislike": "踩了",
             "comment": "评论了",
+            "dismiss": "忽略了",
         }.get(feedback_type, "反馈了")
         feedback_context = f"在 B 站{feedback_label}《{rec_title}》"
         if note:

@@ -142,6 +142,9 @@ class ActivityFeedBuilder:
             elif feedback_type == "dislike":
                 summary = f"这条你点了少来点：{title}"
                 tone = "error"
+            elif feedback_type == "dismiss":
+                summary = f"这条你忽略了：{title}"
+                tone = "info"
             else:
                 summary = note or f"你刚给 {title} 写了一句反馈"
                 tone = "info"
