@@ -11,9 +11,11 @@ Config: [sources.youtube].replace_bilibili_reposts = true
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
+import socket
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -24,8 +26,6 @@ logger = logging.getLogger(__name__)
 _yt_cache: dict[str, dict | None] = {}  # bvid -> {yt_url, yt_title, yt_author} or None
 _yt_cache_mtime: float = 0.0
 _CACHE_TTL = 86400  # 24h
-
-import socket
 
 # ── Server-side internet reachability ────────────────────────────
 _YOUTUBE_REACHABLE: bool | None = None
@@ -152,27 +152,18 @@ def _extract_english_terms(title: str) -> list[str]:
 def _has_repost_keywords(title: str, description: str = "") -> bool:
     """Check if title or description contains repost/translation keywords."""
     combined = f"{title} {description}".lower()
-    for kw in _REPOST_KEYWORDS:
-        if kw.lower() in combined:
-            return True
-    return False
+    return any(kw.lower() in combined for kw in _REPOST_KEYWORDS)
 
 
 def _has_foreign_brand(title: str) -> bool:
     """Check if title mentions a known foreign brand/channel."""
-    for brand in _FOREIGN_CATEGORIES:
-        if brand.lower() in title.lower():
-            return True
-    return False
+    return any(brand.lower() in title.lower() for brand in _FOREIGN_CATEGORIES)
 
 
 def _has_ai_dub_keywords(title: str) -> bool:
     """Check if title contains AI dubbing / machine translation keywords."""
     lower = title.lower()
-    for kw in _AI_DUB_KEYWORDS:
-        if kw.lower() in lower:
-            return True
-    return False
+    return any(kw.lower() in lower for kw in _AI_DUB_KEYWORDS)
 
 
 def _has_ai_dub_desc_signals(description: str) -> bool:
@@ -180,10 +171,7 @@ def _has_ai_dub_desc_signals(description: str) -> bool:
     if not description:
         return False
     lower = description.lower()
-    for kw in _AI_DUB_DESC_SIGNALS:
-        if kw.lower() in lower:
-            return True
-    return False
+    return any(kw.lower() in lower for kw in _AI_DUB_DESC_SIGNALS)
 
 
 def _is_repost_from_comments(comments: list[str] | None) -> bool:
@@ -243,9 +231,10 @@ def is_likely_repost(title: str, description: str = "", comments: list[str] | No
         return True
 
     # Signal 3: Repost keywords + English terms or YT link in description
-    if _has_repost_keywords(title, description):
-        if len(english_terms) >= 1 or latin_ratio > 0.10 or "youtu" in (description or "").lower():
-            return True
+    if _has_repost_keywords(title, description) and (
+        len(english_terms) >= 1 or latin_ratio > 0.10 or "youtu" in (description or "").lower()
+    ):
+        return True
 
     # Signal 4: Strong English phrases (low threshold but requires solid English)
     if has_meaningful and latin_ratio > 0.15:
@@ -266,10 +255,7 @@ def is_likely_repost(title: str, description: str = "", comments: list[str] | No
         return True
 
     # Signal 6: Optional comment-based detection
-    if _is_repost_from_comments(comments):
-        return True
-
-    return False
+    return bool(_is_repost_from_comments(comments))
 
 
 # ── YouTube search via yt-dlp ─────────────────────────────────────
@@ -330,7 +316,10 @@ def find_original(title: str, author: str = "", description: str = "") -> dict |
     """
     # Fast path: description already has YouTube URL
     if description:
-        yt_match = re.search(r"(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})", description)
+        yt_match = re.search(
+            r"(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})",
+            description,
+        )
         if yt_match:
             vid = yt_match.group(1)
             logger.info("YT replacer: fast-path from description url for %r", title)
@@ -549,7 +538,11 @@ def replace_recommendation_row(
     override = {
         "content_url": yt_url,
         "source_platform": "youtube",
-        "expression": (original_expr + expr_suffix) if original_expr else f"原视频在 YouTube：{yt_url}",
+        "expression": (
+            (original_expr + expr_suffix)
+            if original_expr
+            else f"原视频在 YouTube：{yt_url}"
+        ),
     }
     if yt_cover:
         override["cover_url"] = yt_cover
@@ -561,7 +554,5 @@ def clear_cache(data_dir: str = "") -> None:
     _yt_cache.clear()
     p = _cache_path(data_dir)
     if p.exists():
-        try:
+        with contextlib.suppress(Exception):
             p.unlink()
-        except Exception:
-            pass

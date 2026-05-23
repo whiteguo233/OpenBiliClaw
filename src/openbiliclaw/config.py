@@ -1145,7 +1145,8 @@ def _render_config_toml(config: Config) -> str:
             f"daily_channel_budget = {config.sources.youtube.daily_channel_budget}",
             f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
-            f"replace_bilibili_reposts = {_toml_bool(config.sources.youtube.replace_bilibili_reposts)}",
+            "replace_bilibili_reposts = "
+            f"{_toml_bool(config.sources.youtube.replace_bilibili_reposts)}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",

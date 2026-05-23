@@ -49,7 +49,11 @@ def effective_pool_source_shares(config: Any) -> dict[str, int]:
     # Auto-boost YouTube shares when repost replacement is active
     sources_cfg = getattr(config, "sources", None)
     yt_cfg = getattr(sources_cfg, "youtube", None) if sources_cfg is not None else None
-    yt_replace = bool(getattr(yt_cfg, "replace_bilibili_reposts", False)) if yt_cfg is not None else False
+    yt_replace = (
+        bool(getattr(yt_cfg, "replace_bilibili_reposts", False))
+        if yt_cfg is not None
+        else False
+    )
     yt_enabled = enabled.get("youtube", False)
     if yt_replace and yt_enabled:
         shares["youtube"] = shares.get("youtube", 1) + 2

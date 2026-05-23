@@ -1766,10 +1766,14 @@ def create_app(
         # ── YouTube repost replacement ──────────────────────────────
         if rows and ctx.config.sources.youtube.replace_bilibili_reposts:
             try:
-                from openbiliclaw.yt_replacer import replace_recommendation_row
-
                 import os as _os
-                data_dir = _os.path.dirname(str(ctx.config.storage.db_path)) if ctx.config.storage.db_path else ""
+
+                from openbiliclaw.yt_replacer import replace_recommendation_row
+                data_dir = (
+                    _os.path.dirname(str(ctx.config.storage.db_path))
+                    if ctx.config.storage.db_path
+                    else ""
+                )
                 for i, row in enumerate(rows):
                     override = replace_recommendation_row(row, data_dir=data_dir)
                     if override:
@@ -4788,7 +4792,9 @@ def create_app(
             author = str(row["up_name"] or "")
             description = str(row["description"] or "")
             data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
-            result = replace_if_foreign(bvid, title, author, description=description, data_dir=data_dir)
+            result = replace_if_foreign(
+                bvid, title, author, description=description, data_dir=data_dir
+            )
 
             # No detection at all (heuristic said "not a repost").
             if result is None:
