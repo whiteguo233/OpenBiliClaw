@@ -22,7 +22,7 @@
 - **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
 - **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
 - **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
-- **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
+- **🧭 Proactive avoidance probing** — the system now asks about content forms you may want to avoid; confirmed answers write `disliked_topics` and purge the pool, while unconfirmed probes do not filter recommendations.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -323,6 +323,7 @@ This repo ships a [workspace skill](skills/openbiliclaw-adapter/SKILL.md). Point
 
 - ✨ **Proactive recommendations** — the system continuously discovers content in the background; when it finds a high-scoring surprise, it pushes to OpenClaw via WebSocket — **you don't have to ask**
 - 🔮 **Proactive interest probing** — the system guesses you might be into a new domain, generates a hypothesis and a question, and has OpenClaw come ask you "does this direction resonate?" — your answer automatically refines the profile
+- 🧭 **Proactive avoidance probing** — the system can also ask whether a low-quality form, style boundary, or topic shape is something you want to avoid; OpenClaw uses `next-avoidance-probe` / `respond-avoidance-probe`, and nothing is filtered until you confirm it
 - 💬 **Socratic dialogue** — not just interest confirmation; OpenClaw can have deep conversations: probing motivations, proposing hypotheses, confirming understanding — the more you talk, the better it knows you
 - 📖 **Read the current soul profile** — MBTI, core traits, deep needs, interest domains
 - 🎯 **Fetch personalized recommendations on demand** — with explanations, confidence scores, and topic labels
@@ -390,6 +391,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 - 🧠 **Five-Layer Soul Profile** — Event → Preference → Awareness → Insight → Soul, inferring MBTI, cognitive style, and deep needs — like a psychologist understanding you
 - 🔮 **Speculative Interest System** — Uses psychological bridging logic to guess unexplored domains you might love; promotes correct guesses, retires wrong ones, continuously breaking the filter bubble
+- 🧭 **Avoidance Probe System** — Proactively confirms content forms, low-quality expressions, and style boundaries you may want to avoid; confirmed answers write `disliked_topics`, unconfirmed probes stay out of ranking
 - 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin, YouTube init signals, Douyin search / hot / feed discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
 - 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed, coordinated cross-platform
 - 🎯 **Smart Diversity** — PoolCurator five-dimension scoring + cross-source/round topic quota (any topic ≤10% of pool) + share-aware pool trimming that protects smaller sources; goodbye to "all AI all day"
@@ -407,7 +409,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Recs · Chat · Runtime Toggles)       │
+│      (Behavior · Recs · Chat · Interest/Avoidance Probes)  │
 │      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies)
@@ -417,12 +419,12 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ├─────────┬──────────┬───────────┬────────────────────┤
 │  Soul   │ Memory   │ Discovery │  Recommendation    │
 │  Engine │ System   │  Engine   │     Engine          │
-│(Sat.filter)│(5-Layer)│(Neg.anchor)│  (Expression)   │
+│(Profile+Probe)│(5-Layer)│(Neg.anchor)│ (Expression) │
 ├─────────┴──────────┴───────────┴────────────────────┤
 │ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
-│ Runtime: Account sync + XHS/DY/YouTube producers           │
+│ Runtime: Account sync + producers + probe arbiter          │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
-│         recommendations · chat_turns                    │
+│         recommendations · chat_turns · avoidance_state  │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -503,7 +505,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat + avoidance probes (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 

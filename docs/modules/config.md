@@ -122,7 +122,7 @@ cp config.example.toml config.toml
 
 ### `[llm.embedding]`
 
-Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、recommendation 跨主题去重、PoolCurator 反馈相似度判定、interest probe 主题归类。
+Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、recommendation 跨主题去重、PoolCurator 反馈相似度判定、interest / avoidance probe 主题归类。
 
 **v0.3.32+ 起，本段拥有独立的 `api_key` / `base_url`，与 `[llm].default_provider` 完全解耦。** 不再被迫为「embedding 用 OpenAI 但 chat 用 DeepSeek」这种场景在两处填同一组凭据。
 
@@ -332,6 +332,11 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 | `speculation_max_active` | int | `5` | 最多同时活跃的猜测兴趣数 |
 | `speculation_max_primary_interests` | int | `15` | 主要兴趣域的最大数量 |
 | `speculation_max_secondary_interests` | int | `60` | 次要兴趣域的最大数量 |
+| `avoidance_speculation_interval_minutes` | int | `10` | 不喜欢领域探针生成间隔（分钟），与正向兴趣探针独立 |
+| `avoidance_speculation_ttl_days` | int | `3` | 不喜欢领域探针默认存活天数 |
+| `avoidance_speculation_cooldown_days` | int | `7` | 不喜欢领域探针被否认或过期后的冷却天数 |
+| `avoidance_speculation_confirmation_threshold` | int | `3` | 自动确认不喜欢领域所需显式负向信号数；用户直接确认不受此阈值限制 |
+| `avoidance_speculation_max_active` | int | `5` | 最多同时活跃的不喜欢领域探针数，不占 `speculation_max_active` |
 | `auto_update_enabled` | bool | `false` | 是否启用自动检查并应用新版本；默认关闭，避免本地开发或 release 漂移时自动重启 |
 | `auto_update_check_interval_hours` | int | `6` | 自动更新检查间隔（小时） |
 
@@ -393,7 +398,7 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：默认 provider、全局并发数、显式备选 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.*`
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、四个平台 `pool_source_shares`、猜测兴趣参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、四个平台 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 
 保留但不单独暴露的字段主要是目前只有一个有效值的内部兼容项，例如 `[sources.douyin].mode = "direct"`；保存时插件会继续按当前支持值写回，不会删除其他高级字段。

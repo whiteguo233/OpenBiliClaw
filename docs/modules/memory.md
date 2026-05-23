@@ -107,7 +107,7 @@
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
 | 账户同步状态 | ✅ | `account_sync_state.json` 记录历史/收藏/关注同步游标、已见 ID 集合、签名和最近错误 |
 | 多源 bootstrap 去重状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube 已进入事件路径的 bootstrap identity key，避免跨任务重放旧画像信号 |
-| 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊和兴趣猜测内聊的 pending/completed/failed 状态 |
+| 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊、兴趣猜测内聊和避雷探针内聊的 pending/completed/failed 状态 |
 
 ## 公开 API
 
@@ -150,7 +150,7 @@ database.initialize()
 turn = database.create_chat_turn(
     turn_id="turn-...",
     session="popup",
-    scope="chat",  # chat|delight|probe
+    scope="chat",  # chat|delight|probe|avoidance_probe
     message="我想继续聊聊这个方向",
 )
 database.complete_chat_turn(turn["turn_id"], reply="这句我记下了。")
@@ -368,6 +368,7 @@ data/memory/
 ├── account_sync_state.json     # 账户同步游标
 ├── source_bootstrap_state.json # 多源 bootstrap 已见 identity key
 ├── discovery_runtime.json      # 候选池刷新游标
+├── avoidance_state.json        # 不喜欢领域探针 active/cooldown 状态
 ├── insight_candidates.json     # 聊天候选洞察（中间态）
 └── cognition_updates.json      # 认知变化记录（供插件通知）
 ```
@@ -378,6 +379,7 @@ data/memory/
 | `account_sync_state.json` | 历史/收藏/关注的增量同步游标、同秒历史 bvid 集合、收藏 bvid 集合、关注 mid 集合和签名 | AccountSyncService |
 | `source_bootstrap_state.json` | XHS / 抖音 / YouTube bootstrap 已传播 identity key，避免跨任务重复写入同一批画像信号 | FastAPI source task endpoints |
 | `discovery_runtime.json` | 候选池刷新时间、通知游标、最近话题、近期 probe domain / axis 历史、显式 probe feedback 历史 | RefreshController / OpenClaw / FastAPI |
+| `avoidance_state.json` | 不喜欢领域探针的 active/cooldown 列表和生命周期状态 | AvoidanceSpeculator / FastAPI |
 | `insight_candidates.json` | 聊天中提取的候选洞察，等待置信度达标 | SoulEngine |
 | `cognition_updates.json` | 系统最近形成的关键认知变化 | FastAPI → 浏览器插件通知 |
 
@@ -390,6 +392,10 @@ data/memory/
 | `probed_domains` | `{normalized_domain: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的 probe domain，用于短期避免重复问同一方向；前端离线导致未投递时不写入 |
 | `probed_axes` | `{experience_mode|entry_load: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的体验轴，用于在验证压力相同的候选中优先选择不同体验；前端离线导致未投递时不写入 |
 | `probe_feedback_history` | `[{domain,response,axis?,category?,reason?,specifics?,message?,created_at}]` | 最近 100 条用户显式探针反馈；reject / chat_negative 会参与后续 novelty guard 与 probe selection，confirm / chat_positive / chat_neutral 只作为审计记录 |
+| `probed_avoidance_domains` | `{normalized_domain: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的不喜欢领域探针 domain，用于避免重复问同一避雷方向 |
+| `probed_avoidance_axes` | `{experience_mode|entry_load: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的不喜欢领域体验轴，用于在同等压力下优先选择不同形态 |
+| `avoidance_probe_feedback_history` | `[{domain,response,axis?,source_mode?,reason?,specifics?,message?,created_at}]` | 最近 100 条避雷探针反馈；reject / chat_negative 会抑制重复候选，confirm / chat_positive 会进入 confirmed dislike 写回链路 |
+| `last_probe_kind` | `"interest" | "avoidance" | ""` | 主动推送循环的正向/负向 probe 轮转状态；只有实际投递成功后才更新 |
 
 ## 系统集成
 
