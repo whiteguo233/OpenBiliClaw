@@ -2580,6 +2580,25 @@ class Database:
             return None
         return dict(row)
 
+    def get_recommendation_by_bvid(self, bvid: str) -> dict[str, Any] | None:
+        """Return the most recent recommendation row for a bvid."""
+        self._ensure_fresh_read()
+        cursor = self.conn.execute(
+            """\
+            SELECT r.*, c.title AS title, c.up_name AS up_name
+            FROM recommendations AS r
+            LEFT JOIN content_cache AS c ON c.bvid = r.bvid
+            WHERE r.bvid = ?
+            ORDER BY r.id DESC
+            LIMIT 1
+            """,
+            (bvid,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def update_recommendation_feedback(
         self,
         recommendation_id: int,
