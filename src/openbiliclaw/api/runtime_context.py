@@ -312,6 +312,7 @@ class RuntimeContext:
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
             module_overrides=new_module_overrides,
+            concurrency=int(getattr(new_config.llm, "concurrency", 3)),
         )
 
         # 2. Bilibili client
@@ -345,6 +346,7 @@ class RuntimeContext:
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
             module_overrides=new_module_overrides,
+            llm_concurrency=int(getattr(new_config.llm, "concurrency", 3)),
             speculation_interval_minutes=int(
                 getattr(new_config.scheduler, "speculation_interval_minutes", 10)
             ),

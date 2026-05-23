@@ -208,7 +208,7 @@ class ContinuousRefreshController:
     # gating happens upstream now in pipeline.tick().  Kept explicit so
     # we can tune in tests.
     discovery_limit: int = 30
-    pool_target_count: int = 600
+    pool_target_count: int = 300
     pool_source_shares: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
     )
@@ -725,6 +725,22 @@ class ContinuousRefreshController:
             logger.exception("precompute_pool_copy task failed")
             return 0
 
+    async def _safe_prewarm_pool_mmr_embeddings(self) -> int:
+        """Warm MMR embeddings without blocking refresh completion."""
+        try:
+            return int(await self.recommendation_engine.prewarm_pool_mmr_embeddings())
+        except Exception:
+            logger.exception("prewarm_pool_mmr_embeddings failed")
+            return 0
+
+    async def _safe_prewarm_supergroup_embeddings(self) -> int:
+        """Warm topic-supergroup embeddings without blocking refresh completion."""
+        try:
+            return int(await self.recommendation_engine.prewarm_supergroup_embeddings())
+        except Exception:
+            logger.exception("prewarm_supergroup_embeddings failed")
+            return 0
+
     async def run_forever(self) -> None:
         """Launch all background tasks as independent concurrent loops.
 
@@ -835,12 +851,59 @@ class ContinuousRefreshController:
         if profile is None:
             return
         try:
+            before_pool_count = int(self.database.count_pool_candidates())
+        except Exception:
+            before_pool_count = -1
+        try:
             await engine.precompute_pool_copy(
                 profile=profile,
                 limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
             )
         except Exception:
             logger.exception("Periodic precompute drain failed")
+            return
+        if before_pool_count >= 0:
+            await self._publish_precompute_replenishment_if_needed(
+                before_pool_count=before_pool_count,
+            )
+
+    async def _publish_precompute_replenishment_if_needed(
+        self,
+        *,
+        before_pool_count: int,
+    ) -> None:
+        """Report candidates that became usable during the standalone drain."""
+        try:
+            after_pool_count = int(self.database.count_pool_candidates())
+        except Exception:
+            return
+        replenished_count = max(0, after_pool_count - int(before_pool_count))
+        if replenished_count <= 0:
+            return
+
+        state = self.memory_manager.load_discovery_runtime_state()
+        state["last_replenished_count"] = replenished_count
+        discovered_count = self._int_state_value(state, "last_discovered_count")
+        recent_pool_topics = self._list_state_value(state, "recent_pool_topics")
+        self.memory_manager.save_discovery_runtime_state(state)
+        self._last_published_pool_count = after_pool_count
+        logger.info(
+            "Periodic precompute made %s pool candidates available (pool_available %s -> %s)",
+            replenished_count,
+            before_pool_count,
+            after_pool_count,
+        )
+        await self._publish_event(
+            {
+                "type": "refresh.pool_updated",
+                "phase": "done",
+                "message": f"刚补进 {replenished_count} 条新的",
+                "pool_available_count": after_pool_count,
+                "last_discovered_count": discovered_count,
+                "last_replenished_count": replenished_count,
+                "recent_pool_topics": recent_pool_topics,
+            }
+        )
 
     async def _on_profile_ready_if_first_time(self) -> None:
         """One-shot hook fired the tick after soul profile first appears.
@@ -1258,19 +1321,19 @@ class ContinuousRefreshController:
             # Pre-warm supergroup-merge embeddings so the popup's "换一批"
             # hot path always hits the L1/L2 cache. New labels added by
             # this refresh round get warmed before the user clicks.
-            try:
-                await self.recommendation_engine.prewarm_supergroup_embeddings()
-            except Exception:
-                logger.exception("prewarm_supergroup_embeddings failed")
-            # Warm the MMR per-candidate embedding L2 cache so the next
-            # popup "换一批" doesn't have to pay the embedding round trip
-            # synchronously. Detached from the per-item warm hook in
-            # discovery — covers items that pre-date the hook and survives
-            # restart cycles.
-            try:
-                await self.recommendation_engine.prewarm_pool_mmr_embeddings()
-            except Exception:
-                logger.exception("prewarm_pool_mmr_embeddings failed")
+            # Warm embedding-derived caches in the background. They are
+            # latency optimizations for later serve() calls, not
+            # requirements for this refresh result to become visible.
+            # Keeping them off the refresh lock prevents slow local
+            # embedding backends from leaving the popup stuck at "正在补货".
+            self._track_task(
+                "prewarm_supergroup_embeddings",
+                self._safe_prewarm_supergroup_embeddings(),
+            )
+            self._track_task(
+                "prewarm_pool_mmr_embeddings",
+                self._safe_prewarm_pool_mmr_embeddings(),
+            )
             delight_count_after = self._safe_count_delight_candidates()
             net_new_delights = max(0, delight_count_after - delight_count_before)
             if net_new_delights > 0:

@@ -764,10 +764,12 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             registry: object,
             memory: object,
             module_overrides: object | None = None,
+            concurrency: int = 1,
         ) -> None:
             self.registry = registry
             self.memory = memory
             self.module_overrides = module_overrides
+            self.concurrency = concurrency
 
     class FakeRecommendationEngine:
         def __init__(
@@ -804,6 +806,7 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
     fake_config = SimpleNamespace(
         data_path=Path("/tmp/openbiliclaw-test-data"),
         bilibili=SimpleNamespace(cookie=""),
+        llm=SimpleNamespace(concurrency=3),
     )
 
     monkeypatch.setattr(cli_module, "_RUNTIME_COMPONENTS", {}, raising=False)
@@ -2365,7 +2368,7 @@ def test_init_runs_history_preference_profile_and_discovery(
     assert fake_discovery.calls
 
 
-def test_init_caps_bilibili_favorites_and_following_at_300(
+def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
     class FakeBilibiliClient:
@@ -2465,12 +2468,12 @@ def test_init_caps_bilibili_favorites_and_following_at_300(
     assert fake_soul.analyzed_events
     analyzed = fake_soul.analyzed_events[0]
     assert len([event for event in analyzed if event["event_type"] == "favorite"]) == 300
-    assert len([event for event in analyzed if event["event_type"] == "follow"]) == 300
-    assert len(fake_memory.events) == 601
+    assert len([event for event in analyzed if event["event_type"] == "follow"]) == 100
+    assert len(fake_memory.events) == 401
     built_history = fake_soul.built_history[0]
     assert len(built_history) == 3
     assert str(built_history[1]["_favorites_summary"]).startswith("共 300 个收藏")
-    assert str(built_history[2]["_following_summary"]).startswith("共关注 300 人")
+    assert str(built_history[2]["_following_summary"]).startswith("共关注 100 人")
 
 
 def test_init_accepts_custom_bilibili_favorites_and_following_limits(
@@ -3068,6 +3071,34 @@ def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
     assert captured["payload"]["max_scroll_rounds"] == 5
     assert captured["payload"]["max_items_per_scope"] == 100
     assert captured["payload"]["scopes"] == ["saved", "liked", "xhs_history"]
+
+
+def test_enqueue_xhs_bootstrap_task_defaults_to_300_items_per_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db):
+            pass
+
+        def enqueue_with_id(self, task_type, payload, *, daily_budget):
+            captured["task_type"] = task_type
+            captured["payload"] = payload
+            captured["daily_budget"] = daily_budget
+            return "task-default"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.delenv("OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS", raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
+
+    assert _enqueue_xhs_bootstrap_task(force=True) == "task-default"
+    assert captured["payload"]["max_items_per_scope"] == 300
 
 
 def test_enqueue_xhs_bootstrap_task_reuses_recent_task_by_default(
@@ -4091,6 +4122,34 @@ def test_enqueue_dy_bootstrap_task_uses_env_overrides(
     ]
 
 
+def test_enqueue_dy_bootstrap_task_defaults_to_300_items_per_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_dy_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def enqueue_with_id(self, task_type: str, payload: dict, *, daily_budget: int) -> str:
+            captured["task_type"] = task_type
+            captured["payload"] = payload
+            captured["daily_budget"] = daily_budget
+            return "dy-task-default"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.delenv("OPENBILICLAW_DY_BOOTSTRAP_MAX_ITEMS", raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.dy_tasks.DyTaskQueue", FakeQueue)
+
+    assert _enqueue_dy_bootstrap_task() == "dy-task-default"
+    assert captured["payload"]["max_items_per_scope"] == 300
+
+
 def test_enqueue_dy_bootstrap_task_reuses_recent_task_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4153,6 +4212,34 @@ def test_enqueue_yt_bootstrap_task_reuses_recent_task_by_default(
     monkeypatch.setattr("openbiliclaw.sources.yt_tasks.YtTaskQueue", FakeQueue)
 
     assert _enqueue_yt_bootstrap_task() == "recent-yt-task-id"
+
+
+def test_enqueue_yt_bootstrap_task_defaults_to_300_items_per_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_yt_bootstrap_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def enqueue_with_id(self, task_type: str, payload: dict, *, daily_budget: int) -> str:
+            captured["task_type"] = task_type
+            captured["payload"] = payload
+            captured["daily_budget"] = daily_budget
+            return "yt-task-default"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.delenv("OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS", raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.yt_tasks.YtTaskQueue", FakeQueue)
+
+    assert _enqueue_yt_bootstrap_task() == "yt-task-default"
+    assert captured["payload"]["max_items_per_scope"] == 300
 
 
 def test_collect_dy_bootstrap_events_returns_skipped_for_no_task_id() -> None:

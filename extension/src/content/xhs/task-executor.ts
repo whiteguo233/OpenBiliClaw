@@ -724,7 +724,7 @@ export async function executeBootstrapTaskInPage(
   doc: Document,
 ): Promise<TaskResultPayload> {
   const scopes = normalizeBootstrapScopes(msg.scopes);
-  const maxItemsPerScope = Math.max(1, msg.max_items_per_scope ?? 20);
+  const maxItemsPerScope = Math.max(1, msg.max_items_per_scope ?? 300);
   const maxScrollRounds = normalizeBootstrapScrollRounds(msg.max_scroll_rounds);
   const scrollWaitMs = normalizeBootstrapScrollWaitMs(msg.scroll_wait_ms);
   const maxStagnantScrollRounds = normalizeBootstrapStagnantScrollRounds(

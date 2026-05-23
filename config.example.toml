@@ -22,6 +22,9 @@ port = 8420
 # Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter" | "openai_compatible"
 # 这里选择的 provider 决定了运行时会检查哪一组敏感字段。
 default_provider = "openai"
+# Shared max concurrency for LLM requests. Higher values replenish faster but
+# may hit provider/local-proxy rate limits sooner.
+concurrency = 3
 # 旧兼容开关；实际 fallback 只在 fallback_provider 非空时发生。
 fallback_enabled = false
 # 第二个备选 provider；默认空 = 不 fallback，不再自动尝试其它 provider。
@@ -311,7 +314,7 @@ extension_disconnect_grace_seconds = 90
 discovery_cron = "0 */8 * * *"
 # Keep at least this many fresh candidates ready in the discovery pool
 # Allowed range: 1..600; each single refresh will backfill at most 60
-pool_target_count = 600
+pool_target_count = 300
 # Low-frequency account sync interval for history / favorites / following
 account_sync_interval_hours = 6
 # --- Runtime refresh tuning ---

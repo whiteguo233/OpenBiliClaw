@@ -65,6 +65,7 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const RUNTIME_REFRESH_DEBOUNCE_MS = 1000;
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -76,6 +77,16 @@
     ];
     let chatPlaceholderIndex = 0;
     let chatPlaceholderTimer = null;
+    let backendHydrationTimer = null;
+    let backendHydrationInFlight = false;
+    let backendHydrationPending = false;
+    let activityPageRefreshTimer = null;
+    let activityPageRefreshInFlight = false;
+    let activityPageRefreshPending = false;
+    let activityPageRefreshReset = false;
+    let delightQueueRefreshTimer = null;
+    let delightQueueRefreshInFlight = false;
+    let delightQueueRefreshPending = false;
 
     function showFatal(error, context = "页面启动") {
       const message = error?.message || String(error || "未知错误");
@@ -385,15 +396,15 @@
         const card = document.createElement("article");
         card.className = "video-card";
         card.innerHTML = `
-          <button class="cover" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
-            ${coverImg(item)}
+          <div class="cover" data-platform="${escapeHtml(item.platform)}">
+            <button class="cover-btn" type="button" aria-label="打开 ${escapeHtml(item.title)}">
+              ${coverImg(item)}
+            </button>
             <span class="platform">${escapeHtml(platformName(item.platform))}</span>
-          </button>
-          <div>
-            <p class="video-title">${escapeHtml(item.title)}</p>
-            <p class="video-meta">${escapeHtml(recommendationMeta(item))}</p>
           </div>
-          <p class="reason">${escapeHtml(item.reason)}</p>
+          <p class="video-title">${escapeHtml(item.title)}</p>
+          <p class="video-meta">${escapeHtml(recommendationMeta(item))}</p>
+          <p class="reason" data-full-reason="${escapeHtml(item.reason)}">${escapeHtml(item.reason)}</p>
           <div class="card-actions" aria-label="推荐反馈操作">
             <div class="card-feedback-icons" aria-label="喜欢或不感兴趣">
               <button class="feedback-icon-btn" data-action="like" type="button" aria-label="喜欢" title="喜欢">
@@ -412,7 +423,7 @@
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
           <p class="status-line"></p>`;
-        card.querySelector(".cover").addEventListener("click", () => openRecommendation(item, card));
+        card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
         card.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", () => handleCardAction(btn.dataset.action, item, card)));
         card.querySelector(".comment-field input").addEventListener("keydown", (event) => {
           if (event.key === "Enter") handleCardAction("send-comment", item, card);
@@ -1035,19 +1046,19 @@
       if (state.messageListSnapshot && isMessagesDrawerOpen()) state.messageListSnapshot = messages;
       else state.messages = messages;
       syncMessageCount();
-      if (!messages.length) {
-        list.innerHTML = `<div class="empty-state">暂无待处理消息。兴趣确认、惊喜推荐和通知都会出现在这里。</div>`;
+      const filtered = messages.filter((m) => messageType(m) !== "delight");
+      if (!filtered.length) {
+        list.innerHTML = `<div class="empty-state">暂无待处理消息。兴趣确认和通知会出现在这里。</div>`;
         return;
       }
-      list.replaceChildren(...messages.map((msg) => {
+      list.replaceChildren(...filtered.map((msg) => {
         const el = document.createElement("article");
         const key = messageKey(msg);
         const resolvedResult = state.resolvedMessageResults.get(key);
         el.className = "message-item";
         el.dataset.messageKey = key;
         if (messageType(msg) === "delight") {
-          el.innerHTML = `<p class="eyebrow">惊喜推荐</p><h3>${escapeHtml(msg.title)}</h3><p class="video-meta">${escapeHtml(msg.reason || msg.delight_reason || "")}</p>${msg.chat_reply ? `<div class="message-note">${escapeHtml(msg.chat_reply)}</div>` : ""}<div class="message-card-actions"><div class="card-feedback-icons" aria-label="反馈这条惊喜推荐"><button class="feedback-icon-btn" data-delight-msg="like" type="button" aria-label="喜欢" title="喜欢"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg></button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-delight-msg="dislike" type="button" aria-label="不感兴趣" title="不感兴趣"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg></button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-delight-msg="dismiss" type="button" aria-label="忽略" title="忽略"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M9.84 9.91A3 3 0 0 0 12 15c.82 0 1.57-.33 2.11-.87M6.5 6.65A10.45 10.45 0 0 0 2.46 12C3.73 16.06 7.52 19 12 19c1.99 0 3.84-.58 5.4-1.58M11 5.05c.33-.03.66-.05 1-.05 4.48 0 8.27 2.94 9.54 7a10.5 10.5 0 0 1-1.19 2.5"/></svg></button></div><div class="message-primary-actions"><button class="small-btn secondary" data-delight-msg="chat">聊一聊</button><button class="small-btn" data-delight-msg="view">看看</button></div></div>`;
-          el.querySelectorAll("[data-delight-msg]").forEach((btn) => btn.addEventListener("click", () => respondDelight(msg, btn.dataset.delightMsg, el)));
+          return null; // delights shown in delight tray, not messages
         } else if (messageType(msg) === "notification") {
           el.innerHTML = `<p class="eyebrow">待通知候选</p><h3>${escapeHtml(msg.title)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="message-note">这类消息来自后端挑出的高置信推荐，用于插件通知；标记已通知后不会反复出现。</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="通知候选状态"><button class="feedback-icon-btn" data-notification-msg="dismiss" type="button" aria-label="标记已通知" title="标记已通知"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-notification-msg="view">去看看</button></div></div>`;
           el.querySelectorAll("[data-notification-msg]").forEach((btn) => btn.addEventListener("click", () => respondNotification(msg, btn.dataset.notificationMsg, el)));
@@ -1542,6 +1553,7 @@
       const llm = config.llm || {};
       const provider = llm.default_provider || llm.provider;
       setSelect("llmProvider", provider);
+      setInput("llmConcurrency", llm.concurrency ?? 3);
       setSelect("llmAuthMode", llm.openai?.auth_mode || "api_key");
       if (provider) {
         setInput("llmModel", llm[provider]?.model);
@@ -1684,11 +1696,89 @@
       applyDelights(payload);
     }
 
+    function scheduleBackendHydration({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      if (backendHydrationTimer !== null) window.clearTimeout(backendHydrationTimer);
+      backendHydrationTimer = window.setTimeout(() => {
+        backendHydrationTimer = null;
+        void runScheduledBackendHydration();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledBackendHydration() {
+      if (backendHydrationInFlight) {
+        backendHydrationPending = true;
+        return;
+      }
+      backendHydrationInFlight = true;
+      try {
+        await hydrateFromBackend();
+      } finally {
+        backendHydrationInFlight = false;
+        if (backendHydrationPending) {
+          backendHydrationPending = false;
+          scheduleBackendHydration();
+        }
+      }
+    }
+
+    function scheduleActivityPageRefresh({ reset = true, delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      activityPageRefreshReset = activityPageRefreshReset || Boolean(reset);
+      if (activityPageRefreshTimer !== null) window.clearTimeout(activityPageRefreshTimer);
+      activityPageRefreshTimer = window.setTimeout(() => {
+        activityPageRefreshTimer = null;
+        void runScheduledActivityPageRefresh();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledActivityPageRefresh() {
+      if (activityPageRefreshInFlight) {
+        activityPageRefreshPending = true;
+        return;
+      }
+      const reset = activityPageRefreshReset;
+      activityPageRefreshReset = false;
+      activityPageRefreshInFlight = true;
+      try {
+        await loadActivityPage({ reset });
+      } finally {
+        activityPageRefreshInFlight = false;
+        if (activityPageRefreshPending) {
+          activityPageRefreshPending = false;
+          scheduleActivityPageRefresh({ reset: activityPageRefreshReset });
+        }
+      }
+    }
+
+    function scheduleDelightQueueRefresh({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
+      if (delightQueueRefreshTimer !== null) window.clearTimeout(delightQueueRefreshTimer);
+      delightQueueRefreshTimer = window.setTimeout(() => {
+        delightQueueRefreshTimer = null;
+        void runScheduledDelightQueueRefresh();
+      }, Math.max(0, delayMs));
+    }
+
+    async function runScheduledDelightQueueRefresh() {
+      if (delightQueueRefreshInFlight) {
+        delightQueueRefreshPending = true;
+        return;
+      }
+      delightQueueRefreshInFlight = true;
+      try {
+        await fetchDelightQueue();
+      } finally {
+        delightQueueRefreshInFlight = false;
+        if (delightQueueRefreshPending) {
+          delightQueueRefreshPending = false;
+          scheduleDelightQueueRefresh();
+        }
+      }
+    }
+
     function handleRuntimeEvent(event) {
       if (!event?.type) return;
       applyRuntimeStatus({ ...event, live_summary: event.message || event.live_summary || event.type });
-      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) void hydrateFromBackend();
-      if (event.type === "activity.added") void loadActivityPage({ reset: true });
+      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      if (event.type === "activity.added") scheduleActivityPageRefresh({ reset: true });
       if (event.type === "profile_updated" || event.type === "interest.confirmed" || event.type === "interest.rejected" || event.type === "interest.chat") void refreshProfile();
       if (event.type === "delight.candidate" && event.bvid) {
         const delight = normalizeDelight(event);
@@ -1698,7 +1788,7 @@
           mergeMessages([delight]);
         }
       }
-      if (event.type === "delight.refreshed") void fetchDelightQueue();
+      if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [] }]);
     }
@@ -1798,6 +1888,7 @@
       const llm = {
         ...(state.config?.llm || {}),
         default_provider: provider,
+        concurrency: getIntInput("llmConcurrency", 3),
         [provider]: { ...(state.config?.llm?.[provider] || {}), ...llmProviderConfig },
         embedding: { ...(state.config?.llm?.embedding || {}), ...embedding },
         soul: { ...(state.config?.llm?.soul || {}), provider: getInput("moduleSoulProvider"), model: getInput("moduleSoulModel") },
@@ -1857,7 +1948,7 @@
           enabled: $("#schedulerEnabled").value === "on",
           pause_on_extension_disconnect: $("#pauseDisconnect").value === "pause",
           discovery_cron: getInput("discoveryCron"),
-          pool_target_count: getIntInput("poolTarget", 600),
+          pool_target_count: getIntInput("poolTarget", 300),
           account_sync_interval_hours: getIntInput("accountSyncInterval", 6),
           pool_source_shares: {
             bilibili: getIntInput("shareBilibili", 8),
@@ -1926,7 +2017,11 @@
       if (!layout) return;
       const collapsed = layout.classList.toggle("rail-collapsed");
       const btn = $("#railToggle");
-      if (btn) btn.setAttribute("aria-label", collapsed ? "展开侧栏" : "收起侧栏");
+      if (btn) {
+        btn.setAttribute("aria-label", collapsed ? "展开侧栏" : "收起侧栏");
+        const label = btn.querySelector(".rail-toggle-label");
+        if (label) label.textContent = collapsed ? "" : "收起侧栏";
+      }
     });
 
     safeBind("#mobileMenuBtn", "click", openMobileMenu);
@@ -2045,6 +2140,31 @@
       $("#statusLabel").textContent = "首屏渲染失败";
       $("#runtimeSummary").textContent = error?.message || "请检查后端返回的数据结构。";
     }
+    // Global reason tooltip
+    const _tip = document.createElement("div");
+    _tip.id = "reasonTooltip";
+    document.body.appendChild(_tip);
+    let _tipTarget = null;
+    document.addEventListener("mouseover", (e) => {
+      const reason = e.target.closest(".reason[data-full-reason]");
+      if (reason && reason !== _tipTarget) {
+        _tipTarget = reason;
+        _tip.textContent = reason.dataset.fullReason;
+        _tip.style.display = "block";
+        const rect = reason.getBoundingClientRect();
+        let top = rect.bottom + 8;
+        if (top + _tip.offsetHeight > window.innerHeight) top = rect.top - _tip.offsetHeight - 8;
+        let left = rect.left;
+        if (left + _tip.offsetWidth > window.innerWidth - 16) left = window.innerWidth - _tip.offsetWidth - 16;
+        _tip.style.top = Math.max(8, top) + "px";
+        _tip.style.left = Math.max(8, left) + "px";
+      }
+    });
+    document.addEventListener("mouseout", (e) => {
+      const reason = e.target.closest(".reason[data-full-reason]");
+      if (reason && !reason.contains(e.relatedTarget)) { _tip.style.display = "none"; _tipTarget = null; }
+    });
+
     hydrateFromBackend()
       .then(connectRuntimeStream)
       .catch((error) => {

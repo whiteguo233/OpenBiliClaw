@@ -83,6 +83,7 @@ class SoulEngine:
         usage_recorder: Any | None = None,
         satisfaction_filter_enabled: bool = True,
         module_overrides: Mapping[str, ModuleOverride] | None = None,
+        llm_concurrency: int = 3,
         speculation_interval_minutes: int = 10,
         speculation_ttl_days: int = 3,
         speculation_cooldown_days: int = 7,
@@ -96,6 +97,7 @@ class SoulEngine:
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
         self._module_overrides = dict(module_overrides or {})
+        self._llm_concurrency = llm_concurrency
         # Pass usage_recorder through so internal LLM calls
         # (preference / awareness / insight / profile_builder / speculator
         # / dialogue_insight) appear in the cost ledger with their caller
@@ -108,6 +110,7 @@ class SoulEngine:
             memory=memory,
             usage_recorder=usage_recorder,
             module_overrides=self._module_overrides,
+            concurrency=llm_concurrency,
         )
         self._awareness_analyzer = AwarenessAnalyzer(self._llm_service)
         self._dialogue_insight_analyzer = DialogueInsightAnalyzer(self._llm_service)

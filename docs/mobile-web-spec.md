@@ -177,7 +177,7 @@ if web_dir.is_dir():
 - 认知更新卡片会保留后端 `context_line` 与 `source_label`，即使前端已做过一次 normalize 后再次渲染，也不回退成泛化上下文。
 - 对话 turn 兼容 `response` 和后端当前返回的 `reply` 字段，统一映射成聊天气泡使用的 `response`。
 - 移动端主聊天与插件读取同一 `session=popup&scope=chat`；contextual delight/probe 聊天通过 `scope=delight/probe` 标识主题上下文。惊喜推荐内联聊天也复用 `session=popup&scope=delight`，按 `subject_id=bvid` hydrate 每条候选自己的 `turns` 历史，pending turn 通过 `/api/chat/turns/{turn_id}` 轮询恢复。
-- 封面图会在渲染前归一化：B 站 `http` / protocol-relative 地址升级为 HTTPS，推荐、惊喜推荐和消息封面统一走本地 `/api/image-proxy`，加载失败时保留固定比例 fallback。推荐列表首屏封面使用 eager/high priority，后续若干封面通过 `Image()` best-effort 预热，减少滑动过程中的白屏。
+- 封面图会在渲染前归一化：B 站 `http` / protocol-relative 地址升级为 HTTPS，推荐、惊喜推荐和消息封面统一走本地 `/api/image-proxy`，加载失败时保留固定比例 fallback。推荐列表当前批次默认预热 12 张封面，前 12 张使用 eager 加载，追加批次会先等待封面预热/解码或短超时再插入卡片；封面 frame 使用粉蓝渐变骨架占位，真实图片 decode 完成后淡入，减少高速滑动过程中的白屏。
 
 ### 静态资源
 

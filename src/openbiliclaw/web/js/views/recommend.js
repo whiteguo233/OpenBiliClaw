@@ -40,6 +40,7 @@ import {
   getSourceLabel,
   formatRelativeTimestamp,
   getMobileChatSession,
+  shouldAutoAppendRecommendations,
 } from "../view-models.js";
 
 let $root = null;
@@ -56,12 +57,24 @@ const feedbackDone = new Map(); // recId -> "like" | "dislike" | "comment"
 // GET /api/watch-later/{bvid} on first render and toggles the local
 // entry optimistically on click.
 const watchLaterSaved = new Set();
-const COVER_PRELOAD_BATCH_SIZE = 8;
-const AUTO_APPEND_ROOT_MARGIN = "700px 0px 900px 0px";
+const COVER_PRELOAD_BATCH_SIZE = 12;
+const COVER_PRELOAD_WAIT_TIMEOUT_MS = 3000;
+const AUTO_APPEND_ROOT_MARGIN = "700px 0px 1400px 0px";
+const SCROLL_PREHEAT_LOOKAHEAD = 8;
+const SCROLL_PREHEAT_ROOT_MARGIN = "0px 0px 1200px 0px";
 const warmedCoverUrls = new Set();
+const decodedCoverUrls = new Set();
 const warmingImages = new Map();
 let autoAppendObserver = null;
+let scrollPreheatObserver = null;
 let autoAppendExhausted = false;
+let autoAppendUserArmed = false;
+let autoAppendTouchY = null;
+let autoAppendIntentInitialized = false;
+const RECOMMENDATION_ITEMS_REFRESH_DEBOUNCE_MS = 1000;
+let recommendationItemsRefreshTimer = null;
+let recommendationItemsRefreshInFlight = false;
+let recommendationItemsRefreshPending = false;
 
 // ── Escape helper ────────────────────────────────────────────
 function esc(s) {
@@ -129,7 +142,8 @@ function render() {
 
   // Feedback bottom sheet
   renderFeedbackSheet();
-  warmRecommendationCovers(recs);
+  void warmRecommendationCovers(recs);
+  observeScrollPreheat();
   observeAutoAppendSentinel();
 }
 
@@ -594,25 +608,82 @@ function renderLoadMoreRow() {
   $root.appendChild(actions);
 }
 
-function warmRecommendationCovers(items, { start = 0, limit = COVER_PRELOAD_BATCH_SIZE } = {}) {
-  if (typeof Image === "undefined") return;
+function waitForCoverPreload(promises, timeoutMs) {
+  if (promises.length === 0) return Promise.resolve();
+  return Promise.race([
+    Promise.all(promises),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+function warmRecommendationCovers(
+  items,
+  { start = 0, limit = COVER_PRELOAD_BATCH_SIZE, waitForDecode = false } = {},
+) {
+  if (typeof Image === "undefined") return Promise.resolve();
   const urls = getRecommendationCoverPreloadUrls(items, { start, limit });
+  const pending = [];
   for (const src of urls) {
     if (warmedCoverUrls.has(src)) continue;
     warmedCoverUrls.add(src);
 
     const img = new Image();
     const cleanup = () => warmingImages.delete(src);
+    const markDecoded = () => { cleanup(); decodedCoverUrls.add(src); };
+    const loaded = new Promise((resolve) => {
+      img.onload = () => { markDecoded(); resolve(); };
+      img.onerror = () => { cleanup(); resolve(); };
+    });
     img.decoding = "async";
     img.loading = "eager";
-    img.onload = cleanup;
-    img.onerror = cleanup;
     warmingImages.set(src, img);
     img.src = src;
+    let ready = loaded;
     if (typeof img.decode === "function") {
-      img.decode().then(cleanup).catch(cleanup);
+      ready = img.decode().then(markDecoded).catch(cleanup);
     }
+    if (waitForDecode) pending.push(ready);
   }
+  if (!waitForDecode) return Promise.resolve();
+  return waitForCoverPreload(pending, COVER_PRELOAD_WAIT_TIMEOUT_MS);
+}
+
+function disconnectScrollPreheatObserver() {
+  if (!scrollPreheatObserver) return;
+  scrollPreheatObserver.disconnect();
+  scrollPreheatObserver = null;
+}
+
+function observeScrollPreheat() {
+  disconnectScrollPreheatObserver();
+  if (!$root || typeof IntersectionObserver === "undefined") return;
+
+  const cards = $root.querySelectorAll(".card");
+  if (!cards.length) return;
+
+  scrollPreheatObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      scrollPreheatObserver.unobserve(entry.target);
+
+      // Find this card's index and preheat the next batch ahead
+      const allCards = Array.from($root.querySelectorAll(".card"));
+      const idx = allCards.indexOf(entry.target);
+      if (idx < 0) continue;
+
+      const recs = state.recommendations || [];
+      const start = Math.min(idx + 1, recs.length);
+      if (start < recs.length) {
+        warmRecommendationCovers(recs, { start, limit: SCROLL_PREHEAT_LOOKAHEAD });
+      }
+    }
+  }, {
+    root: null,
+    rootMargin: SCROLL_PREHEAT_ROOT_MARGIN,
+    threshold: 0,
+  });
+
+  cards.forEach((card) => scrollPreheatObserver.observe(card));
 }
 
 function disconnectAutoAppendObserver() {
@@ -629,7 +700,13 @@ function observeAutoAppendSentinel() {
 
   autoAppendObserver = new IntersectionObserver((entries) => {
     if (!entries.some((entry) => entry.isIntersecting)) return;
-    if (loading || autoAppendExhausted || state.activeTab !== "recommend") return;
+    if (!shouldAutoAppendRecommendations({
+      loading,
+      autoAppendExhausted,
+      activeTab: state.activeTab,
+      userArmed: autoAppendUserArmed,
+    })) return;
+    autoAppendUserArmed = false;
     handleAppend();
   }, {
     root: document.getElementById("app"),
@@ -637,6 +714,45 @@ function observeAutoAppendSentinel() {
     threshold: 0,
   });
   autoAppendObserver.observe(loadMoreRow);
+}
+
+function resetAutoAppendIntent() {
+  autoAppendUserArmed = false;
+  autoAppendTouchY = null;
+}
+
+function armAutoAppendIntent() {
+  if (state.activeTab !== "recommend") return;
+  autoAppendUserArmed = true;
+}
+
+function initAutoAppendIntent() {
+  if (autoAppendIntentInitialized) return;
+  const container = document.getElementById("app");
+  if (!container) return;
+  autoAppendIntentInitialized = true;
+
+  container.addEventListener("wheel", (event) => {
+    if (event.deltaY > 0) armAutoAppendIntent();
+  }, { passive: true });
+
+  container.addEventListener("touchstart", (event) => {
+    autoAppendTouchY = event.touches?.[0]?.clientY ?? null;
+  }, { passive: true });
+
+  container.addEventListener("touchmove", (event) => {
+    const y = event.touches?.[0]?.clientY ?? null;
+    if (autoAppendTouchY !== null && y !== null && autoAppendTouchY - y > 12) {
+      armAutoAppendIntent();
+    }
+    autoAppendTouchY = y;
+  }, { passive: true });
+
+  window.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) {
+      armAutoAppendIntent();
+    }
+  }, { passive: true });
 }
 
 // ── Recommendation Card ──────────────────────────────────────
@@ -878,6 +994,7 @@ function renderFeedbackSheet() {
 async function handleReshuffle() {
   if (loading) return;
   loading = true;
+  resetAutoAppendIntent();
   render();
   try {
     const result = await reshuffleRecommendations();
@@ -903,15 +1020,17 @@ async function handleAppend() {
     const result = await appendRecommendations(existing);
     const newItems = (result.items || []).map(normalizeRecommendation);
     autoAppendExhausted = newItems.length === 0;
+    await warmRecommendationCovers(newItems, { limit: newItems.length, waitForDecode: true });
     patchState({ recommendations: [...state.recommendations, ...newItems] });
 
     // Append new cards before the load-more row without rebuilding existing ones.
     if (loadMoreRow) {
       for (const [offset, item] of newItems.entries()) {
-        $root.insertBefore(renderCard(item, startIndex + offset), loadMoreRow);
+        const card = renderCard(item, startIndex + offset);
+        $root.insertBefore(card, loadMoreRow);
+        if (scrollPreheatObserver) scrollPreheatObserver.observe(card);
       }
     }
-    warmRecommendationCovers(newItems);
   } catch {
     autoAppendExhausted = true;
   }
@@ -1017,24 +1136,29 @@ async function hydrateDelightTurns() {
 }
 
 // ── Load ─────────────────────────────────────────────────────
+function rememberRecommendationFeedback(normalizedRecs) {
+  for (const rec of normalizedRecs) {
+    if (rec.feedback_type && !feedbackDone.has(rec.id)) {
+      feedbackDone.set(rec.id, rec.feedback_type);
+    }
+  }
+}
+
 async function loadData() {
   loading = true;
   render();
   try {
     const [recs, status, delights, activity] = await Promise.all([
-      reshuffleRecommendations().then((r) => r.items || []).catch(() => fetchRecommendations()),
+      fetchRecommendations(),
       fetchRuntimeStatus().catch(() => null),
       fetchDelightBatch().catch(() => []),
       fetchActivityFeed({ limit: 5 }).catch(() => null),
     ]);
     const normalizedRecs = recs.map(normalizeRecommendation);
     autoAppendExhausted = false;
+    resetAutoAppendIntent();
     // Restore feedback state from backend so it survives page refresh.
-    for (const rec of normalizedRecs) {
-      if (rec.feedback_type && !feedbackDone.has(rec.id)) {
-        feedbackDone.set(rec.id, rec.feedback_type);
-      }
-    }
+    rememberRecommendationFeedback(normalizedRecs);
     patchState({
       recommendations: normalizedRecs,
       runtimeStatus: status ? normalizeRuntimeStatus(status) : state.runtimeStatus,
@@ -1049,12 +1173,48 @@ async function loadData() {
   hydrateDelightTurns();
 }
 
+function scheduleRecommendationItemsRefresh() {
+  if (recommendationItemsRefreshTimer !== null) {
+    clearTimeout(recommendationItemsRefreshTimer);
+  }
+  recommendationItemsRefreshTimer = setTimeout(
+    runScheduledRecommendationItemsRefresh,
+    RECOMMENDATION_ITEMS_REFRESH_DEBOUNCE_MS,
+  );
+}
+
+async function runScheduledRecommendationItemsRefresh() {
+  recommendationItemsRefreshTimer = null;
+  if (recommendationItemsRefreshInFlight) {
+    recommendationItemsRefreshPending = true;
+    return;
+  }
+  recommendationItemsRefreshInFlight = true;
+  try {
+    const recs = await fetchRecommendations();
+    const normalizedRecs = recs.map(normalizeRecommendation);
+    rememberRecommendationFeedback(normalizedRecs);
+    autoAppendExhausted = false;
+    resetAutoAppendIntent();
+    patchState({ recommendations: normalizedRecs });
+    render();
+  } catch { /* best-effort live refresh */ }
+  finally {
+    recommendationItemsRefreshInFlight = false;
+    if (recommendationItemsRefreshPending) {
+      recommendationItemsRefreshPending = false;
+      scheduleRecommendationItemsRefresh();
+    }
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────
 export function initRecommendView(root) {
   $root = root;
   if (!loaded) {
     loaded = true;
     initPullRefresh();
+    initAutoAppendIntent();
     loadData();
   }
   // Tab switch back: don't refetch — just re-render with existing state.
@@ -1064,11 +1224,12 @@ export function initRecommendView(root) {
 export function onStreamEvent(payload) {
   const type = payload?.type || payload?.event;
   if (type === "refresh.pool_updated") {
-    // Merge runtime status from event
+    // Merge runtime status and coalesce the recommendation list fetch.
     patchState({
       runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, payload.data || payload),
     });
-    loadData();
+    rerenderHeaderOnly();
+    scheduleRecommendationItemsRefresh();
   } else if (type === "refresh.started" || type === "refresh.strategy") {
     patchState({ runtimeEvent: payload.data || payload });
     rerenderHeaderOnly();

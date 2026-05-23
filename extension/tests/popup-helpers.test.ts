@@ -34,6 +34,7 @@ import {
   normalizeProfileSummary,
   normalizeRuntimeStatus,
   shouldFetchProfileSummary,
+  shouldAutoLoadRecommendations,
   validateCommentInput,
 } from "../popup/popup-helpers.js";
 
@@ -62,6 +63,54 @@ test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy 
   assert.equal(item.expression, "");
   assert.equal(item.topic_label, "");
   assert.equal(item.presented, false);
+});
+
+test("shouldAutoLoadRecommendations requires user scroll intent", () => {
+  assert.equal(
+    shouldAutoLoadRecommendations({
+      activeTab: "recommend",
+      loadingMore: false,
+      hasMoreRecommendations: true,
+      userArmed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoLoadRecommendations({
+      activeTab: "recommend",
+      loadingMore: false,
+      hasMoreRecommendations: true,
+      userArmed: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAutoLoadRecommendations({
+      activeTab: "profile",
+      loadingMore: false,
+      hasMoreRecommendations: true,
+      userArmed: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoLoadRecommendations({
+      activeTab: "recommend",
+      loadingMore: true,
+      hasMoreRecommendations: true,
+      userArmed: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoLoadRecommendations({
+      activeTab: "recommend",
+      loadingMore: false,
+      hasMoreRecommendations: false,
+      userArmed: true,
+    }),
+    false,
+  );
 });
 
 test("normalizeRecommendation keeps cover empty when missing", () => {

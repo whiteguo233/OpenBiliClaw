@@ -9,8 +9,17 @@
 - 浏览器插件版本提升到 extension v0.3.44，准备发布 `extension-v0.3.44`；后端源码版本仍为 v0.3.89，不发布新的后端 tag。
 - 移动 Web 惊喜推荐的「聊一聊」不再切到对话 tab，而是在当前惊喜卡片内展开 16px textarea composer，提交后就地显示用户气泡、AI thinking、完成回复或失败提示。
 - 移动 Web 和插件的惊喜推荐内聊统一走 durable `/api/chat/turns`，按 `scope=delight` + `subject_id` 归并历史；pending turn 会轮询恢复，reload 后可重新 hydrate。
+- `[llm].concurrency` 新增为全局 LLM 请求并发上限，默认从 1 提升到 3，并接入 `/api/config` 与插件设置页「模型」tab，方便在速度和上游限流之间调整。
+- 插件、桌面 Web 与移动 Web 的 runtime-stream 自动刷新新增 debounce / single-flight：后台补货事件密集时会合并 activity、recommendation、profile 等刷新请求，避免 LLM 并发提升后前端重复拉取和渲染造成卡顿。
+- 后端独立候选池文案预计算完成后会回写 `last_replenished_count` 并广播 `refresh.pool_updated`，修复候选已进入可换库存但前端仍显示“这轮没补进”的状态错位。
+- embedding 预热从 refresh 收尾主路径改为后台 task；慢本地 embedding 后端只影响后续 MMR cache / topic supergroup cache 命中率，不再让 `manual_refresh_state` 长时间停在 `running` 或占住 refresh lock。
+- `[scheduler].pool_target_count` 默认从 600 降到 300；B 站初始化关注默认从 300 收敛到 100，减少长关注列表对首次画像的事件量。XHS / Douyin / YouTube `bootstrap_profile` 的 `max_items_per_scope` 仍默认 300。
+- 移动 Web 与插件 / side panel 推荐列表的自动续页新增用户滚动意图门闩；后台 `refresh.pool_updated` 或列表重渲染不会在加载更多哨兵仍可见时连续调用 `append`，避免候选刚补进就被空转消费到 0。
+- Discovery 批量 LLM 评估前会跳过最近看过的内容，判断从单一 BVID 扩展为 `source_platform:content_id`；B 站保留 raw BVID 兼容，小红书 / 抖音 / YouTube 等来源也会在 LLM 前、写入候选池前和 pool 读取时被过滤，减少重复发现带来的 token 浪费。
 - 移动 Web 推荐列表新增封面预热和接近底部自动续页：首屏推荐封面用 eager/high priority 加载，后续封面通过 `/api/image-proxy` URL best-effort 预热；滚到列表底部附近会自动调用 `append` 续下一批，底部「加载更多」按钮保留为兜底。
+- 移动 Web 推荐列表的高速滑动封面体验继续收敛：当前批次默认预热 12 张封面，前 12 张用 eager 加载，追加批次会先等待封面预热/解码或短超时再插入卡片；封面图加载和 decode 完成前保持透明，让粉蓝渐变骨架先显示，decode 完成后淡入，减少快速下滑时的白屏闪烁。
 - 插件惊喜推荐卡片从单个 `chat_reply` 升级为 per-delight `turns` 多轮气泡，`chat_reply` 仅保留为兼容 last reply；切换候选和 side panel reload 不再覆盖旧回合。
+- 修复兴趣探针聊天反馈的情绪判断：`/api/interest-probes/respond` 的 sentiment LLM 调用改为普通文本模式，不再把只需 `positive / negative / neutral` 的标量分类请求发送成 `json_object`，避免 DeepSeek 返回 400 后频繁落到关键词 fallback。
 - Discovery / recommendation 的批量内容评估统一透传近期 negative exemplars：B 站、抖音、YouTube 策略和 OpenClaw bootstrap 都会把共享 database 传给内部 evaluator；推荐层的未分类池子补评估也会带上 `negative_examples`，让短期话术避让与长期 `disliked_topics` 一起生效。
 - 补充移动端回归测试，锁定 delight inline chat 复用 `session=popup` 契约、`chatted` 状态继续保留「聊一聊」入口，同时 viewed/liked/rejected 等永久处理态不泄漏通用动作按钮。
 - **🎯 B 站 YouTube 搬运视频自动替换** —— 推荐接口自动识别外文搬运内容，将标题、链接和来源替换为 YouTube 原版。新建 `yt_replacer.py`，实现多层检测（拉丁字符比例>35%、搬运关键词、外文品牌/频道名、英文短语），中文原创零误判。yt-dlp 智能搜索 + 双层缓存。配置开关 `[sources.youtube].replace_bilibili_reposts`。涉及：`api/app.py`、`config.py`、`storage/database.py`、`config.example.toml`。

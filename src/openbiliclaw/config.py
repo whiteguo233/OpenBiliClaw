@@ -30,6 +30,9 @@ _DEFAULT_EXPLORE_REFRESH_HOURS = 12
 _DEFAULT_DISCOVERY_LIMIT = 30
 _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS = 120
 _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
+DEFAULT_LLM_CONCURRENCY = 3
+_MIN_LLM_CONCURRENCY = 1
+_MAX_LLM_CONCURRENCY = 16
 _DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 8,
     "xiaohongshu": 1,
@@ -126,6 +129,7 @@ class LLMConfig:
     """LLM configuration with global defaults and per-module overrides."""
 
     default_provider: str = "openai"
+    concurrency: int = DEFAULT_LLM_CONCURRENCY
     fallback_enabled: bool = False
     fallback_provider: str = ""
     openai: LLMProviderConfig = field(default_factory=LLMProviderConfig)
@@ -170,7 +174,7 @@ class SchedulerConfig:
     pause_on_extension_disconnect: bool = False
     extension_disconnect_grace_seconds: int = _DEFAULT_EXTENSION_DISCONNECT_GRACE_SECONDS
     discovery_cron: str = "0 */8 * * *"
-    pool_target_count: int = 600
+    pool_target_count: int = 300
     pool_source_shares: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_POOL_SOURCE_SHARES)
     )
@@ -542,6 +546,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     embedding_raw = llm_raw.get("embedding", {})
     llm = LLMConfig(
         default_provider=llm_raw.get("default_provider", "openai"),
+        concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
         fallback_enabled=bool(llm_raw.get("fallback_enabled", False)),
         fallback_provider=llm_raw.get("fallback_provider", ""),
         openai=LLMProviderConfig(**llm_raw.get("openai", {})),
@@ -769,6 +774,25 @@ def _normalize_api_port(value: object) -> int:
     else:
         return 8420
     return port if 1 <= port <= 65535 else 8420
+
+
+def _normalize_llm_concurrency(value: object) -> int:
+    """Normalize the shared LLM request concurrency limit."""
+    if isinstance(value, bool):
+        return DEFAULT_LLM_CONCURRENCY
+    if isinstance(value, int | float):
+        normalized = int(value)
+    elif isinstance(value, str):
+        try:
+            normalized = int(value.strip())
+        except ValueError:
+            return DEFAULT_LLM_CONCURRENCY
+    else:
+        return DEFAULT_LLM_CONCURRENCY
+
+    if not (_MIN_LLM_CONCURRENCY <= normalized <= _MAX_LLM_CONCURRENCY):
+        return DEFAULT_LLM_CONCURRENCY
+    return normalized
 
 
 def _normalize_pool_source_shares(value: object) -> dict[str, int]:
@@ -1040,6 +1064,7 @@ def _render_config_toml(config: Config) -> str:
         "",
         "[llm]",
         f"default_provider = {_toml_string(config.llm.default_provider)}",
+        f"concurrency = {_normalize_llm_concurrency(config.llm.concurrency)}",
         f"fallback_enabled = {_toml_bool(config.llm.fallback_enabled)}",
         f"fallback_provider = {_toml_string(config.llm.fallback_provider)}",
         "",
