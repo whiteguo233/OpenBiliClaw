@@ -426,7 +426,7 @@
             <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
-          ${(item.bvid && (item.platform || "bilibili") !== "youtube") ? `<button class="small-btn mark-repost-btn" data-action="mark-as-repost" type="button" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向">🔁 标记为搬运</button>` : ""}
+          ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<button class="small-btn mark-repost-btn" data-action="mark-as-repost" type="button" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向">🔁 标记为搬运</button>` : ""}
           <p class="status-line"></p>`;
         card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
         card.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", () => handleCardAction(btn.dataset.action, item, card)));
@@ -591,7 +591,11 @@
       if (action === "mark-as-repost") {
         const btn = card.querySelector(".mark-repost-btn");
         if (!btn || !item.bvid) return;
-        if (item.platform === "youtube") return;  // pointless on YT
+        // Defensive: only bilibili items get this action. The button is
+        // also conditionally rendered for the same constraint, but the
+        // platform may have been mutated to "youtube" by a prior
+        // successful mark on this card — bail out then too.
+        if (item.platform !== "bilibili") return;
         btn.disabled = true;
         const originalLabel = btn.textContent;
         btn.textContent = "🔍 搜索中…";
@@ -623,8 +627,12 @@
             item.content_url = data.yt_url;
             item.platform = "youtube";
           } else if (data && data.pending) {
-            btn.textContent = "⚠️ 已标记，待重试";
-            status.textContent = "已记录为搬运；服务器暂时连不上 YouTube，下次推荐刷新会重试。";
+            // YT unreachable on the server side. Nothing was persisted —
+            // see app.py mark-as-repost handler. Re-enable so user can
+            // try again once their network or the proxy recovers.
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+            status.textContent = "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。";
           } else if (data && data.reason === "no_match") {
             btn.disabled = false;
             btn.textContent = originalLabel;

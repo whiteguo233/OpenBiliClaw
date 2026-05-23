@@ -3654,10 +3654,11 @@ function renderRecommendations(items, { append = false } = {}) {
     );
 
     // 标记为搬运 — manual override of the title heuristic. Only shows
-    // for Bilibili-origin items with a bvid; pointless for already-YT
-    // recommendations and for non-bilibili sources (no bvid → no YT
-    // lookup possible).
-    if (item.bvid && platformKey !== "youtube") {
+    // for Bilibili-origin items with a bvid. Pointless for already-YT
+    // recommendations (target is YT itself); meaningless for xhs/douyin
+    // (those aren't B站 reposts, so searching YT for a 'Bilibili repost
+    // original' returns garbage even if find_original finds something).
+    if (item.bvid && platformKey === "bilibili") {
       const markBtn = createActionButton(
         "🔁 标记为搬运",
         "action-button action-secondary",
@@ -3678,9 +3679,17 @@ function renderRecommendations(items, { append = false } = {}) {
                 "recommendation-source-corner source-platform-youtube";
               setHint(`已记录搬运并指向原视频：${result.yt_url}`, "success");
             } else if (result && result.pending) {
-              markBtn.textContent = "⚠️ 已标记，原版待重试";
+              // Backend hit YT unreachable. Nothing is persisted in this
+              // path — no cache write, no content_cache update. The next
+              // /api/recommendations call won't retry because auto-detect
+              // runs is_likely_repost first, which returns false for
+              // non-obvious reposts (which is why the user clicked manual
+              // mark in the first place). So re-enable the button and
+              // tell the user to retry themselves later.
+              markBtn.disabled = false;
+              markBtn.textContent = "🔁 标记为搬运";
               setHint(
-                "已记录为搬运。服务器暂时连不上 YouTube；下次推荐刷新会重试。",
+                "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。",
                 "info",
               );
             } else if (result && result.reason === "no_match") {
