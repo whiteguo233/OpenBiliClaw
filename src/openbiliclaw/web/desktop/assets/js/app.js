@@ -430,8 +430,8 @@
               <button class="feedback-icon-btn watch-later-btn" data-action="watch-later" type="button" aria-label="稍后再看" title="稍后再看" data-saved="false">
                 <span class="watch-later-glyph" aria-hidden="true">☆</span>
               </button>
-              ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<span class="feedback-separator" aria-hidden="true">/</span>
-              <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向"><svg class="mark-repost-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ""}
+              ${item.bvid ? `<span class="feedback-separator" aria-hidden="true">/</span>
+              <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="检测是否为搬运内容"><svg class="mark-repost-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ""}
             </div>
             <div class="comment-field"><input placeholder="想说点什么？（仅作为反馈记录，不会触发对话）" aria-label="想说点什么？"></div>
             <button class="small-btn chat-action" data-action="comment" type="button">留个想法</button>
@@ -657,53 +657,53 @@
         const btn = card.querySelector(".mark-repost-btn");
         const glyph = btn?.querySelector(".mark-repost-glyph");
         if (!btn || !glyph || !item.bvid) return;
-        // Defensive: only bilibili items get this action. The button is
-        // also conditionally rendered for the same constraint, but the
-        // platform may have been mutated to "youtube" by a prior
-        // successful mark on this card — bail out then too.
-        if (item.platform !== "bilibili") return;
+        const isYoutube = (item.platform || "bilibili").toLowerCase() === "youtube";
         btn.disabled = true;
         setMarkRepostState(btn, glyph, "pending");
-        status.textContent = "搜索 YouTube 原版中…";
+        status.textContent = isYoutube ? "搜索 Bilibili 原版中…" : "搜索 YouTube 原版中…";
         try {
           const resp = await fetch("/api/yt-replacer/mark-as-repost", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              bvid: item.bvid,
-              recommendation_id: item.id ?? null,
-            }),
+            body: JSON.stringify({ bvid: item.bvid, recommendation_id: item.id ?? null, source_platform: item.platform || "bilibili" }),
           });
           if (!resp.ok) {
             const err = await resp.json().catch(() => null);
             throw new Error(err?.detail || `HTTP ${resp.status}`);
           }
           const data = await resp.json();
-          if (data && data.ok && data.yt_url) {
-            setMarkRepostState(btn, glyph, "done");
-            btn.setAttribute("title", `已重定向到 YouTube：${data.yt_url}`);
-            status.textContent = `已记录搬运。原视频：${data.yt_url}`;
-            showToast("已重定向到 YouTube 原版");
-            // Flip the card's source platform badge live.
-            const platformEl = card.querySelector(".platform");
-            if (platformEl) platformEl.textContent = "YouTube";
-            const cover = card.querySelector(".cover");
-            if (cover) cover.dataset.platform = "youtube";
-            // openRecommendation already pulls contentUrl(item) fresh,
-            // so just mutate the in-memory item.
-            item.content_url = data.yt_url;
-            item.platform = "youtube";
-          } else if (data && data.pending) {
-            // YT unreachable on the server side. Nothing was persisted —
-            // see app.py mark-as-repost handler. Re-enable so user can
-            // try again once their network or the proxy recovers.
-            btn.disabled = false;
-            setMarkRepostState(btn, glyph, "idle");
-            status.textContent = "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。";
+          // Bidirectional: B站→YT uses yt_url, YT→B站 uses source_url.
+          const direction = data.direction || "bilibili_to_youtube";
+          if (data && data.ok) {
+            const srcUrl = direction === "youtube_to_bilibili" ? data.source_url : data.yt_url;
+            if (srcUrl) {
+              setMarkRepostState(btn, glyph, "done");
+              const label = direction === "youtube_to_bilibili" ? "Bilibili" : "YouTube";
+              btn.setAttribute("title", `已记录搬运，原视频在 ${label}：${srcUrl}`);
+              status.textContent = `已记录搬运。原视频：${srcUrl}`;
+              showToast(`已重定向到 ${label} 原版`);
+              if (direction !== "youtube_to_bilibili") {
+                const platformEl = card.querySelector(".platform");
+                if (platformEl) platformEl.textContent = "YouTube";
+                const cover = card.querySelector(".cover");
+                if (cover) cover.dataset.platform = "youtube";
+                item.content_url = data.yt_url;
+                item.platform = "youtube";
+              }
+            } else if (data.pending) {
+              btn.disabled = false;
+              setMarkRepostState(btn, glyph, "idle");
+              status.textContent = "服务器暂时连不上目标平台；网络恢复后请再点一次。";
+            } else {
+              btn.disabled = false;
+              setMarkRepostState(btn, glyph, "idle");
+              status.textContent = "没搜到匹配的原版视频。";
+            }
           } else if (data && data.reason === "no_match") {
             btn.disabled = false;
             setMarkRepostState(btn, glyph, "idle");
-            status.textContent = "YouTube 上没搜到匹配的原版视频。";
+            const targetLabel = direction === "youtube_to_bilibili" ? "Bilibili" : "YouTube";
+            status.textContent = `${targetLabel} 上没搜到匹配的原版视频。`;
           } else {
             btn.disabled = false;
             setMarkRepostState(btn, glyph, "idle");
