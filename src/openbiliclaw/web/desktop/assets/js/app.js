@@ -423,7 +423,7 @@
                 <span class="watch-later-glyph" aria-hidden="true">☆</span>
               </button>
               ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<span class="feedback-separator" aria-hidden="true">/</span>
-              <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" type="button" aria-label="标记为搬运" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向"><span class="mark-repost-glyph" aria-hidden="true">🔁</span></button>` : ""}
+              <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向"><svg class="mark-repost-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ""}
             </div>
             <div class="comment-field"><input placeholder="想说点什么？（仅作为反馈记录，不会触发对话）" aria-label="想说点什么？"></div>
             <button class="small-btn chat-action" data-action="comment" type="button">留个想法</button>
@@ -459,10 +459,30 @@
       }));
     }
 
-    async function openRecommendation(item, card) {
-      await requestJson(ENDPOINTS.click, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic, up_name: item.up }) });
+    function openRecommendation(item, card) {
+      // Fire-and-forget the click POST so the redirect happens
+      // immediately. The backend's recommendation_click handler can
+      // take 30-60s (LLM pipeline ingest blocks the response), so
+      // awaiting it made the open-in-new-tab feel broken — users
+      // reported 'WebUI redirects to Bilibili are too slow, I wait
+      // a minute for it to jump'. Mobile UI does this same fire-and-
+      // forget pattern; failing-silently is the accepted tradeoff
+      // because the user has already navigated away by then anyway.
+      void requestJson(ENDPOINTS.click, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bvid: item.bvid,
+          title: item.title,
+          recommendation_id: item.id,
+          topic_label: item.topic,
+          up_name: item.up,
+        }),
+      }).catch(() => { /* click logging best-effort */ });
       const url = contentUrl(item);
-      card.querySelector(".status-line").textContent = url ? "已记录点击信号，并打开真实内容链接。" : "已记录点击信号；后端没有返回可打开链接。";
+      card.querySelector(".status-line").textContent = url
+        ? "已打开真实内容链接，点击信号在后台记录。"
+        : "后端没有返回可打开链接。";
       if (url) window.open(url, "_blank", "noopener,noreferrer");
       showToast(`打开：${item.title}`);
     }
@@ -511,6 +531,22 @@
       button.textContent = "留个想法";
       button.removeAttribute("aria-label");
       button.removeAttribute("title");
+    }
+
+    // SVG bodies for the 标记为搬运 button's three states. Swapping
+    // innerHTML on the existing <svg> preserves its width/stroke/etc.
+    // attributes from the template, so the button doesn't reflow.
+    // Spin animation for pending is driven by CSS keyed on
+    // [data-state="pending"] (see app.css).
+    const MARK_REPOST_SVG_BODY = {
+      idle: '<path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+      pending: '<circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>',
+      done: '<polyline points="20 6 9 17 4 12"/>',
+    };
+    function setMarkRepostState(btn, glyph, state) {
+      if (!btn || !glyph) return;
+      btn.dataset.state = state;
+      glyph.innerHTML = MARK_REPOST_SVG_BODY[state] || MARK_REPOST_SVG_BODY.idle;
     }
 
     function openDelightComposer() {
@@ -596,21 +632,23 @@
       }
       // 标记为搬运 — 5th icon button. Now lives inside card-feedback-icons,
       // so the feedback-flow disable loop covers it during like/dislike
-      // submissions. The button has a child .mark-repost-glyph span we
-      // swap to show progress states; replacing textContent directly
-      // would wipe the span and the icon container would re-layout.
+      // submissions. State changes go through ``data-state`` on the
+      // button + a swap of the SVG path content; the spin animation
+      // for pending is driven by CSS (.mark-repost-btn[data-state=pending]).
+      // Was using emoji glyphs (🔁/⏳/✅) which looked out of place next
+      // to the other 4 inline SVG icons.
       if (action === "mark-as-repost") {
         const btn = card.querySelector(".mark-repost-btn");
         const glyph = btn?.querySelector(".mark-repost-glyph");
-        if (!btn || !item.bvid) return;
+        if (!btn || !glyph || !item.bvid) return;
         // Defensive: only bilibili items get this action. The button is
         // also conditionally rendered for the same constraint, but the
         // platform may have been mutated to "youtube" by a prior
         // successful mark on this card — bail out then too.
         if (item.platform !== "bilibili") return;
         btn.disabled = true;
-        if (glyph) glyph.textContent = "⏳";
-        status.textContent = "🔍 搜索 YouTube 原版中…";
+        setMarkRepostState(btn, glyph, "pending");
+        status.textContent = "搜索 YouTube 原版中…";
         try {
           const resp = await fetch("/api/yt-replacer/mark-as-repost", {
             method: "POST",
@@ -626,7 +664,7 @@
           }
           const data = await resp.json();
           if (data && data.ok && data.yt_url) {
-            if (glyph) glyph.textContent = "✅";
+            setMarkRepostState(btn, glyph, "done");
             btn.setAttribute("title", `已重定向到 YouTube：${data.yt_url}`);
             status.textContent = `已记录搬运。原视频：${data.yt_url}`;
             showToast("已重定向到 YouTube 原版");
@@ -644,20 +682,20 @@
             // see app.py mark-as-repost handler. Re-enable so user can
             // try again once their network or the proxy recovers.
             btn.disabled = false;
-            if (glyph) glyph.textContent = "🔁";
+            setMarkRepostState(btn, glyph, "idle");
             status.textContent = "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。";
           } else if (data && data.reason === "no_match") {
             btn.disabled = false;
-            if (glyph) glyph.textContent = "🔁";
+            setMarkRepostState(btn, glyph, "idle");
             status.textContent = "YouTube 上没搜到匹配的原版视频。";
           } else {
             btn.disabled = false;
-            if (glyph) glyph.textContent = "🔁";
+            setMarkRepostState(btn, glyph, "idle");
             status.textContent = "标记失败，看看本地后端是不是开着。";
           }
         } catch (error) {
           btn.disabled = false;
-          if (glyph) glyph.textContent = "🔁";
+          setMarkRepostState(btn, glyph, "idle");
           status.textContent = error?.message || "标记失败，看看本地后端是不是开着。";
         }
         return;
@@ -685,12 +723,28 @@
           removeRecommendationCard(item, card, "已记录想法");
           return;
         }
-        const feedbackType = action === "like" ? "like" : action === "dismiss" ? "dismiss" : "dislike";
+        // The user-facing 忽略 (dismiss) button maps to feedback_type=
+        // dislike on the wire. There's no separate "dismiss" type in
+        // the backend: /api/feedback only accepts {like, dislike,
+        // comment}, and the DB filters items with feedback_type=
+        // 'dislike' out of all pool/recommendation queries, which is
+        // exactly the "hide this card, don't show again" semantic the
+        // 忽略 button promises. Sending 'dismiss' directly was the
+        // cause of the HTTP 422 the user reported.
+        const feedbackType = action === "like"
+          ? "like"
+          : (action === "dismiss" || action === "dislike")
+            ? "dislike"
+            : "dislike";
         await submitFeedback(item, feedbackType);
         const feedbackCopy = {
           like: ["已记录喜欢，几秒后从当前列表移除。", "已记录喜欢"],
-          dislike: ["已记录不感兴趣，几秒后从当前列表移除。", "已记录不感兴趣"],
-          dismiss: ["已忽略这条推荐，几秒后从当前列表移除。", "已忽略推荐"]
+          // Per-action copy is keyed on the original UI action so the
+          // user sees 忽略 vs 不感兴趣 wording even though both go to
+          // dislike on the wire.
+          dislike: action === "dismiss"
+            ? ["已忽略这条推荐，几秒后从当前列表移除。", "已忽略推荐"]
+            : ["已记录不感兴趣，几秒后从当前列表移除。", "已记录不感兴趣"],
         }[feedbackType];
         status.textContent = feedbackCopy[0];
         removeRecommendationCard(item, card, feedbackCopy[1]);
@@ -1327,6 +1381,51 @@
     async function respondDelight(delight, response, el = null) {
       if (!delight) return;
       if (response === "chat") { openDelightComposer(); return; }
+      if (response === "watch-later") {
+        // Delight watch-later — same /api/watch-later as the rec card,
+        // so a delight and a regular row pointing to the same bvid
+        // stay in sync. Keep the delight visible — it's a bookmark,
+        // not a dismissal. Optimistic flip + reconcile + revert
+        // mirrors the rec-card pattern.
+        const btn = document.querySelector(".delight-feedback-actions .watch-later-btn");
+        const glyph = btn?.querySelector(".watch-later-glyph");
+        if (!btn || !delight.bvid) return;
+        btn.dataset.userTouched = "true";
+        const wasSaved = btn.dataset.saved === "true";
+        const nextSaved = !wasSaved;
+        btn.dataset.saved = String(nextSaved);
+        btn.setAttribute("aria-pressed", String(nextSaved));
+        btn.disabled = true;
+        if (glyph) glyph.textContent = nextSaved ? "★" : "☆";
+        try {
+          const url = nextSaved
+            ? "/api/watch-later"
+            : `/api/watch-later/${encodeURIComponent(delight.bvid)}`;
+          const init = nextSaved
+            ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, note: "" }) }
+            : { method: "DELETE" };
+          const resp = await fetch(url, init);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json().catch(() => null);
+          if (data && typeof data.saved === "boolean") {
+            btn.dataset.saved = String(data.saved);
+            btn.setAttribute("aria-pressed", String(data.saved));
+            if (glyph) glyph.textContent = data.saved ? "★" : "☆";
+          }
+          if ($("#delightStatus")) $("#delightStatus").textContent = nextSaved
+            ? "已加入稍后再看。"
+            : "已从稍后再看里移除。";
+        } catch {
+          // Revert.
+          btn.dataset.saved = String(wasSaved);
+          btn.setAttribute("aria-pressed", String(wasSaved));
+          if (glyph) glyph.textContent = wasSaved ? "★" : "☆";
+          if ($("#delightStatus")) $("#delightStatus").textContent = "稍后再看操作失败，看看本地后端是不是开着。";
+        } finally {
+          btn.disabled = false;
+        }
+        return;
+      }
       if (response === "send-comment") {
         const input = $("#delightCommentInput");
         const note = input?.value?.trim() || "";
@@ -1399,7 +1498,11 @@
     }
 
     function chatHtml(messages) {
-      return messages.map((msg) => `<div class="chat-bubble ${msg.role === "user" ? "user" : "agent"}">${escapeHtml(msg.text)}</div>`).join("");
+      return messages.map((msg) => {
+        const role = msg.role === "user" ? "user" : "agent";
+        const cls = `chat-bubble ${role}${msg.pending ? " is-pending" : ""}`;
+        return `<div class="${cls}">${escapeHtml(msg.text)}</div>`;
+      }).join("");
     }
 
     function renderChat() {
@@ -1422,7 +1525,13 @@
     async function sendChat(message, options = {}) {
       const payloadMessage = options.contextPrefix ? `${options.contextPrefix}\n\n${message}` : message;
       state.chat.push({ role: "user", text: message });
-      state.chat.push({ role: "agent", text: "正在提交给后端，并等待 durable chat turn 完成。" });
+      // Placeholder bubble while waiting for the reply. Was "正在提交
+      // 给后端，并等待 durable chat turn 完成。" — both verbose and
+      // technical (the user doesn't need to know about durable turns).
+      // Three dots reads as "the other party is typing" the way every
+      // other chat UI does it; the bubble is replaced atomically once
+      // the real reply arrives.
+      state.chat.push({ role: "agent", text: "…", pending: true });
       renderChat();
       const payload = { session: "webui", scope: "chat", message: payloadMessage };
       const turn = await requestJson(ENDPOINTS.chatTurns, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -1813,6 +1922,34 @@
       $("#delightReason").textContent = state.delight.reason;
       if ($("#delightStatus")) $("#delightStatus").textContent = "";
       if ($("#delightCount")) $("#delightCount").textContent = `${state.delightIndex + 1}/${state.delights.length}`;
+      // Reset delight watch-later star to ☆ for the new bvid, then
+      // lazy-lookup the saved state. The user-touched flag protects
+      // against the unsave race (user clicks before lookup returns).
+      const wlBtn = document.querySelector(".delight-feedback-actions .watch-later-btn");
+      if (wlBtn) {
+        wlBtn.dataset.saved = "false";
+        wlBtn.setAttribute("aria-pressed", "false");
+        wlBtn.dataset.userTouched = "false";
+        const wlGlyph = wlBtn.querySelector(".watch-later-glyph");
+        if (wlGlyph) wlGlyph.textContent = "☆";
+        const activeBvid = state.delight?.bvid;
+        if (activeBvid) {
+          fetch(`/api/watch-later/${encodeURIComponent(activeBvid)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              // Skip if the delight has changed, or if the user already
+              // clicked the star on this delight (their click wins).
+              if (state.delight?.bvid !== activeBvid) return;
+              if (wlBtn.dataset.userTouched === "true") return;
+              if (!d || d.saved !== true) return;
+              wlBtn.dataset.saved = "true";
+              wlBtn.setAttribute("aria-pressed", "true");
+              const g = wlBtn.querySelector(".watch-later-glyph");
+              if (g) g.textContent = "★";
+            })
+            .catch(() => { /* non-critical */ });
+        }
+      }
       controls.forEach((btn) => {
         const action = btn.dataset.delight;
         btn.disabled = (action === "prev" && state.delightIndex === 0) || (action === "next" && state.delightIndex === state.delights.length - 1);

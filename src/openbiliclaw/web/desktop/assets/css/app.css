@@ -253,11 +253,16 @@
     .feedback-icon-btn.watch-later-btn .watch-later-glyph { font-size: 18px; line-height: 1; transform: translateY(-1px); }
     .feedback-icon-btn.watch-later-btn[data-saved="true"] { color: #d4a017; }
     .feedback-icon-btn.watch-later-btn[data-saved="true"]:hover { background: color-mix(in oklab, #d4a017, transparent 88%); color: #b48a14; }
-    /* 标记为搬运 — 5th icon, uses emoji glyph instead of SVG since
-       there's no clean inline-SVG for "redirect/repost" that reads
-       cleanly at 16px. Greyed out during pending request. */
-    .feedback-icon-btn.mark-repost-btn .mark-repost-glyph { font-size: 14px; line-height: 1; transform: translateY(-1px); }
-    .feedback-icon-btn.mark-repost-btn:disabled { cursor: progress; opacity: 0.6; }
+    /* 标记为搬运 — 5th icon. SVG mirrors the visual weight of the
+       other four feedback icons (~14-16px). Three states swap the
+       SVG body (idle = external-link, pending = ring, done = check)
+       via data-state. Pending spins via CSS so the JS only has to
+       swap path content.  */
+    .feedback-icon-btn.mark-repost-btn .mark-repost-glyph { width: 14px; height: 14px; flex: 0 0 14px; }
+    .feedback-icon-btn.mark-repost-btn[data-state="pending"] .mark-repost-glyph { animation: mark-repost-spin 1s linear infinite; }
+    .feedback-icon-btn.mark-repost-btn[data-state="done"] { color: #16a34a; }
+    .feedback-icon-btn.mark-repost-btn:disabled { cursor: progress; opacity: 0.7; }
+    @keyframes mark-repost-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
     .feedback-separator { color: var(--meta); font-size: 13px; line-height: 1; transform: translateY(-1px); }
     .small-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); padding: 7px var(--space-3); font-size: var(--text-sm); white-space: nowrap; }
@@ -405,6 +410,13 @@
     .chat-log { display: grid; gap: var(--space-3); margin: var(--space-4) 0; }
     .chat-bubble.user { margin-left: 12%; background: var(--surface-warm); }
     .chat-bubble.agent { margin-right: 12%; background: var(--surface); }
+    /* Pending placeholder bubble while waiting for the durable turn
+       reply. Animates the literal "…" text with an opacity wave so it
+       reads as 'someone is typing' without needing 3 separate dot
+       elements. Replaces the verbose "正在提交给后端..." text the
+       user complained about. */
+    .chat-bubble.agent.is-pending { color: var(--muted); font-style: italic; animation: chat-pending-fade 1.4s ease-in-out infinite; }
+    @keyframes chat-pending-fade { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
     .chat-input { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); position: sticky; bottom: 0; background: var(--bg); padding-top: var(--space-3); }
     .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
     .settings-tabs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
