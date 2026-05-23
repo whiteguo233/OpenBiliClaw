@@ -421,6 +421,15 @@ function renderDelightTray() {
       { label: "\u770B\u770B", action: "view" },
       { label: "\u559C\u6B22", action: "like" },
       { label: "\u4E0D\u611F\u5174\u8DA3", action: "reject" },
+      // 稍后再看: star toggle that uses the same /api/watch-later
+      // endpoint as the recommendation row, so a delight card and a
+      // regular row referring to the same bvid stay in sync. Label
+      // renders the current saved state from the shared cache; the
+      // handler optimistically flips and reconciles with the server.
+      {
+        label: watchLaterSaved.has(d.bvid) ? "\u2605" : "\u2606",
+        action: "watch-later",
+      },
       { label: "\u804A\u4E00\u804A", action: "chat" },
     ];
     for (const b of btns) {
@@ -552,6 +561,44 @@ async function handleDelightAction(d, action) {
     });
     patchState({ activeDelights: updated });
     rerenderDelightOnly();
+    return;
+  }
+
+  if (action === "watch-later") {
+    // Toggle saved state via /api/watch-later. The delight card stays
+    // visible — this is a bookmark, not a dismissal. Optimistically
+    // flip the shared cache so the next rerender shows the new state.
+    if (!d.bvid) return;
+    const wasSaved = watchLaterSaved.has(d.bvid);
+    const nextSaved = !wasSaved;
+    if (nextSaved) watchLaterSaved.add(d.bvid);
+    else watchLaterSaved.delete(d.bvid);
+    rerenderDelightOnly();
+    try {
+      const url = nextSaved
+        ? "/api/watch-later"
+        : `/api/watch-later/${encodeURIComponent(d.bvid)}`;
+      const init = nextSaved
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bvid: d.bvid, note: "" }),
+          }
+        : { method: "DELETE" };
+      const resp = await fetch(url, init);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data && typeof data.saved === "boolean") {
+        if (data.saved) watchLaterSaved.add(d.bvid);
+        else watchLaterSaved.delete(d.bvid);
+        rerenderDelightOnly();
+      }
+    } catch {
+      // Revert optimistic flip.
+      if (wasSaved) watchLaterSaved.add(d.bvid);
+      else watchLaterSaved.delete(d.bvid);
+      rerenderDelightOnly();
+    }
     return;
   }
 

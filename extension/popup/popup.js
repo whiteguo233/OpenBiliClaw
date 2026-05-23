@@ -3147,12 +3147,61 @@ function renderDelightSlot() {
       },
     );
 
+    // 稍后再看 button for the delight banner — same /api/watch-later
+    // endpoint as the regular rec card's star, so a delight and a
+    // rec row pointing at the same bvid stay in sync. Optimistic
+    // flip + reconcile + revert-on-error mirrors the rec-card pattern.
+    let delightWatchLaterSaved = false;
+    let delightWatchLaterUserInteracted = false;
+    const renderDelightWatchLater = (saved) => (saved ? "★ 已收藏" : "☆ 稍后再看");
+    const watchLaterButton = createActionButton(
+      renderDelightWatchLater(false),
+      "action-button action-secondary delight-banner-action",
+      async () => {
+        if (!delight.bvid) return;
+        delightWatchLaterUserInteracted = true;
+        const wasSaved = delightWatchLaterSaved;
+        const nextSaved = !wasSaved;
+        delightWatchLaterSaved = nextSaved;
+        watchLaterButton.textContent = renderDelightWatchLater(nextSaved);
+        watchLaterButton.disabled = true;
+        try {
+          const res = nextSaved
+            ? await addToWatchLater(delight.bvid)
+            : await removeFromWatchLater(delight.bvid);
+          // Reconcile with server truth.
+          if (res && typeof res.saved === "boolean") {
+            delightWatchLaterSaved = res.saved;
+            watchLaterButton.textContent = renderDelightWatchLater(res.saved);
+          }
+        } catch {
+          // Revert optimistic flip.
+          delightWatchLaterSaved = wasSaved;
+          watchLaterButton.textContent = renderDelightWatchLater(wasSaved);
+        } finally {
+          watchLaterButton.disabled = false;
+        }
+      },
+    );
+    // Lazy-check initial saved state — same race-protection idiom as
+    // the rec card (skip applying if the user already clicked).
+    if (delight.bvid) {
+      void (async () => {
+        const status = await watchLaterStatus(delight.bvid);
+        if (delightWatchLaterUserInteracted) return;
+        if (status && status.saved === true) {
+          delightWatchLaterSaved = true;
+          watchLaterButton.textContent = renderDelightWatchLater(true);
+        }
+      })();
+    }
+
     if (isHandled || isChatting) {
       rejectButton.disabled = true;
       likeButton.disabled = true;
     }
 
-    actions.append(openButton, likeButton, rejectButton, chatButton);
+    actions.append(openButton, likeButton, rejectButton, watchLaterButton, chatButton);
     body.append(actions);
 
     if (delight.composer_open) {
@@ -3672,11 +3721,11 @@ function renderRecommendations(items, { append = false } = {}) {
     // original' returns garbage even if find_original finds something).
     if (item.bvid && platformKey === "bilibili") {
       const markBtn = createActionButton(
-        "🔁 标记为搬运",
+        "标记为搬运",
         "action-button action-secondary",
         async () => {
           markBtn.disabled = true;
-          markBtn.textContent = "🔍 搜索 YouTube 原版…";
+          markBtn.textContent = "搜索 YouTube 原版…";
           try {
             const result = await markAsRepost(item.bvid, item.id ?? null);
             if (result && result.ok && result.yt_url) {
@@ -3699,26 +3748,26 @@ function renderRecommendations(items, { append = false } = {}) {
               // mark in the first place). So re-enable the button and
               // tell the user to retry themselves later.
               markBtn.disabled = false;
-              markBtn.textContent = "🔁 标记为搬运";
+              markBtn.textContent = "标记为搬运";
               setHint(
                 "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。",
                 "info",
               );
             } else if (result && result.reason === "no_match") {
               markBtn.disabled = false;
-              markBtn.textContent = "🔁 标记为搬运";
+              markBtn.textContent = "标记为搬运";
               setHint(
                 "YouTube 上没搜到匹配的原版视频；这条没被改向。",
                 "info",
               );
             } else {
               markBtn.disabled = false;
-              markBtn.textContent = "🔁 标记为搬运";
+              markBtn.textContent = "标记为搬运";
               setHint("标记失败，看看本地后端是不是开着。", "error");
             }
           } catch {
             markBtn.disabled = false;
-            markBtn.textContent = "🔁 标记为搬运";
+            markBtn.textContent = "标记为搬运";
             setHint("标记失败，看看本地后端是不是开着。", "error");
           }
         },
