@@ -418,10 +418,15 @@
               <button class="feedback-icon-btn" data-action="dismiss" type="button" aria-label="忽略" title="忽略">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M9.84 9.91A3 3 0 0 0 12 15c.82 0 1.57-.33 2.11-.87M6.5 6.65A10.45 10.45 0 0 0 2.46 12C3.73 16.06 7.52 19 12 19c1.99 0 3.84-.58 5.4-1.58M11 5.05c.33-.03.66-.05 1-.05 4.48 0 8.27 2.94 9.54 7a10.5 10.5 0 0 1-1.19 2.5"/></svg>
               </button>
+              <span class="feedback-separator" aria-hidden="true">/</span>
+              <button class="feedback-icon-btn watch-later-btn" data-action="watch-later" type="button" aria-label="稍后再看" title="稍后再看" data-saved="false">
+                <span class="watch-later-glyph" aria-hidden="true">☆</span>
+              </button>
             </div>
             <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
+          ${(item.bvid && (item.platform || "bilibili") !== "youtube") ? `<button class="small-btn mark-repost-btn" data-action="mark-as-repost" type="button" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向">🔁 标记为搬运</button>` : ""}
           <p class="status-line"></p>`;
         card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
         card.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", () => handleCardAction(btn.dataset.action, item, card)));
@@ -429,6 +434,23 @@
           if (event.key === "Enter") handleCardAction("send-comment", item, card);
           if (event.key === "Escape") closeCardComposer(card);
         });
+        // Lazy-check 稍后再看 saved state. Decorative — fine if it lags
+        // by a tick. Star flips ☆ → ★ silently if the bvid is already saved.
+        if (item.bvid) {
+          fetch(`/api/watch-later/${encodeURIComponent(item.bvid)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (!d || d.saved !== true) return;
+              const btn = card.querySelector(".watch-later-btn");
+              const glyph = btn?.querySelector(".watch-later-glyph");
+              if (btn) {
+                btn.dataset.saved = "true";
+                btn.setAttribute("aria-pressed", "true");
+              }
+              if (glyph) glyph.textContent = "★";
+            })
+            .catch(() => { /* non-critical lookup */ });
+        }
         return card;
       }));
     }
@@ -517,6 +539,102 @@
       if (card.dataset.feedbackPending === "true") return;
       if (action === "open") return openRecommendation(item, card);
       if (action === "comment") { openCardComposer(card); return; }
+      // 稍后再看 toggle. Independent of the feedback flow — it doesn't
+      // remove the card, doesn't lock other buttons, just flips the star
+      // and reconciles with server state. Same shape as the mobile
+      // WebUI's wlBtn in src/openbiliclaw/web/js/views/recommend.js.
+      if (action === "watch-later") {
+        const btn = card.querySelector(".watch-later-btn");
+        const glyph = btn?.querySelector(".watch-later-glyph");
+        if (!btn || !item.bvid) return;
+        const wasSaved = btn.dataset.saved === "true";
+        const nextSaved = !wasSaved;
+        btn.dataset.saved = String(nextSaved);
+        btn.setAttribute("aria-pressed", String(nextSaved));
+        if (glyph) glyph.textContent = nextSaved ? "★" : "☆";
+        btn.disabled = true;
+        try {
+          const url = nextSaved
+            ? "/api/watch-later"
+            : `/api/watch-later/${encodeURIComponent(item.bvid)}`;
+          const init = nextSaved
+            ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: item.bvid, note: "" }) }
+            : { method: "DELETE" };
+          const resp = await fetch(url, init);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          if (data && typeof data.saved === "boolean") {
+            btn.dataset.saved = String(data.saved);
+            btn.setAttribute("aria-pressed", String(data.saved));
+            if (glyph) glyph.textContent = data.saved ? "★" : "☆";
+          }
+          status.textContent = nextSaved ? "已加入稍后再看。" : "已从稍后再看里移除。";
+        } catch {
+          // Revert.
+          btn.dataset.saved = String(wasSaved);
+          btn.setAttribute("aria-pressed", String(wasSaved));
+          if (glyph) glyph.textContent = wasSaved ? "★" : "☆";
+          status.textContent = "稍后再看操作失败，看看本地后端是不是开着。";
+        } finally {
+          btn.disabled = false;
+        }
+        return;
+      }
+      // 标记为搬运 — same out-of-band shape as watch-later. Doesn't take
+      // feedbackPending so it can run alongside an in-progress comment.
+      if (action === "mark-as-repost") {
+        const btn = card.querySelector(".mark-repost-btn");
+        if (!btn || !item.bvid) return;
+        if (item.platform === "youtube") return;  // pointless on YT
+        btn.disabled = true;
+        const originalLabel = btn.textContent;
+        btn.textContent = "🔍 搜索中…";
+        try {
+          const resp = await fetch("/api/yt-replacer/mark-as-repost", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              bvid: item.bvid,
+              recommendation_id: item.id ?? null,
+            }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => null);
+            throw new Error(err?.detail || `HTTP ${resp.status}`);
+          }
+          const data = await resp.json();
+          if (data && data.ok && data.yt_url) {
+            btn.textContent = "✅ 已重定向";
+            status.textContent = `已记录搬运。原视频：${data.yt_url}`;
+            showToast("已重定向到 YouTube 原版");
+            // Flip the card's source platform badge live.
+            const platformEl = card.querySelector(".platform");
+            if (platformEl) platformEl.textContent = "YouTube";
+            const cover = card.querySelector(".cover");
+            if (cover) cover.dataset.platform = "youtube";
+            // Hide the open button's prior URL — openRecommendation
+            // already pulls contentUrl(item) fresh, so just mutate item.
+            item.content_url = data.yt_url;
+            item.platform = "youtube";
+          } else if (data && data.pending) {
+            btn.textContent = "⚠️ 已标记，待重试";
+            status.textContent = "已记录为搬运；服务器暂时连不上 YouTube，下次推荐刷新会重试。";
+          } else if (data && data.reason === "no_match") {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+            status.textContent = "YouTube 上没搜到匹配的原版视频。";
+          } else {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+            status.textContent = "标记失败，看看本地后端是不是开着。";
+          }
+        } catch (error) {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+          status.textContent = error?.message || "标记失败，看看本地后端是不是开着。";
+        }
+        return;
+      }
       card.dataset.feedbackPending = "true";
       card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = true; });
       try {

@@ -238,7 +238,7 @@
     .card-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
     .video-card .card-actions { display: grid; grid-template-columns: auto minmax(96px, auto); align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: auto; padding-top: var(--space-2); transition: grid-template-columns var(--motion-base) var(--ease-standard), gap var(--motion-base) var(--ease-standard); }
     .video-card .card-actions.is-composing { grid-template-columns: minmax(0, 1fr) 38px; gap: var(--space-2); }
-    .card-feedback-icons { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; max-width: 128px; padding: 3px 7px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--bg); opacity: 1; transform: scale(1); overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard), padding var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard); }
+    .card-feedback-icons { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; max-width: 168px; padding: 3px 7px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--bg); opacity: 1; transform: scale(1); overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard), padding var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard); }
     .card-actions.is-composing .card-feedback-icons { max-width: 0; padding-inline: 0; border-color: transparent; opacity: 0; transform: scale(0.9); pointer-events: none; }
     .comment-field { grid-column: 1; grid-row: 1; min-width: 0; max-width: 0; opacity: 0; transform: translateX(8px); pointer-events: none; overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard); }
     .card-actions.is-composing .comment-field { max-width: 100%; opacity: 1; transform: translateX(0); pointer-events: auto; }
@@ -247,6 +247,19 @@
     .feedback-icon-btn { width: 32px; height: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); }
     .feedback-icon-btn svg { width: 16px; height: 16px; stroke-width: 2; }
     .feedback-icon-btn:hover { background: var(--surface); color: var(--fg); }
+    /* 稍后再看 star — uses a text glyph rather than an SVG since the
+       saved (★) and unsaved (☆) Unicode characters are crisp at any size.
+       Coloured gold-ish when saved so it visually pops vs the other icons. */
+    .feedback-icon-btn.watch-later-btn .watch-later-glyph { font-size: 18px; line-height: 1; transform: translateY(-1px); }
+    .feedback-icon-btn.watch-later-btn[data-saved="true"] { color: #d4a017; }
+    .feedback-icon-btn.watch-later-btn[data-saved="true"]:hover { background: color-mix(in oklab, #d4a017, transparent 88%); color: #b48a14; }
+    /* 标记为搬运 — secondary action sitting below the feedback row.
+       Discreet by default so it doesn't compete with like/dislike, but
+       still discoverable. Disabled state matches other small-btn. */
+    .video-card .mark-repost-btn { width: 100%; margin-top: var(--space-2); background: transparent; border: 1px dashed var(--border-soft); color: var(--muted); font-size: 12px; font-weight: 500; min-height: 30px; }
+    .video-card .mark-repost-btn:hover { background: var(--surface); color: var(--fg-2); border-style: solid; }
+    .video-card .mark-repost-btn:disabled { cursor: not-allowed; opacity: 0.42; }
+
     .feedback-separator { color: var(--meta); font-size: 13px; line-height: 1; transform: translateY(-1px); }
     .small-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); padding: 7px var(--space-3); font-size: var(--text-sm); white-space: nowrap; }
     .video-card .small-btn { width: auto; min-height: 38px; padding: 0 var(--space-4); border: 1px solid var(--accent); background: var(--accent); color: var(--accent-on); font-size: 13px; font-weight: 650; transition: width var(--motion-base) var(--ease-standard), min-width var(--motion-base) var(--ease-standard), padding var(--motion-base) var(--ease-standard), background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }

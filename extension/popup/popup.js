@@ -41,6 +41,7 @@ import {
   isLoopbackMobileHost,
 } from "./popup-qr.js";
 import {
+  addToWatchLater,
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
@@ -53,8 +54,10 @@ import {
   fetchRecommendations,
   fetchRuntimeStatus,
   fetchSourceShareSuggestion,
+  markAsRepost,
   markDelightSent,
   readCachedConfigSnapshot,
+  removeFromWatchLater,
   reportRecommendationClick,
   requestJson,
   reshuffleRecommendations,
@@ -64,6 +67,7 @@ import {
   startChatTurn,
   submitFeedback,
   updateConfig,
+  watchLaterStatus,
 } from "./popup-api.js";
 
 const state = {
@@ -3482,10 +3486,64 @@ function renderRecommendations(items, { append = false } = {}) {
     const actions = document.createElement("div");
     actions.className = "recommendation-actions";
     const composer = createCommentComposer(item, feedbackStatus);
+
+    // 稍后再看 toggle. Same star-icon pattern as the WebUI
+    // (src/openbiliclaw/web/js/views/recommend.js). Renders ☆ until we
+    // know it's saved; flips to ★ on click (optimistic), reverts on
+    // backend error. We don't block render on the lookup — the icon may
+    // flip a moment after the card appears, which is acceptable.
+    const renderWatchLaterIcon = (saved) => (saved ? "★ 已收藏" : "☆ 稍后再看");
+    let watchLaterSaved = false;
+    const watchLaterBtn = createActionButton(
+      renderWatchLaterIcon(false),
+      "action-button action-secondary",
+      async () => {
+        if (!item.bvid) return;
+        const wasSaved = watchLaterSaved;
+        const nextSaved = !wasSaved;
+        // Optimistic flip for immediate feedback.
+        watchLaterSaved = nextSaved;
+        watchLaterBtn.textContent = renderWatchLaterIcon(nextSaved);
+        watchLaterBtn.disabled = true;
+        try {
+          const wlState = nextSaved
+            ? await addToWatchLater(item.bvid)
+            : await removeFromWatchLater(item.bvid);
+          // Reconcile with server truth (covers concurrent edits).
+          if (wlState && typeof wlState.saved === "boolean") {
+            watchLaterSaved = wlState.saved;
+            watchLaterBtn.textContent = renderWatchLaterIcon(wlState.saved);
+          }
+          setHint(
+            nextSaved ? "已加入稍后再看。" : "已从稍后再看里移除。",
+            "success",
+          );
+        } catch {
+          // Revert on failure.
+          watchLaterSaved = wasSaved;
+          watchLaterBtn.textContent = renderWatchLaterIcon(wasSaved);
+          setHint("稍后再看操作失败，看看本地后端是不是开着。", "error");
+        } finally {
+          watchLaterBtn.disabled = false;
+        }
+      },
+    );
+    // Lazy-check the saved state. Decorative — fine if it lags by a beat.
+    if (item.bvid) {
+      void (async () => {
+        const status = await watchLaterStatus(item.bvid);
+        if (status && status.saved === true) {
+          watchLaterSaved = true;
+          watchLaterBtn.textContent = renderWatchLaterIcon(true);
+        }
+      })();
+    }
+
     actions.append(
       createActionButton("去看看", "action-button action-primary", () => {
         void openRecommendation(item.bvid, item);
       }),
+      watchLaterBtn,
       createActionButton("多来点", "action-button action-secondary", async () => {
         try {
           setFeedbackStatusWithTone(
@@ -3594,6 +3652,59 @@ function renderRecommendations(items, { append = false } = {}) {
         }
       }),
     );
+
+    // 标记为搬运 — manual override of the title heuristic. Only shows
+    // for Bilibili-origin items with a bvid; pointless for already-YT
+    // recommendations and for non-bilibili sources (no bvid → no YT
+    // lookup possible).
+    const platformKeyForMark = (item.source_platform || "bilibili").toLowerCase();
+    if (item.bvid && platformKeyForMark !== "youtube") {
+      const markBtn = createActionButton(
+        "🔁 标记为搬运",
+        "action-button action-secondary",
+        async () => {
+          markBtn.disabled = true;
+          markBtn.textContent = "🔍 搜索 YouTube 原版…";
+          try {
+            const result = await markAsRepost(item.bvid, item.id ?? null);
+            if (result && result.ok && result.yt_url) {
+              markBtn.textContent = "✅ 已重定向到 YouTube";
+              // Reflect the override in the live card. Subsequent recommendations
+              // refresh will return source_platform=youtube + the YT cover_url.
+              item.content_url = result.yt_url;
+              item.source_platform = "youtube";
+              if (result.expression) item.expression = result.expression;
+              sourceCorner.textContent = "YouTube";
+              sourceCorner.className =
+                "recommendation-source-corner source-platform-youtube";
+              setHint(`已记录搬运并指向原视频：${result.yt_url}`, "success");
+            } else if (result && result.pending) {
+              markBtn.textContent = "⚠️ 已标记，原版待重试";
+              setHint(
+                "已记录为搬运。服务器暂时连不上 YouTube；下次推荐刷新会重试。",
+                "info",
+              );
+            } else if (result && result.reason === "no_match") {
+              markBtn.disabled = false;
+              markBtn.textContent = "🔁 标记为搬运";
+              setHint(
+                "YouTube 上没搜到匹配的原版视频；这条没被改向。",
+                "info",
+              );
+            } else {
+              markBtn.disabled = false;
+              markBtn.textContent = "🔁 标记为搬运";
+              setHint("标记失败，看看本地后端是不是开着。", "error");
+            }
+          } catch {
+            markBtn.disabled = false;
+            markBtn.textContent = "🔁 标记为搬运";
+            setHint("标记失败，看看本地后端是不是开着。", "error");
+          }
+        },
+      );
+      actions.append(markBtn);
+    }
 
     card.append(preview, actions, composer.wrapper, feedbackStatus);
     elements.list.append(card);

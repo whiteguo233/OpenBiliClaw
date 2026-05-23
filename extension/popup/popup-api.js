@@ -267,6 +267,74 @@ export async function reportRecommendationClick(payload) {
   }
 }
 
+// ── 稍后再看 (watch-later) ────────────────────────────────────────
+// Wrappers around /api/watch-later. Same shape as the WebUI uses in
+// src/openbiliclaw/web/js/views/recommend.js.
+
+/**
+ * Check whether a bvid is currently in 稍后再看.
+ * Returns `{saved, total, ...}` from the backend or `null` on error.
+ */
+export async function watchLaterStatus(bvid) {
+  try {
+    return await requestJson(`/watch-later/${encodeURIComponent(bvid)}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add a bvid to 稍后再看. Optional `note` is a short user-supplied annotation.
+ * Returns the new state from the backend.
+ */
+export async function addToWatchLater(bvid, note = "") {
+  return requestJson("/watch-later", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bvid, note }),
+  });
+}
+
+/**
+ * Remove a bvid from 稍后再看. Returns the new state from the backend.
+ */
+export async function removeFromWatchLater(bvid) {
+  return requestJson(`/watch-later/${encodeURIComponent(bvid)}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * Fetch the saved 稍后再看 list. Useful for surfacing a summary or count.
+ */
+export async function listWatchLater({ limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return requestJson(`/watch-later?${params.toString()}`);
+}
+
+/**
+ * Manually mark a Bilibili video as a 搬运 (re-upload) of foreign
+ * content. Skips the title heuristic, forces a YouTube search, and
+ * persists the override so the override sticks even with
+ * replace_bilibili_reposts off.
+ *
+ * @returns {Promise<{ok: boolean, yt_url?: string, yt_title?: string,
+ *   yt_uploader?: string, pending?: boolean, expression?: string|null,
+ *   reason?: string}>}
+ */
+export async function markAsRepost(bvid, recommendationId = null) {
+  return requestJson("/yt-replacer/mark-as-repost", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bvid,
+      recommendation_id: recommendationId,
+    }),
+  });
+}
+
 export async function sendChatMessage(message) {
   const controller = new AbortController();
   // Bumped from 35s to 150s. Backend's chat dialogue can take ~120s under
