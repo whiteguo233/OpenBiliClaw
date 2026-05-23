@@ -145,29 +145,27 @@
        checks. Falls back to a placeholder div when no cover. */
     .watch-later-list { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
     .watch-later-empty { text-align: center; padding: var(--space-6) var(--space-3); color: var(--muted); }
-    .watch-later-item { display: grid; grid-template-columns: 96px 1fr auto; gap: var(--space-2) var(--space-3); align-items: start; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); padding: var(--space-3); }
-    .watch-later-link { display: block; line-height: 0; text-decoration: none; grid-row: 1 / span 2; }
-    .watch-later-cover { width: 96px; height: 54px; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface); transition: opacity var(--motion-fast) var(--ease-standard); }
+    .watch-later-item { display: grid; grid-template-columns: 80px 1fr 64px; gap: var(--space-2); align-items: center; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); padding: var(--space-2); }
+    .watch-later-link { display: block; line-height: 0; text-decoration: none; }
+    .watch-later-cover { width: 80px; height: 45px; object-fit: cover; border-radius: var(--radius-sm); background: var(--surface); transition: opacity var(--motion-fast) var(--ease-standard); }
     .watch-later-link:hover .watch-later-cover { opacity: 0.8; }
     .watch-later-cover-placeholder { display: block; }
     .watch-later-body { min-width: 0; }
-    .watch-later-title { font-size: 13px; line-height: 1.35; margin: 0 0 3px 0; font-weight: 650; }
+    .watch-later-title { font-size: 13px; line-height: 1.3; margin: 0 0 2px 0; font-weight: 650; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     .watch-later-title-link { color: inherit; text-decoration: none; }
     .watch-later-title-link:hover { color: var(--accent, #4f46e5); text-decoration: underline; }
-    .watch-later-title-link:visited { color: var(--muted); }
-    .wl-feedback-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; align-content: start; }
-    .wl-feedback-btn { display: flex; align-items: center; justify-content: center; gap: 3px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg-2); cursor: pointer; padding: 5px 4px; font-size: 11px; font-weight: 500; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); white-space: nowrap; }
-    .wl-feedback-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
-    .wl-btn-label { font-size: 10px; }
+    .wl-feedback-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 3px; width: 64px; height: 64px; }
+    .wl-feedback-btn { display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg-2); cursor: pointer; padding: 0; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }
+    .wl-feedback-btn svg { width: 16px; height: 16px; display: block; }
     .wl-feedback-btn:hover { background: var(--bg); border-color: var(--border); color: var(--fg); }
     .wl-feedback-btn[disabled] { opacity: 0.4; pointer-events: none; }
-    .mark-repost-btn-sm { display: inline-flex; align-items: center; vertical-align: middle; border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px; border-radius: var(--radius-sm); margin-left: 4px; }
-    .mark-repost-btn-sm svg { width: 13px; height: 13px; }
-    .mark-repost-btn-sm:hover { color: var(--accent, #4f46e5); background: var(--surface); }
-    .mark-repost-btn-sm[disabled] { opacity: 0.4; pointer-events: none; }
+    .mark-repost-btn-sm { display: inline-flex; align-items: center; vertical-align: middle; border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 1px; border-radius: var(--radius-sm); }
+    .mark-repost-btn-sm svg { width: 11px; height: 11px; display: block; }
+    .mark-repost-btn-sm:hover { color: var(--accent, #4f46e5); }
+    .mark-repost-btn-sm[disabled] { opacity: 0.3; pointer-events: none; }
     .watch-later-item .comment-field { grid-column: 1 / -1; margin-top: var(--space-1); }
-    .watch-later-item .comment-field input { width: 100%; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); }
-    .watch-later-item .status-line { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin: 2px 0 0; min-height: 0; }
+    .watch-later-item .comment-field input { width: 100%; font-size: 12px; padding: 3px 7px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface); box-sizing: border-box; }
+    .watch-later-item .status-line { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin: 1px 0 0; min-height: 0; line-height: 1.3; }
     [hidden] { display: none !important; }
     .icon-btn, .pill-btn { border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); min-height: 40px; padding: 0 var(--space-4); box-shadow: var(--elev-ring); }
     .icon-btn { min-width: 40px; padding: 0; }

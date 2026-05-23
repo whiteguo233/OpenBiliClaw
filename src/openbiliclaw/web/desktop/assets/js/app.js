@@ -890,10 +890,10 @@
               <p class="video-meta"><span class="platform-badge platform-${escapeHtml(platform)}">${escapeHtml(platformText)}</span>${up ? ` · ${escapeHtml(up)}` : ""}${added ? ` · ${escapeHtml(added)}` : ""} <button class="mark-repost-btn-sm" data-wl-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="检测是否为搬运内容">${repostSvg}</button></p>
             </div>
             <div class="wl-feedback-grid" aria-label="推荐反馈操作">
-              <button class="wl-feedback-btn" data-wl-action="like" type="button" aria-label="推荐" title="推荐"><span class="wl-btn-label">推荐</span>${likeIcon}</button>
-              <button class="wl-feedback-btn" data-wl-action="dislike" type="button" aria-label="不推荐" title="不推荐"><span class="wl-btn-label">不推荐</span>${dislikeIcon}</button>
-              <button class="wl-feedback-btn" data-wl-action="comment" type="button" aria-label="聊一聊" title="聊一聊"><span class="wl-btn-label">聊一聊</span>${chatIcon}</button>
-              <button class="wl-feedback-btn wl-feedback-trash" data-watch-later-remove="${escapeHtml(bvid)}" type="button" aria-label="移除" title="移除"><span class="wl-btn-label">移除</span>${trashIcon}</button>
+              <button class="wl-feedback-btn" data-wl-action="like" type="button" aria-label="推荐" title="推荐">${likeIcon}</button>
+              <button class="wl-feedback-btn" data-wl-action="dislike" type="button" aria-label="不推荐" title="不推荐">${dislikeIcon}</button>
+              <button class="wl-feedback-btn" data-wl-action="comment" type="button" aria-label="聊一聊" title="聊一聊">${chatIcon}</button>
+              <button class="wl-feedback-btn" data-watch-later-remove="${escapeHtml(bvid)}" type="button" aria-label="移除" title="移除">${trashIcon}</button>
             </div>
             <div class="comment-field"><input placeholder="想说点什么？（仅作为反馈记录，不会触发对话）" aria-label="想说点什么？"></div>
             <p class="status-line"></p>
