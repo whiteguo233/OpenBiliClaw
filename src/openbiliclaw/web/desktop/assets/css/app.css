@@ -238,7 +238,7 @@
     .card-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
     .video-card .card-actions { display: grid; grid-template-columns: auto minmax(96px, auto); align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: auto; padding-top: var(--space-2); transition: grid-template-columns var(--motion-base) var(--ease-standard), gap var(--motion-base) var(--ease-standard); }
     .video-card .card-actions.is-composing { grid-template-columns: minmax(0, 1fr) 38px; gap: var(--space-2); }
-    .card-feedback-icons { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; max-width: 168px; padding: 3px 7px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--bg); opacity: 1; transform: scale(1); overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard), padding var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard); }
+    .card-feedback-icons { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; max-width: 208px; padding: 3px 7px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); background: var(--bg); opacity: 1; transform: scale(1); overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard), padding var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard); }
     .card-actions.is-composing .card-feedback-icons { max-width: 0; padding-inline: 0; border-color: transparent; opacity: 0; transform: scale(0.9); pointer-events: none; }
     .comment-field { grid-column: 1; grid-row: 1; min-width: 0; max-width: 0; opacity: 0; transform: translateX(8px); pointer-events: none; overflow: hidden; transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), max-width var(--motion-base) var(--ease-standard); }
     .card-actions.is-composing .comment-field { max-width: 100%; opacity: 1; transform: translateX(0); pointer-events: auto; }
@@ -253,12 +253,11 @@
     .feedback-icon-btn.watch-later-btn .watch-later-glyph { font-size: 18px; line-height: 1; transform: translateY(-1px); }
     .feedback-icon-btn.watch-later-btn[data-saved="true"] { color: #d4a017; }
     .feedback-icon-btn.watch-later-btn[data-saved="true"]:hover { background: color-mix(in oklab, #d4a017, transparent 88%); color: #b48a14; }
-    /* 标记为搬运 — secondary action sitting below the feedback row.
-       Discreet by default so it doesn't compete with like/dislike, but
-       still discoverable. Disabled state matches other small-btn. */
-    .video-card .mark-repost-btn { width: 100%; margin-top: var(--space-2); background: transparent; border: 1px dashed var(--border-soft); color: var(--muted); font-size: 12px; font-weight: 500; min-height: 30px; }
-    .video-card .mark-repost-btn:hover { background: var(--surface); color: var(--fg-2); border-style: solid; }
-    .video-card .mark-repost-btn:disabled { cursor: not-allowed; opacity: 0.42; }
+    /* 标记为搬运 — 5th icon, uses emoji glyph instead of SVG since
+       there's no clean inline-SVG for "redirect/repost" that reads
+       cleanly at 16px. Greyed out during pending request. */
+    .feedback-icon-btn.mark-repost-btn .mark-repost-glyph { font-size: 14px; line-height: 1; transform: translateY(-1px); }
+    .feedback-icon-btn.mark-repost-btn:disabled { cursor: progress; opacity: 0.6; }
 
     .feedback-separator { color: var(--meta); font-size: 13px; line-height: 1; transform: translateY(-1px); }
     .small-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); padding: 7px var(--space-3); font-size: var(--text-sm); white-space: nowrap; }

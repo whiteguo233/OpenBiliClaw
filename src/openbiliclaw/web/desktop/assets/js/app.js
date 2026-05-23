@@ -422,11 +422,12 @@
               <button class="feedback-icon-btn watch-later-btn" data-action="watch-later" type="button" aria-label="稍后再看" title="稍后再看" data-saved="false">
                 <span class="watch-later-glyph" aria-hidden="true">☆</span>
               </button>
+              ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<span class="feedback-separator" aria-hidden="true">/</span>
+              <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" type="button" aria-label="标记为搬运" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向"><span class="mark-repost-glyph" aria-hidden="true">🔁</span></button>` : ""}
             </div>
             <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
-          ${(item.bvid && (item.platform || "bilibili") === "bilibili") ? `<button class="small-btn mark-repost-btn" data-action="mark-as-repost" type="button" title="手动标记为搬运视频，系统会搜索 YouTube 原版并把这条改向">🔁 标记为搬运</button>` : ""}
           <p class="status-line"></p>`;
         card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
         card.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", () => handleCardAction(btn.dataset.action, item, card)));
@@ -586,10 +587,14 @@
         }
         return;
       }
-      // 标记为搬运 — same out-of-band shape as watch-later. Doesn't take
-      // feedbackPending so it can run alongside an in-progress comment.
+      // 标记为搬运 — 5th icon button. Now lives inside card-feedback-icons,
+      // so the feedback-flow disable loop covers it during like/dislike
+      // submissions. The button has a child .mark-repost-glyph span we
+      // swap to show progress states; replacing textContent directly
+      // would wipe the span and the icon container would re-layout.
       if (action === "mark-as-repost") {
         const btn = card.querySelector(".mark-repost-btn");
+        const glyph = btn?.querySelector(".mark-repost-glyph");
         if (!btn || !item.bvid) return;
         // Defensive: only bilibili items get this action. The button is
         // also conditionally rendered for the same constraint, but the
@@ -597,8 +602,8 @@
         // successful mark on this card — bail out then too.
         if (item.platform !== "bilibili") return;
         btn.disabled = true;
-        const originalLabel = btn.textContent;
-        btn.textContent = "🔍 搜索中…";
+        if (glyph) glyph.textContent = "⏳";
+        status.textContent = "🔍 搜索 YouTube 原版中…";
         try {
           const resp = await fetch("/api/yt-replacer/mark-as-repost", {
             method: "POST",
@@ -614,7 +619,8 @@
           }
           const data = await resp.json();
           if (data && data.ok && data.yt_url) {
-            btn.textContent = "✅ 已重定向";
+            if (glyph) glyph.textContent = "✅";
+            btn.setAttribute("title", `已重定向到 YouTube：${data.yt_url}`);
             status.textContent = `已记录搬运。原视频：${data.yt_url}`;
             showToast("已重定向到 YouTube 原版");
             // Flip the card's source platform badge live.
@@ -622,8 +628,8 @@
             if (platformEl) platformEl.textContent = "YouTube";
             const cover = card.querySelector(".cover");
             if (cover) cover.dataset.platform = "youtube";
-            // Hide the open button's prior URL — openRecommendation
-            // already pulls contentUrl(item) fresh, so just mutate item.
+            // openRecommendation already pulls contentUrl(item) fresh,
+            // so just mutate the in-memory item.
             item.content_url = data.yt_url;
             item.platform = "youtube";
           } else if (data && data.pending) {
@@ -631,20 +637,20 @@
             // see app.py mark-as-repost handler. Re-enable so user can
             // try again once their network or the proxy recovers.
             btn.disabled = false;
-            btn.textContent = originalLabel;
+            if (glyph) glyph.textContent = "🔁";
             status.textContent = "服务器暂时连不上 YouTube；网络恢复后请再点一次此按钮。";
           } else if (data && data.reason === "no_match") {
             btn.disabled = false;
-            btn.textContent = originalLabel;
+            if (glyph) glyph.textContent = "🔁";
             status.textContent = "YouTube 上没搜到匹配的原版视频。";
           } else {
             btn.disabled = false;
-            btn.textContent = originalLabel;
+            if (glyph) glyph.textContent = "🔁";
             status.textContent = "标记失败，看看本地后端是不是开着。";
           }
         } catch (error) {
           btn.disabled = false;
-          btn.textContent = originalLabel;
+          if (glyph) glyph.textContent = "🔁";
           status.textContent = error?.message || "标记失败，看看本地后端是不是开着。";
         }
         return;
