@@ -445,6 +445,22 @@ class WatchLaterAddIn(BaseModel):
     note: str = ""
 
 
+class YtReplacerMarkAsRepostIn(BaseModel):
+    """Manually mark a Bilibili video as a 搬运 (re-upload).
+
+    Skips the title heuristic — the user has asserted this IS a repost.
+    The handler searches YouTube for the original and persists the
+    redirect so subsequent recommendations return the YouTube version.
+
+    ``recommendation_id`` is optional; when supplied, the matching
+    recommendation row's ``expression`` is also updated to surface the
+    manual mark in the card text.
+    """
+
+    bvid: str
+    recommendation_id: int | None = None
+
+
 class WatchLaterItem(BaseModel):
     """One row in the saved-list view.
 

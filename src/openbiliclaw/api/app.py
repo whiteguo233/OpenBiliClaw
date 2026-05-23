@@ -83,6 +83,7 @@ from openbiliclaw.api.models import (
     WatchLaterStateResponse,
     XiaohongshuSourceConfigOut,
     YoutubeSourceConfigOut,
+    YtReplacerMarkAsRepostIn,
 )
 
 if TYPE_CHECKING:
@@ -4821,6 +4822,132 @@ def create_app(
         except Exception:
             logger.exception("YT replacer lookup failed for bvid=%s", bvid)
             return {"repost": False, "yt_url": "", "pending": False}
+
+    @app.post("/api/yt-replacer/mark-as-repost")
+    async def yt_replacer_mark_as_repost(
+        payload: YtReplacerMarkAsRepostIn,
+    ) -> dict[str, Any]:
+        """Manually mark a Bilibili video as a 搬运 (re-upload) of foreign
+        content, even when the title gives no obvious signal.
+
+        Triggered by the "标记为搬运" button in the popup and the Web UIs.
+        The handler:
+
+          1. Skips the ``is_likely_repost`` heuristic (the user has
+             asserted this IS a repost).
+          2. Searches YouTube for the original — same yt-dlp path
+             ``replace_if_foreign`` uses for auto-detected reposts.
+          3. Persists the override by flipping the ``content_cache``
+             row's ``content_url`` + ``source_platform`` to point at
+             the YouTube URL. This means subsequent ``/api/recommendations``
+             responses return the YouTube version regardless of the
+             ``replace_bilibili_reposts`` config flag (the user's manual
+             mark is a stronger signal than the global toggle).
+
+        Response::
+
+          {
+            "ok": true,
+            "yt_url": "https://www.youtube.com/watch?v=...",
+            "yt_title": "...",
+            "yt_uploader": "...",
+            "pending": false,           # True if YT unreachable; mark
+                                        # was recorded but no URL yet
+            "expression": "..."         # optional updated expression
+          }
+
+        If no YouTube match is found, returns ``{"ok": false,
+        "reason": "no_match"}`` — the cache records this as a negative
+        result so subsequent marks for the same bvid don't re-run yt-dlp.
+        """
+        bvid = payload.bvid.strip()
+        if not bvid:
+            raise HTTPException(status_code=422, detail="bvid is required")
+        recommendation_id = payload.recommendation_id
+        try:
+            from openbiliclaw.yt_replacer import replace_if_foreign
+
+            cursor = ctx.database.conn.execute(
+                "SELECT c.title, c.up_name, c.description "
+                "FROM content_cache c WHERE c.bvid = ?",
+                (bvid,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"bvid={bvid!r} not in content cache",
+                )
+            title = str(row["title"] or "")
+            author = str(row["up_name"] or "")
+            description = str(row["description"] or "")
+            data_dir = str(ctx.config.data_path) if ctx.config.data_path else ""
+
+            # force=True bypasses any stale "no match" cache entry.
+            # skip_detection=True bypasses the heuristic — the user has
+            # already said this IS a repost, no need to re-confirm.
+            result = replace_if_foreign(
+                bvid,
+                title,
+                author,
+                description=description,
+                data_dir=data_dir,
+                force=True,
+                skip_detection=True,
+            )
+
+            if result is None:
+                # YT search ran but found no match. The cache has been
+                # updated to None so subsequent marks return the same.
+                return {"ok": False, "reason": "no_match"}
+
+            yt_url = str(result.get("yt_url") or "")
+            yt_cover = str(result.get("yt_cover_url") or "")
+            pending = bool(result.get("repost_detected") and not yt_url)
+
+            # Persist the override on the content_cache row so it survives
+            # restarts and applies even with replace_bilibili_reposts=off.
+            if yt_url:
+                ctx.database.mark_content_as_youtube_repost(
+                    bvid,
+                    yt_url=yt_url,
+                    yt_cover_url=yt_cover,
+                )
+
+            # Update the recommendation's expression to surface the mark
+            # if a recommendation_id was supplied.
+            new_expression: str | None = None
+            if recommendation_id is not None and yt_url:
+                rec = ctx.database.get_recommendation_by_id(recommendation_id)
+                if rec is not None:
+                    original_expr = str(rec.get("expression") or "")
+                    suffix = f"\n💡 用户标记为搬运，原视频在 YouTube：{yt_url}"
+                    new_expression = (
+                        (original_expr + suffix) if original_expr
+                        else f"用户标记为搬运，原视频在 YouTube：{yt_url}"
+                    )
+                    ctx.database.update_recommendation_content(
+                        recommendation_id,
+                        expression=new_expression,
+                        topic=str(rec.get("topic") or ""),
+                    )
+
+            return {
+                "ok": True,
+                "yt_url": yt_url,
+                "yt_title": str(result.get("yt_title") or ""),
+                "yt_uploader": str(result.get("yt_uploader") or ""),
+                "pending": pending,
+                "expression": new_expression,
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("YT replacer manual mark failed for bvid=%s", bvid)
+            raise HTTPException(
+                status_code=500,
+                detail="manual mark failed; see server logs",
+            ) from None
 
     # v0.3.57+: one-shot purge of self-authored xhs pool rows that
     # accumulated before the per-path filter was wired in. No-op on

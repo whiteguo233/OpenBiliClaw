@@ -420,14 +420,25 @@ def replace_if_foreign(
     *,
     data_dir: str = "",
     force: bool = False,
+    skip_detection: bool = False,
 ) -> dict[str, Any] | None:
     """Check if a Bilibili video is a foreign repost and return the
     original YouTube URL + metadata.
 
     Returns ``None`` if:
-      - The video doesn't look like a repost
+      - The video doesn't look like a repost (unless ``skip_detection=True``)
       - No good YouTube match is found
-      - The result is cached as ``None``
+      - The result is cached as ``None`` (unless ``force=True``)
+
+    Parameters
+    ----------
+    force : bool
+        When True, ignore any cached "no match" entry for ``bvid``.
+    skip_detection : bool
+        When True, bypass the ``is_likely_repost`` heuristic — the caller
+        has already decided this video IS a repost (e.g. the user clicked
+        a "标记为搬运" button on a video whose title gives no obvious
+        signal). The YouTube search runs regardless.
     """
     _load_cache(data_dir)
 
@@ -438,8 +449,8 @@ def replace_if_foreign(
             return None
         return dict(cached)
 
-    # Detection
-    if not is_likely_repost(title, description=description):
+    # Detection — skipped when the caller is asserting "this IS a repost".
+    if not skip_detection and not is_likely_repost(title, description=description):
         _yt_cache[bvid] = None
         return None
 

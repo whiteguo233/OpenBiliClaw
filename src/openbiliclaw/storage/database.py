@@ -2504,6 +2504,45 @@ class Database:
             (expression, topic, recommendation_id),
         )
 
+    def mark_content_as_youtube_repost(
+        self,
+        bvid: str,
+        *,
+        yt_url: str,
+        yt_cover_url: str = "",
+    ) -> None:
+        """Persist a manual 搬运 mark: redirect ``bvid``'s content_url to YT.
+
+        Updates the ``content_cache`` row so the next /api/recommendations
+        call returns ``source_platform='youtube'`` + the YouTube URL even
+        when ``sources.youtube.replace_bilibili_reposts`` is off (since
+        the user explicitly marked it). When ``yt_cover_url`` is provided,
+        the cover image is swapped too so the card preview matches.
+        """
+        if not bvid or not yt_url:
+            return
+        if yt_cover_url:
+            self._execute_write(
+                """
+                UPDATE content_cache
+                SET content_url = ?,
+                    source_platform = 'youtube',
+                    cover_url = ?
+                WHERE bvid = ?
+                """,
+                (yt_url, yt_cover_url, bvid),
+            )
+        else:
+            self._execute_write(
+                """
+                UPDATE content_cache
+                SET content_url = ?,
+                    source_platform = 'youtube'
+                WHERE bvid = ?
+                """,
+                (yt_url, bvid),
+            )
+
     def get_recommendation_by_id(self, recommendation_id: int) -> dict[str, Any] | None:
         """Return a single recommendation row by primary key."""
         self._ensure_fresh_read()
