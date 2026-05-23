@@ -127,7 +127,10 @@ def test_description_repeats_title_signal() -> None:
 def test_long_title_penalty() -> None:
     """Titles over 30 chars add a small penalty proportional to excess."""
     short = score_marketing_signal("A short title")
-    long_title = "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的标题"
+    long_title = (
+        "这是一个非常非常非常非常非常非常非常非常"
+        "非常非常非常非常非常非常非常非常非常非常长的标题"
+    )
     assert len(long_title) > 40
     long_result = score_marketing_signal(long_title)
     assert long_result.score > short.score
