@@ -1,6 +1,6 @@
 {
   "name": "openbiliclaw-extension",
-  "version": "0.3.44",
+  "version": "0.3.46",
   "private": true,
   "type": "module",
   "scripts": {

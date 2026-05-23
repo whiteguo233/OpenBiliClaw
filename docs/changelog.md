@@ -6,10 +6,12 @@
 
 ## v0.3.89 / extension v0.3.44: Safari 面板化、CI 扩展构建、搬运 AI 配音检测（2026-05-23）
 
-- **🎯 搬运视频新增 AI 配音检测** —— 新增两路检测信号：标题纯英文 + 中文关键词混合判定（Signal 5）和 B 站评论识别搬运反馈（Signal 6），与原有拉丁字符比例、搬运关键词等多信号叠加，减少 AI 配音搬运视频的漏检率。涉及：`yt_replacer.py`、`api/app.py`。
-- **🌈 Safari 弹窗面板化** —— Safari 点击工具栏按钮不再打开新标签页 + 跳出"抱歉"脚注。弹窗从 320px 加宽到 420px，直接嵌入推荐、画像、聊天三个完整 tab 视图，与 Chrome side panel / Firefox sidebar 保持 1:1 体验一致。`popup-launcher.html` 引入完整的 OpenBiliClaw 设计系统（CSS tokens、tab 栏、推荐卡片、画像卡、聊一聊接口）。`popup-launcher.js` 转为 ES module，复用 `popup-api.js` 的数据接口。
-- **🤖 CI 新增 Chrome 扩展构建** —— 在已有 `test`（Ruff/MyPy/pytest）和 `Smoke-build Firefox extension` 之外，新增 `Smoke-build Chrome extension` job，确保 Chrome 扩展也能在 CI 中自动验证打包。
+- 搬运视频新增 AI 配音检测 —— 新增两路检测信号：标题纯英文 + 中文关键词混合判定（Signal 5）和 B 站评论识别搬运反馈（Signal 6），与原有拉丁字符比例、搬运关键词等多信号叠加，减少 AI 配音搬运视频的漏检率。涉及：`yt_replacer.py`、`api/app.py`。
+- Safari 弹窗面板化 —— Safari 点击工具栏按钮不再打开新标签页 + 跳出"抱歉"脚注。弹窗从 320px 加宽到 420px，直接嵌入推荐、画像、聊天三个完整 tab 视图，与 Chrome side panel / Firefox sidebar 保持 1:1 体验一致。`popup-launcher.html` 引入完整的 OpenBiliClaw 设计系统（CSS tokens、tab 栏、推荐卡片、画像卡、聊一聊接口）。`popup-launcher.js` 转为 ES module，复用 `popup-api.js` 的数据接口。
+- CI 新增 Chrome 扩展构建 —— 在已有 `test`（Ruff/MyPy/pytest）和 `Smoke-build Firefox extension` 之外，新增 `Smoke-build Chrome extension` job，确保 Chrome 扩展也能在 CI 中自动验证打包。
 - 修复 `service-worker.ts` 中两处 `apiUrl()` 异步函数未 `await` 直接传给 `fetch()` 的 TypeScript 构建错误（Firefox 严格模式报 TS2345）。
+- 修复用户显式配置 `[llm.embedding].provider = "openrouter"` 仍然报 `No embedding-capable provider available (requested='openrouter')` 并禁用 embedding 的 bug：`_EMBEDDING_CAPABLE_PROVIDERS` 漏了 `openrouter`，dedicated 构建分支也没有 OpenRouter 路径。现在 registry 显式支持 OpenRouter embedding（必须配 `model = "<vendor>/<model>"`，例如 `google/gemini-embedding-2-preview`；无显式 model 时拒绝构建，避免运行时 404），`[llm.openrouter]` 的 `http_referer` / `x_title` 也会透传到 embedding 实例。`OpenRouterProvider.supports_embedding` 仍保持 `False` —— 只有用户显式选 openrouter 才走这条 dedicated 路径，不污染 chat-side 的自动回退链。
+- 修复桌面 Web 推荐卡片点击「忽略」时 `/api/feedback` 返回 422 的回归：`feedback_type` 白名单新增 `dismiss`（CLI / API / OpenClaw adapter 同步放行）。dismiss 走「软移除」语义——`content_cache.pool_status` 标记为 `feedbacked` 让候选不再被重新发现，前端按 `feedback_type` 非空过滤掉已忽略卡片；soul 与 preference 分析忽略 dismiss 事件，不会把单次软忽略升成话题级负反馈。`activity_feed._feedback_items` 现会显示「这条你忽略了：{title}」而不是落到 fallback 的「写了一句反馈」。
 - 浏览器插件版本提升到 extension v0.3.44，准备发布 `extension-v0.3.44`；后端源码版本仍为 v0.3.89，不发布新的后端 tag。
 - 移动 Web 惊喜推荐的「聊一聊」不再切到对话 tab，而是在当前惊喜卡片内展开 16px textarea composer，提交后就地显示用户气泡、AI thinking、完成回复或失败提示。
 - 移动 Web 和插件的惊喜推荐内聊统一走 durable `/api/chat/turns`，按 `scope=delight` + `subject_id` 归并历史；pending turn 会轮询恢复，reload 后可重新 hydrate。

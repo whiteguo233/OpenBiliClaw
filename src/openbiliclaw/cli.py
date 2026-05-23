@@ -4840,8 +4840,8 @@ def feedback(
     """对一条推荐记录提交反馈."""
     _require_runtime_config()
     normalized_signal = signal.strip().lower()
-    if normalized_signal not in {"like", "dislike", "comment"}:
-        _print_status_panel("error", "反馈类型无效", "仅支持: like, dislike, comment")
+    if normalized_signal not in {"like", "dislike", "comment", "dismiss"}:
+        _print_status_panel("error", "反馈类型无效", "仅支持: like, dislike, comment, dismiss")
         raise typer.Exit(code=1)
     if normalized_signal == "comment" and not note.strip():
         _print_status_panel("error", "comment 需要备注", "请通过 `--note` 补充一句你的想法。")

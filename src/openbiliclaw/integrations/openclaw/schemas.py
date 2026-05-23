@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from .errors import AdapterValidationError
 
-_VALID_FEEDBACK_TYPES = {"like", "dislike", "comment"}
+_VALID_FEEDBACK_TYPES = {"like", "dislike", "comment", "dismiss"}
 
 
 @dataclass(slots=True)

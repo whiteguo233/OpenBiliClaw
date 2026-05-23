@@ -128,8 +128,8 @@ Embedding 服务用于多个语义任务：discovery 内容兴趣预过滤、rec
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `provider` | string | `""` | 留空 = 不启用 embedding；不会跟随 `[llm].default_provider`。可填 `"openai"` / `"gemini"` / `"ollama"` / `"openai_compatible"`。Claude / DeepSeek / OpenRouter 没有 embedding 接口 |
-| `model` | string | `"gemini-embedding-001"` | embedding 模型名；按 provider 自动填合理默认：`gemini → gemini-embedding-001` / `openai → text-embedding-3-small` / `ollama → bge-m3` |
+| `provider` | string | `""` | 留空 = 不启用 embedding；不会跟随 `[llm].default_provider`。可填 `"openai"` / `"gemini"` / `"ollama"` / `"openai_compatible"` / `"openrouter"`。Claude / DeepSeek 没有 embedding 接口；OpenRouter 走 per-route 路由，必须显式配 `model`（如 `google/gemini-embedding-2-preview`） |
+| `model` | string | `"gemini-embedding-001"` | embedding 模型名；按 provider 自动填合理默认：`gemini → gemini-embedding-001` / `openai → text-embedding-3-small` / `ollama → bge-m3`。`openrouter` / `openai_compatible` 无安全默认，需要显式指定 |
 | `api_key` | string | `""` | v0.3.32+ embedding 专属 API Key。默认不会借用 `[llm.<provider>].api_key`；只有 `fallback_enabled=true` 时才允许旧配置借用 chat-side 凭据并打一条 WARNING。Ollama 不需要 |
 | `base_url` | string | `""` | v0.3.32+ embedding 专属 base URL。留空使用 provider 默认值（OpenAI → `api.openai.com/v1`、Ollama → `localhost:11434/v1`）。Gemini SDK 忽略此字段 |
 | `similarity_threshold` | float | `0.82` | 余弦相似度阈值，超过即视为"同主题" |
