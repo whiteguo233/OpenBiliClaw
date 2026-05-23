@@ -352,7 +352,7 @@ async def test_evaluate_content_batch_default_size_30_uses_single_llm_call(
 # ---------------------------------------------------------------------------
 
 
-def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path) -> None:
+def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Recreates the community-reported popup case:
 
     The user clicks one "AI 重绘原神地图" video. Then related_chain
@@ -365,6 +365,30 @@ def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path) -> None:
 
     from openbiliclaw.api.app import create_app
     from openbiliclaw.storage.database import Database
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "openbiliclaw.config.load_config",
+        lambda: SimpleNamespace(
+            data_path=tmp_path,
+            llm=SimpleNamespace(concurrency=3),
+            bilibili=SimpleNamespace(cookie="", browser_executable="", browser_headed=False),
+            sources=SimpleNamespace(
+                browser_cdp_url="",
+                browser_headed=False,
+                xiaohongshu=SimpleNamespace(
+                    daily_search_budget=20,
+                    daily_creator_budget=10,
+                    task_interval_seconds=45,
+                ),
+                douyin=SimpleNamespace(enabled=False),
+                youtube=SimpleNamespace(enabled=False, replace_bilibili_reposts=False),
+            ),
+            scheduler=SimpleNamespace(pool_target_count=300, account_sync_interval_hours=24),
+        ),
+    )
+    monkeypatch.setattr("openbiliclaw.llm.build_llm_registry", lambda config: "registry")
+    monkeypatch.setattr("openbiliclaw.bilibili.auth.resolve_runtime_cookie", lambda **_: "")
 
     db = Database(tmp_path / "test.db")
     db.initialize()
@@ -398,7 +422,7 @@ def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path) -> None:
         )
     db.conn.commit()
 
-    app = create_app(database=db, memory_manager=object(), soul_engine=object())
+    app = create_app(database=db)
     client = TestClient(app)
 
     response = client.get("/api/recommendations")

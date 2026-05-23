@@ -125,9 +125,9 @@ def test_description_repeats_title_signal() -> None:
 
 
 def test_long_title_penalty() -> None:
-    """Titles over 40 chars add a small penalty proportional to excess."""
+    """Titles over 30 chars add a small penalty proportional to excess."""
     short = score_marketing_signal("A short title")
-    long_title = "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的标题"
+    long_title = "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的标题"
     assert len(long_title) > 40
     long_result = score_marketing_signal(long_title)
     assert long_result.score > short.score
@@ -140,7 +140,7 @@ def test_emoji_density_scales() -> None:
     two_emoji = score_marketing_signal("回家了 😊😄")  # below threshold
     three_emoji = score_marketing_signal("回家了 😊😄😍")  # fires
     twenty_emoji = score_marketing_signal("回家了 " + "😊" * 20)
-    assert any("高密度表情" not in r for r in two_emoji.reasons)
+    assert all("高密度表情" not in r for r in two_emoji.reasons)
     assert any("高密度表情" in r for r in three_emoji.reasons)
     # cap: 20 emojis should not score 5x the 3-emoji case
     assert twenty_emoji.score <= three_emoji.score + 0.20
