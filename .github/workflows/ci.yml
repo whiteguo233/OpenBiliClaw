@@ -91,9 +91,13 @@ jobs:
         run: npm run build
         working-directory: extension
 
-      - name: Verify Chrome manifest at dist root
+      - name: Verify Chrome extension build
         shell: bash
         working-directory: extension
         run: |
-          test -f dist/manifest.json
-          echo "Chrome extension build successful"
+          test -f dist/background/service-worker.js
+          test -f dist/content/bilibili.js
+          test -f dist/content/xiaohongshu.js
+          test -f dist/content/douyin.js
+          test -f dist/content/youtube.js
+          echo "Chrome extension build successful (all bundles present)"
