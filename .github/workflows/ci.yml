@@ -67,3 +67,33 @@ jobs:
             exit 1
           fi
           echo "Firefox manifest version $firefox_version matches manifest.json"
+
+  extension-chrome-build:
+    name: Smoke-build Chrome extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci
+        working-directory: extension
+
+      - name: Build Chrome extension
+        run: npm run build
+        working-directory: extension
+
+      - name: Verify Chrome manifest at dist root
+        shell: bash
+        working-directory: extension
+        run: |
+          test -f dist/manifest.json
+          echo "Chrome extension build successful"

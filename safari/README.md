@@ -56,8 +56,9 @@ copies its contents into `safari/Extension/Resources/`.
      then Develop > **Allow Unsigned Extensions**. This setting resets
      every Safari restart during development.
 5. The OpenBiliClaw toolbar button (the 阿B icon) appears in Safari's
-   toolbar. Click it to open the compact launcher popup, then click
-   **在新标签页中打开** to load the full UI.
+   toolbar. Click it to open the self-contained popup panel, which
+   shows the same content as Chrome's side panel and Firefox's sidebar:
+   **推荐** (recommendations), **我的画像** (profile), and **聊聊想法** (chat).
 
 ## Iterating
 
@@ -75,13 +76,10 @@ between iterations.
 
 ## Notes on Safari behavior
 
-- **Side panel:** Safari has no `sidePanel` or `sidebar_action` API, so
-  the Chrome side panel UX becomes a small toolbar popup with an "Open
-  in new tab" button (see `extension/popup/popup-launcher.html`). The
-  full UI (`popup/popup.html`) opens in a regular tab via
-  `chrome.tabs.create`. The background-side fallback in
-  `src/background/notifications.ts` already opens a tab when no panel
-  API is available, so notification-driven opens work too.
+- **Popup panel:** Safari has no native `sidePanel` or `sidebar_action` API, so
+  the Chrome side panel UX is realized as a 420px-wide popup with the same
+  content: tabbed views for recommendations, profile, and chat. No new tab
+  or popup window is required — the toolbar popup itself is the panel.
 - **MAIN world content scripts:** Supported on Safari 17.4+. The
   xiaohongshu token sniffer and state bridge run unchanged.
 - **`cookies` permission:** Safari honors it, but Intelligent Tracking
