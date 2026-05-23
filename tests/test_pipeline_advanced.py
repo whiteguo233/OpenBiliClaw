@@ -1289,6 +1289,104 @@ async def test_update_interest_detects_dislike_changes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_new_dislikes_persists_preference_and_soul_profile(tmp_path: Path) -> None:
+    from openbiliclaw.soul.dislike_writeback import apply_new_dislikes
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+    profile = OnionProfile()
+    soul_layer = memory.get_layer("soul")
+    soul_layer.data.update(profile.to_dict())
+    soul_layer.save()
+
+    changes = await apply_new_dislikes(
+        memory=memory,
+        database=memory._database,
+        embedding_service=None,
+        llm_service=None,
+        topics=["标题党", "标题党"],
+    )
+
+    assert memory.get_layer("preference").data["disliked_topics"] == ["标题党"]
+    saved_profile = OnionProfile.from_dict(memory.get_layer("soul").data)
+    assert [item.domain for item in saved_profile.interest.dislikes] == ["标题党"]
+    assert "新增讨厌: 标题党" in changes
+
+
+@pytest.mark.asyncio
+async def test_purge_pool_for_new_dislikes_invokes_existing_pool_purge_paths(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.soul.dislike_writeback import purge_pool_for_new_dislikes
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+    db = memory._database
+    db.cache_content(
+        "BVtitlebait",
+        title="标题党热点复读",
+        up_name="热点UP",
+        source="trending",
+        topic_key="热点",
+    )
+
+    changes = await purge_pool_for_new_dislikes(
+        database=db,
+        embedding_service=None,
+        llm_service=None,
+        newly_added=["标题党"],
+        all_dislikes=["标题党"],
+    )
+
+    rows = {row["bvid"]: row for row in db.get_cached_content(limit=10)}
+    assert rows["BVtitlebait"]["pool_status"] == "purged_by_dislike"
+    assert any("从候选池清除" in item for item in changes)
+
+
+@pytest.mark.asyncio
+async def test_layer_updater_uses_purge_helper_without_rewriting_preference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openbiliclaw.soul.layer_updaters as lu_mod
+    from openbiliclaw.soul.layer_updaters import _update_interest
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_purge_pool_for_new_dislikes(**kwargs: object) -> list[str]:
+        calls.append(dict(kwargs))
+        return ["从候选池清除 1 条相关内容"]
+
+    async def forbidden_apply_new_dislikes(**kwargs: object) -> list[str]:
+        raise AssertionError("analyzer path must not call apply_new_dislikes")
+
+    monkeypatch.setattr(lu_mod, "purge_pool_for_new_dislikes", fake_purge_pool_for_new_dislikes)
+    monkeypatch.setattr(lu_mod, "apply_new_dislikes", forbidden_apply_new_dislikes, raising=False)
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+
+    class _DislikeService:
+        async def complete_structured_task(self, **kwargs: Any) -> LLMResponse:
+            payload = json.loads(_PREF_RESP)
+            payload["disliked_topics"] = ["标题党"]
+            return LLMResponse(content=json.dumps(payload), provider="fake")
+
+    result = await _update_interest(
+        signals=[{"payload": {"event_type": "view", "title": "v"}}],
+        profile=OnionProfile(),
+        memory=memory,
+        preference_analyzer=PreferenceAnalyzer(registry=_DislikeService()),
+        profile_builder=ProfileBuilder(registry=_DislikeService()),
+    )
+
+    assert calls
+    assert calls[0]["newly_added"] == ["标题党"]
+    assert calls[0]["all_dislikes"] == ["标题党"]
+    assert "从候选池清除 1 条相关内容" in result.changes
+
+
+@pytest.mark.asyncio
 async def test_new_dislike_purges_matching_pool_candidates(tmp_path: Path) -> None:
     """End-to-end: when a new dislike is learned, matching pool items must
     be moved to pool_status='purged_by_dislike' and a change line recorded.

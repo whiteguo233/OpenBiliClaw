@@ -17,6 +17,7 @@ from openbiliclaw.llm.json_utils import (
     JSONValue,
     parse_llm_json_tolerant,
 )
+from openbiliclaw.soul.dislike_writeback import purge_pool_for_new_dislikes
 
 if TYPE_CHECKING:
     from openbiliclaw.memory.manager import MemoryManager
@@ -219,60 +220,17 @@ async def _update_interest(
     for topic in newly_added_dislikes:
         changes.append(f"新增讨厌: {topic}")
 
-    # Eagerly purge already-cached pool candidates that match the new dislikes.
-    # Without this, the candidate pool would keep disliked topics alive for
-    # another full discovery cycle — the curator's -0.10 penalty only demotes
-    # them, it doesn't remove them.
     if newly_added_dislikes:
         database = getattr(memory, "_database", None)
-
-        # Pass 1: fast string match (topic_key / title substring / label).
-        try:
-            purge_fn = getattr(database, "purge_pool_by_disliked_topics", None)
-            if callable(purge_fn):
-                purged = purge_fn(list(newly_added_dislikes))
-                if purged:
-                    changes.append(f"从候选池清除 {purged} 条相关内容")
-        except Exception:
-            logger.exception("Failed to purge pool candidates by new dislikes")
-
-        # Pass 2: embedding recall → LLM precision (preferred), or
-        # standalone embedding purge (fallback when LLM unavailable).
-        if embedding_service is not None and database is not None:
-            if llm_service is not None:
-                # Full pipeline: low-threshold recall + LLM judge.
-                try:
-                    from openbiliclaw.soul.pool_purge import (
-                        recall_and_llm_purge_pool,
-                    )
-
-                    smart_purged = await recall_and_llm_purge_pool(
-                        database=database,
-                        topics=list(newly_added_dislikes),
-                        all_disliked_topics=list(new_dislikes),
-                        embedding_service=embedding_service,
-                        llm_service=llm_service,
-                    )
-                    if smart_purged:
-                        changes.append(f"从候选池召回+LLM 清除 {smart_purged} 条相关内容")
-                except Exception:
-                    logger.exception("Failed to recall+LLM purge pool candidates")
-            else:
-                # Fallback: high-threshold embedding purge only.
-                try:
-                    from openbiliclaw.soul.pool_purge import (
-                        semantic_purge_pool_by_disliked_topics,
-                    )
-
-                    semantic_purged = await semantic_purge_pool_by_disliked_topics(
-                        database=database,
-                        topics=list(newly_added_dislikes),
-                        embedding_service=embedding_service,
-                    )
-                    if semantic_purged:
-                        changes.append(f"从候选池语义清除 {semantic_purged} 条相关内容")
-                except Exception:
-                    logger.exception("Failed to semantic-purge pool candidates")
+        changes.extend(
+            await purge_pool_for_new_dislikes(
+                database=database,
+                embedding_service=embedding_service,
+                llm_service=llm_service,
+                newly_added=sorted(newly_added_dislikes),
+                all_dislikes=sorted(new_dislikes),
+            )
+        )
 
     # Feed speculative_interests to speculator as seed candidates
     speculative_seeds = updated_preference.get("speculative_interests")
