@@ -182,17 +182,35 @@ def _is_repost_from_comments(comments: list[str] | None) -> bool:
         comments: List of comment text strings. Can be None or empty.
 
     Returns:
-        True if multiple comments contain repost-related keywords.
+        True if comments contain repost-related keywords. A single comment
+        explicitly mentioning YouTube (油管/youtube) alongside a repost
+        keyword is a strong-enough signal on its own; otherwise two
+        suspicious comments are required.
     """
     if not comments:
         return False
     hits = 0
     for comment in comments:
         lower = comment.lower()
+        # Strong single-comment signal: mentions YouTube/油管 directly.
+        # An AI-dub repost commenter who writes "原视频在YouTube" or
+        # "油管上是XYZ" doesn't need a second confirmation — the URL
+        # reference is already strong enough.
+        mentions_youtube = (
+            "youtube" in lower
+            or "youtu.be" in lower
+            or "油管" in comment
+            or "YT" in comment
+        )
+        comment_has_kw = False
         for kw in _REPOST_COMMENT_KEYWORDS:
             if kw.lower() in lower:
-                hits += 1
-                break  # One keyword per comment is enough
+                comment_has_kw = True
+                break
+        if comment_has_kw and mentions_youtube:
+            return True
+        if comment_has_kw:
+            hits += 1
         if hits >= 2:  # Two or more suspicious comments = strong signal
             return True
     return False
@@ -421,6 +439,7 @@ def replace_if_foreign(
     data_dir: str = "",
     force: bool = False,
     skip_detection: bool = False,
+    comments: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Check if a Bilibili video is a foreign repost and return the
     original YouTube URL + metadata.
@@ -439,6 +458,12 @@ def replace_if_foreign(
         has already decided this video IS a repost (e.g. the user clicked
         a "标记为搬运" button on a video whose title gives no obvious
         signal). The YouTube search runs regardless.
+    comments : list[str] | None
+        Top-N comment message texts for signal 6. When supplied and the
+        title/description signals don't fire, the comment-keyword detector
+        gets a shot at catching AI-dubbed reposts whose title is fully
+        Chinese. Callers that don't want to spend API quota on comment
+        fetches just pass ``None``.
     """
     _load_cache(data_dir)
 
@@ -450,7 +475,9 @@ def replace_if_foreign(
         return dict(cached)
 
     # Detection — skipped when the caller is asserting "this IS a repost".
-    if not skip_detection and not is_likely_repost(title, description=description):
+    if not skip_detection and not is_likely_repost(
+        title, description=description, comments=comments
+    ):
         _yt_cache[bvid] = None
         return None
 
@@ -505,12 +532,20 @@ def replace_recommendation_row(
     row: dict[str, Any],
     *,
     data_dir: str = "",
+    comments: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Take a recommendation row dict (from ``get_recommendations()``) and
     return the YT replacement data if applicable.
 
     Returns a dict with ``content_url``, ``source_platform``, ``expression``
     overrides, or ``None`` if no replacement is needed.
+
+    Parameters
+    ----------
+    comments : list[str] | None
+        Top-N comment messages for this row's bvid. Threaded into the
+        detector for signal 6 (comment-keyword repost detection). Pass
+        ``None`` to skip comment-based detection for this row.
     """
     bvid = str(row.get("bvid", "") or "")
     title = str(row.get("title", "") or "")
@@ -524,7 +559,12 @@ def replace_recommendation_row(
     if not bvid or not title:
         return None
 
-    yt = replace_if_foreign(bvid, title, author, description=description, data_dir=data_dir)
+    yt = replace_if_foreign(
+        bvid, title, author,
+        description=description,
+        data_dir=data_dir,
+        comments=comments,
+    )
     if yt is None:
         return None
 

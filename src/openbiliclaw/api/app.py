@@ -1035,9 +1035,17 @@ def create_app(
         Successfully fetched images are cached to ``data/image-cache/``.
         When the upstream fails (e.g. expired XHS CDN tokens), the cached
         copy is served instead.
+
+        Network note: httpx.AsyncClient defaults to ``trust_env=True``,
+        so setting ``HTTPS_PROXY=http://127.0.0.1:7890`` (Clash default)
+        in the environment before launching the backend makes YouTube
+        images route through the proxy. This is the recommended fix for
+        users behind the Great Firewall who see 502s on i.ytimg.com URLs
+        — Bilibili/XHS/Douyin work direct, ytimg.com typically doesn't.
         """
 
         parsed = _parse_image_proxy_url(url)
+        host = (parsed.host or "").lower()
         try:
             async with httpx.AsyncClient(
                 timeout=_IMAGE_PROXY_TIMEOUT_SECONDS,
@@ -1046,7 +1054,18 @@ def create_app(
                 response = await _send_image_proxy_request(client, parsed)
                 try:
                     if response.status_code < 200 or response.status_code >= 300:
-                        raise HTTPException(status_code=502, detail="Upstream request failed")
+                        # Upstream returned but rejected — pass through
+                        # the status so the caller can tell hot-link 403
+                        # apart from origin 5xx. Both go to 502 because
+                        # we *are* a gateway, but the detail is what
+                        # makes the failure diagnosable.
+                        raise HTTPException(
+                            status_code=502,
+                            detail=(
+                                f"Upstream {host} returned "
+                                f"{response.status_code}"
+                            ),
+                        )
                     content_type = _validate_image_proxy_content_headers(response.headers)
                     spool = await _read_image_proxy_body(response)
                 finally:
@@ -1055,11 +1074,35 @@ def create_app(
             # Network-level upstream failures may use a cached copy.
             if cached := _image_cache_response(url):
                 return cached
-            raise HTTPException(status_code=504, detail="Upstream request timed out") from exc
+            raise HTTPException(
+                status_code=504,
+                detail=f"Upstream {host} timed out (>{_IMAGE_PROXY_TIMEOUT_SECONDS}s)",
+            ) from exc
+        except httpx.ConnectError as exc:
+            # DNS / TCP / TLS failure before we even sent the request.
+            # On Great Firewall-blocked hosts (ytimg.com, ggpht.com), this
+            # is the dominant failure mode and the user thinks the
+            # backend is broken. Surface the actual cause + a hint.
+            if cached := _image_cache_response(url):
+                return cached
+            hint = ""
+            if host.endswith(".ytimg.com") or host.endswith(".ggpht.com"):
+                hint = (
+                    "; YouTube CDNs are often unreachable without a proxy "
+                    "— try `HTTPS_PROXY=http://127.0.0.1:7890` (or your "
+                    "proxy URL) when launching the backend"
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=f"Cannot reach {host}: {exc}{hint}",
+            ) from exc
         except httpx.HTTPError as exc:
             if cached := _image_cache_response(url):
                 return cached
-            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Upstream {host} request failed: {type(exc).__name__}",
+            ) from exc
         except HTTPException as exc:
             if exc.status_code >= 500 and (cached := _image_cache_response(url)):
                 return cached
@@ -1805,8 +1848,83 @@ def create_app(
                     if ctx.config.storage.db_path
                     else ""
                 )
+
+                # Signal 6 enablement: fetch comments for borderline rows
+                # so the comment-keyword detector can catch AI-dubbed
+                # reposts whose title is fully Chinese and description is
+                # empty. Bounded by ``comment_detection_max_rows`` to
+                # cap Bilibili API quota burn.
+                yt_cfg = ctx.config.sources.youtube
+                use_comments = (
+                    yt_cfg.use_comments_for_detection
+                    and getattr(ctx, "bilibili_client", None) is not None
+                )
+                comments_by_bvid: dict[str, list[str]] = {}
+                if use_comments:
+                    max_rows = yt_cfg.comment_detection_max_rows
+                    borderline_rows: list[tuple[int, dict[str, Any]]] = []
+                    for i, row in enumerate(rows):
+                        if str(row.get("source_platform", "") or "") == "youtube":
+                            continue
+                        title = str(row.get("title", "") or "")
+                        description = str(row.get("description", "") or "")
+                        # Skip if title already trips obvious signals 1-5
+                        # — comments add no value, and we'd be wasting an
+                        # API call. ``is_likely_repost`` on title alone
+                        # mimics the sync-path's first pass.
+                        from openbiliclaw.yt_replacer import is_likely_repost
+                        if is_likely_repost(title, description=description):
+                            continue
+                        # Heuristic for "could be a repost worth checking
+                        # comments for": some Latin characters OR mentions
+                        # of foreign brands / weak repost keywords in title
+                        # or description. Rules out the 80% obvious
+                        # Chinese-original videos.
+                        latin = sum(1 for ch in title if "a" <= ch.lower() <= "z")
+                        latin_ratio = latin / max(1, len(title))
+                        combined = (title + " " + description).lower()
+                        borderline = (
+                            latin_ratio > 0.05
+                            or any(
+                                kw in combined
+                                for kw in ("配音", "翻译", "搬运", "ai", "youtube", "油管")
+                            )
+                        )
+                        if borderline:
+                            borderline_rows.append((i, row))
+                    if max_rows > 0:
+                        borderline_rows = borderline_rows[:max_rows]
+                    # Fetch comments concurrently to keep latency bounded.
+                    if borderline_rows:
+                        async def _fetch(bvid: str) -> tuple[str, list[str]]:
+                            try:
+                                client = ctx.bilibili_client
+                                infos = await client.get_video_comments(bvid, limit=20)
+                                return bvid, [
+                                    str(getattr(c, "message", "") or "")
+                                    for c in infos
+                                ]
+                            except Exception as exc:
+                                logger.debug(
+                                    "comment-fetch failed for %s: %s — falling "
+                                    "back to title-only detection",
+                                    bvid, exc,
+                                )
+                                return bvid, []
+                        import asyncio as _asyncio
+                        fetched = await _asyncio.gather(
+                            *[_fetch(str(row.get("bvid", "") or "")) for _, row in borderline_rows],
+                            return_exceptions=False,
+                        )
+                        comments_by_bvid = {bvid: msgs for bvid, msgs in fetched if msgs}
+
                 for i, row in enumerate(rows):
-                    override = replace_recommendation_row(row, data_dir=data_dir)
+                    bvid = str(row.get("bvid", "") or "")
+                    override = replace_recommendation_row(
+                        row,
+                        data_dir=data_dir,
+                        comments=comments_by_bvid.get(bvid),
+                    )
                     if override:
                         rows[i] = {**row, **override}
             except Exception as exc:
@@ -3229,8 +3347,11 @@ def create_app(
                 }
         except Exception as exc:
             # Never break the recipes view if platform enrichment fails —
-            # the caller still gets ``items``.
-            platforms = {"_error": str(exc)}
+            # the caller still gets ``items``. Log so it shows up in
+            # backend stderr; users can't see the error string here
+            # anyway (it'd land inside a typed dict).
+            logger.exception("platform enrichment for /api/sources failed: %s", exc)
+            platforms = {}
         return {"items": recipes, "platforms": platforms}
 
     @app.post("/api/sources", status_code=201)
