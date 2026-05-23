@@ -470,7 +470,7 @@ async function handleLauncherPendingQuery(): Promise<LauncherPendingStatus> {
 
   try {
     const resp = await fetch(
-      apiUrl(`/api/yt-replacer/lookup?bvid=${encodeURIComponent(bvid)}`),
+      await apiUrl(`/api/yt-replacer/lookup?bvid=${encodeURIComponent(bvid)}`),
       { signal: AbortSignal.timeout(2500) },
     );
     if (!resp.ok) return empty;
@@ -506,7 +506,7 @@ async function handleLauncherPendingQuery(): Promise<LauncherPendingStatus> {
 async function handleWatchLaterCountQuery(): Promise<WatchLaterCount> {
   const fallback: WatchLaterCount = { ok: false, total: 0 };
   try {
-    const resp = await fetch(apiUrl("/api/watch-later?limit=1"), {
+    const resp = await fetch(await apiUrl("/api/watch-later?limit=1"), {
       signal: AbortSignal.timeout(2500),
     });
     if (!resp.ok) return fallback;
