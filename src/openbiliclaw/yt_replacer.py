@@ -68,6 +68,42 @@ _REPOST_KEYWORDS = [
     "CC", "English", "中英", "英文解说",
 ]
 
+# AI dubbing / machine translation signals — new wave of reposts where
+# the original foreign audio is replaced with AI-generated Chinese voiceover.
+# Title is often Chinese (low Latin ratio), so the classic signals miss these.
+_AI_DUB_KEYWORDS = [
+    "AI配音", "AI 配音", "AI翻译", "AI 翻译", "AI语音", "AI 语音",
+    "AI朗读", "AI 朗读", "AI克隆", "AI 克隆", "AI声音", "AI 声音",
+    "AI解说", "AI 解说", "AI连读", "AI 连读",
+    "机翻", "机器翻译", "AI机翻", "AI 机翻",
+    "AI voice", "AI dub", "AI dubbing", "AI translate", "AI voiceover",
+    "TTS配音", "TTS 配音", "TTS翻译", "TTS 翻译",
+    "自动配音", "自动翻译",
+]
+
+# Signals in description that hint the video is an AI-dubbed repost
+_AI_DUB_DESC_SIGNALS = [
+    "原视频", "原片", "原版", "来源", "原始视频",
+    "original video", "source video", "original",
+    "来自YouTube", "来自Youtube", "来自油管",
+    "YouTube链接", "youtube链接",
+    "本视频为AI", "AI配音视频", "AI翻译视频",
+    "机器翻译视频", "机翻视频",
+    "字幕翻译", "音频翻译",
+]
+
+# Comment keywords that strongly suggest a video is a repost
+_REPOST_COMMENT_KEYWORDS = [
+    "AI配音", "AI 配音", "机翻", "机器翻译", "配音",
+    "这是搬运", "搬运的", "搬运视频",
+    "原视频", "原版",
+    "这都能搬", "又搬", "偷视频",
+    "YouTube上", "油管上",
+    "不是原创", "不是原創",
+    "AI翻译", "AI 翻译",
+    "抄的", "盗视频", "盗用",
+]
+
 # Known non-Chinese content categories that often get reposted
 _FOREIGN_CATEGORIES = [
     "Gamespot", "IGN", "Gamesradar", "Polygon", "Kotaku",
@@ -130,7 +166,50 @@ def _has_foreign_brand(title: str) -> bool:
     return False
 
 
-def is_likely_repost(title: str, description: str = "") -> bool:
+def _has_ai_dub_keywords(title: str) -> bool:
+    """Check if title contains AI dubbing / machine translation keywords."""
+    lower = title.lower()
+    for kw in _AI_DUB_KEYWORDS:
+        if kw.lower() in lower:
+            return True
+    return False
+
+
+def _has_ai_dub_desc_signals(description: str) -> bool:
+    """Check if description contains signals the video is an AI-dubbed repost."""
+    if not description:
+        return False
+    lower = description.lower()
+    for kw in _AI_DUB_DESC_SIGNALS:
+        if kw.lower() in lower:
+            return True
+    return False
+
+
+def _is_repost_from_comments(comments: list[str] | None) -> bool:
+    """Check if user comments suggest this video is a repost.
+
+    Args:
+        comments: List of comment text strings. Can be None or empty.
+
+    Returns:
+        True if multiple comments contain repost-related keywords.
+    """
+    if not comments:
+        return False
+    hits = 0
+    for comment in comments:
+        lower = comment.lower()
+        for kw in _REPOST_COMMENT_KEYWORDS:
+            if kw.lower() in lower:
+                hits += 1
+                break  # One keyword per comment is enough
+        if hits >= 2:  # Two or more suspicious comments = strong signal
+            return True
+    return False
+
+
+def is_likely_repost(title: str, description: str = "", comments: list[str] | None = None) -> bool:
     """Return True if the video is likely a repost of foreign content.
 
     Combines multiple signals:
@@ -138,6 +217,9 @@ def is_likely_repost(title: str, description: str = "") -> bool:
       2. Title contains known foreign brands/channels + at least some English
       3. Title or description contains repost keywords AND English terms
       4. Title has meaningful English content phrases (≥2 terms or 1 long term)
+      5. Title or description has AI dubbing/machine translation signals
+         (catches AI-voiceover reposts where the title is fully Chinese)
+      6. (Optional) User comments contain repost-related keywords
     """
     if not title:
         return False
@@ -167,6 +249,24 @@ def is_likely_repost(title: str, description: str = "") -> bool:
 
     # Signal 4: Strong English phrases (low threshold but requires solid English)
     if has_meaningful and latin_ratio > 0.15:
+        return True
+
+    # Signal 5: AI dubbing / machine translation signals
+    # Catches AI-voiceover reposts where title is fully Chinese but
+    # contains dubbing keywords, or description references original content.
+    if _has_ai_dub_keywords(title):
+        logger.debug("YT replacer: AI dub keyword match in title %r", title)
+        return True
+    if _has_ai_dub_desc_signals(description):
+        logger.debug("YT replacer: AI dub desc signal in description of %r", title)
+        return True
+    # If title has AI dub keywords AND description has desc signals — very likely repost
+    if _has_ai_dub_keywords(description):
+        logger.debug("YT replacer: AI dub keyword match in description of %r", title)
+        return True
+
+    # Signal 6: Optional comment-based detection
+    if _is_repost_from_comments(comments):
         return True
 
     return False
