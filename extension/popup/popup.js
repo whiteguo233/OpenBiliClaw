@@ -3657,8 +3657,7 @@ function renderRecommendations(items, { append = false } = {}) {
     // for Bilibili-origin items with a bvid; pointless for already-YT
     // recommendations and for non-bilibili sources (no bvid → no YT
     // lookup possible).
-    const platformKeyForMark = (item.source_platform || "bilibili").toLowerCase();
-    if (item.bvid && platformKeyForMark !== "youtube") {
+    if (item.bvid && platformKey !== "youtube") {
       const markBtn = createActionButton(
         "🔁 标记为搬运",
         "action-button action-secondary",

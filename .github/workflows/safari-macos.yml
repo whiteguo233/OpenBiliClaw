@@ -38,6 +38,13 @@ on:
 permissions:
   contents: read
 
+# Cancel older runs on the same branch when a new push comes in.
+# Smoke builds are expensive on macOS (~5-8 min); no point burning
+# minutes on a build whose output is already stale.
+concurrency:
+  group: safari-macos-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Safari Web Extension app
@@ -115,17 +122,35 @@ jobs:
         # next step can find the .app.
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project OpenBiliClawSafari.xcodeproj \
-            -scheme OpenBiliClaw \
-            -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="" \
-            build | xcpretty || true
-          # xcpretty filters noise but swallows the exit code; check
-          # that the .app actually exists, otherwise fail.
+          # xcpretty is preinstalled on macOS GitHub runners but guard
+          # against absence anyway — silently piping into a missing
+          # command would lose all build output and make CI failures
+          # opaque. pipefail+set -e means a real xcodebuild error here
+          # exits the step with a non-zero status instead of falling
+          # through to the test -d check.
+          if command -v xcpretty >/dev/null 2>&1; then
+            xcodebuild \
+              -project OpenBiliClawSafari.xcodeproj \
+              -scheme OpenBiliClaw \
+              -configuration Release \
+              -derivedDataPath build \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM="" \
+              build | xcpretty
+          else
+            xcodebuild \
+              -project OpenBiliClawSafari.xcodeproj \
+              -scheme OpenBiliClaw \
+              -configuration Release \
+              -derivedDataPath build \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM="" \
+              build
+          fi
+          # Belt-and-suspenders: even if xcodebuild somehow returned 0
+          # without producing the .app, fail loudly here.
           test -d build/Build/Products/Release/OpenBiliClaw.app
 
       - name: Verify extension is embedded

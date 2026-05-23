@@ -536,7 +536,13 @@
 
     async function handleCardAction(action, item, card) {
       const status = card.querySelector(".status-line");
-      if (card.dataset.feedbackPending === "true") return;
+      // Out-of-band actions (open, comment, watch-later, mark-as-repost)
+      // run BEFORE the feedbackPending gate — they don't touch the
+      // feedback flow and shouldn't be blocked by an in-flight submission.
+      // The mark-repost button lives outside .card-actions so it isn't
+      // disabled when feedbackPending is set; without this reordering,
+      // clicking it during a feedback submission would silently no-op
+      // and confuse the user.
       if (action === "open") return openRecommendation(item, card);
       if (action === "comment") { openCardComposer(card); return; }
       // 稍后再看 toggle. Independent of the feedback flow — it doesn't
@@ -635,6 +641,9 @@
         }
         return;
       }
+      // Feedback actions (like/dislike/dismiss/send-comment) past this point.
+      // The pending check protects against double-submission of the same action.
+      if (card.dataset.feedbackPending === "true") return;
       card.dataset.feedbackPending = "true";
       card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = true; });
       try {
