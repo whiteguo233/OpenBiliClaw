@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+from openbiliclaw.runtime.events import RuntimeEventHub
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
 
@@ -1326,6 +1327,51 @@ async def test_publish_interest_probe_skips_recent_axis_repeat() -> None:
     assert probe_events[0]["domain"] == "城市漫游"
 
 
+async def test_publish_interest_probe_does_not_record_probe_without_stream_subscriber() -> None:
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+            "probed_domains": {},
+            "probed_axes": {},
+        }
+    )
+
+    class _SoulEngineWithSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._speculator = _FakeSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="城市漫游",
+                        reason="能从场景里看结构。",
+                        weight=0.5,
+                        experience_mode="wander_observe",
+                        entry_load="light",
+                    )
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=RuntimeEventHub(),
+    )
+
+    await controller._publish_interest_probe_if_available()
+
+    assert memory.state["probed_domains"] == {}
+    assert memory.state["probed_axes"] == {}
+
+
 # ===========================================================================
 # Pool cap — hard upper bound on replenishment
 # ===========================================================================
@@ -2175,3 +2221,38 @@ async def test_refresh_pool_status_re_emits_when_count_rotates() -> None:
     pool_events = [e for e in event_hub.events if e["type"] == "pool_status"]
     counts = [e["pool_available_count"] for e in pool_events]
     assert counts == [42, 20, 42]
+
+
+async def test_refresh_if_needed_skips_when_scheduler_disabled() -> None:
+    """refresh_if_needed must respect the LLM gate so event-ingest and
+    feedback paths don't fire discovery when 停止后台 LLM 请求 is on."""
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(enabled=False, pause_on_extension_disconnect=False),
+    )
+
+    result = await controller.refresh_if_needed()
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "llm_paused"
+
+
+async def test_refresh_after_event_ingest_skips_when_scheduler_disabled() -> None:
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(enabled=False, pause_on_extension_disconnect=False),
+    )
+
+    result = await controller.refresh_after_event_ingest()
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "llm_paused"
+
+
+async def test_refresh_after_feedback_skips_when_scheduler_disabled() -> None:
+    controller = _controller_with_gate(
+        scheduler_config=SimpleNamespace(enabled=False, pause_on_extension_disconnect=False),
+    )
+
+    result = await controller.refresh_after_feedback()
+
+    assert result["refreshed"] is False
+    assert result["reason"] == "llm_paused"

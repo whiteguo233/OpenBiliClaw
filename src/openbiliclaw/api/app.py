@@ -748,10 +748,6 @@ def create_app(
     async def _run_post_feedback_tasks() -> None:
         with suppress(Exception):
             await ctx.soul_engine.process_feedback_batch_if_needed()
-        refresh_after_feedback = getattr(ctx.runtime_controller, "refresh_after_feedback", None)
-        if callable(refresh_after_feedback):
-            with suppress(Exception):
-                await refresh_after_feedback()
 
     async def _ingest_profile_update_events(events: list[dict[str, Any]]) -> None:
         """Feed source task events into the profile-update pipeline when ready.
@@ -4438,6 +4434,7 @@ def create_app(
         from openbiliclaw.config import (
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
+            _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
             _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
             _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS,
             _DEFAULT_SIGNAL_EVENT_THRESHOLD,
@@ -4674,6 +4671,11 @@ def create_app(
                     5,
                     None,
                 ),
+                "feedback_batch_threshold": (
+                    _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
+                    1,
+                    None,
+                ),
             }
             for key in (
                 "enabled",
@@ -4698,6 +4700,7 @@ def create_app(
                 "speculation_max_secondary_interests",
                 "auto_update_enabled",
                 "auto_update_check_interval_hours",
+                "feedback_batch_threshold",
             ):
                 if key in sdata:
                     current_val = getattr(cfg.scheduler, key)

@@ -367,6 +367,9 @@ class RuntimeContext:
             speculator_idle_interval_minutes=int(
                 getattr(new_config.scheduler, "speculator_idle_interval_minutes", 30)
             ),
+            feedback_batch_threshold=int(
+                getattr(new_config.scheduler, "feedback_batch_threshold", 3)
+            ),
         )
 
         # 4. Embedding service

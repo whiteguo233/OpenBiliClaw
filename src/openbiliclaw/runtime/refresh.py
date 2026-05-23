@@ -341,6 +341,9 @@ class ContinuousRefreshController:
         ``refresh_if_needed`` entry does, so callers reaching it from
         different paths can't double-acquire.
         """
+        if not self._llm_work_allowed():
+            return {"refreshed": False, "strategies": [], "reason": "llm_paused"}
+
         if self._refresh_lock.locked():
             logger.debug("refresh_if_needed skipped: another refresh in flight")
             return {"skipped": True, "reason": "another refresh holds lock"}
@@ -1462,10 +1465,12 @@ class ContinuousRefreshController:
         except Exception:
             return 0
 
-    async def _publish_event(self, event: dict[str, object]) -> None:
+    async def _publish_event(self, event: dict[str, object]) -> bool:
         publish = getattr(self.event_hub, "publish", None)
         if callable(publish):
-            await publish(event)
+            result = await publish(event)
+            return True if result is None else bool(result)
+        return False
 
     async def _publish_delight_if_available(self) -> None:
         """Check for a pending delight candidate and push it via WebSocket."""
@@ -1531,17 +1536,10 @@ class ContinuousRefreshController:
         if not domain:
             return
 
-        # Record this probe
-        probed[domain.lower()] = now.isoformat()
-        state["probed_domains"] = probed
         axis = build_probe_axis(
             experience_mode=getattr(top, "experience_mode", ""),
             entry_load=getattr(top, "entry_load", ""),
         )
-        if axis:
-            probed_axes[axis] = now.isoformat()
-        state["probed_axes"] = probed_axes
-        self.memory_manager.save_discovery_runtime_state(state)
         reason = str(getattr(top, "reason", "")).strip()
         specifics = [
             str(getattr(item, "name", "")).strip()
@@ -1557,7 +1555,7 @@ class ContinuousRefreshController:
             if reason
             else f"我感觉你可能对【{domain}】{specific_hint}有潜在兴趣，这个方向你自己认不认？"
         )
-        await self._publish_event(
+        delivered = await self._publish_event(
             {
                 "type": "interest.probe",
                 "phase": "ready",
@@ -1573,6 +1571,17 @@ class ContinuousRefreshController:
                 "question": question,
             }
         )
+        if not delivered:
+            logger.debug("interest probe skipped: no runtime-stream subscriber")
+            return
+
+        # Record this probe only after it has reached at least one runtime stream.
+        probed[domain.lower()] = now.isoformat()
+        state["probed_domains"] = probed
+        if axis:
+            probed_axes[axis] = now.isoformat()
+        state["probed_axes"] = probed_axes
+        self.memory_manager.save_discovery_runtime_state(state)
 
     def _strategy_message(self, strategies: list[str]) -> str:
         if strategies == ["search", "related_chain"]:

@@ -387,8 +387,8 @@ data/memory/
 
 | 字段 | 结构 | 说明 |
 |------|------|------|
-| `probed_domains` | `{normalized_domain: iso_timestamp}` | 近期已推送 / 已返回的 probe domain，用于短期避免重复问同一方向 |
-| `probed_axes` | `{experience_mode|entry_load: iso_timestamp}` | 近期已推送 / 已返回的体验轴，用于在验证压力相同的候选中优先选择不同体验 |
+| `probed_domains` | `{normalized_domain: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的 probe domain，用于短期避免重复问同一方向；前端离线导致未投递时不写入 |
+| `probed_axes` | `{experience_mode|entry_load: iso_timestamp}` | 近期已成功推送到 runtime stream / 已由 OpenClaw 返回的体验轴，用于在验证压力相同的候选中优先选择不同体验；前端离线导致未投递时不写入 |
 | `probe_feedback_history` | `[{domain,response,axis?,category?,reason?,specifics?,message?,created_at}]` | 最近 100 条用户显式探针反馈；reject / chat_negative 会参与后续 novelty guard 与 probe selection，confirm / chat_positive / chat_neutral 只作为审计记录 |
 
 ## 系统集成

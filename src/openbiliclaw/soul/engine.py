@@ -92,10 +92,12 @@ class SoulEngine:
         speculation_max_primary_interests: int = 15,
         speculation_max_secondary_interests: int = 60,
         speculator_idle_interval_minutes: int = 30,
+        feedback_batch_threshold: int = 3,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
+        self._feedback_batch_threshold = max(1, feedback_batch_threshold)
         self._module_overrides = dict(module_overrides or {})
         self._llm_concurrency = llm_concurrency
         # Pass usage_recorder through so internal LLM calls
@@ -461,7 +463,7 @@ class SoulEngine:
         ]
         feedback_events.sort(key=lambda item: int(item.get("id", 0) or 0))
         feedback_count = len(feedback_events)
-        if feedback_count < 3:
+        if feedback_count < self._feedback_batch_threshold:
             return {
                 "triggered": False,
                 "feedback_count": feedback_count,

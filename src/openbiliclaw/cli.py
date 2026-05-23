@@ -3778,10 +3778,13 @@ def init(
                 for item in folder.items if hasattr(folder, "items") else []:
                     if len(favs) >= resolved_bilibili_favorite_limit:
                         break
+                    upper = item.get("upper", {}) if isinstance(item, dict) else {}
+                    if not isinstance(upper, dict):
+                        upper = {}
                     favs.append(
                         {
-                            "title": getattr(item, "title", str(item)),
-                            "upper": getattr(item, "upper", ""),
+                            "title": item.get("title", "") if isinstance(item, dict) else str(item),
+                            "upper": str(upper.get("name", "")).strip(),
                             "folder": folder_title,
                         }
                     )

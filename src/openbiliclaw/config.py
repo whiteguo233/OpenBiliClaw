@@ -30,6 +30,7 @@ _DEFAULT_EXPLORE_REFRESH_HOURS = 12
 _DEFAULT_DISCOVERY_LIMIT = 30
 _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS = 120
 _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
+_DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
 DEFAULT_LLM_CONCURRENCY = 3
 _MIN_LLM_CONCURRENCY = 1
 _MAX_LLM_CONCURRENCY = 16
@@ -193,6 +194,7 @@ class SchedulerConfig:
     speculation_max_active: int = 5
     speculation_max_primary_interests: int = 15
     speculation_max_secondary_interests: int = 60
+    feedback_batch_threshold: int = _DEFAULT_FEEDBACK_BATCH_THRESHOLD
     # Default off. The auto-updater pulls from GitHub releases and
     # restarts the backend when a newer version is detected, but it has
     # historically caused restart loops when the local

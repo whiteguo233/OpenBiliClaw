@@ -24,8 +24,16 @@ class RuntimeEventHub:
         """Remove one subscriber queue."""
         self._subscribers.discard(queue)
 
-    async def publish(self, event: dict[str, Any]) -> None:
-        """Fan out one event to all current subscribers."""
+    async def publish(self, event: dict[str, Any]) -> bool:
+        """Fan out one event to all current subscribers.
+
+        Returns ``True`` when at least one subscriber queue accepted the
+        event.  Callers that need delivery-sensitive side effects can avoid
+        marking one-shot events as consumed when no runtime stream is open.
+        """
+        delivered = False
         for queue in list(self._subscribers):
             with suppress(asyncio.QueueFull):
                 queue.put_nowait(dict(event))
+                delivered = True
+        return delivered

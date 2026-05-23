@@ -4742,6 +4742,7 @@ function bindSettings() {
     setVal("cfgAccountSyncInterval", cfg.scheduler?.account_sync_interval_hours);
     setVal("cfgRefreshCheckInterval", cfg.scheduler?.refresh_check_interval_seconds);
     setVal("cfgSignalEventThreshold", cfg.scheduler?.signal_event_threshold);
+    setVal("cfgFeedbackBatchThreshold", cfg.scheduler?.feedback_batch_threshold);
     setVal("cfgTrendingRefreshHours", cfg.scheduler?.trending_refresh_hours);
     setVal("cfgExploreRefreshHours", cfg.scheduler?.explore_refresh_hours);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
@@ -4901,6 +4902,7 @@ function bindSettings() {
         account_sync_interval_hours: getInt("cfgAccountSyncInterval", 6),
         refresh_check_interval_seconds: getInt("cfgRefreshCheckInterval", 60),
         signal_event_threshold: getInt("cfgSignalEventThreshold", 6),
+        feedback_batch_threshold: getInt("cfgFeedbackBatchThreshold", 3),
         trending_refresh_hours: getInt("cfgTrendingRefreshHours", 3),
         explore_refresh_hours: getInt("cfgExploreRefreshHours", 12),
         discovery_limit: getInt("cfgDiscoveryLimit", 30),
