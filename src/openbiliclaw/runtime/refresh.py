@@ -435,6 +435,13 @@ class ContinuousRefreshController:
             logger.exception("trim_topic_group_overflow failed")
 
         source_targets = self._source_target_counts()
+        # Augmented view that includes explicit 0 quotas for share=0
+        # platforms; trim/reactivate functions need these to actually
+        # enforce "user set this platform to 0" on the existing pool.
+        # Without this, an xhs item from a prior config would never be
+        # suppressed when the user toggles xhs share to 0 — it would
+        # sit in the pool until manually feedbacked.
+        source_trim_quotas = self._source_quotas_for_trim()
         reactivate_fn = getattr(self.database, "reactivate_under_quota_pool_sources", None)
         if callable(reactivate_fn):
             try:
@@ -470,7 +477,7 @@ class ContinuousRefreshController:
         if callable(trim_source_overflow_fn):
             try:
                 source_overflow_suppressed = trim_source_overflow_fn(
-                    source_share_quotas=source_targets,
+                    source_share_quotas=source_trim_quotas,
                 )
                 if source_overflow_suppressed > 0:
                     logger.info(
@@ -489,7 +496,7 @@ class ContinuousRefreshController:
             try:
                 trimmed = self.database.trim_pool_to_target_count(
                     target=self.pool_target_count,
-                    source_share_quotas=source_targets,
+                    source_share_quotas=source_trim_quotas,
                 )
             except Exception:
                 logger.exception("trim_pool_to_target_count failed")
@@ -1595,20 +1602,19 @@ class ContinuousRefreshController:
         return plan
 
     def _source_target_counts(self) -> dict[str, int]:
+        """Per-source target counts that sum to ``pool_target_count``.
+
+        Only sources with positive share appear in the result. Callers
+        that need explicit zeros for share-disabled sources (e.g. the
+        trim-overflow pass) should use ``_source_quotas_for_trim`` instead.
+        """
         shares = self._normalized_pool_source_shares()
-        targets: dict[str, int] = {source: 0 for source, share in shares.items() if share == 0}
-        positive = [(source, share) for source, share in shares.items() if share > 0]
-        if not positive:
-            # _normalized_pool_source_shares falls back to defaults when all
-            # shares are 0, so this branch is just defensive belt-and-braces.
-            return targets
-        total_share = sum(share for _source, share in positive)
+        total_share = sum(shares.values())
         remaining = self.pool_target_count
-        for index, (source, share) in enumerate(positive):
-            if index == len(positive) - 1:
-                # Last positive-share source gets the rounding leftover.
-                # Zero-share sources never get it, even if they appear
-                # last in the original iteration order.
+        targets: dict[str, int] = {}
+        items = list(shares.items())
+        for index, (source, share) in enumerate(items):
+            if index == len(items) - 1:
                 targets[source] = remaining
                 break
             count = round(self.pool_target_count * share / total_share)
@@ -1616,6 +1622,29 @@ class ContinuousRefreshController:
             targets[source] = count
             remaining -= count
         return targets
+
+    def _source_quotas_for_trim(self) -> dict[str, int]:
+        """Quotas dict for the per-source trim/overflow pass.
+
+        ``_source_target_counts`` omits zero-share sources because
+        downstream code (refresh-plan, deficit calculation) uses
+        ``"source" not in shares`` as the disable signal. The trim
+        functions need the opposite — they iterate the dict and only
+        suppress items whose source IS present, so a missing entry
+        means "leave items of this source alone".
+
+        For strict enforcement of share=0 on the live pool — when a
+        user just lowered xhs from 2 to 0 and we want to suppress the
+        old xhs items still sitting in the pool — we need to explicitly
+        include those sources with quota 0. This helper builds that
+        augmented view: target_counts plus an explicit 0 for any
+        ``_PLATFORM_SOURCE_ORDER`` family not already there.
+        """
+        targets = self._source_target_counts()
+        return {
+            source: targets.get(source, 0)
+            for source in _PLATFORM_SOURCE_ORDER
+        } | targets  # preserve non-standard sources if any
 
     def _source_deficit(self, source_family: str) -> int:
         source_counts = self.database.count_pool_candidates_by_source()
@@ -1675,9 +1704,14 @@ class ContinuousRefreshController:
                 share = int(raw.get(source, 0))
             except (TypeError, ValueError):
                 share = 0
-            # Accept 0 as a legitimate "do not recommend from this source"
-            # signal. Negatives are rejected.
-            if share >= 0:
+            # Drop zero shares from the dict. A user setting share=0 in
+            # the popup is asking "exclude this platform" — downstream
+            # code uses "source not in shares" as the disable signal
+            # (e.g. _build_refresh_plan skips bilibili strategies when
+            # bilibili is absent). Strict enforcement of share=0 in the
+            # *existing* pool lives in _source_quotas_for_trim, which
+            # adds back explicit zeros for the trim-overflow pass.
+            if share > 0:
                 normalized[source] = share
         for source, raw_share in raw.items():
             source_key = str(source).strip().lower()
@@ -1687,13 +1721,13 @@ class ContinuousRefreshController:
                 share = int(raw_share)
             except (TypeError, ValueError):
                 continue
-            if share >= 0:
+            if share > 0:
                 normalized[source_key] = share
-        # If every share is zero we'd compute total_share = 0 in
-        # _source_target_counts and divide by zero. Fall back to defaults
-        # so the pool keeps refilling. A user who really wants to disable
-        # everything should toggle enabled=False on each source.
-        if not normalized or all(value == 0 for value in normalized.values()):
+        # All-zero / empty input falls back to defaults so the pool keeps
+        # refilling. Users who really want to disable everything should
+        # toggle ``enabled=False`` per source — that path goes through
+        # ``effective_pool_source_shares`` which strips disabled rows.
+        if not normalized:
             return dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
         return normalized
 
