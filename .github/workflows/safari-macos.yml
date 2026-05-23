@@ -66,11 +66,14 @@ jobs:
       - name: Select Xcode
         run: |
           set -euo pipefail
-          # List what's available for diagnostics, then pick the newest
-          # 15.x that ships on this runner image.
+          # List what's available for diagnostics, then pick Xcode 16+.
+          # xcodegen 2.45.4 generates Xcode project format 77, which only
+          # Xcode 16 and newer can open — 15.4 fails with "future Xcode
+          # project file format (77)". macos-14 runners ship 16.1 and
+          # 16.2; pick the newest, fall back to the older 16 if absent.
           ls /Applications | grep -E '^Xcode' || true
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer 2>/dev/null \
-            || sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer 2>/dev/null \
+          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer 2>/dev/null \
             || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
 

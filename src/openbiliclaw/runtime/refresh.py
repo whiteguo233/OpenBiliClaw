@@ -1635,16 +1635,32 @@ class ContinuousRefreshController:
 
         For strict enforcement of share=0 on the live pool — when a
         user just lowered xhs from 2 to 0 and we want to suppress the
-        old xhs items still sitting in the pool — we need to explicitly
-        include those sources with quota 0. This helper builds that
-        augmented view: target_counts plus an explicit 0 for any
-        ``_PLATFORM_SOURCE_ORDER`` family not already there.
+        old xhs items still sitting in the pool — we explicitly add
+        the source back with quota 0. But ONLY for sources the user
+        actively set to 0 in ``self.pool_source_shares``; sources
+        missing from the raw config entirely are "untracked" and the
+        trim leaves their items alone (backward-compat — that's what
+        ``test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target``
+        verifies: the default config without youtube produces a quota
+        dict that doesn't mention youtube, so legacy youtube items in
+        the pool aren't surprise-suppressed).
         """
         targets = self._source_target_counts()
-        return {
-            source: targets.get(source, 0)
-            for source in _PLATFORM_SOURCE_ORDER
-        } | targets  # preserve non-standard sources if any
+        quotas = dict(targets)
+        raw = self.pool_source_shares or {}
+        for source, raw_share in raw.items():
+            source_key = str(source).strip().lower()
+            if not source_key or source_key in quotas:
+                continue
+            try:
+                share = int(raw_share)
+            except (TypeError, ValueError):
+                continue
+            # Only ``explicitly 0`` triggers a trim quota; anything else
+            # would be either positive (already in targets) or invalid.
+            if share == 0:
+                quotas[source_key] = 0
+        return quotas
 
     def _source_deficit(self, source_family: str) -> int:
         source_counts = self.database.count_pool_candidates_by_source()
