@@ -5537,7 +5537,7 @@ def create_app(
                     # success with `was_false_positive=True` so the frontend
                     # can surface a clear "误报已清除" message.
                     ctx.database.clear_youtube_repost(bvid)
-                    new_expression = None
+                    new_expression: str | None = None
                     if recommendation_id is not None:
                         rec = ctx.database.get_recommendation_by_id(recommendation_id)
                         if rec is not None:
@@ -5575,7 +5575,7 @@ def create_app(
                         yt_cover_url=str(result.get("cover_url") or ""),
                     )
 
-                new_expression: str | None = None
+                new_expression = None
                 if recommendation_id is not None and source_url:
                     rec = ctx.database.get_recommendation_by_id(recommendation_id)
                     if rec is not None:
