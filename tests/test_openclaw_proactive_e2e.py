@@ -156,6 +156,7 @@ class _FakeSpeculator:
             )
         ]
         self.confirmed_domains: list[str] = []
+        self.confirmation_sources: list[str] = []
         self.rejected_domains: list[tuple[str, int]] = []
         self.observed_events: list[list[dict[str, object]]] = []
         self.force_tick_profiles: list[Any] = []
@@ -163,8 +164,14 @@ class _FakeSpeculator:
     def get_active_speculations(self) -> list[SpeculativeInterest]:
         return list(self.specs)
 
-    def user_confirm_speculation(self, domain: str) -> bool:
+    def user_confirm_speculation(
+        self,
+        domain: str,
+        *,
+        confirmation_source: str = "probe_confirmed",
+    ) -> bool:
         self.confirmed_domains.append(domain)
+        self.confirmation_sources.append(confirmation_source)
         return True
 
     def user_reject_speculation(self, domain: str, cooldown_days: int = 30) -> bool:
@@ -367,6 +374,7 @@ async def test_interest_probe_trigger_and_confirm_flow_publish_full_round_trip(
     assert len(confirm_events) == 1
     assert confirm_events[0]["domain"] == "建筑美学"
     assert speculator.confirmed_domains == ["建筑美学"]
+    assert speculator.confirmation_sources == ["probe_confirmed"]
     assert speculator.force_tick_profiles == [{"personality_portrait": "E2E 测试画像"}]
     assert "建筑美学" in memory_manager.runtime_state["probed_domains"]
     assert "aesthetic|light" in memory_manager.runtime_state["probed_axes"]

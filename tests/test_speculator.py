@@ -843,6 +843,35 @@ def test_speculator_get_active():
         assert {s.domain for s in active} == {"A", "C"}
 
 
+def test_user_confirm_speculation_records_source_and_confirmed_at():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_dir = Path(tmpdir)
+        speculator = InterestSpeculator(llm_service=None, data_dir=data_dir)
+        save_speculative_state(
+            data_dir,
+            SpeculativeState(
+                active=[
+                    SpeculativeInterest(
+                        domain="建筑美学",
+                        status="active",
+                        created_at=datetime.now().isoformat(),
+                    )
+                ]
+            ),
+        )
+
+        speculator.user_confirm_speculation(
+            "建筑美学",
+            confirmation_source="profile_confirmed",
+        )
+        state = speculator._load_state()
+        spec = next(item for item in state.active if item.domain == "建筑美学")
+
+        assert spec.status == "confirmed"
+        assert spec.confirmation_source == "profile_confirmed"
+        assert spec.confirmed_at
+
+
 async def test_speculator_tick_promotes():
     with tempfile.TemporaryDirectory() as tmpdir:
         data_dir = Path(tmpdir)

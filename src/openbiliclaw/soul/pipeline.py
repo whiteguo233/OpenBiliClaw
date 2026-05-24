@@ -833,7 +833,7 @@ class ProfileUpdatePipeline:
 
     async def _run_speculator_tick(self, result: FlushResult) -> None:
         """Run speculator lifecycle: expire, promote, generate."""
-        from openbiliclaw.soul.profile import InterestDomain
+        from openbiliclaw.soul.interest_writeback import merge_confirmed_interest
 
         profile = self._load_profile()
         feedback_history: object = []
@@ -854,14 +854,21 @@ class ProfileUpdatePipeline:
         # Promote confirmed speculations into the interest layer
         if tick_result.promoted:
             for spec in tick_result.promoted:
-                profile.interest.likes.append(
-                    InterestDomain(
-                        domain=spec.domain,
-                        weight=0.3,
-                        source="speculated",
-                        first_seen=spec.created_at,
-                        last_seen=datetime.now().isoformat(),
-                    )
+                specifics = [
+                    str(getattr(specific, "name", "")).strip()
+                    for specific in getattr(spec, "specifics", [])
+                    if str(getattr(specific, "name", "")).strip()
+                ]
+                source = str(
+                    getattr(spec, "confirmation_source", "") or "speculated"
+                )
+                merge_confirmed_interest(
+                    profile,
+                    domain=str(getattr(spec, "domain", "")),
+                    specifics=specifics,
+                    source=source,
+                    first_seen=str(getattr(spec, "created_at", "")),
+                    last_seen=str(getattr(spec, "confirmed_at", "")) or datetime.now().isoformat(),
                 )
 
             self._save_profile(profile)

@@ -2387,6 +2387,9 @@ def create_app(
         *,
         speculator: Any,
         message: str = "",
+        classification: str = "",
+        classifier: str = "",
+        resulting_action: str = "",
         state_key: str = "probe_feedback_history",
         metadata_fn: Any | None = None,
     ) -> None:
@@ -2409,6 +2412,13 @@ def create_app(
             entry["response"] = response
             if message:
                 entry["message"] = message
+                entry["raw_text_excerpt"] = message[:240]
+            if classification:
+                entry["classification"] = classification
+            if classifier:
+                entry["classifier"] = classifier
+            if resulting_action:
+                entry["resulting_action"] = resulting_action
             state[state_key] = append_probe_feedback_history(
                 state.get(state_key, []),
                 entry,
@@ -2422,52 +2432,58 @@ def create_app(
         ai_reply: str,
         domain: str,
     ) -> str:
-        """Judge whether the user's probe chat is positive, negative, or neutral.
+        """Judge the user's probe chat as a 4-way confirmation signal."""
+        sentiment, _classifier = await _classify_probe_sentiment(
+            user_message,
+            ai_reply,
+            domain,
+        )
+        return sentiment
 
-        Uses LLM first; falls back to keyword detection on failure.
-        Returns: "positive", "negative", or "neutral".
-        """
-        # Try LLM judgment
+    async def _classify_probe_sentiment(
+        user_message: str,
+        ai_reply: str,
+        domain: str,
+    ) -> tuple[str, str]:
+        """Return ``(classification, classifier)`` for probe chat feedback."""
         llm_result = await _llm_judge_sentiment(user_message, ai_reply, domain)
-        if llm_result in ("positive", "negative"):
-            return llm_result
-        # Fallback: keyword detection
-        return _keyword_judge_sentiment(user_message)
+        if llm_result in {"strong_positive", "weak_positive", "negative"}:
+            return llm_result, "llm"
+        keyword_result = _keyword_judge_sentiment(user_message)
+        if keyword_result != "neutral":
+            return keyword_result, "keyword"
+        return "neutral", "neutral_default"
 
     def _keyword_judge_sentiment(user_message: str) -> str:
         """Fallback keyword-based sentiment detection."""
         msg = user_message.lower()
-        neg = {
+        negative_terms = {
             "不喜欢",
-            "太硬",
-            "太艰涩",
-            "没兴趣",
             "不感兴趣",
+            "不是这个意思",
+            "别推",
+            "没兴趣",
             "不想看",
-            "太深",
-            "太学术",
-            "无聊",
-            "不行",
-            "算了",
-            "不要",
-            "讨厌",
         }
-        pos = {
-            "有意思",
-            "感兴趣",
-            "想看看",
-            "挺好",
-            "可以",
-            "继续",
-            "不错",
+        strong_positive_terms = {
+            "以后多推",
+            "这就是我想看的",
+            "我就喜欢",
+            "加入我的画像",
+        }
+        weak_positive_terms = {
             "有点意思",
-            "想了解",
-            "喜欢",
+            "可以看看",
+            "偶尔看看",
+            "还行",
+            "先试试",
         }
-        if any(kw in msg for kw in neg):
+        if any(kw in msg for kw in negative_terms):
             return "negative"
-        if any(kw in msg for kw in pos):
-            return "positive"
+        if any(kw in msg for kw in strong_positive_terms):
+            return "strong_positive"
+        if any(kw in msg for kw in weak_positive_terms):
+            return "weak_positive"
         return "neutral"
 
     async def _llm_judge_sentiment(
@@ -2475,7 +2491,7 @@ def create_app(
         ai_reply: str,
         domain: str,
     ) -> str:
-        """LLM-based sentiment judgment. Returns positive/negative/neutral."""
+        """LLM-based sentiment judgment for probe chat."""
         if ctx.recommendation_engine is None:
             return "neutral"
         llm = getattr(ctx.recommendation_engine, "_llm", None)
@@ -2487,10 +2503,12 @@ def create_app(
                     system_instruction=(
                         "任务：判断用户对一个兴趣方向的态度。\n\n"
                         "规则：\n"
-                        "1. 只输出一个英文单词：positive 或 negative 或 neutral\n"
+                        "1. 只输出一个英文标签："
+                        "strong_positive、weak_positive、neutral 或 negative\n"
                         "2. 不要输出任何其他内容\n\n"
                         "判断标准：\n"
-                        "- positive = 用户表达了兴趣、想了解、觉得有意思\n"
+                        "- strong_positive = 用户明确要加入画像、以后多推、这就是想看的\n"
+                        "- weak_positive = 用户表达轻微兴趣、可以看看、偶尔看看，但未直接确认\n"
                         "- negative = 用户表达了不喜欢、不感兴趣、太难、太无聊\n"
                         "- neutral = 态度不明确\n"
                     ),
@@ -2507,7 +2525,12 @@ def create_app(
             # Extract the first recognizable word
             for word in raw.split():
                 cleaned = word.strip("\"'.,:;!?")
-                if cleaned in ("negative", "positive", "neutral"):
+                if cleaned in (
+                    "strong_positive",
+                    "weak_positive",
+                    "negative",
+                    "neutral",
+                ):
                     logger.info("Sentiment LLM for '%s': %s (raw=%r)", domain, cleaned, raw)
                     return cleaned
             logger.info(
@@ -2517,6 +2540,20 @@ def create_app(
         except Exception:
             logger.info("Sentiment LLM for '%s' failed, trying keywords", domain)
             return "neutral"
+
+    def _confirm_speculation_with_source(
+        speculator: Any,
+        domain: str,
+        *,
+        confirmation_source: str,
+    ) -> bool:
+        confirm = getattr(speculator, "user_confirm_speculation", None)
+        if not callable(confirm):
+            return False
+        try:
+            return bool(confirm(domain, confirmation_source=confirmation_source))
+        except TypeError:
+            return bool(confirm(domain))
 
     def _contextual_chat_message(turn: ChatTurnOut) -> str:
         if turn.scope == "delight":
@@ -2568,31 +2605,44 @@ def create_app(
             )
         elif turn.scope == "probe":
             domain = turn.subject_id or turn.subject_title
-            sentiment = await _judge_probe_sentiment(turn.message, reply, domain)
+            sentiment, classifier = await _classify_probe_sentiment(turn.message, reply, domain)
             speculator = getattr(ctx.soul_engine, "_speculator", None)
+            chat_response = "chat_neutral"
+            resulting_action = "none"
             if sentiment == "negative":
+                chat_response = "chat_rejected"
+                resulting_action = "rejected"
                 if speculator is not None:
                     with suppress(Exception):
                         speculator.user_reject_speculation(domain, cooldown_days=14)
                 summary = f"你对「{domain}」的反馈偏负面（{turn.message}），已暂时搁置 14 天。"
-            elif sentiment == "positive":
+            elif sentiment == "strong_positive":
+                chat_response = "chat_confirmed"
+                resulting_action = "confirmed"
                 if speculator is not None:
                     with suppress(Exception):
-                        speculator.observe(
-                            [
-                                {
-                                    "event_type": "dialogue",
-                                    "title": domain,
-                                    "metadata": {
-                                        "user_message": turn.message,
-                                        "source": "probe_chat",
-                                    },
-                                }
-                            ]
+                        _confirm_speculation_with_source(
+                            speculator,
+                            domain,
+                            confirmation_source="chat_confirmed",
                         )
-                summary = f"你对「{domain}」表示了兴趣，确认度 +1。"
+                summary = f"你明确确认了对「{domain}」的兴趣，已加入画像。"
+            elif sentiment == "weak_positive":
+                chat_response = "weak_positive"
+                resulting_action = "weak_positive_deferred"
+                summary = f"你对「{domain}」有轻微信号，先作为短期探索方向观察。"
             else:
                 summary = f"关于「{domain}」你说：{turn.message}"
+            if speculator is not None:
+                _record_probe_feedback_history(
+                    domain,
+                    chat_response,
+                    speculator=speculator,
+                    message=turn.message,
+                    classification=sentiment,
+                    classifier=classifier,
+                    resulting_action=resulting_action,
+                )
             _record_probe_cognition(
                 summary,
                 domain,
@@ -2602,10 +2652,11 @@ def create_app(
             await _publish_probe_event("interest.chat", summary, domain)
         elif turn.scope == "avoidance_probe":
             domain = turn.subject_id or turn.subject_title
-            sentiment = await _judge_probe_sentiment(turn.message, reply, domain)
+            sentiment, classifier = await _classify_probe_sentiment(turn.message, reply, domain)
             speculator = getattr(ctx.soul_engine, "_avoidance_speculator", None)
             if sentiment == "negative":
-                chat_response = "chat_positive"
+                chat_response = "avoidance_chat_confirmed"
+                resulting_action = "confirmed"
                 if speculator is not None:
                     with suppress(Exception):
                         speculator.observe(
@@ -2622,8 +2673,9 @@ def create_app(
                             ]
                         )
                 summary = f"你确认「{domain}」偏向不喜欢，确认度 +1。"
-            elif sentiment == "positive":
-                chat_response = "chat_negative"
+            elif sentiment in {"strong_positive", "weak_positive"}:
+                chat_response = "avoidance_chat_rejected"
+                resulting_action = "rejected"
                 if speculator is not None:
                     reject_fn = getattr(speculator, "user_reject_avoidance", None)
                     if callable(reject_fn):
@@ -2631,7 +2683,8 @@ def create_app(
                             reject_fn(domain, cooldown_days=14)
                 summary = f"你表示其实不排斥「{domain}」，已暂时搁置 14 天。"
             else:
-                chat_response = "chat_neutral"
+                chat_response = "avoidance_chat_neutral"
+                resulting_action = "none"
                 summary = f"关于避雷方向「{domain}」你说：{turn.message}"
             if speculator is not None:
                 _record_probe_feedback_history(
@@ -2639,6 +2692,9 @@ def create_app(
                     chat_response,
                     speculator=speculator,
                     message=turn.message,
+                    classification=sentiment,
+                    classifier=classifier,
+                    resulting_action=resulting_action,
                     state_key="avoidance_probe_feedback_history",
                     metadata_fn=lambda item_domain: _probe_metadata_from_active_avoidance(
                         speculator,
@@ -2780,12 +2836,23 @@ def create_app(
             raise HTTPException(status_code=503, detail="Speculator not available")
 
         if response_type == "confirm":
+            requested_source = str(payload.get("confirmation_source", "")).strip()
+            surface = str(payload.get("surface", "")).strip().lower()
+            confirmation_source = (
+                requested_source
+                or ("profile_confirmed" if surface == "profile" else "probe_confirmed")
+            )
             _record_probe_feedback_history(
                 domain,
                 "confirm",
                 speculator=speculator,
+                resulting_action="confirmed",
             )
-            ok = speculator.user_confirm_speculation(domain)
+            ok = _confirm_speculation_with_source(
+                speculator,
+                domain,
+                confirmation_source=confirmation_source,
+            )
             if ok:
                 # Force_tick generates 5 new probes via LLM (~30-60s).
                 # Running it inline blocks the response past the
@@ -2883,7 +2950,7 @@ def create_app(
                 timeout=30,
             )
             # Judge sentiment while discovery is still paused
-            sentiment = await _judge_probe_sentiment(raw_message, reply, domain)
+            sentiment, classifier = await _classify_probe_sentiment(raw_message, reply, domain)
         except TimeoutError:
             return {
                 "ok": False,
@@ -2903,32 +2970,38 @@ def create_app(
             if concurrency is not None:
                 concurrency.chat_active = False
 
-        chat_response = (
-            f"chat_{sentiment}" if sentiment in {"positive", "negative"} else "chat_neutral"
-        )
+        chat_response = "chat_neutral"
+        resulting_action = "none"
+        if sentiment == "negative":
+            chat_response = "chat_rejected"
+            resulting_action = "rejected"
+            speculator.user_reject_speculation(domain, cooldown_days=14)
+            summary = f"你对「{domain}」的反馈偏负面（{raw_message}），已暂时搁置 14 天。"
+        elif sentiment == "strong_positive":
+            chat_response = "chat_confirmed"
+            resulting_action = "confirmed"
+            _confirm_speculation_with_source(
+                speculator,
+                domain,
+                confirmation_source="chat_confirmed",
+            )
+            summary = f"你明确确认了对「{domain}」的兴趣，已加入画像。"
+        elif sentiment == "weak_positive":
+            chat_response = "weak_positive"
+            resulting_action = "weak_positive_deferred"
+            summary = f"你对「{domain}」有轻微信号，先作为短期探索方向观察。"
+        else:
+            summary = f"关于「{domain}」你说：{raw_message}"
+
         _record_probe_feedback_history(
             domain,
             chat_response,
             speculator=speculator,
             message=raw_message,
+            classification=sentiment,
+            classifier=classifier,
+            resulting_action=resulting_action,
         )
-
-        if sentiment == "negative":
-            speculator.user_reject_speculation(domain, cooldown_days=14)
-            summary = f"你对「{domain}」的反馈偏负面（{raw_message}），已暂时搁置 14 天。"
-        elif sentiment == "positive":
-            speculator.observe(
-                [
-                    {
-                        "event_type": "dialogue",
-                        "title": domain,
-                        "metadata": {"user_message": raw_message, "source": "probe_chat"},
-                    }
-                ]
-            )
-            summary = f"你对「{domain}」表示了兴趣，确认度 +1。"
-        else:
-            summary = f"关于「{domain}」你说：{raw_message}"
 
         detail = f"你的反馈：{raw_message}\n阿b的回复：{reply}"
         _record_probe_cognition(summary, domain, "chat", detail=detail)
@@ -3080,7 +3153,11 @@ def create_app(
                 ctx.dialogue.respond(contextual_message),
                 timeout=30,
             )
-            sentiment = await _judge_probe_sentiment(raw_message, reply, domain)
+            sentiment, classifier = await _classify_probe_sentiment(
+                raw_message,
+                reply,
+                domain,
+            )
         except TimeoutError:
             return {
                 "ok": False,
@@ -3101,7 +3178,8 @@ def create_app(
                 concurrency.chat_active = False
 
         if sentiment == "negative":
-            chat_response = "chat_positive"
+            chat_response = "avoidance_chat_confirmed"
+            resulting_action = "confirmed"
             speculator.observe(
                 [
                     {
@@ -3116,14 +3194,16 @@ def create_app(
                 ]
             )
             summary = f"你确认「{domain}」偏向不喜欢，确认度 +1。"
-        elif sentiment == "positive":
-            chat_response = "chat_negative"
+        elif sentiment in {"strong_positive", "weak_positive"}:
+            chat_response = "avoidance_chat_rejected"
+            resulting_action = "rejected"
             reject_fn = getattr(speculator, "user_reject_avoidance", None)
             if callable(reject_fn):
                 reject_fn(domain, cooldown_days=14)
             summary = f"你表示其实不排斥「{domain}」，已暂时搁置 14 天。"
         else:
-            chat_response = "chat_neutral"
+            chat_response = "avoidance_chat_neutral"
+            resulting_action = "none"
             summary = f"关于避雷方向「{domain}」你说：{raw_message}"
 
         _record_probe_feedback_history(
@@ -3131,6 +3211,9 @@ def create_app(
             chat_response,
             speculator=speculator,
             message=raw_message,
+            classification=sentiment,
+            classifier=classifier,
+            resulting_action=resulting_action,
             state_key="avoidance_probe_feedback_history",
             metadata_fn=metadata_fn,
         )

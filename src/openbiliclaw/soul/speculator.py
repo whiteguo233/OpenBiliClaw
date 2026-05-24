@@ -314,7 +314,7 @@ def _normalize_probe_term(value: Any) -> str:
 
 
 PROBE_FEEDBACK_HISTORY_LIMIT = 100
-NEGATIVE_PROBE_FEEDBACK_RESPONSES = {"reject", "chat_negative"}
+NEGATIVE_PROBE_FEEDBACK_RESPONSES = {"reject", "chat_negative", "chat_rejected"}
 
 
 def _string_field(value: Any) -> str:
@@ -354,13 +354,17 @@ def normalize_probe_feedback_history(history: object) -> list[dict[str, object]]
             "category",
             "reason",
             "message",
+            "raw_text_excerpt",
+            "classification",
+            "classifier",
+            "resulting_action",
             "created_at",
             "source_mode",
             "source_signal",
         ):
             text = _string_field(item.get(key))
             if text:
-                record[key] = text
+                record[key] = text[:240] if key == "raw_text_excerpt" else text
         specifics = _specific_names(item.get("specifics"))
         if specifics:
             record["specifics"] = specifics
@@ -922,7 +926,12 @@ class InterestSpeculator:
         state = self._load_state()
         return [s for s in state.active if s.status == "active"]
 
-    def user_confirm_speculation(self, domain: str) -> bool:
+    def user_confirm_speculation(
+        self,
+        domain: str,
+        *,
+        confirmation_source: str = "probe_confirmed",
+    ) -> bool:
         """User explicitly confirmed a speculated interest. Force-promote it.
 
         Sets ``status="confirmed"`` so the API stops surfacing this row in
@@ -934,10 +943,13 @@ class InterestSpeculator:
         was ignored.
         """
         state = self._load_state()
+        now = datetime.now().isoformat()
         for spec in state.active:
             if spec.domain.lower() == domain.lower() and spec.status == "active":
                 spec.confirmation_count = spec.confirmation_threshold  # Meet threshold
-                spec.confirming_events.append("user_confirmed")
+                spec.confirming_events.append(confirmation_source)
+                spec.confirmation_source = confirmation_source
+                spec.confirmed_at = now
                 spec.status = "confirmed"
                 self._save_state(state)
                 return True

@@ -2586,6 +2586,296 @@ class TestBackendAPI:
         ]
         assert soul_engine._speculator.rejected == [("城市漫游路线", 30)]
 
+    def test_interest_probe_confirm_from_profile_uses_profile_confirmed_source(self) -> None:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {"probe_feedback_history": []}
+                self.cognition_updates: list[dict[str, object]] = []
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
+                self.runtime_state = dict(state)
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self.cognition_updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.cognition_updates = list(updates)
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.confirmed: list[tuple[str, str]] = []
+                self._active = [SimpleNamespace(domain="建筑美学")]
+
+            def get_active_speculations(self) -> list[object]:
+                return list(self._active)
+
+            def user_confirm_speculation(
+                self,
+                domain: str,
+                *,
+                confirmation_source: str = "probe_confirmed",
+            ) -> bool:
+                self.confirmed.append((domain, confirmation_source))
+                return True
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self._speculator = FakeSpeculator()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/interest-probes/respond",
+            json={"domain": "建筑美学", "response": "confirm", "surface": "profile"},
+        )
+
+        assert response.status_code == 200
+        assert soul_engine._speculator.confirmed == [("建筑美学", "profile_confirmed")]
+
+    def test_interest_probe_chat_strong_positive_direct_confirms(self) -> None:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        class FakeDialogue:
+            async def respond(self, _message: str) -> str:
+                return "懂，这就是你想看的那类。"
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {"probe_feedback_history": []}
+                self.cognition_updates: list[dict[str, object]] = []
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
+                self.runtime_state = dict(state)
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self.cognition_updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.cognition_updates = list(updates)
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.confirmed: list[tuple[str, str]] = []
+                self.rejected: list[tuple[str, int]] = []
+
+            def get_active_speculations(self) -> list[object]:
+                return [SimpleNamespace(domain="建筑美学")]
+
+            def user_confirm_speculation(
+                self,
+                domain: str,
+                *,
+                confirmation_source: str = "probe_confirmed",
+            ) -> bool:
+                self.confirmed.append((domain, confirmation_source))
+                return True
+
+            def user_reject_speculation(
+                self,
+                domain: str,
+                cooldown_days: int = 30,
+            ) -> bool:
+                self.rejected.append((domain, cooldown_days))
+                return True
+
+        speculator = FakeSpeculator()
+        memory = FakeMemoryManager()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=SimpleNamespace(_speculator=speculator),
+            dialogue=FakeDialogue(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/interest-probes/respond",
+            json={
+                "domain": "建筑美学",
+                "response": "chat",
+                "message": "这就是我想看的，以后多推这种",
+            },
+        )
+
+        assert response.status_code == 200
+        assert speculator.confirmed == [("建筑美学", "chat_confirmed")]
+        assert speculator.rejected == []
+        history = memory.runtime_state["probe_feedback_history"]
+        assert isinstance(history, list)
+        assert history[0]["response"] == "chat_confirmed"
+        assert history[0]["classification"] == "strong_positive"
+        assert history[0]["classifier"] == "keyword"
+        assert history[0]["resulting_action"] == "confirmed"
+        assert history[0]["raw_text_excerpt"] == "这就是我想看的，以后多推这种"
+
+    def test_interest_probe_chat_weak_positive_records_without_confirming(self) -> None:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        class FakeDialogue:
+            async def respond(self, _message: str) -> str:
+                return "可以，先把它当作一个轻量方向。"
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {"probe_feedback_history": []}
+                self.cognition_updates: list[dict[str, object]] = []
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
+                self.runtime_state = dict(state)
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self.cognition_updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.cognition_updates = list(updates)
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.confirmed: list[object] = []
+                self.observed: list[object] = []
+                self.rejected: list[object] = []
+
+            def get_active_speculations(self) -> list[object]:
+                return [SimpleNamespace(domain="城市基础设施观察")]
+
+            def user_confirm_speculation(self, *_args: object, **_kwargs: object) -> bool:
+                self.confirmed.append((_args, _kwargs))
+                return True
+
+            def observe(self, events: object) -> None:
+                self.observed.append(events)
+
+            def user_reject_speculation(self, *_args: object, **_kwargs: object) -> bool:
+                self.rejected.append((_args, _kwargs))
+                return True
+
+        speculator = FakeSpeculator()
+        memory = FakeMemoryManager()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=SimpleNamespace(_speculator=speculator),
+            dialogue=FakeDialogue(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/interest-probes/respond",
+            json={
+                "domain": "城市基础设施观察",
+                "response": "chat",
+                "message": "有点意思，可以看看",
+            },
+        )
+
+        assert response.status_code == 200
+        assert speculator.confirmed == []
+        assert speculator.observed == []
+        assert speculator.rejected == []
+        history = memory.runtime_state["probe_feedback_history"]
+        assert isinstance(history, list)
+        assert history[0]["response"] == "weak_positive"
+        assert history[0]["classification"] == "weak_positive"
+        assert history[0]["resulting_action"] == "weak_positive_deferred"
+
+    def test_interest_probe_chat_classifier_failure_defaults_to_neutral(self) -> None:
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        class BrokenLLM:
+            async def complete_with_core_memory(self, **_kwargs: object) -> object:
+                raise RuntimeError("classifier unavailable")
+
+        class FakeDialogue:
+            async def respond(self, _message: str) -> str:
+                return "我先理解成你还在犹豫。"
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {"probe_feedback_history": []}
+                self.cognition_updates: list[dict[str, object]] = []
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
+                self.runtime_state = dict(state)
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return list(self.cognition_updates)
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.cognition_updates = list(updates)
+
+        class FakeSpeculator:
+            def __init__(self) -> None:
+                self.confirmed: list[object] = []
+                self.rejected: list[object] = []
+
+            def get_active_speculations(self) -> list[object]:
+                return [SimpleNamespace(domain="抽象雕塑")]
+
+            def user_confirm_speculation(self, *_args: object, **_kwargs: object) -> bool:
+                self.confirmed.append((_args, _kwargs))
+                return True
+
+            def user_reject_speculation(self, *_args: object, **_kwargs: object) -> bool:
+                self.rejected.append((_args, _kwargs))
+                return True
+
+        speculator = FakeSpeculator()
+        memory = FakeMemoryManager()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=SimpleNamespace(_speculator=speculator),
+            dialogue=FakeDialogue(),
+            recommendation_engine=SimpleNamespace(_llm=BrokenLLM()),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/interest-probes/respond",
+            json={
+                "domain": "抽象雕塑",
+                "response": "chat",
+                "message": "先放着吧",
+            },
+        )
+
+        assert response.status_code == 200
+        assert speculator.confirmed == []
+        assert speculator.rejected == []
+        history = memory.runtime_state["probe_feedback_history"]
+        assert isinstance(history, list)
+        assert history[0]["classification"] == "neutral"
+        assert history[0]["resulting_action"] == "none"
+
     def test_avoidance_probe_pending_returns_active_items(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
@@ -3061,7 +3351,7 @@ class TestBackendAPI:
             ).json()
             assert [item["turn_id"] for item in history["items"]] == ["turn-avoidance-1"]
             feedback_history = memory.runtime_state["avoidance_probe_feedback_history"]
-            assert feedback_history[0]["response"] == "chat_positive"
+            assert feedback_history[0]["response"] == "avoidance_chat_confirmed"
 
     def test_recommendation_click_endpoint_ingests_strong_signal(self) -> None:
         """POST /api/recommendation-click should push a strong signal through the pipeline."""

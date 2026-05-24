@@ -831,6 +831,41 @@ async def test_speculator_promotion_records_layer_update(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_confirm_speculation_promotes_with_source_weight(tmp_path: Path) -> None:
+    """Confirmed speculation source should control written interest weight."""
+
+    class _PromotingSpec:
+        def __init__(self) -> None:
+            self.domain = "建筑美学"
+            self.confirmation_count = 3
+            self.created_at = "2026-05-24T12:00:00"
+            self.confirmed_at = "2026-05-24T12:30:00"
+            self.confirmation_source = "profile_confirmed"
+            self.specifics: list[Any] = []
+
+    class _PromotingSpeculator(_SpeculatorSpy):
+        async def tick(self, profile: Any) -> Any:
+            self.tick_called = True
+
+            class _R:
+                promoted = [_PromotingSpec()]
+                rejected: list[Any] = []
+                generated: list[Any] = []
+
+            return _R()
+
+    spy = _PromotingSpeculator()
+    pipeline, _, memory = _make_low_threshold_pipeline(tmp_path, speculator=spy)
+
+    await pipeline.tick()
+
+    profile = OnionProfile.from_dict(memory.get_layer("soul").data)
+    promoted = next(item for item in profile.interest.likes if item.domain == "建筑美学")
+    assert promoted.source == "profile_confirmed"
+    assert promoted.weight == 0.60
+
+
+@pytest.mark.asyncio
 async def test_avoidance_speculator_observe_called_on_ingest(tmp_path: Path) -> None:
     """ingest_batch should pass payloads to the avoidance speculator too."""
     spy = _SpeculatorSpy()
