@@ -14,6 +14,7 @@ from openbiliclaw.llm.prompts import (
     build_search_queries_prompt,
     build_socratic_dialogue_prompt,
     build_soul_profile_prompt,
+    build_speculation_generation_prompt,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -341,6 +342,22 @@ def test_build_awareness_prompt_serialization_is_deterministic() -> None:
     )
 
     assert msg_a[1]["content"] == msg_b[1]["content"]
+
+
+def test_speculation_prompt_requests_probe_mode_distance_bands() -> None:
+    messages = build_speculation_generation_prompt(
+        profile_summary="likes: 机器人技术",
+        existing_speculations=[],
+        cooldown_domains=[],
+        confirmed_domains=["机器人技术"],
+        count=5,
+    )
+
+    system = messages[0]["content"]
+    # Distance definitions are static and should stay in the system prompt for prompt-cache reuse.
+    assert "probe_mode" in system
+    for band in ("near", "lateral", "bridge", "wildcard"):
+        assert band in system
 
 
 def test_batch_content_evaluation_prompt_orders_profile_before_source_and_batch() -> None:

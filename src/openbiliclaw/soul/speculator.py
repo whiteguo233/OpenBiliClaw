@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -71,9 +72,16 @@ class SpeculativeInterest:
     ttl_days: int = 14
     confirmation_count: int = 0
     confirmation_threshold: int = 3
-    status: str = "active"  # "active" | "promoted" | "rejected"
+    status: str = "active"  # "active" | "confirmed" | "promoted" | "rejected"
     confirming_events: list[str] = field(default_factory=list)
     specifics: list[SpeculativeSpecific] = field(default_factory=list)
+    probe_mode: str = "near"
+    confirmation_source: str = ""
+    confirmed_at: str = ""
+
+    @property
+    def challenge(self) -> bool:
+        return self.probe_mode in {"lateral", "bridge", "wildcard"}
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +99,9 @@ class SpeculativeInterest:
             "status": self.status,
             "confirming_events": list(self.confirming_events),
             "specifics": [s.to_dict() for s in self.specifics],
+            "probe_mode": self.probe_mode,
+            "confirmation_source": self.confirmation_source,
+            "confirmed_at": self.confirmed_at,
         }
 
     @classmethod
@@ -114,6 +125,9 @@ class SpeculativeInterest:
                 for s in (data.get("specifics") or [])
                 if isinstance(s, dict)
             ],
+            probe_mode=_normalize_probe_mode(data.get("probe_mode")),
+            confirmation_source=str(data.get("confirmation_source", "")),
+            confirmed_at=str(data.get("confirmed_at", "")),
         )
 
 
@@ -887,6 +901,7 @@ class InterestSpeculator:
                     created_at=now.isoformat(),
                     ttl_days=self._default_ttl_days,
                     confirmation_threshold=self._confirmation_threshold,
+                    probe_mode=_normalize_probe_mode(seed.get("probe_mode")),
                 )
             )
             existing_domains.add(domain.lower())
@@ -1127,6 +1142,7 @@ class InterestSpeculator:
                     reason=reason_text,
                     experience_mode=_normalize_experience_mode(item.get("experience_mode")),
                     entry_load=_normalize_entry_load(item.get("entry_load")),
+                    probe_mode=_normalize_probe_mode(item.get("probe_mode")),
                     confidence=confidence,
                     weight=confidence,
                     created_at=now.isoformat(),
@@ -1193,6 +1209,11 @@ def _normalize_entry_load(value: Any) -> str:
     return text if text in {"light", "heavy"} else ""
 
 
+def _normalize_probe_mode(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return text if text in {"near", "lateral", "bridge", "wildcard"} else "near"
+
+
 def _candidate_priority(
     candidate: SpeculativeInterest,
     selected: list[SpeculativeInterest],
@@ -1239,6 +1260,133 @@ def _pick_best_candidate(
             avoid_axes=avoid_axes,
         ),
     )
+
+
+def _probe_mode(candidate: SpeculativeInterest) -> str:
+    return _normalize_probe_mode(candidate.probe_mode)
+
+
+def _best_unselected_by_probe_mode(
+    ordered: list[SpeculativeInterest],
+    selected: list[SpeculativeInterest],
+    context: list[SpeculativeInterest],
+    *,
+    avoid_axes: set[str],
+    modes: set[str],
+) -> SpeculativeInterest | None:
+    pool = [
+        candidate
+        for candidate in ordered
+        if candidate not in selected and _probe_mode(candidate) in modes
+    ]
+    if not pool:
+        return None
+    return max(
+        pool,
+        key=lambda candidate: _candidate_priority(
+            candidate,
+            context + selected,
+            avoid_axes=avoid_axes,
+        ),
+    )
+
+
+def _replace_weakest_selected(
+    selected: list[SpeculativeInterest],
+    replacement: SpeculativeInterest,
+    context: list[SpeculativeInterest],
+    *,
+    avoid_axes: set[str],
+    replace_modes: set[str],
+) -> bool:
+    replaceable = [
+        candidate for candidate in selected if _probe_mode(candidate) in replace_modes
+    ]
+    if not replaceable:
+        return False
+    weakest = min(
+        replaceable,
+        key=lambda candidate: _candidate_priority(
+            candidate,
+            context + selected,
+            avoid_axes=avoid_axes,
+        ),
+    )
+    selected[selected.index(weakest)] = replacement
+    return True
+
+
+def _apply_probe_mode_quotas(
+    ordered: list[SpeculativeInterest],
+    selected: list[SpeculativeInterest],
+    *,
+    limit: int,
+    context: list[SpeculativeInterest],
+    avoid_axes: set[str],
+) -> list[SpeculativeInterest]:
+    if not selected:
+        return selected
+
+    available_modes = {_probe_mode(candidate) for candidate in ordered}
+    challenge_modes = {"lateral", "bridge", "wildcard"}
+    challenge_available = bool(available_modes & challenge_modes)
+    if challenge_available and not any(_probe_mode(item) in challenge_modes for item in selected):
+        replacement = _best_unselected_by_probe_mode(
+            ordered,
+            selected,
+            context,
+            avoid_axes=avoid_axes,
+            modes=challenge_modes,
+        )
+        if replacement is not None:
+            _replace_weakest_selected(
+                selected,
+                replacement,
+                context,
+                avoid_axes=avoid_axes,
+                replace_modes={"near"},
+            )
+
+    if challenge_available:
+        near_max = max(1, math.ceil(limit * 0.40))
+        while sum(1 for item in selected if _probe_mode(item) == "near") > near_max:
+            replacement = _best_unselected_by_probe_mode(
+                ordered,
+                selected,
+                context,
+                avoid_axes=avoid_axes,
+                modes=challenge_modes,
+            )
+            if replacement is None:
+                break
+            if not _replace_weakest_selected(
+                selected,
+                replacement,
+                context,
+                avoid_axes=avoid_axes,
+                replace_modes={"near"},
+            ):
+                break
+
+    selected_modes = {_probe_mode(item) for item in selected}
+    if limit >= 4 and len(available_modes) >= 2 and len(selected_modes) < 2:
+        replacement = _best_unselected_by_probe_mode(
+            ordered,
+            selected,
+            context,
+            avoid_axes=avoid_axes,
+            modes=available_modes - selected_modes,
+        )
+        if replacement is not None:
+            _replace_weakest_selected(
+                selected,
+                replacement,
+                context,
+                avoid_axes=avoid_axes,
+                replace_modes=selected_modes,
+            )
+
+    return selected
 
 
 def _select_diverse_candidates(
@@ -1298,7 +1446,13 @@ def _select_diverse_candidates(
                 ),
             )
         )
-    return selected[:limit]
+    return _apply_probe_mode_quotas(
+        ordered,
+        selected[:limit],
+        limit=limit,
+        context=context,
+        avoid_axes=avoid_axes,
+    )
 
 
 def build_probe_axis(*, experience_mode: Any, entry_load: Any) -> str:

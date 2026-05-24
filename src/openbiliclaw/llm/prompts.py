@@ -1598,34 +1598,13 @@ def build_speculation_generation_prompt(
         "   ta 喝咖啡不一定是为了『研究萃取曲线』，可能就是喜欢咖啡馆氛围。\n"
         "   reason 和 specifics 都要尊重 ta 的实际消费姿态，\n"
         "   而不是你（LLM）作为分析师默认的『更有内容』的版本。\n"
-        "10. **每条探针选一种最自然的生成模式**（不要为了『显得有深度』强行套同一种）。\n"
-        "    每条探针在 schema 里输出 probe_mode 字段，三选一：\n"
-        "    \n"
-        "    - lateral（横向延伸）：直接从用户某个 like 出发，推同轴相邻内容。\n"
-        "      reason **不需要**也**不应该**引用 deep_needs / MBTI / 人格特质——\n"
-        "      就像朋友式直接推荐，简单直白。\n"
-        "      lateral 有多种合法路径，自由选最贴合 ta 真实行为的那条：\n"
-        "        ① 大类向小类钻：用户某 category 整体权重高 →\n"
-        "           钻到该 category 下更具体的子方向\n"
-        "        ② 小类向兄弟小类（同大类内）：用户某具体 like 横向跳到\n"
-        "           同大类下另一个小类\n"
-        "        ③ 小类向兄弟小类（跨大类）：不同大类但消费形态接近的\n"
-        "           子类互相延伸\n"
-        "        ④ 大类 + 小类组合：综合大类整体特征和具体小类，\n"
-        "           找一个新方向\n"
-        "      不预设哪条路径『更高级』，哪条最贴合 ta 真实行为就用哪条。\n"
-        "      reason 形如：『你 likes 里有 X，这个跟 X 是一路的』。\n"
-        "    \n"
-        "    - blend（浅+深结合）：某个 like 与某个 deep_need 共振，跨到另一个领域。\n"
-        "      reason 可以引用 deep_needs，但不要强行套；只在桥接确实自然时用。\n"
-        "      reason 形如：『你 likes 里有 X，加上 ta 需要 Y，所以可能也会爱 Z』。\n"
-        "    \n"
-        "    - depth（深层驱动）：从 deep_needs / 人格特质出发，推一个 likes 里没有\n"
-        "      但能满足该需求的方向。reason 主要谈内在需要，不必锚定具体 like。\n"
-        "      reason 形如：『ta 需要 Y 这种感受，这个方向能稳定提供 Y』。\n"
-        "    \n"
-        "    自由判断哪种最贴合 —— 哪种自然就用哪种。如果某条用 lateral 最贴合，\n"
-        "    就别为了『显得有深度』强行 blend / depth。\n"
+        "10. **每条探针必须输出 probe_mode 距离带**，四选一：\n"
+        "    - near：贴着用户已经明确喜欢的主题往下钻，几乎是同类内容的更具体版本。\n"
+        "    - lateral：从已有 like 横向跳到相邻主题，消费体感相近，但主题不是同一个词的换皮。\n"
+        "    - bridge：用某个 like 加上一条 deep_need / cognitive_style 自然桥接到较陌生方向。\n"
+        "    - wildcard：证据较弱但可能打破信息茧房的挑战方向，必须保持可搜索、可点击。\n"
+        "    probe_mode 只用于系统理解距离，不要把 near / lateral / bridge / wildcard 写进用户文案。\n"
+        "    默认多给 near，少量给 lateral / bridge / wildcard；不要让所有探针都停在 near。\n"
         "</rules>\n\n"
         "<bridge_examples>\n"
         "（只描述结构性的延伸路径，不写具体 topic 关键词——\n"
@@ -1659,8 +1638,8 @@ def build_speculation_generation_prompt(
         "    {\n"
         '      "domain": "一级方向名称（宽泛领域）",\n'
         '      "category": "所属大类（必须两两不同）",\n'
-        '      "probe_mode": "lateral|blend|depth",\n'
-        '      "reason": "对应 probe_mode 的推荐语（参考 rule 10 的形式）",\n'
+        '      "probe_mode": "near|lateral|bridge|wildcard",\n'
+        '      "reason": "朋友式说明为什么这个距离带的方向值得试试（不要露出 probe_mode）",\n'
         '      "experience_mode": "knowledge|aesthetic|hands_on|people_story|wander_observe",\n'
         '      "entry_load": "light|heavy",\n'
         '      "confidence": 0.45,\n'

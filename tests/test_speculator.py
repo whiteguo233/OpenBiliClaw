@@ -225,6 +225,20 @@ def test_select_diverse_candidates_avoids_negative_feedback_axis():
     ]
 
 
+def test_select_diverse_candidates_enforces_probe_mode_quota_when_possible():
+    candidates = [
+        SpeculativeInterest(domain="近1", probe_mode="near", confidence=0.9, weight=0.9),
+        SpeculativeInterest(domain="近2", probe_mode="near", confidence=0.8, weight=0.8),
+        SpeculativeInterest(domain="横向", probe_mode="lateral", confidence=0.6, weight=0.6),
+        SpeculativeInterest(domain="桥接", probe_mode="bridge", confidence=0.55, weight=0.55),
+    ]
+
+    selected = speculator_module._select_diverse_candidates(candidates, limit=3)
+
+    assert any(item.probe_mode != "near" for item in selected)
+    assert sum(1 for item in selected if item.probe_mode == "near") <= 2
+
+
 def _profile_with_ai_specifics():
     from openbiliclaw.soul.profile import (
         InterestDomain,
@@ -656,6 +670,29 @@ def test_speculative_state_roundtrip():
     assert len(restored.cooldown) == 1
     assert restored.total_promoted == 3
     assert restored.total_rejected == 5
+
+
+def test_speculative_interest_round_trips_probe_mode_and_confirmation_fields():
+    spec = SpeculativeInterest(
+        domain="城市基础设施观察",
+        category="知识观察",
+        probe_mode="bridge",
+        confirmation_source="probe_confirmed",
+        confirmed_at="2026-05-24T12:00:00",
+    )
+
+    restored = SpeculativeInterest.from_dict(spec.to_dict())
+
+    assert restored.probe_mode == "bridge"
+    assert restored.challenge is True
+    assert restored.confirmation_source == "probe_confirmed"
+    assert restored.confirmed_at == "2026-05-24T12:00:00"
+
+
+def test_normalize_probe_mode_defaults_missing_or_unknown_to_near():
+    assert speculator_module._normalize_probe_mode("") == "near"
+    assert speculator_module._normalize_probe_mode(None) == "near"
+    assert speculator_module._normalize_probe_mode("surprise") == "near"
 
 
 # ---------------------------------------------------------------------------
