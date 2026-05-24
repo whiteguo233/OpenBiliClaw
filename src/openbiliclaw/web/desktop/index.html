@@ -75,7 +75,7 @@
     </aside>
 
     <main class="layout" id="home">
-      <section class="main-col" aria-label="推荐首页" data-od-id="recommendation-home">
+      <section class="main-col" id="homePage" aria-label="推荐首页" data-od-id="recommendation-home">
         <section class="delight" id="delightBanner" data-od-id="delight-banner">
           <div class="thumb" id="delightThumb" role="button" tabindex="0" aria-label="打开当前惊喜推荐"></div>
           <div class="delight-body">
@@ -141,6 +141,18 @@
           <div class="load-row"><button class="pill-btn dark" id="loadMoreBtn" type="button">加载更多推荐</button></div>
         </section>
       </section>
+
+      <section class="profile-page" id="profilePage" aria-label="我的画像" hidden>
+        <div class="profile-page-head">
+          <button class="small-btn" id="profileBackBtn" type="button">← 返回推荐</button>
+          <div>
+            <p class="eyebrow">Soul profile</p>
+            <h2>我的画像</h2>
+          </div>
+        </div>
+        <div class="profile-list profile-page-list" id="profileDetails"></div>
+        <div class="drawer-actions profile-page-actions"><button class="pill-btn dark" id="profileMemoryMoreBtn" type="button" hidden="">加载更多近期记忆</button></div>
+      </section>
     </main>
   </div>
 
@@ -155,13 +167,13 @@
         <button class="pill-btn dark" type="submit">搜索</button>
       </form>
       <div class="mobile-menu-list" aria-label="手机功能入口">
-        <button class="mobile-menu-item" data-mobile-panel="profileDrawer" type="button"><span>我的画像</span><small id="mobileProfileHint">查看完整画像和近期记忆</small></button>
+        <button class="mobile-menu-item" data-mobile-page="profilePage" type="button"><span>我的画像</span><small id="mobileProfileHint">查看完整画像和近期记忆</small></button>
         <button class="mobile-menu-item" data-mobile-panel="chatDrawer" type="button"><span>聊聊口味</span><small>告诉阿B你的偏好和边界</small></button>
         <button class="mobile-menu-item" data-mobile-panel="messagesDrawer" type="button"><span>消息</span><small><span id="mobileMessageCount">0</span> 条待处理</small></button>
         <button class="mobile-menu-item" data-mobile-panel="settingsModal" data-settings="models" type="button"><span>设置</span><small>模型、平台源和调度配置</small></button>
       </div>
       <section class="mobile-summary-card" aria-label="阿B 眼里的你">
-        <div class="mobile-summary-head"><p class="eyebrow">Profile</p><button class="small-btn" data-mobile-panel="profileDrawer" type="button">查看画像</button></div>
+        <div class="mobile-summary-head"><p class="eyebrow">Profile</p><button class="small-btn" data-mobile-page="profilePage" type="button">查看画像</button></div>
         <h3>阿B 眼里的你</h3>
         <div class="profile-chip-row" id="mobileProfileChips"></div>
         <p class="video-meta" id="mobileProfilePortrait">偏好结构化解释、长视频和跨学科桥接。</p>
@@ -176,15 +188,6 @@
         <h3>后台刚记住的事</h3>
         <div class="activity-list" id="mobileActivityList"></div>
       </section>
-    </div>
-  </section>
-
-  <section class="drawer" id="profileDrawer" aria-label="画像详情" data-od-id="profile-drawer">
-    <div class="scrim" data-close="profileDrawer"></div>
-    <div class="drawer-panel">
-      <div class="drawer-head"><button class="small-btn mobile-back-btn" data-mobile-back type="button">← 返回菜单</button><div><p class="eyebrow">Soul profile</p><h2>我的画像</h2></div><button class="icon-btn" data-close="profileDrawer" type="button">×</button></div>
-      <div class="profile-list" id="profileDetails"></div>
-      <div class="drawer-actions"><button class="pill-btn dark" id="profileMemoryMoreBtn" type="button" hidden="">加载更多近期记忆</button></div>
     </div>
   </section>
 

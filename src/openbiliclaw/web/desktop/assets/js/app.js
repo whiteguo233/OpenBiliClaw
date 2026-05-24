@@ -263,6 +263,24 @@
       }
     }
 
+    function openHomePage() {
+      document.getElementById("homePage")?.removeAttribute("hidden");
+      document.getElementById("profilePage")?.setAttribute("hidden", "");
+      document.body.classList.remove("profile-page-open");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function openProfilePage() {
+      closeMobileMenu();
+      document.querySelectorAll(".drawer.is-open, .overlay.is-open").forEach((panel) => closePanel(panel.id));
+      document.getElementById("homePage")?.setAttribute("hidden", "");
+      document.getElementById("profilePage")?.removeAttribute("hidden");
+      document.body.classList.add("profile-page-open");
+      renderProfileDetails();
+      void refreshProfile().catch(() => {});
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
     function setSideDrawerOpen(open, { persist = true } = {}) {
       const drawer = document.getElementById("sideDrawer");
       drawer?.classList.toggle("is-open", open);
@@ -2267,6 +2285,7 @@
     }
 
     safeBind("#sideDrawerBtn", "click", toggleSideDrawer);
+    safeBind(".brand", "click", (event) => { event.preventDefault(); openHomePage(); });
     safeBind("#sideDrawerScrim", "click", closeSideDrawer);
     safeBind("#mobileMenuBtn", "click", openMobileMenu);
     safeBind("#mobileMenuClose", "click", closeMobileMenu);
@@ -2275,11 +2294,17 @@
     document.querySelectorAll("[data-mobile-panel]").forEach((button) => {
       button.addEventListener("click", () => openMobilePanel(button.dataset.mobilePanel, { settingsPanel: button.dataset.settings }));
     });
+    document.querySelectorAll("[data-mobile-page]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.mobilePage === "profilePage") openProfilePage();
+      });
+    });
     document.querySelectorAll("[data-mobile-back]").forEach((button) => {
       button.addEventListener("click", returnToMobileMenu);
     });
 
-    safeBind("#profileBtn", "click", () => { closeSideDrawer(); openPanel("profileDrawer"); });
+    safeBind("#profileBtn", "click", openProfilePage);
+    safeBind("#profileBackBtn", "click", openHomePage);
     safeBind("#profileMemoryMoreBtn", "click", loadMoreProfileMemory);
     safeBind("#chatBtn", "click", () => { closeSideDrawer(); openPanel("chatDrawer"); });
     safeBind("#messagesBtn", "click", () => {
