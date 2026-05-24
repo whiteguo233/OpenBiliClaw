@@ -8,10 +8,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
+from openbiliclaw.soul.dislike_writeback import apply_new_dislikes, topics_for_confirmed_avoidance
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
-from .errors import AdapterOperationError
+from .errors import AdapterOperationError, AdapterValidationError
 from .schemas import (
+    AvoidanceProbeFeedbackRequest,
+    AvoidanceProbeFeedbackResponse,
+    AvoidanceProbeItem,
+    AvoidanceProbeResponse,
     ChatRequest,
     ChatResponse,
     DelightItem,
@@ -367,6 +373,9 @@ class OpenClawAdapter:
         runtime_state: dict[str, object],
         probe: Any,
         domain: str,
+        *,
+        domains_key: str = "probed_domains",
+        axes_key: str = "probed_axes",
     ) -> None:
         """Persist OpenClaw probe selection so repeated calls avoid repeats."""
         save_runtime_state = getattr(
@@ -376,8 +385,8 @@ class OpenClawAdapter:
         )
         if not callable(save_runtime_state):
             return
-        raw_domains = runtime_state.get("probed_domains")
-        raw_axes = runtime_state.get("probed_axes")
+        raw_domains = runtime_state.get(domains_key)
+        raw_axes = runtime_state.get(axes_key)
         probed_domains = dict(raw_domains) if isinstance(raw_domains, dict) else {}
         probed_axes = dict(raw_axes) if isinstance(raw_axes, dict) else {}
         now = datetime.now().isoformat()
@@ -388,8 +397,8 @@ class OpenClawAdapter:
         )
         if axis:
             probed_axes[axis] = now
-        runtime_state["probed_domains"] = probed_domains
-        runtime_state["probed_axes"] = probed_axes
+        runtime_state[domains_key] = probed_domains
+        runtime_state[axes_key] = probed_axes
         save_runtime_state(runtime_state)
 
     @staticmethod
@@ -409,6 +418,147 @@ class OpenClawAdapter:
                 f"——{reason} 这个方向你自己认不认？"
             )
         return f"我感觉你可能对【{domain}】{specific_hint}有潜在兴趣，这个方向你自己认不认？"
+
+    async def get_next_avoidance_probe(self) -> AvoidanceProbeResponse:
+        """Return the next speculative-avoidance hypothesis to ask about."""
+        try:
+            soul_engine = self.services.soul_engine
+            speculator = getattr(soul_engine, "_avoidance_speculator", None)
+            get_active = getattr(speculator, "get_active_avoidances", None)
+            if not callable(get_active):
+                return AvoidanceProbeResponse(probe=None)
+            avoidances = list(get_active())
+            if not avoidances:
+                return AvoidanceProbeResponse(probe=None)
+            load_runtime_state = getattr(
+                self.services.memory_manager,
+                "load_discovery_runtime_state",
+                None,
+            )
+            runtime_state = load_runtime_state() if callable(load_runtime_state) else {}
+            if not isinstance(runtime_state, dict):
+                runtime_state = {}
+            probed_domains = set((runtime_state.get("probed_avoidance_domains") or {}).keys())
+            probed_axes = set((runtime_state.get("probed_avoidance_axes") or {}).keys())
+            top = choose_next_avoidance_candidate(
+                avoidances,
+                probed_domains=probed_domains,
+                probed_axes=probed_axes,
+                feedback_history=runtime_state.get("avoidance_probe_feedback_history", []),
+            )
+            if top is None:
+                return AvoidanceProbeResponse(probe=None)
+            domain = str(getattr(top, "domain", "")).strip()
+            if not domain:
+                return AvoidanceProbeResponse(probe=None)
+            self._record_probe_history(
+                runtime_state,
+                top,
+                domain,
+                domains_key="probed_avoidance_domains",
+                axes_key="probed_avoidance_axes",
+            )
+            reason = str(getattr(top, "reason", "")).strip()
+            confidence = self._to_float(getattr(top, "confidence", 0.0))
+            weight = self._to_float(getattr(top, "weight", 0.0))
+            specifics = [
+                str(getattr(item, "name", "")).strip()
+                for item in getattr(top, "specifics", [])
+                if str(getattr(item, "name", "")).strip()
+            ][:5]
+            question = self._build_avoidance_probe_question(
+                domain=domain,
+                reason=reason,
+                specifics=specifics,
+            )
+            return AvoidanceProbeResponse(
+                probe=AvoidanceProbeItem(
+                    domain=domain,
+                    reason=reason,
+                    confidence=confidence,
+                    weight=weight,
+                    source_mode=str(getattr(top, "source_mode", "")),
+                    source_signal=str(getattr(top, "source_signal", "")),
+                    experience_mode=str(getattr(top, "experience_mode", "")),
+                    entry_load=str(getattr(top, "entry_load", "")),
+                    specifics=specifics,
+                    question=question,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            raise AdapterOperationError("Failed to read next avoidance probe.") from exc
+
+    async def respond_avoidance_probe(
+        self,
+        request: AvoidanceProbeFeedbackRequest,
+    ) -> AvoidanceProbeFeedbackResponse:
+        """Record user feedback for a speculative avoidance probe."""
+        try:
+            speculator = getattr(self.services.soul_engine, "_avoidance_speculator", None)
+            if request.response == "confirm":
+                confirm = getattr(speculator, "user_confirm_avoidance", None)
+                active = confirm(request.domain) if callable(confirm) else None
+                ok = active is not None
+                get_layer = getattr(self.services.memory_manager, "get_layer", None)
+                if ok and callable(get_layer):
+                    await apply_new_dislikes(
+                        memory=self.services.memory_manager,
+                        database=getattr(self.services, "database", None)
+                        or getattr(self.services.memory_manager, "_database", None),
+                        embedding_service=getattr(
+                            self.services.soul_engine,
+                            "_embedding_service",
+                            None,
+                        ),
+                        llm_service=getattr(self.services, "llm_service", None),
+                        topics=topics_for_confirmed_avoidance(active),
+                    )
+                return AvoidanceProbeFeedbackResponse(
+                    ok=ok,
+                    action="confirmed",
+                    domain=request.domain,
+                )
+            if request.response == "reject":
+                reject = getattr(speculator, "user_reject_avoidance", None)
+                ok = bool(reject(request.domain) if callable(reject) else False)
+                return AvoidanceProbeFeedbackResponse(
+                    ok=ok,
+                    action="rejected",
+                    domain=request.domain,
+                )
+
+            message = request.message or f"我想聊聊你猜我可能想避开的「{request.domain}」"
+            reply = await self.chat(
+                ChatRequest(
+                    message=f"[关于避雷方向「{request.domain}」的反馈] {message}",
+                    session="openclaw",
+                )
+            )
+            return AvoidanceProbeFeedbackResponse(
+                ok=True,
+                action="chat",
+                domain=request.domain,
+                reply=reply.reply,
+            )
+        except AdapterValidationError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            raise AdapterOperationError("Failed to respond to avoidance probe.") from exc
+
+    @staticmethod
+    def _build_avoidance_probe_question(
+        *,
+        domain: str,
+        reason: str,
+        specifics: list[str],
+    ) -> str:
+        """Template a ready-to-ask avoidance probe question."""
+        specific_hint = ""
+        if specifics:
+            specific_hint = "（比如：" + "、".join(specifics[:3]) + "）"
+        if reason:
+            return f"我猜【{domain}】{specific_hint}可能是你想避开的方向——{reason} 这个判断准吗？"
+        return f"我感觉【{domain}】{specific_hint}可能不是你想看的方向，这个判断准吗？"
 
     async def get_runtime_status(self) -> RuntimeStatusResponse:
         """Return the merged runtime and account sync summary."""

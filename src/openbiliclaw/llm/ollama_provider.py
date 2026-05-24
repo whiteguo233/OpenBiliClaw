@@ -136,7 +136,10 @@ class OllamaProvider(OpenAIProvider):
                 # concurrency=2 but the daemon enqueued >2 cache-miss texts
                 # within seconds. 60s was too tight under the post-proxy-fix
                 # cache-rebuild burst.
-                async with httpx.AsyncClient(timeout=self._embed_timeout, trust_env=False) as client:
+                async with httpx.AsyncClient(
+                    timeout=self._embed_timeout,
+                    trust_env=False,
+                ) as client:
                     response = await client.post(
                         url,
                         json={"model": model, "prompt": text},

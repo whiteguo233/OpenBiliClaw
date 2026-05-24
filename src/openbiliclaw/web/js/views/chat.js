@@ -12,11 +12,13 @@ import {
   fetchActivityFeed,
   fetchPendingNotifications,
   fetchPendingProbes,
+  fetchPendingAvoidanceProbes,
   ackNotification,
   fetchDelightBatch,
   respondToDelight,
   markDelightSent,
   respondToProbe,
+  respondToAvoidanceProbe,
 } from "../api.js";
 import { setUnreadCount, navigateToTab } from "../app.js";
 import {
@@ -27,6 +29,7 @@ import {
   getDelightActionState,
   getDelightMessageActions,
   getProbeMessageActions,
+  getAvoidanceProbeMessageActions,
   getMobileChatSession,
   getCoverImageAttrs,
   getSourceLabel,
@@ -312,15 +315,17 @@ function renderOverlay() {
 
   // Probe notifications
   for (const n of notifications) {
+    const isAvoidance = (n.type || "") === "avoidance.probe";
+    const actions = isAvoidance ? getAvoidanceProbeMessageActions() : getProbeMessageActions();
     const card = document.createElement("div");
     card.className = "message-card";
     card.innerHTML = `
-      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>兴趣探测</div>
+      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>${isAvoidance ? "避雷确认" : "兴趣探测"}</div>
       <div class="message-card-title">${esc(n.domain || n.title || "")}</div>
       <div class="message-card-body">${esc(n.description || n.reason || n.message || "")}</div>
       <div class="message-card-actions">
-        ${getProbeMessageActions().map((item) => `
-          <button class="message-action-btn ${item.primary ? "primary" : "secondary"}" data-probe="${esc(item.action)}" data-domain="${esc(n.domain || "")}">${esc(item.label)}</button>
+        ${actions.map((item) => `
+          <button class="message-action-btn ${item.primary ? "primary" : "secondary"}" data-probe="${esc(item.action)}" data-probe-kind="${isAvoidance ? "avoidance" : "interest"}" data-domain="${esc(n.domain || "")}">${esc(item.label)}</button>
         `).join("")}
       </div>`;
     panel.appendChild(card);
@@ -338,15 +343,28 @@ function renderOverlay() {
     btn.addEventListener("click", async () => {
       const domain = btn.dataset.domain;
       const action = btn.dataset.probe;
+      const isAvoidance = btn.dataset.probeKind === "avoidance";
       if (action === "chat") {
         toggleMessages();
-        startContextualChat({ scope: "probe", subjectId: domain, subjectTitle: domain });
+        startContextualChat({
+          scope: isAvoidance ? "avoidance_probe" : "probe",
+          subjectId: domain,
+          subjectTitle: domain,
+        });
         return;
       }
       btn.disabled = true;
       try {
-        await respondToProbe(domain, action);
-        notifications = notifications.filter((n) => (n.domain || n.title) !== domain);
+        if (isAvoidance) {
+          await respondToAvoidanceProbe(domain, action);
+        } else {
+          await respondToProbe(domain, action);
+        }
+        notifications = notifications.filter((n) => {
+          const sameDomain = (n.domain || n.title) === domain;
+          const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
+          return !(sameDomain && sameKind);
+        });
         updateBadgeCount();
         renderOverlay();
       } catch {
@@ -433,17 +451,24 @@ async function refreshAfterChatTurn() {
 
 export async function loadNotifications() {
   try {
-    const [notifData, probeData, delightData] = await Promise.all([
+    const [notifData, probeData, avoidanceProbeData, delightData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
       fetchPendingProbes().catch(() => []),
+      fetchPendingAvoidanceProbes().catch(() => []),
       fetchDelightBatch(10).catch(() => []),
     ]);
     // Start with persisted probes from backend
-    const probes = Array.isArray(probeData) ? probeData : [];
+    const probes = [
+      ...(Array.isArray(probeData) ? probeData.map((p) => ({ ...p, type: "interest.probe" })) : []),
+      ...(Array.isArray(avoidanceProbeData)
+        ? avoidanceProbeData.map((p) => ({ ...p, type: "avoidance.probe" }))
+        : []),
+    ];
     // Merge any WebSocket-received probes not yet in the persisted list
-    const persistedDomains = new Set(probes.map((p) => p.domain));
+    const persistedDomains = new Set(probes.map((p) => `${p.type || "interest.probe"}:${p.domain}`));
     for (const n of notifications) {
-      if (n.domain && !persistedDomains.has(n.domain)) {
+      const key = `${n.type || "interest.probe"}:${n.domain}`;
+      if (n.domain && !persistedDomains.has(key)) {
         probes.push(n);
       }
     }
@@ -482,10 +507,10 @@ export function updateBadge() {
 
 export function onStreamEvent(payload) {
   const type = payload?.type || payload?.event;
-  if (type === "interest.probe") {
+  if (type === "interest.probe" || type === "avoidance.probe") {
     const item = payload.data || payload;
     if (item.domain) {
-      notifications.push(item);
+      notifications.push({ ...item, type });
       updateBadgeCount();
     }
   } else if (type === "delight.liked" || type === "delight.disliked") {

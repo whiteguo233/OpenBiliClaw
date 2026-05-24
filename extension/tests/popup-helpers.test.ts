@@ -66,6 +66,25 @@ test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy 
   assert.equal(item.presented, false);
 });
 
+test("normalizeProfileSummary keeps speculative avoidances", () => {
+  const summary = normalizeProfileSummary({
+    initialized: true,
+    speculative_avoidances: [
+      {
+        domain: "浅层热点复读",
+        reason: "信息密度低",
+        source_mode: "negative_signal",
+        status: "active",
+        specifics: [{ name: "标题党热点解读" }],
+      },
+    ],
+  });
+
+  assert.equal(summary.speculative_avoidances[0].domain, "浅层热点复读");
+  assert.equal(summary.speculative_avoidances[0].source_mode, "negative_signal");
+  assert.equal(summary.speculative_avoidances[0].specifics[0].name, "标题党热点解读");
+});
+
 test("shouldAutoLoadRecommendations requires user scroll intent", () => {
   assert.equal(
     shouldAutoLoadRecommendations({
@@ -864,6 +883,7 @@ test("normalizeProfileSummary fills stable fallback fields", () => {
       speculative_interests: [
         { domain: "建筑美学", reason: "你最近的审美倾向", confidence: 0.4, confirmation_count: 1, confirmation_threshold: 3, status: "active", specifics: [{ name: "现代主义建筑", confirmation_count: 1 }] },
       ],
+      speculative_avoidances: [],
       recent_cognition_updates: [
         {
           summary: "阿B 记住了你会吃深拆这一路。",
@@ -1003,6 +1023,7 @@ test("normalizeProfileSummary keeps the newer low-roleplay fallback copy", () =>
       context: null,
       exploration_openness: 0.5,
       speculative_interests: [],
+      speculative_avoidances: [],
       recent_cognition_updates: [],
       has_more_cognition_updates: false,
       next_cognition_cursor: "",

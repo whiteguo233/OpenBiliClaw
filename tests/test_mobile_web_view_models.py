@@ -631,6 +631,14 @@ class TestMobileWebViewModels:
               exploration_openness: 0.7,
               favorite_up_users: ["UP1"],
               speculative_interests: [{ domain: "cooking", confidence: 0.6, status: "active" }],
+              speculative_avoidances: [{
+                domain: "浅层热点复读",
+                reason: "信息密度低",
+                source_mode: "negative_signal",
+                confidence: 0.7,
+                status: "active",
+                specifics: [{ name: "标题党热点解读" }],
+              }],
             });
             assert.equal(full.initialized, true);
             assert.equal(full.personality_portrait, "test portrait");
@@ -640,8 +648,38 @@ class TestMobileWebViewModels:
             assert.equal(full.exploration_openness, 0.7);
             assert.deepEqual(full.favorite_up_users, ["UP1"]);
             assert.equal(full.speculative_interests[0].domain, "cooking");
+            assert.equal(full.speculative_avoidances[0].domain, "浅层热点复读");
+            assert.equal(full.speculative_avoidances[0].source_mode, "negative_signal");
+            assert.equal(full.speculative_avoidances[0].specifics[0].name, "标题党热点解读");
         """)
         )
+
+    def test_mobile_avoidance_probe_ui_wiring_is_present(self) -> None:
+        api_js = Path("src/openbiliclaw/web/js/api.js").read_text()
+        chat_js = Path("src/openbiliclaw/web/js/views/chat.js").read_text()
+        profile_js = Path("src/openbiliclaw/web/js/views/profile.js").read_text()
+        view_models_js = Path("src/openbiliclaw/web/js/view-models.js").read_text()
+
+        assert "fetchPendingAvoidanceProbes" in api_js
+        assert 'requestJson("/avoidance-probes/pending")' in api_js
+        assert "respondToAvoidanceProbe" in api_js
+        assert 'requestJson("/avoidance-probes/respond"' in api_js
+
+        assert 'type === "avoidance.probe"' in chat_js
+        assert '"avoidance_probe"' in chat_js
+        assert "getAvoidanceProbeMessageActions" in chat_js
+        assert "确实不喜欢" in view_models_js
+
+        assert "speculative_avoidances" in profile_js
+        assert "renderSpecAvoidances" in profile_js
+        assert "respondToAvoidanceProbe" in profile_js
+
+    def test_desktop_web_knows_avoidance_probe_endpoint(self) -> None:
+        source = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text()
+
+        assert "avoidanceProbeRespond" in source
+        assert "avoidance.probe" in source
+        assert "确实不喜欢" in source
 
     def test_profile_display_helpers_preserve_plugin_semantics(self) -> None:
         _assert_js(

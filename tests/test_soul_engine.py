@@ -64,6 +64,11 @@ def test_soul_engine_wires_scheduler_speculation_config(tmp_path: Path) -> None:
         speculation_max_primary_interests=17,
         speculation_max_secondary_interests=66,
         speculator_idle_interval_minutes=11,
+        avoidance_speculation_interval_minutes=12,
+        avoidance_speculation_ttl_days=4,
+        avoidance_speculation_cooldown_days=8,
+        avoidance_speculation_confirmation_threshold=2,
+        avoidance_speculation_max_active=5,
     )
 
     assert engine._speculator._generation_interval_minutes == 22
@@ -73,7 +78,13 @@ def test_soul_engine_wires_scheduler_speculation_config(tmp_path: Path) -> None:
     assert engine._speculator._max_active == 6
     assert engine._speculator._max_primary_interests == 17
     assert engine._speculator._max_secondary_interests == 66
+    assert engine._avoidance_speculator._generation_interval_minutes == 12
+    assert engine._avoidance_speculator._default_ttl_days == 4
+    assert engine._avoidance_speculator._cooldown_days == 8
+    assert engine._avoidance_speculator._confirmation_threshold == 2
+    assert engine._avoidance_speculator._max_active == 5
     assert engine._pipeline._speculator_idle_min_interval == timedelta(minutes=11)
+    assert engine._pipeline._avoidance_speculator is engine._avoidance_speculator
 
 
 @pytest.mark.asyncio

@@ -192,6 +192,7 @@ def _make_low_threshold_pipeline(
     *,
     service: Any = None,
     speculator: Any = None,
+    avoidance_speculator: Any = None,
     speculator_idle_interval_minutes: int = 30,
 ) -> tuple[ProfileUpdatePipeline, _RichFakeService, MemoryManager]:
     """Pipeline with min_signals=1 thresholds — every signal triggers update."""
@@ -208,6 +209,7 @@ def _make_low_threshold_pipeline(
         profile_builder=ProfileBuilder(registry=svc),
         thresholds=thresholds,
         speculator=speculator,
+        avoidance_speculator=avoidance_speculator,
         speculator_idle_interval_minutes=speculator_idle_interval_minutes,
     )
     return pipeline, svc, memory
@@ -828,6 +830,72 @@ async def test_speculator_promotion_records_layer_update(tmp_path: Path) -> None
     assert "AI伦理" in promoted_updates[0].changes[0]
 
 
+@pytest.mark.asyncio
+async def test_avoidance_speculator_observe_called_on_ingest(tmp_path: Path) -> None:
+    """ingest_batch should pass payloads to the avoidance speculator too."""
+    spy = _SpeculatorSpy()
+    pipeline, _, _ = _make_low_threshold_pipeline(tmp_path, avoidance_speculator=spy)
+
+    await pipeline.ingest(signals_from_events([{"event_type": "dislike", "title": "标题党"}])[0])
+
+    assert len(spy.observe_calls) == 1
+    assert spy.observe_calls[0][0]["title"] == "标题党"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_auto_promoted_avoidance_uses_apply_new_dislikes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Observe-driven avoidance promotion must use the shared dislike writeback."""
+    from openbiliclaw.soul import pipeline as pipeline_mod
+    from openbiliclaw.soul.avoidance_speculator import (
+        SpeculativeAvoidance,
+        SpeculativeAvoidanceSpecific,
+    )
+
+    class _PromotingAvoidanceSpeculator(_SpeculatorSpy):
+        async def tick(self, profile: Any, *, feedback_history: object | None = None) -> Any:
+            self.tick_called = True
+
+            class _R:
+                promoted = [
+                    SpeculativeAvoidance(
+                        domain="浅层热点复读",
+                        confirmation_count=3,
+                        confirmation_threshold=3,
+                        specifics=[
+                            SpeculativeAvoidanceSpecific(name="标题党热点解读"),
+                            SpeculativeAvoidanceSpecific(name="无信息增量复读"),
+                        ],
+                    )
+                ]
+                rejected: list[Any] = []
+                generated: list[Any] = []
+
+            return _R()
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_apply_new_dislikes(**kwargs: Any) -> list[str]:
+        calls.append(kwargs)
+        return [f"新增不喜欢方向: {topic}" for topic in kwargs["topics"]]
+
+    monkeypatch.setattr(pipeline_mod, "apply_new_dislikes", fake_apply_new_dislikes, raising=False)
+
+    spy = _PromotingAvoidanceSpeculator()
+    pipeline, _, _ = _make_low_threshold_pipeline(tmp_path, avoidance_speculator=spy)
+
+    flush_result = await pipeline.tick()
+
+    assert spy.tick_called
+    assert [call["topics"] for call in calls] == [["标题党热点解读", "无信息增量复读"]]
+    promoted_updates = [r for r in flush_result.layers_updated if r.trigger == "避雷方向确认"]
+    assert promoted_updates, "Promoted avoidance must produce a LayerUpdateResult"
+    assert promoted_updates[0].layer == OnionLayer.INTEREST
+    assert "标题党热点解读" in promoted_updates[0].changes[0]
+
+
 # ===========================================================================
 # 7. Boundary / routing edge cases
 # ===========================================================================
@@ -1286,6 +1354,104 @@ async def test_update_interest_detects_dislike_changes(tmp_path: Path) -> None:
         profile_builder=ProfileBuilder(registry=svc),
     )
     assert any("新增讨厌" in c for c in result.changes), result.changes
+
+
+@pytest.mark.asyncio
+async def test_apply_new_dislikes_persists_preference_and_soul_profile(tmp_path: Path) -> None:
+    from openbiliclaw.soul.dislike_writeback import apply_new_dislikes
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+    profile = OnionProfile()
+    soul_layer = memory.get_layer("soul")
+    soul_layer.data.update(profile.to_dict())
+    soul_layer.save()
+
+    changes = await apply_new_dislikes(
+        memory=memory,
+        database=memory._database,
+        embedding_service=None,
+        llm_service=None,
+        topics=["标题党", "标题党"],
+    )
+
+    assert memory.get_layer("preference").data["disliked_topics"] == ["标题党"]
+    saved_profile = OnionProfile.from_dict(memory.get_layer("soul").data)
+    assert [item.domain for item in saved_profile.interest.dislikes] == ["标题党"]
+    assert "新增讨厌: 标题党" in changes
+
+
+@pytest.mark.asyncio
+async def test_purge_pool_for_new_dislikes_invokes_existing_pool_purge_paths(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.soul.dislike_writeback import purge_pool_for_new_dislikes
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+    db = memory._database
+    db.cache_content(
+        "BVtitlebait",
+        title="标题党热点复读",
+        up_name="热点UP",
+        source="trending",
+        topic_key="热点",
+    )
+
+    changes = await purge_pool_for_new_dislikes(
+        database=db,
+        embedding_service=None,
+        llm_service=None,
+        newly_added=["标题党"],
+        all_dislikes=["标题党"],
+    )
+
+    rows = {row["bvid"]: row for row in db.get_cached_content(limit=10)}
+    assert rows["BVtitlebait"]["pool_status"] == "purged_by_dislike"
+    assert any("从候选池清除" in item for item in changes)
+
+
+@pytest.mark.asyncio
+async def test_layer_updater_uses_purge_helper_without_rewriting_preference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openbiliclaw.soul.layer_updaters as lu_mod
+    from openbiliclaw.soul.layer_updaters import _update_interest
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_purge_pool_for_new_dislikes(**kwargs: object) -> list[str]:
+        calls.append(dict(kwargs))
+        return ["从候选池清除 1 条相关内容"]
+
+    async def forbidden_apply_new_dislikes(**kwargs: object) -> list[str]:
+        raise AssertionError("analyzer path must not call apply_new_dislikes")
+
+    monkeypatch.setattr(lu_mod, "purge_pool_for_new_dislikes", fake_purge_pool_for_new_dislikes)
+    monkeypatch.setattr(lu_mod, "apply_new_dislikes", forbidden_apply_new_dislikes, raising=False)
+
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+
+    class _DislikeService:
+        async def complete_structured_task(self, **kwargs: Any) -> LLMResponse:
+            payload = json.loads(_PREF_RESP)
+            payload["disliked_topics"] = ["标题党"]
+            return LLMResponse(content=json.dumps(payload), provider="fake")
+
+    result = await _update_interest(
+        signals=[{"payload": {"event_type": "view", "title": "v"}}],
+        profile=OnionProfile(),
+        memory=memory,
+        preference_analyzer=PreferenceAnalyzer(registry=_DislikeService()),
+        profile_builder=ProfileBuilder(registry=_DislikeService()),
+    )
+
+    assert calls
+    assert calls[0]["newly_added"] == ["标题党"]
+    assert calls[0]["all_dislikes"] == ["标题党"]
+    assert "从候选池清除 1 条相关内容" in result.changes
 
 
 @pytest.mark.asyncio

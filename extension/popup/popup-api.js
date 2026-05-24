@@ -336,6 +336,21 @@ export async function respondToInterestProbe(domain, responseType, message = "")
   }
 }
 
+export async function respondToAvoidanceProbe(domain, responseType, message = "") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 35_000);
+  try {
+    return await requestJson("/avoidance-probes/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain, response: responseType, message }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function respondToDelight(bvid, responseType, title = "", message = "") {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 35_000);

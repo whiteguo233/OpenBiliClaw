@@ -4,12 +4,17 @@
 
 ---
 
-## v0.3.90 / extension v0.3.46: 真实可换库存口径修正（2026-05-24）
+## v0.3.91 / extension v0.3.47: 真实可换库存口径修正 + 不喜欢领域探针（2026-05-24）
 
+- 后端源码版本提升到 v0.3.91，准备发布 `backend-v0.3.91`；浏览器插件版本提升到 extension v0.3.47，准备发布 `extension-v0.3.47`。
 - 修复 runtime status / runtime stream 的候选池数字口径：`pool_available_count` 现在只表示后端当前可立即 `serve()` 的候选；新增 `pool_raw_count` / `pool_pending_count` 用于区分素材库存和待整理内容，避免“池子有素材”被显示成“还有 N 条可换”。
 - `count_pool_candidates()` 读取前会刷新 SQLite/WAL snapshot，避免同一次操作里 runtime status 看到旧库存、`get_pool_candidates()` 看到新状态而返回空。
+- `count_pool_candidates()` 现在默认应用与 `get_pool_candidates()` 相同的 `max_per_topic_group=3` 候选窗口；单个 `topic_group` 堆积大量内容时，UI “可换”数量不再高于 `serve()` 实际可加载库存。
 - 推荐 serve 的零候选 warning 增加 `raw/servable/pending` 诊断字段，方便区分 Gemini quota / 分类文案未完成导致的 pending，和真实 count/load 查询漂移。
 - 插件 side panel、移动 Web 和桌面 Web 统一显示真实可换数；当 `pool_available_count=0` 且 `pool_pending_count>0` 时显示“找到 N 条素材，正在整理成可换内容”，不会把 pending 数量写成“可换”。插件手动“换一批”空结果会重新同步 runtime status，并用单飞锁避免重复点击竞态。
+- 新增不喜欢领域探针设计与实现：系统会主动确认可能的避雷方向，移动 Web / 桌面 Web / 浏览器插件 / OpenClaw 都可查看和操作。
+- 确认后通过 `apply_new_dislikes()` 写入 `disliked_topics` 并触发候选池清理；未确认避雷方向不参与 discovery / recommendation 过滤。
+- 避雷探针聊天使用 durable `scope=avoidance_probe`，用户在多聊中确认或否认会走同一条反馈、写回与冷却路径。
 
 ## v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）
 

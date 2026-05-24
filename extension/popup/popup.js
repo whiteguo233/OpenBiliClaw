@@ -60,6 +60,7 @@ import {
   reportRecommendationClick,
   reshuffleRecommendations,
   refreshRecommendations,
+  respondToAvoidanceProbe,
   respondToDelight,
   respondToInterestProbe,
   startChatTurn,
@@ -103,6 +104,7 @@ const state = {
   activeFeedbackProgress: null,
   refreshStatusMessage: "",
   pendingProbe: null,
+  pendingAvoidanceProbe: null,
   messages: [],
 };
 
@@ -161,6 +163,7 @@ const elements = {
   profileContext: document.getElementById("profileContext"),
   profileExplorationOpenness: document.getElementById("profileExplorationOpenness"),
   profileSpeculativeInterests: document.getElementById("profileSpeculativeInterests"),
+  profileSpeculativeAvoidances: document.getElementById("profileSpeculativeAvoidances"),
   profileRecentMemory: document.getElementById("profileRecentMemory"),
   profileRecentMemoryStatus: document.getElementById("profileRecentMemoryStatus"),
   profileRecentMemoryMore: document.getElementById("profileRecentMemoryMore"),
@@ -633,6 +636,27 @@ async function runScheduledActivityFeedRefresh() {
   }
 }
 
+function normalizeProbeType(type) {
+  return type === "avoidance.probe" ? "avoidance.probe" : "interest.probe";
+}
+
+function isAvoidanceProbeType(type) {
+  return normalizeProbeType(type) === "avoidance.probe";
+}
+
+function probeMessageKey(type, domain) {
+  return `${normalizeProbeType(type)}:${String(domain || "")}`;
+}
+
+function addProbeMessage(event, type = event?.type) {
+  if (!event?.domain) return;
+  const normalizedType = normalizeProbeType(type);
+  const key = probeMessageKey(normalizedType, event.domain);
+  if (state.messages.some((m) => probeMessageKey(m?.type, m?.domain) === key)) return;
+  state.messages.push({ ...event, type: normalizedType });
+  updateMessageBadge();
+}
+
 function connectRuntimeStream() {
   // Disconnect any previous client first so a settings-page port change
   // doesn't leave a zombie WebSocket against the old origin.
@@ -670,18 +694,27 @@ function connectRuntimeStream() {
         scheduleActivityFeedRefresh();
       }
       // Interest confirmed/rejected: refresh profile and show hint
-      if (event.type === "interest.confirmed" || event.type === "interest.rejected" || event.type === "interest.chat") {
+      if (
+        event.type === "interest.confirmed" ||
+        event.type === "interest.rejected" ||
+        event.type === "interest.chat" ||
+        event.type === "avoidance.confirmed" ||
+        event.type === "avoidance.rejected" ||
+        event.type === "avoidance.chat"
+      ) {
         setHint(String(event.message || ""), "success");
         void loadProfileSummary({ force: true });
       }
-      // Interest probe: add to messages inbox
+      // Probe events: add to messages inbox
       if (event.type === "interest.probe" && event.domain) {
         state.pendingProbe = event;
-        if (!state.messages.some((m) => m.type === "interest.probe" && m.domain === event.domain)) {
-          state.messages.push({ ...event, type: "interest.probe" });
-          updateMessageBadge();
-        }
+        addProbeMessage(event, "interest.probe");
         renderProbeCard();
+      }
+      if (event.type === "avoidance.probe" && event.domain) {
+        state.pendingAvoidanceProbe = event;
+        addProbeMessage(event, "avoidance.probe");
+        void loadProfileSummary({ force: true });
       }
       // Delight candidates are shown in the delight tray, not in messages.
       // Delight refreshed: backend computed N new above-threshold delights
@@ -910,15 +943,16 @@ function renderExplorationBar(container, openness) {
   }
 }
 
-function renderSpeculativeInterests(container, items) {
+function renderSpeculativeInterests(container, items, { kind = "interest" } = {}) {
   if (!(container instanceof HTMLElement)) {
     return;
   }
+  const isAvoidance = kind === "avoidance";
   container.replaceChildren();
   if (!items || items.length === 0) {
     const fallback = document.createElement("p");
     fallback.className = "is-fallback";
-    fallback.textContent = "暂时没有在试探的方向，过一阵会有的。";
+    fallback.textContent = isAvoidance ? "暂时没有待确认避雷方向。" : "暂时没有在试探的方向，过一阵会有的。";
     container.append(fallback);
     return;
   }
@@ -1010,16 +1044,16 @@ function renderSpeculativeInterests(container, items) {
 
       const confirmBtn = document.createElement("button");
       confirmBtn.className = "probe-btn is-confirm";
-      confirmBtn.textContent = "喜欢";
+      confirmBtn.textContent = isAvoidance ? "确实不喜欢" : "喜欢";
       confirmBtn.addEventListener("click", () =>
-        handleSpecResponse(item.domain, "confirm", row),
+        handleSpecResponse(item.domain, "confirm", row, isAvoidance ? "avoidance.probe" : "interest.probe"),
       );
 
       const rejectBtn = document.createElement("button");
       rejectBtn.className = "probe-btn is-reject";
-      rejectBtn.textContent = "不喜欢";
+      rejectBtn.textContent = isAvoidance ? "不是" : "不喜欢";
       rejectBtn.addEventListener("click", () =>
-        handleSpecResponse(item.domain, "reject", row),
+        handleSpecResponse(item.domain, "reject", row, isAvoidance ? "avoidance.probe" : "interest.probe"),
       );
 
       actions.append(confirmBtn, rejectBtn);
@@ -1030,8 +1064,9 @@ function renderSpeculativeInterests(container, items) {
   }
 }
 
-async function handleSpecResponse(domain, responseType, rowEl) {
+async function handleSpecResponse(domain, responseType, rowEl, type = "interest.probe") {
   if (!domain) return;
+  const isAvoidance = isAvoidanceProbeType(type);
   // Disable buttons immediately so double-click can't fire twice.
   if (rowEl instanceof HTMLElement) {
     rowEl.querySelectorAll(".probe-btn").forEach((b) => {
@@ -1039,21 +1074,20 @@ async function handleSpecResponse(domain, responseType, rowEl) {
     });
   }
   try {
-    await respondToInterestProbe(domain, responseType);
+    const respond = isAvoidance ? respondToAvoidanceProbe : respondToInterestProbe;
+    await respond(domain, responseType);
     if (rowEl instanceof HTMLElement) {
       rowEl.replaceChildren();
       const msg = document.createElement("p");
       msg.className = "spec-result";
-      msg.textContent =
-        responseType === "confirm"
-          ? `好，「${domain}」记住了。`
-          : `好，「${domain}」先不看了。`;
+      msg.textContent = isAvoidance
+        ? (responseType === "confirm" ? `好，「${domain}」会作为避雷方向处理。` : `好，「${domain}」不记成避雷。`)
+        : (responseType === "confirm" ? `好，「${domain}」记住了。` : `好，「${domain}」先不看了。`);
       rowEl.append(msg);
       setTimeout(() => rowEl.remove(), 2500);
     }
     // Drop matching message-card from inbox state too, so the badge is in sync.
-    state.messages = state.messages.filter((m) => m.domain !== domain);
-    if (state.pendingProbe?.domain === domain) state.pendingProbe = null;
+    removeMessageFromState(domain, type);
     updateMessageBadge();
     // Delay the profile re-fetch so the "好，记住了" message stays
     // visible long enough to be perceived. Without this delay,
@@ -1160,8 +1194,7 @@ async function handleProbeResponse(responseType) {
 
     state.pendingProbe = null;
     // Also remove from messages inbox
-    state.messages = state.messages.filter((m) => m.domain !== domain);
-    updateMessageBadge();
+    removeMessageFromState(domain, "interest.probe");
 
     // Delay the profile re-fetch so the success message stays visible.
     // Re-rendering speculative-list immediately would clobber the probe
@@ -1356,17 +1389,25 @@ function renderMessagesList() {
 }
 
 function buildMessageCard(probe) {
+  const type = normalizeProbeType(probe?.type);
+  const isAvoidance = isAvoidanceProbeType(type);
   const item = document.createElement("div");
   item.className = "message-item";
   item.dataset.domain = probe.domain;
+  item.dataset.type = type;
 
   // Dismiss button (×)
   const dismiss = document.createElement("button");
   dismiss.className = "message-dismiss";
   dismiss.textContent = "\u00D7";
   dismiss.title = "\u5173\u95ED";
-  dismiss.addEventListener("click", () => dismissMessage(probe.domain));
+  dismiss.addEventListener("click", () => dismissMessage(probe.domain, type));
   item.append(dismiss);
+
+  const eyebrow = document.createElement("div");
+  eyebrow.className = "message-reason";
+  eyebrow.textContent = isAvoidance ? "避雷确认" : "兴趣确认";
+  item.append(eyebrow);
 
   const domain = document.createElement("div");
   domain.className = "message-domain";
@@ -1406,18 +1447,18 @@ function buildMessageCard(probe) {
 
   const confirmBtn = document.createElement("button");
   confirmBtn.className = "probe-btn is-confirm";
-  confirmBtn.textContent = "\u559C\u6B22";
-  confirmBtn.addEventListener("click", () => handleMessageResponse(probe.domain, "confirm"));
+  confirmBtn.textContent = isAvoidance ? "确实不喜欢" : "\u559C\u6B22";
+  confirmBtn.addEventListener("click", () => handleMessageResponse(probe.domain, "confirm", type));
 
   const rejectBtn = document.createElement("button");
   rejectBtn.className = "probe-btn is-reject";
-  rejectBtn.textContent = "\u4E0D\u559C\u6B22";
-  rejectBtn.addEventListener("click", () => handleMessageResponse(probe.domain, "reject"));
+  rejectBtn.textContent = isAvoidance ? "不是" : "\u4E0D\u559C\u6B22";
+  rejectBtn.addEventListener("click", () => handleMessageResponse(probe.domain, "reject", type));
 
   const chatBtn = document.createElement("button");
   chatBtn.className = "probe-btn is-chat";
   chatBtn.textContent = "\u591A\u804A\u804A";
-  chatBtn.addEventListener("click", () => expandInlineChat(item, probe.domain));
+  chatBtn.addEventListener("click", () => expandInlineChat(item, probe.domain, type));
 
   if (probe.chat_status === "pending") {
     confirmBtn.disabled = true;
@@ -1655,9 +1696,10 @@ function dismissMessageByBvid(bvid, removeFromDom = true) {
   }
 }
 
-function expandInlineChat(itemEl, domain) {
+function expandInlineChat(itemEl, domain, type = "interest.probe") {
   // Don't add twice
   if (itemEl.querySelector(".message-chat-area")) return;
+  const isAvoidance = isAvoidanceProbeType(type);
 
   // Hide the action buttons
   const actions = itemEl.querySelector(".message-actions");
@@ -1669,12 +1711,12 @@ function expandInlineChat(itemEl, domain) {
   const input = document.createElement("textarea");
   input.className = "message-chat-input";
   input.rows = 1;
-  input.placeholder = `\u804A\u804A\u4F60\u5BF9\u300C${domain}\u300D\u7684\u60F3\u6CD5\u2026`;
+  input.placeholder = isAvoidance ? `聊聊你为什么想避开「${domain}」…` : `\u804A\u804A\u4F60\u5BF9\u300C${domain}\u300D\u7684\u60F3\u6CD5\u2026`;
 
   const sendBtn = document.createElement("button");
   sendBtn.className = "message-chat-send";
   sendBtn.textContent = "\u53D1\u9001";
-  sendBtn.addEventListener("click", () => sendInlineChat(itemEl, domain, input, sendBtn));
+  sendBtn.addEventListener("click", () => sendInlineChat(itemEl, domain, input, sendBtn, type));
 
   // Allow Enter to send
   input.addEventListener("keydown", (e) => {
@@ -1711,25 +1753,26 @@ function createChatThinkingPlaceholder(label) {
   return wrap;
 }
 
-async function sendInlineChat(itemEl, domain, input, sendBtn) {
+async function sendInlineChat(itemEl, domain, input, sendBtn, type = "interest.probe") {
   const message = input.value.trim();
   if (!message) return;
+  const isAvoidance = isAvoidanceProbeType(type);
 
   sendBtn.disabled = true;
-  const turnId = createClientTurnId("probe");
+  const turnId = createClientTurnId(isAvoidance ? "avoidance_probe" : "probe");
 
   // Show a thinking placeholder so the user knows we\u2019re waiting
   // on the LLM. The composer\u2019s send button alone going gray
   // wasn\u2019t enough of a signal — many users assumed the click
   // didn\u2019t register.
-  const thinking = createChatThinkingPlaceholder("\u963fB \u6b63\u5728\u601d\u8003\u8fd9\u4e2a\u65b9\u5411");
+  const thinking = createChatThinkingPlaceholder(isAvoidance ? "阿B 正在确认这个避雷边界" : "\u963fB \u6b63\u5728\u601d\u8003\u8fd9\u4e2a\u65b9\u5411");
   itemEl.append(thinking);
 
   try {
     const turn = await startChatTurn({
       turnId,
       session: CHAT_SESSION,
-      scope: "probe",
+      scope: isAvoidance ? "avoidance_probe" : "probe",
       subjectId: domain,
       subjectTitle: domain,
       message,
@@ -1748,7 +1791,7 @@ async function sendInlineChat(itemEl, domain, input, sendBtn) {
       itemEl.append(replyEl);
       applyTurnToMessage(nextTurn);
       setTimeout(() => {
-        removeMessageFromState(domain);
+        removeMessageFromState(domain, type);
         itemEl.remove();
         renderMessagesEmptyIfNeeded();
       }, 4000);
@@ -1779,18 +1822,23 @@ async function sendInlineChat(itemEl, domain, input, sendBtn) {
   }
 }
 
-function dismissMessage(domain) {
-  removeMessageFromState(domain);
-  const item = elements.messagesList?.querySelector(`[data-domain="${CSS.escape(domain)}"]`);
+function dismissMessage(domain, type = "") {
+  removeMessageFromState(domain, type);
+  const selector = type
+    ? `[data-domain="${CSS.escape(domain)}"][data-type="${CSS.escape(normalizeProbeType(type))}"]`
+    : `[data-domain="${CSS.escape(domain)}"]`;
+  const item = elements.messagesList?.querySelector(selector);
   if (item) item.remove();
   renderMessagesEmptyIfNeeded();
 }
 
-async function handleMessageResponse(domain, responseType) {
+async function handleMessageResponse(domain, responseType, type = "interest.probe") {
+  const isAvoidance = isAvoidanceProbeType(type);
   try {
-    const apiResp = await respondToInterestProbe(domain, responseType);
+    const respond = isAvoidance ? respondToAvoidanceProbe : respondToInterestProbe;
+    const apiResp = await respond(domain, responseType);
 
-    const item = elements.messagesList?.querySelector(`[data-domain="${CSS.escape(domain)}"]`);
+    const item = elements.messagesList?.querySelector(`[data-domain="${CSS.escape(domain)}"][data-type="${CSS.escape(normalizeProbeType(type))}"]`);
     // ok=false means the backend no longer recognises this domain
     // (typical: probe rotated out by TTL or a fresh force_tick while
     // the popup sat open with a stale inbox). Tell the user, then
@@ -1808,7 +1856,7 @@ async function handleMessageResponse(domain, responseType) {
       } catch {
         /* fall through */
       }
-      removeMessageFromState(domain);
+      removeMessageFromState(domain, type);
       renderMessagesList();
       return;
     }
@@ -1817,9 +1865,9 @@ async function handleMessageResponse(domain, responseType) {
       item.replaceChildren();
       const msg = document.createElement("p");
       msg.className = "message-result";
-      msg.textContent = responseType === "confirm"
-        ? `\u597D\uFF0C\u300C${domain}\u300D\u8BB0\u4F4F\u4E86\u3002`
-        : `\u597D\uFF0C\u300C${domain}\u300D\u5148\u4E0D\u770B\u4E86\u3002`;
+      msg.textContent = isAvoidance
+        ? (responseType === "confirm" ? `好，「${domain}」会作为避雷方向处理。` : `好，「${domain}」不记成避雷。`)
+        : (responseType === "confirm" ? `\u597D\uFF0C\u300C${domain}\u300D\u8BB0\u4F4F\u4E86\u3002` : `\u597D\uFF0C\u300C${domain}\u300D\u5148\u4E0D\u770B\u4E86\u3002`);
       item.append(msg);
       setTimeout(() => {
         item.remove();
@@ -1827,7 +1875,7 @@ async function handleMessageResponse(domain, responseType) {
       }, 2000);
     }
 
-    removeMessageFromState(domain);
+    removeMessageFromState(domain, type);
     // Delay the profile re-fetch so the inbox card's success message stays
     // visible. The speculative-list re-render that loadProfileSummary
     // triggers doesn't touch the messages container, but it can still
@@ -1840,9 +1888,14 @@ async function handleMessageResponse(domain, responseType) {
   }
 }
 
-function removeMessageFromState(domain) {
-  state.messages = state.messages.filter((m) => m.domain !== domain);
-  if (state.pendingProbe?.domain === domain) state.pendingProbe = null;
+function removeMessageFromState(domain, type = "") {
+  const normalizedType = type ? normalizeProbeType(type) : "";
+  state.messages = state.messages.filter((m) => {
+    if (m.domain !== domain) return true;
+    return normalizedType && normalizeProbeType(m.type) !== normalizedType;
+  });
+  if ((!normalizedType || normalizedType === "interest.probe") && state.pendingProbe?.domain === domain) state.pendingProbe = null;
+  if ((!normalizedType || normalizedType === "avoidance.probe") && state.pendingAvoidanceProbe?.domain === domain) state.pendingAvoidanceProbe = null;
   updateMessageBadge();
 }
 
@@ -1852,7 +1905,7 @@ function renderMessagesEmptyIfNeeded() {
   if (state.messages.length === 0 && container.children.length === 0) {
     const empty = document.createElement("div");
     empty.className = "messages-empty";
-    empty.innerHTML = '<div class="messages-empty-icon">\u{1F4EC}</div><p>\u6682\u65F6\u6CA1\u6709\u5F85\u786E\u8BA4\u7684\u6D88\u606F\u3002<br>\u5F53\u7CFB\u7EDF\u731C\u6D4B\u5230\u4F60\u53EF\u80FD\u611F\u5174\u8DA3\u7684\u65B9\u5411\u65F6\uFF0C\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p>';
+    empty.innerHTML = '<div class="messages-empty-icon">\u{1F4EC}</div><p>\u6682\u65F6\u6CA1\u6709\u5F85\u786E\u8BA4\u7684\u6D88\u606F\u3002<br>\u5174\u8DA3\u786E\u8BA4\u548C\u907F\u96F7\u786E\u8BA4\u90FD\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002</p>';
     container.append(empty);
   }
 }
@@ -2451,6 +2504,7 @@ function renderProfileSummary(summary) {
   renderExplorationBar(elements.profileExplorationOpenness, summary.exploration_openness);
   // Cross-cutting
   renderSpeculativeInterests(elements.profileSpeculativeInterests, summary.speculative_interests);
+  renderSpeculativeInterests(elements.profileSpeculativeAvoidances, summary.speculative_avoidances, { kind: "avoidance" });
   renderCognitionCards(
     elements.profileRecentMemory,
     getProfileCognitionItems(summary),
@@ -2676,7 +2730,11 @@ function applyTurnToDelight(turn) {
 
 function applyTurnToMessage(turn) {
   if (!turn || !turn.subject_id) return;
-  const type = turn.scope === "delight" ? "delight" : "interest.probe";
+  const type = turn.scope === "delight"
+    ? "delight"
+    : turn.scope === "avoidance_probe"
+      ? "avoidance.probe"
+      : "interest.probe";
   const idx = state.messages.findIndex((item) => {
     const itemType = item?.type || "interest.probe";
     return (
@@ -2760,9 +2818,10 @@ async function hydrateChatHistory() {
 async function syncScopedChatTurns() {
   if (!state.online) return;
   try {
-    const [delightTurns, probeTurns] = await Promise.all([
+    const [delightTurns, probeTurns, avoidanceProbeTurns] = await Promise.all([
       fetchChatTurns({ session: CHAT_SESSION, scope: "delight", limit: 80 }),
       fetchChatTurns({ session: CHAT_SESSION, scope: "probe", limit: 80 }),
+      fetchChatTurns({ session: CHAT_SESSION, scope: "avoidance_probe", limit: 80 }),
     ]);
     for (const turn of delightTurns.items || []) {
       applyTurnToDelight(turn);
@@ -2779,6 +2838,17 @@ async function syncScopedChatTurns() {
       }
     }
     for (const turn of probeTurns.items || []) {
+      applyTurnToMessage(turn);
+      if (turn.status === "pending") {
+        pollChatTurnUntilSettled(turn.turn_id, {
+          onUpdate(nextTurn) {
+            applyTurnToMessage(nextTurn);
+            renderMessagesList();
+          },
+        });
+      }
+    }
+    for (const turn of avoidanceProbeTurns.items || []) {
       applyTurnToMessage(turn);
       if (turn.status === "pending") {
         pollChatTurnUntilSettled(turn.turn_id, {
@@ -3716,7 +3786,7 @@ async function loadProfileSummary({ force = false } = {}) {
     } else if (state.profile) {
       // Cached path: still hydrate inbox so reopening popup with a
       // warm profile cache still surfaces the active speculations.
-      hydrateInboxFromSpeculations(state.profile.speculative_interests);
+      hydrateInboxFromProfile(state.profile);
       renderProfileSummary(state.profile);
     }
     return;
@@ -3742,15 +3812,21 @@ async function loadProfileSummary({ force = false } = {}) {
   // inbox stays in sync with the speculator state (the backend dedupes
   // its WebSocket pushes via ``probed_domains``, so already-pushed
   // probes won't re-arrive on reconnect).
-  hydrateInboxFromSpeculations(state.profile?.speculative_interests);
+  hydrateInboxFromProfile(state.profile);
   void syncScopedChatTurns();
   state.profileLoaded = true;
   renderProfileSummary(state.profile);
   maybeLoadMoreCognitionHistory();
 }
 
-function hydrateInboxFromSpeculations(speculations) {
+function hydrateInboxFromProfile(profile) {
+  hydrateInboxFromSpeculations(profile?.speculative_interests, "interest.probe");
+  hydrateInboxFromSpeculations(profile?.speculative_avoidances, "avoidance.probe");
+}
+
+function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
   if (!Array.isArray(speculations)) return;
+  const normalizedType = normalizeProbeType(type);
   // Speculator regenerates probes on a runtime cycle; older actives may
   // have rotated to cooldown.  We must REPLACE the interest.probe slice
   // of state.messages with the current active set, otherwise the inbox
@@ -3763,23 +3839,23 @@ function hydrateInboxFromSpeculations(speculations) {
       .filter((s) => s && s.domain && (!s.status || s.status === "active"))
       .map((s) => s.domain),
   );
-  // Drop interest.probe entries no longer in the active set.
+  // Drop probe entries of the same type no longer in the active set.
   state.messages = state.messages.filter((m) => {
-    const type = m?.type || "interest.probe";
-    if (type !== "interest.probe") return true;
+    const itemType = normalizeProbeType(m?.type);
+    if (itemType !== normalizedType) return true;
     return m.domain && activeDomains.has(m.domain);
   });
   // Add any current active probes not yet in state.messages.
   const existingDomains = new Set(
     state.messages
-      .filter((m) => (m?.type || "interest.probe") === "interest.probe" && m?.domain)
+      .filter((m) => normalizeProbeType(m?.type) === normalizedType && m?.domain)
       .map((m) => m.domain),
   );
   for (const item of speculations) {
     if (!item || (item.status && item.status !== "active") || !item.domain) continue;
     if (existingDomains.has(item.domain)) continue;
     state.messages.push({
-      type: "interest.probe",
+      type: normalizedType,
       domain: item.domain,
       reason: item.reason || "",
       specifics: Array.isArray(item.specifics) ? item.specifics : [],

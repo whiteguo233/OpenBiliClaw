@@ -41,6 +41,7 @@ class SpeculativeAvoidance:
     category: str
     reason: str
     source_mode: str  # negative_signal | positive_boundary | style_boundary
+    source_signal: str  # thumbs_down | dislike | chat_negative | profile_boundary | style_boundary
     experience_mode: str
     entry_load: str
     confidence: float
@@ -152,6 +153,7 @@ runtime 事件：
   "confidence": 0.46,
   "weight": 0.46,
   "source_mode": "negative_signal",
+  "source_signal": "thumbs_down",
   "experience_mode": "knowledge",
   "entry_load": "light",
   "specifics": ["标题党热点解读", "无信息增量复读", "情绪化站队剪辑"],

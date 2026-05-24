@@ -203,3 +203,16 @@ export async function respondToProbe(domain, responseType, message = "") {
     timeoutMs: 35_000,
   });
 }
+
+// ── Avoidance Probes ────────────────────────────────────────
+export async function fetchPendingAvoidanceProbes() {
+  const data = await requestJson("/avoidance-probes/pending");
+  return Array.isArray(data?.items) ? data.items : [];
+}
+
+export async function respondToAvoidanceProbe(domain, responseType, message = "") {
+  return requestJson("/avoidance-probes/respond", {
+    ...json({ domain, response: responseType, message }),
+    timeoutMs: 35_000,
+  });
+}

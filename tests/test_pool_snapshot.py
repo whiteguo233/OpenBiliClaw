@@ -38,7 +38,8 @@ def test_build_pool_snapshot_marks_saturated_topics_and_styles(tmp_path):
         source_targets={"bilibili": 48, "xiaohongshu": 6, "douyin": 6},
     )
 
-    assert snapshot.pool_available_count == 15
+    # 12 AI items capped to 3 by max_per_topic_group + 3 doc items = 6 servable
+    assert snapshot.pool_available_count == 6
     assert "AI 编程" in snapshot.saturated_topics
     assert "deep_dive" in snapshot.saturated_styles
     assert snapshot.source_deficits["bilibili"] == 33

@@ -36,6 +36,7 @@
 | M125 pool 预生成推荐文案 | ✅ | discovery pool 现在会异步批量预生成 `expression/topic_label`，`reshuffle/append` 只消费预生成结果，缺失时返回空而不是写统一兜底 |
 | M126 源无关内容分类 | ✅ | `classify_pool_backlog()` 在 `precompute_pool_copy` 前自动为未分类内容（XHS 等）补上 `style_key` / `topic_group` / `relevance_score`，并在批量评估 prompt 中带上近期 `negative_examples`，让小红书等延迟入池内容也能避开用户刚刚明确不喜欢的话术模式。COALESCE 保护已分类字段不被重复入库覆盖。`_diversity_tokens` 不再 fallback `source_strategy`——推荐层只看内容特征，来源完全透明 |
 | M127 兴趣探针用户确认 | ✅ | WebSocket 推送 `interest.probe` → Chrome 通知 → popup 卡片（是 / 不是 / 多聊聊）→ `POST /api/interest-probes/respond` → speculator confirm/reject/chat。4h 去重冷却。推送从 `_run_refresh_plan` 移到 `run_forever` 主循环 |
+| M127b 避雷探针用户确认 | ✅ | WebSocket 推送 `avoidance.probe` → popup / Web / OpenClaw 卡片（确实不喜欢 / 不是 / 多聊聊）→ `POST /api/avoidance-probes/respond`；确认后写入 `disliked_topics` 并清理候选池，未确认时不参与过滤 |
 | M128 CLI delight + probe | ✅ | `openbiliclaw delight` 手动查看惊喜推荐候选；`openbiliclaw probe` 手动列出猜测方向并交互确认/拒绝 |
 | M129 惊喜候选自动预热与回填 | ✅ | delight 运行时统一使用共享阈值（默认 `0.70`，保守用户 `0.80`）；后台启动会自动补齐高分但缺 `reason/hook` 的候选，`suppressed` 高分库存也允许作为惊喜推荐入口 |
 | v0.3.0 在线 supergroup 合并 | ✅ | `_merge_topic_supergroups` serve 时基于 embedding 把 `动漫杂谈/补番/解说` 等近义 topic 合并为同一聚类，让多样化器把它们当作一个桶 |
@@ -47,7 +48,7 @@
 | v0.3.45 MMR embedding 提前 warm | ✅ | `warm_mmr_embeddings` 在 discovery 入池 + `classify_pool_backlog` 落库后立即并行 warm L2 SQLite embedding cache（cache key 文本由 `_mmr_embedding_text` 静态方法做 single source of truth），serve() 用 `asyncio.gather` 并行兜底,新增 `MMR embedding fetch: coverage=N/M elapsed=Xms` 埋点。换一批 P50 双峰（0.7s / 6-10s）收敛到稳定 <1s |
 | v0.3.57 pool gate on precomputed copy | ✅ | `get_pool_candidates` / `count_pool_candidates` SQL 加 `AND COALESCE(pool_expression, '') != '' AND COALESCE(pool_topic_label, '') != ''` —— 未 precompute 的 row 对 serve() 不可见,消除"discovery 完成→precompute 完成"60–90s 窗口内 popup 显示占位模板的旧 bug。`engine.py:320` 的 `_fallback_expression` 路径变成 race-window 安全网,触发即 `logger.warning("Pool gate leak: ...")` |
 | v0.3.66 pool gate on classification | ✅ | `get_pool_candidates` / `count_pool_candidates` 现在同样要求 `style_key` 与 `topic_group` 非空；`get_pool_candidates_needing_copy` 也只挑已分类但缺文案的候选，避免未分类跨源内容先生成 copy 后绕过 serve 分类口径 |
-| v0.3.90 servable pool count | ✅ | `count_pool_candidates()` 在读取前刷新 SQLite/WAL snapshot，并新增 `count_pool_readiness()` 拆分 `available/raw/pending`；`serve()` 零候选 warning 会输出 `raw/servable/pending`，用于定位“池子有素材但暂不可换”的真实原因。 |
+| v0.3.91 servable pool count | ✅ | `count_pool_candidates()` 在读取前刷新 SQLite/WAL snapshot，并默认应用与 `get_pool_candidates()` 相同的 `max_per_topic_group=3` 候选窗口；新增 `count_pool_readiness()` 拆分 `available/raw/pending`；`serve()` 零候选 warning 会输出 `raw/servable/pending`，用于定位“池子有素材但暂不可换”的真实原因。 |
 | v0.3.74 recommendation/delight JSON 容错统一 | ✅ | `RecommendationEngine` 的内容分类、单条表达和批量表达解析，以及 `delight.precompute_delight_scores()` 的 batch scorer 都改用 `llm.json_utils`。MiMo / OpenAI-compatible provider 返回 object wrapper、fenced JSON、JSONL、schema echo 或 malformed `{ [ ... ] }` 时会优先提取满足字段 predicate 的真实结果 |
 | v0.3.81 批量结果按内容 ID 绑定 | ✅ | 批量推荐文案和源无关内容分类的 prompt 都带 `bvid/content_id`，解析时优先按返回 ID 写回。模型乱序、漏项或只返回部分条目时不再按数组下标把原因写到错误视频；无 ID 且数量不完整的文案批次会降级单条生成，分类批次会标记失败避免错写 |
 | v0.3.x 批量文案限流保护 | ✅ | `_precompute_batch()` 遇到 LLM provider rate limit / cooldown / quota 时不再进入逐条 `_try_generate_expression()` fallback；本轮预生成计为 0，保留空 `pool_expression/topic_label` 等后续调度重试 |
@@ -112,7 +113,7 @@ items = await engine.reshuffle_recommendations(
 - runtime 会把 discovery pool 持续补到 `pool_target_count` 附近，默认目标现在是 `300`（允许配置到 `600`）；达到目标后停止 discover，等池子掉回目标以下再补货，保证 popup 连续“换一批”和自动续页时尽量随时有货，同时避免无谓的远端调用。补货和 trim 会按 `[scheduler.pool_source_shares]` 做平台级硬配比，默认保存 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1，但小红书、抖音、YouTube 默认关闭，运行时有效配比默认只有 B 站；显式启用某个平台后才会按保存 share 获得配额。单个平台族超过配额时会被先压回目标内；少量补货时 discovery 会收缩 LLM 评估窗口，只评估可被当前平台缺口吸收的过采样候选
 - runtime 补货在调用 discovery 前会构建候选池分布 snapshot，把当前来源缺口和饱和方向作为可选上下文传给兼容的 discovery strategy
 - pool-aware discovery 只改变上游补货时的 query 软指导和入池前软重排；`reshuffle` 的服务路径、候选过滤、文案 gating、推荐记录写入和多样性选择逻辑保持不变
-- `count_pool_candidates()` 是“真实可换”口径，必须与 `get_pool_candidates()` 的 fresh/readiness/viewed/linkability gates 保持一致；素材库存和待整理内容通过 `count_pool_readiness()` 的 `raw/pending` 诊断字段暴露给 runtime。
+- `count_pool_candidates()` 是“真实可换”口径，必须与 `get_pool_candidates()` 的 fresh/readiness/viewed/linkability gates 以及默认每 `topic_group` 最多 3 条的候选窗口保持一致；素材库存和待整理内容通过 `count_pool_readiness()` 的 `raw/pending` 诊断字段暴露给 runtime。
 - refresh 结束后还会顺手压一轮 `explore` 的高风险相邻子簇，避免制造 / 工艺 / 材料、博弈 / 桌游 / 机制这类方向把剩余可换窗口挤成单一口味
 
 ### RecommendationEngine.append_recommendations

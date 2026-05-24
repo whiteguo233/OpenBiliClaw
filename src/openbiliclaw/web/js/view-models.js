@@ -365,6 +365,14 @@ export function getProbeMessageActions() {
   ];
 }
 
+export function getAvoidanceProbeMessageActions() {
+  return [
+    { label: "确实不喜欢", action: "confirm", primary: true },
+    { label: "不是", action: "reject", primary: false },
+    { label: "多聊聊", action: "chat", primary: false },
+  ];
+}
+
 // ── Pool Status (simple — backward compat) ───────────────────
 
 export function normalizePoolStatus(status) {
@@ -883,6 +891,25 @@ export function normalizeProfileSummary(summary) {
             domain: normalizeText(item.domain),
             reason: normalizeText(item.reason),
             confidence: Number(item.confidence ?? 0),
+            confirmation_count: Number(item.confirmation_count ?? 0),
+            confirmation_threshold: Number(item.confirmation_threshold ?? 3),
+            status: normalizeText(item.status) || "active",
+            specifics: Array.isArray(item.specifics)
+              ? item.specifics
+                  .filter((s) => s?.name)
+                  .map((s) => ({ name: normalizeText(s.name), confirmation_count: Number(s.confirmation_count ?? 0) }))
+              : [],
+          }))
+      : [],
+    speculative_avoidances: Array.isArray(summary?.speculative_avoidances)
+      ? summary.speculative_avoidances
+          .filter((item) => item?.domain)
+          .map((item) => ({
+            domain: normalizeText(item.domain),
+            reason: normalizeText(item.reason),
+            confidence: Number(item.confidence ?? 0),
+            source_mode: normalizeText(item.source_mode),
+            source_signal: normalizeText(item.source_signal),
             confirmation_count: Number(item.confirmation_count ?? 0),
             confirmation_threshold: Number(item.confirmation_threshold ?? 3),
             status: normalizeText(item.status) || "active",

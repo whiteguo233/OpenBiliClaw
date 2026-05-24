@@ -351,7 +351,7 @@ def test_needs_replenishment_false_when_pool_full() -> None:
             pool_expression="x",
             pool_topic_label="y",
             style_key="tutorial",
-            topic_group="测试分组",
+            topic_group=f"分组{i}",
         )
     curator = PoolCurator(db)
     assert curator.needs_replenishment() is False

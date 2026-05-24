@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 from openbiliclaw.llm.service import LLMService
 
+from .avoidance_speculator import AvoidanceSpeculator
 from .awareness_analyzer import AwarenessAnalyzer
 from .cognition_cycle import (
     DEFAULT_MIN_INTERVAL_SECONDS as _DEFAULT_COG_INTERVAL,
@@ -91,6 +92,11 @@ class SoulEngine:
         speculation_max_active: int = 5,
         speculation_max_primary_interests: int = 15,
         speculation_max_secondary_interests: int = 60,
+        avoidance_speculation_interval_minutes: int = 10,
+        avoidance_speculation_ttl_days: int = 3,
+        avoidance_speculation_cooldown_days: int = 7,
+        avoidance_speculation_confirmation_threshold: int = 3,
+        avoidance_speculation_max_active: int = 5,
         speculator_idle_interval_minutes: int = 30,
         feedback_batch_threshold: int = 3,
     ) -> None:
@@ -134,6 +140,15 @@ class SoulEngine:
             max_primary_interests=speculation_max_primary_interests,
             max_secondary_interests=speculation_max_secondary_interests,
         )
+        self._avoidance_speculator = AvoidanceSpeculator(
+            llm_service=self._llm_service,
+            data_dir=data_dir,
+            generation_interval_minutes=avoidance_speculation_interval_minutes,
+            default_ttl_days=avoidance_speculation_ttl_days,
+            cooldown_days=avoidance_speculation_cooldown_days,
+            confirmation_threshold=avoidance_speculation_confirmation_threshold,
+            max_active=avoidance_speculation_max_active,
+        )
         self._embedding_service = embedding_service
         self._cognition_cycle = CognitionCycle(
             memory=memory,
@@ -150,6 +165,7 @@ class SoulEngine:
             preference_analyzer=self._preference_analyzer,
             profile_builder=self._profile_builder,
             speculator=self._speculator,
+            avoidance_speculator=self._avoidance_speculator,
             embedding_service=embedding_service,
             cognition_cycle=self._cognition_cycle,
             speculator_idle_interval_minutes=speculator_idle_interval_minutes,
@@ -253,11 +269,16 @@ class SoulEngine:
         # Trigger speculator immediately after init to seed speculative interests
         try:
             feedback_history: object = []
+            avoidance_feedback_history: object = []
             load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
             if callable(load_runtime_state):
                 runtime_state = load_runtime_state()
                 if isinstance(runtime_state, dict):
                     feedback_history = runtime_state.get("probe_feedback_history", [])
+                    avoidance_feedback_history = runtime_state.get(
+                        "avoidance_probe_feedback_history",
+                        [],
+                    )
             try:
                 await self._speculator.force_tick(
                     profile,
@@ -265,6 +286,13 @@ class SoulEngine:
                 )
             except TypeError:
                 await self._speculator.force_tick(profile)
+            try:
+                await self._avoidance_speculator.force_tick(
+                    profile,
+                    feedback_history=avoidance_feedback_history,
+                )
+            except TypeError:
+                await self._avoidance_speculator.force_tick(profile)
         except Exception:
             logger.debug("Speculator force_tick after init failed", exc_info=True)
 

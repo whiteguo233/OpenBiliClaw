@@ -14,6 +14,7 @@ from openbiliclaw.config import SchedulerConfig
 from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
+from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
 
 if TYPE_CHECKING:
@@ -986,7 +987,7 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self._publish_delight_if_available()
             with suppress(Exception):
-                await self._publish_interest_probe_if_available()
+                await self._publish_probe_if_available()
             delight_count_after = self._safe_count_delight_candidates()
             net_new_delights = max(0, delight_count_after - delight_count_before)
             if net_new_delights > 0:
@@ -1328,7 +1329,7 @@ class ContinuousRefreshController:
                     }
                 )
             await self._publish_delight_if_available()
-            await self._publish_interest_probe_if_available()
+            await self._publish_probe_if_available()
 
             # v0.3.66+: enforce the absolute pool cap at the end of every
             # refresh plan. The earlier trim_topic_group_overflow /
@@ -1464,7 +1465,7 @@ class ContinuousRefreshController:
 
     _PROBE_COOLDOWN_HOURS = 4  # Don't re-push the same domain within this window
 
-    async def _publish_interest_probe_if_available(self) -> None:
+    async def _publish_interest_probe_if_available(self) -> bool:
         """Push the top speculative-interest hypothesis via WebSocket.
 
         Fires an ``interest.probe`` event when the speculator has an active
@@ -1477,10 +1478,10 @@ class ContinuousRefreshController:
         speculator = getattr(self.soul_engine, "_speculator", None)
         get_active = getattr(speculator, "get_active_speculations", None)
         if not callable(get_active):
-            return
+            return False
         specs = list(get_active())
         if not specs:
-            return
+            return False
 
         # Load probe history from runtime state
         state = self.memory_manager.load_discovery_runtime_state()
@@ -1499,11 +1500,11 @@ class ContinuousRefreshController:
             feedback_history=state.get("probe_feedback_history", []),
         )
         if top is None:
-            return  # All active specs were probed recently
+            return False  # All active specs were probed recently
 
         domain = str(getattr(top, "domain", "")).strip()
         if not domain:
-            return
+            return False
 
         axis = build_probe_axis(
             experience_mode=getattr(top, "experience_mode", ""),
@@ -1542,7 +1543,7 @@ class ContinuousRefreshController:
         )
         if not delivered:
             logger.debug("interest probe skipped: no runtime-stream subscriber")
-            return
+            return False
 
         # Record this probe only after it has reached at least one runtime stream.
         probed[domain.lower()] = now.isoformat()
@@ -1551,6 +1552,110 @@ class ContinuousRefreshController:
             probed_axes[axis] = now.isoformat()
         state["probed_axes"] = probed_axes
         self.memory_manager.save_discovery_runtime_state(state)
+        return True
+
+    async def _publish_avoidance_probe_if_available(self) -> bool:
+        """Push the top speculative-avoidance hypothesis via WebSocket."""
+        speculator = getattr(self.soul_engine, "_avoidance_speculator", None)
+        get_active = getattr(speculator, "get_active_avoidances", None)
+        if not callable(get_active):
+            return False
+        avoidances = list(get_active())
+        if not avoidances:
+            return False
+
+        state = self.memory_manager.load_discovery_runtime_state()
+        probed: dict[str, str] = state.get("probed_avoidance_domains", {})  # type: ignore[assignment]
+        probed_axes: dict[str, str] = state.get("probed_avoidance_axes", {})  # type: ignore[assignment]
+        now = self._now()
+        cutoff = (now - timedelta(hours=self._PROBE_COOLDOWN_HOURS)).isoformat()
+        probed = {d: t for d, t in probed.items() if t > cutoff}
+        probed_axes = {axis: t for axis, t in probed_axes.items() if t > cutoff}
+
+        top = choose_next_avoidance_candidate(
+            avoidances,
+            probed_domains=set(probed),
+            probed_axes=set(probed_axes),
+            feedback_history=state.get("avoidance_probe_feedback_history", []),
+        )
+        if top is None:
+            return False
+
+        domain = str(getattr(top, "domain", "")).strip()
+        if not domain:
+            return False
+
+        axis = build_probe_axis(
+            experience_mode=getattr(top, "experience_mode", ""),
+            entry_load=getattr(top, "entry_load", ""),
+        )
+        reason = str(getattr(top, "reason", "")).strip()
+        specifics = [
+            str(getattr(item, "name", "")).strip()
+            for item in getattr(top, "specifics", [])
+            if str(getattr(item, "name", "")).strip()
+        ][:5]
+        specific_hint = ""
+        if specifics:
+            specific_hint = "（比如：" + "、".join(specifics[:3]) + "）"
+        question = (
+            f"我猜【{domain}】{specific_hint}可能是你想避开的方向"
+            f"——{reason} 这个判断准不准？"
+            if reason
+            else f"我感觉【{domain}】{specific_hint}可能不是你想看的方向，这个判断准不准？"
+        )
+        delivered = await self._publish_event(
+            {
+                "type": "avoidance.probe",
+                "phase": "ready",
+                "message": "有一个可能想避开的方向想确认",
+                "domain": domain,
+                "reason": reason,
+                "confidence": float(getattr(top, "confidence", 0.0) or 0.0),
+                "weight": float(getattr(top, "weight", 0.0) or 0.0),
+                "source_mode": str(getattr(top, "source_mode", "")),
+                "source_signal": str(getattr(top, "source_signal", "")),
+                "experience_mode": str(getattr(top, "experience_mode", "")),
+                "entry_load": str(getattr(top, "entry_load", "")),
+                "specifics": specifics,
+                "question": question,
+            }
+        )
+        if not delivered:
+            logger.debug("avoidance probe skipped: no runtime-stream subscriber")
+            return False
+
+        probed[domain.lower()] = now.isoformat()
+        state["probed_avoidance_domains"] = probed
+        if axis:
+            probed_axes[axis] = now.isoformat()
+        state["probed_avoidance_axes"] = probed_axes
+        self.memory_manager.save_discovery_runtime_state(state)
+        return True
+
+    async def _publish_probe_if_available(self) -> bool:
+        """Publish at most one proactive probe, alternating interest and avoidance."""
+        state = self.memory_manager.load_discovery_runtime_state()
+        last_kind = str(state.get("last_probe_kind", "")).strip().lower()
+        order = (
+            ("avoidance", self._publish_avoidance_probe_if_available),
+            ("interest", self._publish_interest_probe_if_available),
+        )
+        if last_kind != "interest":
+            order = (
+                ("interest", self._publish_interest_probe_if_available),
+                ("avoidance", self._publish_avoidance_probe_if_available),
+            )
+
+        for kind, publish in order:
+            delivered = await publish()
+            if not delivered:
+                continue
+            latest_state = self.memory_manager.load_discovery_runtime_state()
+            latest_state["last_probe_kind"] = kind
+            self.memory_manager.save_discovery_runtime_state(latest_state)
+            return True
+        return False
 
     def _strategy_message(self, strategies: list[str]) -> str:
         if strategies == ["search", "related_chain"]:

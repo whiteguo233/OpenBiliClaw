@@ -7,6 +7,9 @@ from pathlib import Path
 
 from openbiliclaw.integrations.openclaw.errors import AdapterValidationError
 from openbiliclaw.integrations.openclaw.schemas import (
+    AvoidanceProbeFeedbackResponse,
+    AvoidanceProbeItem,
+    AvoidanceProbeResponse,
     ChatResponse,
     DelightItem,
     DelightResponse,
@@ -127,6 +130,31 @@ class _FakeCliAdapter:
             )
         )
 
+    async def get_next_avoidance_probe(self) -> AvoidanceProbeResponse:
+        self.calls.append(("get_next_avoidance_probe",))
+        return AvoidanceProbeResponse(
+            probe=AvoidanceProbeItem(
+                domain="浅层热点复读",
+                reason="用户可能想避开无信息增量的热点复读内容。",
+                source_mode="negative_signal",
+                source_signal="thumbs_down",
+                confidence=0.55,
+                weight=0.5,
+                specifics=["标题党热点解读"],
+                question="我猜【浅层热点复读】（比如：标题党热点解读）可能是你想避开的方向。",
+            )
+        )
+
+    async def respond_avoidance_probe(self, request) -> AvoidanceProbeFeedbackResponse:  # noqa: ANN001
+        self.calls.append(
+            ("respond_avoidance_probe", request.domain, request.response, request.message)
+        )
+        return AvoidanceProbeFeedbackResponse(
+            ok=True,
+            action="confirmed",
+            domain=request.domain,
+        )
+
 
 def test_recommend_cli_emits_json_and_returns_zero(capsys) -> None:
     from openbiliclaw.integrations.openclaw.cli import main
@@ -227,7 +255,7 @@ def test_doctor_cli_reports_skill_pack_and_registered_skill_names(capsys) -> Non
         "data": {
             "skill_pack_path": str(_SKILL_PACK_PATH),
             "skill_pack_exists": True,
-            "skill_count": 8,
+            "skill_count": 10,
             "skill_names": [
                 "openbiliclaw_sync_account",
                 "openbiliclaw_get_profile",
@@ -237,6 +265,8 @@ def test_doctor_cli_reports_skill_pack_and_registered_skill_names(capsys) -> Non
                 "openbiliclaw_get_runtime_status",
                 "openbiliclaw_chat",
                 "openbiliclaw_next_probe",
+                "openbiliclaw_next_avoidance_probe",
+                "openbiliclaw_respond_avoidance_probe",
             ],
             "cli_module": "openbiliclaw.integrations.openclaw.cli",
         },
@@ -369,8 +399,53 @@ def test_next_probe_cli_emits_json_and_returns_zero(capsys) -> None:
     assert adapter.calls == [("get_next_probe",)]
 
 
+def test_next_avoidance_probe_cli_emits_json_and_returns_zero(capsys) -> None:
+    from openbiliclaw.integrations.openclaw.cli import main
+
+    adapter = _FakeCliAdapter()
+
+    exit_code = main(["next-avoidance-probe"], adapter=adapter)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["ok"] is True
+    assert payload["data"]["probe"]["domain"] == "浅层热点复读"
+    assert "避开" in payload["data"]["probe"]["question"]
+    assert adapter.calls == [("get_next_avoidance_probe",)]
+
+
+def test_respond_avoidance_probe_cli_emits_json_and_returns_zero(capsys) -> None:
+    from openbiliclaw.integrations.openclaw.cli import main
+
+    adapter = _FakeCliAdapter()
+
+    exit_code = main(
+        [
+            "respond-avoidance-probe",
+            "--domain",
+            "浅层热点复读",
+            "--response",
+            "confirm",
+            "--message",
+            "对，就是不想看",
+        ],
+        adapter=adapter,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["ok"] is True
+    assert payload["data"]["action"] == "confirmed"
+    assert adapter.calls == [
+        ("respond_avoidance_probe", "浅层热点复读", "confirm", "对，就是不想看")
+    ]
+
+
 def test_listen_default_events_include_interest_probe() -> None:
     from openbiliclaw.integrations.openclaw.cli import _LISTEN_EVENT_TYPES
 
     assert "interest.probe" in _LISTEN_EVENT_TYPES
+    assert "avoidance.probe" in _LISTEN_EVENT_TYPES
     assert "delight.candidate" in _LISTEN_EVENT_TYPES

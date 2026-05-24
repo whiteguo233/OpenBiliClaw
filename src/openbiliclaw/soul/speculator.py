@@ -335,7 +335,15 @@ def normalize_probe_feedback_history(history: object) -> list[dict[str, object]]
             "domain": domain,
             "response": response,
         }
-        for key in ("axis", "category", "reason", "message", "created_at"):
+        for key in (
+            "axis",
+            "category",
+            "reason",
+            "message",
+            "created_at",
+            "source_mode",
+            "source_signal",
+        ):
             text = _string_field(item.get(key))
             if text:
                 record[key] = text

@@ -80,6 +80,10 @@ from openbiliclaw.api.models import (
     XiaohongshuSourceConfigOut,
     YoutubeSourceConfigOut,
 )
+from openbiliclaw.soul.dislike_writeback import (
+    apply_new_dislikes,
+    topics_for_confirmed_avoidance,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -809,7 +813,7 @@ def create_app(
 
     def _normalize_chat_scope(scope: str) -> str:
         normalized = scope.strip().lower()
-        if normalized in {"chat", "delight", "probe"}:
+        if normalized in {"chat", "delight", "probe", "avoidance_probe"}:
             return normalized
         return "chat"
 
@@ -1410,9 +1414,12 @@ def create_app(
             InterestSpecificOut,
             MBTIDimensionOut,
             MBTIOut,
+            SpeculativeAvoidanceOut,
             SpeculativeInterestOut,
+            SpeculativeSpecificOut,
             StylePreferenceOut,
         )
+        from openbiliclaw.soul.avoidance_speculator import load_avoidance_state
         from openbiliclaw.soul.speculator import load_speculative_state
 
         prefs = profile.preferences
@@ -1511,9 +1518,10 @@ def create_app(
 
         # ── Speculative interests ──
         spec_items: list[SpeculativeInterestOut] = []
+        avoidance_items: list[SpeculativeAvoidanceOut] = []
+        runtime_config = getattr(ctx, "config", None) or config
         try:
-            spec_state = load_speculative_state(ctx.config.data_path)
-            from openbiliclaw.api.models import SpeculativeSpecificOut
+            spec_state = load_speculative_state(runtime_config.data_path)
 
             # Filter status="active" only — confirmed/rejected items are
             # technically still in spec_state.active until force_tick rotates
@@ -1542,6 +1550,36 @@ def create_app(
             ]
         except Exception:
             logger.debug("Failed to load speculative state for profile summary")
+
+        # ── Speculative avoidances ──
+        try:
+            avoidance_state = load_avoidance_state(runtime_config.data_path)
+            active_avoidances = [
+                item for item in avoidance_state.active if item.status == "active"
+            ]
+            avoidance_items = [
+                SpeculativeAvoidanceOut(
+                    domain=item.domain,
+                    reason=item.reason,
+                    confidence=item.confidence,
+                    source_mode=item.source_mode,
+                    source_signal=item.source_signal,
+                    confirmation_count=item.confirmation_count,
+                    confirmation_threshold=item.confirmation_threshold,
+                    status=item.status,
+                    specifics=[
+                        SpeculativeSpecificOut(
+                            name=s.name,
+                            confirmation_count=s.confirmation_count,
+                        )
+                        for s in item.specifics
+                        if s.name.strip()
+                    ],
+                )
+                for item in active_avoidances[:6]
+            ]
+        except Exception:
+            logger.debug("Failed to load avoidance state for profile summary")
 
         active_insights_out = [
             InsightHypothesisOut(
@@ -1590,6 +1628,7 @@ def create_app(
             exploration_openness=exploration_openness,
             # Cross-cutting
             speculative_interests=spec_items,
+            speculative_avoidances=avoidance_items,
             recent_cognition_updates=cognition_updates,
             has_more_cognition_updates=has_more_cognition_updates,
             next_cognition_cursor=next_cognition_cursor,
@@ -2234,6 +2273,7 @@ def create_app(
         domain: str,
         action: str,
         *,
+        source: str = "interest_probe",
         detail: str = "",
     ) -> None:
         """Write a cognition update so probe feedback shows in '阿b最近记住了什么'."""
@@ -2246,7 +2286,7 @@ def create_app(
                     "summary": summary,
                     "detail": detail or f"兴趣探针反馈：{action} — {domain}",
                     "created_at": datetime.now().isoformat(),
-                    "source": "interest_probe",
+                    "source": source,
                     "tone": "success" if action == "confirmed" else "info",
                 }
             )
@@ -2268,40 +2308,50 @@ def create_app(
                 }
             )
 
-    def _probe_metadata_from_active_speculation(
-        speculator: Any,
+    def _probe_metadata_from_active_item(
+        get_active: Any,
         domain: str,
+        *,
+        include_category: bool = False,
+        include_source_mode: bool = False,
     ) -> dict[str, object]:
         """Read active probe metadata before confirm/reject mutates state."""
         from openbiliclaw.soul.speculator import build_probe_axis
 
-        get_active = getattr(speculator, "get_active_speculations", None)
         if not callable(get_active):
             return {"domain": domain}
         try:
-            active_specs = list(get_active())
+            active_items = list(get_active())
         except Exception:
             logger.debug("Failed to read active probe metadata", exc_info=True)
             return {"domain": domain}
 
-        for spec in active_specs:
-            spec_domain = str(getattr(spec, "domain", "")).strip()
+        for item in active_items:
+            spec_domain = str(getattr(item, "domain", "")).strip()
             if spec_domain.lower() != domain.lower():
                 continue
             specifics = [
-                str(getattr(item, "name", "")).strip()
-                for item in getattr(spec, "specifics", [])
-                if str(getattr(item, "name", "")).strip()
+                str(getattr(specific, "name", "")).strip()
+                for specific in getattr(item, "specifics", [])
+                if str(getattr(specific, "name", "")).strip()
             ]
             axis = build_probe_axis(
-                experience_mode=getattr(spec, "experience_mode", ""),
-                entry_load=getattr(spec, "entry_load", ""),
+                experience_mode=getattr(item, "experience_mode", ""),
+                entry_load=getattr(item, "entry_load", ""),
             )
             metadata: dict[str, object] = {
                 "domain": spec_domain or domain,
-                "category": str(getattr(spec, "category", "")).strip(),
-                "reason": str(getattr(spec, "reason", "")).strip(),
+                "reason": str(getattr(item, "reason", "")).strip(),
             }
+            if include_category:
+                metadata["category"] = str(getattr(item, "category", "")).strip()
+            if include_source_mode:
+                source_mode = str(getattr(item, "source_mode", "")).strip()
+                source_signal = str(getattr(item, "source_signal", "")).strip()
+                if source_mode:
+                    metadata["source_mode"] = source_mode
+                if source_signal:
+                    metadata["source_signal"] = source_signal
             if axis:
                 metadata["axis"] = axis
             if specifics:
@@ -2309,12 +2359,36 @@ def create_app(
             return metadata
         return {"domain": domain}
 
+    def _probe_metadata_from_active_speculation(
+        speculator: Any,
+        domain: str,
+    ) -> dict[str, object]:
+        """Read active interest probe metadata before state mutation."""
+        return _probe_metadata_from_active_item(
+            getattr(speculator, "get_active_speculations", None),
+            domain,
+            include_category=True,
+        )
+
+    def _probe_metadata_from_active_avoidance(
+        speculator: Any,
+        domain: str,
+    ) -> dict[str, object]:
+        """Read active avoidance probe metadata before state mutation."""
+        return _probe_metadata_from_active_item(
+            getattr(speculator, "get_active_avoidances", None),
+            domain,
+            include_source_mode=True,
+        )
+
     def _record_probe_feedback_history(
         domain: str,
         response: str,
         *,
         speculator: Any,
         message: str = "",
+        state_key: str = "probe_feedback_history",
+        metadata_fn: Any | None = None,
     ) -> None:
         """Persist explicit user feedback for future probe novelty checks."""
         from openbiliclaw.soul.speculator import append_probe_feedback_history
@@ -2328,12 +2402,15 @@ def create_app(
             return
         try:
             state = load_state()
-            entry = _probe_metadata_from_active_speculation(speculator, domain)
+            if metadata_fn is not None:
+                entry = metadata_fn(domain)
+            else:
+                entry = _probe_metadata_from_active_speculation(speculator, domain)
             entry["response"] = response
             if message:
                 entry["message"] = message
-            state["probe_feedback_history"] = append_probe_feedback_history(
-                state.get("probe_feedback_history", []),
+            state[state_key] = append_probe_feedback_history(
+                state.get(state_key, []),
                 entry,
             )
             save_state(state)
@@ -2448,6 +2525,9 @@ def create_app(
         if turn.scope == "probe":
             label = turn.subject_title or turn.subject_id or "这个方向"
             return f"[关于猜测兴趣「{label}」的反馈] {turn.message}"
+        if turn.scope == "avoidance_probe":
+            label = turn.subject_title or turn.subject_id or "这个避雷方向"
+            return f"[关于避雷方向「{label}」的反馈] {turn.message}"
         return turn.message
 
     async def _generate_durable_chat_reply(turn: ChatTurnOut) -> str:
@@ -2520,6 +2600,59 @@ def create_app(
                 detail=f"你的反馈：{turn.message}\n阿b的回复：{reply}",
             )
             await _publish_probe_event("interest.chat", summary, domain)
+        elif turn.scope == "avoidance_probe":
+            domain = turn.subject_id or turn.subject_title
+            sentiment = await _judge_probe_sentiment(turn.message, reply, domain)
+            speculator = getattr(ctx.soul_engine, "_avoidance_speculator", None)
+            if sentiment == "negative":
+                chat_response = "chat_positive"
+                if speculator is not None:
+                    with suppress(Exception):
+                        speculator.observe(
+                            [
+                                {
+                                    "event_type": "dislike",
+                                    "title": domain,
+                                    "metadata": {
+                                        "feedback_type": "dislike",
+                                        "user_message": turn.message,
+                                        "source": "avoidance_probe_chat",
+                                    },
+                                }
+                            ]
+                        )
+                summary = f"你确认「{domain}」偏向不喜欢，确认度 +1。"
+            elif sentiment == "positive":
+                chat_response = "chat_negative"
+                if speculator is not None:
+                    reject_fn = getattr(speculator, "user_reject_avoidance", None)
+                    if callable(reject_fn):
+                        with suppress(Exception):
+                            reject_fn(domain, cooldown_days=14)
+                summary = f"你表示其实不排斥「{domain}」，已暂时搁置 14 天。"
+            else:
+                chat_response = "chat_neutral"
+                summary = f"关于避雷方向「{domain}」你说：{turn.message}"
+            if speculator is not None:
+                _record_probe_feedback_history(
+                    domain,
+                    chat_response,
+                    speculator=speculator,
+                    message=turn.message,
+                    state_key="avoidance_probe_feedback_history",
+                    metadata_fn=lambda item_domain: _probe_metadata_from_active_avoidance(
+                        speculator,
+                        item_domain,
+                    ),
+                )
+            _record_probe_cognition(
+                summary,
+                domain,
+                "chat",
+                source="avoidance_probe",
+                detail=f"你的反馈：{turn.message}\n阿b的回复：{reply}",
+            )
+            await _publish_probe_event("avoidance.chat", summary, domain)
 
         return reply
 
@@ -2806,6 +2939,210 @@ def create_app(
         )
         from fastapi.responses import JSONResponse
 
+        return JSONResponse(
+            content={"ok": True, "action": "chat", "domain": domain, "reply": reply}
+        )
+
+    @app.post("/api/avoidance-probes/trigger")
+    async def trigger_avoidance_probe() -> dict[str, Any]:
+        """Manually trigger an avoidance probe push via WebSocket."""
+        controller = ctx.runtime_controller
+        if controller is None:
+            raise HTTPException(status_code=503, detail="Runtime controller not available")
+        publish = getattr(controller, "_publish_avoidance_probe_if_available", None)
+        if not callable(publish):
+            raise HTTPException(status_code=503, detail="Avoidance probe publisher not available")
+        await publish()
+        return {"ok": True, "action": "avoidance_probe_triggered"}
+
+    @app.get("/api/avoidance-probes/pending")
+    async def pending_avoidance_probes() -> dict[str, Any]:
+        """Return active speculative avoidances awaiting user response."""
+        try:
+            from openbiliclaw.soul.avoidance_speculator import load_avoidance_state
+
+            runtime_config = getattr(ctx, "config", None) or config
+            avoidance_state = load_avoidance_state(runtime_config.data_path)
+            active = [item for item in avoidance_state.active if item.status == "active"]
+            items = [
+                {
+                    "domain": item.domain,
+                    "reason": item.reason,
+                    "confidence": item.confidence,
+                    "source_mode": item.source_mode,
+                    "source_signal": item.source_signal,
+                    "status": item.status,
+                    "specifics": [
+                        {"name": specific.name, "confirmation_count": specific.confirmation_count}
+                        for specific in item.specifics
+                        if specific.name.strip()
+                    ],
+                }
+                for item in active[:6]
+            ]
+            return {"items": items}
+        except Exception:
+            logger.debug("Failed to load pending avoidance probes", exc_info=True)
+            return {"items": []}
+
+    @app.post("/api/avoidance-probes/respond")
+    async def respond_to_avoidance_probe(payload: dict[str, Any]) -> Any:
+        """User responds to a speculated avoidance probe."""
+        domain = str(payload.get("domain", "")).strip()
+        response_type = str(payload.get("response", "")).strip().lower()
+
+        if not domain:
+            raise HTTPException(status_code=422, detail="domain is required")
+        if response_type not in {"confirm", "reject", "chat"}:
+            raise HTTPException(status_code=422, detail="response must be confirm, reject, or chat")
+
+        speculator = getattr(ctx.soul_engine, "_avoidance_speculator", None)
+        if speculator is None:
+            raise HTTPException(status_code=503, detail="Avoidance speculator not available")
+
+        def metadata_fn(item_domain: str) -> dict[str, object]:
+            return _probe_metadata_from_active_avoidance(
+                speculator,
+                item_domain,
+            )
+
+        if response_type == "confirm":
+            _record_probe_feedback_history(
+                domain,
+                "confirm",
+                speculator=speculator,
+                state_key="avoidance_probe_feedback_history",
+                metadata_fn=metadata_fn,
+            )
+            confirm_fn = getattr(speculator, "user_confirm_avoidance", None)
+            active_avoidance = confirm_fn(domain) if callable(confirm_fn) else None
+            ok = active_avoidance is not None
+            if ok:
+                topics = topics_for_confirmed_avoidance(active_avoidance)
+                changes = await apply_new_dislikes(
+                    memory=ctx.memory_manager,
+                    database=getattr(ctx, "database", None)
+                    or getattr(ctx.memory_manager, "_database", None),
+                    embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
+                    llm_service=getattr(ctx, "llm_service", None),
+                    topics=topics,
+                )
+                _record_probe_cognition(
+                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
+                    domain,
+                    "confirmed",
+                    source="avoidance_probe",
+                    detail="\n".join(changes) if changes else "",
+                )
+                await _publish_probe_event(
+                    "avoidance.confirmed",
+                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
+                    domain,
+                )
+            return {"ok": ok, "action": "confirmed", "domain": domain}
+
+        if response_type == "reject":
+            _record_probe_feedback_history(
+                domain,
+                "reject",
+                speculator=speculator,
+                state_key="avoidance_probe_feedback_history",
+                metadata_fn=metadata_fn,
+            )
+            reject_fn = getattr(speculator, "user_reject_avoidance", None)
+            ok = bool(reject_fn(domain) if callable(reject_fn) else False)
+            if ok:
+                _record_probe_cognition(
+                    f"你表示并不需要避开「{domain}」，30 天内不再推送。",
+                    domain,
+                    "rejected",
+                    source="avoidance_probe",
+                )
+                await _publish_probe_event(
+                    "avoidance.rejected",
+                    f"已记录：你并不需要避开「{domain}」，30 天内不再推送。",
+                    domain,
+                )
+            return {"ok": ok, "action": "rejected", "domain": domain}
+
+        raw_message = str(payload.get("message", "")).strip()
+        if not raw_message:
+            raw_message = f"我想聊聊你猜我可能想避开的「{domain}」这个方向"
+        contextual_message = f"[关于避雷方向「{domain}」的反馈] {raw_message}"
+        if ctx.dialogue is None:
+            return {"ok": False, "action": "chat", "domain": domain, "reply": "对话引擎暂不可用。"}
+
+        concurrency = getattr(ctx.discovery_engine, "_concurrency", None)
+        if concurrency is not None:
+            concurrency.chat_active = True
+        try:
+            reply = await asyncio.wait_for(
+                ctx.dialogue.respond(contextual_message),
+                timeout=30,
+            )
+            sentiment = await _judge_probe_sentiment(raw_message, reply, domain)
+        except TimeoutError:
+            return {
+                "ok": False,
+                "action": "chat",
+                "domain": domain,
+                "reply": "后台正忙，等一下再聊。",
+            }
+        except Exception:
+            logger.exception("Dialogue failed for avoidance probe chat: %s", domain)
+            return {
+                "ok": False,
+                "action": "chat",
+                "domain": domain,
+                "reply": "聊天出了点问题，稍后再试。",
+            }
+        finally:
+            if concurrency is not None:
+                concurrency.chat_active = False
+
+        if sentiment == "negative":
+            chat_response = "chat_positive"
+            speculator.observe(
+                [
+                    {
+                        "event_type": "dislike",
+                        "title": domain,
+                        "metadata": {
+                            "feedback_type": "dislike",
+                            "user_message": raw_message,
+                            "source": "avoidance_probe_chat",
+                        },
+                    }
+                ]
+            )
+            summary = f"你确认「{domain}」偏向不喜欢，确认度 +1。"
+        elif sentiment == "positive":
+            chat_response = "chat_negative"
+            reject_fn = getattr(speculator, "user_reject_avoidance", None)
+            if callable(reject_fn):
+                reject_fn(domain, cooldown_days=14)
+            summary = f"你表示其实不排斥「{domain}」，已暂时搁置 14 天。"
+        else:
+            chat_response = "chat_neutral"
+            summary = f"关于避雷方向「{domain}」你说：{raw_message}"
+
+        _record_probe_feedback_history(
+            domain,
+            chat_response,
+            speculator=speculator,
+            message=raw_message,
+            state_key="avoidance_probe_feedback_history",
+            metadata_fn=metadata_fn,
+        )
+        detail = f"你的反馈：{raw_message}\n阿b的回复：{reply}"
+        _record_probe_cognition(
+            summary,
+            domain,
+            "chat",
+            source="avoidance_probe",
+            detail=detail,
+        )
+        await _publish_probe_event("avoidance.chat", summary, domain)
         return JSONResponse(
             content={"ok": True, "action": "chat", "domain": domain, "reply": reply}
         )
@@ -4025,6 +4362,17 @@ def create_app(
                 speculation_max_secondary_interests=(
                     cfg.scheduler.speculation_max_secondary_interests
                 ),
+                avoidance_speculation_interval_minutes=(
+                    cfg.scheduler.avoidance_speculation_interval_minutes
+                ),
+                avoidance_speculation_ttl_days=cfg.scheduler.avoidance_speculation_ttl_days,
+                avoidance_speculation_cooldown_days=(
+                    cfg.scheduler.avoidance_speculation_cooldown_days
+                ),
+                avoidance_speculation_confirmation_threshold=(
+                    cfg.scheduler.avoidance_speculation_confirmation_threshold
+                ),
+                avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
                 auto_update_enabled=cfg.scheduler.auto_update_enabled,
                 auto_update_check_interval_hours=cfg.scheduler.auto_update_check_interval_hours,
             ),
@@ -4313,6 +4661,11 @@ def create_app(
                     1,
                     None,
                 ),
+                "avoidance_speculation_interval_minutes": (10, 1, None),
+                "avoidance_speculation_ttl_days": (3, 1, None),
+                "avoidance_speculation_cooldown_days": (7, 1, None),
+                "avoidance_speculation_confirmation_threshold": (3, 1, None),
+                "avoidance_speculation_max_active": (5, 1, None),
             }
             for key in (
                 "enabled",
@@ -4335,6 +4688,11 @@ def create_app(
                 "speculation_max_active",
                 "speculation_max_primary_interests",
                 "speculation_max_secondary_interests",
+                "avoidance_speculation_interval_minutes",
+                "avoidance_speculation_ttl_days",
+                "avoidance_speculation_cooldown_days",
+                "avoidance_speculation_confirmation_threshold",
+                "avoidance_speculation_max_active",
                 "auto_update_enabled",
                 "auto_update_check_interval_hours",
                 "feedback_batch_threshold",

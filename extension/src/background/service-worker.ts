@@ -215,10 +215,10 @@ function handleRuntimeEvent(event: Record<string, unknown>): void {
   }
 
   // v0.3.16+: OS-level Chrome toasts are disabled by user request.
-  // Both interest.probe and delight.candidate surface inside the
+  // Probe and delight events surface inside the
   // popup via its own runtime-stream WS handler — no chrome
   // notification toast at the bottom-right of the screen.
-  if (eventType === "interest.probe") {
+  if (eventType === "interest.probe" || eventType === "avoidance.probe") {
     return;
   }
 

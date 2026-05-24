@@ -314,6 +314,20 @@ class SpeculativeInterestOut(BaseModel):
     specifics: list[SpeculativeSpecificOut] = Field(default_factory=list)
 
 
+class SpeculativeAvoidanceOut(BaseModel):
+    """A speculated avoidance direction with two-level structure."""
+
+    domain: str = ""
+    reason: str = ""
+    confidence: float = 0.0
+    source_mode: str = ""
+    source_signal: str = ""
+    confirmation_count: int = 0
+    confirmation_threshold: int = 3
+    status: str = "active"
+    specifics: list[SpeculativeSpecificOut] = Field(default_factory=list)
+
+
 class MBTIDimensionOut(BaseModel):
     """A single MBTI dimension pole with strength."""
 
@@ -408,6 +422,7 @@ class ProfileSummaryResponse(BaseModel):
     exploration_openness: float = 0.5
     # Cross-cutting
     speculative_interests: list[SpeculativeInterestOut] = Field(default_factory=list)
+    speculative_avoidances: list[SpeculativeAvoidanceOut] = Field(default_factory=list)
     recent_cognition_updates: list[CognitionUpdateSummary] = Field(default_factory=list)
     has_more_cognition_updates: bool = False
     next_cognition_cursor: str = ""
@@ -635,6 +650,11 @@ class SchedulerConfigOut(BaseModel):
     speculation_max_active: int = 5
     speculation_max_primary_interests: int = 15
     speculation_max_secondary_interests: int = 60
+    avoidance_speculation_interval_minutes: int = 10
+    avoidance_speculation_ttl_days: int = 3
+    avoidance_speculation_cooldown_days: int = 7
+    avoidance_speculation_confirmation_threshold: int = 3
+    avoidance_speculation_max_active: int = 5
     auto_update_enabled: bool = False
     auto_update_check_interval_hours: int = 6
 

@@ -14,8 +14,9 @@
 |------|------|------|
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
-| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐和兴趣猜测的内联聊天也会按 `scope=delight/probe` 恢复 pending/completed/failed turn；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
+| 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
 | Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `refresh.pool_updated` / `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；补货事件密集时合并请求，移动推荐页只重拉推荐列表和 header，不再回到全量 `loadData()`。 |
+| 避雷探针 UI | ✅ | popup inbox 支持 `avoidance.probe`，按钮文案为「确实不喜欢 / 不是 / 多聊聊」；画像页显示 `speculative_avoidances` 的待确认避雷方向，确认后通过 `/api/avoidance-probes/respond` 写回后端。 |
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
@@ -132,6 +133,7 @@ extension/
 - 通知和认知提醒也会优先把用户带回插件 side panel / sidebar 上下文
 - 在推荐通知之外，认知变化通知会打开带 `?tab=profile` 的插件页面，直接落到画像视图
 - 惊喜推荐通知现在会打开带 `?tab=recommend&delight=<bvid>` 的插件页面，落到对应的首屏惊喜卡，而不是只把人丢回通用推荐页
+- `interest.probe` 和 `avoidance.probe` 都留在 side panel inbox 内处理，不走系统级 OS toast，避免探针在浏览器外打扰用户
 
 ### 小红书任务桥
 
@@ -251,7 +253,9 @@ CLI 入口：
 - 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；如果当前 host 仍是 `127.0.0.1` / `localhost`，面板会提示手机通常无法访问，需要先把插件后端地址改成电脑局域网 IP
 - 设置页调度区的「停止后台 LLM 请求」写入 `scheduler.enabled=false`；开启后会暂停 daemon-owned 定时发现、候选池预计算和画像更新里的 LLM / embedding 调用，推荐列表不会自动补充新内容，候选池为空时可能暂时没有推荐。「关闭浏览器后停止后台」写入 `scheduler.pause_on_extension_disconnect=true`，断开宽限秒数写入 `scheduler.extension_disconnect_grace_seconds`；所有扩展窗口断开并超过宽限期后，后台 LLM / embedding 工作暂停，重新打开浏览器后恢复。手动刷新和显式 CLI / API 操作仍按用户动作执行
 - 从 `/api/recommendations` 拉取推荐列表
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM 显式备选 provider、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/显式备选 provider、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣参数、完整日志路径和日志清理参数
+- 从 `/api/profile-summary` 同步 `speculative_interests` 与 `speculative_avoidances`，分别渲染待确认兴趣和待确认避雷方向
+- 收到 `avoidance.probe` runtime 事件后在 inbox 渲染避雷确认卡；`confirm` 调 `/api/avoidance-probes/respond` 且语义为“确实不喜欢”，`reject` 表示“不排斥”，`chat` 进入 `scope=avoidance_probe` 的 durable turn
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM 显式备选 provider、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/显式备选 provider、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣和避雷探针参数、完整日志路径和日志清理参数
 - 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
 - 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues，保存按钮显示“保存并提示重启”；保存响应带 `restart_required=true` 时用 warning tone 提示用户重启 daemon
 - 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`

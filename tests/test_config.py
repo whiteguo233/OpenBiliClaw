@@ -666,6 +666,11 @@ explore_refresh_hours = 18
 discovery_limit = 17
 proactive_push_interval_seconds = 155
 speculator_idle_interval_minutes = 11
+avoidance_speculation_interval_minutes = 12
+avoidance_speculation_ttl_days = 4
+avoidance_speculation_cooldown_days = 8
+avoidance_speculation_confirmation_threshold = 2
+avoidance_speculation_max_active = 5
 """.strip(),
         encoding="utf-8",
     )
@@ -679,6 +684,11 @@ speculator_idle_interval_minutes = 11
     assert config.scheduler.discovery_limit == 17
     assert config.scheduler.proactive_push_interval_seconds == 155
     assert config.scheduler.speculator_idle_interval_minutes == 11
+    assert config.scheduler.avoidance_speculation_interval_minutes == 12
+    assert config.scheduler.avoidance_speculation_ttl_days == 4
+    assert config.scheduler.avoidance_speculation_cooldown_days == 8
+    assert config.scheduler.avoidance_speculation_confirmation_threshold == 2
+    assert config.scheduler.avoidance_speculation_max_active == 5
 
 
 @pytest.mark.parametrize(
@@ -725,6 +735,11 @@ def test_save_config_round_trips_scheduler_runtime_fields(tmp_path: Path) -> Non
     config.scheduler.discovery_limit = 17
     config.scheduler.proactive_push_interval_seconds = 155
     config.scheduler.speculator_idle_interval_minutes = 11
+    config.scheduler.avoidance_speculation_interval_minutes = 12
+    config.scheduler.avoidance_speculation_ttl_days = 4
+    config.scheduler.avoidance_speculation_cooldown_days = 8
+    config.scheduler.avoidance_speculation_confirmation_threshold = 2
+    config.scheduler.avoidance_speculation_max_active = 5
 
     save_config(config, config_path)
     loaded = load_config(config_path)
@@ -736,6 +751,11 @@ def test_save_config_round_trips_scheduler_runtime_fields(tmp_path: Path) -> Non
     assert loaded.scheduler.discovery_limit == 17
     assert loaded.scheduler.proactive_push_interval_seconds == 155
     assert loaded.scheduler.speculator_idle_interval_minutes == 11
+    assert loaded.scheduler.avoidance_speculation_interval_minutes == 12
+    assert loaded.scheduler.avoidance_speculation_ttl_days == 4
+    assert loaded.scheduler.avoidance_speculation_cooldown_days == 8
+    assert loaded.scheduler.avoidance_speculation_confirmation_threshold == 2
+    assert loaded.scheduler.avoidance_speculation_max_active == 5
 
 
 def test_scheduler_pool_source_shares_override(tmp_path: Path) -> None:

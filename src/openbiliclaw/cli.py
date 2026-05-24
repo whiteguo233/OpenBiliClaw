@@ -417,6 +417,15 @@ def _build_soul_engine() -> Any:
         speculation_max_active=cfg.scheduler.speculation_max_active,
         speculation_max_primary_interests=cfg.scheduler.speculation_max_primary_interests,
         speculation_max_secondary_interests=cfg.scheduler.speculation_max_secondary_interests,
+        avoidance_speculation_interval_minutes=(
+            cfg.scheduler.avoidance_speculation_interval_minutes
+        ),
+        avoidance_speculation_ttl_days=cfg.scheduler.avoidance_speculation_ttl_days,
+        avoidance_speculation_cooldown_days=cfg.scheduler.avoidance_speculation_cooldown_days,
+        avoidance_speculation_confirmation_threshold=(
+            cfg.scheduler.avoidance_speculation_confirmation_threshold
+        ),
+        avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
     )
 

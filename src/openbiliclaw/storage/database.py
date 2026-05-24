@@ -1126,7 +1126,7 @@ class Database:
         )
         return self._balance_pool_rows(rows, limit=limit)
 
-    def count_pool_candidates(self) -> int:
+    def count_pool_candidates(self, *, max_per_topic_group: int = 3) -> int:
         """Return how many fresh candidates are immediately available for reshuffle.
 
         v0.3.57+: matches ``get_pool_candidates`` precompute gate — rows
@@ -1137,25 +1137,70 @@ class Database:
         v0.3.66+: also requires ``style_key`` / ``topic_group`` — content
         must be classified before it can be served, regardless of source
         platform.
+
+        v0.3.91+: applies the same ``max_per_topic_group`` window as
+        ``get_pool_candidates`` so concentrated topic groups don't inflate
+        the displayed count beyond what ``serve()`` can actually load.
         """
         self._ensure_fresh_read()
-        cursor = self.conn.execute(
-            """
-            SELECT bvid, source, source_platform, content_url
-            FROM content_cache
-            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
-              AND COALESCE(feedback_type, '') != 'dislike'
-              AND COALESCE(pool_expression, '') != ''
-              AND COALESCE(pool_topic_label, '') != ''
-              AND COALESCE(style_key, '') != ''
-              AND COALESCE(topic_group, '') != ''
-              AND NOT EXISTS (
-                SELECT 1
-                FROM recommendations AS r
-                WHERE r.bvid = content_cache.bvid
-              )
-            """
-        )
+        if max_per_topic_group > 0:
+            cursor = self.conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT bvid, source, source_platform, content_url,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY topic_group
+                               ORDER BY
+                                   relevance_score DESC,
+                                   last_scored_at DESC,
+                                   view_count DESC,
+                                   bvid ASC
+                           ) AS group_rank
+                    FROM content_cache
+                    WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+                      AND COALESCE(feedback_type, '') != 'dislike'
+                      AND COALESCE(pool_expression, '') != ''
+                      AND COALESCE(pool_topic_label, '') != ''
+                      AND COALESCE(style_key, '') != ''
+                      AND COALESCE(topic_group, '') != ''
+                      AND (
+                        source_platform != 'xiaohongshu'
+                        OR content_url LIKE '%xsec_token=%'
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM recommendations AS r
+                        WHERE r.bvid = content_cache.bvid
+                      )
+                )
+                SELECT bvid, source, source_platform, content_url
+                FROM ranked
+                WHERE group_rank <= ?
+                """,
+                (max_per_topic_group,),
+            )
+        else:
+            cursor = self.conn.execute(
+                """
+                SELECT bvid, source, source_platform, content_url
+                FROM content_cache
+                WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+                  AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(pool_expression, '') != ''
+                  AND COALESCE(pool_topic_label, '') != ''
+                  AND COALESCE(style_key, '') != ''
+                  AND COALESCE(topic_group, '') != ''
+                  AND (
+                    source_platform != 'xiaohongshu'
+                    OR content_url LIKE '%xsec_token=%'
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM recommendations AS r
+                    WHERE r.bvid = content_cache.bvid
+                  )
+                """
+            )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         return sum(
             1

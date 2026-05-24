@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .bootstrap import build_openclaw_adapter
 from .errors import AdapterOperationError, AdapterValidationError
-from .schemas import ChatRequest, FeedbackRequest
+from .schemas import AvoidanceProbeFeedbackRequest, ChatRequest, FeedbackRequest
 from .skill import build_openclaw_skills
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ _RUNTIME_STREAM_URL = "ws://127.0.0.1:8420/api/runtime-stream"
 # ``interest.probe``    — the agent has a new speculative interest hypothesis
 #                         it wants the user to confirm; payload mirrors the
 #                         response of ``next-probe``.
-_LISTEN_EVENT_TYPES = frozenset({"delight.candidate", "interest.probe"})
+_LISTEN_EVENT_TYPES = frozenset({"delight.candidate", "interest.probe", "avoidance.probe"})
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -42,6 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("get-profile")
     subparsers.add_parser("get-delight")
     subparsers.add_parser("next-probe")
+    subparsers.add_parser("next-avoidance-probe")
     subparsers.add_parser("runtime-status")
     subparsers.add_parser("doctor")
     subparsers.add_parser("emit-skill-descriptors")
@@ -94,6 +95,15 @@ def _build_parser() -> argparse.ArgumentParser:
     feedback_parser.add_argument("--recommendation-id", type=int, required=True)
     feedback_parser.add_argument("--feedback-type", required=True)
     feedback_parser.add_argument("--note", default="")
+
+    avoidance_feedback_parser = subparsers.add_parser("respond-avoidance-probe")
+    avoidance_feedback_parser.add_argument("--domain", required=True)
+    avoidance_feedback_parser.add_argument(
+        "--response",
+        choices=["confirm", "reject", "chat"],
+        required=True,
+    )
+    avoidance_feedback_parser.add_argument("--message", default="")
     return parser
 
 
@@ -158,6 +168,15 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
             result = await adapter.chat(chat_request)
         elif args.command == "next-probe":
             result = await adapter.get_next_probe()
+        elif args.command == "next-avoidance-probe":
+            result = await adapter.get_next_avoidance_probe()
+        elif args.command == "respond-avoidance-probe":
+            avoidance_request = AvoidanceProbeFeedbackRequest(
+                domain=args.domain,
+                response=args.response,
+                message=args.message,
+            )
+            result = await adapter.respond_avoidance_probe(avoidance_request)
         else:  # pragma: no cover - argparse guarantees command validity
             raise AdapterValidationError(f"Unsupported command: {args.command}")
     except AdapterValidationError as exc:

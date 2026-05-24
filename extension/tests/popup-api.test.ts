@@ -14,6 +14,7 @@ import {
   readCachedConfigSnapshot,
   requestJson,
   reshuffleRecommendations,
+  respondToAvoidanceProbe,
   startChatTurn,
   updateConfig,
 } from "../popup/popup-api.js";
@@ -116,6 +117,30 @@ test("appendRecommendations posts excluded bvids to append endpoint", async () =
         source_platform: "bilibili",
       },
     ],
+  });
+});
+
+test("respondToAvoidanceProbe posts to avoidance probe endpoint", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { ok: true };
+      },
+    };
+  };
+
+  await respondToAvoidanceProbe("浅层热点复读", "confirm", "对，这类我不想看");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/avoidance-probes/respond");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    domain: "浅层热点复读",
+    response: "confirm",
+    message: "对，这类我不想看",
   });
 });
 

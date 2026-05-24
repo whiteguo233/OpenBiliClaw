@@ -19,6 +19,9 @@ from openbiliclaw.integrations.openclaw.bootstrap import (
 from openbiliclaw.integrations.openclaw.errors import AdapterValidationError
 from openbiliclaw.integrations.openclaw.operations import OpenClawAdapter
 from openbiliclaw.integrations.openclaw.schemas import (
+    AvoidanceProbeFeedbackRequest,
+    AvoidanceProbeFeedbackResponse,
+    AvoidanceProbeResponse,
     ChatRequest,
     ChatResponse,
     DelightItem,
@@ -216,6 +219,60 @@ class _FakeSpeculator:
         return list(self._specs)
 
 
+class _FakeSpeculativeAvoidance:
+    """Minimal stand-in for ``avoidance_speculator.SpeculativeAvoidance``."""
+
+    def __init__(
+        self,
+        domain: str = "浅层热点复读",
+        reason: str = "用户可能想避开无信息增量的热点复读内容。",
+        confidence: float = 0.55,
+        weight: float = 0.55,
+        confirmation_count: int = 0,
+        source_mode: str = "negative_signal",
+        source_signal: str = "thumbs_down",
+        experience_mode: str = "knowledge",
+        entry_load: str = "heavy",
+        specifics: list[object] | None = None,
+    ) -> None:
+        self.domain = domain
+        self.reason = reason
+        self.confidence = confidence
+        self.weight = weight
+        self.confirmation_count = confirmation_count
+        self.source_mode = source_mode
+        self.source_signal = source_signal
+        self.experience_mode = experience_mode
+        self.entry_load = entry_load
+        self.specifics = specifics or []
+
+
+class _FakeAvoidanceSpeculator:
+    def __init__(self, avoidances: list[_FakeSpeculativeAvoidance] | None = None) -> None:
+        self._avoidances = avoidances if avoidances is not None else [_FakeSpeculativeAvoidance()]
+        self.confirmed: list[str] = []
+        self.rejected: list[tuple[str, int]] = []
+        self.observed: list[list[dict[str, object]]] = []
+
+    def get_active_avoidances(self) -> list[_FakeSpeculativeAvoidance]:
+        return list(self._avoidances)
+
+    def user_confirm_avoidance(self, domain: str) -> object | None:
+        self.confirmed.append(domain)
+        for item in self._avoidances:
+            if item.domain == domain:
+                return item
+        return None
+
+    def user_reject_avoidance(self, domain: str, cooldown_days: int = 30) -> bool:
+        self.rejected.append((domain, cooldown_days))
+        return any(item.domain == domain for item in self._avoidances)
+
+    def observe(self, events: list[dict[str, object]]) -> int:
+        self.observed.append(events)
+        return len(events)
+
+
 class _FakeLLMService:
     """Minimal LLM service that returns a canned Socratic reply."""
 
@@ -247,6 +304,7 @@ class _FakeSoulEngine:
         self.feedback_batches = 0
         self.immediate_calls: list[tuple[str, str, str]] = []
         self._speculator = _FakeSpeculator()
+        self._avoidance_speculator = _FakeAvoidanceSpeculator()
         self._llm = None  # Socratic dialogue falls through to llm_service
 
     async def get_profile(self) -> SoulProfile:
@@ -985,3 +1043,65 @@ async def test_get_next_probe_records_history_and_avoids_repeat() -> None:
     assert second.probe.domain == "城市漫游"
     assert "量子物理" in memory_manager.runtime_state["probed_domains"]
     assert "knowledge|heavy" in memory_manager.runtime_state["probed_axes"]
+
+
+@pytest.mark.asyncio
+async def test_get_next_avoidance_probe_returns_top_candidate() -> None:
+    adapter, *_ = _build_adapter()
+
+    result = await adapter.get_next_avoidance_probe()
+
+    assert isinstance(result, AvoidanceProbeResponse)
+    assert result.probe is not None
+    assert result.probe.domain == "浅层热点复读"
+    assert result.probe.source_mode == "negative_signal"
+    assert "避开" in result.probe.question or "不喜欢" in result.probe.question
+
+
+@pytest.mark.asyncio
+async def test_get_next_avoidance_probe_records_history_and_avoids_repeat() -> None:
+    adapter, soul_engine, memory_manager, *_ = _build_adapter()
+    soul_engine._avoidance_speculator = _FakeAvoidanceSpeculator(
+        avoidances=[
+            _FakeSpeculativeAvoidance(
+                domain="浅层热点复读",
+                confirmation_count=0,
+                weight=0.9,
+                experience_mode="knowledge",
+                entry_load="heavy",
+            ),
+            _FakeSpeculativeAvoidance(
+                domain="情绪化争吵切片",
+                confirmation_count=0,
+                weight=0.5,
+                experience_mode="wander_observe",
+                entry_load="light",
+            ),
+        ]
+    )
+
+    first = await adapter.get_next_avoidance_probe()
+    second = await adapter.get_next_avoidance_probe()
+
+    assert first.probe is not None
+    assert second.probe is not None
+    assert first.probe.domain == "浅层热点复读"
+    assert second.probe.domain == "情绪化争吵切片"
+    assert "浅层热点复读" in memory_manager.runtime_state["probed_avoidance_domains"]
+    assert "knowledge|heavy" in memory_manager.runtime_state["probed_avoidance_axes"]
+
+
+@pytest.mark.asyncio
+async def test_respond_avoidance_probe_confirm_delegates_to_speculator() -> None:
+    adapter, soul_engine, *_ = _build_adapter()
+
+    result = await adapter.respond_avoidance_probe(
+        AvoidanceProbeFeedbackRequest(domain="浅层热点复读", response="confirm")
+    )
+
+    assert result == AvoidanceProbeFeedbackResponse(
+        ok=True,
+        action="confirmed",
+        domain="浅层热点复读",
+    )
+    assert soul_engine._avoidance_speculator.confirmed == ["浅层热点复读"]

@@ -366,6 +366,21 @@ class RuntimeContext:
             speculation_max_secondary_interests=int(
                 getattr(new_config.scheduler, "speculation_max_secondary_interests", 60)
             ),
+            avoidance_speculation_interval_minutes=int(
+                getattr(new_config.scheduler, "avoidance_speculation_interval_minutes", 10)
+            ),
+            avoidance_speculation_ttl_days=int(
+                getattr(new_config.scheduler, "avoidance_speculation_ttl_days", 3)
+            ),
+            avoidance_speculation_cooldown_days=int(
+                getattr(new_config.scheduler, "avoidance_speculation_cooldown_days", 7)
+            ),
+            avoidance_speculation_confirmation_threshold=int(
+                getattr(new_config.scheduler, "avoidance_speculation_confirmation_threshold", 3)
+            ),
+            avoidance_speculation_max_active=int(
+                getattr(new_config.scheduler, "avoidance_speculation_max_active", 5)
+            ),
             speculator_idle_interval_minutes=int(
                 getattr(new_config.scheduler, "speculator_idle_interval_minutes", 30)
             ),

@@ -359,6 +359,33 @@ function normalizeContext(raw) {
   };
 }
 
+function normalizeSpeculativeItems(items) {
+  return Array.isArray(items)
+    ? items
+        .filter((item) => item?.domain)
+        .map((item) => {
+          const sourceMode = normalizeText(item.source_mode);
+          return {
+            domain: normalizeText(item.domain),
+            reason: normalizeText(item.reason),
+            ...(sourceMode ? { source_mode: sourceMode } : {}),
+            confidence: Number(item.confidence ?? 0),
+            confirmation_count: Number(item.confirmation_count ?? 0),
+            confirmation_threshold: Number(item.confirmation_threshold ?? 3),
+            status: normalizeText(item.status) || "active",
+            specifics: Array.isArray(item.specifics)
+              ? item.specifics
+                  .filter((s) => s?.name)
+                  .map((s) => ({
+                    name: normalizeText(s.name),
+                    confirmation_count: Number(s.confirmation_count ?? 0),
+                  }))
+              : [],
+          };
+        })
+    : [];
+}
+
 export function normalizeProfileSummary(summary) {
   return {
     initialized: Boolean(summary?.initialized),
@@ -385,26 +412,8 @@ export function normalizeProfileSummary(summary) {
       ? Math.max(0, Math.min(1, summary.exploration_openness))
       : 0.5,
     // Cross-cutting
-    speculative_interests: Array.isArray(summary?.speculative_interests)
-      ? summary.speculative_interests
-          .filter((item) => item?.domain)
-          .map((item) => ({
-            domain: normalizeText(item.domain),
-            reason: normalizeText(item.reason),
-            confidence: Number(item.confidence ?? 0),
-            confirmation_count: Number(item.confirmation_count ?? 0),
-            confirmation_threshold: Number(item.confirmation_threshold ?? 3),
-            status: normalizeText(item.status) || "active",
-            specifics: Array.isArray(item.specifics)
-              ? item.specifics
-                  .filter((s) => s?.name)
-                  .map((s) => ({
-                    name: normalizeText(s.name),
-                    confirmation_count: Number(s.confirmation_count ?? 0),
-                  }))
-              : [],
-          }))
-      : [],
+    speculative_interests: normalizeSpeculativeItems(summary?.speculative_interests),
+    speculative_avoidances: normalizeSpeculativeItems(summary?.speculative_avoidances),
     recent_cognition_updates: Array.isArray(summary?.recent_cognition_updates)
       ? summary.recent_cognition_updates
           .map(normalizeCognitionUpdateCard)

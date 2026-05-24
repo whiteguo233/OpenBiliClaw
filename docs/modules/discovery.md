@@ -694,12 +694,12 @@ hints = snapshot.to_prompt_hints()
 
 行为说明：
 
-- `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`。
+- `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`；其中 `pool_available_count` 使用 recommendation serve 同口径的默认每 `topic_group` 最多 3 条候选窗口。
 - 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以默认 `pool_target_count=300` 为例，topic 15 条、style 37 条、franchise 10 条即进入软避让。
 - `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin`、`youtube` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
 - `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
 - 当前 runtime 构建的 snapshot 不会把平台缺口自动合成内容 `prefer_axes`；`undercovered_axes` / `prefer_axes` 保留给手动传入或未来更细的内容轴缺口判断。
-- 统计口径复用候选池可见性：只看 fresh、非 dislike、未推荐、已预生成 pool copy 且可打开的候选。
+- 统计口径复用候选池可见性：只看 fresh、非 dislike、未推荐、已预生成 pool copy 且可打开的候选；`pool_available_count` 额外复用 serve 候选窗口，避免拥挤主题把补货状态误判为可换库存充足。
 - runtime refresh 会在每次 B 站 discovery 前构建 snapshot，并通过 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)` 传入；构建失败只记录日志，不阻塞补货。
 - 引擎层会在最终压缩前应用 snapshot 软重排：饱和 topic/style/franchise 分别轻微降权，显式 undercovered topic 轻微加权，强相关候选仍保留优先级，且调整分只用于本轮排序，不会持久化覆盖 `relevance_score`。
 

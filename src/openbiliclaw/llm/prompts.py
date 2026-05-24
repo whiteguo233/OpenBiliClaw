@@ -1729,3 +1729,78 @@ def build_speculation_generation_prompt(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+
+
+_AVOIDANCE_GENERATION_SYSTEM_PROMPT = """
+<task>
+你要为用户生成“可能不喜欢 / 想避开”的内容方向探针。
+这些探针不是推荐过滤本身，而是需要用户确认的避雷假设。
+</task>
+
+<source_modes>
+每条候选必须选择一个 source_mode：
+- negative_signal：从显式 dislike、thumbs_down、负向聊天或已确认 disliked_topics 延展。
+- positive_boundary：从用户喜欢的领域推断其可能不喜欢的低质形态或边界。
+- style_boundary：从节奏、质量、表达方式、信息密度等风格偏好推断避雷边界。
+</source_modes>
+
+<rules>
+1. 输出严格 JSON，不要附带解释。
+2. 每条必须是内容形态、质量、节奏、表达方式或信息增量层面的边界。
+3. 不能生成敏感人格判断，不能把用户本人贴负面标签。
+4. 不能重复已有 dislike、已在探测中的 avoidance、冷却期 avoidance。
+5. 不能直接把正向兴趣本身当成讨厌对象；如果来自 positive_boundary，只能问具体低质形态。
+6. domain 必须具体，specifics 必须列 2-4 个更窄的避雷形态。
+7. experience_mode 必须从 knowledge / aesthetic / hands_on / people_story / wander_observe 中选择。
+8. entry_load 必须从 light / heavy 中选择。
+9. confidence 范围 0.3-0.75，越有证据越高。
+</rules>
+
+<output_schema>
+{
+  "avoidances": [
+    {
+      "domain": "浅层热点复读",
+      "reason": "用户可能不喜欢无信息增量、只复读热梗和立场的热点内容。",
+      "source_mode": "negative_signal",
+      "source_signal": "thumbs_down: 热点复读",
+      "experience_mode": "knowledge",
+      "entry_load": "light",
+      "confidence": 0.62,
+      "specifics": ["标题党热点解读", "无信息增量复读", "情绪化站队剪辑"]
+    }
+  ]
+}
+</output_schema>
+""".strip()
+
+
+def build_avoidance_generation_prompt(
+    *,
+    profile_summary: dict[str, object],
+    existing_avoidances: list[str],
+    cooldown_domains: list[str],
+    confirmed_dislikes: list[str],
+    confirmed_likes: list[str],
+    count: int = 5,
+) -> list[dict[str, str]]:
+    """Build a prompt for generating speculative avoidance directions."""
+    payload = {
+        "profile_summary": profile_summary,
+        "existing_avoidances": existing_avoidances,
+        "cooldown_domains": cooldown_domains,
+        "confirmed_dislikes": confirmed_dislikes,
+        "confirmed_likes": confirmed_likes,
+        "count": count,
+    }
+    user_prompt = "\n\n".join(
+        [
+            "<avoidance_generation_context>",
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            "</avoidance_generation_context>",
+        ]
+    )
+    return [
+        {"role": "system", "content": _AVOIDANCE_GENERATION_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]

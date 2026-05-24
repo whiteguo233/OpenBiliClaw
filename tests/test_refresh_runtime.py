@@ -299,7 +299,7 @@ _LOOP_BODY_ATTRS = [
         (
             "prepare_delight_candidates",
             "_publish_delight_if_available",
-            "_publish_interest_probe_if_available",
+            "_publish_probe_if_available",
         ),
     ),
 ]
@@ -498,6 +498,14 @@ class _FakeSpeculator:
 
     def get_active_speculations(self) -> list[_FakeSpeculation]:
         return list(self._specs)
+
+
+class _FakeAvoidanceSpeculator:
+    def __init__(self, avoidances: list[_FakeSpeculation]) -> None:
+        self._avoidances = avoidances
+
+    def get_active_avoidances(self) -> list[_FakeSpeculation]:
+        return list(self._avoidances)
 
 
 async def test_refresh_controller_falls_back_to_full_plan_when_below_target() -> None:
@@ -1399,6 +1407,204 @@ async def test_publish_interest_probe_does_not_record_probe_without_stream_subsc
 
     assert memory.state["probed_domains"] == {}
     assert memory.state["probed_axes"] == {}
+
+
+async def test_publish_avoidance_probe_skips_recent_axis_repeat() -> None:
+    event_hub = _FakeEventHub()
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+            "probed_avoidance_domains": {},
+            "probed_avoidance_axes": {"knowledge|heavy": datetime.now().isoformat()},
+        }
+    )
+
+    class _SoulEngineWithAvoidanceSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._avoidance_speculator = _FakeAvoidanceSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="标题党热点解读",
+                        reason="容易造成低信息密度重复消费。",
+                        weight=0.9,
+                        experience_mode="knowledge",
+                        entry_load="heavy",
+                    ),
+                    _FakeSpeculation(
+                        domain="浅层情绪争吵",
+                        reason="和用户偏好的冷静分析方式冲突。",
+                        weight=0.5,
+                        experience_mode="wander_observe",
+                        entry_load="light",
+                    ),
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithAvoidanceSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+    )
+
+    await controller._publish_avoidance_probe_if_available()
+
+    probe_events = [event for event in event_hub.events if event["type"] == "avoidance.probe"]
+    assert len(probe_events) == 1
+    assert probe_events[0]["domain"] == "浅层情绪争吵"
+
+
+async def test_publish_avoidance_probe_does_not_record_without_stream_subscriber() -> None:
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+            "probed_avoidance_domains": {},
+            "probed_avoidance_axes": {},
+        }
+    )
+
+    class _SoulEngineWithAvoidanceSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._avoidance_speculator = _FakeAvoidanceSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="标题党热点解读",
+                        reason="容易造成低信息密度重复消费。",
+                        weight=0.5,
+                        experience_mode="knowledge",
+                        entry_load="light",
+                    )
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithAvoidanceSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=RuntimeEventHub(),
+    )
+
+    await controller._publish_avoidance_probe_if_available()
+
+    assert memory.state["probed_avoidance_domains"] == {}
+    assert memory.state["probed_avoidance_axes"] == {}
+
+
+async def test_proactive_probe_push_publishes_only_one_probe_per_tick() -> None:
+    event_hub = _FakeEventHub()
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+            "probed_domains": {},
+            "probed_axes": {},
+            "probed_avoidance_domains": {},
+            "probed_avoidance_axes": {},
+            "last_probe_kind": "",
+        }
+    )
+
+    class _SoulEngineWithBothSpeculators(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._speculator = _FakeSpeculator(
+                [_FakeSpeculation(domain="城市漫游", reason="能从场景里看结构。")]
+            )
+            self._avoidance_speculator = _FakeAvoidanceSpeculator(
+                [_FakeSpeculation(domain="标题党热点解读", reason="低信息密度。")]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithBothSpeculators(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+    )
+
+    await controller._publish_probe_if_available()
+
+    probe_events = [
+        event
+        for event in event_hub.events
+        if event["type"] in {"interest.probe", "avoidance.probe"}
+    ]
+    assert len(probe_events) == 1
+    assert probe_events[0]["type"] == "interest.probe"
+    assert memory.state["last_probe_kind"] == "interest"
+
+    await controller._publish_probe_if_available()
+
+    probe_events = [
+        event
+        for event in event_hub.events
+        if event["type"] in {"interest.probe", "avoidance.probe"}
+    ]
+    assert len(probe_events) == 2
+    assert probe_events[1]["type"] == "avoidance.probe"
+    assert memory.state["last_probe_kind"] == "avoidance"
+
+
+async def test_proactive_probe_push_does_not_record_kind_when_publish_fails() -> None:
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+            "probed_domains": {},
+            "probed_axes": {},
+            "last_probe_kind": "",
+        }
+    )
+
+    class _SoulEngineWithSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._speculator = _FakeSpeculator(
+                [_FakeSpeculation(domain="城市漫游", reason="能从场景里看结构。")]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=RuntimeEventHub(),
+    )
+
+    await controller._publish_probe_if_available()
+
+    assert memory.state["last_probe_kind"] == ""
+    assert memory.state["probed_domains"] == {}
 
 
 # ===========================================================================

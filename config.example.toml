@@ -305,6 +305,12 @@ speculator_idle_interval_minutes = 30    # Idle interval before checking specula
 # speculation_max_active = 5          # 最多同时活跃的猜测兴趣
 # speculation_max_primary_interests = 15  # 主要兴趣域上限
 # speculation_max_secondary_interests = 60  # 次要兴趣域上限
+# --- 不喜欢领域探针（Speculative Avoidance）调度 ---
+# avoidance_speculation_interval_minutes = 10  # 避雷方向推测运行间隔（分钟）
+# avoidance_speculation_ttl_days = 3           # 避雷方向默认存活天数
+# avoidance_speculation_cooldown_days = 7      # 被否定后的冷却天数
+# avoidance_speculation_confirmation_threshold = 3  # 确认避雷方向需要的显式负向信号数
+# avoidance_speculation_max_active = 5         # 最多同时活跃的避雷方向
 # --- 自动更新 ---
 auto_update_enabled = false        # 是否自动检查并应用新版本（git pull + uv sync）
 auto_update_check_interval_hours = 6  # 检查间隔（小时）

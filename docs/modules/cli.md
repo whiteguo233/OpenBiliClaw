@@ -44,6 +44,8 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `chat` | 苏格拉底式对话 | ✅ |
 | `delight` | 手动查看当前惊喜推荐候选 | ✅ |
 | `probe` | 手动查看并确认猜测兴趣方向 | ✅ |
+| `python -m openbiliclaw.integrations.openclaw.cli next-avoidance-probe` | OpenClaw JSON bridge：拉取下一条不喜欢领域探针 | ✅ |
+| `python -m openbiliclaw.integrations.openclaw.cli respond-avoidance-probe` | OpenClaw JSON bridge：确认 / 否认 / 多聊避雷探针 | ✅ |
 
 ## 详细说明
 
@@ -265,6 +267,33 @@ $ openbiliclaw probe
 猜测兴趣方向
 1. 城市空间叙事
 2. 复杂系统
+```
+
+### OpenClaw JSON bridge: avoidance probes
+
+不喜欢领域探针目前通过 OpenClaw bridge 暴露，而不是新增顶层 `openbiliclaw` 命令。它返回稳定 JSON，供 OpenClaw / Codex / Claude Code 等 agent 调用。
+
+```bash
+$ uv run python -m openbiliclaw.integrations.openclaw.cli next-avoidance-probe
+{"ok": true, "data": {"probe": {"domain": "浅层热点复读", "question": "..."}}}
+
+$ uv run python -m openbiliclaw.integrations.openclaw.cli respond-avoidance-probe \
+  --domain "浅层热点复读" \
+  --response confirm
+{"ok": true, "data": {"ok": true, "action": "confirmed", "domain": "浅层热点复读"}}
+```
+
+`respond-avoidance-probe --response` 支持：
+
+- `confirm`：用户确认“不喜欢 / 需要避开”，后端写入 `preference.disliked_topics`，同步 soul layer，并触发候选池清理。
+- `reject`：用户否认“不排斥这个方向”，只进入 cooldown 和反馈历史，不写画像。
+- `chat`：进入带 `avoidance_probe` scope 的上下文对话；明确确认或否认的聊天会转成对应反馈。
+
+`listen` 默认转发 `delight.candidate`、`interest.probe` 和 `avoidance.probe`：
+
+```bash
+$ uv run python -m openbiliclaw.integrations.openclaw.cli listen
+{"ok": true, "data": {"type": "avoidance.probe", "domain": "浅层热点复读", "...": "..."}}
 ```
 
 ### `openbiliclaw profile`

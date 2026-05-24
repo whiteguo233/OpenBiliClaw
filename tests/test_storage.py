@@ -725,6 +725,7 @@ class TestDatabase:
                     up_name="UP",
                     source="search",
                     relevance_score=0.95,
+                    topic_group=f"搜索分组{i}",
                 )
             for i in range(3):
                 note_id = f"xhs-reactivate-{i}"
@@ -737,6 +738,7 @@ class TestDatabase:
                     source_platform="xiaohongshu",
                     content_url=(f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token=ABC="),
                     relevance_score=0.80,
+                    topic_group=f"小红书分组{i}",
                 )
                 db._execute_write(
                     "UPDATE content_cache SET pool_status = 'suppressed' WHERE bvid = ?",
@@ -1334,6 +1336,38 @@ class TestDatabase:
             db.update_pool_copy("b", expression="x", topic_label="y")
 
             assert db.count_pool_candidates() == 1
+
+            db.close()
+
+    def test_count_pool_candidates_respects_default_topic_group_window(self) -> None:
+        """The public available count uses the same topic_group cap as pool load."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for index in range(5):
+                _seed_visible(
+                    db,
+                    f"BVAI{index}",
+                    title=f"AI 候选 {index}",
+                    source="search",
+                    topic_group="人工智能",
+                    relevance_score=0.95 - index * 0.01,
+                )
+            _seed_visible(
+                db,
+                "BVDOC",
+                title="纪录片候选",
+                source="explore",
+                topic_group="人物纪录",
+                relevance_score=0.75,
+            )
+
+            assert db.count_pool_candidates() == 4
+            assert db.count_pool_candidates(max_per_topic_group=0) == 6
+            rows = db.get_pool_candidates(limit=10)
+            assert len(rows) == 4
+            assert [row["topic_group"] for row in rows].count("人工智能") == 3
 
             db.close()
 

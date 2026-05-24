@@ -1,9 +1,9 @@
 /**
  * Profile view — full onion model with uninit state, all layers,
- * expandable cognition cards, speculative interest actions.
+ * expandable cognition cards, speculative interest/avoidance actions.
  */
 
-import { fetchProfileSummary, respondToProbe } from "../api.js";
+import { fetchProfileSummary, respondToProbe, respondToAvoidanceProbe } from "../api.js";
 import {
   normalizeProfileSummary,
   normalizeMbtiDimensions,
@@ -145,6 +145,11 @@ function render() {
     html += section("\u63A8\u6D4B\u6027\u5174\u8DA3", renderSpecInterests(p.speculative_interests));
   }
 
+  // Speculative avoidances
+  if (p.speculative_avoidances.length) {
+    html += section("\u5F85\u786E\u8BA4\u907F\u96F7\u65B9\u5411", renderSpecAvoidances(p.speculative_avoidances));
+  }
+
   // Cognition history
   const cogItems = cognitionHistory?.items || p.recent_cognition_updates || [];
   if (cogItems.length) {
@@ -195,6 +200,7 @@ function render() {
   // Bind events
   $root.querySelector("#load-more-cognition")?.addEventListener("click", loadMoreCognition);
   bindSpecInterestActions();
+  bindSpecAvoidanceActions();
   bindCognitionExpand();
 }
 
@@ -269,7 +275,7 @@ function renderSpecInterests(interests) {
 }
 
 function bindSpecInterestActions() {
-  for (const btn of $root.querySelectorAll(".spec-btn")) {
+  for (const btn of $root.querySelectorAll(".spec-interest .spec-btn")) {
     btn.addEventListener("click", async (e) => {
       const row = e.target.closest(".spec-interest");
       const domain = row?.dataset.domain;
@@ -284,6 +290,59 @@ function bindSpecInterestActions() {
             profile: {
               ...p,
               speculative_interests: p.speculative_interests.filter((si) => si.domain !== domain),
+            },
+          });
+        }
+        render();
+      } catch {
+        btn.disabled = false;
+      }
+    });
+  }
+}
+
+// ── Speculative Avoidances ──────────────────────────────────
+function renderSpecAvoidances(avoidances) {
+  return avoidances.map((item) => {
+    const canAct = item.status === "active" || item.status === "pending";
+    const progressPct = item.confirmation_threshold > 0
+      ? Math.round((item.confirmation_count / item.confirmation_threshold) * 100)
+      : 0;
+    const source = item.source_mode ? ` \u00B7 ${esc(item.source_mode)}` : "";
+    return `
+      <div class="spec-interest spec-avoidance" data-domain="${esc(item.domain)}">
+        <div class="spec-interest-info">
+          <div class="spec-interest-name">${esc(item.domain)}</div>
+          <div class="spec-interest-status">${esc(item.status)}${item.confidence ? ` \u00B7 ${Math.round(item.confidence * 100)}%` : ""}${source}</div>
+          ${item.reason ? `<div style="font-size:11px;color:var(--text-muted)">${esc(item.reason)}</div>` : ""}
+          <div class="spec-interest-progress"><div class="spec-interest-progress-fill" style="width:${progressPct}%"></div></div>
+          ${item.specifics?.length ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${item.specifics.map((s) => esc(s.name)).join(", ")}</div>` : ""}
+        </div>
+        ${canAct ? `
+        <div class="spec-interest-actions">
+          <button class="spec-btn spec-avoidance-btn confirm" data-action="confirm">\u2713</button>
+          <button class="spec-btn spec-avoidance-btn reject" data-action="reject">\u2717</button>
+        </div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+function bindSpecAvoidanceActions() {
+  for (const btn of $root.querySelectorAll(".spec-avoidance .spec-avoidance-btn")) {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest(".spec-avoidance");
+      const domain = row?.dataset.domain;
+      const action = e.target.dataset.action;
+      if (!domain || !action) return;
+      btn.disabled = true;
+      try {
+        await respondToAvoidanceProbe(domain, action);
+        const p = state.profile;
+        if (p?.speculative_avoidances) {
+          patchState({
+            profile: {
+              ...p,
+              speculative_avoidances: p.speculative_avoidances.filter((si) => si.domain !== domain),
             },
           });
         }

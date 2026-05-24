@@ -20,9 +20,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.soul.avoidance_speculator import AvoidanceSpeculator
     from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
     from openbiliclaw.soul.profile_builder import ProfileBuilder
     from openbiliclaw.soul.speculator import InterestSpeculator
+
+from openbiliclaw.soul.dislike_writeback import (
+    apply_new_dislikes,
+    topics_for_confirmed_avoidance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +563,7 @@ class ProfileUpdatePipeline:
         profile_builder: ProfileBuilder,
         thresholds: dict[OnionLayer, LayerThreshold] | None = None,
         speculator: InterestSpeculator | None = None,
+        avoidance_speculator: AvoidanceSpeculator | None = None,
         embedding_service: Any | None = None,
         cognition_cycle: Any | None = None,
         speculator_idle_interval_minutes: int = 30,
@@ -566,6 +573,7 @@ class ProfileUpdatePipeline:
         self._profile_builder = profile_builder
         self._thresholds = thresholds or dict(DEFAULT_THRESHOLDS)
         self._speculator = speculator
+        self._avoidance_speculator = avoidance_speculator
         self._embedding_service = embedding_service
         self._cognition_cycle = cognition_cycle
         data_dir = getattr(memory, "_data_dir", None)
@@ -623,13 +631,18 @@ class ProfileUpdatePipeline:
         result.layers_buffered = sorted(layers_touched)
 
         # Speculator observation (lightweight keyword matching)
-        if self._speculator:
+        if self._speculator or self._avoidance_speculator:
             raw_events = [
                 sig.get("payload", {}) if isinstance(sig.get("payload"), dict) else {}
                 for signal in signals
                 for sig in [{"payload": signal.payload}]
             ]
+        else:
+            raw_events = []
+        if self._speculator:
             self._speculator.observe(raw_events)
+        if self._avoidance_speculator:
+            self._avoidance_speculator.observe(raw_events)
 
         # Check thresholds and update ready layers.
         # Strong-signal types (feedback, dialogue) bypass the min_signals gate.
@@ -673,13 +686,16 @@ class ProfileUpdatePipeline:
         #   (b) idle interval (30 min) has elapsed since the last tick —
         #       safety net so expire/promote still happens for users
         #       whose profile is stable but who interact with probes
-        if self._speculator:
+        if self._speculator or self._avoidance_speculator:
             should_tick_speculator = bool(result.layers_updated) or (
                 self._last_speculator_tick_at is None
                 or now - self._last_speculator_tick_at >= self._speculator_idle_min_interval
             )
             if should_tick_speculator:
-                await self._run_speculator_tick(result)
+                if self._speculator:
+                    await self._run_speculator_tick(result)
+                if self._avoidance_speculator:
+                    await self._run_avoidance_speculator_tick(result)
                 self._last_speculator_tick_at = now
 
         # Cognition cycle: throttled awareness + insight regeneration.
@@ -863,6 +879,59 @@ class ProfileUpdatePipeline:
             )
             result.layers_updated.append(update_result)
             self._record_changelog(update_result)
+
+    async def _run_avoidance_speculator_tick(self, result: FlushResult) -> None:
+        """Run avoidance speculator lifecycle and write confirmed topics."""
+        profile = self._load_profile()
+        feedback_history: object = []
+        load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
+        if callable(load_runtime_state):
+            try:
+                runtime_state = load_runtime_state()
+                if isinstance(runtime_state, dict):
+                    feedback_history = runtime_state.get("avoidance_probe_feedback_history", [])
+            except Exception:
+                logger.debug("Failed to load avoidance probe feedback history", exc_info=True)
+
+        tick = self._avoidance_speculator.tick  # type: ignore[union-attr]
+        try:
+            tick_result = await tick(profile, feedback_history=feedback_history)
+        except TypeError:
+            tick_result = await tick(profile)
+
+        if not tick_result.promoted:
+            return
+
+        topics: list[str] = []
+        for avoidance in tick_result.promoted:
+            topics.extend(topics_for_confirmed_avoidance(avoidance))
+        if not topics:
+            return
+
+        changes = await apply_new_dislikes(
+            memory=self._memory,
+            database=getattr(self._memory, "_database", None),
+            embedding_service=self._embedding_service,
+            llm_service=getattr(self._preference_analyzer, "registry", None),
+            topics=topics,
+        )
+        if not changes:
+            return
+
+        update_result = LayerUpdateResult(
+            layer=OnionLayer.INTEREST,
+            changed=True,
+            changes=changes,
+            signals_consumed=0,
+            trigger="避雷方向确认",
+            evidence=", ".join(
+                f"{item.domain}({item.confirmation_count}次确认)"
+                for item in tick_result.promoted
+            ),
+            timestamp=datetime.now().isoformat(),
+        )
+        result.layers_updated.append(update_result)
+        self._record_changelog(update_result)
 
     def _save_state(self) -> None:
         """Persist buffer state to disk."""

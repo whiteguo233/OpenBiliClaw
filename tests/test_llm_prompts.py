@@ -5,6 +5,7 @@ from pathlib import Path
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
     _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT,
+    build_avoidance_generation_prompt,
     build_awareness_prompt,
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
@@ -121,6 +122,30 @@ def test_recommendation_expression_prompts_treat_dislikes_as_avoidance() -> None
     assert "disliked_topics" in batch[1]["content"]
     assert "避开 profile_summary.disliked_topics" in single[0]["content"]
     assert "避开 profile_summary.disliked_topics" in batch[0]["content"]
+
+
+def test_avoidance_generation_prompt_requires_source_modes() -> None:
+    messages = build_avoidance_generation_prompt(
+        profile_summary={
+            "likes": ["AI"],
+            "disliked_topics": ["标题党"],
+            "style": {"preferred_pace": "dense"},
+        },
+        existing_avoidances=["浅层热点复读"],
+        cooldown_domains=["营销号带货"],
+        confirmed_dislikes=["标题党"],
+        confirmed_likes=["AI"],
+        count=5,
+    )
+
+    assert messages[0]["role"] == "system"
+    text = messages[0]["content"] + messages[1]["content"]
+    assert "negative_signal" in text
+    assert "positive_boundary" in text
+    assert "style_boundary" in text
+    assert "不能直接把正向兴趣本身当成讨厌对象" in text
+    assert "disliked_topics" in messages[1]["content"]
+    assert "cooldown_domains" in messages[1]["content"]
 
 
 def test_build_soul_profile_prompt_avoids_report_tone() -> None:
@@ -477,6 +502,25 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
                     "directness": "balanced",
                 },
                 source_platform="xiaohongshu",
+            ),
+        ),
+        (
+            "build_avoidance_generation_prompt",
+            dict(
+                profile_summary={"likes": ["A"], "disliked_topics": ["X"]},
+                existing_avoidances=["old"],
+                cooldown_domains=[],
+                confirmed_dislikes=["X"],
+                confirmed_likes=["A"],
+                count=3,
+            ),
+            dict(
+                profile_summary={"likes": ["B"], "disliked_topics": ["Y"]},
+                existing_avoidances=["other"],
+                cooldown_domains=["cool"],
+                confirmed_dislikes=["Y"],
+                confirmed_likes=["B"],
+                count=5,
             ),
         ),
         # NOTE: build_socratic_dialogue_prompt is intentionally NOT in

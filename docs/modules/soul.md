@@ -13,6 +13,7 @@
 - **DialogueInsightAnalyzer** — 从聊天中提取候选长期理解信号
 - **ToneProfile** — 从画像、偏好和近期反馈推断语气风格，用于推荐、画像总结和对话
 - **SocraticDialogue** — 苏格拉底式用户对话，通过追问深化理解
+- **AvoidanceSpeculator** — 主动确认用户可能想避开的内容方向
 - **SoulProfile** — 用户灵魂画像数据结构
 
 ## 已实现功能
@@ -54,6 +55,7 @@
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
 | 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并按 `[scheduler]` 的 generation interval、TTL、cooldown、确认阈值和上限运行；通过事件确认后转正为正式兴趣，未确认则拒绝并冷却 |
+| 不喜欢领域探针系统 | ✅ | `AvoidanceSpeculator` 与正向兴趣探针并行运行，最多 5 条 active 避雷假设；只在用户确认或显式负向证据达到阈值后写入 `disliked_topics`，未确认前不参与 discovery / recommendation 过滤 |
 | ROLE/VALUES/CORE 增量更新器 | ✅ | `_update_role`（`build_role_delta_prompt`，基于信号证据 + LLM diff-protection）、`_update_values`（LLM delta，每周期最多 add/remove 1 条，注入完整画像上下文）、`_update_core`（`build_core_delta_prompt`，更新 traits/needs/MBTI，强 diff-protection）均已完整实现 |
 | v0.3.74 Soul 结构化 JSON 容错统一 | ✅ | ProfileBuilder、PreferenceAnalyzer、DialogueInsightAnalyzer、AwarenessAnalyzer、InsightAnalyzer、LayerUpdaters 和 InterestSpeculator 都收敛到 `llm.json_utils`，每个任务用 predicate 约束自己需要的 schema；MiMo / 非 OpenAI wrapper 不再只修 awareness 一处 |
 
@@ -162,6 +164,66 @@
 - `src/openbiliclaw/soul/speculator.py` — 核心引擎（生成/观测/转正/过期/force_tick）
 - `src/openbiliclaw/llm/prompts.py` — `build_speculation_generation_prompt()`
 - `tests/test_speculator.py` — speculative lifecycle / novelty / probe selection 单元测试
+
+## 不喜欢领域探针系统 (Avoidance Probe Lifecycle)
+
+系统会主动探索用户可能想避开的内容形态、质量边界或表达方式。它和正向 `InterestSpeculator` 分开存储、分开配额，默认最多 5 条 active，不占正向兴趣探针的 5 条配额。
+
+### 生命周期
+
+```
+生成 (Generate) — LLM 根据 dislike、正向边界和风格画像生成 2-4 个细分避雷假设
+    ↓  受独立 active 上限限制，到达 5 条则跳过
+活跃 (Active) — 只观测显式负向证据
+    ├→ 用户 confirm 或 confirmation_count >= threshold
+    │    → 标记 confirmed/promoted
+    │    → Pipeline/API 调用 apply_new_dislikes()
+    │    → 写入 preference.disliked_topics + 同步 soul layer + 清理候选池
+    └→ 用户 reject 或 TTL 到期
+         → 进入 cooldown，不写画像，不过滤推荐
+```
+
+### 确认语义
+
+- `confirm` 表示“确实不喜欢 / 需要避开”。写回时优先写 `specifics[*].name`；只有 specifics 为空时才兜底写 domain，避免把子方向扩大成整个领域。
+- `reject` 表示“我并不排斥这个方向”。它只进入 cooldown 和 `avoidance_probe_feedback_history`，用于后续去重。
+- `chat` 使用 `scope="avoidance_probe"` 的 durable chat。用户在多聊中表达“对，这类不喜欢”会走 confirm-like 反馈；表达“不是，我其实可以看”会走 reject-like 反馈；中立只留审计记录。
+
+### 写回路径
+
+确认后的持久化源头是 flat preference：
+
+`apply_new_dislikes()` → `preference_layer.data["disliked_topics"]` → `OnionProfile.populate_from_flat_preference()` → `soul` layer / profile files → pool purge。
+
+`AvoidanceSpeculator` 只维护自己的 `avoidance_state.json`，不直接跨模块修改 `disliked_topics`、`soul` layer 或候选池。API confirm 和 pipeline 自动 promote 都调用 `soul.dislike_writeback.apply_new_dislikes()`，因此手动确认和观察驱动确认走同一条写回与清池路径。
+
+### 观察规则
+
+自动确认只消费高确信负向信号：`feedback_type=dislike`、`reaction=thumbs_down`、`event_type=dislike` 或避雷探针聊天里明确的负向表达。`quick_exit` / `inferred_satisfaction=negative` 这类被动信号不会增加 confirmation count；这是有意严于 preference 层 dislike 抽取的规则，因为避雷探针确认会写入长期过滤偏好。
+
+### 配置项
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `scheduler.avoidance_speculation_interval_minutes` | 10 | 负向探针生成间隔（分钟） |
+| `scheduler.avoidance_speculation_ttl_days` | 3 | 负向探针存活期 |
+| `scheduler.avoidance_speculation_cooldown_days` | 7 | 否认或过期后的冷却期 |
+| `scheduler.avoidance_speculation_confirmation_threshold` | 3 | 自动确认所需显式负向证据数 |
+| `scheduler.avoidance_speculation_max_active` | 5 | 最大活跃避雷假设数 |
+
+### 集成边界
+
+- `GET /api/profile-summary` 返回 `speculative_avoidances`，供移动 Web、桌面 Web 和插件画像页展示。
+- `GET /api/avoidance-probes/pending` / `POST /api/avoidance-probes/respond` / `POST /api/avoidance-probes/trigger` 提供前端与 OpenClaw 的操作入口。
+- runtime stream 推送 `avoidance.probe`，确认、否认和聊天分别广播 `avoidance.confirmed` / `avoidance.rejected` / `avoidance.chat`。
+- 未确认避雷探针不会挂到 `profile._active_speculations`，也不会进入 discovery、curator、delight 或 recommendation prompt。
+
+### 关键文件
+
+- `src/openbiliclaw/soul/avoidance_speculator.py` — 负向探针状态机、novelty guard、候选选择
+- `src/openbiliclaw/soul/dislike_writeback.py` — confirmed dislike 写回、profile 同步和候选池清理
+- `src/openbiliclaw/llm/prompts.py` — `build_avoidance_generation_prompt()`
+- `tests/test_avoidance_speculator.py` — avoidance lifecycle / novelty / probe selection 单元测试
 
 ## 画像更新逻辑详解
 

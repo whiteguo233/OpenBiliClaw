@@ -46,3 +46,15 @@ test("popup copy uses a more native bilibili-style voice in key entry points", (
   assert.doesNotMatch(popupJs, /刚补进 .* 条还没看过的新内容/);
   assert.doesNotMatch(popupHtml, /对个暗号|来，唠一句/);
 });
+
+test("popup avoidance probe contract is wired", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const serviceWorker = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
+
+  assert.match(popupHtml, /profileSpeculativeAvoidances/);
+  assert.match(popupJs, /avoidance\.probe/);
+  assert.match(popupJs, /确实不喜欢/);
+  assert.match(popupJs, /avoidance_probe/);
+  assert.match(serviceWorker, /avoidance\.probe/);
+});

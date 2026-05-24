@@ -198,6 +198,11 @@ class SchedulerConfig:
     speculation_max_active: int = 5
     speculation_max_primary_interests: int = 15
     speculation_max_secondary_interests: int = 60
+    avoidance_speculation_interval_minutes: int = 10
+    avoidance_speculation_ttl_days: int = 3
+    avoidance_speculation_cooldown_days: int = 7
+    avoidance_speculation_confirmation_threshold: int = 3
+    avoidance_speculation_max_active: int = 5
     feedback_batch_threshold: int = _DEFAULT_FEEDBACK_BATCH_THRESHOLD
     # Default off. The auto-updater pulls from GitHub releases and
     # restarts the backend when a newer version is detected, but it has
@@ -656,6 +661,31 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     default=_DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES,
                     min_value=5,
                 ),
+                "avoidance_speculation_interval_minutes": _normalize_scheduler_int(
+                    sched_raw.get("avoidance_speculation_interval_minutes"),
+                    default=10,
+                    min_value=1,
+                ),
+                "avoidance_speculation_ttl_days": _normalize_scheduler_int(
+                    sched_raw.get("avoidance_speculation_ttl_days"),
+                    default=3,
+                    min_value=1,
+                ),
+                "avoidance_speculation_cooldown_days": _normalize_scheduler_int(
+                    sched_raw.get("avoidance_speculation_cooldown_days"),
+                    default=7,
+                    min_value=1,
+                ),
+                "avoidance_speculation_confirmation_threshold": _normalize_scheduler_int(
+                    sched_raw.get("avoidance_speculation_confirmation_threshold"),
+                    default=3,
+                    min_value=1,
+                ),
+                "avoidance_speculation_max_active": _normalize_scheduler_int(
+                    sched_raw.get("avoidance_speculation_max_active"),
+                    default=5,
+                    min_value=1,
+                ),
             }
         ),
         storage=StorageConfig(**store_raw),
@@ -1108,6 +1138,15 @@ def _render_config_toml(config: Config) -> str:
             f"{config.scheduler.speculation_max_primary_interests}",
             "speculation_max_secondary_interests = "
             f"{config.scheduler.speculation_max_secondary_interests}",
+            "avoidance_speculation_interval_minutes = "
+            f"{config.scheduler.avoidance_speculation_interval_minutes}",
+            f"avoidance_speculation_ttl_days = {config.scheduler.avoidance_speculation_ttl_days}",
+            "avoidance_speculation_cooldown_days = "
+            f"{config.scheduler.avoidance_speculation_cooldown_days}",
+            "avoidance_speculation_confirmation_threshold = "
+            f"{config.scheduler.avoidance_speculation_confirmation_threshold}",
+            "avoidance_speculation_max_active = "
+            f"{config.scheduler.avoidance_speculation_max_active}",
             f"auto_update_enabled = {_toml_bool(config.scheduler.auto_update_enabled)}",
             "auto_update_check_interval_hours = "
             f"{config.scheduler.auto_update_check_interval_hours}",
