@@ -161,18 +161,18 @@
     .side-drawer.is-open .side-drawer-panel { transform: translateX(0); }
     body.side-drawer-open .layout,
     body.side-drawer-open .fatal-banner { transform: translateX(calc(var(--side-drawer-width) / 2)); }
-    .side-drawer-nav { display: grid; gap: 4px; padding: var(--space-2) 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+    .side-drawer-nav { display: grid; gap: 4px; padding: var(--space-2) 0 var(--space-3); }
     .side-drawer-nav .nav-action { width: 100%; min-height: 40px; display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--fg-2); box-shadow: none; text-align: left; }
     .side-drawer-nav .nav-action:hover { background: color-mix(in oklab, var(--surface-warm), var(--accent) 6%); color: var(--fg); }
     .nav-glyph { width: 22px; height: 22px; display: inline-grid; place-items: center; border-radius: var(--radius-sm); background: var(--surface-warm); color: var(--fg-2); font-size: 13px; }
     .side-drawer-nav .nav-action:nth-child(-n + 3) .nav-glyph { background: color-mix(in oklab, var(--surface-warm), var(--accent) 10%); color: var(--accent); }
-    .side-section { display: grid; gap: var(--space-3); padding: var(--space-3) 2px; border-bottom: 1px solid var(--border-soft); }
+    .side-section { display: grid; gap: var(--space-3); padding: var(--space-4) 2px 0; }
     .side-section h3 { color: var(--fg); font-size: 16px; letter-spacing: -0.01em; }
     .side-section p { margin: 0; color: var(--muted); }
     .side-section .eyebrow { color: var(--accent); }
     .side-drawer-actions { display: grid; gap: var(--space-2); }
     .side-drawer-actions .pill-btn { width: 100%; display: inline-flex; align-items: center; justify-content: center; }
-    .side-runtime-panel, .side-activity-section { border-bottom-color: var(--border-soft); }
+    .side-runtime-panel, .side-activity-section { border-bottom: 0; }
     .side-drawer .hero-status-grid, .side-drawer .metric { background: transparent; border-color: var(--border-soft); }
     .side-drawer .hero-status-grid { padding: 0; border: 0; }
     .side-drawer .hero-status-grid span, .side-drawer .hero-topics { color: var(--muted); }
