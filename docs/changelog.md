@@ -18,6 +18,8 @@
 - `[llm].concurrency` 新增为全局 LLM 请求并发上限，默认从 1 提升到 3，并接入 `/api/config` 与插件设置页「模型」tab，方便在速度和上游限流之间调整。
 - 插件、桌面 Web 与移动 Web 的 runtime-stream 自动刷新新增 debounce / single-flight：后台补货事件密集时会合并 activity、recommendation、profile 等刷新请求，避免 LLM 并发提升后前端重复拉取和渲染造成卡顿。
 - 后端独立候选池文案预计算完成后会回写 `last_replenished_count` 并广播 `refresh.pool_updated`，修复候选已进入可换库存但前端仍显示“这轮没补进”的状态错位。
+- 推荐候选池 serve / 计数 / 文案预生成入口统一加 `style_key` 与 `topic_group` 非空门控；未分类内容必须先经过 `classify_pool_backlog`，不会再先生成推荐文案后绕过分类口径进入换一批。
+- API runtime 与 OpenClaw direct bootstrap 读取 `[llm].concurrency` 时统一使用默认值兜底；旧测试夹具或精简配置缺少该字段时不再在组件构建阶段抛 `AttributeError`。
 - embedding 预热从 refresh 收尾主路径改为后台 task；慢本地 embedding 后端只影响后续 MMR cache / topic supergroup cache 命中率，不再让 `manual_refresh_state` 长时间停在 `running` 或占住 refresh lock。
 - `[scheduler].pool_target_count` 默认从 600 降到 300；B 站初始化关注默认从 300 收敛到 100，减少长关注列表对首次画像的事件量。XHS / Douyin / YouTube `bootstrap_profile` 的 `max_items_per_scope` 仍默认 300。
 - 移动 Web 与插件 / side panel 推荐列表的自动续页新增用户滚动意图门闩；后台 `refresh.pool_updated` 或列表重渲染不会在加载更多哨兵仍可见时连续调用 `append`，避免候选刚补进就被空转消费到 0。

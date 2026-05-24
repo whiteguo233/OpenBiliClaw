@@ -125,6 +125,8 @@ def _seed_pool(
         if precomputed:
             kwargs["pool_expression"] = item.pool_expression or "测试推荐文案"
             kwargs["pool_topic_label"] = item.pool_topic_label or "测试主题"
+            kwargs["style_key"] = item.style_key or "tutorial"
+            kwargs["topic_group"] = item.topic_group or "测试分组"
         # Use cache_content directly so precomputed=False genuinely leaves
         # pool copy empty (helpful for future gate-behavior tests).
         db.cache_content(item.bvid, **kwargs)
@@ -141,6 +143,8 @@ def _seed_visible(db: Database, bvid: str, **kwargs: Any) -> None:
     """
     kwargs.setdefault("pool_expression", "测试推荐文案")
     kwargs.setdefault("pool_topic_label", "测试主题")
+    kwargs.setdefault("style_key", "tutorial")
+    kwargs.setdefault("topic_group", "测试分组")
     db.cache_content(bvid, **kwargs)
 
 
@@ -289,14 +293,16 @@ async def test_generate_recommendations_reads_from_cache_when_discovered_missing
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1A",
             title="A",
             up_name="UPA",
             source="search",
             view_count=10,
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1B",
             title="B",
             up_name="UPB",
@@ -362,7 +368,8 @@ async def test_generate_recommendations_reads_cached_relevance_score() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1LOW",
             title="低相关高播放",
             up_name="UPA",
@@ -371,7 +378,8 @@ async def test_generate_recommendations_reads_cached_relevance_score() -> None:
             relevance_score=0.41,
             candidate_tier="primary",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1HIGH",
             title="高相关低播放",
             up_name="UPB",
@@ -477,7 +485,8 @@ async def test_generate_recommendations_balances_topics_from_cache() -> None:
 
         # Dominant source + dominant topic at the relevance head
         for index in range(25):
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 f"BVAI{index}",
                 title=f"AI 高分候选 {index}",
                 up_name="AI 频道",
@@ -490,7 +499,8 @@ async def test_generate_recommendations_balances_topics_from_cache() -> None:
             )
         # Long tail: lower scores but distinct topic groups
         for index in range(5):
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 f"BVGAME{index}",
                 title=f"游戏候选 {index}",
                 up_name="游戏频道",
@@ -502,7 +512,8 @@ async def test_generate_recommendations_balances_topics_from_cache() -> None:
                 topic_group="游戏",
             )
         for index in range(5):
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 f"BVDOC{index}",
                 title=f"纪录片候选 {index}",
                 up_name="纪录片频道",
@@ -514,7 +525,8 @@ async def test_generate_recommendations_balances_topics_from_cache() -> None:
                 topic_group="纪录片",
             )
         for index in range(5):
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 f"BVHIST{index}",
                 title=f"历史候选 {index}",
                 up_name="历史频道",
@@ -546,14 +558,16 @@ async def test_generate_recommendations_does_not_repeat_history() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1A",
             title="A",
             up_name="UPA",
             source="search",
             view_count=10,
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1B",
             title="B",
             up_name="UPB",
@@ -582,14 +596,16 @@ async def test_generate_recommendations_skips_recently_viewed_content() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1SEEN",
             title="已经看过的内容",
             up_name="UPA",
             source="search",
             relevance_score=0.97,
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1NEW",
             title="还没看过",
             up_name="UPB",
@@ -763,7 +779,8 @@ async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expres
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1POOL",
             title="讲透地缘政治的链路",
             up_name="观察站",
@@ -795,7 +812,8 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1A",
             title="第一条",
             up_name="UPA",
@@ -803,7 +821,8 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
             relevance_score=0.95,
             relevance_reason="第一条基础理由。",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1B",
             title="第二条",
             up_name="UPB",
@@ -811,7 +830,8 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
             relevance_score=0.94,
             relevance_reason="第二条基础理由。",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1C",
             title="第三条",
             up_name="UPC",
@@ -860,6 +880,8 @@ async def test_reshuffle_recommendations_hides_missing_precomputed_copy() -> Non
             source="search",
             relevance_score=0.89,
             relevance_reason="这条会对上你最近那股想把来龙去脉搞明白的劲头。",
+            style_key="deep_dive",
+            topic_group="测试分组",
         )
         engine = RecommendationEngine(llm=_ExplodingLLM(), database=db)
 
@@ -891,7 +913,8 @@ async def test_reshuffle_recommendations_skips_recently_viewed_content() -> None
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1SEEN",
             title="已经看过的地缘政治分析",
             up_name="观察站",
@@ -899,7 +922,8 @@ async def test_reshuffle_recommendations_skips_recently_viewed_content() -> None
             relevance_score=0.93,
             relevance_reason="这条本来很像你会点开的内容。",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1NEW",
             title="还没看过的纪录片",
             up_name="纪录片研究所",
@@ -928,7 +952,8 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVGAME1",
             title="杀戮尖塔2 全英雄基础流派攻略",
             up_name="卡牌研究所",
@@ -937,8 +962,10 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
             relevance_reason="这条偏你会点开的机制拆解。",
             style_key="game_strategy",
             topic_key="游戏:杀戮尖塔2",
+            topic_group="游戏",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVGAME2",
             title="杀戮尖塔2 17分钟实机演示",
             up_name="IGN",
@@ -947,8 +974,10 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
             relevance_reason="这条还是同一类游戏机制内容。",
             style_key="game_strategy",
             topic_key="游戏:杀戮尖塔2",
+            topic_group="游戏",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVNEWS1",
             title="美国关税政策又有新变化",
             up_name="国际观察",
@@ -957,8 +986,10 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
             relevance_reason="这条信息来得快，而且不是纯复读。",
             style_key="news_brief",
             topic_key="国际时事:贸易",
+            topic_group="国际时事",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVDOC1",
             title="塔可夫斯基《潜行者》到底讲了什么",
             up_name="猫鲨Catshark",
@@ -967,6 +998,7 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
             relevance_reason="这条会把故事和信息一起带出来。",
             style_key="story_doc",
             topic_key="科幻:电影",
+            topic_group="科幻",
         )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
@@ -1009,7 +1041,8 @@ async def test_reshuffle_recommendations_caps_topic_and_style_for_larger_batches
             ("BVMUSIC1", "音乐视觉 1", "trending", 0.9, "visual_showcase", "music:1", "音乐"),
         ]
         for bvid, title, source, score, style, topic, group in items:
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 bvid,
                 title=title,
                 up_name=f"{source}-频道",
@@ -1047,7 +1080,8 @@ async def test_reshuffle_recommendations_backfills_to_requested_limit_when_style
         # has a distinct broad topic so backfill can reach `limit`.
         topics = ["生活随笔", "职场闲谈", "读书片段", "城市漫步", "餐桌小记", "音乐碎片"]
         for index, topic in enumerate(topics):
-            _seed_visible(db,
+            _seed_visible(
+                db,
                 f"BVLIGHT{index + 1}",
                 title=f"轻聊候选 {index + 1}",
                 up_name="轻聊频道",
@@ -1056,6 +1090,7 @@ async def test_reshuffle_recommendations_backfills_to_requested_limit_when_style
                 relevance_reason=f"这条会接住你最近想往里看一点的状态 {index + 1}。",
                 style_key="light_chat",
                 topic_key=topic,
+                topic_group=topic,
             )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
@@ -1109,7 +1144,8 @@ async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() ->
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVINT1",
             title="讲透中东局势的来龙去脉",
             up_name="国际观察",
@@ -1117,8 +1153,10 @@ async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() ->
             relevance_score=0.96,
             relevance_reason="这条会接住你最近那股想把国际时事看透的劲头。",
             topic_key="国际时事:地缘政治",
+            topic_group="国际时事",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVINT2",
             title="伊朗问题的底层链路",
             up_name="世界现场",
@@ -1126,8 +1164,10 @@ async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() ->
             relevance_score=0.95,
             relevance_reason="这条延续了你最近盯国际新闻时那种爱追因果的状态。",
             topic_key="国际时事:地缘政治",
+            topic_group="国际时事",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVTECH1",
             title="OpenAI 新模型到底强在哪",
             up_name="技术拆机局",
@@ -1135,8 +1175,10 @@ async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() ->
             relevance_score=0.91,
             relevance_reason="这条会对上你最近想把模型能力边界搞清楚的劲头。",
             topic_key="AI:大模型",
+            topic_group="人工智能",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVDOC1",
             title="城市纪录片里的空间叙事",
             up_name="纪录片研究所",
@@ -1144,6 +1186,7 @@ async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() ->
             relevance_score=0.9,
             relevance_reason="这条会接住你那种喜欢从具体细节里看见大结构的状态。",
             topic_key="纪录片:城市",
+            topic_group="纪录片",
         )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
@@ -1165,7 +1208,8 @@ async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVINT1",
             title="讲透中东局势的来龙去脉",
             up_name="国际观察",
@@ -1173,8 +1217,10 @@ async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
             relevance_score=0.96,
             relevance_reason="这条会接住你最近那股想把国际时事看透的劲头。",
             tags=["国际时事", "地缘政治"],
+            topic_group="国际时事",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVINT2",
             title="伊朗问题的底层链路",
             up_name="世界现场",
@@ -1182,8 +1228,10 @@ async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
             relevance_score=0.95,
             relevance_reason="这条延续了你最近盯国际新闻时那种爱追因果的状态。",
             tags=["国际时事", "地缘政治"],
+            topic_group="国际时事",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVTECH1",
             title="OpenAI 新模型到底强在哪",
             up_name="技术拆机局",
@@ -1191,8 +1239,10 @@ async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
             relevance_score=0.91,
             relevance_reason="这条会对上你最近想把模型能力边界搞清楚的劲头。",
             tags=["AI", "大模型"],
+            topic_group="人工智能",
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BVDOC1",
             title="城市纪录片里的空间叙事",
             up_name="纪录片研究所",
@@ -1200,6 +1250,7 @@ async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
             relevance_score=0.9,
             relevance_reason="这条会接住你那种喜欢从具体细节里看见大结构的状态。",
             tags=["纪录片", "城市"],
+            topic_group="纪录片",
         )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
@@ -1491,7 +1542,8 @@ async def test_classify_pool_backlog_fills_metadata() -> None:
         db.initialize()
 
         # Insert 2 XHS items with NO metadata
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "xhs_001",
             title="莫氏鸡煲在家复刻",
             up_name="美食博主",
@@ -1504,7 +1556,8 @@ async def test_classify_pool_backlog_fills_metadata() -> None:
             topic_key="",
             relevance_score=0.0,
         )
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "xhs_002",
             title="宝可梦PVP配队",
             up_name="游戏玩家",
@@ -1553,7 +1606,8 @@ async def test_classify_pool_backlog_skips_already_classified() -> None:
         db.initialize()
 
         # Already classified bilibili item
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV_classified",
             title="已分类的内容",
             up_name="UP主",
@@ -1717,9 +1771,7 @@ async def test_classify_pool_backlog_accepts_wrapped_output(
 
         assert classified == 1
         row = next(
-            r
-            for r in db.get_cached_content(limit=10)
-            if r["bvid"] == f"xhs_wrapped_{wrapper_key}"
+            r for r in db.get_cached_content(limit=10) if r["bvid"] == f"xhs_wrapped_{wrapper_key}"
         )
         assert row["style_key"] == "tech_analysis"
         assert row["topic_group"] == "工具效率"
@@ -2055,7 +2107,8 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
         db.initialize()
 
         # First insert: classified content (as if classify_pool_backlog ran)
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "xhs_reingest",
             title="莫氏鸡煲在家复刻",
             up_name="美食博主",
@@ -2069,7 +2122,8 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
         )
 
         # Second insert: extension re-sends same note with empty metadata
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "xhs_reingest",
             title="莫氏鸡煲在家复刻",
             up_name="美食博主",
@@ -2131,7 +2185,8 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        _seed_visible(db,
+        _seed_visible(
+            db,
             "BV1BACKFILL",
             title="讲透复杂系统的连接方式",
             up_name="系统观察者",

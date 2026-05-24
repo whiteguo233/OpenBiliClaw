@@ -643,12 +643,17 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
 
     class FakeLLMService:
         def __init__(
-            self, *, registry: object, memory: object,
-            module_overrides=None, concurrency=None,
+            self,
+            *,
+            registry: object,
+            memory: object,
+            module_overrides=None,
+            concurrency: int = 3,
         ) -> None:
             self.registry = registry
             self.memory = memory
             self.module_overrides = module_overrides
+            self.concurrency = concurrency
 
     class FakeRecommendationEngine:
         def __init__(
@@ -781,8 +786,10 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
     assert services.soul_engine.kwargs["speculation_max_primary_interests"] == 17
     assert services.soul_engine.kwargs["speculation_max_secondary_interests"] == 66
     assert services.soul_engine.kwargs["speculator_idle_interval_minutes"] == 11
+    assert services.soul_engine.kwargs["llm_concurrency"] == 3
     assert services.llm_service.module_overrides["discovery"].provider == "deepseek"
     assert services.llm_service.module_overrides["evaluation"].model == "gpt-4o-mini"
+    assert services.llm_service.concurrency == 3
     assert registered_strategies == [
         "FakeStrategy",
         "FakeStrategy",

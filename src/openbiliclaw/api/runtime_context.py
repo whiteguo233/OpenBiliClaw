@@ -28,6 +28,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from openbiliclaw.config import llm_concurrency_from_config as _llm_concurrency_from_config
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
@@ -307,12 +308,13 @@ class RuntimeContext:
         new_registry = build_llm_registry(new_config)
         new_usage_recorder = UsageRecorder(sink=self.database)
         new_module_overrides = module_overrides_from_config(new_config)
+        llm_concurrency = _llm_concurrency_from_config(new_config)
         new_llm_service = LLMService(
             registry=new_registry,
             memory=self.memory_manager,
             usage_recorder=new_usage_recorder,
             module_overrides=new_module_overrides,
-            concurrency=int(getattr(new_config.llm, "concurrency", 3)),
+            concurrency=llm_concurrency,
         )
 
         # 2. Bilibili client
@@ -346,7 +348,7 @@ class RuntimeContext:
             usage_recorder=new_usage_recorder,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
             module_overrides=new_module_overrides,
-            llm_concurrency=int(getattr(new_config.llm, "concurrency", 3)),
+            llm_concurrency=llm_concurrency,
             speculation_interval_minutes=int(
                 getattr(new_config.scheduler, "speculation_interval_minutes", 10)
             ),

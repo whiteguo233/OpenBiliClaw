@@ -827,6 +827,17 @@ def _normalize_llm_concurrency(value: object) -> int:
     return normalized
 
 
+def llm_concurrency_from_config(config: object) -> int:
+    """Extract LLM concurrency from a config object, with safe fallback.
+
+    Works with both a full ``Config`` instance and a bare
+    ``types.SimpleNamespace`` (used by test stubs and hot-reload paths).
+    """
+    llm_section = getattr(config, "llm", None)
+    raw = getattr(llm_section, "concurrency", DEFAULT_LLM_CONCURRENCY)
+    return _normalize_llm_concurrency(raw)
+
+
 def _normalize_pool_source_shares(value: object) -> dict[str, int]:
     """Normalize scheduler pool source shares from TOML into non-negative ints.
 

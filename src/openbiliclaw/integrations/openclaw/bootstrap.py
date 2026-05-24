@@ -9,6 +9,7 @@ from openbiliclaw.api.runtime_context import build_youtube_discovery_producer
 from openbiliclaw.bilibili.api import BilibiliAPIClient
 from openbiliclaw.bilibili.auth import resolve_runtime_cookie
 from openbiliclaw.config import Config, load_config
+from openbiliclaw.config import llm_concurrency_from_config as _llm_concurrency_from_config
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 from openbiliclaw.discovery.strategies.strategies import (
     ExploreStrategy,
@@ -51,6 +52,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     config = load_config()
     llm_registry = build_llm_registry(config)
     module_overrides = module_overrides_from_config(config)
+    llm_concurrency = _llm_concurrency_from_config(config)
 
     database = Database(config.data_path / "openbiliclaw.db")
     database.initialize()
@@ -62,7 +64,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         llm=llm_registry,
         memory=memory_manager,
         module_overrides=module_overrides,
-        llm_concurrency=config.llm.concurrency,
+        llm_concurrency=llm_concurrency,
         speculation_interval_minutes=config.scheduler.speculation_interval_minutes,
         speculation_ttl_days=config.scheduler.speculation_ttl_days,
         speculation_cooldown_days=config.scheduler.speculation_cooldown_days,
@@ -76,7 +78,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         registry=llm_registry,
         memory=memory_manager,
         module_overrides=module_overrides,
-        concurrency=config.llm.concurrency,
+        concurrency=llm_concurrency,
     )
     from openbiliclaw.llm.registry import build_embedding_service
     from openbiliclaw.recommendation.curator import PoolCurator

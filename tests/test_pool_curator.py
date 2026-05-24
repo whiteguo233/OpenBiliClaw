@@ -350,6 +350,8 @@ def test_needs_replenishment_false_when_pool_full() -> None:
             source="search",
             pool_expression="x",
             pool_topic_label="y",
+            style_key="tutorial",
+            topic_group="测试分组",
         )
     curator = PoolCurator(db)
     assert curator.needs_replenishment() is False
@@ -369,6 +371,8 @@ def test_evict_stale_pool_items_marks_old_items() -> None:
         source="search",
         pool_expression="x",
         pool_topic_label="y",
+        style_key="tutorial",
+        topic_group="测试分组",
     )
     # Backdate the discovered_at to 20 days ago
     db.conn.execute(
@@ -382,6 +386,8 @@ def test_evict_stale_pool_items_marks_old_items() -> None:
         source="search",
         pool_expression="x",
         pool_topic_label="y",
+        style_key="tutorial",
+        topic_group="测试分组",
     )
     evicted = db.evict_stale_pool_items(max_age_days=14)
     assert evicted == 1

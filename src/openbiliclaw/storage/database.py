@@ -387,9 +387,7 @@ class Database:
         for top_level_key in ("watch_seconds", "video_duration_seconds"):
             if top_level_key in kwargs and kwargs[top_level_key] is not None:
                 classifier_event[top_level_key] = kwargs[top_level_key]
-        inferred_satisfaction, satisfaction_reason = classify_event_satisfaction(
-            classifier_event
-        )
+        inferred_satisfaction, satisfaction_reason = classify_event_satisfaction(classifier_event)
 
         cursor = self._execute_write(
             "INSERT INTO events "
@@ -1080,6 +1078,8 @@ class Database:
                   AND COALESCE(feedback_type, '') != 'dislike'
                   AND COALESCE(pool_expression, '') != ''
                   AND COALESCE(pool_topic_label, '') != ''
+                  AND COALESCE(style_key, '') != ''
+                  AND COALESCE(topic_group, '') != ''
                   AND (
                     source_platform != 'xiaohongshu'
                     OR content_url LIKE '%xsec_token=%'
@@ -1099,28 +1099,26 @@ class Database:
             """
             params: tuple[Any, ...] = (fetch_limit,)
         else:
-            # Per-group rank via window function: keep the top-N items of
-            # each topic_group (and all items with empty topic_group, which
-            # are untracked). Then order the remainder by relevance.
+            # Per-group rank via window function: keep the top-N classified
+            # items of each topic_group, then order the remainder by relevance.
             sql = """
                 WITH ranked AS (
                     SELECT *,
-                           CASE
-                               WHEN COALESCE(topic_group, '') = '' THEN 1
-                               ELSE ROW_NUMBER() OVER (
-                                   PARTITION BY topic_group
-                                   ORDER BY
-                                       relevance_score DESC,
-                                       last_scored_at DESC,
-                                       view_count DESC,
-                                       bvid ASC
-                               )
-                           END AS group_rank
+                           ROW_NUMBER() OVER (
+                               PARTITION BY topic_group
+                               ORDER BY
+                                   relevance_score DESC,
+                                   last_scored_at DESC,
+                                   view_count DESC,
+                                   bvid ASC
+                           ) AS group_rank
                     FROM content_cache
                     WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                       AND COALESCE(feedback_type, '') != 'dislike'
                       AND COALESCE(pool_expression, '') != ''
                       AND COALESCE(pool_topic_label, '') != ''
+                      AND COALESCE(style_key, '') != ''
+                      AND COALESCE(topic_group, '') != ''
                       AND (
                         source_platform != 'xiaohongshu'
                         OR content_url LIKE '%xsec_token=%'
@@ -1132,9 +1130,7 @@ class Database:
                       )
                 )
                 SELECT * FROM ranked
-                WHERE
-                    COALESCE(topic_group, '') = ''
-                    OR group_rank <= ?
+                WHERE group_rank <= ?
                 ORDER BY
                     CASE candidate_tier WHEN 'primary' THEN 0 ELSE 1 END ASC,
                     relevance_score DESC,
@@ -1160,6 +1156,10 @@ class Database:
         without ``pool_expression`` / ``pool_topic_label`` are excluded so
         the popup's "还有 N 条" never overstates what serve() can actually
         return.
+
+        v0.3.66+: also requires ``style_key`` / ``topic_group`` — content
+        must be classified before it can be served, regardless of source
+        platform.
         """
         cursor = self.conn.execute(
             """
@@ -1169,6 +1169,8 @@ class Database:
               AND COALESCE(feedback_type, '') != 'dislike'
               AND COALESCE(pool_expression, '') != ''
               AND COALESCE(pool_topic_label, '') != ''
+              AND COALESCE(style_key, '') != ''
+              AND COALESCE(topic_group, '') != ''
               AND NOT EXISTS (
                 SELECT 1
                 FROM recommendations AS r
@@ -2171,13 +2173,21 @@ class Database:
         return rows[:limit]
 
     def get_pool_candidates_needing_copy(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Return fresh pool candidates missing precomputed popup copy."""
+        """Return fresh pool candidates missing precomputed popup copy.
+
+        v0.3.66+: requires ``style_key`` / ``topic_group`` — content must
+        be classified before expression generation.  This prevents
+        unclassified items (e.g. raw XHS notes) from getting an expression
+        and leaking through the serve gate without proper relevance scoring.
+        """
         cursor = self.conn.execute(
             """
             SELECT *
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(style_key, '') != ''
+              AND COALESCE(topic_group, '') != ''
               AND (
                 COALESCE(pool_expression, '') = ''
                 OR COALESCE(pool_topic_label, '') = ''
@@ -2674,8 +2684,7 @@ class Database:
         as ``unknown`` so the upgrade is non-blocking.
         """
         existing_columns = {
-            str(row["name"])
-            for row in self.conn.execute("PRAGMA table_info(events)").fetchall()
+            str(row["name"]) for row in self.conn.execute("PRAGMA table_info(events)").fetchall()
         }
         required_columns = {
             "inferred_satisfaction": "TEXT",
@@ -2684,9 +2693,7 @@ class Database:
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
                 continue
-            self.conn.execute(
-                f"ALTER TABLE events ADD COLUMN {column_name} {column_type}"
-            )
+            self.conn.execute(f"ALTER TABLE events ADD COLUMN {column_name} {column_type}")
 
     def _ensure_recommendation_feedback_columns(self) -> None:
         """Backfill recommendation feedback columns for existing databases."""
@@ -3418,7 +3425,5 @@ class Database:
     ) -> list[dict[str, Any]]:
         if not viewed_content_keys:
             return rows[:limit]
-        filtered = [
-            row for row in rows if not Database._is_viewed_row(row, viewed_content_keys)
-        ]
+        filtered = [row for row in rows if not Database._is_viewed_row(row, viewed_content_keys)]
         return filtered[:limit]

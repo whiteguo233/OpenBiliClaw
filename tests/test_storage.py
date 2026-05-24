@@ -19,6 +19,8 @@ def _seed_visible(db: Database, bvid: str, **kwargs: Any) -> None:
     """
     kwargs.setdefault("pool_expression", "测试推荐文案")
     kwargs.setdefault("pool_topic_label", "测试主题")
+    kwargs.setdefault("style_key", "tutorial")
+    kwargs.setdefault("topic_group", "测试分组")
     db.cache_content(bvid, **kwargs)
 
 
@@ -1257,6 +1259,8 @@ class TestDatabase:
                 relevance_score=0.84,
                 pool_expression="这条先给你备好了推荐理由。",
                 pool_topic_label="先备好的那股味儿",
+                style_key="tutorial",
+                topic_group="测试分组",
             )
 
             items = db.get_pool_candidates(limit=10)
@@ -1302,6 +1306,8 @@ class TestDatabase:
                 relevance_score=0.8,
                 pool_expression="LLM 文案",
                 pool_topic_label="LLM topic",
+                style_key="tutorial",
+                topic_group="测试分组",
             )
 
             rows = db.get_pool_candidates(limit=10)
@@ -1317,7 +1323,14 @@ class TestDatabase:
             db.initialize()
 
             db.cache_content("a", title="a", source="search", relevance_score=0.5)
-            db.cache_content("b", title="b", source="search", relevance_score=0.5)
+            db.cache_content(
+                "b",
+                title="b",
+                source="search",
+                relevance_score=0.5,
+                style_key="tutorial",
+                topic_group="测试分组",
+            )
             db.update_pool_copy("b", expression="x", topic_label="y")
 
             assert db.count_pool_candidates() == 1
@@ -1331,7 +1344,14 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            db.cache_content("BVPENDING", title="待生成", source="search", relevance_score=0.7)
+            db.cache_content(
+                "BVPENDING",
+                title="待生成",
+                source="search",
+                relevance_score=0.7,
+                style_key="tutorial",
+                topic_group="测试分组",
+            )
             assert db.count_pool_candidates() == 0
             assert db.get_pool_candidates(limit=10) == []
 
@@ -2015,8 +2035,7 @@ class TestEventSatisfactionPersistence:
         )
 
         rows = db.conn.execute(
-            "SELECT event_type, inferred_satisfaction, satisfaction_reason "
-            "FROM events ORDER BY id"
+            "SELECT event_type, inferred_satisfaction, satisfaction_reason FROM events ORDER BY id"
         ).fetchall()
         assert rows[0]["event_type"] == "like"
         assert rows[0]["inferred_satisfaction"] == "positive"
@@ -2051,9 +2070,7 @@ class TestEventSatisfactionPersistence:
         assert positives[0]["title"] == "好内容"
 
         # Positive + unknown also includes the missing_dwell row.
-        mixed = db.query_events(
-            satisfaction_modes=frozenset({"positive", "unknown"}), limit=10
-        )
+        mixed = db.query_events(satisfaction_modes=frozenset({"positive", "unknown"}), limit=10)
         assert {row["title"] for row in mixed} == {"好内容", "未知"}
         db.close()
 
