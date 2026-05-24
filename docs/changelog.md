@@ -15,6 +15,7 @@
 - 新增不喜欢领域探针设计与实现：系统会主动确认可能的避雷方向，移动 Web / 桌面 Web / 浏览器插件 / OpenClaw 都可查看和操作。
 - 确认后通过 `apply_new_dislikes()` 写入 `disliked_topics` 并触发候选池清理；未确认避雷方向不参与 discovery / recommendation 过滤。
 - 避雷探针聊天使用 durable `scope=avoidance_probe`，用户在多聊中确认或否认会走同一条反馈、写回与冷却路径。
+- Interest probes now use challenge distance bands, direct confirmation sources, weak-signal buffering, and guarded recommendation amplification to reduce short-term overfitting.
 
 ## v0.3.89 / extension v0.3.44: Safari 面板化、CI 扩展构建、搬运 AI 配音检测（2026-05-23）
 

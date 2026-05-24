@@ -217,7 +217,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ B 站 / 抖音 Cookie 同步（runtime-stream 请求 + 扩展回传）   │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ delight / interest.probe / avoidance.probe 主动推送（成功后写冷却）│ │
+│  │ delight / interest.probe / avoidance.probe 主动推送（含probe_mode）│ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 后台 LLM 请求暂停配置（设置页调度区 + presence gate）          │   │
@@ -243,11 +243,12 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ (画像+探针)   │ │ (发现+负样本) │ │ (排序+表达)     │      │
 │  └──────────────┘ └──────────────┘ └────────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │     PoolCurator + 双轴 fatigue + per-group 候选窗口     │   │
+│  │     PoolCurator + 双轴 fatigue + per-group 窗口 + 新兴趣放大保护 │ │
 │  │     ContinuousRefreshController + B/XHS/DY/YT=8/1/1/1 │   │
 │  │     LLM gate: scheduler + extension presence          │   │
 │  │     XHS/Douyin/YouTube producers: 按平台缺口独立补池       │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │
+│  │     Probe memory: domain / axis / distance + exploration buffer │ │
 │  │     AccountSync: B 站账号增量 -> Memory/Soul bootstrap     │   │
 │  │     Pool readiness: servable/raw/pending 统一库存口径       │   │
 │  │     Source bootstrap seen-key guard -> Memory/Profile      │   │
