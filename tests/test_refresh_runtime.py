@@ -57,12 +57,16 @@ class _FakeDatabase:
         *,
         pool_count: int = 30,
         source_counts: dict[str, int] | None = None,
+        pool_raw_count: int | None = None,
+        pool_pending_count: int = 0,
         reactivate_pool_count: int = 0,
         delight_candidate: dict[str, object] | None = None,
         delight_count: int = 0,
     ) -> None:
         self.events = events
         self.pool_count = pool_count
+        self.pool_raw_count = pool_raw_count
+        self.pool_pending_count = pool_pending_count
         self.source_counts = source_counts or {}
         self.reactivate_pool_count = reactivate_pool_count
         self.delight_candidate = delight_candidate
@@ -107,6 +111,13 @@ class _FakeDatabase:
 
     def count_pool_candidates(self) -> int:
         return self.pool_count
+
+    def count_pool_readiness(self) -> dict[str, int]:
+        return {
+            "available": self.pool_count,
+            "raw": self.pool_count if self.pool_raw_count is None else self.pool_raw_count,
+            "pending": self.pool_pending_count,
+        }
 
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         return dict(self.source_counts)
@@ -671,6 +682,22 @@ async def test_refresh_controller_uses_shared_delight_threshold_for_runtime_quer
     assert database.get_delight_thresholds == [DEFAULT_DELIGHT_THRESHOLD]
 
 
+def test_runtime_status_reports_pool_readiness_counts() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0, pool_raw_count=142, pool_pending_count=142),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+    )
+
+    status = controller.get_runtime_status()
+
+    assert status["pool_available_count"] == 0
+    assert status["pool_raw_count"] == 142
+    assert status["pool_pending_count"] == 142
+
+
 async def test_refresh_controller_prepares_delight_candidates_without_refresh() -> None:
     recommendations = _FakeRecommendationEngine()
     controller = ContinuousRefreshController(
@@ -719,6 +746,8 @@ async def test_periodic_pool_precompute_reports_newly_available_inventory() -> N
             "phase": "done",
             "message": "刚补进 16 条新的",
             "pool_available_count": 16,
+            "pool_raw_count": 16,
+            "pool_pending_count": 0,
             "last_discovered_count": 21,
             "last_replenished_count": 16,
             "recent_pool_topics": [],
@@ -2169,6 +2198,34 @@ async def test_refresh_publishes_pool_status_when_count_changes() -> None:
     assert len(pool_events) == 1
     assert pool_events[0]["pool_available_count"] == 42
     assert pool_events[0]["pool_target_count"] == 30
+
+
+async def test_refresh_pool_status_includes_readiness_counts() -> None:
+    event_hub = _FakeEventHub()
+    database = _FakeDatabase([], pool_count=0, pool_raw_count=142, pool_pending_count=142)
+
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+        pool_target_count=30,
+    )
+
+    await controller._publish_pool_status_if_changed()
+
+    pool_events = [e for e in event_hub.events if e["type"] == "pool_status"]
+    assert pool_events == [
+        {
+            "type": "pool_status",
+            "pool_available_count": 0,
+            "pool_raw_count": 142,
+            "pool_pending_count": 142,
+            "pool_target_count": 30,
+        }
+    ]
 
 
 async def test_refresh_pool_status_dedupes_unchanged_count() -> None:

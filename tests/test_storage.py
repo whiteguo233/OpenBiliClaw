@@ -1363,6 +1363,80 @@ class TestDatabase:
 
             db.close()
 
+    def test_count_pool_candidates_refreshes_stale_read_snapshot(self) -> None:
+        """Runtime status must not report stale availability after another
+        connection consumes a pool row."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            db_a = Database(db_path)
+            db_a.initialize()
+            _seed_visible(
+                db_a,
+                "BVSTALE",
+                title="会被另一个连接消费",
+                source="search",
+                relevance_score=0.9,
+            )
+
+            db_a.conn.execute("BEGIN")
+            assert db_a.count_pool_candidates() == 1
+
+            db_b = Database(db_path)
+            db_b.initialize()
+            db_b.insert_recommendation(
+                "BVSTALE",
+                confidence=0.9,
+                expression="已经进入推荐历史",
+                topic="测试主题",
+            )
+
+            assert db_a.count_pool_candidates() == 0
+
+            db_b.close()
+            db_a.close()
+
+    def test_count_pool_readiness_keeps_viewed_rows_out_of_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            _seed_visible(
+                db,
+                "BVREADY",
+                title="可换",
+                source="search",
+                relevance_score=0.91,
+            )
+            _seed_visible(
+                db,
+                "BVSEEN",
+                title="看过",
+                source="search",
+                relevance_score=0.9,
+            )
+            db.cache_content(
+                "BVPENDING",
+                title="待整理",
+                source="search",
+                relevance_score=0.89,
+                style_key="tutorial",
+                topic_group="测试分组",
+            )
+            db.insert_event(
+                "view",
+                title="看过",
+                url="https://www.bilibili.com/video/BVSEEN",
+                metadata={"bvid": "BVSEEN"},
+            )
+
+            assert db.count_pool_readiness() == {
+                "available": 1,
+                "raw": 3,
+                "pending": 1,
+            }
+
+            db.close()
+
     def test_get_pool_candidates_skips_recently_viewed_bvids(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

@@ -1138,6 +1138,7 @@ class Database:
         must be classified before it can be served, regardless of source
         platform.
         """
+        self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
             SELECT bvid, source, source_platform, content_url
@@ -1167,6 +1168,75 @@ class Database:
                 row["content_url"],
             )
         )
+
+    def count_pool_readiness(self) -> dict[str, int]:
+        """Return pool inventory split by immediately servable and pending rows.
+
+        ``available`` is the public "可换" count. ``raw`` is broad fresh
+        material before readiness gates. ``pending`` is counted independently:
+        recently viewed rows are unavailable, but they are not pending.
+        """
+        self._ensure_fresh_read()
+        raw_cursor = self.conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM recommendations AS r
+                WHERE r.bvid = content_cache.bvid
+              )
+            """
+        )
+        raw_count = int(raw_cursor.fetchone()["count"])
+        pending_cursor = self.conn.execute(
+            """
+            SELECT
+                bvid,
+                content_id,
+                source,
+                source_platform,
+                content_url,
+                pool_expression,
+                pool_topic_label,
+                style_key,
+                topic_group
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM recommendations AS r
+                WHERE r.bvid = content_cache.bvid
+              )
+            """
+        )
+        viewed_content_keys = self.get_recent_viewed_content_keys()
+        pending_count = 0
+        for row in pending_cursor.fetchall():
+            item = dict(row)
+            if self._is_viewed_row(item, viewed_content_keys):
+                continue
+            if (
+                not str(item.get("pool_expression") or "").strip()
+                or not str(item.get("pool_topic_label") or "").strip()
+                or not str(item.get("style_key") or "").strip()
+                or not str(item.get("topic_group") or "").strip()
+                or not _is_linkable_pool_source(
+                    item.get("source"),
+                    item.get("source_platform"),
+                    item.get("content_url"),
+                )
+            ):
+                pending_count += 1
+
+        return {
+            "available": self.count_pool_candidates(),
+            "raw": raw_count,
+            "pending": pending_count,
+        }
 
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         """Return fresh pool counts grouped by discovery source family."""

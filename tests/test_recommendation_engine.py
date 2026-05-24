@@ -321,6 +321,35 @@ async def test_generate_recommendations_reads_from_cache_when_discovered_missing
 
 
 @pytest.mark.asyncio
+async def test_serve_zero_candidates_warning_includes_readiness_counts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BV1READY",
+            title="已经在池子里",
+            source="search",
+            relevance_score=0.9,
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        caplog.set_level(logging.WARNING)
+        result = await engine.serve(
+            _build_profile(),
+            limit=1,
+            excluded_bvids=frozenset({"BV1READY"}),
+        )
+
+        assert result == []
+        assert "raw=1" in caplog.text
+        assert "servable=1" in caplog.text
+        assert "pending=0" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_generate_recommendations_prefers_primary_then_relevance_then_recency() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")

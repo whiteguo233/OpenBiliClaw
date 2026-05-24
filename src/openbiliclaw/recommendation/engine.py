@@ -245,6 +245,22 @@ class RecommendationEngine:
         # carryover signals stale-pool / fatigue-bypass.
         self._last_served_bvids: frozenset[str] = frozenset()
 
+    def _pool_readiness_counts(self) -> dict[str, int]:
+        readiness_fn = getattr(self._database, "count_pool_readiness", None)
+        if callable(readiness_fn):
+            try:
+                counts = readiness_fn()
+                available = int(counts.get("available", 0))
+                return {
+                    "available": max(0, available),
+                    "raw": max(0, int(counts.get("raw", available))),
+                    "pending": max(0, int(counts.get("pending", 0))),
+                }
+            except Exception:
+                logger.exception("Failed to load pool readiness counts")
+        available = int(self._database.count_pool_candidates())
+        return {"available": max(0, available), "raw": max(0, available), "pending": 0}
+
     async def serve(
         self,
         profile: SoulProfile,
@@ -271,7 +287,10 @@ class RecommendationEngine:
             List of personalized recommendations.
         """
         multiplier = 4 if excluded_bvids else 3
-        raw_pool_count = self._database.count_pool_candidates()
+        pool_readiness = self._pool_readiness_counts()
+        servable_pool_count = pool_readiness["available"]
+        raw_pool_count = pool_readiness["raw"]
+        pending_pool_count = pool_readiness["pending"]
         candidates = self._load_pool_candidates(limit=max(limit * multiplier, 40))
         loaded_count = len(candidates)
         if excluded_bvids:
@@ -290,35 +309,36 @@ class RecommendationEngine:
         label = "realtime" if expression_mode == "realtime" else "pool"
         prev_bvids = self._last_served_bvids
 
-        # Surface "pool says 97 but serve loads 0" mismatches: count_pool
-        # counts items the user can theoretically reshuffle to, while
-        # _load_pool_candidates filters by candidate_tier / linkable
-        # source / etc. Without this log line, the popup's "还有 N 条"
-        # count rarely matches what serve() actually picks, which makes
-        # "popup shows empty even though pool has items" silent.
-        if raw_pool_count > 0 and after_viewed_count == 0:
+        # Surface "pool says N but serve loads 0" mismatches with enough
+        # readiness detail to distinguish pending material from query drift.
+        if servable_pool_count > 0 and after_viewed_count == 0:
             logger.warning(
-                "serve(/%s) loaded 0 candidates from pool of %d — likely cause: "
+                "serve(/%s) loaded 0 candidates from servable=%d "
+                "(raw=%d pending=%d) — likely cause: "
                 "all items lack required fields (style_key/topic_group), filtered "
                 "by excluded_bvids (%d → %d), or already viewed (%d → 0). "
                 "Inspect content_cache rows directly: "
                 "SELECT count(*), source, source_platform FROM content_cache "
                 "WHERE pool_status='fresh' GROUP BY source, source_platform;",
                 label,
+                servable_pool_count,
                 raw_pool_count,
+                pending_pool_count,
                 loaded_count,
                 after_exclude_count,
                 after_viewed_count,
             )
-        elif raw_pool_count != loaded_count:
+        elif servable_pool_count != loaded_count:
             logger.info(
                 "serve(/%s) pool/load mismatch: count=%d → loaded=%d"
-                " → after_exclude=%d → after_viewed=%d",
+                " → after_exclude=%d → after_viewed=%d (raw=%d pending=%d)",
                 label,
-                raw_pool_count,
+                servable_pool_count,
                 loaded_count,
                 after_exclude_count,
                 after_viewed_count,
+                raw_pool_count,
+                pending_pool_count,
             )
 
         logger.info(
