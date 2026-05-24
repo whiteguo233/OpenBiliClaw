@@ -169,7 +169,7 @@
     .side-section { display: grid; gap: var(--space-3); padding: var(--space-3) 2px; border-bottom: 1px solid var(--border-soft); }
     .side-section h3 { color: var(--fg); font-size: 16px; letter-spacing: -0.01em; }
     .side-section p { margin: 0; color: var(--muted); }
-    .side-section .eyebrow { color: var(--accent-active); }
+    .side-section .eyebrow { color: var(--accent); }
     .side-drawer-actions { display: grid; gap: var(--space-2); }
     .side-drawer-actions .pill-btn { width: 100%; display: inline-flex; align-items: center; justify-content: center; }
     .side-runtime-panel, .side-activity-section { border-bottom-color: var(--border-soft); }
