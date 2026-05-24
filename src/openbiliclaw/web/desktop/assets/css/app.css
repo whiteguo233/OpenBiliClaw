@@ -252,7 +252,7 @@
     .thumb.has-image::before { display: none; }
     .thumb.has-image::after { background: color-mix(in oklab, var(--surface), transparent 4%); box-shadow: 0 0 0 1px color-mix(in oklab, var(--fg), transparent 88%); }
     .delight-copy { min-width: 0; align-self: start; }
-    .delight-copy h3 { max-width: 760px; overflow-wrap: normal; word-break: normal; text-wrap: balance; }
+    .delight-copy h3 { max-width: 760px; overflow-wrap: normal; word-break: normal; text-wrap: pretty; }
     .delight-copy p { margin: var(--space-2) 0 0; color: var(--muted); max-width: 720px; }
     .delight-chat-turns { display: grid; gap: 8px; margin-top: var(--space-3); max-height: 220px; overflow: auto; padding-right: 2px; }
     .delight-chat-turns[hidden] { display: none; }
