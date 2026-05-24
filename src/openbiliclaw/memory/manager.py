@@ -329,6 +329,7 @@ class MemoryManager:
             "recent_pool_topics": [],
             "probed_domains": {},
             "probed_axes": {},
+            "probed_distance_bands": {},
             "probe_feedback_history": [],
             "probed_avoidance_domains": {},
             "probed_avoidance_axes": {},
@@ -352,6 +353,7 @@ class MemoryManager:
             "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
             "probed_domains": loaded.get("probed_domains", {}),
             "probed_axes": loaded.get("probed_axes", {}),
+            "probed_distance_bands": loaded.get("probed_distance_bands", {}),
             "probe_feedback_history": self._as_dict_list(loaded.get("probe_feedback_history", []))[
                 -100:
             ],
@@ -378,6 +380,7 @@ class MemoryManager:
             "recent_pool_topics": self._as_str_list(state.get("recent_pool_topics", [])),
             "probed_domains": state.get("probed_domains", {}),
             "probed_axes": state.get("probed_axes", {}),
+            "probed_distance_bands": state.get("probed_distance_bands", {}),
             "probe_feedback_history": self._as_dict_list(state.get("probe_feedback_history", []))[
                 -100:
             ],

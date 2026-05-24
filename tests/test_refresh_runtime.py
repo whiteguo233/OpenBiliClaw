@@ -479,6 +479,7 @@ class _FakeSpeculation:
         confirmation_count: int = 0,
         experience_mode: str = "",
         entry_load: str = "",
+        probe_mode: str = "near",
         specifics: list[object] | None = None,
     ) -> None:
         self.domain = domain
@@ -489,6 +490,7 @@ class _FakeSpeculation:
         self.confirmation_count = confirmation_count
         self.experience_mode = experience_mode
         self.entry_load = entry_load
+        self.probe_mode = probe_mode
         self.specifics = specifics or []
 
 
@@ -1362,6 +1364,43 @@ async def test_publish_interest_probe_skips_recent_axis_repeat() -> None:
     probe_events = [event for event in event_hub.events if event["type"] == "interest.probe"]
     assert len(probe_events) == 1
     assert probe_events[0]["domain"] == "城市漫游"
+
+
+async def test_publish_interest_probe_records_probed_distance_bands() -> None:
+    event_hub = _FakeEventHub()
+    memory = _FakeMemoryManager(
+        {
+            "probed_domains": {},
+            "probed_axes": {},
+            "probed_distance_bands": {},
+        }
+    )
+
+    class _SoulEngineWithSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._speculator = _FakeSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="桥接方向",
+                        reason="从已有兴趣自然跨到一个挑战方向。",
+                        weight=0.5,
+                        probe_mode="bridge",
+                    )
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+    )
+
+    await controller._publish_interest_probe_if_available()
+
+    assert "bridge" in memory.state["probed_distance_bands"]
 
 
 async def test_publish_interest_probe_does_not_record_probe_without_stream_subscriber() -> None:

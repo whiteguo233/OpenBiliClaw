@@ -175,6 +175,18 @@ def test_choose_next_probe_prefers_axis_without_negative_feedback():
     assert chosen.domain == "手作模型制作"
 
 
+def test_choose_next_probe_candidate_prefers_fresh_probe_mode_after_filters():
+    near = SpeculativeInterest(domain="近", probe_mode="near", weight=0.9)
+    bridge = SpeculativeInterest(domain="桥", probe_mode="bridge", weight=0.6)
+
+    chosen = choose_next_probe_candidate(
+        [near, bridge],
+        probed_probe_modes={"near"},
+    )
+
+    assert chosen is bridge
+
+
 def test_select_diverse_candidates_avoids_negative_feedback_axis():
     candidates = [
         SpeculativeInterest(

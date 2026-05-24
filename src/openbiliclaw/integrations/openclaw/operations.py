@@ -10,7 +10,11 @@ from typing import Any, Protocol
 
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.dislike_writeback import apply_new_dislikes, topics_for_confirmed_avoidance
-from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
+from openbiliclaw.soul.speculator import (
+    _normalize_probe_mode,
+    build_probe_axis,
+    choose_next_probe_candidate,
+)
 
 from .errors import AdapterOperationError, AdapterValidationError
 from .schemas import (
@@ -326,10 +330,12 @@ class OpenClawAdapter:
                 runtime_state = {}
             probed_domains = set((runtime_state.get("probed_domains") or {}).keys())
             probed_axes = set((runtime_state.get("probed_axes") or {}).keys())
+            probed_probe_modes = set((runtime_state.get("probed_distance_bands") or {}).keys())
             top = choose_next_probe_candidate(
                 specs,
                 probed_domains=probed_domains,
                 probed_axes=probed_axes,
+                probed_probe_modes=probed_probe_modes,
                 feedback_history=runtime_state.get("probe_feedback_history", []),
             )
             if top is None:
@@ -376,6 +382,7 @@ class OpenClawAdapter:
         *,
         domains_key: str = "probed_domains",
         axes_key: str = "probed_axes",
+        probe_modes_key: str | None = "probed_distance_bands",
     ) -> None:
         """Persist OpenClaw probe selection so repeated calls avoid repeats."""
         save_runtime_state = getattr(
@@ -387,8 +394,10 @@ class OpenClawAdapter:
             return
         raw_domains = runtime_state.get(domains_key)
         raw_axes = runtime_state.get(axes_key)
+        raw_probe_modes = runtime_state.get(probe_modes_key) if probe_modes_key else None
         probed_domains = dict(raw_domains) if isinstance(raw_domains, dict) else {}
         probed_axes = dict(raw_axes) if isinstance(raw_axes, dict) else {}
+        probed_probe_modes = dict(raw_probe_modes) if isinstance(raw_probe_modes, dict) else {}
         now = datetime.now().isoformat()
         probed_domains[domain.lower()] = now
         axis = build_probe_axis(
@@ -397,6 +406,10 @@ class OpenClawAdapter:
         )
         if axis:
             probed_axes[axis] = now
+        if probe_modes_key:
+            probe_mode = _normalize_probe_mode(getattr(probe, "probe_mode", ""))
+            probed_probe_modes[probe_mode] = now
+            runtime_state[probe_modes_key] = probed_probe_modes
         runtime_state[domains_key] = probed_domains
         runtime_state[axes_key] = probed_axes
         save_runtime_state(runtime_state)
@@ -457,6 +470,7 @@ class OpenClawAdapter:
                 domain,
                 domains_key="probed_avoidance_domains",
                 axes_key="probed_avoidance_axes",
+                probe_modes_key=None,
             )
             reason = str(getattr(top, "reason", "")).strip()
             confidence = self._to_float(getattr(top, "confidence", 0.0))

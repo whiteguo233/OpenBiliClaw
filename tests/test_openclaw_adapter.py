@@ -193,6 +193,7 @@ class _FakeSpeculativeInterest:
         confirmation_count: int = 0,
         experience_mode: str = "knowledge",
         entry_load: str = "heavy",
+        probe_mode: str = "near",
         specifics: list[object] | None = None,
     ) -> None:
         self.domain = domain
@@ -203,6 +204,7 @@ class _FakeSpeculativeInterest:
         self.confirmation_count = confirmation_count
         self.experience_mode = experience_mode
         self.entry_load = entry_load
+        self.probe_mode = probe_mode
         self.specifics = specifics or []
 
 
@@ -1044,6 +1046,26 @@ async def test_get_next_probe_records_history_and_avoids_repeat() -> None:
     assert second.probe.domain == "城市漫游"
     assert "量子物理" in memory_manager.runtime_state["probed_domains"]
     assert "knowledge|heavy" in memory_manager.runtime_state["probed_axes"]
+
+
+@pytest.mark.asyncio
+async def test_get_next_probe_records_distance_bands_history() -> None:
+    adapter, soul_engine, memory_manager, *_ = _build_adapter()
+    soul_engine._speculator = _FakeSpeculator(
+        specs=[
+            _FakeSpeculativeInterest(
+                domain="桥接方向",
+                confirmation_count=0,
+                weight=0.5,
+                probe_mode="bridge",
+            ),
+        ]
+    )
+
+    result = await adapter.get_next_probe()
+
+    assert result.probe is not None
+    assert "bridge" in memory_manager.runtime_state["probed_distance_bands"]
 
 
 @pytest.mark.asyncio

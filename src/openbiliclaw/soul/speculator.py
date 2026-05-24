@@ -1468,10 +1468,14 @@ def choose_next_probe_candidate(
     *,
     probed_domains: set[str] | None = None,
     probed_axes: set[str] | None = None,
+    probed_probe_modes: set[str] | None = None,
     feedback_history: object | None = None,
 ) -> Any | None:
     recent_domains = probed_domains or set()
     recent_axes = probed_axes or set()
+    recent_probe_modes = {
+        _normalize_probe_mode(mode) for mode in (probed_probe_modes or set())
+    }
     negative_domains = _negative_probe_feedback_domains(feedback_history)
     negative_axes = _negative_probe_feedback_axes(feedback_history)
     candidates = []
@@ -1504,7 +1508,13 @@ def choose_next_probe_candidate(
         )
         and axis not in recent_axes
     ]
-    pool = fresh_axis or same_pressure
+    axis_pool = fresh_axis or same_pressure
+    fresh_probe_mode = [
+        candidate
+        for candidate in axis_pool
+        if _normalize_probe_mode(getattr(candidate, "probe_mode", "")) not in recent_probe_modes
+    ]
+    pool = fresh_probe_mode or axis_pool
     return max(
         pool,
         key=lambda candidate: (
@@ -1513,6 +1523,8 @@ def choose_next_probe_candidate(
                 entry_load=getattr(candidate, "entry_load", ""),
             )
             not in negative_axes,
+            _normalize_probe_mode(getattr(candidate, "probe_mode", ""))
+            not in recent_probe_modes,
             float(getattr(candidate, "weight", 0.0) or 0.0),
             float(getattr(candidate, "confidence", 0.0) or 0.0),
         ),
