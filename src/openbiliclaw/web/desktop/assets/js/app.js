@@ -2291,7 +2291,6 @@
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
     safeBind("#settingsBtn", "click", () => { closeSideDrawer(); setActiveSettingsPanel("models"); openPanel("settingsModal"); });
     safeBind("#openSettingsHero", "click", () => { closeSideDrawer(); setActiveSettingsPanel("models"); openPanel("settingsModal"); });
-    safeBind("#refreshBtn", "click", refreshRecommendations);
     safeBind("#dismissOnReshuffleToggle", "change", (event) => {
       state.dismissOnReshuffle = Boolean(event.target.checked);
       storageSet(DISMISS_ON_RESHUFFLE_KEY, state.dismissOnReshuffle ? "1" : "0");
@@ -2299,7 +2298,6 @@
     });
     safeBind("#reshuffleBtn", "click", reshuffle);
     safeBind("#loadMoreBtn", "click", appendMore);
-    safeBind("#loadMoreTopBtn", "click", appendMore);
     safeBind("#delightThumb", "click", () => respondDelight(state.delight, "view"));
     safeBind("#delightThumb", "keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;

@@ -20,6 +20,18 @@
         <input id="searchInput" type="search" placeholder="搜索推荐、UP 主、兴趣方向或解释文本">
         <button type="submit">搜索</button>
       </form>
+      <div class="top-actions" aria-label="状态与消息">
+        <button class="backend-status-pill" id="openSettingsHero" type="button">
+          <span class="badge-dot"></span><span id="statusLabel">已连接本地后端</span>
+        </button>
+        <button class="top-message-btn" id="messagesBtn" type="button" aria-label="消息">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round"/>
+          </svg>
+          <span class="message-dot" id="messagesDot" hidden></span>
+        </button>
+      </div>
       <button class="icon-btn mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="打开手机菜单">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
       </button>
@@ -40,7 +52,6 @@
         <nav class="side-drawer-nav" aria-label="全局功能">
           <button class="nav-action" id="profileBtn" type="button"><span class="nav-glyph">◎</span><span>我的画像</span></button>
           <button class="nav-action" id="chatBtn" type="button"><span class="nav-glyph">✦</span><span>聊聊口味</span></button>
-          <button class="nav-action" id="messagesBtn" type="button"><span class="nav-glyph">◌</span><span>消息</span></button>
           <button class="nav-action" id="settingsBtn" type="button"><span class="nav-glyph">⌁</span><span>设置</span></button>
         </nav>
         <section class="side-section side-runtime-panel" aria-label="实时运行摘要">
@@ -58,11 +69,6 @@
             <div class="metric"><strong id="metricSources">—</strong><span>内容源</span></div>
           </div>
           <p class="hero-topics">最近主题：<span id="poolTopics">等待后端同步</span></p>
-          <div class="side-drawer-actions">
-            <button class="pill-btn primary" id="refreshBtn" type="button">开始补货</button>
-            <button class="pill-btn dark" id="loadMoreTopBtn" type="button">加载更多推荐</button>
-            <button class="pill-btn" id="openSettingsHero" type="button"><span class="badge-dot"></span><span id="statusLabel">已连接本地后端</span></button>
-          </div>
         </section>
         <section class="side-section side-activity-section" data-od-id="activity-rail" aria-label="后台动态摘要">
           <p class="eyebrow">Activity</p>
