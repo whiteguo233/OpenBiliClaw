@@ -128,6 +128,7 @@
     const DISMISS_ON_RESHUFFLE_KEY = "openbiliclaw.dismissOnReshuffle";
     state.dismissOnReshuffle = storageGet(DISMISS_ON_RESHUFFLE_KEY) !== "0";
     const SIDE_DRAWER_OPEN_KEY = "openbiliclaw.sideDrawerOpen";
+    const DELIGHT_QUEUE_LIMIT_KEY = "openbiliclaw.webui.delightQueueLimit";
 
     function normalizeBackendHost(host) {
       const trimmed = String(host || "").trim();
@@ -162,6 +163,25 @@
       storageSet("openbiliclaw.webui.backendHost", host);
       storageSet("openbiliclaw.webui.backendPort", port);
       return { host, port };
+    }
+
+    function getDelightQueueLimit() {
+      const raw = $("#delightQueueLimit")?.value || storageGet(DELIGHT_QUEUE_LIMIT_KEY) || "20";
+      const limit = Number.parseInt(String(raw), 10);
+      if (!Number.isFinite(limit)) return 20;
+      return Math.max(1, Math.min(100, limit));
+    }
+
+    function restoreFrontendSettings() {
+      const limit = storageGet(DELIGHT_QUEUE_LIMIT_KEY);
+      setInput("delightQueueLimit", limit || "20");
+    }
+
+    function persistFrontendSettings() {
+      const limit = getDelightQueueLimit();
+      setInput("delightQueueLimit", String(limit));
+      storageSet(DELIGHT_QUEUE_LIMIT_KEY, String(limit));
+      return { delightQueueLimit: limit };
     }
 
     function getRuntimeStreamUrl() {
@@ -1970,6 +1990,7 @@
 
       if ($("#configStatus")) $("#configStatus").value = "配置已从后端加载。";
       if (state.runtimeStatus) applyRuntimeStatus(state.runtimeStatus);
+      restoreFrontendSettings();
     }
 
     function normalizeDelight(item) {
@@ -2074,7 +2095,7 @@
     }
 
     async function fetchDelightQueue() {
-      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=20`);
+      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`);
       applyDelights(payload);
     }
 
@@ -2150,7 +2171,7 @@
         requestJson(ENDPOINTS.runtimeStatus),
         requestJson(`${ENDPOINTS.activityFeed}?limit=5`),
         requestJson(ENDPOINTS.profile),
-        requestJson(`${ENDPOINTS.delightBatch}?limit=20`),
+        requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`),
         requestJson(ENDPOINTS.notificationPending),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
@@ -2477,7 +2498,8 @@
         submitBtn.textContent = "保存中…";
       }
       const endpoint = persistBackendEndpoint();
-      if ($("#configStatus")) $("#configStatus").value = `正在保存到 ${endpoint.host}:${endpoint.port}，后端热重载可能需要几秒。`;
+      const frontend = persistFrontendSettings();
+      if ($("#configStatus")) $("#configStatus").value = `正在保存到 ${endpoint.host}:${endpoint.port}，惊喜队列加载 ${frontend.delightQueueLimit} 条，后端热重载可能需要几秒。`;
       try {
         const payload = buildConfigUpdate();
         const result = await requestJsonStrict(ENDPOINTS.config.replace("?reveal_keys=true", ""), {
@@ -2511,6 +2533,7 @@
     }));
 
     restoreBackendEndpoint();
+    restoreFrontendSettings();
     setSideDrawerOpen(!isMobileViewport() && storageGet(SIDE_DRAWER_OPEN_KEY) !== "0", { persist: false });
     startChatPlaceholderRotation();
     try {

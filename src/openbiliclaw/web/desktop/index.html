@@ -175,11 +175,12 @@
           </div>
         </div>
         <form id="settingsForm" class="settings-grid">
-        <div class="settings-tabs" role="tablist" aria-label="后端设置分类">
+        <div class="settings-tabs" role="tablist" aria-label="设置分类">
           <button class="settings-tab is-active" type="button" data-settings-tab="models">模型</button>
           <button class="settings-tab" type="button" data-settings-tab="sources">平台源</button>
           <button class="settings-tab" type="button" data-settings-tab="scheduler">调度</button>
           <button class="settings-tab" type="button" data-settings-tab="general">通用</button>
+          <button class="settings-tab" type="button" data-settings-tab="frontend">前端</button>
           <button class="settings-tab" type="button" data-settings-tab="logging">日志</button>
         </div>
 
@@ -311,11 +312,17 @@
 
         <div class="settings-panel" data-settings-panel="general" hidden>
           <p class="settings-section-title">通用</p>
-          <label class="settings-field"><span>后端地址</span><input id="backendHost" value="127.0.0.1"></label>
-          <label class="settings-field"><span>后端端口</span><input id="backendPort" value="8420" inputmode="numeric"></label>
           <label class="settings-field"><span>语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
           <label class="settings-field"><span>数据目录</span><input id="dataDir" placeholder="data"></label>
           <label class="settings-field full"><span>SQLite 数据库路径</span><input id="storageDbPath" placeholder="data/openbiliclaw.db"></label>
+        </div>
+
+        <div class="settings-panel" data-settings-panel="frontend" hidden>
+          <p class="settings-section-title">前端</p>
+          <label class="settings-field"><span>后端地址</span><input id="backendHost" value="127.0.0.1"></label>
+          <label class="settings-field"><span>后端端口</span><input id="backendPort" value="8420" inputmode="numeric"></label>
+          <label class="settings-field"><span>惊喜推荐加载数量</span><input id="delightQueueLimit" value="20" inputmode="numeric" min="1" max="100"></label>
+          <p class="settings-note-inline">这些设置只保存在当前浏览器，用于控制 Web UI 如何连接后端和加载前端队列。</p>
         </div>
 
         <div class="settings-panel" data-settings-panel="logging" hidden>
@@ -353,7 +360,7 @@
         <button class="mobile-menu-item" data-mobile-page="profilePage" type="button"><span>我的画像</span><small id="mobileProfileHint">查看完整画像和近期记忆</small></button>
         <button class="mobile-menu-item" data-mobile-page="chatPage" type="button"><span>聊聊口味</span><small>告诉阿B你的偏好和边界</small></button>
         <button class="mobile-menu-item" data-mobile-panel="messagesDrawer" type="button"><span>消息</span><small><span id="mobileMessageCount">0</span> 条通知</small></button>
-        <button class="mobile-menu-item" data-mobile-page="settingsPage" data-settings="models" type="button"><span>设置</span><small>模型、平台源和调度配置</small></button>
+        <button class="mobile-menu-item" data-mobile-page="settingsPage" data-settings="models" type="button"><span>设置</span><small>模型、前端、平台源和调度配置</small></button>
       </div>
       <section class="mobile-summary-card" aria-label="阿B 眼里的你">
         <div class="mobile-summary-head"><p class="eyebrow">Profile</p><button class="small-btn" data-mobile-page="profilePage" type="button">查看画像</button></div>

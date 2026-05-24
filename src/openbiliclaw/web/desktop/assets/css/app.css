@@ -464,7 +464,7 @@
     .chat-bubble.agent { margin-right: 12%; background: var(--surface); }
     .chat-input { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); position: sticky; bottom: 0; background: var(--bg); padding-top: var(--space-3); }
     .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
-    .settings-tabs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
+    .settings-tabs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-1); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
     .settings-tab { min-height: 38px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--muted); font-weight: 750; transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard); }
     .settings-tab.is-active { background: var(--fg); color: var(--surface); }
     .settings-panel { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
@@ -544,7 +544,7 @@
       .drawer-head, .modal-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
       .drawer-head h2, .modal-head h2 { font-size: clamp(28px, 7vw, 40px); }
       .chat-input { grid-template-columns: minmax(0, 1fr) auto; }
-      .settings-tabs { overflow-x: auto; grid-template-columns: repeat(5, minmax(92px, 1fr)); }
+      .settings-tabs { overflow-x: auto; grid-template-columns: repeat(6, minmax(92px, 1fr)); }
       .content-page, .profile-page { max-width: 100%; }
       .content-page-head, .profile-page-head { align-items: start; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); }
       .chat-page { height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
