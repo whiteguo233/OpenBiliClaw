@@ -113,8 +113,7 @@ class ExploreStrategy(DiscoveryStrategy):
                 "cooldown_remaining_seconds": int(cooldown_remaining),
             }
             logger.info(
-                "Explore: Bilibili search cooldown active (%.0fs left); "
-                "skipping domain generation",
+                "Explore: Bilibili search cooldown active (%.0fs left); skipping domain generation",
                 cooldown_remaining,
             )
             return []

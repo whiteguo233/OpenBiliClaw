@@ -1003,7 +1003,7 @@ function renderCard(rawItem, index = 0) {
           item.source_platform = "youtube";
         }
       }
-      btn.title = data.ok ? "✓ 已标记" : (data.reason === "not_found" ? "未找到原视频" : "标记失败");
+      btn.title = data.ok ? "✓ 已标记" : (data.reason === "no_match" ? "未找到原视频" : "标记失败");
       btn.style.opacity = data.ok ? "1" : "0.5";
     } catch {
       btn.disabled = false;

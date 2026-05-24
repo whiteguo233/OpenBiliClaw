@@ -56,8 +56,7 @@ def test_put_config_rejects_unbuildable_candidate_before_writing(
     assert body["reloaded"] is False
     assert body["rollback_applied"] is False
     assert any(
-        issue["severity"] == "blocking"
-        and issue["field"] in {"llm", "llm.openai.api_key"}
+        issue["severity"] == "blocking" and issue["field"] in {"llm", "llm.openai.api_key"}
         for issue in body["config"]["issues"]
     )
     assert config_path.read_bytes() == before

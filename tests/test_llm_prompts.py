@@ -534,9 +534,7 @@ def test_batch_eval_no_examples_user_message_equals_none_path() -> None:
         source_platform="bilibili",
     )
     none_msg = build_batch_content_evaluation_prompt(**base_kwargs)
-    empty_msg = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=[]
-    )
+    empty_msg = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=[])
 
     assert none_msg[1]["content"] == empty_msg[1]["content"]
     assert "<negative_examples>" not in none_msg[1]["content"]
@@ -619,10 +617,6 @@ def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:
         source_context="explore",
         source_platform="bilibili",
     )
-    msg_a = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=examples_a
-    )
-    msg_b = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=examples_b
-    )
+    msg_a = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_a)
+    msg_b = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_b)
     assert msg_a[1]["content"] == msg_b[1]["content"]

@@ -177,7 +177,9 @@ async def test_evaluate_includes_persona_resonance(monkeypatch: pytest.MonkeyPat
 
     evaluator = SpeculationEvaluator()
     report = await evaluator.evaluate(
-        speculations, profile, persona_judgment=judgment,
+        speculations,
+        profile,
+        persona_judgment=judgment,
     )
 
     assert report.mean_persona_resonance == pytest.approx(0.55, abs=0.01)

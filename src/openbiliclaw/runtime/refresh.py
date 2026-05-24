@@ -697,9 +697,7 @@ class ContinuousRefreshController:
             score_marketing_signal,
         )
 
-        threshold = float(
-            getattr(rec_cfg, "marketing_filter_threshold", DEFAULT_THRESHOLD)
-        )
+        threshold = float(getattr(rec_cfg, "marketing_filter_threshold", DEFAULT_THRESHOLD))
 
         def _is_clickbait(title: str, description: str) -> bool:
             return score_marketing_signal(title, description=description).score >= threshold

@@ -162,8 +162,10 @@ def _classify_click_dwell(
         duration = _read_dwell_field(event, metadata, "duration")
 
     meets_seconds = watch_seconds >= _MEANINGFUL_DWELL_MIN_SECONDS
-    meets_ratio = duration is not None and duration > 0 and (
-        watch_seconds / duration >= _MEANINGFUL_DWELL_MIN_RATIO
+    meets_ratio = (
+        duration is not None
+        and duration > 0
+        and (watch_seconds / duration >= _MEANINGFUL_DWELL_MIN_RATIO)
     )
 
     if meets_seconds and (duration is None or meets_ratio):
@@ -191,6 +193,7 @@ def _read_dwell_field(
         return float(raw)
     except (TypeError, ValueError):
         return None
+
 
 # Source platform constants — kept stable for analyzer mix calculations.
 SOURCE_BILIBILI = "bilibili"

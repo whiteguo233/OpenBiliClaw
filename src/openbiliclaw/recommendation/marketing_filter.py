@@ -78,35 +78,35 @@ _TITLE_PATTERNS: tuple[tuple[re.Pattern[str], float, str], ...] = (
     (re.compile(r"^(突发|刚刚|紧急|重磅|警惕|注意了?|[【\[]速报[】\]])"), 0.28, "速报式标题"),
     (re.compile(r"^据悉"), 0.20, "据悉式标题"),
     (re.compile(r"国家(终于|出手|宣布)"), 0.25, "权威诉求"),
-
     # ── Mystery / curiosity-gap hooks ──────────────────────────────
     # "居然/竟然/没想到/真相/内幕/揭秘/曝光" — the curiosity-gap
     # vocabulary, very high-precision when in the leading 8 chars.
     (re.compile(r"(竟然|居然|没想到)"), 0.18, "悬念式连词"),
     (re.compile(r"(内幕|真相|揭秘|曝光|惊人秘密|不为人知)"), 0.22, "揭秘式词汇"),
     (re.compile(r"难以置信|不敢相信"), 0.20, "不可信夸张"),
-
     # ── Demonstrative-vague subjects ───────────────────────────────
     # "某地/某男/某女/一名男子" — deliberately anonymous referent so
     # the video can be about anything. Signature of low-substance
     # content farms.
     (re.compile(r"(某地|某男|某女|某市|某村|某省)"), 0.25, "匿名指代"),
     (re.compile(r"^(一名|一位)(男子|女子|网友|学生|老人|大爷|大妈)"), 0.18, "匿名主语开头"),
-
     # ── Implicit-content gates ─────────────────────────────────────
     # "看完...就懂了/学到了/收藏起来" — title doesn't tell you the
     # content, demands a click to find out.
     (re.compile(r"看完.{0,12}(就懂|就明白|秒懂)"), 0.20, "看完才知道"),
     (re.compile(r"(必须收藏|赶紧收藏|建议收藏|强烈收藏)"), 0.18, "收藏诉求"),
     (re.compile(r"(学到了|涨知识了|赚到了)[!！]?$"), 0.14, "感叹学到"),
-
     # ── Number-shock formats ───────────────────────────────────────
     # "3个理由让你/十大秘密" — listicle clickbait. Common, lower-
     # weight on its own because legitimate listicles use this too.
-    (re.compile(r"^[0-9一二三四五六七八九十]+(个|大|条|种|招|样)[^,，。.!！?？]{2,20}(秘密|理由|真相|妙招|绝招|技巧)"),
-     0.16, "数字+秘密/理由"),
+    (
+        re.compile(
+            r"^[0-9一二三四五六七八九十]+(个|大|条|种|招|样)[^,，。.!！?？]{2,20}(秘密|理由|真相|妙招|绝招|技巧)"
+        ),
+        0.16,
+        "数字+秘密/理由",
+    ),
     (re.compile(r"(吓人|可怕|恐怖)的(真相|事实|内幕)"), 0.25, "恐怖式真相"),
-
     # ── Implicit threats and warnings ──────────────────────────────
     (re.compile(r"千万(别|不要|不能)"), 0.16, "禁止式警告"),
     (re.compile(r"(99%|9成|大多数)的人都(不知道|做错|搞错)"), 0.22, "你不知道的普遍性"),
@@ -129,17 +129,17 @@ _RAW_TITLE_PATTERNS: tuple[tuple[re.Pattern[str], float, str], ...] = (
 # stacking emoji titles all use these blocks.
 _EMOJI_PATTERN = re.compile(
     "["
-    "\U0001F300-\U0001F5FF"  # symbols & pictographs
-    "\U0001F600-\U0001F64F"  # emoticons
-    "\U0001F680-\U0001F6FF"  # transport & map
-    "\U0001F700-\U0001F77F"
-    "\U0001F780-\U0001F7FF"
-    "\U0001F800-\U0001F8FF"
-    "\U0001F900-\U0001F9FF"
-    "\U0001FA00-\U0001FA6F"
-    "\U0001FA70-\U0001FAFF"
-    "\u2600-\u26FF"          # misc symbols
-    "\u2700-\u27BF"          # dingbats
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f680-\U0001f6ff"  # transport & map
+    "\U0001f700-\U0001f77f"
+    "\U0001f780-\U0001f7ff"
+    "\U0001f800-\U0001f8ff"
+    "\U0001f900-\U0001f9ff"
+    "\U0001fa00-\U0001fa6f"
+    "\U0001fa70-\U0001faff"
+    "\u2600-\u26ff"  # misc symbols
+    "\u2700-\u27bf"  # dingbats
     "]",
     flags=re.UNICODE,
 )

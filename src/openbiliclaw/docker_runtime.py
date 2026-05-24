@@ -64,12 +64,9 @@ def bootstrap_runtime_root(
     resolved_env = env if env is not None else os.environ
     if str(resolved_env.get("OPENBILICLAW_SEED_OLLAMA_DEFAULTS", "")).strip():
         ollama_base = (
-            resolved_env.get("OPENBILICLAW_OLLAMA_BASE_URL", "").strip()
-            or "http://ollama:11434/v1"
+            resolved_env.get("OPENBILICLAW_OLLAMA_BASE_URL", "").strip() or "http://ollama:11434/v1"
         )
-        embedding_model = (
-            resolved_env.get("OPENBILICLAW_EMBEDDING_MODEL", "").strip() or "bge-m3"
-        )
+        embedding_model = resolved_env.get("OPENBILICLAW_EMBEDDING_MODEL", "").strip() or "bge-m3"
         _seed_ollama_defaults(config_path, ollama_base, embedding_model)
 
 

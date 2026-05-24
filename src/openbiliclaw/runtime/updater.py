@@ -28,9 +28,7 @@ import openbiliclaw
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_TAGS = (
-    "https://api.github.com/repos/whiteguo233/OpenBiliClaw/tags"
-)
+_GITHUB_TAGS = "https://api.github.com/repos/whiteguo233/OpenBiliClaw/tags"
 _BACKEND_TAG_PREFIX = "backend-v"
 _MAX_TAG_PAGES = 5
 _TAGS_PER_PAGE = 100
@@ -134,9 +132,7 @@ class AutoUpdateService:
             return {"checked": True, "updated": False, "reason": "no_backend_tag_yet"}
 
         if remote_parsed <= _parse_version(current):
-            logger.info(
-                "Already up-to-date: current=%s, remote=%s", current, remote_version
-            )
+            logger.info("Already up-to-date: current=%s, remote=%s", current, remote_version)
             return {
                 "checked": True,
                 "updated": False,

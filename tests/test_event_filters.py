@@ -42,9 +42,7 @@ def test_filter_modes_positive_plus_unknown_keeps_null_and_unknown() -> None:
         _row(3, None),
         _row(4, "negative"),
     ]
-    out = filter_events_by_satisfaction(
-        events, modes=frozenset({"positive", "unknown"})
-    )
+    out = filter_events_by_satisfaction(events, modes=frozenset({"positive", "unknown"}))
     assert [row["id"] for row in out] == [1, 2, 3]
 
 
@@ -71,13 +69,9 @@ def test_filter_rows_without_field_treated_as_none() -> None:
     """Defensive: a row that somehow lacks the field is treated as None
     (i.e. requesting `unknown` keeps it, requesting `positive` drops it)."""
     events = [{"id": 99, "event_type": "view"}]
-    keeps_with_unknown = filter_events_by_satisfaction(
-        events, modes=frozenset({"unknown"})
-    )
+    keeps_with_unknown = filter_events_by_satisfaction(events, modes=frozenset({"unknown"}))
     assert keeps_with_unknown == events
-    drops_with_positive = filter_events_by_satisfaction(
-        events, modes=frozenset({"positive"})
-    )
+    drops_with_positive = filter_events_by_satisfaction(events, modes=frozenset({"positive"}))
     assert drops_with_positive == []
 
 

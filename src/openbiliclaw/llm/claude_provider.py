@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class ClaudeProvider(LLMProvider):
     """Anthropic Claude provider."""
+
     _MAX_RETRIES = 3
     _BASE_RETRY_DELAY = 0.25
 

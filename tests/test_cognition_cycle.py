@@ -142,9 +142,7 @@ async def test_awareness_double_failure_preserves_schedule(
     assert flaky.call_count == 2
 
     # WARNING-level log, not ERROR — this is recoverable, not a bug.
-    awareness_logs = [
-        r for r in caplog.records if "awareness" in r.getMessage().lower()
-    ]
+    awareness_logs = [r for r in caplog.records if "awareness" in r.getMessage().lower()]
     assert awareness_logs, "expected an awareness-related log entry"
     assert all(r.levelno <= logging.WARNING for r in awareness_logs), (
         "awareness retry exhaustion should not log at ERROR level"

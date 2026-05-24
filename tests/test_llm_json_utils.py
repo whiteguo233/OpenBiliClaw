@@ -26,9 +26,7 @@ def _has_hypothesis(item: dict[str, object]) -> bool:
 
 
 def test_extract_llm_json_list_accepts_root_array() -> None:
-    assert extract_llm_json_list('[{"score":0.8}]', item_predicate=_has_score) == [
-        {"score": 0.8}
-    ]
+    assert extract_llm_json_list('[{"score":0.8}]', item_predicate=_has_score) == [{"score": 0.8}]
 
 
 def test_extract_llm_json_list_accepts_common_wrappers() -> None:

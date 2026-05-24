@@ -23,15 +23,17 @@ class TestSourceToolDispatcher:
         db = self._make_db(tmp_path)
         dispatcher = SourceToolDispatcher(db)
 
-        result = dispatcher.dispatch({
-            "name": "create_source",
-            "arguments": {
-                "source_type": "xiaohongshu",
-                "name": "小红书-机械键盘",
-                "strategy": "search",
-                "query": "机械键盘",
-            },
-        })
+        result = dispatcher.dispatch(
+            {
+                "name": "create_source",
+                "arguments": {
+                    "source_type": "xiaohongshu",
+                    "name": "小红书-机械键盘",
+                    "strategy": "search",
+                    "query": "机械键盘",
+                },
+            }
+        )
 
         assert "小红书-机械键盘" in result
         recipes = db.get_all_recipes()
@@ -49,10 +51,14 @@ class TestSourceToolDispatcher:
 
     def test_list_sources_with_recipes(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "B站搜索", "strategy": "search",
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "B站搜索",
+                "strategy": "search",
+            }
+        )
         dispatcher = SourceToolDispatcher(db)
 
         result = dispatcher.dispatch({"name": "list_sources"})
@@ -60,16 +66,22 @@ class TestSourceToolDispatcher:
 
     def test_toggle_source(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "web",
-            "name": "测试", "strategy": "feed",
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "web",
+                "name": "测试",
+                "strategy": "feed",
+            }
+        )
         dispatcher = SourceToolDispatcher(db)
 
-        result = dispatcher.dispatch({
-            "name": "toggle_source",
-            "arguments": {"id": "r1", "enabled": False},
-        })
+        result = dispatcher.dispatch(
+            {
+                "name": "toggle_source",
+                "arguments": {"id": "r1", "enabled": False},
+            }
+        )
         assert "禁用" in result
         assert db.get_enabled_recipes() == []
 
@@ -77,10 +89,12 @@ class TestSourceToolDispatcher:
         db = self._make_db(tmp_path)
         dispatcher = SourceToolDispatcher(db)
 
-        result = dispatcher.dispatch({
-            "name": "toggle_source",
-            "arguments": {"id": "nope", "enabled": True},
-        })
+        result = dispatcher.dispatch(
+            {
+                "name": "toggle_source",
+                "arguments": {"id": "nope", "enabled": True},
+            }
+        )
         assert "未找到" in result
 
     def test_unknown_tool(self, tmp_path: Path) -> None:

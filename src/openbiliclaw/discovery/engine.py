@@ -927,8 +927,7 @@ class ContentDiscoveryEngine:
             skipped_viewed = len(contents) - len(eval_pairs)
             if skipped_viewed > 0:
                 logger.info(
-                    "eval_batch skipped %d recently viewed candidate(s) before LLM "
-                    "(source=%s)",
+                    "eval_batch skipped %d recently viewed candidate(s) before LLM (source=%s)",
                     skipped_viewed,
                     source_context or "mixed",
                 )
@@ -2154,9 +2153,8 @@ class ContentDiscoveryEngine:
         round_franchise_counts: dict[str, int] = {}
         viewed_content_keys = self._recent_viewed_content_keys()
         for item in results:
-            if (
+            if viewed_content_keys and not self._candidate_view_keys(item).isdisjoint(
                 viewed_content_keys
-                and not self._candidate_view_keys(item).isdisjoint(viewed_content_keys)
             ):
                 skipped_viewed += 1
                 continue

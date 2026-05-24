@@ -17,9 +17,7 @@ from openbiliclaw.sources.event_format import classify_event_satisfaction
 
 @pytest.mark.parametrize("event_type", ["like", "coin", "favorite", "comment"])
 def test_explicit_positive_engagement_types(event_type: str) -> None:
-    category, reason = classify_event_satisfaction(
-        {"event_type": event_type, "title": "X"}
-    )
+    category, reason = classify_event_satisfaction({"event_type": event_type, "title": "X"})
     assert category == "positive"
     assert reason == "explicit_engagement"
 
@@ -135,9 +133,7 @@ def test_passive_browse_events_are_neutral(event_type: str) -> None:
 
 
 def test_unknown_event_type_returns_fallback_without_raising() -> None:
-    category, reason = classify_event_satisfaction(
-        {"event_type": "totally_invented_action"}
-    )
+    category, reason = classify_event_satisfaction({"event_type": "totally_invented_action"})
     assert (category, reason) == ("unknown", "fallback")
 
 

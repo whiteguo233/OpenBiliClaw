@@ -226,10 +226,7 @@ class PoolCurator:
                 )
                 * w.freshness
             )
-            fatigue = (
-                self._combined_topic_fatigue(item, context)
-                * w.topic_fatigue
-            )
+            fatigue = self._combined_topic_fatigue(item, context) * w.topic_fatigue
             monotony = (
                 self._source_monotony(
                     item.source_strategy,

@@ -462,11 +462,7 @@ class ProbeNoveltyGuard:
         return any(_has_probe_term_overlap(domain, term) for term in self.fuzzy_terms)
 
     def filter_specifics(self, specifics: list[str]) -> list[str]:
-        return [
-            specific
-            for specific in specifics
-            if not self.is_duplicate_domain(specific)
-        ]
+        return [specific for specific in specifics if not self.is_duplicate_domain(specific)]
 
 
 def observe_events(
@@ -533,8 +529,7 @@ def promote_ready(state: SpeculativeState) -> tuple[list[SpeculativeInterest], S
     remaining: list[SpeculativeInterest] = []
     for spec in state.active:
         ready = (
-            spec.status == "active"
-            and spec.confirmation_count >= spec.confirmation_threshold
+            spec.status == "active" and spec.confirmation_count >= spec.confirmation_threshold
         ) or spec.status == "confirmed"
         if ready:
             spec.status = "promoted"
@@ -1270,8 +1265,7 @@ def _select_diverse_candidates(
             selected.append(light_pick)
 
     if not any(
-        item.experience_mode and item.experience_mode != "knowledge"
-        for item in context + selected
+        item.experience_mode and item.experience_mode != "knowledge" for item in context + selected
     ):
         non_knowledge_pick = _pick_best_candidate(
             ordered,

@@ -74,10 +74,7 @@ class ActivityFeedBuilder:
         # only items strictly older than it.
         if before:
             cutoff = _parse_timestamp(before)
-            items = [
-                it for it in items
-                if _parse_timestamp(it.get("created_at", "")) < cutoff
-            ]
+            items = [it for it in items if _parse_timestamp(it.get("created_at", "")) < cutoff]
 
         page_size = max(1, min(50, int(limit)))
         page = items[:page_size]
@@ -173,8 +170,7 @@ class ActivityFeedBuilder:
                     "kind": "recommendation",
                     "summary": f"这批先给你翻出来了：{title}",
                     "detail": (
-                        _normalize_text(row.get("topic"))
-                        or _normalize_text(row.get("expression"))
+                        _normalize_text(row.get("topic")) or _normalize_text(row.get("expression"))
                     ),
                     "created_at": _normalize_text(row.get("created_at")),
                     "tone": "info",

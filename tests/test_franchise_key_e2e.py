@@ -353,7 +353,8 @@ async def test_evaluate_content_batch_default_size_30_uses_single_llm_call(
 
 
 def test_user_reported_scenario_5_genshin_in_popup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recreates the community-reported popup case:
 

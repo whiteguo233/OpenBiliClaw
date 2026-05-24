@@ -105,9 +105,7 @@ def test_probe_novelty_guard_matches_negative_feedback_history():
     )
 
     assert guard.is_duplicate_domain("城市漫游隐藏路线") is True
-    assert guard.filter_specifics(["老街路线", "城市声音采样"]) == [
-        "城市声音采样"
-    ]
+    assert guard.filter_specifics(["老街路线", "城市声音采样"]) == ["城市声音采样"]
     assert guard.is_duplicate_domain("手作模型制作") is False
 
 
@@ -475,9 +473,7 @@ def test_promote_ready_handles_user_confirmed_status():
     assert updated.total_promoted == 2
 
 
-async def test_force_tick_unblocked_when_active_full_of_confirmed(
-    monkeypatch, tmp_path
-):
+async def test_force_tick_unblocked_when_active_full_of_confirmed(monkeypatch, tmp_path):
     """Regression for the 'probe wedge' bug observed in production:
     a profile with N=max_active rows all in ``status="confirmed"``
     (because the user kept clicking 喜欢 but no tick ever ran) made
@@ -509,8 +505,15 @@ async def test_force_tick_unblocked_when_active_full_of_confirmed(
         for i in range(5)
     ]
     state_file.write_text(
-        json.dumps({"active": confirmed_rows, "cooldown": [], "total_rejected": 0,
-                    "total_promoted": 0, "last_generation_at": None})
+        json.dumps(
+            {
+                "active": confirmed_rows,
+                "cooldown": [],
+                "total_rejected": 0,
+                "total_promoted": 0,
+                "last_generation_at": None,
+            }
+        )
     )
 
     # Stub LLM service to return 5 fresh probes; without the fix this
@@ -896,10 +899,7 @@ def test_should_generate_respects_primary_cap():
         assert speculator._should_generate(state, datetime.now(), profile) is True
 
         capped_state = SpeculativeState(
-            active=[
-                SpeculativeInterest(domain=f"猜{i}", status="active")
-                for i in range(15)
-            ]
+            active=[SpeculativeInterest(domain=f"猜{i}", status="active") for i in range(15)]
         )
         assert speculator._should_generate(capped_state, datetime.now(), profile) is False
 
@@ -941,10 +941,7 @@ def test_should_generate_respects_secondary_cap():
         assert speculator._should_generate(state, datetime.now(), profile) is True
 
         capped_state = SpeculativeState(
-            active=[
-                SpeculativeInterest(domain=f"猜{i}", status="active")
-                for i in range(60)
-            ]
+            active=[SpeculativeInterest(domain=f"猜{i}", status="active") for i in range(60)]
         )
         assert speculator._should_generate(capped_state, datetime.now(), profile) is False
 
@@ -986,8 +983,7 @@ async def test_speculator_generate_keeps_visible_experience_mix():
                                 "domain": "博弈论科普",
                                 "category": "知识解释",
                                 "reason": (
-                                    "你一直在看结构化推演内容，"
-                                    "这个方向能继续提供可验证的思考乐趣。"
+                                    "你一直在看结构化推演内容，这个方向能继续提供可验证的思考乐趣。"
                                 ),
                                 "bridge_type": "near",
                                 "confidence": 0.59,
@@ -999,8 +995,7 @@ async def test_speculator_generate_keeps_visible_experience_mix():
                                 "domain": "AI治理",
                                 "category": "社会文化",
                                 "reason": (
-                                    "你对技术影响现实社会的链条敏感，"
-                                    "这个方向能接住这种关注。"
+                                    "你对技术影响现实社会的链条敏感，这个方向能接住这种关注。"
                                 ),
                                 "bridge_type": "far",
                                 "confidence": 0.57,
@@ -1025,8 +1020,7 @@ async def test_speculator_generate_keeps_visible_experience_mix():
                                 "domain": "城市漫游",
                                 "category": "现实观察",
                                 "reason": (
-                                    "你有从具体场景观察系统的习惯，"
-                                    "这个方向入口轻但仍有结构感。"
+                                    "你有从具体场景观察系统的习惯，这个方向入口轻但仍有结构感。"
                                 ),
                                 "bridge_type": "near",
                                 "confidence": 0.49,
@@ -1038,8 +1032,7 @@ async def test_speculator_generate_keeps_visible_experience_mix():
                                 "domain": "器物修复",
                                 "category": "实操动手",
                                 "reason": (
-                                    "你喜欢看结构怎么被拆开再复原，"
-                                    "这个方向能给到更直接的动手反馈。"
+                                    "你喜欢看结构怎么被拆开再复原，这个方向能给到更直接的动手反馈。"
                                 ),
                                 "bridge_type": "near",
                                 "confidence": 0.48,
@@ -1094,8 +1087,7 @@ async def test_speculator_generate_prefers_axis_missing_from_active_pool():
                                 "domain": "旧物修复",
                                 "category": "实操动手",
                                 "reason": (
-                                    "你喜欢看结构怎么被拆开再复原，"
-                                    "这个方向能补上更直接的动手反馈。"
+                                    "你喜欢看结构怎么被拆开再复原，这个方向能补上更直接的动手反馈。"
                                 ),
                                 "confidence": 0.48,
                                 "experience_mode": "hands_on",

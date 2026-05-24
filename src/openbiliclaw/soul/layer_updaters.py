@@ -291,9 +291,7 @@ async def _update_interest(
                     runtime_state = load_runtime_state()
                 probed_domains_raw = runtime_state.get("probed_domains", {})
                 probed_domains = (
-                    set(probed_domains_raw)
-                    if isinstance(probed_domains_raw, dict)
-                    else set()
+                    set(probed_domains_raw) if isinstance(probed_domains_raw, dict) else set()
                 )
                 added = speculator.ingest_seeds(
                     speculative_seeds,

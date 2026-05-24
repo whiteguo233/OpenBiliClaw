@@ -1057,10 +1057,7 @@ def create_app(
                         # makes the failure diagnosable.
                         raise HTTPException(
                             status_code=502,
-                            detail=(
-                                f"Upstream {host} returned "
-                                f"{response.status_code}"
-                            ),
+                            detail=(f"Upstream {host} returned {response.status_code}"),
                         )
                     content_type = _validate_image_proxy_content_headers(response.headers)
                     spool = await _read_image_proxy_body(response)
@@ -1839,6 +1836,7 @@ def create_app(
                 import os as _os
 
                 from openbiliclaw.yt_replacer import replace_recommendation_row
+
                 data_dir = (
                     _os.path.dirname(str(ctx.config.storage.db_path))
                     if ctx.config.storage.db_path
@@ -1869,6 +1867,7 @@ def create_app(
                         # API call. ``is_likely_repost`` on title alone
                         # mimics the sync-path's first pass.
                         from openbiliclaw.yt_replacer import is_likely_repost
+
                         if is_likely_repost(title, description=description):
                             continue
                         # Heuristic for "could be a repost worth checking
@@ -1879,15 +1878,36 @@ def create_app(
                         latin = sum(1 for ch in title if "a" <= ch.lower() <= "z")
                         latin_ratio = latin / max(1, len(title))
                         combined = (title + " " + description).lower()
-                        borderline = (
-                            latin_ratio > 0.05
-                            or any(
-                                kw in combined
-                                for kw in ("配音", "翻译", "搬运", "ai", "youtube", "油管",
-                                           "双语", "中字", "字幕", "英配", "熟肉", "译制",
-                                           "外网", "国外视频", "海外", "原视频", "原版",
-                                           "转载", "转录", "素材来源", "视频来源", "原作者",
-                                           "CC", "sub", "dub", "clone", "voiceover")
+                        borderline = latin_ratio > 0.05 or any(
+                            kw in combined
+                            for kw in (
+                                "配音",
+                                "翻译",
+                                "搬运",
+                                "ai",
+                                "youtube",
+                                "油管",
+                                "双语",
+                                "中字",
+                                "字幕",
+                                "英配",
+                                "熟肉",
+                                "译制",
+                                "外网",
+                                "国外视频",
+                                "海外",
+                                "原视频",
+                                "原版",
+                                "转载",
+                                "转录",
+                                "素材来源",
+                                "视频来源",
+                                "原作者",
+                                "CC",
+                                "sub",
+                                "dub",
+                                "clone",
+                                "voiceover",
                             )
                         )
                         if borderline:
@@ -1896,22 +1916,23 @@ def create_app(
                         borderline_rows = borderline_rows[:max_rows]
                     # Fetch comments concurrently to keep latency bounded.
                     if borderline_rows:
+
                         async def _fetch(bvid: str) -> tuple[str, list[str]]:
                             try:
                                 client = ctx.bilibili_client
                                 infos = await client.get_video_comments(bvid, limit=20)
-                                return bvid, [
-                                    str(getattr(c, "message", "") or "")
-                                    for c in infos
-                                ]
+                                return bvid, [str(getattr(c, "message", "") or "") for c in infos]
                             except Exception as exc:
                                 logger.debug(
                                     "comment-fetch failed for %s: %s — falling "
                                     "back to title-only detection",
-                                    bvid, exc,
+                                    bvid,
+                                    exc,
                                 )
                                 return bvid, []
+
                         import asyncio as _asyncio
+
                         fetched = await _asyncio.gather(
                             *[_fetch(str(row.get("bvid", "") or "")) for _, row in borderline_rows],
                             return_exceptions=False,
@@ -5035,7 +5056,7 @@ def create_app(
 
             cursor = ctx.database.conn.execute(
                 "SELECT c.title, c.up_name, c.description FROM content_cache c WHERE c.bvid = ?",
-                (bvid,)
+                (bvid,),
             )
             row = cursor.fetchone()
             if not row:
@@ -5121,8 +5142,7 @@ def create_app(
         is_youtube = payload.source_platform.strip().lower() == "youtube"
         try:
             cursor = ctx.database.conn.execute(
-                "SELECT c.title, c.up_name, c.description "
-                "FROM content_cache c WHERE c.bvid = ?",
+                "SELECT c.title, c.up_name, c.description FROM content_cache c WHERE c.bvid = ?",
                 (bvid,),
             )
             row = cursor.fetchone()
@@ -5138,8 +5158,11 @@ def create_app(
 
             if is_youtube:
                 from openbiliclaw.yt_replacer import replace_if_from_bilibili
+
                 result = replace_if_from_bilibili(
-                    bvid, title, author,
+                    bvid,
+                    title,
+                    author,
                     description=description,
                     data_dir=data_dir,
                     force=True,
@@ -5167,7 +5190,8 @@ def create_app(
                         original_expr = str(rec.get("expression") or "")
                         suffix = f"\n💡 用户标记为搬运，原视频在 Bilibili：{source_url}"
                         new_expression = (
-                            (original_expr + suffix) if original_expr
+                            (original_expr + suffix)
+                            if original_expr
                             else f"用户标记为搬运，原视频在 Bilibili：{source_url}"
                         )
                         ctx.database.update_recommendation_content(
@@ -5188,8 +5212,11 @@ def create_app(
                 }
             else:
                 from openbiliclaw.yt_replacer import replace_if_foreign
+
                 result = replace_if_foreign(
-                    bvid, title, author,
+                    bvid,
+                    title,
+                    author,
                     description=description,
                     data_dir=data_dir,
                     force=True,
@@ -5202,7 +5229,9 @@ def create_app(
                 pending = bool(result.get("repost_detected") and not yt_url)
                 if yt_url:
                     ctx.database.mark_content_as_youtube_repost(
-                        bvid, yt_url=yt_url, yt_cover_url=yt_cover,
+                        bvid,
+                        yt_url=yt_url,
+                        yt_cover_url=yt_cover,
                     )
                 new_expression = None
                 if recommendation_id is not None and yt_url:
@@ -5211,7 +5240,8 @@ def create_app(
                         original_expr = str(rec.get("expression") or "")
                         suffix = f"\n💡 用户标记为搬运，原视频在 YouTube：{yt_url}"
                         new_expression = (
-                            (original_expr + suffix) if original_expr
+                            (original_expr + suffix)
+                            if original_expr
                             else f"用户标记为搬运，原视频在 YouTube：{yt_url}"
                         )
                         ctx.database.update_recommendation_content(

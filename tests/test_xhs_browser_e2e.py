@@ -74,22 +74,30 @@ def cdp_navigate_and_wait(tab_ws_url: str, url: str, wait_secs: float = 6.0) -> 
     ws = websocket.create_connection(tab_ws_url, timeout=15)
     try:
         # Navigate
-        ws.send(json.dumps({
-            "id": 1,
-            "method": "Page.navigate",
-            "params": {"url": url},
-        }))
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Page.navigate",
+                    "params": {"url": url},
+                }
+            )
+        )
         ws.recv()  # ack
 
         # Wait for page to load
         time.sleep(wait_secs)
 
         # Get document HTML length to verify page loaded
-        ws.send(json.dumps({
-            "id": 2,
-            "method": "Runtime.evaluate",
-            "params": {"expression": "document.body?.innerHTML?.length || 0"},
-        }))
+        ws.send(
+            json.dumps(
+                {
+                    "id": 2,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": "document.body?.innerHTML?.length || 0"},
+                }
+            )
+        )
         result = json.loads(ws.recv())
         return result
     finally:
@@ -101,18 +109,23 @@ def cdp_evaluate(tab_ws_url: str, expression: str) -> Any:
     import websocket  # type: ignore[import-untyped]
 
     ws = websocket.create_connection(
-        tab_ws_url, timeout=10,
+        tab_ws_url,
+        timeout=10,
         suppress_origin=True,  # Chrome 147 rejects non-matching origins
     )
     try:
-        ws.send(json.dumps({
-            "id": 1,
-            "method": "Runtime.evaluate",
-            "params": {
-                "expression": expression,
-                "returnByValue": True,
-            },
-        }))
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": expression,
+                        "returnByValue": True,
+                    },
+                }
+            )
+        )
         result = json.loads(ws.recv())
         return result.get("result", {}).get("result", {}).get("value")
     finally:
@@ -259,7 +272,7 @@ class TestChromeXhsPages:
                     Array.from(document.querySelectorAll('a[href*="/explore/"]'))
                         .slice(0, 5)
                         .map(a => a.href)
-                )"""
+                )""",
             )
             if samples:
                 print(f"  Sample URLs: {samples}")
@@ -288,7 +301,7 @@ class TestExtensionContentScript:
         has_collector = cdp_evaluate(
             xhs_tab["ws"],
             """(typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined'
-              && typeof chrome.runtime.sendMessage === 'function')"""
+              && typeof chrome.runtime.sendMessage === 'function')""",
         )
         if has_collector:
             print("✓ Extension chrome.runtime available — content script likely injected")
@@ -317,7 +330,7 @@ class TestExtensionContentScript:
                     .slice(0, 10)
                     .map(a => a.href)
                     .filter(h => h.includes('/explore/'))
-            )"""
+            )""",
         )
 
         if urls_json:
@@ -356,7 +369,7 @@ class TestFullPipeline:
                     .slice(0, 20)
                     .map(a => a.href)
                     .filter((v, i, a) => a.indexOf(v) === i)
-            )"""
+            )""",
         )
 
         urls = json.loads(urls_json) if urls_json else []

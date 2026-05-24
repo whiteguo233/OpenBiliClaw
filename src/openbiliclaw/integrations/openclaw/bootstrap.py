@@ -188,9 +188,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
             getattr(config.scheduler, "proactive_push_interval_seconds", 120)
         ),
         discovery_limit=int(getattr(config.scheduler, "discovery_limit", 30)),
-        hibernate_sleep_seconds=int(
-            getattr(config.scheduler, "hibernate_sleep_seconds", 3600)
-        ),
+        hibernate_sleep_seconds=int(getattr(config.scheduler, "hibernate_sleep_seconds", 3600)),
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
         scheduler_config=config.scheduler,

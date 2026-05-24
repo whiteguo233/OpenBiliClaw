@@ -1203,8 +1203,7 @@ def _render_config_toml(config: Config) -> str:
             f"{_toml_bool(config.sources.youtube.replace_bilibili_reposts)}",
             "use_comments_for_detection = "
             f"{_toml_bool(config.sources.youtube.use_comments_for_detection)}",
-            "comment_detection_max_rows = "
-            f"{config.sources.youtube.comment_detection_max_rows}",
+            f"comment_detection_max_rows = {config.sources.youtube.comment_detection_max_rows}",
             "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",

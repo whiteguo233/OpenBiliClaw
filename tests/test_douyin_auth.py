@@ -30,8 +30,7 @@ def test_resolve_douyin_cookie_prefers_env_over_persisted(
     monkeypatch.setenv("TEST_DOUYIN_COOKIE", "msToken=env;")
 
     assert (
-        resolve_douyin_cookie(data_dir=tmp_path, cookie_env="TEST_DOUYIN_COOKIE")
-        == "msToken=env;"
+        resolve_douyin_cookie(data_dir=tmp_path, cookie_env="TEST_DOUYIN_COOKIE") == "msToken=env;"
     )
 
 
@@ -44,6 +43,5 @@ def test_resolve_douyin_cookie_falls_back_to_persisted_file(
     monkeypatch.delenv("TEST_DOUYIN_COOKIE", raising=False)
 
     assert (
-        resolve_douyin_cookie(data_dir=tmp_path, cookie_env="TEST_DOUYIN_COOKIE")
-        == "msToken=file;"
+        resolve_douyin_cookie(data_dir=tmp_path, cookie_env="TEST_DOUYIN_COOKIE") == "msToken=file;"
     )

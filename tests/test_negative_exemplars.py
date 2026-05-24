@@ -62,11 +62,15 @@ def test_empty_store_returns_empty_list() -> None:
 
 def test_returns_records_with_expected_shape() -> None:
     now = datetime(2026, 5, 16, 12, 0, 0)
-    store = _StubEventStore([
-        _row(idx=1, title="震惊！这把键盘竟然", age_days=2, now=now),
-        _row(idx=2, title="保姆级教程一期通关", reason="explicit_negative", age_days=5, now=now),
-        _row(idx=3, title="无效信息流", age_days=10, now=now),
-    ])
+    store = _StubEventStore(
+        [
+            _row(idx=1, title="震惊！这把键盘竟然", age_days=2, now=now),
+            _row(
+                idx=2, title="保姆级教程一期通关", reason="explicit_negative", age_days=5, now=now
+            ),
+            _row(idx=3, title="无效信息流", age_days=10, now=now),
+        ]
+    )
     out = recent_negative_exemplars(store, now=now)
     assert len(out) == 3
     for record in out:
@@ -77,9 +81,7 @@ def test_returns_records_with_expected_shape() -> None:
 def test_caps_to_limit_with_recency_priority() -> None:
     """20 negatives — only the 8 most-recent (highest weight) are kept."""
     now = datetime(2026, 5, 16, 12, 0, 0)
-    events = [
-        _row(idx=i, title=f"标题{i}", age_days=i, now=now) for i in range(1, 21)
-    ]
+    events = [_row(idx=i, title=f"标题{i}", age_days=i, now=now) for i in range(1, 21)]
     out = recent_negative_exemplars(_StubEventStore(events), now=now)
     assert len(out) == 8
     # The 8 newest titles should be "标题1" through "标题8"

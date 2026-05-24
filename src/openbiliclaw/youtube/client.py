@@ -91,9 +91,7 @@ def _scrapetube_channel(channel_id: str, limit: int) -> list[dict[str, Any]]:
                 )
             ]
         else:
-            results = [
-                dict(v) for v in scrapetube.get_channel(channel_url=channel_id, limit=limit)
-            ]
+            results = [dict(v) for v in scrapetube.get_channel(channel_url=channel_id, limit=limit)]
         if results:
             return results
     except Exception as exc:
@@ -275,7 +273,7 @@ def _extract_yt_initial_data_videos(html: str, limit: int) -> list[dict[str, Any
 def _extract_yt_initial_data(html: str) -> dict[str, Any] | None:
     for marker in (
         "var ytInitialData",
-        "window[\"ytInitialData\"]",
+        'window["ytInitialData"]',
         "window['ytInitialData']",
     ):
         start = html.find(marker)
@@ -365,9 +363,7 @@ def _extract_js_number(html: str, key: str) -> str:
     return match.group(1) if match else ""
 
 
-def _extract_innertube_videos(
-    data: dict[str, Any], *, limit: int
-) -> list[dict[str, Any]]:
+def _extract_innertube_videos(data: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
     """Walk InnerTube's nested renderer tree and extract video renderer dicts."""
     results: list[dict[str, Any]] = []
     _walk(data, results, limit)
@@ -494,9 +490,7 @@ def normalize_yt_video(
         cover_url = str(thumbs_raw[-1].get("url", cover_url))
 
     # Description snippet
-    description = _extract_text(
-        raw.get("descriptionSnippet") or raw.get("description") or ""
-    )[:300]
+    description = _extract_text(raw.get("descriptionSnippet") or raw.get("description") or "")[:300]
 
     return DiscoveredContent(
         content_id=video_id,

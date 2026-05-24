@@ -75,8 +75,7 @@ async def extract_content_from_page(
     truncated = page_text[:8000] if len(page_text) > 8000 else page_text
 
     user_prompt = (
-        f"<platform>{source_platform}</platform>\n\n"
-        f"<page_text>\n{truncated}\n</page_text>"
+        f"<platform>{source_platform}</platform>\n\n<page_text>\n{truncated}\n</page_text>"
     )
 
     try:
@@ -136,6 +135,8 @@ async def extract_content_from_page(
 
     logger.info(
         "Extracted %d content items from %s page (%d chars)",
-        len(results), source_platform, len(page_text),
+        len(results),
+        source_platform,
+        len(page_text),
     )
     return results

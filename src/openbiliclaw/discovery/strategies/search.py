@@ -86,8 +86,7 @@ class SearchStrategy(DiscoveryStrategy):
                 "cooldown_remaining_seconds": int(cooldown_remaining),
             }
             logger.info(
-                "Search: Bilibili search cooldown active (%.0fs left); "
-                "skipping query generation",
+                "Search: Bilibili search cooldown active (%.0fs left); skipping query generation",
                 cooldown_remaining,
             )
             return []

@@ -60,84 +60,223 @@ def _can_reach_youtube() -> bool:
     logger.debug("YT reachable check: %s", _YOUTUBE_REACHABLE)
     return _YOUTUBE_REACHABLE
 
+
 # ── Heuristic: is this likely a repost of foreign content? ─────────
 
 # Signs in the title that indicate this is a translation/repost
 _REPOST_KEYWORDS = [
-    "翻译", "中字", "字幕", "自译", "译制", "熟肉",
-    "搬运", "英文字幕", "中英字幕", "双语字幕",
-    "英文", "外语", "外文", "英文原版", "原版视频",
-    "sub", "subtitle", "translation", "translate",
-    "CC", "English", "中英", "英文解说",
+    "翻译",
+    "中字",
+    "字幕",
+    "自译",
+    "译制",
+    "熟肉",
+    "搬运",
+    "英文字幕",
+    "中英字幕",
+    "双语字幕",
+    "英文",
+    "外语",
+    "外文",
+    "英文原版",
+    "原版视频",
+    "sub",
+    "subtitle",
+    "translation",
+    "translate",
+    "CC",
+    "English",
+    "中英",
+    "英文解说",
 ]
 
 # AI dubbing / machine translation signals — new wave of reposts where
 # the original foreign audio is replaced with AI-generated Chinese voiceover.
 # Title is often Chinese (low Latin ratio), so the classic signals miss these.
 _AI_DUB_KEYWORDS = [
-    "AI配音", "AI 配音", "AI翻译", "AI 翻译", "AI语音", "AI 语音",
-    "AI朗读", "AI 朗读", "AI克隆", "AI 克隆", "AI声音", "AI 声音",
-    "AI解说", "AI 解说", "AI连读", "AI 连读",
-    "机翻", "机器翻译", "AI机翻", "AI 机翻",
-    "AI voice", "AI dub", "AI dubbing", "AI translate", "AI voiceover",
-    "TTS配音", "TTS 配音", "TTS翻译", "TTS 翻译",
-    "自动配音", "自动翻译",
+    "AI配音",
+    "AI 配音",
+    "AI翻译",
+    "AI 翻译",
+    "AI语音",
+    "AI 语音",
+    "AI朗读",
+    "AI 朗读",
+    "AI克隆",
+    "AI 克隆",
+    "AI声音",
+    "AI 声音",
+    "AI解说",
+    "AI 解说",
+    "AI连读",
+    "AI 连读",
+    "机翻",
+    "机器翻译",
+    "AI机翻",
+    "AI 机翻",
+    "AI voice",
+    "AI dub",
+    "AI dubbing",
+    "AI translate",
+    "AI voiceover",
+    "TTS配音",
+    "TTS 配音",
+    "TTS翻译",
+    "TTS 翻译",
+    "自动配音",
+    "自动翻译",
     # Broader AI dubbing signals — some creators don't write "AI" explicitly
-    "配音译制", "译制配音", "中英双语配音", "配音翻译",
-    "外语中文配音", "英文中配", "英语中配",
-    "智能配音", "智能翻译", "语音合成",
+    "配音译制",
+    "译制配音",
+    "中英双语配音",
+    "配音翻译",
+    "外语中文配音",
+    "英文中配",
+    "英语中配",
+    "智能配音",
+    "智能翻译",
+    "语音合成",
 ]
 
 # Signals in description that hint the video is an AI-dubbed repost
 _AI_DUB_DESC_SIGNALS = [
-    "原视频", "原片", "原版", "来源", "原始视频",
-    "original video", "source video", "original",
-    "来自YouTube", "来自Youtube", "来自油管",
-    "YouTube链接", "youtube链接",
-    "本视频为AI", "AI配音视频", "AI翻译视频",
-    "机器翻译视频", "机翻视频",
-    "字幕翻译", "音频翻译",
+    "原视频",
+    "原片",
+    "原版",
+    "来源",
+    "原始视频",
+    "original video",
+    "source video",
+    "original",
+    "来自YouTube",
+    "来自Youtube",
+    "来自油管",
+    "YouTube链接",
+    "youtube链接",
+    "本视频为AI",
+    "AI配音视频",
+    "AI翻译视频",
+    "机器翻译视频",
+    "机翻视频",
+    "字幕翻译",
+    "音频翻译",
     # Broader description signals
-    "转载自油管", "转载自YouTube", "来源油管",
-    "视频来源", "素材来源", "原作者",
-    "原视频链接", "原地址", "原链接",
-    "出自YouTube", "采集自", "自译",
-    "翻译自", "译自",
+    "转载自油管",
+    "转载自YouTube",
+    "来源油管",
+    "视频来源",
+    "素材来源",
+    "原作者",
+    "原视频链接",
+    "原地址",
+    "原链接",
+    "出自YouTube",
+    "采集自",
+    "自译",
+    "翻译自",
+    "译自",
 ]
 
 # Comment keywords that strongly suggest a video is a repost
 _REPOST_COMMENT_KEYWORDS = [
-    "AI配音", "AI 配音", "机翻", "机器翻译", "配音",
-    "这是搬运", "搬运的", "搬运视频",
-    "原视频", "原版",
-    "这都能搬", "又搬", "偷视频",
-    "YouTube上", "油管上",
-    "不是原创", "不是原創",
-    "AI翻译", "AI 翻译",
-    "抄的", "盗视频", "盗用",
+    "AI配音",
+    "AI 配音",
+    "机翻",
+    "机器翻译",
+    "配音",
+    "这是搬运",
+    "搬运的",
+    "搬运视频",
+    "原视频",
+    "原版",
+    "这都能搬",
+    "又搬",
+    "偷视频",
+    "YouTube上",
+    "油管上",
+    "不是原创",
+    "不是原創",
+    "AI翻译",
+    "AI 翻译",
+    "抄的",
+    "盗视频",
+    "盗用",
 ]
 
 # Known non-Chinese content categories that often get reposted
 _FOREIGN_CATEGORIES = [
-    "Gamespot", "IGN", "Gamesradar", "Polygon", "Kotaku",
-    "GameSpot", "Nintendo", "PlayStation", "Xbox",
-    "TED", "TEDx", "BBC", "CNN", "NPR", "PBS",
-    "Netflix", "HBO", "Disney+", "Apple TV",
-    "Vox", "Verge", "Wired", "TechCrunch", "Ars Technica",
-    "NYT", "New York Times", "Guardian", "Reuters", "AP",
-    "National Geographic", "Discovery", "Science", "Nature",
-    "Vsauce", "Veritasium", "SmarterEveryDay", "Kurzgesagt",
-    "3Blue1Brown", "Numberphile", "Computerphile",
-    "Tom Scott", "LTT", "Linus Tech Tips", "Gamers Nexus",
-    "MKBHD", "Marques Brownlee", "Dave2D", "Dave Lee",
-    "iJustine", "UrAvgConsumer", "Austin Evans",
-    "Fstoppers", "DPReview", "PetaPixel",
-    "The Wall Street Journal", "Bloomberg", "Forbes",
-    "CNET", "Engadget", "Gizmodo", "GizChina",
-    "Digital Trends", "Tom's Guide", "TechSpot",
-    "AnandTech", "SemiAnalysis", "Chip War",
-    "Asianometry", "Asianometry", "High Yield",
-    "Two Minute Papers", "Yannic Kilcher",
+    "Gamespot",
+    "IGN",
+    "Gamesradar",
+    "Polygon",
+    "Kotaku",
+    "GameSpot",
+    "Nintendo",
+    "PlayStation",
+    "Xbox",
+    "TED",
+    "TEDx",
+    "BBC",
+    "CNN",
+    "NPR",
+    "PBS",
+    "Netflix",
+    "HBO",
+    "Disney+",
+    "Apple TV",
+    "Vox",
+    "Verge",
+    "Wired",
+    "TechCrunch",
+    "Ars Technica",
+    "NYT",
+    "New York Times",
+    "Guardian",
+    "Reuters",
+    "AP",
+    "National Geographic",
+    "Discovery",
+    "Science",
+    "Nature",
+    "Vsauce",
+    "Veritasium",
+    "SmarterEveryDay",
+    "Kurzgesagt",
+    "3Blue1Brown",
+    "Numberphile",
+    "Computerphile",
+    "Tom Scott",
+    "LTT",
+    "Linus Tech Tips",
+    "Gamers Nexus",
+    "MKBHD",
+    "Marques Brownlee",
+    "Dave2D",
+    "Dave Lee",
+    "iJustine",
+    "UrAvgConsumer",
+    "Austin Evans",
+    "Fstoppers",
+    "DPReview",
+    "PetaPixel",
+    "The Wall Street Journal",
+    "Bloomberg",
+    "Forbes",
+    "CNET",
+    "Engadget",
+    "Gizmodo",
+    "GizChina",
+    "Digital Trends",
+    "Tom's Guide",
+    "TechSpot",
+    "AnandTech",
+    "SemiAnalysis",
+    "Chip War",
+    "Asianometry",
+    "Asianometry",
+    "High Yield",
+    "Two Minute Papers",
+    "Yannic Kilcher",
 ]
 
 
@@ -209,10 +348,7 @@ def _is_repost_from_comments(comments: list[str] | None) -> bool:
         # "油管上是XYZ" doesn't need a second confirmation — the URL
         # reference is already strong enough.
         mentions_youtube = (
-            "youtube" in lower
-            or "youtu.be" in lower
-            or "油管" in comment
-            or "YT" in comment
+            "youtube" in lower or "youtu.be" in lower or "油管" in comment or "YT" in comment
         )
         comment_has_kw = False
         for kw in _REPOST_COMMENT_KEYWORDS:
@@ -247,7 +383,7 @@ def is_likely_repost(title: str, description: str = "", comments: list[str] | No
     if total < 5:
         return False
 
-    latin = sum(1 for ch in title if 'a' <= ch.lower() <= 'z')
+    latin = sum(1 for ch in title if "a" <= ch.lower() <= "z")
     latin_ratio = latin / total if total > 0 else 0.0
     english_terms = _extract_english_terms(title)
     meaningful = [t for t in english_terms if len(t) >= 6]
@@ -395,8 +531,12 @@ def find_original(title: str, author: str = "", description: str = "") -> dict[s
     best_sim, best = scored[0]
 
     if best_sim < 0.35:
-        logger.debug("YT replacer: no good match for %r (best=%.2f %s)",
-                      title, best_sim, best.get("title", ""))
+        logger.debug(
+            "YT replacer: no good match for %r (best=%.2f %s)",
+            title,
+            best_sim,
+            best.get("title", ""),
+        )
         return None
 
     url = f"https://www.youtube.com/watch?v={best.get('id', '')}"
@@ -541,7 +681,8 @@ def replace_if_foreign(
     _save_cache(data_dir)
     logger.info(
         "YT replacer: %s → %s (%.2f) %r",
-        bvid, result["url"],
+        bvid,
+        result["url"],
         SequenceMatcher(None, title.lower(), result["title"].lower()).ratio(),
         result["title"],
     )
@@ -626,9 +767,7 @@ def find_on_bilibili(title: str, author: str = "", description: str = "") -> dic
         "title": best_clean,
         "up_name": str(best.get("author", "") or ""),
         "cover_url": (
-            pic_url
-            if pic_url.startswith("http")
-            else f"https:{pic_url}" if pic_url else ""
+            pic_url if pic_url.startswith("http") else f"https:{pic_url}" if pic_url else ""
         ),
     }
 
@@ -687,11 +826,14 @@ def replace_if_from_bilibili(
     }
     _yt_cache[cache_key] = entry
     _save_cache(data_dir)
-    logger.info("B站 reverse: %s → %s (%.2f) %r", bvid, result["url"],
-                SequenceMatcher(None, title.lower(), result["title"].lower()).ratio(),
-                result["title"])
+    logger.info(
+        "B站 reverse: %s → %s (%.2f) %r",
+        bvid,
+        result["url"],
+        SequenceMatcher(None, title.lower(), result["title"].lower()).ratio(),
+        result["title"],
+    )
     return entry
-
 
 
 def replace_recommendation_row(
@@ -726,7 +868,9 @@ def replace_recommendation_row(
         return None
 
     yt = replace_if_foreign(
-        bvid, title, author,
+        bvid,
+        title,
+        author,
         description=description,
         data_dir=data_dir,
         comments=comments,
@@ -750,16 +894,12 @@ def replace_recommendation_row(
         vid_match = re.search(r"v=([a-zA-Z0-9_-]{11})", yt_url)
         if vid_match:
             yt_cover = f"https://i.ytimg.com/vi/{vid_match.group(1)}/hqdefault.jpg"
-    expr_suffix = (
-        f"\n💡 这是搬运，原视频在 YouTube：{yt_url}"
-    )
+    expr_suffix = f"\n💡 这是搬运，原视频在 YouTube：{yt_url}"
     override = {
         "content_url": yt_url,
         "source_platform": "youtube",
         "expression": (
-            (original_expr + expr_suffix)
-            if original_expr
-            else f"原视频在 YouTube：{yt_url}"
+            (original_expr + expr_suffix) if original_expr else f"原视频在 YouTube：{yt_url}"
         ),
     }
     if yt_cover:

@@ -87,12 +87,14 @@ class _ClassifyLLM:
                 # user_input has profile + content sections; extract content items
                 for title, (style, topic, score) in self._TITLE_MAP.items():
                     if title in user_input:
-                        results.append({
-                            "score": score,
-                            "reason": f"{topic}类内容",
-                            "topic_group": topic,
-                            "style_key": style,
-                        })
+                        results.append(
+                            {
+                                "score": score,
+                                "reason": f"{topic}类内容",
+                                "topic_group": topic,
+                                "style_key": style,
+                            }
+                        )
             except Exception:
                 pass
 
@@ -109,16 +111,23 @@ class _ClassifyLLM:
 
             return LLMResponse(
                 content=json.dumps(results, ensure_ascii=False),
-                provider="test", model="dummy", usage={},
+                provider="test",
+                model="dummy",
+                usage={},
             )
 
         # Expression generation call
         return LLMResponse(
-            content=json.dumps({
-                "expression": "这条给你找的。",
-                "topic_label": "测试",
-            }, ensure_ascii=False),
-            provider="test", model="dummy", usage={},
+            content=json.dumps(
+                {
+                    "expression": "这条给你找的。",
+                    "topic_label": "测试",
+                },
+                ensure_ascii=False,
+            ),
+            provider="test",
+            model="dummy",
+            usage={},
         )
 
 
@@ -288,7 +297,8 @@ class TestMultiSourceDiversityE2E:
             llm = _ClassifyLLM()
             engine = RecommendationEngine(llm=llm, database=db)
             classified = await engine.classify_pool_backlog(
-                profile=_build_profile(), limit=50,
+                profile=_build_profile(),
+                limit=50,
             )
 
             assert classified == 10
@@ -346,9 +356,9 @@ class TestMultiSourceDiversityE2E:
                 assert row["topic_group"] == original["topic_group"], (
                     f"topic_group wiped for {bvid}"
                 )
-                assert float(row["relevance_score"]) == float(
-                    original["relevance_score"]
-                ), f"relevance_score wiped for {bvid}"
+                assert float(row["relevance_score"]) == float(original["relevance_score"]), (
+                    f"relevance_score wiped for {bvid}"
+                )
 
     @pytest.mark.asyncio
     async def test_mixed_pool_produces_diverse_recommendations(self) -> None:
@@ -384,8 +394,9 @@ class TestMultiSourceDiversityE2E:
 
             # 3. Multiple styles (not all "unknown")
             styles = Counter(p.style_key for p in picked)
-            assert "unknown" not in styles or styles["unknown"] <= 2, \
+            assert "unknown" not in styles or styles["unknown"] <= 2, (
                 f"Too many unclassified items: {styles}"
+            )
             assert len(styles) >= 4, f"Not enough style diversity: {styles}"
 
             # 4. Multiple topics
@@ -399,10 +410,12 @@ class TestMultiSourceDiversityE2E:
             topic_tokens = set()
             for item in picked:
                 topic_tokens.update(RecommendationEngine._diversity_tokens(item))
-            assert "xhs-extension-task" not in topic_tokens, \
+            assert "xhs-extension-task" not in topic_tokens, (
                 "source_strategy leaked into diversity tokens"
-            assert "xhs-extension-tas" not in topic_tokens, \
+            )
+            assert "xhs-extension-tas" not in topic_tokens, (
                 "truncated source_strategy leaked into diversity tokens"
+            )
 
     def test_empty_title_notes_filtered_at_ingest(self) -> None:
         """Notes with empty title must not enter content_cache."""
@@ -447,13 +460,16 @@ class TestMultiSourceDiversityE2E:
             )
 
             import openbiliclaw.config
+
             original_load = openbiliclaw.config.load_config
 
             try:
                 openbiliclaw.config.load_config = lambda: fake_config
                 import openbiliclaw.llm
+
                 openbiliclaw.llm.build_llm_registry = lambda config: "registry"  # type: ignore
                 import openbiliclaw.bilibili.auth
+
                 openbiliclaw.bilibili.auth.resolve_runtime_cookie = lambda **_: ""  # type: ignore
 
                 db2 = Database(Path(tmpdir) / "test2.db")
@@ -461,6 +477,7 @@ class TestMultiSourceDiversityE2E:
                 app = create_app(database=db2)
 
                 from fastapi.testclient import TestClient
+
                 client = TestClient(app)
 
                 response = client.post(
@@ -514,8 +531,9 @@ class TestMultiSourceDiversityE2E:
 
             # One should have classified items, the other should return 0
             # (lock prevents concurrent execution)
-            assert sorted(results) == [0, 10], \
+            assert sorted(results) == [0, 10], (
                 f"Expected [0, 10], got {sorted(results)} — lock didn't prevent concurrent runs"
+            )
 
     @pytest.mark.asyncio
     async def test_xhs_only_pool_still_diverse(self) -> None:
@@ -580,12 +598,14 @@ class TestMultiSourceDiversityE2E:
 
             # First call: classifies, but LLM returns only 1 result per batch
             classified_1 = await engine.classify_pool_backlog(
-                profile=_build_profile(), limit=50,
+                profile=_build_profile(),
+                limit=50,
             )
             assert classified_1 == 10  # All 10 were "attempted"
 
             # Second call: nothing left to classify (all have score > 0)
             classified_2 = await engine.classify_pool_backlog(
-                profile=_build_profile(), limit=50,
+                profile=_build_profile(),
+                limit=50,
             )
             assert classified_2 == 0, "Items are being retried — sentinel score didn't work"

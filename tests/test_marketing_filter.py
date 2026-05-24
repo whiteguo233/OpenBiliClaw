@@ -42,8 +42,7 @@ from openbiliclaw.recommendation.marketing_filter import (
 def test_high_confidence_positives(title: str) -> None:
     result = score_marketing_signal(title)
     assert result.is_likely_marketing, (
-        f"expected high score for {title!r}, got {result.score:.2f} "
-        f"(reasons: {result.reasons})"
+        f"expected high score for {title!r}, got {result.score:.2f} (reasons: {result.reasons})"
     )
     # We also want at least 2 distinct reasons firing, otherwise the
     # threshold was crossed by a single saturated pattern (fragile).
@@ -75,13 +74,11 @@ def test_high_confidence_positives(title: str) -> None:
 def test_high_confidence_negatives(title: str) -> None:
     result = score_marketing_signal(title)
     assert not result.is_likely_marketing, (
-        f"unexpected high score for {title!r}: {result.score:.2f} "
-        f"(reasons: {result.reasons})"
+        f"unexpected high score for {title!r}: {result.score:.2f} (reasons: {result.reasons})"
     )
     # And for the cleanest cases, the score should be small.
     assert result.score < 0.25, (
-        f"score for clean title {title!r} should be near zero, "
-        f"got {result.score:.2f}"
+        f"score for clean title {title!r} should be near zero, got {result.score:.2f}"
     )
 
 
@@ -102,16 +99,15 @@ def test_single_signal_stays_below_threshold() -> None:
     independent signals before we act.
     """
     cases = [
-        "震惊！",                       # sensationalist only
-        "据悉今日有变化",               # 据悉 only
-        "学到了！",                     # 学到 only
-        "千万别错过",                   # 千万别 only
+        "震惊！",  # sensationalist only
+        "据悉今日有变化",  # 据悉 only
+        "学到了！",  # 学到 only
+        "千万别错过",  # 千万别 only
     ]
     for title in cases:
         s = score_marketing_signal(title)
         assert s.score < DEFAULT_THRESHOLD, (
-            f"single signal {title!r} crossed threshold: {s.score:.2f} "
-            f"(reasons: {s.reasons})"
+            f"single signal {title!r} crossed threshold: {s.score:.2f} (reasons: {s.reasons})"
         )
 
 
@@ -128,8 +124,7 @@ def test_long_title_penalty() -> None:
     """Titles over 30 chars add a small penalty proportional to excess."""
     short = score_marketing_signal("A short title")
     long_title = (
-        "这是一个非常非常非常非常非常非常非常非常"
-        "非常非常非常非常非常非常非常非常非常非常长的标题"
+        "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的标题"
     )
     assert len(long_title) > 40
     long_result = score_marketing_signal(long_title)
@@ -189,9 +184,7 @@ def test_duplicate_reasons_deduplicated() -> None:
     # reason appears at most once in the output list.
     title = "震惊！震惊！震惊！9成的人都不知道的真相！！！"
     result = score_marketing_signal(title)
-    assert len(set(result.reasons)) == len(result.reasons), (
-        f"duplicate reasons in {result.reasons}"
-    )
+    assert len(set(result.reasons)) == len(result.reasons), f"duplicate reasons in {result.reasons}"
 
 
 # ── Reason surfacing ──────────────────────────────────────────────

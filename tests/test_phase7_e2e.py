@@ -59,9 +59,7 @@ class _StaticStructuredService:
         return self._response
 
 
-async def _ingest_batch(
-    memory: MemoryManager, events: list[dict[str, object]]
-) -> int:
+async def _ingest_batch(memory: MemoryManager, events: list[dict[str, object]]) -> int:
     """Replicate the exact body of /api/events.ingest_events.
 
     We exercise the Pydantic validation layer (BehaviorEventBatchIn) and the

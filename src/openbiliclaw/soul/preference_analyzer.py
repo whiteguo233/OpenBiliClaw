@@ -148,11 +148,7 @@ class PreferenceAnalyzer:
         """
         if not self.satisfaction_filter_enabled:
             return events
-        filtered = [
-            event
-            for event in events
-            if self._keeps_event_under_satisfaction_filter(event)
-        ]
+        filtered = [event for event in events if self._keeps_event_under_satisfaction_filter(event)]
         if len(filtered) != len(events):
             logger.info(
                 "satisfaction_filter dropped %d/%d events before preference analysis",
@@ -179,9 +175,7 @@ class PreferenceAnalyzer:
             feedback_type = str(metadata.get("feedback_type") or "").strip().lower()
             reaction = str(metadata.get("reaction") or "").strip().lower()
         return event_type in {"feedback", "dislike"} and (
-            feedback_type == "dislike"
-            or reaction == "thumbs_down"
-            or event_type == "dislike"
+            feedback_type == "dislike" or reaction == "thumbs_down" or event_type == "dislike"
         )
 
     async def _analyze_events_single(
@@ -226,8 +220,7 @@ class PreferenceAnalyzer:
 
     def _prompt_fits_budget(self, messages: list[dict[str, str]]) -> bool:
         return (
-            self.max_prompt_chars <= 0
-            or self._prompt_char_count(messages) <= self.max_prompt_chars
+            self.max_prompt_chars <= 0 or self._prompt_char_count(messages) <= self.max_prompt_chars
         )
 
     def _estimate_budget_chunk_size(self, *, event_count: int, prompt_chars: int) -> int:

@@ -76,9 +76,7 @@ def test_configure_logging_uses_rotating_handler_when_enabled(tmp_path: Path) ->
     )
 
     configure_logging(config)
-    file_handlers = [
-        h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)
-    ]
+    file_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
 
     assert len(file_handlers) == 1
     handler = file_handlers[0]
@@ -98,9 +96,7 @@ def test_configure_logging_disables_rotation_when_size_is_zero(tmp_path: Path) -
     )
 
     configure_logging(config)
-    file_handlers = [
-        h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)
-    ]
+    file_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
 
     assert len(file_handlers) == 1
     handler = file_handlers[0]

@@ -131,9 +131,7 @@ def _parse_zip(zip_path: Path) -> TakeoutParseResult:
                 data = zf.read(watch_html)
                 _parse_watch_html(data.decode("utf-8", errors="replace"), result)
             else:
-                result.warnings.append(
-                    "watch-history.json / watch-history.html not found in zip"
-                )
+                result.warnings.append("watch-history.json / watch-history.html not found in zip")
 
             if subs_csv:
                 data = zf.read(subs_csv)
@@ -172,9 +170,7 @@ def _parse_dir(root: Path) -> TakeoutParseResult:
 
     subs_file = subs_dir / "subscriptions.csv"
     if subs_file.exists():
-        _parse_subscriptions_csv(
-            subs_file.read_text(encoding="utf-8", errors="replace"), result
-        )
+        _parse_subscriptions_csv(subs_file.read_text(encoding="utf-8", errors="replace"), result)
 
     liked_file = _find_dir_liked(playlists_dir)
     if liked_file:

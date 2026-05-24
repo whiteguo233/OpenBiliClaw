@@ -204,9 +204,7 @@ class TestXhsCreatorStore:
         assert deleted is True
         assert len(creator_store.list_all()) == 0
 
-    def test_delete_nonexistent_returns_false(
-        self, creator_store: XhsCreatorStore
-    ) -> None:
+    def test_delete_nonexistent_returns_false(self, creator_store: XhsCreatorStore) -> None:
         assert creator_store.delete(9999) is False
 
     def test_due_for_fetch(self, creator_store: XhsCreatorStore, db: Database) -> None:

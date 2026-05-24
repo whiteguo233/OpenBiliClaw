@@ -2093,7 +2093,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "gemini",
                 "gemini-key",
                 "",
-                    "3",
+                "3",
                 "n",
                 "y",
                 "",
@@ -2401,7 +2401,7 @@ def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
             users = [
                 SimpleNamespace(uname=f"关注用户 {idx}", sign=f"签名 {idx}")
                 for idx in range(start, min(start + page_size, 350))
-                ]
+            ]
             return users
 
     class FakeAuthManager:

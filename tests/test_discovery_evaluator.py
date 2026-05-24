@@ -39,15 +39,17 @@ def _make_items(
 ) -> list[DiscoveredContent]:
     items: list[DiscoveredContent] = []
     for i, topic in enumerate(topics):
-        items.append(DiscoveredContent(
-            bvid=f"BV{i:03d}",
-            title=f"Video about {topic}",
-            topic_key=topic,
-            style_key=(styles[i] if styles and i < len(styles) else ""),
-            relevance_reason=(reasons[i] if reasons and i < len(reasons) else ""),
-            relevance_score=(scores[i] if scores and i < len(scores) else 0.5),
-            source_strategy="search",
-        ))
+        items.append(
+            DiscoveredContent(
+                bvid=f"BV{i:03d}",
+                title=f"Video about {topic}",
+                topic_key=topic,
+                style_key=(styles[i] if styles and i < len(styles) else ""),
+                relevance_reason=(reasons[i] if reasons and i < len(reasons) else ""),
+                relevance_score=(scores[i] if scores and i < len(scores) else 0.5),
+                source_strategy="search",
+            )
+        )
     return items
 
 

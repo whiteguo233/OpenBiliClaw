@@ -140,15 +140,12 @@ class SoulProfile:
 
         if self.active_insights:
             insights_text = "\n".join(
-                f"- {i.hypothesis} (置信度: {i.confidence:.0%})"
-                for i in self.active_insights
+                f"- {i.hypothesis} (置信度: {i.confidence:.0%})" for i in self.active_insights
             )
             parts.append(f"## 当前洞察\n{insights_text}")
 
         if self.recent_awareness:
-            notes = "\n".join(
-                f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5]
-            )
+            notes = "\n".join(f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5])
             parts.append(f"## 近期观察\n{notes}")
 
         if len(self.preferences.source_platform_mix) > 1:
@@ -592,9 +589,7 @@ class OnionProfile:
                 dom.weight = tag.weight
         self.interest = InterestLayer(
             likes=list(domain_map.values()),
-            dislikes=[
-                InterestDomain(domain=topic, weight=0.9) for topic in pref.disliked_topics
-            ],
+            dislikes=[InterestDomain(domain=topic, weight=0.9) for topic in pref.disliked_topics],
             favorite_up_users=list(pref.favorite_up_users),
         )
         self.surface.style = pref.style
@@ -672,8 +667,7 @@ class OnionProfile:
         likes = list(domain_map.values())
 
         dislikes = [
-            InterestDomain(domain=topic, weight=0.9)
-            for topic in soul.preferences.disliked_topics
+            InterestDomain(domain=topic, weight=0.9) for topic in soul.preferences.disliked_topics
         ]
 
         # Extract MBTI if the builder attached raw data
@@ -749,20 +743,18 @@ class OnionProfile:
         if speculations:
             spec_lines = [
                 f"- {s.get('domain', '')}（{s.get('reason', '')}）"
-                if isinstance(s, dict) else f"- {s.domain}（{s.reason}）"
+                if isinstance(s, dict)
+                else f"- {s.domain}（{s.reason}）"
                 for s in speculations[:5]
             ]
             parts.append("## 猜测兴趣（待验证）\n" + "\n".join(spec_lines))
         if self.active_insights:
             insights_text = "\n".join(
-                f"- {i.hypothesis} (置信度: {i.confidence:.0%})"
-                for i in self.active_insights
+                f"- {i.hypothesis} (置信度: {i.confidence:.0%})" for i in self.active_insights
             )
             parts.append(f"## 当前洞察\n{insights_text}")
         if self.recent_awareness:
-            notes = "\n".join(
-                f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5]
-            )
+            notes = "\n".join(f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5])
             parts.append(f"## 近期观察\n{notes}")
         return "\n\n".join(parts) if parts else "（尚未建立用户画像）"
 
