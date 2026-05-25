@@ -4,11 +4,11 @@
 
 ---
 
-## v0.3.91 / extension v0.3.48: 挑战式兴趣探针发布（2026-05-25）
+## v0.3.91 / extension v0.3.49: 挑战式兴趣探针与跨源推荐点击修复（2026-05-25）
 
 - 修复 YouTube 推荐点击的跨源链路：推荐卡片和移动 Web 现在向 `/api/recommendation-click` 同步上报 `content_id / content_url / source_platform`；后端会从 payload 或推荐记录补齐来源，YouTube 点击会写成 YouTube URL 和 `source_platform="youtube"` 的事件 / 强画像信号，不再把 `KPoJ7p9iy4Q` 这类 YouTube ID 记成 B 站 BV 号。惊喜推荐 payload 也暴露 `content_url / source_platform`，前端 URL fallback 会按来源构造。
 - 主页 SEO 全面补齐：`docs/index.html` 增加 canonical、hreflang(zh-CN/en/x-default)、完整 OG + Twitter Card、JSON-LD（SoftwareApplication + SoftwareSourceCode + WebSite）、关键词、theme-color、preconnect；i18n 切换语言时同步覆盖 title / description / og / twitter / locale。首屏 hero 图 `fetchpriority=high`，截图全部 `loading=lazy`+显式宽高，CLS 0.00 / LCP 197ms。Lighthouse 移动 + 桌面四项均 100。新增 `docs/sitemap.xml`（含 image sitemap）、`docs/robots.txt`、`docs/seo.md`（Search Console / Bing 提交清单 + 长期维护要点）。
-- 后端源码版本仍为 v0.3.91；浏览器插件版本提升到 extension v0.3.48，准备发布 `extension-v0.3.48`。
+- 后端源码版本仍为 v0.3.91；浏览器插件版本提升到 extension v0.3.49，准备发布 `extension-v0.3.49`；v0.3.48 已发布，此次补发跨源推荐点击修复。
 - 兴趣探针新增 near / lateral / bridge / wildcard 四档挑战距离，system prompt 保留距离定义，运行时按近期历史和画像状态控制探索远近。
 - 探针反馈改成 4-way 语义：`positive`、`weak_positive`、`negative`、`neutral`；聊天、卡片、OpenClaw adapter 和 avoidance probe 的反向语义都走同一套写回分支。
 - 弱正向兴趣探针先进入短期 exploration buffer，只有积累到足够显式信号后才晋升为正式兴趣，避免单次“有点意思”造成推荐短期刷屏。

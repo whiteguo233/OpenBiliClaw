@@ -27,12 +27,12 @@
 
 ---
 
-## 📌 v0.3.91 / extension v0.3.48 重要更新（2026-05-25）
+## 📌 v0.3.91 / extension v0.3.49 重要更新（2026-05-25）
 
 - **🔮 挑战式兴趣探针** —— 兴趣探针按 near / lateral / bridge / wildcard 四档控制探索距离，既能试探相近兴趣，也能发起更大胆的心理桥接。
+- **🎬 YouTube 推荐点击修复** —— 推荐卡片和移动 Web 打开 YouTube 内容时会保留 `content_id / content_url / source_platform`，画像事件不再把 YouTube ID 写成 B 站链接。
 - **🧪 弱正向 buffer** —— “有点意思”这类弱正向反馈先进入短期 buffer，积累足够显式信号后才晋升为正式兴趣。
 - **🛡️ 推荐放大保护** —— 新确认方向参与探索时带 per-refresh 上限，避免一次确认后短期刷屏。
-- **🧭 避雷探针语义统一** —— 不喜欢领域探针继续写入 `disliked_topics`，聊天确认 / 否认和兴趣探针共享 4-way 反馈分支。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -579,7 +579,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.91 / extension v0.3.48: 挑战式兴趣探针发布（2026-05-25）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.91 / extension v0.3.49: 挑战式兴趣探针与跨源推荐点击修复（2026-05-25）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 
