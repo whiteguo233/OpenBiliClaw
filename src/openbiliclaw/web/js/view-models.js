@@ -201,10 +201,32 @@ export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }
 
+export function buildYouTubeUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${normalizeText(videoId)}`;
+}
+
 export function buildContentUrl(item) {
   if (item?.content_url) return item.content_url;
-  if (item?.bvid) return buildVideoUrl(item.bvid);
-  return "";
+  const platform = normalizeText(item?.source_platform);
+  const vid = normalizeText(item?.content_id || item?.bvid);
+  if (!vid) return "";
+  if (platform === "youtube") return buildYouTubeUrl(vid);
+  return buildVideoUrl(vid);
+}
+
+export function buildRecommendationClickPayload(item, contentUrl = "") {
+  const bvid = normalizeText(item?.bvid || item?.content_id);
+  const contentId = normalizeText(item?.content_id || item?.bvid);
+  return {
+    bvid,
+    content_id: contentId,
+    content_url: normalizeText(contentUrl) || normalizeText(item?.content_url),
+    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    title: normalizeText(item?.title),
+    recommendation_id: typeof item?.id === "number" ? item.id : null,
+    topic_label: normalizeText(item?.topic_label),
+    up_name: normalizeText(item?.up_name),
+  };
 }
 
 // ── Recommendation Normalization ─────────────────────────────

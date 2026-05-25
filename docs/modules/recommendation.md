@@ -20,7 +20,7 @@
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示 |
 | 6.3 推荐持久化 | ✅ | 推荐记录已补齐展示状态、结构化反馈字段和反馈更新时间 |
 | 候选排序统一 | ✅ | freshly discovered 与 cache backfill 现在共享同一套 tier / relevance / recency 排序口径 |
-| 9.1 反馈处理 | ✅ | CLI、本地 API、插件 popup 与移动 Web 已统一写回推荐反馈与 `feedback` 事件 |
+| 9.1 反馈处理 | ✅ | CLI、本地 API、插件 popup 与移动 Web 已统一写回推荐反馈与 `feedback` 事件；推荐点击会携带 `content_id / content_url / source_platform`，跨源内容不会被记成 B 站点击 |
 | 9.2 画像更新 | ✅ | 反馈累计到阈值后会自动触发偏好层重分析与画像重建 |
 | 体验优化：动态“老B友”语气 | ✅ | 推荐文案不再固定套模板，而是根据画像、偏好和近期反馈动态调整信息密度、温度、梗感与直给程度 |
 | M106 候选池即时换一批 | ✅ | `content_cache` 现已作为 discovery pool 使用，popup 可秒级从池子里换一批新推荐 |
@@ -205,6 +205,32 @@ Recommendation(
 - `cover_url`
 - `relevance_score`
 - `relevance_reason`
+- `content_id`
+- `content_url`
+- `source_platform`
+
+### Recommendation Click API
+
+```http
+POST /api/recommendation-click
+Content-Type: application/json
+
+{
+  "recommendation_id": 42,
+  "bvid": "KPoJ7p9iy4Q",
+  "content_id": "KPoJ7p9iy4Q",
+  "content_url": "https://www.youtube.com/watch?v=KPoJ7p9iy4Q",
+  "source_platform": "youtube",
+  "title": "A YouTube deep dive"
+}
+```
+
+行为说明：
+
+- `bvid` 保留为推荐历史兼容字段；非 B 站内容可传同一个跨源 `content_id`
+- `content_id / content_url / source_platform` 会进入持久化 click 事件和 `recommendation_click` 强画像信号
+- 如果 payload 只传 `recommendation_id`，后端会从推荐记录 join `content_cache` 回填标题、作者、topic、`content_id / content_url / source_platform`
+- `content_url` 缺失时，后端只对 B 站、YouTube、抖音构造安全 fallback；小红书仍要求已有带 token 的 URL，避免生成不可打开的裸链接
 
 ### Recommendation Feedback
 

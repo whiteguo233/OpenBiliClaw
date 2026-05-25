@@ -97,7 +97,7 @@ class TestMobileWebViewModels:
             import * as vm from "./src/openbiliclaw/web/js/view-models.js";
 
             const required = [
-              "buildVideoUrl", "buildContentUrl",
+              "buildVideoUrl", "buildContentUrl", "buildRecommendationClickPayload",
               "normalizeRecommendation", "normalizeDelightCandidate",
               "getDelightUiState", "getDelightActionState",
               "buildFeedbackPayload", "validateCommentInput", "getCommentSubmitUiState",
@@ -119,6 +119,39 @@ class TestMobileWebViewModels:
             for (const name of required) {
                 assert.equal(typeof vm[name], "function", `missing export: ${name}`);
             }
+        """)
+        )
+
+    def test_youtube_recommendation_url_and_click_payload_are_source_aware(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              buildContentUrl,
+              buildRecommendationClickPayload,
+              normalizeRecommendation,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const item = normalizeRecommendation({
+              id: 42,
+              bvid: "KPoJ7p9iy4Q",
+              content_id: "KPoJ7p9iy4Q",
+              title: "A YouTube deep dive",
+              source_platform: "youtube",
+            });
+            const url = buildContentUrl(item);
+
+            assert.equal(url, "https://www.youtube.com/watch?v=KPoJ7p9iy4Q");
+            assert.deepEqual(buildRecommendationClickPayload(item, url), {
+              bvid: "KPoJ7p9iy4Q",
+              content_id: "KPoJ7p9iy4Q",
+              content_url: "https://www.youtube.com/watch?v=KPoJ7p9iy4Q",
+              source_platform: "youtube",
+              title: "A YouTube deep dive",
+              recommendation_id: 42,
+              topic_label: "",
+              up_name: "这位 UP 还没认出来",
+            });
         """)
         )
 

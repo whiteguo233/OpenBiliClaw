@@ -15,6 +15,7 @@ import tempfile
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -320,6 +321,38 @@ def _normalize_source_platform(source: object) -> str:
     if source_key in {"bilibili", "bili", ""}:
         return "bilibili"
     return source_key
+
+
+def _infer_source_platform_from_url(url: object) -> str:
+    text = str(url or "").strip().lower()
+    if "youtube.com" in text or "youtu.be" in text:
+        return "youtube"
+    if "xiaohongshu.com" in text or "xhslink.com" in text:
+        return "xiaohongshu"
+    if "douyin.com" in text:
+        return "douyin"
+    if "bilibili.com" in text or "b23.tv" in text:
+        return "bilibili"
+    return ""
+
+
+def _fallback_recommendation_click_url(
+    *,
+    source_platform: str,
+    content_id: str,
+    bvid: str,
+) -> str:
+    """Build a canonical click URL when the recommendation row lacks one."""
+    item_id = (content_id or bvid).strip()
+    if not item_id:
+        return ""
+    if source_platform == "youtube":
+        return f"https://www.youtube.com/watch?v={quote(item_id, safe='')}"
+    if source_platform == "douyin":
+        return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if source_platform == "bilibili":
+        return f"https://www.bilibili.com/video/{quote(bvid or item_id, safe='')}"
+    return ""
 
 
 def _normalize_probe_mode_for_payload(value: object) -> str:
@@ -3487,36 +3520,60 @@ def create_app(
             )
 
         bvid = (payload.bvid or "").strip()
+        content_id = (payload.content_id or "").strip()
+        content_url = (payload.content_url or "").strip()
+        source_platform_raw = (payload.source_platform or "").strip()
         title = (payload.title or "").strip()
         topic_label = (payload.topic_label or "").strip()
         up_name = (payload.up_name or "").strip()
 
         if recommendation is not None:
-            bvid = bvid or str(recommendation.get("bvid", "")).strip()
-            title = title or str(recommendation.get("title", "")).strip()
-            topic_label = topic_label or str(recommendation.get("topic_label", "")).strip()
-            up_name = up_name or str(recommendation.get("up_name", "")).strip()
+            bvid = bvid or str(recommendation.get("bvid", "") or "").strip()
+            content_id = content_id or str(recommendation.get("content_id", "") or "").strip()
+            content_url = content_url or str(recommendation.get("content_url", "") or "").strip()
+            source_platform_raw = (
+                source_platform_raw or str(recommendation.get("source_platform", "") or "").strip()
+            )
+            title = title or str(recommendation.get("title", "") or "").strip()
+            topic_label = topic_label or str(recommendation.get("topic_label", "") or "").strip()
+            up_name = up_name or str(recommendation.get("up_name", "") or "").strip()
 
+        content_id = content_id or bvid
+        bvid = bvid or content_id
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required.")
+        if not source_platform_raw:
+            source_platform_raw = _infer_source_platform_from_url(content_url)
+        source_platform = _normalize_source_platform(source_platform_raw)
+        if not content_url:
+            content_url = _fallback_recommendation_click_url(
+                source_platform=source_platform,
+                content_id=content_id,
+                bvid=bvid,
+            )
 
         # Persist the click as an event so history/query paths can see it.
         from openbiliclaw.sources.event_format import (
-            SOURCE_BILIBILI,
             build_event,
+            format_event_context,
         )
 
         click_extra_parts: list[str] = []
         if topic_label:
             click_extra_parts.append(f"主题:{topic_label}")
-        if up_name:
-            click_extra_parts.append(f"UP:{up_name}")
-        click_context = f"在 B 站点开了《{title}》"
-        if click_extra_parts:
-            click_context = f"{click_context}({','.join(click_extra_parts)})"
+        click_context = format_event_context(
+            event_type="click",
+            source_platform=source_platform,
+            title=title,
+            author=up_name,
+            extra=",".join(click_extra_parts),
+        )
         click_metadata: dict[str, object] = {
             "recommendation_id": payload.recommendation_id,
             "bvid": bvid,
+            "content_id": content_id,
+            "content_url": content_url,
+            "source_platform": source_platform,
             "topic_label": topic_label,
             "up_name": up_name,
             "source": "recommendation_click",
@@ -3534,9 +3591,9 @@ def create_app(
             await ctx.memory_manager.propagate_event(
                 build_event(
                     event_type="click",
-                    source_platform=SOURCE_BILIBILI,
+                    source_platform=source_platform,
                     title=title,
-                    url=f"https://www.bilibili.com/video/{bvid}" if bvid else "",
+                    url=content_url,
                     author=up_name,
                     context=click_context,
                     metadata=click_metadata,
@@ -3566,6 +3623,9 @@ def create_app(
                 recommendation_id=payload.recommendation_id,
                 topic_label=topic_label,
                 up_name=up_name,
+                content_id=content_id,
+                content_url=content_url,
+                source_platform=source_platform,
             )
             try:
                 ingest_result = await pipeline.ingest(signal)

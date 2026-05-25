@@ -2462,7 +2462,7 @@ class Database:
             """
             SELECT r.bvid, c.topic_key, c.topic_group, c.source, r.created_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             ORDER BY r.created_at DESC, r.id DESC
             LIMIT ?
             """,
@@ -2487,7 +2487,7 @@ class Database:
                    r.created_at,
                    r.presented_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE COALESCE(r.presented_at, r.created_at) >= ?
             ORDER BY COALESCE(r.presented_at, r.created_at) DESC, r.id DESC
             """,
@@ -2510,7 +2510,7 @@ class Database:
             SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key,
                    c.source, c.title, c.franchise_key
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.feedback_type IS NOT NULL
             ORDER BY r.feedback_at DESC
             LIMIT ?
@@ -2534,15 +2534,15 @@ class Database:
             """
             SELECT
                 r.*,
-                c.title AS title,
-                c.up_name AS up_name,
-                c.cover_url AS cover_url,
-                c.content_id AS content_id,
-                c.content_url AS content_url,
-                c.source_platform AS source_platform,
-                c.franchise_key AS franchise_key
+                COALESCE(c.title, '') AS title,
+                COALESCE(c.up_name, '') AS up_name,
+                COALESCE(c.cover_url, '') AS cover_url,
+                COALESCE(c.content_id, r.bvid) AS content_id,
+                COALESCE(c.content_url, '') AS content_url,
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.franchise_key, '') AS franchise_key
             FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid
+            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE (
                 COALESCE(c.source_platform, '') != 'xiaohongshu'
                 OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
@@ -2587,7 +2587,7 @@ class Database:
                 c.notification_sent,
                 c.notified_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.presented = 0
               AND c.notification_sent = 0
               AND r.confidence >= ?
@@ -2635,9 +2635,16 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT r.*, c.title AS title, c.up_name AS up_name
+            SELECT
+                r.*,
+                r.topic AS topic_label,
+                c.title AS title,
+                c.up_name AS up_name,
+                COALESCE(c.content_id, r.bvid) AS content_id,
+                COALESCE(c.content_url, '') AS content_url,
+                COALESCE(c.source_platform, '') AS source_platform
             FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid
+            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.id = ?
             """,
             (recommendation_id,),

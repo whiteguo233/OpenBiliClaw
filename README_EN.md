@@ -409,10 +409,10 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Recs · True Pool Count · Chat · Probes) │
+│      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
 │      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
-                         │ REST API / WebSocket (presence + cookies + pool counts + probes)
+                         │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
 │       (Skills · Dialogue · Runtime Gate · Account Sync) │

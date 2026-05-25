@@ -36,6 +36,7 @@ import {
   validateCommentInput,
   getCommentSubmitUiState,
   buildContentUrl,
+  buildRecommendationClickPayload,
   normalizeSourcePlatform,
   getSourceLabel,
   formatRelativeTimestamp,
@@ -779,7 +780,7 @@ function renderCard(rawItem, index = 0) {
   const alreadyFeedback = feedbackDone.get(item.id);
 
   const openBtn = createCardAction("\u{1F517} \u6253\u5F00", () => {
-    reportClick({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic_label, up_name: item.up_name });
+    reportClick(buildRecommendationClickPayload(item, url));
     if (url) window.open(url, "_blank");
   });
 
@@ -841,7 +842,7 @@ function renderCard(rawItem, index = 0) {
   if (url) {
     card.style.cursor = "pointer";
     card.addEventListener("click", () => {
-      reportClick({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic_label, up_name: item.up_name });
+      reportClick(buildRecommendationClickPayload(item, url));
       window.open(url, "_blank");
     });
   }

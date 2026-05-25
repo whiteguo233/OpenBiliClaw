@@ -645,6 +645,8 @@ class ContinuousRefreshController:
             "delight_score": float(candidate.get("delight_score", 0.0) or 0.0),
             "delight_hook": str(candidate.get("delight_hook", "")),
             "cover_url": str(candidate.get("cover_url", "")),
+            "content_url": str(candidate.get("content_url", "")),
+            "source_platform": str(candidate.get("source_platform", "") or "bilibili"),
         }
 
     def _load_disliked_topic_phrases(self) -> list[str]:

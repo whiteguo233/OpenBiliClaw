@@ -454,6 +454,9 @@ def signal_from_recommendation_click(
     recommendation_id: int | None = None,
     topic_label: str = "",
     up_name: str = "",
+    content_id: str = "",
+    content_url: str = "",
+    source_platform: str = "",
 ) -> ProfileSignal:
     """Convert a recommendation click-through into a strong profile signal.
 
@@ -473,6 +476,12 @@ def signal_from_recommendation_click(
         payload["topic_label"] = topic_label
     if up_name:
         payload["up_name"] = up_name
+    if content_id:
+        payload["content_id"] = content_id
+    if content_url:
+        payload["content_url"] = content_url
+    if source_platform:
+        payload["source_platform"] = source_platform
     return _make_signal(SignalType.RECOMMENDATION_CLICK, "recommendation", payload)
 
 

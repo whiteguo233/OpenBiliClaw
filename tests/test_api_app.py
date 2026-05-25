@@ -3689,6 +3689,78 @@ class TestBackendAPI:
         assert ingested_signal.payload["topic_label"] == "AI技术"
         assert ingested_signal.payload["up_name"] == "ML教程君"
 
+    def test_recommendation_click_endpoint_keeps_youtube_click_source_aware(self) -> None:
+        """YouTube recommendation clicks must not be persisted as Bilibili URLs."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self,
+                recommendation_id: int,
+            ) -> dict[str, object] | None:
+                if recommendation_id != 42:
+                    return None
+                return {
+                    "id": 42,
+                    "bvid": "KPoJ7p9iy4Q",
+                    "content_id": "KPoJ7p9iy4Q",
+                    "content_url": "https://www.youtube.com/watch?v=KPoJ7p9iy4Q",
+                    "source_platform": "youtube",
+                    "title": "A YouTube deep dive",
+                    "topic_label": "技术长视频",
+                    "up_name": "YT Creator",
+                }
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+                from openbiliclaw.soul.pipeline import IngestResult
+
+                return IngestResult(signals_accepted=1)
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"recommendation_id": 42},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bvid"] == "KPoJ7p9iy4Q"
+        assert memory.events, "YouTube click should be persisted"
+        event = memory.events[0]
+        assert event["url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+        assert "YouTube" in event["context"]
+        assert event["metadata"]["source_platform"] == "youtube"
+        assert event["metadata"]["content_id"] == "KPoJ7p9iy4Q"
+        assert event["metadata"]["content_url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+
+        signal = soul_engine.pipeline.ingested[0]
+        assert signal.payload["source_platform"] == "youtube"
+        assert signal.payload["content_id"] == "KPoJ7p9iy4Q"
+        assert signal.payload["content_url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+
     def test_recommendation_click_endpoint_persists_dwell_fields(self) -> None:
         """When the extension reports dwell on the click-through, those
         fields flow into the persisted click event so storage can classify

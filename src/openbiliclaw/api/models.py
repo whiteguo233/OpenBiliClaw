@@ -164,6 +164,8 @@ class PendingDelightOut(BaseModel):
     delight_score: float = 0.0
     delight_hook: str = ""
     cover_url: str = ""
+    content_url: str = ""
+    source_platform: str = ""
 
 
 class PendingDelightResponse(BaseModel):
@@ -459,6 +461,9 @@ class RecommendationClickIn(BaseModel):
 
     recommendation_id: int | None = None
     bvid: str = ""
+    content_id: str = ""
+    content_url: str = ""
+    source_platform: str = ""
     title: str = ""
     topic_label: str = ""
     up_name: str = ""

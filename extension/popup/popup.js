@@ -4,6 +4,7 @@ import {
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
   buildContentUrl,
+  buildRecommendationClickPayload,
   buildVideoUrl,
   formatRelativeTimestamp,
   getCommentSubmitUiState,
@@ -1551,7 +1552,7 @@ function buildDelightCard(delight) {
   viewBtn.className = "probe-btn is-view";
   viewBtn.textContent = "\u770B\u770B";
   viewBtn.addEventListener("click", () => {
-    const url = delight.content_url || `https://www.bilibili.com/video/${delight.bvid}`;
+    const url = buildContentUrl(delight);
     window.open(url, "_blank");
     respondToDelight(delight.bvid, "view", delight.title).catch(() => {});
     dismissMessageByBvid(delight.bvid);
@@ -2924,23 +2925,24 @@ function attachFeedbackRuntimeProgress(statusLine) {
  *   title?: string,
  *   topic_label?: string,
  *   up_name?: string,
+ *   content_id?: string,
+ *   content_url?: string,
+ *   source_platform?: string,
  * }} [context]
  */
 async function openRecommendation(bvid, context = {}) {
-  if (!bvid) {
-    setHint("这条卡片还没挂上 BV 号，稍后再试。", "error");
+  const url = buildContentUrl(context);
+  if (!url) {
+    setHint("这条卡片还没挂上链接，稍后再试。", "error");
     return;
   }
   // Fire-and-forget click report (best effort). Runs in parallel with tab.create.
-  void reportRecommendationClick({
-    bvid,
-    title: context.title || "",
-    recommendation_id:
-      typeof context.id === "number" ? context.id : null,
-    topic_label: context.topic_label || "",
-    up_name: context.up_name || "",
-  });
-  const url = buildContentUrl(context) || buildVideoUrl(bvid);
+  void reportRecommendationClick(
+    buildRecommendationClickPayload(
+      { ...context, bvid: bvid || context.bvid || context.content_id || "" },
+      url,
+    ),
+  );
   await chrome.tabs.create({ url });
 }
 
