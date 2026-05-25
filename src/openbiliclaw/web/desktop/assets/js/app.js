@@ -12,7 +12,6 @@
       notificationSent: "/notifications/sent",
       delightBatch: "/delight/pending-batch",
       delightRespond: "/delight/respond",
-      delightSent: "/delight/sent",
       profile: "/profile-summary",
       feedback: "/feedback",
       click: "/recommendation-click",
@@ -1609,11 +1608,17 @@
       const feedbackToast = response === "like" ? "惊喜推荐已喜欢" : response === "dislike" ? "这类惊喜先少来点" : "已忽略这条惊喜推荐";
       const toastImmediately = response === "like" || response === "dislike";
       if (toastImmediately) showToast(feedbackToast);
-      if (response === "dismiss") {
-        await requestJson(ENDPOINTS.delightSent, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid }) });
-      } else {
-        await requestJson(ENDPOINTS.delightRespond, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, response, title: delight.title, message: "" }) });
-      }
+      await requestJson(ENDPOINTS.delightRespond, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bvid: delight.bvid,
+          response,
+          response,
+          title: delight.title,
+          message: ""
+        })
+      });
       state.delights = state.delights.filter((item) => item.bvid !== delight.bvid);
       setActiveDelight(Math.min(state.delightIndex, state.delights.length - 1));
       if (el) el.remove();

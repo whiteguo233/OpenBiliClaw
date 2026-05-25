@@ -1605,9 +1605,7 @@ def create_app(
         # ── Speculative avoidances ──
         try:
             avoidance_state = load_avoidance_state(runtime_config.data_path)
-            active_avoidances = [
-                item for item in avoidance_state.active if item.status == "active"
-            ]
+            active_avoidances = [item for item in avoidance_state.active if item.status == "active"]
             avoidance_items = [
                 SpeculativeAvoidanceOut(
                     domain=item.domain,
@@ -2166,23 +2164,39 @@ def create_app(
 
         Body:
         ``{ "bvid": "...", "title": "...", "response": "view"|"dislike"|"chat",
-        "message": "..." }``
+        "message": "..." }``. ``dismiss`` is accepted as a response so clients
+        can consume a delight recommendation without also calling
+        ``/api/delight/sent``.
         """
         from fastapi.responses import JSONResponse
 
         bvid = str(payload.get("bvid", "")).strip()
         title = str(payload.get("title", "")).strip()
-        response_type = str(payload.get("response", "")).strip().lower()
+        response_type = str(payload.get("response") or "").strip().lower()
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required")
-        if response_type not in {"view", "like", "dislike", "chat"}:
+        if response_type not in {"view", "like", "dislike", "chat", "dismiss"}:
             raise HTTPException(
                 status_code=422,
-                detail="response must be view, like, dislike, or chat",
+                detail="response must be view, like, dislike, chat, or dismiss",
             )
+
+        def mark_delight_consumed() -> None:
+            mark_sent = getattr(ctx.runtime_controller, "mark_delight_sent", None)
+            if callable(mark_sent):
+                mark_sent(bvid)
+            else:
+                ctx.database.mark_delight_notified(bvid)
 
         if response_type == "view":
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
+
+        if response_type == "dismiss":
+            try:
+                mark_delight_consumed()
+            except Exception:
+                logger.debug("Failed to dismiss delight bvid %s", bvid)
+            return JSONResponse(content={"ok": True, "action": "dismissed", "bvid": bvid})
 
         if response_type == "like":
             # User marks this delight as liked WITHOUT having opened the
@@ -2197,7 +2211,7 @@ def create_app(
                     "WHERE bvid = ?",
                     (bvid,),
                 )
-                ctx.database.mark_delight_notified(bvid)
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to record delight like for %s", bvid)
             label = title or bvid
@@ -2226,7 +2240,7 @@ def create_app(
                     "WHERE bvid = ?",
                     (bvid,),
                 )
-                ctx.database.mark_delight_notified(bvid)
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to purge delight bvid %s", bvid)
             label = title or bvid
@@ -2291,7 +2305,7 @@ def create_app(
             detail=f"你的反馈：{raw_message}\n阿b的回复：{reply}",
         )
         with suppress(Exception):
-            ctx.database.mark_delight_notified(bvid)
+            mark_delight_consumed()
         await _publish_probe_event("delight.chat", f"关于「{label}」你说：{raw_message}", bvid)
         return JSONResponse(content={"ok": True, "action": "chat", "bvid": bvid, "reply": reply})
 
@@ -3019,9 +3033,8 @@ def create_app(
         if response_type == "confirm":
             requested_source = str(payload.get("confirmation_source", "")).strip()
             surface = str(payload.get("surface", "")).strip().lower()
-            confirmation_source = (
-                requested_source
-                or ("profile_confirmed" if surface == "profile" else "probe_confirmed")
+            confirmation_source = requested_source or (
+                "profile_confirmed" if surface == "profile" else "probe_confirmed"
             )
             _record_probe_feedback_history(
                 domain,
@@ -3292,9 +3305,7 @@ def create_app(
                             memory=ctx.memory_manager,
                             database=getattr(ctx, "database", None)
                             or getattr(ctx.memory_manager, "_database", None),
-                            embedding_service=getattr(
-                                ctx.soul_engine, "_embedding_service", None
-                            ),
+                            embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
                             llm_service=getattr(ctx, "llm_service", None),
                             topics=topics,
                         )
