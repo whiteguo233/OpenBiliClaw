@@ -299,8 +299,7 @@ def promote_ready_avoidances(
     remaining: list[SpeculativeAvoidance] = []
     for item in state.active:
         ready = (
-            item.status == "active"
-            and item.confirmation_count >= item.confirmation_threshold
+            item.status == "active" and item.confirmation_count >= item.confirmation_threshold
         ) or item.status == "confirmed"
         if ready:
             item.status = "promoted"

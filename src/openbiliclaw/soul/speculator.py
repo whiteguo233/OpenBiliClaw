@@ -1311,9 +1311,7 @@ def _replace_weakest_selected(
     avoid_axes: set[str],
     replace_modes: set[str],
 ) -> bool:
-    replaceable = [
-        candidate for candidate in selected if _probe_mode(candidate) in replace_modes
-    ]
+    replaceable = [candidate for candidate in selected if _probe_mode(candidate) in replace_modes]
     if not replaceable:
         return False
     weakest = min(
@@ -1485,9 +1483,7 @@ def choose_next_probe_candidate(
 ) -> Any | None:
     recent_domains = probed_domains or set()
     recent_axes = probed_axes or set()
-    recent_probe_modes = {
-        _normalize_probe_mode(mode) for mode in (probed_probe_modes or set())
-    }
+    recent_probe_modes = {_normalize_probe_mode(mode) for mode in (probed_probe_modes or set())}
     negative_domains = _negative_probe_feedback_domains(feedback_history)
     negative_axes = _negative_probe_feedback_axes(feedback_history)
     candidates = []
@@ -1535,8 +1531,7 @@ def choose_next_probe_candidate(
                 entry_load=getattr(candidate, "entry_load", ""),
             )
             not in negative_axes,
-            _normalize_probe_mode(getattr(candidate, "probe_mode", ""))
-            not in recent_probe_modes,
+            _normalize_probe_mode(getattr(candidate, "probe_mode", "")) not in recent_probe_modes,
             float(getattr(candidate, "weight", 0.0) or 0.0),
             float(getattr(candidate, "confidence", 0.0) or 0.0),
         ),

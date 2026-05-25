@@ -859,9 +859,7 @@ class ProfileUpdatePipeline:
                     for specific in getattr(spec, "specifics", [])
                     if str(getattr(specific, "name", "")).strip()
                 ]
-                source = str(
-                    getattr(spec, "confirmation_source", "") or "speculated"
-                )
+                source = str(getattr(spec, "confirmation_source", "") or "speculated")
                 merge_confirmed_interest(
                     profile,
                     domain=str(getattr(spec, "domain", "")),
@@ -932,8 +930,7 @@ class ProfileUpdatePipeline:
             signals_consumed=0,
             trigger="避雷方向确认",
             evidence=", ".join(
-                f"{item.domain}({item.confirmation_count}次确认)"
-                for item in tick_result.promoted
+                f"{item.domain}({item.confirmation_count}次确认)" for item in tick_result.promoted
             ),
             timestamp=datetime.now().isoformat(),
         )

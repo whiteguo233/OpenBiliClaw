@@ -313,8 +313,7 @@ async def test_avoidance_speculator_force_tick_generates_candidates(tmp_path):
                             {
                                 "domain": "浅层热点复读",
                                 "reason": (
-                                    "用户可能不喜欢没有信息增量、"
-                                    "只是在复读热梗和立场的热点内容。"
+                                    "用户可能不喜欢没有信息增量、只是在复读热梗和立场的热点内容。"
                                 ),
                                 "source_mode": "negative_signal",
                                 "source_signal": "thumbs_down: 热点复读",

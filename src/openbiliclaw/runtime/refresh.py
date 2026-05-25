@@ -1580,9 +1580,7 @@ class ContinuousRefreshController:
         cutoff = (now - timedelta(hours=self._PROBE_COOLDOWN_HOURS)).isoformat()
         probed = {d: t for d, t in probed.items() if t > cutoff}
         probed_axes = {axis: t for axis, t in probed_axes.items() if t > cutoff}
-        probed_distance_bands = {
-            mode: t for mode, t in probed_distance_bands.items() if t > cutoff
-        }
+        probed_distance_bands = {mode: t for mode, t in probed_distance_bands.items() if t > cutoff}
 
         top = choose_next_probe_candidate(
             specs,
@@ -1699,8 +1697,7 @@ class ContinuousRefreshController:
         if specifics:
             specific_hint = "（比如：" + "、".join(specifics[:3]) + "）"
         question = (
-            f"我猜【{domain}】{specific_hint}可能是你想避开的方向"
-            f"——{reason} 这个判断准不准？"
+            f"我猜【{domain}】{specific_hint}可能是你想避开的方向——{reason} 这个判断准不准？"
             if reason
             else f"我感觉【{domain}】{specific_hint}可能不是你想看的方向，这个判断准不准？"
         )

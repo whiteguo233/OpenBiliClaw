@@ -3223,9 +3223,10 @@ class TestBackendAPI:
         assert "浅层热点复读" not in disliked_topics
 
         profile_response = client.get("/api/profile-summary")
-        assert {
-            item["domain"] for item in profile_response.json()["dislikes"]
-        } >= {"标题党热点解读", "无信息增量复读"}
+        assert {item["domain"] for item in profile_response.json()["dislikes"]} >= {
+            "标题党热点解读",
+            "无信息增量复读",
+        }
 
     def test_avoidance_probe_reject_does_not_add_disliked_topic(
         self,
@@ -3483,9 +3484,7 @@ class TestBackendAPI:
             ).json()
             assert [item["turn_id"] for item in delight_history["items"]] == ["turn-delight-1"]
 
-    def test_chat_turn_endpoint_records_avoidance_probe_scope_context(
-        self, tmp_path: Path
-    ) -> None:
+    def test_chat_turn_endpoint_records_avoidance_probe_scope_context(self, tmp_path: Path) -> None:
         import asyncio
         import time
         from types import SimpleNamespace
@@ -3529,9 +3528,7 @@ class TestBackendAPI:
         class FakeMemoryManager:
             def __init__(self) -> None:
                 self.cognition_updates: list[object] = []
-                self.runtime_state: dict[str, object] = {
-                    "avoidance_probe_feedback_history": []
-                }
+                self.runtime_state: dict[str, object] = {"avoidance_probe_feedback_history": []}
 
             def load_cognition_updates(self) -> list[object]:
                 return list(self.cognition_updates)

@@ -670,7 +670,7 @@ class TestMobileWebViewModels:
         assert "export async function respondToProbe(domain, responseType, options = {})" in api_js
         assert 'surface: "profile"' in profile_js
         assert 'payload.surface = "profile"' in desktop_js
-        assert "respondToProbe(domain, action, { surface: \"profile\" })" in profile_js
+        assert 'respondToProbe(domain, action, { surface: "profile" })' in profile_js
 
     def test_normalize_profile_summary_preserves_probe_mode_metadata(self) -> None:
         _assert_js(

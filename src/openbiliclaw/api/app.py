@@ -1668,9 +1668,7 @@ def create_app(
         # ── Speculative avoidances ──
         try:
             avoidance_state = load_avoidance_state(runtime_config.data_path)
-            active_avoidances = [
-                item for item in avoidance_state.active if item.status == "active"
-            ]
+            active_avoidances = [item for item in avoidance_state.active if item.status == "active"]
             avoidance_items = [
                 SpeculativeAvoidanceOut(
                     domain=item.domain,
@@ -3238,9 +3236,8 @@ def create_app(
         if response_type == "confirm":
             requested_source = str(payload.get("confirmation_source", "")).strip()
             surface = str(payload.get("surface", "")).strip().lower()
-            confirmation_source = (
-                requested_source
-                or ("profile_confirmed" if surface == "profile" else "probe_confirmed")
+            confirmation_source = requested_source or (
+                "profile_confirmed" if surface == "profile" else "probe_confirmed"
             )
             _record_probe_feedback_history(
                 domain,
