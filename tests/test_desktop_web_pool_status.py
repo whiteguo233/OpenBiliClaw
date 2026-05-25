@@ -1,10 +1,10 @@
 from pathlib import Path
 
 
-def test_desktop_pool_status_distinguishes_pending_from_swappable() -> None:
+def test_desktop_pool_status_shows_available_count() -> None:
+    """Desktop web UI displays pool_available_count for inventory status."""
     app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text()
 
-    assert "pool_pending_count" in app_js
-    assert "pool_raw_count" in app_js
-    assert "找到 ${runtime.pool_pending_count} 条素材，正在整理成可换内容" in app_js
-    assert "整理好就能换，不会把素材数当可换数" in app_js
+    assert "pool_available_count" in app_js
+    assert "还有 ${runtime.pool_available_count} 条可换" in app_js
+    assert "暂无可换库存" in app_js
