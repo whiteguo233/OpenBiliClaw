@@ -81,6 +81,28 @@
     let chatPlaceholderTimer = null;
     let activityRailHeightFrame = 0;
 
+    function debounceAsync(fn, delayMs = 1000) {
+      let timer = null;
+      let inFlight = false;
+      let pending = false;
+      const run = async () => {
+        if (inFlight) { pending = true; return; }
+        inFlight = true;
+        try { await fn(); } finally {
+          inFlight = false;
+          if (pending) { pending = false; timer = window.setTimeout(run, 0); }
+        }
+      };
+      return () => {
+        if (timer !== null) window.clearTimeout(timer);
+        timer = window.setTimeout(() => { timer = null; run(); }, delayMs);
+      };
+    }
+
+    const scheduleBackendHydration = debounceAsync(() => hydrateFromBackend(), 1000);
+    const scheduleActivityPageRefresh = debounceAsync(() => loadActivityPage({ reset: true }), 1000);
+    const scheduleDelightQueueRefresh = debounceAsync(() => fetchDelightQueue(), 1000);
+
     function syncActivityRailHeight() {
       const rail = document.querySelector('[data-od-id="activity-rail"]');
       const delight = document.getElementById("delightBanner");
@@ -126,7 +148,7 @@
     }
 
     const DISMISS_ON_RESHUFFLE_KEY = "openbiliclaw.dismissOnReshuffle";
-    state.dismissOnReshuffle = storageGet(DISMISS_ON_RESHUFFLE_KEY) !== "0";
+    state.dismissOnReshuffle = storageGet(DISMISS_ON_RESHUFFLE_KEY) === "1";
     const SIDE_DRAWER_OPEN_KEY = "openbiliclaw.sideDrawerOpen";
     const DELIGHT_QUEUE_LIMIT_KEY = "openbiliclaw.webui.delightQueueLimit";
 
@@ -2146,8 +2168,8 @@
     function handleRuntimeEvent(event) {
       if (!event?.type) return;
       applyRuntimeStatus({ ...event, live_summary: event.message || event.live_summary || event.type });
-      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) void hydrateFromBackend();
-      if (event.type === "activity.added") void loadActivityPage({ reset: true });
+      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||
         event.type === "interest.confirmed" ||
@@ -2171,7 +2193,7 @@
           }
         }
       }
-      if (event.type === "delight.refreshed") void fetchDelightQueue();
+      if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
       if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
