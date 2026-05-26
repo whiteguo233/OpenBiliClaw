@@ -341,12 +341,22 @@
     .activity-item p, .profile-item p, .message-item p { margin: 0; }
     .message-list { gap: 12px; }
     .message-item { display: grid; gap: 8px; padding: 16px 18px; border-color: var(--border-soft); border-radius: 20px; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in oklab, var(--border-soft), transparent 35%), rgba(20, 20, 19, 0.045) 0 10px 28px; }
+    .message-item.is-interest-probe { background: color-mix(in oklab, var(--surface), #f3b15f 8%); border-color: color-mix(in oklab, var(--accent), var(--border-soft) 62%); }
+    .message-item.is-challenge-probe { background: color-mix(in oklab, var(--surface), #8b5cf6 8%); border-color: color-mix(in oklab, #7c3aed, var(--border-soft) 68%); }
+    .message-item.is-avoidance-probe { background: color-mix(in oklab, var(--surface), #60a5fa 8%); border-color: color-mix(in oklab, #2563eb, var(--border-soft) 68%); }
+    .message-item.is-challenge-probe .eyebrow,
+    .message-item.is-challenge-probe h3 { color: #6d28d9; }
+    .message-item.is-avoidance-probe .eyebrow,
+    .message-item.is-avoidance-probe h3 { color: #1d4ed8; }
     .message-item .eyebrow { margin: 0; }
     .message-item h3 { margin: -2px 0 0; font-size: 22px; line-height: 1.18; }
     .message-item .video-meta { line-height: 1.45; }
     .message-item .profile-chip-row { gap: 7px; }
     .message-item .profile-chip-row .chip { padding: 6px 12px; border-color: color-mix(in oklab, var(--border-soft), transparent 22%); background: color-mix(in oklab, var(--bg), var(--surface) 28%); color: var(--muted); font-size: 14px; line-height: 1.25; }
     .message-note { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg-2); font-size: var(--text-sm); }
+    .probe-kind-copy { color: var(--muted); font-weight: 650; }
+    .message-item.is-challenge-probe .probe-kind-copy { color: #6d28d9; }
+    .message-item.is-avoidance-probe .probe-kind-copy { color: #1d4ed8; }
     .message-note.is-success { min-height: 38px; display: flex; align-items: center; border: 1px solid color-mix(in oklab, var(--accent), var(--border) 58%); background: color-mix(in oklab, var(--accent), var(--surface) 88%); color: var(--fg); }
     .message-item.is-resolved { border-color: color-mix(in oklab, var(--accent), var(--border) 64%); background: color-mix(in oklab, var(--surface), var(--accent) 4%); }
     .message-item.is-resolving .message-card-actions { opacity: 0.72; pointer-events: none; }

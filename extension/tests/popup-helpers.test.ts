@@ -110,6 +110,24 @@ test("normalizeProfileSummary keeps speculative avoidances", () => {
   assert.equal(summary.speculative_avoidances[0].specifics[0].name, "标题党热点解读");
 });
 
+test("normalizeProfileSummary keeps interest probe challenge metadata", () => {
+  const summary = normalizeProfileSummary({
+    initialized: true,
+    speculative_interests: [
+      {
+        domain: "体检指标与作息修复",
+        reason: "从健康方向侧向挑战",
+        probe_mode: " bridge ",
+        challenge: true,
+        status: "active",
+      },
+    ],
+  });
+
+  assert.equal(summary.speculative_interests[0].probe_mode, "bridge");
+  assert.equal(summary.speculative_interests[0].challenge, true);
+});
+
 test("shouldAutoLoadRecommendations requires user scroll intent", () => {
   assert.equal(
     shouldAutoLoadRecommendations({

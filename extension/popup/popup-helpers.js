@@ -389,10 +389,13 @@ function normalizeSpeculativeItems(items) {
         .filter((item) => item?.domain)
         .map((item) => {
           const sourceMode = normalizeText(item.source_mode);
+          const probeMode = normalizeText(item.probe_mode);
           return {
             domain: normalizeText(item.domain),
             reason: normalizeText(item.reason),
             ...(sourceMode ? { source_mode: sourceMode } : {}),
+            ...(probeMode ? { probe_mode: probeMode } : {}),
+            ...(item.challenge ? { challenge: true } : {}),
             confidence: Number(item.confidence ?? 0),
             confirmation_count: Number(item.confirmation_count ?? 0),
             confirmation_threshold: Number(item.confirmation_threshold ?? 3),

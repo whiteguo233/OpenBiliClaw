@@ -152,6 +152,63 @@ class TestBackendAPI:
             await ctx.task_registry.cancel_all()
 
     @pytest.mark.asyncio
+    async def test_restart_tasks_detaches_avoidance_speculator_tick(self) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class HangingAvoidanceSpeculator:
+            def __init__(self) -> None:
+                self.started = asyncio.Event()
+                self.calls: list[tuple[object, object | None]] = []
+
+            async def force_tick(
+                self,
+                profile: object,
+                *,
+                feedback_history: object | None = None,
+            ) -> None:
+                self.calls.append((profile, feedback_history))
+                self.started.set()
+                await asyncio.sleep(60)
+
+        class FakeSoulEngine:
+            def __init__(self, avoidance_speculator: HangingAvoidanceSpeculator) -> None:
+                self._avoidance_speculator = avoidance_speculator
+
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        feedback_history = [{"domain": "浅层热点复读", "response": "reject"}]
+        avoidance_speculator = HangingAvoidanceSpeculator()
+        cfg = Config()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(
+                load_discovery_runtime_state=lambda: {
+                    "avoidance_probe_feedback_history": feedback_history,
+                }
+            ),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=FakeSoulEngine(avoidance_speculator),
+            recommendation_engine=object(),
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        try:
+            await asyncio.wait_for(ctx.restart_background_tasks(app), timeout=0.5)
+            assert ctx.task_registry.stats().get("post_reload_avoidance_speculate") == 1
+            await asyncio.wait_for(avoidance_speculator.started.wait(), timeout=0.5)
+            assert avoidance_speculator.calls == [
+                ({"profile": "ok"}, feedback_history),
+            ]
+        finally:
+            await ctx.task_registry.cancel_all()
+
+    @pytest.mark.asyncio
     async def test_restart_tasks_swallows_detached_speculator_failure(self) -> None:
         from types import SimpleNamespace
 

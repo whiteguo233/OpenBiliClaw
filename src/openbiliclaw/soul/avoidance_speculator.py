@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,78 @@ logger = logging.getLogger(__name__)
 
 DENYING_AVOIDANCE_RESPONSES = {"reject", "chat_negative"}
 CONFIRMING_AVOIDANCE_RESPONSES = {"confirm", "chat_positive"}
+AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT = 2
+
+
+def _normalize_avoidance_source_mode(value: object) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _avoidance_topic_markers(value: object) -> set[str]:
+    text = str(value or "").strip().lower()
+    normalized = _normalize_probe_term(text)
+    if not normalized:
+        return set()
+
+    markers: set[str] = set()
+    if re.search(r"\b(ai|aigc|llm|gpt)\b", text) or any(
+        marker in normalized
+        for marker in ("人工智能", "大模型", "机器学习", "深度学习", "提示词")
+    ):
+        markers.add("ai")
+    if any(marker in normalized for marker in ("动漫", "番剧", "新番", "轻小说")):
+        markers.add("anime")
+    if any(marker in normalized for marker in ("游戏", "手游", "网游", "主机游戏")):
+        markers.add("game")
+    if any(marker in normalized for marker in ("时政", "国际", "社会新闻", "公共议题")):
+        markers.add("news")
+    if any(marker in normalized for marker in ("美食", "探店", "吃播")):
+        markers.add("food")
+    if any(marker in normalized for marker in ("营销", "带货", "广告")):
+        markers.add("marketing")
+    if any(marker in normalized for marker in ("标题党", "震惊体")):
+        markers.add("clickbait")
+    return markers
+
+
+def _avoidance_domain_head(value: object) -> str:
+    normalized = _normalize_probe_term(value)
+    if not normalized:
+        return ""
+    for separator in ("里的", "中的", "里面的", "当中的", "内容", "话题"):
+        if separator in normalized:
+            head = normalized.split(separator, 1)[0]
+            return head[:12]
+    return normalized[:12]
+
+
+def _avoidance_topic_keys(
+    *,
+    domain: object,
+    source_signal: object = "",
+) -> set[str]:
+    markers = _avoidance_topic_markers(domain)
+    if not markers:
+        markers.update(_avoidance_topic_markers(source_signal))
+    head = _avoidance_domain_head(domain)
+    if head:
+        markers.add(head)
+    return markers
+
+
+def _avoidance_source_topic_keys(
+    *,
+    domain: object,
+    source_mode: object = "",
+    source_signal: object = "",
+) -> set[str]:
+    mode = _normalize_avoidance_source_mode(source_mode)
+    if not mode:
+        return set()
+    return {
+        f"{mode}:{key}"
+        for key in _avoidance_topic_keys(domain=domain, source_signal=source_signal)
+    }
 
 
 @dataclass
@@ -201,6 +274,7 @@ class AvoidanceNoveltyGuard:
 
     exact_terms: set[str] = field(default_factory=set)
     fuzzy_terms: set[str] = field(default_factory=set)
+    source_topic_keys: set[str] = field(default_factory=set)
 
     @classmethod
     def from_profile_and_state(
@@ -213,6 +287,7 @@ class AvoidanceNoveltyGuard:
     ) -> AvoidanceNoveltyGuard:
         exact_terms: set[str] = set()
         fuzzy_terms: set[str] = set()
+        source_topic_keys: set[str] = set()
 
         def add_term(value: object, *, fuzzy: bool = True) -> None:
             text = str(value or "").strip()
@@ -222,6 +297,24 @@ class AvoidanceNoveltyGuard:
             exact_terms.add(normalized)
             if fuzzy:
                 fuzzy_terms.add(text)
+
+        def add_candidate_terms(
+            domain: object,
+            *,
+            specifics: list[object] | None = None,
+            source_mode: object = "",
+            source_signal: object = "",
+        ) -> None:
+            add_term(domain)
+            for specific in specifics or []:
+                add_term(specific)
+            source_topic_keys.update(
+                _avoidance_source_topic_keys(
+                    domain=domain,
+                    source_mode=source_mode,
+                    source_signal=source_signal,
+                )
+            )
 
         if profile is not None:
             interest = getattr(profile, "interest", None)
@@ -241,9 +334,12 @@ class AvoidanceNoveltyGuard:
                 add_term(item)
 
         for item in state.active:
-            add_term(item.domain)
-            for specific in item.specifics:
-                add_term(specific.name)
+            add_candidate_terms(
+                item.domain,
+                specifics=[specific.name for specific in item.specifics],
+                source_mode=item.source_mode,
+                source_signal=item.source_signal,
+            )
         for item in state.cooldown:
             add_term(item.domain)
         for item in probed_domains or set():
@@ -251,13 +347,44 @@ class AvoidanceNoveltyGuard:
         for item in normalize_probe_feedback_history(feedback_history):
             if str(item.get("response", "")).lower() not in DENYING_AVOIDANCE_RESPONSES:
                 continue
-            add_term(item.get("domain", ""))
             raw_specifics = item.get("specifics", [])
-            if isinstance(raw_specifics, list):
-                for specific in raw_specifics:
-                    add_term(specific)
+            specifics = raw_specifics if isinstance(raw_specifics, list) else []
+            add_candidate_terms(
+                item.get("domain", ""),
+                specifics=specifics,
+                source_mode=item.get("source_mode", ""),
+                source_signal=item.get("source_signal", ""),
+            )
 
-        return cls(exact_terms=exact_terms, fuzzy_terms=fuzzy_terms)
+        return cls(
+            exact_terms=exact_terms,
+            fuzzy_terms=fuzzy_terms,
+            source_topic_keys=source_topic_keys,
+        )
+
+    def mark_seen(
+        self,
+        domain: str,
+        *,
+        specifics: list[str] | None = None,
+        source_mode: str = "",
+        source_signal: str = "",
+    ) -> None:
+        """Add an accepted avoidance candidate to this in-memory guard."""
+        for value in [domain, *(specifics or [])]:
+            text = str(value or "").strip()
+            normalized = _normalize_probe_term(text)
+            if not normalized:
+                continue
+            self.exact_terms.add(normalized)
+            self.fuzzy_terms.add(text)
+        self.source_topic_keys.update(
+            _avoidance_source_topic_keys(
+                domain=domain,
+                source_mode=source_mode,
+                source_signal=source_signal,
+            )
+        )
 
     def is_duplicate_domain(self, domain: str) -> bool:
         normalized = _normalize_probe_term(domain)
@@ -266,6 +393,26 @@ class AvoidanceNoveltyGuard:
         if normalized in self.exact_terms:
             return True
         return any(_has_probe_term_overlap(domain, term) for term in self.fuzzy_terms)
+
+    def is_duplicate_candidate(
+        self,
+        domain: str,
+        *,
+        specifics: list[str] | None = None,
+        source_mode: str = "",
+        source_signal: str = "",
+    ) -> bool:
+        if self.is_duplicate_domain(domain):
+            return True
+        candidate_keys = _avoidance_source_topic_keys(
+            domain=domain,
+            source_mode=source_mode,
+            source_signal=source_signal,
+        )
+        return bool(candidate_keys & self.source_topic_keys)
+
+    def filter_specifics(self, specifics: list[str]) -> list[str]:
+        return [specific for specific in specifics if not self.is_duplicate_domain(specific)]
 
 
 def load_avoidance_state(data_dir: Path) -> AvoidanceState:
@@ -299,8 +446,7 @@ def promote_ready_avoidances(
     remaining: list[SpeculativeAvoidance] = []
     for item in state.active:
         ready = (
-            item.status == "active"
-            and item.confirmation_count >= item.confirmation_threshold
+            item.status == "active" and item.confirmation_count >= item.confirmation_threshold
         ) or item.status == "confirmed"
         if ready:
             item.status = "promoted"
@@ -355,6 +501,185 @@ def expire_stale_avoidances(
             valid_cooldown.append(cooldown)
     state.cooldown = valid_cooldown
     return rejected, state
+
+
+def _avoidance_specific_names(item: SpeculativeAvoidance) -> list[str]:
+    return [specific.name for specific in item.specifics if specific.name]
+
+
+def _avoidance_priority(item: SpeculativeAvoidance) -> tuple[int, int, float, float]:
+    return (
+        int(item.confirmation_count or 0),
+        len(item.specifics),
+        float(item.confidence or 0.0),
+        float(item.weight or 0.0),
+    )
+
+
+def _source_mode_counts(avoidances: list[SpeculativeAvoidance]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in avoidances:
+        if item.status != "active":
+            continue
+        mode = _normalize_avoidance_source_mode(item.source_mode)
+        if not mode:
+            continue
+        counts[mode] = counts.get(mode, 0) + 1
+    return counts
+
+
+_ALL_SOURCE_MODES = ("negative_signal", "positive_boundary", "style_boundary")
+
+
+def _compute_source_mode_quota(
+    active: list[SpeculativeAvoidance],
+    *,
+    slots: int,
+    count: int,
+) -> dict[str, int]:
+    """Compute how many of each source_mode the LLM should generate.
+
+    The goal: spread the ``count`` candidates across all 3 source_modes,
+    biasing toward modes that are under-represented in the current active set.
+    Modes already at ``AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT`` get 0.
+    """
+    current = _source_mode_counts(
+        [item for item in active if item.status == "active"]
+    )
+    # Remaining capacity per mode before hitting the per-mode cap
+    remaining: dict[str, int] = {}
+    for mode in _ALL_SOURCE_MODES:
+        remaining[mode] = max(0, AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT - current.get(mode, 0))
+
+    total_remaining = sum(remaining.values())
+    if total_remaining == 0:
+        # All modes saturated — ask for 1 each anyway so quality gate can pick
+        return {mode: 1 for mode in _ALL_SOURCE_MODES}
+
+    # Distribute count proportionally to remaining capacity, minimum 1 per
+    # mode that still has capacity
+    quota: dict[str, int] = {}
+    for mode in _ALL_SOURCE_MODES:
+        if remaining[mode] <= 0:
+            quota[mode] = 0
+        else:
+            quota[mode] = max(1, round(count * remaining[mode] / total_remaining))
+    return quota
+
+
+def compact_redundant_active_avoidances(
+    state: AvoidanceState,
+    now: datetime,
+    cooldown_days: int = 7,
+) -> tuple[list[SpeculativeAvoidance], AvoidanceState]:
+    """Remove redundant active avoidance probes before they keep occupying slots."""
+    active = [item for item in state.active if item.status == "active"]
+    if len(active) < 2:
+        return [], state
+
+    guard = AvoidanceNoveltyGuard()
+    mode_counts: dict[str, int] = {}
+    kept_ids: set[int] = set()
+    rejected: list[SpeculativeAvoidance] = []
+
+    for item in sorted(active, key=_avoidance_priority, reverse=True):
+        mode = _normalize_avoidance_source_mode(item.source_mode)
+        if guard.is_duplicate_candidate(
+            item.domain,
+            specifics=_avoidance_specific_names(item),
+            source_mode=mode,
+            source_signal=item.source_signal,
+        ):
+            rejected.append(item)
+            continue
+        if mode and mode_counts.get(mode, 0) >= AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT:
+            rejected.append(item)
+            continue
+        kept_ids.add(id(item))
+        if mode:
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        guard.mark_seen(
+            item.domain,
+            specifics=_avoidance_specific_names(item),
+            source_mode=mode,
+            source_signal=item.source_signal,
+        )
+
+    if not rejected:
+        return [], state
+
+    rejected_ids = {id(item) for item in rejected}
+    state.active = [
+        item
+        for item in state.active
+        if item.status != "active" or id(item) in kept_ids or id(item) not in rejected_ids
+    ]
+    for item in rejected:
+        item.status = "rejected"
+        state.total_rejected += 1
+        state.cooldown.append(
+            AvoidanceCooldownEntry(
+                domain=item.domain,
+                source_mode=item.source_mode,
+                rejected_at=now.isoformat(),
+                cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+            )
+        )
+
+    logger.info(
+        "AvoidanceSpeculator compacted %d redundant active avoidance(s): %s",
+        len(rejected),
+        [item.domain for item in rejected],
+    )
+    return rejected, state
+
+
+def _select_diverse_avoidance_candidates(
+    candidates: list[SpeculativeAvoidance],
+    *,
+    slots: int,
+    existing: list[SpeculativeAvoidance],
+) -> list[SpeculativeAvoidance]:
+    if slots <= 0:
+        return []
+
+    selected: list[SpeculativeAvoidance] = []
+    guard = AvoidanceNoveltyGuard()
+    for item in existing:
+        if item.status != "active":
+            continue
+        guard.mark_seen(
+            item.domain,
+            specifics=_avoidance_specific_names(item),
+            source_mode=item.source_mode,
+            source_signal=item.source_signal,
+        )
+    mode_counts = _source_mode_counts(existing)
+
+    ordered = sorted(candidates, key=lambda item: (item.confidence, item.weight), reverse=True)
+    for candidate in ordered:
+        mode = _normalize_avoidance_source_mode(candidate.source_mode)
+        if guard.is_duplicate_candidate(
+            candidate.domain,
+            specifics=_avoidance_specific_names(candidate),
+            source_mode=mode,
+            source_signal=candidate.source_signal,
+        ):
+            continue
+        if mode and mode_counts.get(mode, 0) >= AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT:
+            continue
+        selected.append(candidate)
+        if mode:
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        guard.mark_seen(
+            candidate.domain,
+            specifics=_avoidance_specific_names(candidate),
+            source_mode=mode,
+            source_signal=candidate.source_signal,
+        )
+        if len(selected) >= slots:
+            break
+    return selected
 
 
 def _is_explicit_negative_event(event: dict[str, Any]) -> bool:
@@ -592,6 +917,14 @@ class AvoidanceSpeculator:
         result.rejected = rejected
         promoted, state = promote_ready_avoidances(state)
         result.promoted = promoted
+        compacted, state = compact_redundant_active_avoidances(
+            state,
+            now,
+            self._cooldown_days,
+        )
+        result.rejected.extend(compacted)
+        if result.promoted or result.rejected:
+            self._save_state(state)
 
         if self._should_generate(state, now):
             pre_active_domains = {item.domain for item in state.active if item.status == "active"}
@@ -603,6 +936,26 @@ class AvoidanceSpeculator:
             ]
 
         self._save_state(state)
+
+        if result.promoted:
+            logger.info(
+                "AvoidanceSpeculator promoted %d avoidances: %s",
+                len(result.promoted),
+                [item.domain for item in result.promoted],
+            )
+        if result.rejected:
+            logger.info(
+                "AvoidanceSpeculator rejected %d avoidances: %s",
+                len(result.rejected),
+                [item.domain for item in result.rejected],
+            )
+        if result.generated:
+            logger.info(
+                "AvoidanceSpeculator generated %d new avoidances: %s",
+                len(result.generated),
+                [item.domain for item in result.generated],
+            )
+
         return result
 
     async def force_tick(
@@ -619,6 +972,14 @@ class AvoidanceSpeculator:
         result.rejected = rejected
         promoted, state = promote_ready_avoidances(state)
         result.promoted = promoted
+        compacted, state = compact_redundant_active_avoidances(
+            state,
+            now,
+            self._cooldown_days,
+        )
+        result.rejected.extend(compacted)
+        if result.promoted or result.rejected:
+            self._save_state(state)
 
         active_count = sum(1 for item in state.active if item.status == "active")
         if active_count < self._max_active and self._llm_service is not None:
@@ -631,6 +992,21 @@ class AvoidanceSpeculator:
             ]
 
         self._save_state(state)
+
+        if result.generated or result.promoted or result.rejected:
+            logger.info(
+                "AvoidanceSpeculator force_tick: generated=%d, promoted=%d, rejected=%d",
+                len(result.generated),
+                len(result.promoted),
+                len(result.rejected),
+            )
+        else:
+            logger.debug(
+                "AvoidanceSpeculator force_tick: no-op (active=%d/%d)",
+                active_count,
+                self._max_active,
+            )
+
         return result
 
     def _should_generate(self, state: AvoidanceState, now: datetime) -> bool:
@@ -678,13 +1054,30 @@ class AvoidanceSpeculator:
             for item in getattr(interest, "likes", []) or []
             if str(getattr(item, "domain", "")).strip()
         ]
+        active_items = [item for item in state.active if item.status == "active"]
+        existing_avoidance_details: list[dict[str, object]] = [
+            {
+                "domain": item.domain,
+                "source_mode": item.source_mode,
+                "source_signal": item.source_signal,
+                "experience_mode": item.experience_mode,
+                "entry_load": item.entry_load,
+                "specifics": [specific.name for specific in item.specifics],
+            }
+            for item in active_items
+        ]
+        source_mode_quota = _compute_source_mode_quota(
+            active_items, slots=slots, count=min(max(slots * 2, 5), 7)
+        )
         messages = build_avoidance_generation_prompt(
             profile_summary=profile_summary,
             existing_avoidances=[item.domain for item in state.active],
+            existing_avoidance_details=existing_avoidance_details,
             cooldown_domains=[item.domain for item in state.cooldown],
             confirmed_dislikes=confirmed_dislikes,
             confirmed_likes=confirmed_likes,
             count=min(max(slots * 2, 5), 7),
+            source_mode_quota=source_mode_quota,
         )
 
         try:
@@ -706,32 +1099,46 @@ class AvoidanceSpeculator:
         )
         existing_domains = {item.domain.lower() for item in state.active}
         candidates: list[SpeculativeAvoidance] = []
+        rejected_reasons: list[str] = []
         for item in raw:
             domain = str(item.get("domain", "")).strip()
             if not domain or domain.lower() in existing_domains:
                 continue
-            if guard.is_duplicate_domain(domain):
-                continue
             reason = str(item.get("reason", "")).strip()
             if len(reason) < 20:
+                rejected_reasons.append(f"{domain} (reason<20chars)")
                 continue
             raw_specifics = item.get("specifics") or []
-            specifics = [
-                SpeculativeAvoidanceSpecific(name=str(specific).strip())
+            specific_names = [
+                str(specific).strip()
                 for specific in raw_specifics
                 if isinstance(specific, str) and str(specific).strip()
             ]
+            source_mode = str(item.get("source_mode", "")).strip()
+            source_signal = str(item.get("source_signal", "")).strip()
+            if guard.is_duplicate_candidate(
+                domain,
+                specifics=specific_names,
+                source_mode=source_mode,
+                source_signal=source_signal,
+            ):
+                rejected_reasons.append(f"{domain} (duplicate coverage)")
+                continue
+            specific_names = guard.filter_specifics(specific_names)
+            specifics = [SpeculativeAvoidanceSpecific(name=name) for name in specific_names]
             if len(specifics) < 2:
+                rejected_reasons.append(f"{domain} (specifics<2)")
                 continue
             confidence = float(item.get("confidence", 0.4))
             if confidence < 0.3:
+                rejected_reasons.append(f"{domain} (conf={confidence:.2f}<0.3)")
                 continue
             candidates.append(
                 SpeculativeAvoidance(
                     domain=domain,
                     reason=reason,
-                    source_mode=str(item.get("source_mode", "")).strip(),
-                    source_signal=str(item.get("source_signal", "")).strip(),
+                    source_mode=source_mode,
+                    source_signal=source_signal,
                     experience_mode=_normalize_experience_mode(item.get("experience_mode")),
                     entry_load=_normalize_entry_load(item.get("entry_load")),
                     confidence=confidence,
@@ -743,14 +1150,21 @@ class AvoidanceSpeculator:
                 )
             )
 
-        ordered_candidates = sorted(
+        if rejected_reasons:
+            logger.info(
+                "AvoidanceSpeculator quality gate dropped %d candidate(s): %s",
+                len(rejected_reasons),
+                "; ".join(rejected_reasons),
+            )
+
+        selected_candidates = _select_diverse_avoidance_candidates(
             candidates,
-            key=lambda item: (item.confidence, item.weight),
-            reverse=True,
+            slots=slots,
+            existing=[item for item in state.active if item.status == "active"],
         )
-        for candidate in ordered_candidates[:slots]:
+        for candidate in selected_candidates:
             state.active.append(candidate)
             existing_domains.add(candidate.domain.lower())
-        if candidates:
+        if selected_candidates:
             state.last_generation_at = now.isoformat()
         return state

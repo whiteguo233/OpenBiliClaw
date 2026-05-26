@@ -1551,6 +1551,7 @@ def build_speculation_generation_prompt(
     cooldown_domains: list[str],
     confirmed_domains: list[str],
     count: int = 5,
+    probe_mode_request: str | None = None,
 ) -> list[dict[str, str]]:
     """Build a prompt for generating speculative interest directions."""
     system_prompt = (
@@ -1690,20 +1691,21 @@ def build_speculation_generation_prompt(
         if main_axes_list
         else "（用户尚无明确主轴）"
     )
-    user_prompt = "\n\n".join(
-        [
-            "<user_profile>",
-            profile_summary,
-            "</user_profile>",
-            "<main_axes>",
-            main_axes_text,
-            "</main_axes>",
-            "<hard_exclude>",
-            hard_exclude_text,
-            "</hard_exclude>",
-            f"请生成 {count} 个猜测兴趣方向。",
-        ]
-    )
+    user_sections = [
+        "<user_profile>",
+        profile_summary,
+        "</user_profile>",
+        "<main_axes>",
+        main_axes_text,
+        "</main_axes>",
+        "<hard_exclude>",
+        hard_exclude_text,
+        "</hard_exclude>",
+    ]
+    if probe_mode_request:
+        user_sections.extend(["<probe_mode_request>", probe_mode_request, "</probe_mode_request>"])
+    user_sections.append(f"请生成 {count} 个猜测兴趣方向。")
+    user_prompt = "\n\n".join(user_sections)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -1733,6 +1735,8 @@ _AVOIDANCE_GENERATION_SYSTEM_PROMPT = """
 7. experience_mode 必须从 knowledge / aesthetic / hands_on / people_story / wander_observe 中选择。
 8. entry_load 必须从 light / heavy 中选择。
 9. confidence 范围 0.3-0.75，越有证据越高。
+10. active set 要保持多样性：同一 source_mode + 同一粗主题 / 证据源只生成一个候选；如果已有 AI positive_boundary，不要再输出 AI 教程 / 测评 / 趋势的换皮候选。
+11. 每批候选要尽量覆盖不同 source_mode、experience_mode、entry_load，不要只围绕 confirmed_likes 中最强的领域扩写。
 </rules>
 
 <output_schema>
@@ -1758,27 +1762,45 @@ def build_avoidance_generation_prompt(
     *,
     profile_summary: dict[str, object],
     existing_avoidances: list[str],
+    existing_avoidance_details: list[dict[str, object]] | None = None,
     cooldown_domains: list[str],
     confirmed_dislikes: list[str],
     confirmed_likes: list[str],
     count: int = 5,
+    source_mode_quota: dict[str, int] | None = None,
 ) -> list[dict[str, str]]:
     """Build a prompt for generating speculative avoidance directions."""
-    payload = {
+    payload: dict[str, object] = {
         "profile_summary": profile_summary,
         "existing_avoidances": existing_avoidances,
+        "existing_avoidance_details": existing_avoidance_details or [],
         "cooldown_domains": cooldown_domains,
         "confirmed_dislikes": confirmed_dislikes,
         "confirmed_likes": confirmed_likes,
         "count": count,
     }
-    user_prompt = "\n\n".join(
-        [
-            "<avoidance_generation_context>",
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            "</avoidance_generation_context>",
+    if source_mode_quota:
+        payload["source_mode_quota"] = source_mode_quota
+    user_prompt_parts = [
+        "<avoidance_generation_context>",
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        "</avoidance_generation_context>",
+    ]
+    if source_mode_quota:
+        quota_lines = [
+            f"  - {mode}: {n} 条" for mode, n in source_mode_quota.items() if n > 0
         ]
-    )
+        user_prompt_parts.extend(
+            [
+                "",
+                "<source_mode_distribution>",
+                "本轮请按以下配额分配 source_mode（硬约束，违反即失败）：",
+                *quota_lines,
+                "配额为 0 的 mode 不要生成。",
+                "</source_mode_distribution>",
+            ]
+        )
+    user_prompt = "\n\n".join(user_prompt_parts)
     return [
         {"role": "system", "content": _AVOIDANCE_GENERATION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},

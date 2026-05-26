@@ -34,6 +34,25 @@ class TestDatabase:
             assert db.conn is not None
             db.close()
 
+    def test_initialize_creates_recommendation_read_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            recommendation_indexes = {
+                str(row["name"])
+                for row in db.conn.execute("PRAGMA index_list(recommendations)").fetchall()
+            }
+            content_indexes = {
+                str(row["name"])
+                for row in db.conn.execute("PRAGMA index_list(content_cache)").fetchall()
+            }
+
+            assert "idx_recommendations_created_id" in recommendation_indexes
+            assert "idx_content_cache_content_id" in content_indexes
+
+            db.close()
+
     def test_insert_and_get_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

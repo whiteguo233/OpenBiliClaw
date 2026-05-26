@@ -73,6 +73,11 @@ function esc(s) {
   return el.innerHTML;
 }
 
+function isChallengeProbe(item) {
+  const mode = String(item?.probe_mode || "").toLowerCase();
+  return Boolean(item?.challenge) || mode === "lateral" || mode === "bridge" || mode === "wildcard";
+}
+
 // ── Render Chat ──────────────────────────────────────────────
 function render() {
   if (!$root) return;
@@ -316,11 +321,18 @@ function renderOverlay() {
   // Probe notifications
   for (const n of notifications) {
     const isAvoidance = (n.type || "") === "avoidance.probe";
+    const isChallenge = !isAvoidance && isChallengeProbe(n);
     const actions = isAvoidance ? getAvoidanceProbeMessageActions() : getProbeMessageActions();
     const card = document.createElement("div");
-    card.className = "message-card";
+    card.className = `message-card ${isAvoidance ? "is-avoidance-probe" : isChallenge ? "is-challenge-probe" : "is-interest-probe"}`;
+    const prompt = isAvoidance
+      ? "想少看这类，就确认这是雷点；如果阿B猜错了，点不是。"
+      : isChallenge
+        ? "这是挑战方向，会把口味往侧边推一点；想继续试探就点喜欢，不准就点不喜欢。"
+      : "想继续探索这个方向，就点喜欢；不准就点不喜欢。";
     card.innerHTML = `
-      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>${isAvoidance ? "避雷确认" : "兴趣探测"}</div>
+      <div class="message-card-type"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>${isAvoidance ? "避雷确认" : isChallenge ? "挑战探针" : "兴趣探测"}</div>
+      <div class="message-card-prompt">${esc(prompt)}</div>
       <div class="message-card-title">${esc(n.domain || n.title || "")}</div>
       <div class="message-card-body">${esc(n.description || n.reason || n.message || "")}</div>
       <div class="message-card-actions">
@@ -344,21 +356,43 @@ function renderOverlay() {
       const domain = btn.dataset.domain;
       const action = btn.dataset.probe;
       const isAvoidance = btn.dataset.probeKind === "avoidance";
+      const card = btn.closest(".message-card");
       if (action === "chat") {
-        toggleMessages();
-        startContextualChat({
+        expandInlineChatOnCard(card, {
           scope: isAvoidance ? "avoidance_probe" : "probe",
           subjectId: domain,
           subjectTitle: domain,
+          placeholder: isAvoidance
+            ? `聊聊你为什么想避开「${domain}」…`
+            : `聊聊你对「${domain}」的想法…`,
         });
         return;
       }
       btn.disabled = true;
       try {
-        if (isAvoidance) {
-          await respondToAvoidanceProbe(domain, action);
-        } else {
-          await respondToProbe(domain, action);
+        const resp = isAvoidance
+          ? await respondToAvoidanceProbe(domain, action)
+          : await respondToProbe(domain, action);
+        if (resp && resp.ok === false) {
+          // Backend no longer recognises this probe (expired/rotated)
+          const card = btn.closest(".message-card");
+          if (card) {
+            const errEl = document.createElement("div");
+            errEl.className = "inline-chat-error";
+            errEl.textContent = "这条已过期，正在刷新…";
+            card.appendChild(errEl);
+          }
+          // Refresh notifications from backend
+          setTimeout(() => {
+            notifications = notifications.filter((n) => {
+              const sameDomain = (n.domain || n.title) === domain;
+              const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
+              return !(sameDomain && sameKind);
+            });
+            updateBadgeCount();
+            renderOverlay();
+          }, 1500);
+          return;
         }
         notifications = notifications.filter((n) => {
           const sameDomain = (n.domain || n.title) === domain;
@@ -381,8 +415,13 @@ function renderOverlay() {
       const title = btn.dataset.title || "";
 
       if (action === "chat") {
-        toggleMessages();
-        startContextualChat({ scope: "delight", subjectId: bvid, subjectTitle: title });
+        const card = btn.closest(".message-card");
+        expandInlineChatOnCard(card, {
+          scope: "delight",
+          subjectId: bvid,
+          subjectTitle: title,
+          placeholder: `聊聊你对「${title}」的想法…`,
+        });
         return;
       }
 
@@ -449,13 +488,13 @@ async function refreshAfterChatTurn() {
   } catch { /* best-effort */ }
 }
 
-export async function loadNotifications() {
+export async function loadNotifications({ includeDelights = false } = {}) {
   try {
     const [notifData, probeData, avoidanceProbeData, delightData] = await Promise.all([
       fetchPendingNotifications().catch(() => ({})),
       fetchPendingProbes().catch(() => []),
       fetchPendingAvoidanceProbes().catch(() => []),
-      fetchDelightBatch(10).catch(() => []),
+      includeDelights ? fetchDelightBatch(10).catch(() => []) : Promise.resolve(delightMsgs),
     ]);
     // Start with persisted probes from backend
     const probes = [
@@ -473,7 +512,9 @@ export async function loadNotifications() {
       }
     }
     notifications = probes;
-    delightMsgs = delightData;
+    if (includeDelights) {
+      delightMsgs = delightData;
+    }
     updateBadgeCount();
   } catch { /* ignore */ }
   // Re-render if overlay is visible so first-click shows real data
@@ -494,7 +535,7 @@ export async function toggleMessages() {
   overlayOpen = !overlayOpen;
   if (overlayOpen) {
     renderOverlay();          // show panel immediately (loading state)
-    await loadNotifications();
+    await loadNotifications({ includeDelights: true });
     renderOverlay();          // re-render with actual data
   } else {
     renderOverlay();
@@ -528,6 +569,7 @@ export function onStreamEvent(payload) {
 
 /**
  * Start a contextual chat from delight "聊一聊" or probe "多聊聊".
+ * Legacy: navigates to chat tab. Prefer expandInlineChatOnCard for overlay cards.
  */
 export async function startContextualChat({ scope, subjectId, subjectTitle, message }) {
   patchState({ pendingChatContext: { scope, subjectId, subjectTitle } });
@@ -554,4 +596,118 @@ export async function startContextualChat({ scope, subjectId, subjectTitle, mess
     sending = false;
     render();
   }
+}
+
+/**
+ * Expand inline chat within a message card (probe or delight).
+ * Replaces action buttons with a textarea + send button, sends the turn
+ * to the backend, shows the reply inline, then removes the card.
+ */
+function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placeholder }) {
+  if (!card || card.querySelector(".inline-chat-area")) return;
+
+  // Hide action buttons
+  const actions = card.querySelector(".message-card-actions");
+  if (actions) actions.style.display = "none";
+
+  const chatArea = document.createElement("div");
+  chatArea.className = "inline-chat-area";
+
+  const input = document.createElement("textarea");
+  input.className = "inline-chat-input";
+  input.rows = 2;
+  input.placeholder = placeholder || "聊聊你的想法…";
+
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "inline-chat-send";
+  sendBtn.textContent = "发送";
+
+  async function doSend() {
+    const message = input.value.trim();
+    if (!message) return;
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    // Show thinking indicator
+    const thinking = document.createElement("div");
+    thinking.className = "inline-chat-thinking";
+    thinking.textContent = "阿B 正在思考…";
+    chatArea.appendChild(thinking);
+
+    const turnId = `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const turn = await startChatTurn({
+        turnId,
+        ...chatSession(scope),
+        subjectId,
+        subjectTitle,
+        message,
+      });
+
+      const showReply = (t) => {
+        thinking.remove();
+        input.remove();
+        sendBtn.remove();
+        const replyEl = document.createElement("div");
+        replyEl.className = "inline-chat-reply";
+        replyEl.textContent = t.reply || t.response || "收到了，我会结合这个方向继续观察。";
+        chatArea.appendChild(replyEl);
+        // Remove card after delay
+        setTimeout(() => {
+          const domain = subjectId;
+          const isAvoidance = scope === "avoidance_probe";
+          notifications = notifications.filter((n) => {
+            const sameDomain = (n.domain || n.title) === domain;
+            const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
+            return !(sameDomain && sameKind);
+          });
+          if (scope === "delight") {
+            delightMsgs = delightMsgs.filter((d) => d.bvid !== subjectId);
+          }
+          updateBadgeCount();
+          renderOverlay();
+        }, 3500);
+      };
+
+      if (turn.status === "completed" || turn.status === "failed") {
+        showReply(turn);
+      } else {
+        // Poll until settled
+        const poll = async () => {
+          try {
+            const t = await fetchChatTurn(turnId);
+            if (t.status === "completed" || t.status === "failed") {
+              showReply(t);
+            } else {
+              setTimeout(poll, 1500);
+            }
+          } catch {
+            setTimeout(poll, 2000);
+          }
+        };
+        setTimeout(poll, 1500);
+      }
+    } catch {
+      thinking.remove();
+      sendBtn.disabled = false;
+      input.disabled = false;
+      const errEl = document.createElement("div");
+      errEl.className = "inline-chat-error";
+      errEl.textContent = "后台正忙，等一下再聊。";
+      chatArea.appendChild(errEl);
+      setTimeout(() => errEl.remove(), 3000);
+    }
+  }
+
+  sendBtn.addEventListener("click", doSend);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      doSend();
+    }
+  });
+
+  chatArea.append(input, sendBtn);
+  card.appendChild(chatArea);
+  input.focus();
 }

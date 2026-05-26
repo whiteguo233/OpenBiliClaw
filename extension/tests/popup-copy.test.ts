@@ -58,3 +58,19 @@ test("popup avoidance probe contract is wired", () => {
   assert.match(popupJs, /avoidance_probe/);
   assert.match(serviceWorker, /avoidance\.probe/);
 });
+
+test("popup probe inbox gives interest challenge and avoidance distinct treatments", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupJs, /isChallengeProbe/);
+  assert.match(popupJs, /is-challenge/);
+  assert.match(popupJs, /message-kind-copy/);
+  assert.match(popupJs, /想继续试探/);
+  assert.match(popupJs, /挑战方向/);
+  assert.match(popupJs, /想少看这类/);
+  assert.match(popupHtml, /\.message-item\.is-interest/);
+  assert.match(popupHtml, /\.message-item\.is-challenge/);
+  assert.match(popupHtml, /\.message-item\.is-avoidance/);
+  assert.match(popupHtml, /\.message-item\.is-delight/);
+});

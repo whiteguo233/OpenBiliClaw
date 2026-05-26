@@ -14,6 +14,12 @@
 - 探针反馈改成 4-way 语义：`positive`、`weak_positive`、`negative`、`neutral`；聊天、卡片、OpenClaw adapter 和 avoidance probe 的反向语义都走同一套写回分支。
 - 弱正向兴趣探针先进入短期 exploration buffer，只有积累到足够显式信号后才晋升为正式兴趣，避免单次“有点意思”造成推荐短期刷屏。
 - 推荐侧对新确认方向增加放大保护和 per-refresh 上限，新兴趣可以参与探索，但不会立刻挤占整批推荐。
+- 修复配置热重载后只触发正向兴趣 speculator、漏掉避雷 speculator 的问题；热重载 one-shot 现在会同时调度 `post_reload_avoidance_speculate` 并传入 `avoidance_probe_feedback_history`。避雷 speculator 增加生成 / 转正 / 拒绝 / quality gate 日志，pipeline tick 异常会以 warning 暴露，避免 refresh loop 静默吞掉。
+- 避雷探针新增 source/topic 级别去重：同一 `source_mode` 下的同一粗主题（如 AI 正向边界）只保留一条 active，重复 active 会在下一轮 tick 压入 cooldown；生成 prompt 也会携带 `existing_avoidance_details` 并要求避开同源换皮候选，避免一屏都是 AI 教程 / 测评 / 趋势类避雷。
+- 挑战式兴趣探针改为独立 active 额度：普通 `near` 探针继续最多 5 条，`lateral/bridge/wildcard` 合并为挑战池并单独最多 3 条；5 个普通探针占满时，热重载 / force tick 仍能生成挑战探针，生成 prompt 也会切到 challenge-only 补货提示。
+- 插件 side panel、移动 Web 和桌面 Web 的消息区把普通 `near` 兴趣探针、`lateral/bridge/wildcard` 挑战探针和避雷探针分成不同视觉语义与提示文案：普通兴趣用于“继续探索”，挑战探针提示“把口味往侧边推一点”，避雷用于“少看这类 / 猜错点不是”。
+- 移动 Web 推荐页首屏请求增加超时兜底：推荐 / 惊喜推荐最多等待 12 秒，runtime status / activity 最多等待 5 秒；推荐接口慢或暂时失败时会结束 loading 并显示当前可用状态，避免手机端一直停在加载中。
+- 移动 Web 推荐页加载优化：`recommendations.created_at/id` 与 `content_cache.content_id` 增加读取索引，修复 `/api/recommendations` 的双表扫描；推荐页首屏先渲染 `/api/recommendations` 结果，再异步补 runtime status / activity / delight，消息 badge 首次加载不再额外拉取未使用的 delight batch。
 
 ## v0.3.91 / extension v0.3.47: 真实可换库存口径修正 + 不喜欢领域探针（2026-05-24）
 

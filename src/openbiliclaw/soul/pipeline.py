@@ -704,7 +704,10 @@ class ProfileUpdatePipeline:
                 if self._speculator:
                     await self._run_speculator_tick(result)
                 if self._avoidance_speculator:
-                    await self._run_avoidance_speculator_tick(result)
+                    try:
+                        await self._run_avoidance_speculator_tick(result)
+                    except Exception:
+                        logger.warning("Avoidance speculator tick failed", exc_info=True)
                 self._last_speculator_tick_at = now
 
         # Cognition cycle: throttled awareness + insight regeneration.
@@ -868,9 +871,7 @@ class ProfileUpdatePipeline:
                     for specific in getattr(spec, "specifics", [])
                     if str(getattr(specific, "name", "")).strip()
                 ]
-                source = str(
-                    getattr(spec, "confirmation_source", "") or "speculated"
-                )
+                source = str(getattr(spec, "confirmation_source", "") or "speculated")
                 merge_confirmed_interest(
                     profile,
                     domain=str(getattr(spec, "domain", "")),
@@ -941,8 +942,7 @@ class ProfileUpdatePipeline:
             signals_consumed=0,
             trigger="避雷方向确认",
             evidence=", ".join(
-                f"{item.domain}({item.confirmation_count}次确认)"
-                for item in tick_result.promoted
+                f"{item.domain}({item.confirmation_count}次确认)" for item in tick_result.promoted
             ),
             timestamp=datetime.now().isoformat(),
         )

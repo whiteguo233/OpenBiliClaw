@@ -145,6 +145,8 @@ def test_avoidance_generation_prompt_requires_source_modes() -> None:
     assert "positive_boundary" in text
     assert "style_boundary" in text
     assert "不能直接把正向兴趣本身当成讨厌对象" in text
+    assert "同一 source_mode + 同一粗主题" in text
+    assert "existing_avoidance_details" in messages[1]["content"]
     assert "disliked_topics" in messages[1]["content"]
     assert "cooldown_domains" in messages[1]["content"]
 
@@ -358,6 +360,25 @@ def test_speculation_prompt_requests_probe_mode_distance_bands() -> None:
     assert "probe_mode" in system
     for band in ("near", "lateral", "bridge", "wildcard"):
         assert band in system
+
+
+def test_speculation_prompt_accepts_slot_aware_probe_mode_request() -> None:
+    messages = build_speculation_generation_prompt(
+        profile_summary="likes: 机器人技术",
+        existing_speculations=[],
+        cooldown_domains=[],
+        confirmed_domains=["机器人技术"],
+        count=3,
+        probe_mode_request=(
+            "本轮普通 near 池已满，只补挑战探针。"
+            "所有候选的 probe_mode 必须从 lateral / bridge / wildcard 中选择，不要输出 near。"
+        ),
+    )
+
+    user = messages[1]["content"]
+    assert "<probe_mode_request>" in user
+    assert "只补挑战探针" in user
+    assert "不要输出 near" in user
 
 
 def test_batch_content_evaluation_prompt_orders_profile_before_source_and_batch() -> None:
@@ -595,9 +616,7 @@ def test_batch_eval_no_examples_user_message_equals_none_path() -> None:
         source_platform="bilibili",
     )
     none_msg = build_batch_content_evaluation_prompt(**base_kwargs)
-    empty_msg = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=[]
-    )
+    empty_msg = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=[])
 
     assert none_msg[1]["content"] == empty_msg[1]["content"]
     assert "<negative_examples>" not in none_msg[1]["content"]
@@ -680,10 +699,6 @@ def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:
         source_context="explore",
         source_platform="bilibili",
     )
-    msg_a = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=examples_a
-    )
-    msg_b = build_batch_content_evaluation_prompt(
-        **base_kwargs, negative_examples=examples_b
-    )
+    msg_a = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_a)
+    msg_b = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_b)
     assert msg_a[1]["content"] == msg_b[1]["content"]

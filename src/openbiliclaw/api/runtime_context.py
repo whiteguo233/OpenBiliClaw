@@ -624,25 +624,24 @@ class RuntimeContext:
 
         llm_work_allowed = self.background_llm_work_allowed()
 
-        # Kick speculator to seed speculative interests
+        # Kick speculators to seed speculative interests / avoidances
         if self.soul_engine is not None and llm_work_allowed:
             try:
                 profile = await self.soul_engine.get_profile()
+                runtime_state: dict[str, object] = {}
+                load_runtime_state = getattr(
+                    self.memory_manager,
+                    "load_discovery_runtime_state",
+                    None,
+                )
+                if callable(load_runtime_state):
+                    loaded = load_runtime_state()
+                    if isinstance(loaded, dict):
+                        runtime_state = loaded
+
                 speculator = getattr(self.soul_engine, "_speculator", None)
                 if speculator is not None:
-                    feedback_history: object = []
-                    load_runtime_state = getattr(
-                        self.memory_manager,
-                        "load_discovery_runtime_state",
-                        None,
-                    )
-                    if callable(load_runtime_state):
-                        runtime_state = load_runtime_state()
-                        if isinstance(runtime_state, dict):
-                            feedback_history = runtime_state.get(
-                                "probe_feedback_history",
-                                [],
-                            )
+                    feedback_history: object = runtime_state.get("probe_feedback_history", [])
                     self.task_registry.track(
                         "post_reload_speculate",
                         self._safe_post_reload_speculate(
@@ -652,6 +651,21 @@ class RuntimeContext:
                         ),
                     )
                     logger.debug("post-reload speculator scheduled as background task")
+
+                avoidance_speculator = getattr(self.soul_engine, "_avoidance_speculator", None)
+                if avoidance_speculator is not None:
+                    avoidance_feedback: object = runtime_state.get(
+                        "avoidance_probe_feedback_history", []
+                    )
+                    self.task_registry.track(
+                        "post_reload_avoidance_speculate",
+                        self._safe_post_reload_speculate(
+                            avoidance_speculator,
+                            profile,
+                            avoidance_feedback,
+                        ),
+                    )
+                    logger.debug("post-reload avoidance speculator scheduled as background task")
             except Exception:
                 pass  # Profile not initialized yet — skip silently
 

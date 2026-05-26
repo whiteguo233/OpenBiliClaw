@@ -79,6 +79,12 @@
     let chatPlaceholderIndex = 0;
     let chatPlaceholderTimer = null;
     let activityRailHeightFrame = 0;
+    let backendHydrationTimer = null;
+    let backendHydrationInFlight = false;
+    let backendHydrationPending = false;
+    let activityPageRefreshTimer = null;
+    let activityPageRefreshInFlight = false;
+    let activityPageRefreshPending = false;
 
     function debounceAsync(fn, delayMs = 1000) {
       let timer = null;
@@ -98,9 +104,63 @@
       };
     }
 
-    const scheduleBackendHydration = debounceAsync(() => hydrateFromBackend(), 1000);
-    const scheduleActivityPageRefresh = debounceAsync(() => loadActivityPage({ reset: true }), 1000);
     const scheduleDelightQueueRefresh = debounceAsync(() => fetchDelightQueue(), 1000);
+
+    async function runBackendHydration() {
+      if (backendHydrationInFlight) {
+        backendHydrationPending = true;
+        return;
+      }
+      backendHydrationInFlight = true;
+      try {
+        await hydrateFromBackend();
+      } finally {
+        backendHydrationInFlight = false;
+        if (backendHydrationPending) {
+          backendHydrationPending = false;
+          backendHydrationTimer = window.setTimeout(() => {
+            backendHydrationTimer = null;
+            void runBackendHydration();
+          }, 0);
+        }
+      }
+    }
+
+    function scheduleBackendHydration() {
+      if (backendHydrationTimer !== null) window.clearTimeout(backendHydrationTimer);
+      backendHydrationTimer = window.setTimeout(() => {
+        backendHydrationTimer = null;
+        void runBackendHydration();
+      }, 1000);
+    }
+
+    async function runActivityPageRefresh() {
+      if (activityPageRefreshInFlight) {
+        activityPageRefreshPending = true;
+        return;
+      }
+      activityPageRefreshInFlight = true;
+      try {
+        await loadActivityPage({ reset: true });
+      } finally {
+        activityPageRefreshInFlight = false;
+        if (activityPageRefreshPending) {
+          activityPageRefreshPending = false;
+          activityPageRefreshTimer = window.setTimeout(() => {
+            activityPageRefreshTimer = null;
+            void runActivityPageRefresh();
+          }, 0);
+        }
+      }
+    }
+
+    function scheduleActivityPageRefresh() {
+      if (activityPageRefreshTimer !== null) window.clearTimeout(activityPageRefreshTimer);
+      activityPageRefreshTimer = window.setTimeout(() => {
+        activityPageRefreshTimer = null;
+        void runActivityPageRefresh();
+      }, 1000);
+    }
 
     function syncActivityRailHeight() {
       const rail = document.querySelector('[data-od-id="activity-rail"]');
@@ -1154,6 +1214,11 @@
       return messageType({ type }) === "avoidance.probe";
     }
 
+    function isChallengeProbe(item) {
+      const mode = String(item?.probe_mode || "").toLowerCase();
+      return Boolean(item?.challenge) || mode === "lateral" || mode === "bridge" || mode === "wildcard";
+    }
+
     function probeKey(type, domain) {
       return `${messageType({ type })}:${String(domain || "")}`;
     }
@@ -1275,15 +1340,23 @@
         el.className = "message-item";
         el.dataset.messageKey = key;
         if (messageType(msg) === "notification") {
+          el.classList.add("is-notification");
           el.innerHTML = `<p class="eyebrow">待通知候选</p><h3>${escapeHtml(msg.title)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="message-note">这类消息来自后端挑出的高置信推荐，用于插件通知；标记已通知后不会反复出现。</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="通知候选状态"><button class="feedback-icon-btn" data-notification-msg="dismiss" type="button" aria-label="标记已通知" title="标记已通知"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-notification-msg="view">去看看</button></div></div>`;
           el.querySelectorAll("[data-notification-msg]").forEach((btn) => btn.addEventListener("click", () => respondNotification(msg, btn.dataset.notificationMsg, el)));
         } else {
           const isAvoidance = messageType(msg) === "avoidance.probe";
-          const eyebrow = isAvoidance ? "避雷确认" : "兴趣确认";
-          const actionsLabel = isAvoidance ? "确认或排除这个避雷方向" : "确认或排除这个兴趣";
+          const isChallenge = !isAvoidance && isChallengeProbe(msg);
+          el.classList.add(isAvoidance ? "is-avoidance-probe" : isChallenge ? "is-challenge-probe" : "is-interest-probe");
+          const eyebrow = isAvoidance ? "避雷确认" : isChallenge ? "挑战探针" : "兴趣确认";
+          const actionsLabel = isAvoidance ? "确认或排除这个避雷方向" : isChallenge ? "确认或排除这个挑战方向" : "确认或排除这个兴趣";
           const confirmLabel = isAvoidance ? "确实不喜欢" : "喜欢";
           const rejectLabel = isAvoidance ? "不是" : "不喜欢";
-          el.innerHTML = `<p class="eyebrow">${eyebrow}</p><h3>${escapeHtml(msg.domain)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="profile-chip-row">${asArray(msg.specifics).map((s) => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="${actionsLabel}"><button class="feedback-icon-btn" data-probe="confirm" type="button" aria-label="${confirmLabel}" title="${confirmLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg></button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-probe="reject" type="button" aria-label="${rejectLabel}" title="${rejectLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-probe="chat">多聊聊</button></div></div>`;
+          const kindCopy = isAvoidance
+            ? "想少看这类，就确认这是雷点；如果阿B猜错了，点不是。"
+            : isChallenge
+              ? "这是挑战方向，会把口味往侧边推一点；想继续试探就点喜欢，不准就点不喜欢。"
+            : "想继续探索这个方向，就点喜欢；不准就点不喜欢。";
+          el.innerHTML = `<p class="eyebrow">${eyebrow}</p><div class="message-note probe-kind-copy">${escapeHtml(kindCopy)}</div><h3>${escapeHtml(msg.domain)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="profile-chip-row">${asArray(msg.specifics).map((s) => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="${actionsLabel}"><button class="feedback-icon-btn" data-probe="confirm" type="button" aria-label="${confirmLabel}" title="${confirmLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg></button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-probe="reject" type="button" aria-label="${rejectLabel}" title="${rejectLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-probe="chat">多聊聊</button></div></div>`;
           if (resolvedResult) {
             el.classList.add("is-resolved");
             const resolvedActions = el.querySelector(".message-card-actions");

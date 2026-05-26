@@ -1076,12 +1076,7 @@ async function loadData() {
   loading = true;
   render();
   try {
-    const [recs, status, delights, activity] = await Promise.all([
-      fetchRecommendations(),
-      fetchRuntimeStatus().catch(() => null),
-      fetchDelightBatch().catch(() => []),
-      fetchActivityFeed({ limit: 5 }).catch(() => null),
-    ]);
+    const recs = await fetchRecommendations().catch(() => []);
     const normalizedRecs = recs.map(normalizeRecommendation);
     autoAppendExhausted = false;
     resetAutoAppendIntent();
@@ -1089,16 +1084,39 @@ async function loadData() {
     rememberRecommendationFeedback(normalizedRecs);
     patchState({
       recommendations: normalizedRecs,
-      runtimeStatus: status ? normalizeRuntimeStatus(status) : state.runtimeStatus,
-      activeDelights: delights.map(normalizeDelightCandidate),
-      delightCurrentIndex: 0,
-      activityFeed: activity,
     });
   } catch { /* ignore */ }
   loading = false;
   render();
-  // Hydrate durable delight chat turns after initial render
-  hydrateDelightTurns();
+  void hydrateRecommendSideChannels();
+}
+
+function hydrateRecommendSideChannels() {
+  fetchRuntimeStatus()
+    .then((status) => {
+      if (!status) return;
+      patchState({ runtimeStatus: normalizeRuntimeStatus(status) });
+      rerenderHeaderOnly();
+    })
+    .catch(() => {});
+
+  fetchActivityFeed({ limit: 5 })
+    .then((activityFeed) => {
+      patchState({ activityFeed });
+      rerenderHeaderOnly();
+    })
+    .catch(() => {});
+
+  fetchDelightBatch()
+    .then((delights) => {
+      patchState({
+        activeDelights: delights.map(normalizeDelightCandidate),
+        delightCurrentIndex: 0,
+      });
+      rerenderDelightOnly();
+      void hydrateDelightTurns();
+    })
+    .catch(() => {});
 }
 
 function scheduleRecommendationItemsRefresh() {

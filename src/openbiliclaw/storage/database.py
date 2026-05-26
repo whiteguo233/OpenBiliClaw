@@ -248,6 +248,7 @@ class Database:
         self._ensure_content_cache_pool_copy_columns()
         self._ensure_content_cache_delight_columns()
         self._ensure_content_cache_multisource_columns()
+        self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
         self._ensure_llm_usage_cache_columns()
@@ -2866,6 +2867,15 @@ class Database:
             added = True
         if added:
             self.conn.execute("UPDATE content_cache SET content_id = bvid WHERE content_id = ''")
+
+    def _ensure_recommendation_read_indexes(self) -> None:
+        """Create indexes used by recommendation and activity-feed reads."""
+        self.conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_recommendations_created_id
+                ON recommendations (created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_content_cache_content_id
+                ON content_cache (content_id);
+        """)
 
     def _ensure_source_recipes_table(self) -> None:
         """Create the source_recipes table if it does not exist."""

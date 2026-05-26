@@ -2013,6 +2013,42 @@
       animation: probeSlideIn 0.3s ease-out;
     }
 
+    .probe-card.is-interest,
+    .message-item.is-interest {
+      background: linear-gradient(135deg, rgba(255, 248, 232, 0.98), rgba(255, 238, 210, 0.96));
+      border-color: rgba(221, 127, 45, 0.34);
+    }
+
+    .probe-card.is-challenge,
+    .message-item.is-challenge {
+      background: linear-gradient(135deg, rgba(246, 241, 255, 0.98), rgba(237, 232, 255, 0.96));
+      border-color: rgba(124, 58, 237, 0.28);
+    }
+
+    .message-item.is-avoidance {
+      background: linear-gradient(135deg, rgba(238, 247, 255, 0.98), rgba(225, 239, 252, 0.96));
+      border-color: rgba(59, 130, 246, 0.28);
+    }
+
+    .probe-card.is-challenge .probe-kicker,
+    .message-item.is-challenge .message-domain { color: #6d28d9; }
+    .message-item.is-challenge .message-reason { color: #5b21b6; }
+    .message-item.is-avoidance .message-domain { color: #1d4ed8; }
+    .message-item.is-avoidance .message-reason { color: #1e40af; }
+
+    .probe-kicker,
+    .message-kind-copy {
+      margin: 0 0 8px;
+      color: #7c5b2f;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .probe-card.is-challenge .message-kind-copy,
+    .message-item.is-challenge .message-kind-copy { color: #6d28d9; }
+    .message-item.is-avoidance .message-kind-copy { color: #1d4ed8; }
+
     @keyframes probeSlideIn {
       from { opacity: 0; transform: translateY(-8px); }
       to { opacity: 1; transform: translateY(0); }
@@ -3067,6 +3103,7 @@
     }
     .message-item.is-delight .message-domain { color: #4c1d95; }
     .message-item.is-delight .message-reason { color: #6b21a8; }
+    .message-item.is-delight .message-kind-copy { color: #6b21a8; }
 
     .probe-btn.is-view {
       background: rgba(88, 166, 255, 0.12);
