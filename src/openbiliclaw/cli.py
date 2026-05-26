@@ -6059,15 +6059,21 @@ def quality_gate_suggest_patterns(
     table.add_column("#", style="dim")
     table.add_column("正则", style="cyan")
     table.add_column("说明", style="green")
-    for i, item in enumerate(suggested, 1):
-        pat = str(item.get("pattern", "")).strip()
-        reason = str(item.get("reason", "")).strip()
+    for i, raw_item in enumerate(suggested, 1):
+        if not isinstance(raw_item, dict):
+            continue
+        pat = str(raw_item.get("pattern", "")).strip()
+        reason = str(raw_item.get("reason", "")).strip()
         if pat:
             table.add_row(str(i), pat, reason)
     console.print(table)
 
     if apply:
-        new_patterns = [str(item["pattern"]).strip() for item in suggested if "pattern" in item]
+        new_patterns = [
+            str(item["pattern"]).strip()
+            for item in suggested
+            if isinstance(item, dict) and "pattern" in item
+        ]
         cfg.quality_gate.clickbait_patterns = new_patterns
         if not cfg.quality_gate.enabled:
             cfg.quality_gate.enabled = True
