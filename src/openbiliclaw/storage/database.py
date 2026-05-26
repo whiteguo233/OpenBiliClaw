@@ -3089,6 +3089,7 @@ class Database:
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
+              AND COALESCE(feedback_type, '') = ''
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
             ORDER BY delight_score DESC, relevance_score DESC, discovered_at DESC
             LIMIT ?
@@ -3143,6 +3144,7 @@ class Database:
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
+              AND COALESCE(feedback_type, '') = ''
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
             """,
             (min_delight_score,),

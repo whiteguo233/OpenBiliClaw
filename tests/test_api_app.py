@@ -3336,11 +3336,13 @@ class TestBackendAPI:
         history = memory.load_discovery_runtime_state()["avoidance_probe_feedback_history"]
         assert history[0]["response"] == "reject"
 
-    def test_avoidance_probe_confirm_uses_apply_new_dislikes(
+    def test_avoidance_probe_confirm_schedules_dislike_writeback(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        import time
+
         from fastapi.testclient import TestClient
 
         from openbiliclaw.api import app as app_module
@@ -3372,6 +3374,7 @@ class TestBackendAPI:
         calls: list[dict[str, object]] = []
 
         async def fake_apply_new_dislikes(**kwargs: object) -> list[str]:
+            await asyncio.sleep(0.02)
             calls.append(dict(kwargs))
             return ["新增不喜欢方向: 标题党热点解读"]
 
@@ -3396,14 +3399,19 @@ class TestBackendAPI:
             soul_engine=FakeSoulEngine(),
         )
         app.state.runtime_context.config = SimpleNamespace(data_path=tmp_path)
-        client = TestClient(app)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/avoidance-probes/respond",
+                json={"domain": "浅层热点复读", "response": "confirm"},
+            )
 
-        response = client.post(
-            "/api/avoidance-probes/respond",
-            json={"domain": "浅层热点复读", "response": "confirm"},
-        )
+            assert response.status_code == 200
+            assert calls == []
+            for _ in range(20):
+                time.sleep(0.02)
+                if calls:
+                    break
 
-        assert response.status_code == 200
         assert calls
         assert calls[0]["topics"] == ["标题党热点解读"]
         assert calls[0]["embedding_service"] is embedding_service
@@ -4045,6 +4053,90 @@ class TestBackendAPI:
         assert memory.events[0]["metadata"]["bvid"] == "BVresilient"
         # But layers_updated should be empty because ingest raised.
         assert response.json()["layers_updated"] == []
+
+    def test_delight_like_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "like"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "liked"
+        assert database.notified == ["BV1DL"]
+        assert any("feedback_type='like'" in query for query, _params in database.writes)
+
+    def test_delight_dislike_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "dislike"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "disliked"
+        assert database.notified == ["BV1DL"]
+        assert any("feedback_type='dislike'" in query for query, _params in database.writes)
+
+    def test_delight_dismiss_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "dismiss"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "dismissed"
+        assert database.notified == ["BV1DL"]
+        assert database.writes == []
 
     def test_get_config_returns_llm_and_embedding_settings(
         self,

@@ -92,6 +92,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _CONFIG_SAVE_LOCK = asyncio.Lock()
+_fire_and_forget_tasks: set[asyncio.Task[None]] = set()
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -1605,9 +1606,7 @@ def create_app(
         # ── Speculative avoidances ──
         try:
             avoidance_state = load_avoidance_state(runtime_config.data_path)
-            active_avoidances = [
-                item for item in avoidance_state.active if item.status == "active"
-            ]
+            active_avoidances = [item for item in avoidance_state.active if item.status == "active"]
             avoidance_items = [
                 SpeculativeAvoidanceOut(
                     domain=item.domain,
@@ -2166,23 +2165,39 @@ def create_app(
 
         Body:
         ``{ "bvid": "...", "title": "...", "response": "view"|"dislike"|"chat",
-        "message": "..." }``
+        "message": "..." }``. ``dismiss`` is accepted as a response so clients
+        can consume a delight recommendation without also calling
+        ``/api/delight/sent``.
         """
         from fastapi.responses import JSONResponse
 
         bvid = str(payload.get("bvid", "")).strip()
         title = str(payload.get("title", "")).strip()
-        response_type = str(payload.get("response", "")).strip().lower()
+        response_type = str(payload.get("response") or "").strip().lower()
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required")
-        if response_type not in {"view", "like", "dislike", "chat"}:
+        if response_type not in {"view", "like", "dislike", "chat", "dismiss"}:
             raise HTTPException(
                 status_code=422,
-                detail="response must be view, like, dislike, or chat",
+                detail="response must be view, like, dislike, chat, or dismiss",
             )
+
+        def mark_delight_consumed() -> None:
+            mark_sent = getattr(ctx.runtime_controller, "mark_delight_sent", None)
+            if callable(mark_sent):
+                mark_sent(bvid)
+            else:
+                ctx.database.mark_delight_notified(bvid)
 
         if response_type == "view":
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
+
+        if response_type == "dismiss":
+            try:
+                mark_delight_consumed()
+            except Exception:
+                logger.debug("Failed to dismiss delight bvid %s", bvid)
+            return JSONResponse(content={"ok": True, "action": "dismissed", "bvid": bvid})
 
         if response_type == "like":
             # User marks this delight as liked WITHOUT having opened the
@@ -2197,6 +2212,7 @@ def create_app(
                     "WHERE bvid = ?",
                     (bvid,),
                 )
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to record delight like for %s", bvid)
             label = title or bvid
@@ -2220,10 +2236,12 @@ def create_app(
         if response_type == "dislike":
             try:
                 ctx.database._execute_write(
-                    "UPDATE content_cache SET pool_status = 'purged_by_dislike' "
-                    "WHERE bvid = ? AND COALESCE(pool_status, 'fresh') = 'fresh'",
+                    "UPDATE content_cache SET pool_status = 'purged_by_dislike', "
+                    "feedback_type='dislike', feedback_at=CURRENT_TIMESTAMP "
+                    "WHERE bvid = ?",
                     (bvid,),
                 )
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to purge delight bvid %s", bvid)
             label = title or bvid
@@ -2287,6 +2305,8 @@ def create_app(
             "delight_chat",
             detail=f"你的反馈：{raw_message}\n阿b的回复：{reply}",
         )
+        with suppress(Exception):
+            mark_delight_consumed()
         await _publish_probe_event("delight.chat", f"关于「{label}」你说：{raw_message}", bvid)
         return JSONResponse(content={"ok": True, "action": "chat", "bvid": bvid, "reply": reply})
 
@@ -3014,9 +3034,8 @@ def create_app(
         if response_type == "confirm":
             requested_source = str(payload.get("confirmation_source", "")).strip()
             surface = str(payload.get("surface", "")).strip().lower()
-            confirmation_source = (
-                requested_source
-                or ("profile_confirmed" if surface == "profile" else "probe_confirmed")
+            confirmation_source = requested_source or (
+                "profile_confirmed" if surface == "profile" else "probe_confirmed"
             )
             _record_probe_feedback_history(
                 domain,
@@ -3272,26 +3291,42 @@ def create_app(
             ok = active_avoidance is not None
             if ok:
                 topics = topics_for_confirmed_avoidance(active_avoidance)
-                changes = await apply_new_dislikes(
-                    memory=ctx.memory_manager,
-                    database=getattr(ctx, "database", None)
-                    or getattr(ctx.memory_manager, "_database", None),
-                    embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
-                    llm_service=getattr(ctx, "llm_service", None),
-                    topics=topics,
-                )
+                summary = f"你确认了避开「{domain}」，已开始更新不喜欢方向。"
                 _record_probe_cognition(
-                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
+                    summary,
                     domain,
                     "confirmed",
                     source="avoidance_probe",
-                    detail="\n".join(changes) if changes else "",
                 )
-                await _publish_probe_event(
-                    "avoidance.confirmed",
-                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
-                    domain,
-                )
+                await _publish_probe_event("avoidance.confirmed", summary, domain)
+
+                async def _apply_confirmed_avoidance() -> None:
+                    try:
+                        changes = await apply_new_dislikes(
+                            memory=ctx.memory_manager,
+                            database=getattr(ctx, "database", None)
+                            or getattr(ctx.memory_manager, "_database", None),
+                            embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
+                            llm_service=getattr(ctx, "llm_service", None),
+                            topics=topics,
+                        )
+                        if changes:
+                            _record_probe_cognition(
+                                f"避雷方向「{domain}」的不喜欢画像已更新。",
+                                domain,
+                                "confirmed",
+                                source="avoidance_probe",
+                                detail="\n".join(changes),
+                            )
+                    except Exception:
+                        logger.exception(
+                            "Background avoidance dislike writeback failed: %s",
+                            domain,
+                        )
+
+                task = asyncio.create_task(_apply_confirmed_avoidance())
+                _fire_and_forget_tasks.add(task)
+                task.add_done_callback(_fire_and_forget_tasks.discard)
             return {"ok": ok, "action": "confirmed", "domain": domain}
 
         if response_type == "reject":

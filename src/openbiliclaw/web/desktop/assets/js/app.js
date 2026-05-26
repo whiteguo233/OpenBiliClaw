@@ -12,7 +12,6 @@
       notificationSent: "/notifications/sent",
       delightBatch: "/delight/pending-batch",
       delightRespond: "/delight/respond",
-      delightSent: "/delight/sent",
       profile: "/profile-summary",
       feedback: "/feedback",
       click: "/recommendation-click",
@@ -1393,7 +1392,10 @@
       target.getBoundingClientRect();
       target.classList.add("is-dismissing");
       target.style.height = "0px";
-      window.setTimeout(finish, 260);
+      window.setTimeout(() => {
+        target.remove();
+        finish();
+      }, 260);
     }
 
     async function respondProbe(msg, response, el) {
@@ -1470,11 +1472,14 @@
         const payload = { domain, response, message: "" };
         if (!isAvoidance) payload.surface = "profile";
         await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        row.innerHTML = `<p class="spec-result">${isAvoidance
-          ? response === "confirm" ? `好，「${escapeHtml(domain)}」会作为避雷方向处理。` : `好，「${escapeHtml(domain)}」不记成避雷。`
-          : response === "confirm" ? `好，「${escapeHtml(domain)}」记住了。` : `好，「${escapeHtml(domain)}」先不看了。`}</p>`;
-        state.handledProbeKeys.add(probeKey(type, domain));
-        state.messages = state.messages.filter((msg) => !(messageType(msg) === messageType({ type }) && msg.domain === domain));
+        const result = isAvoidance
+          ? (response === "confirm" ? `好，「${escapeHtml(domain)}」会作为避雷方向处理。` : `好，「${escapeHtml(domain)}」不记成避雷。`)
+          : (response === "confirm" ? `好，「${escapeHtml(domain)}」记住了。` : `好，「${escapeHtml(domain)}」先不看了。`);
+        row.innerHTML = `<p class="spec-result">${result}</p>`;
+        const key = probeKey(type, domain);
+        state.handledProbeKeys.add(key);
+        state.messages = state.messages.filter((msg) => messageKey(msg) !== key);
+        if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((msg) => messageKey(msg) !== key);
         renderMessages();
         showToast(isAvoidance
           ? response === "confirm" ? "已确认这个避雷方向" : "已排除这个避雷方向"
@@ -1676,11 +1681,16 @@
       const feedbackToast = response === "like" ? "惊喜推荐已喜欢" : response === "dislike" ? "这类惊喜先少来点" : "已忽略这条惊喜推荐";
       const toastImmediately = response === "like" || response === "dislike";
       if (toastImmediately) showToast(feedbackToast);
-      if (response === "dismiss") {
-        await requestJson(ENDPOINTS.delightSent, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid }) });
-      } else {
-        await requestJson(ENDPOINTS.delightRespond, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, response, title: delight.title, message: "" }) });
-      }
+      await requestJson(ENDPOINTS.delightRespond, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bvid: delight.bvid,
+          response,
+          title: delight.title,
+          message: ""
+        })
+      });
       state.delights = state.delights.filter((item) => item.bvid !== delight.bvid);
       setActiveDelight(Math.min(state.delightIndex, state.delights.length - 1));
       if (el) el.remove();
@@ -1915,18 +1925,24 @@
       };
     }
 
-    function currentRecommendationSourceCount() {
-      const sources = new Set(
-        state.videos
-          .map((item) => platformName(item.platform || item.source_platform || item.source))
-          .map((label) => String(label || "").trim())
-          .filter(Boolean)
-      );
-      return sources.size;
+    function configuredSourceCount() {
+      const sources = state.config?.sources;
+      if (!sources || typeof sources !== "object") return 0;
+      const shares = state.config?.scheduler?.pool_source_shares || {};
+      return Object.entries(sources).reduce((count, [key, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return count;
+        if (Object.prototype.hasOwnProperty.call(value, "enabled")) {
+          return count + (value.enabled !== false ? 1 : 0);
+        }
+        if (Object.prototype.hasOwnProperty.call(shares, key)) {
+          return count + (Number(shares[key] ?? 0) > 0 ? 1 : 0);
+        }
+        return count;
+      }, 0);
     }
 
     function syncSourceMetric() {
-      const count = currentRecommendationSourceCount();
+      const count = configuredSourceCount();
       $("#metricSources").textContent = count ? String(count) : "—";
     }
 
@@ -2263,7 +2279,7 @@
       if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
-      if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [] }]);
+      if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
     }
 
     function connectRuntimeStream() {

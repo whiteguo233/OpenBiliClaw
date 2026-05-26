@@ -360,7 +360,7 @@
     .message-note.is-success { min-height: 38px; display: flex; align-items: center; border: 1px solid color-mix(in oklab, var(--accent), var(--border) 58%); background: color-mix(in oklab, var(--accent), var(--surface) 88%); color: var(--fg); }
     .message-item.is-resolved { border-color: color-mix(in oklab, var(--accent), var(--border) 64%); background: color-mix(in oklab, var(--surface), var(--accent) 4%); }
     .message-item.is-resolving .message-card-actions { opacity: 0.72; pointer-events: none; }
-    .message-item.is-dismissing { opacity: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; border-bottom-width: 0; pointer-events: none; }
+    .message-item.is-dismissing { opacity: 0; height: 0 !important; min-height: 0 !important; margin: 0 !important; padding-top: 0; padding-bottom: 0; border-top-width: 0; border-bottom-width: 0; overflow: hidden; pointer-events: none; }
     .message-card-actions { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: 2px; }
     .message-card-actions.is-result { justify-content: stretch; }
     .message-action-result { min-height: 38px; width: 100%; display: flex; align-items: center; justify-content: center; padding: 0 var(--space-3); border: 1px solid color-mix(in oklab, var(--accent), var(--border) 58%); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--accent), var(--surface) 88%); color: var(--fg); font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
