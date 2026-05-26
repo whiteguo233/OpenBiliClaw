@@ -2484,10 +2484,18 @@ class Database:
         """
         cursor = self.conn.execute(
             """
-            SELECT r.bvid, c.topic_key, c.topic_group, c.source, r.created_at
-            FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            ORDER BY r.created_at DESC, r.id DESC
+            SELECT bvid, topic_key, topic_group, source, created_at
+            FROM (
+                SELECT r.bvid, c.topic_key, c.topic_group, c.source, r.created_at, r.id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
+            )
+            WHERE _match_rank = 1
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (limit,),
@@ -2504,16 +2512,20 @@ class Database:
         since_text = since.isoformat(sep=" ")
         cursor = self.conn.execute(
             """
-            SELECT r.bvid,
-                   c.topic_key,
-                   c.topic_group,
-                   c.source,
-                   r.created_at,
-                   r.presented_at
-            FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            WHERE COALESCE(r.presented_at, r.created_at) >= ?
-            ORDER BY COALESCE(r.presented_at, r.created_at) DESC, r.id DESC
+            SELECT bvid, topic_key, topic_group, source, created_at, presented_at
+            FROM (
+                SELECT r.bvid, c.topic_key, c.topic_group, c.source,
+                       r.created_at, r.presented_at, r.id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
+                WHERE COALESCE(r.presented_at, r.created_at) >= ?
+            )
+            WHERE _match_rank = 1
+            ORDER BY COALESCE(presented_at, created_at) DESC, id DESC
             """,
             (since_text,),
         )
@@ -2531,12 +2543,22 @@ class Database:
         """
         cursor = self.conn.execute(
             """
-            SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key,
-                   c.source, c.title, c.franchise_key
-            FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            WHERE r.feedback_type IS NOT NULL
-            ORDER BY r.feedback_at DESC
+            SELECT feedback_type, up_mid, up_name, topic_key,
+                   source, title, franchise_key
+            FROM (
+                SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key,
+                       c.source, c.title, c.franchise_key,
+                       r.id, r.feedback_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
+                WHERE r.feedback_type IS NOT NULL
+            )
+            WHERE _match_rank = 1
+            ORDER BY feedback_at DESC
             LIMIT ?
             """,
             (limit,),
@@ -2645,20 +2667,23 @@ class Database:
         """Return one recommendation worth notifying the user about."""
         cursor = self.conn.execute(
             """
-            SELECT
-                r.id,
-                r.bvid,
-                r.expression,
-                r.confidence,
-                c.title,
-                c.notification_sent,
-                c.notified_at
-            FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            WHERE r.presented = 0
-              AND c.notification_sent = 0
-              AND r.confidence >= ?
-            ORDER BY r.confidence DESC, r.created_at DESC, r.id DESC
+            SELECT id, bvid, expression, confidence, title, notification_sent, notified_at
+            FROM (
+                SELECT r.id, r.bvid, r.expression, r.confidence,
+                       c.title, c.notification_sent, c.notified_at,
+                       r.presented, r.created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
+                WHERE r.presented = 0
+                  AND c.notification_sent = 0
+                  AND r.confidence >= ?
+            )
+            WHERE _match_rank = 1
+            ORDER BY confidence DESC, created_at DESC, id DESC
             LIMIT 1
             """,
             (min_confidence,),

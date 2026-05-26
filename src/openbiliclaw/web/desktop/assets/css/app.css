@@ -191,7 +191,14 @@
     [hidden] { display: none !important; }
     :root { --side-drawer-width: 312px; --topbar-height: 75px; }
     .layout, .fatal-banner { transition: transform var(--motion-base) var(--ease-standard); }
-    .icon-btn, .pill-btn { border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); min-height: 40px; padding: 0 var(--space-4); box-shadow: var(--elev-ring); }
+    .icon-btn, .pill-btn { border: 1px solid var(--border-soft); background: var(--surface); color: var(--fg-2); border-radius: var(--radius-pill); min-height: 40px; padding: 0 var(--space-4); box-shadow: var(--elev-ring); transition: transform var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard); }
+    /* Restore the tactile press animation lost during the upstream
+       merge. Upstream's button reset dropped the :active scale-down,
+       which made the buttons feel inert on touch. Subtle 97% scale +
+       short transition reads as "press registered" without making
+       the layout shift. */
+    .icon-btn:active, .pill-btn:active { transform: scale(0.97); }
+    .pill-btn.primary:active { transform: scale(0.97); box-shadow: none; }
     .icon-btn { min-width: 40px; padding: 0; }
     .nav-compact { min-width: 64px; padding-inline: var(--space-3); }
     .side-drawer-btn svg { width: 20px; height: 20px; stroke-width: 2; }

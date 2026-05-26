@@ -1837,6 +1837,171 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_recommendations_hides_after_thumbs_up(self) -> None:
+        """Regression (fork): a thumbs-up'd recommendation must not
+        reappear in the list on next reload. Without filtering on
+        ``r.feedback_type``, the rec row keeps surfacing every time
+        ``/api/recommendations`` is hit, even though the user is done
+        with it.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation("BVLIKE", confidence=0.5, expression="", topic="")
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, title, source_platform) VALUES (?, ?, ?)",
+                ("BVLIKE", "liked", "bilibili"),
+            )
+            db._execute_write(
+                "UPDATE recommendations SET feedback_type='like' WHERE bvid=?",
+                ("BVLIKE",),
+            )
+
+            rows = db.get_recommendations(limit=10)
+            assert all(r["bvid"] != "BVLIKE" for r in rows), (
+                f"BVLIKE should be filtered out after like, got: "
+                f"{[r['bvid'] for r in rows]}"
+            )
+            db.close()
+
+    def test_get_recommendations_hides_after_delight_dislike(self) -> None:
+        """Regression (fork): when the user clicks 不推荐 on a delight
+        card, the bvid gets ``content_cache.feedback_type='dislike'``
+        plus ``pool_status='purged_by_dislike'``. The regular feed
+        must NOT re-surface that bvid afterwards.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation("BVDLG", confidence=0.5, expression="", topic="")
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, title, source_platform, "
+                "feedback_type, pool_status) VALUES (?, ?, ?, ?, ?)",
+                ("BVDLG", "delight-disliked", "bilibili", "dislike", "purged_by_dislike"),
+            )
+
+            rows = db.get_recommendations(limit=10)
+            assert all(r["bvid"] != "BVDLG" for r in rows)
+            db.close()
+
+    def test_get_recommendations_hides_after_delight_dismiss(self) -> None:
+        """Regression (fork): when the user clicks 忽略 on a delight
+        card, ``content_cache.delight_notified`` is set to 1 (via
+        ``mark_delight_consumed`` → ``mark_delight_notified``). The
+        regular feed must also drop the bvid so the user doesn't see
+        in the main grid what they just dismissed from the delight
+        banner.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation("BVDISMISS", confidence=0.5, expression="", topic="")
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, title, source_platform) "
+                "VALUES (?, ?, ?)",
+                ("BVDISMISS", "dismissed-delight", "bilibili"),
+            )
+            db.mark_delight_notified("BVDISMISS")
+
+            rows = db.get_recommendations(limit=10)
+            assert all(r["bvid"] != "BVDISMISS" for r in rows)
+            db.close()
+
+    def test_get_recommendations_hides_after_comment(self) -> None:
+        """Regression (fork): commenting on a rec card auto-removes
+        it locally; reload should keep it gone too.
+        ``r.feedback_type`` of any non-empty value (``like`` /
+        ``dislike`` / ``comment``) must hide the row.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation("BVCMT", confidence=0.5, expression="", topic="")
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, title, source_platform) "
+                "VALUES (?, ?, ?)",
+                ("BVCMT", "commented", "bilibili"),
+            )
+            db._execute_write(
+                "UPDATE recommendations SET feedback_type='comment' WHERE bvid=?",
+                ("BVCMT",),
+            )
+
+            rows = db.get_recommendations(limit=10)
+            assert all(r["bvid"] != "BVCMT" for r in rows)
+            db.close()
+
+    def test_get_recommendations_dedups_dual_cache_match(self) -> None:
+        """Regression (fork): the upstream
+        ``c.bvid = r.bvid OR c.content_id = r.bvid`` join can match
+        two content_cache rows for the same recommendation when
+        ``r.bvid`` happens to coincide with another row's
+        ``content_id`` (realistic after mark-as-repost rewrites
+        ``content_url`` to a YouTube id that another row uses as
+        its bvid). Without dedup the recommendation appears twice.
+
+        Verifies the ROW_NUMBER() PARTITION dedup in
+        ``get_recommendations`` returns exactly one row, preferring
+        the exact-bvid match over the content_id-only match.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            # Row A: bilibili entry whose content_id pointer is the YT id
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, content_id, title, source_platform) "
+                "VALUES (?, ?, ?, ?)",
+                ("BV-real", "yt-abc", "via content_id", "bilibili"),
+            )
+            # Row B: youtube entry where the bvid IS the YT id directly
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, content_id, title, source_platform) "
+                "VALUES (?, ?, ?, ?)",
+                ("yt-abc", "", "via bvid", "youtube"),
+            )
+            db.insert_recommendation("yt-abc", confidence=0.9, expression="", topic="")
+
+            rows = db.get_recommendations(limit=10)
+            assert len(rows) == 1, (
+                f"OR-join should be deduplicated to 1 row, got {len(rows)}: "
+                f"{[r['title'] for r in rows]}"
+            )
+            # Prefer exact bvid match.
+            assert rows[0]["title"] == "via bvid", (
+                f"Should prefer exact-bvid match, got: {rows[0]['title']}"
+            )
+            db.close()
+
+    def test_list_watch_later_returns_source_platform_and_content_url(self) -> None:
+        """Regression (fork): the saved-list UI shows a platform
+        badge and the open-link prefers ``content_url`` over a
+        constructed bilibili URL (preserves xhs ``xsec_token`` and
+        post-mark-as-repost YouTube URLs). The list endpoint must
+        actually carry those fields.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db._execute_write(
+                "INSERT INTO content_cache (bvid, title, source_platform, "
+                "content_url) VALUES (?, ?, ?, ?)",
+                ("BVWL", "saved item", "youtube", "https://youtube.com/watch?v=abc"),
+            )
+            db.add_to_watch_later("BVWL", note="my note")
+            items = db.list_watch_later(limit=10)
+            bv = next(i for i in items if i["bvid"] == "BVWL")
+
+            assert bv["source_platform"] == "youtube"
+            assert bv["content_url"] == "https://youtube.com/watch?v=abc"
+            assert bv["note"] == "my note"
+            db.close()
+
     def test_get_pool_candidates_filters_bare_xhs_rows(self) -> None:
         """Regression: ranking pool must exclude bare xhs rows too, so the
         engine never promotes them into recommendations in the first place.
