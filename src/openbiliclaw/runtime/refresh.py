@@ -217,6 +217,15 @@ class ContinuousRefreshController:
     pool_source_shares: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
     )
+    # Fork feature (v0.3.x): when the candidate pool is at the cap,
+    # the producer loops have nothing to do — there's no room to
+    # insert and no benefit from hammering Bilibili / xhs / douyin /
+    # youtube APIs every check_interval_seconds. Sleep this long
+    # instead. 3600s (1h) is a balance: long enough that hibernation
+    # actually saves cycles, short enough that the system recovers
+    # within an hour of the pool draining (which itself happens at
+    # human-feedback pace, so an hour is fine).
+    hibernate_sleep_seconds: int = 3600
     # v0.3.63+: optional registry so detached tasks (manual-refresh
     # background work, per-strategy precompute fire-and-forget) can be
     # cancelled by ``RuntimeContext.rebuild_from_config`` before the
@@ -445,6 +454,20 @@ class ContinuousRefreshController:
             plan=plan,
             reason="manual",
         )
+
+    def _pool_full(self) -> bool:
+        """Quick check: is the candidate pool at/above the target count?
+
+        Producer loops use this to decide whether to hibernate (sleep
+        ``hibernate_sleep_seconds``) instead of running their tick.
+        Wrapped in try/except because count_pool_candidates can race
+        with concurrent writers on SQLite — better to assume not-full
+        and run an extra tick than to crash the loop.
+        """
+        try:
+            return int(self.database.count_pool_candidates()) >= self.pool_target_count
+        except Exception:
+            return False
 
     def _enforce_pool_cap(self) -> bool:
         """Trim any overflow and report whether the pool is at/above target.
@@ -783,8 +806,19 @@ class ContinuousRefreshController:
             else:
                 with suppress(Exception):
                     await self._on_profile_ready_if_first_time()
+                result: dict[str, object] | None = None
                 with suppress(Exception):
-                    await self.refresh_if_needed()
+                    result = await self.refresh_if_needed()
+                # Hibernate when pool is full — sleep longer instead of
+                # waking every check_interval_seconds just to find the
+                # pool still at cap. The pool drains at human-feedback
+                # pace (user 👍/👎/dismiss), so an hour is the right
+                # order of magnitude for the next useful refresh.
+                if result and result.get("reason") == "pool_at_cap":
+                    await asyncio.sleep(self.hibernate_sleep_seconds)
+                else:
+                    await asyncio.sleep(self.check_interval_seconds)
+                continue
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_pool_precompute(self) -> None:
@@ -941,6 +975,9 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
+            if self._pool_full():
+                await asyncio.sleep(self.hibernate_sleep_seconds)
+                continue
             with suppress(Exception):
                 await self._tick_xhs_producer()
             await asyncio.sleep(self.check_interval_seconds)
@@ -951,6 +988,9 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
+            if self._pool_full():
+                await asyncio.sleep(self.hibernate_sleep_seconds)
+                continue
             with suppress(Exception):
                 await self._tick_douyin_producer()
             await asyncio.sleep(self.check_interval_seconds)
@@ -960,6 +1000,9 @@ class ContinuousRefreshController:
         while True:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
+                continue
+            if self._pool_full():
+                await asyncio.sleep(self.hibernate_sleep_seconds)
                 continue
             with suppress(Exception):
                 await self._tick_youtube_producer()
