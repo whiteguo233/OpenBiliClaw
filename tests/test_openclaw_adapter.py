@@ -739,9 +739,13 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             database: object,
             embedding_service: object = None,
             concurrency: object = None,
+            bilibili_client: object = None,
+            quality_gate: object = None,
         ) -> None:
             self.llm_service = llm_service
             self.database = database
+            self.bilibili_client = bilibili_client
+            self.quality_gate = quality_gate
 
         def register_strategy(self, strategy: object) -> None:
             registered_strategies.append(str(getattr(strategy, "name", "")))
@@ -800,6 +804,16 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             speculation_max_primary_interests=17,
             speculation_max_secondary_interests=66,
             speculator_idle_interval_minutes=11,
+        ),
+        quality_gate=SimpleNamespace(
+            enabled=False,
+            mode="reject",
+            min_follower=1000,
+            max_level=2,
+            min_views=500,
+            ban_franchise_accounts=True,
+            allowlist_mids=[],
+            clickbait_patterns=[],
         ),
     )
 
