@@ -4,6 +4,8 @@
  */
 
 const BASE_URL = `${location.protocol}//${location.host}/api`;
+const DEFAULT_READ_TIMEOUT_MS = 12_000;
+const QUICK_READ_TIMEOUT_MS = 5_000;
 
 function abortError(message = "Request aborted") {
   if (typeof DOMException === "function") {
@@ -77,7 +79,7 @@ export async function checkHealth() {
 
 // ── Recommendations ─────────────────────────────────────────
 export async function fetchRecommendations() {
-  const data = await requestJson("/recommendations");
+  const data = await requestJson("/recommendations", { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
   return Array.isArray(data.items) ? data.items : [];
 }
 
@@ -100,12 +102,12 @@ export async function reportClick(payload) {
 
 // ── Runtime Status ──────────────────────────────────────────
 export async function fetchRuntimeStatus() {
-  return requestJson("/runtime-status");
+  return requestJson("/runtime-status", { timeoutMs: QUICK_READ_TIMEOUT_MS });
 }
 
 // ── Delight ─────────────────────────────────────────────────
 export async function fetchDelightBatch(limit = 20) {
-  const data = await requestJson(`/delight/pending-batch?limit=${limit}`);
+  const data = await requestJson(`/delight/pending-batch?limit=${limit}`, { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
   return Array.isArray(data?.items) ? data.items : [];
 }
 
@@ -149,7 +151,7 @@ export async function fetchActivityFeed({ limit, before } = {}) {
   if (typeof limit === "number") params.set("limit", String(limit));
   if (before) params.set("before", before);
   const qs = params.toString();
-  return requestJson(`/activity-feed${qs ? `?${qs}` : ""}`);
+  return requestJson(`/activity-feed${qs ? `?${qs}` : ""}`, { timeoutMs: QUICK_READ_TIMEOUT_MS });
 }
 
 // ── Chat ────────────────────────────────────────────────────

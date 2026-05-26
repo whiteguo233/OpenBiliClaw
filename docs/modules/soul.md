@@ -54,7 +54,7 @@
 | ToneProfile | ✅ | 从 `OnionProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
-| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并按 `[scheduler]` 的 generation interval、TTL、cooldown、确认阈值和上限运行；候选带 `probe_mode=near/lateral/bridge/wildcard` 四档距离，selector 会限制过近方向、优先保留挑战项；通过事件或用户确认后按来源权重转正为正式兴趣，未确认则拒绝并冷却 |
+| 猜测兴趣系统 | ✅ | `InterestSpeculator` 定期通过 LLM 过采样生成猜测兴趣方向，并按 `[scheduler]` 的 generation interval、TTL、cooldown、确认阈值和上限运行；候选带 `probe_mode=near/lateral/bridge/wildcard` 四档距离，普通 `near` 池最多 5 条，`lateral/bridge/wildcard` 挑战池单独最多 3 条；通过事件或用户确认后按来源权重转正为正式兴趣，未确认则拒绝并冷却 |
 | 短期探索 buffer | ✅ | `exploration_buffer.py` 把弱正向聊天、推荐喜欢、惊喜喜欢、普通点击和负反馈汇总到 `discovery_runtime_state["short_term_exploration_buffer"]`；7 天内显式弱证据累计到阈值后以 `buffer_promoted` 写回兴趣，负向反馈会进入 48h 冷却并抵消分数 |
 | 不喜欢领域探针系统 | ✅ | `AvoidanceSpeculator` 与正向兴趣探针并行运行，最多 5 条 active 避雷假设；只在用户确认或显式负向证据达到阈值后写入 `disliked_topics`，未确认前不参与 discovery / recommendation 过滤 |
 | ROLE/VALUES/CORE 增量更新器 | ✅ | `_update_role`（`build_role_delta_prompt`，基于信号证据 + LLM diff-protection）、`_update_values`（LLM delta，每周期最多 add/remove 1 条，注入完整画像上下文）、`_update_core`（`build_core_delta_prompt`，更新 traits/needs/MBTI，强 diff-protection）均已完整实现 |
@@ -107,7 +107,7 @@
 | `bridge` | 从已知兴趣桥接到另一个内容域，挑战但可解释 |
 | `wildcard` | 更远的探索项，用于打破短期口味收窄 |
 
-`SpeculativeInterest.challenge` 对 `lateral/bridge/wildcard` 返回 `True`。`GET /api/profile-summary`、`GET /api/interest-probes/pending` 和 `interest.probe` runtime event 都会暴露 `probe_mode` 与 `challenge`，让 UI 可以区分普通确认和挑战探针。
+`SpeculativeInterest.challenge` 对 `lateral/bridge/wildcard` 返回 `True`。`GET /api/profile-summary`、`GET /api/interest-probes/pending` 和 `interest.probe` runtime event 都会暴露 `probe_mode` 与 `challenge`，让 UI 可以区分普通确认和挑战探针。挑战探针有独立 active 额度：普通 `near` 继续使用 `scheduler.speculation_max_active`（默认 5），挑战池固定最多 3 条，不再被 5 个普通探针占满后挤掉。
 
 ### Probe Novelty Guard
 
@@ -124,7 +124,7 @@
 | `scheduler.speculation_ttl_days` | 3 | 猜测存活期。注意：`SpeculativeInterest` 数据类本身的 `ttl_days` 字段默认值为 14，仅作为反序列化不含该字段的历史数据时的兜底值；实际新产生的猜测兴趣均使用此配置项的 3 天 |
 | `scheduler.speculation_cooldown_days` | 7 | 拒绝后冷却期 |
 | `scheduler.speculation_confirmation_threshold` | 3 | 转正所需确认数 |
-| `scheduler.speculation_max_active` | 5 | 最大活跃猜测数 |
+| `scheduler.speculation_max_active` | 5 | 最大活跃普通 `near` 猜测数；挑战探针 `lateral/bridge/wildcard` 另有固定 3 条 active 额度 |
 | `scheduler.speculation_max_primary_interests` | 15 | 活跃猜测一级上限；不再把已确认兴趣计入，避免画像丰富后探针系统永久停摆 |
 | `scheduler.speculation_max_secondary_interests` | 60 | 活跃猜测二级上限；不再把已确认细项计入，避免画像丰富后探针系统永久停摆 |
 | `scheduler.speculator_idle_interval_minutes` | 30 | `ProfileUpdatePipeline` 空闲时检查猜测兴趣生命周期的间隔；`speculation_interval_minutes` 仍作为 speculator 内部生成间隔 gate |
@@ -138,7 +138,7 @@
 | 进程启动 | `force_tick()` via `startup_refresh_loop()` | API 启动时确保有活跃猜测 |
 | 偏好分析 | `ingest_seeds()` via `_update_interest()` | PreferenceAnalyzer 附带的推测兴趣注入 |
 
-`force_tick()` 忽略间隔计时器，但仍尊重活跃猜测上限和 `max_active`。
+`force_tick()` 忽略间隔计时器，但仍尊重普通 `near` 上限和独立挑战上限；即使 5 条普通探针已满，只要挑战池未满，仍会尝试生成挑战探针。生成 prompt 会根据空位写入动态 `probe_mode_request`：near 池满时明确要求只输出 `lateral/bridge/wildcard`，挑战池满时只输出 `near`，最终入池仍由本地 slot selector 硬约束。
 
 ### 兴趣上限机制
 
@@ -214,6 +214,10 @@
          → 进入 cooldown，不写画像，不过滤推荐
 ```
 
+`AvoidanceSpeculator.tick()` 和 `force_tick()` 会在生成、转正、拒绝时输出 INFO 级摘要；active 已满或无 LLM 服务导致 `force_tick()` 无变化时只输出 DEBUG。LLM 返回的候选若被 novelty / quality gate 丢弃，会记录丢弃原因，方便排查“post-reload 已触发但没有新避雷探针”的生产问题。
+
+active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻止明显重复，source/topic guard 额外阻止同一 `source_mode` 下围绕同一粗主题连续换皮（例如多个 AI positive_boundary 只留一条）。如果历史 active 已经重复，下一轮 tick 会保留更具体 / 置信度更高的一条，其余写入 cooldown；新生成候选也会参考当前 active 的 `source_mode`、`source_signal`、体验轴和 specifics，避免一批避雷探针都围绕同一个证据源。
+
 ### 确认语义
 
 - `confirm` 表示“确实不喜欢 / 需要避开”。写回时优先写 `specifics[*].name`；只有 specifics 为空时才兜底写 domain，避免把子方向扩大成整个领域。
@@ -247,6 +251,8 @@
 - `GET /api/profile-summary` 返回 `speculative_avoidances`，供移动 Web、桌面 Web 和插件画像页展示。
 - `GET /api/avoidance-probes/pending` / `POST /api/avoidance-probes/respond` / `POST /api/avoidance-probes/trigger` 提供前端与 OpenClaw 的操作入口。
 - runtime stream 推送 `avoidance.probe`，确认、否认和聊天分别广播 `avoidance.confirmed` / `avoidance.rejected` / `avoidance.chat`。
+- 配置热重载后，`RuntimeContext.restart_background_tasks()` 会 detached 调度避雷 speculator 的 `force_tick()`，并传入 `discovery_runtime_state["avoidance_probe_feedback_history"]`；这条 one-shot 与正向兴趣 speculator 共用 `_safe_post_reload_speculate()`，避免阻塞 `/api/config` 响应。
+- `ProfileUpdatePipeline.tick()` 调用避雷 speculator 时会捕获并记录 warning，避免 refresh loop 外层的 broad suppress 把异常静默吞掉。
 - 未确认避雷探针不会挂到 `profile._active_speculations`，也不会进入 discovery、curator、delight 或 recommendation prompt。
 
 ### 关键文件

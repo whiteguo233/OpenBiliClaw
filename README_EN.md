@@ -17,12 +17,12 @@
 
 ---
 
-## 📌 v0.3.91 / extension v0.3.48 Highlights (2026-05-25)
+## 📌 v0.3.91 / extension v0.3.49 Highlights (2026-05-25)
 
-- **🔮 Challenge probes** — interest probes now use near / lateral / bridge / wildcard distance bands, so exploration can range from adjacent interests to bolder psychological bridges.
+- **🔮 Challenge probes** — interest probes now use near / lateral / bridge / wildcard distance bands; the regular near pool stays at 5 active probes, while challenge probes get their own 3 active slots.
+- **🎬 YouTube recommendation clicks** — recommendation cards and mobile Web now preserve `content_id / content_url / source_platform`, so profile events no longer turn YouTube IDs into Bilibili URLs.
 - **🧪 Weak-positive buffer** — tentative "maybe interesting" feedback enters a short-term buffer before becoming a formal interest.
 - **🛡️ Amplification guardrails** — newly confirmed directions can influence exploration without taking over an entire refresh.
-- **🧭 Unified avoidance semantics** — avoidance probes still write `disliked_topics`, while chat confirm / reject paths share the same 4-way feedback flow as interest probes.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -402,7 +402,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ## ✨ Key Features
 
 - 🧠 **Five-Layer Soul Profile** — Event → Preference → Awareness → Insight → Soul, inferring MBTI, cognitive style, and deep needs — like a psychologist understanding you
-- 🔮 **Challenge Interest Probes** — Uses psychological bridging logic to guess unexplored domains you might love, labels distance as near/lateral/bridge/wildcard, buffers weak positives, and guards against short-term over-amplification
+- 🔮 **Challenge Interest Probes** — Uses psychological bridging logic to guess unexplored domains you might love, labels distance as near/lateral/bridge/wildcard, keeps 5 regular near slots plus 3 separate challenge slots, buffers weak positives, and guards against short-term over-amplification
 - 🧭 **Avoidance Probe System** — Proactively confirms content forms, low-quality expressions, and style boundaries you may want to avoid; confirmed answers write `disliked_topics`, unconfirmed probes stay out of ranking
 - 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin, YouTube init signals, Douyin search / hot / feed discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
 - 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed, coordinated cross-platform
@@ -421,10 +421,10 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Recs · True Pool Count · Chat · Probes) │
+│      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
 │      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
-                         │ REST API / WebSocket (presence + cookies + pool counts + probes)
+                         │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
 │       (Skills · Dialogue · Runtime Gate · Account Sync) │
@@ -434,7 +434,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │(Profile+Probe)│(5-Layer+Buffer)│(Neg.anchor)│(Guarded Mix)│
 ├─────────┴──────────┴───────────┴────────────────────┤
 │ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
-│ Runtime: Account sync + producers + probe arbiter(distance)│
+│ Runtime: Account sync + producers + probe arbiter(distance/quota)│
 │ Runtime status: pool_available/raw/pending_count           │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
 │         recommendations · chat_turns · avoidance_state  │
@@ -477,14 +477,14 @@ Infers from user behavior:
 OpenBiliClaw/
 ├── src/openbiliclaw/          # Python backend core
 │   ├── agent/                 # Agent orchestration & Skill system
-│   ├── soul/                  # Soul Engine (profiling · MBTI · interest speculation)
+│   ├── soul/                  # Soul Engine (profiling · MBTI · interest/avoidance probes)
 │   ├── memory/                # Multi-layer memory system
 │   ├── discovery/             # Discovery engine (4 strategies · quota balancing · diversity)
 │   ├── recommendation/        # Recommendation & expression engine
 │   ├── sources/               # Source adapters and XHS/Douyin/YouTube task bridges
 │   ├── youtube/               # Google Takeout import parser
 │   ├── api/                   # Local FastAPI (config rollback / degraded mode / popup API)
-│   ├── runtime/               # Refresh, presence gate, auto-update, degraded RuntimeContext
+│   ├── runtime/               # Refresh, presence gate, speculator one-shots, degraded RuntimeContext
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
 │   └── storage/               # Data storage layer
@@ -520,7 +520,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.91 / extension v0.3.48: challenge interest probes (2026-05-25)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.91 / extension v0.3.49: challenge probes and source-aware recommendation clicks (2026-05-25)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 

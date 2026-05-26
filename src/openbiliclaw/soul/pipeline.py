@@ -454,6 +454,9 @@ def signal_from_recommendation_click(
     recommendation_id: int | None = None,
     topic_label: str = "",
     up_name: str = "",
+    content_id: str = "",
+    content_url: str = "",
+    source_platform: str = "",
 ) -> ProfileSignal:
     """Convert a recommendation click-through into a strong profile signal.
 
@@ -473,6 +476,12 @@ def signal_from_recommendation_click(
         payload["topic_label"] = topic_label
     if up_name:
         payload["up_name"] = up_name
+    if content_id:
+        payload["content_id"] = content_id
+    if content_url:
+        payload["content_url"] = content_url
+    if source_platform:
+        payload["source_platform"] = source_platform
     return _make_signal(SignalType.RECOMMENDATION_CLICK, "recommendation", payload)
 
 
@@ -695,7 +704,10 @@ class ProfileUpdatePipeline:
                 if self._speculator:
                     await self._run_speculator_tick(result)
                 if self._avoidance_speculator:
-                    await self._run_avoidance_speculator_tick(result)
+                    try:
+                        await self._run_avoidance_speculator_tick(result)
+                    except Exception:
+                        logger.warning("Avoidance speculator tick failed", exc_info=True)
                 self._last_speculator_tick_at = now
 
         # Cognition cycle: throttled awareness + insight regeneration.

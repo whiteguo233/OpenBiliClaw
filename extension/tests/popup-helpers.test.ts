@@ -4,7 +4,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  buildContentUrl,
   buildImageProxyPath,
+  buildRecommendationClickPayload,
   getActivityCardState,
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
@@ -46,6 +48,29 @@ test("buildVideoUrl builds bilibili video url from bvid", () => {
   );
 });
 
+test("buildContentUrl and click payload keep YouTube items source-aware", () => {
+  const item = normalizeRecommendation({
+    id: 42,
+    bvid: "KPoJ7p9iy4Q",
+    content_id: "KPoJ7p9iy4Q",
+    title: "A YouTube deep dive",
+    source_platform: "youtube",
+  });
+  const url = buildContentUrl(item);
+
+  assert.equal(url, "https://www.youtube.com/watch?v=KPoJ7p9iy4Q");
+  assert.deepEqual(buildRecommendationClickPayload(item, url), {
+    bvid: "KPoJ7p9iy4Q",
+    content_id: "KPoJ7p9iy4Q",
+    content_url: "https://www.youtube.com/watch?v=KPoJ7p9iy4Q",
+    source_platform: "youtube",
+    title: "A YouTube deep dive",
+    recommendation_id: 42,
+    topic_label: "",
+    up_name: "这位 UP 还没认出来",
+  });
+});
+
 test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy empty", () => {
   const item = normalizeRecommendation({
     id: 7,
@@ -83,6 +108,24 @@ test("normalizeProfileSummary keeps speculative avoidances", () => {
   assert.equal(summary.speculative_avoidances[0].domain, "浅层热点复读");
   assert.equal(summary.speculative_avoidances[0].source_mode, "negative_signal");
   assert.equal(summary.speculative_avoidances[0].specifics[0].name, "标题党热点解读");
+});
+
+test("normalizeProfileSummary keeps interest probe challenge metadata", () => {
+  const summary = normalizeProfileSummary({
+    initialized: true,
+    speculative_interests: [
+      {
+        domain: "体检指标与作息修复",
+        reason: "从健康方向侧向挑战",
+        probe_mode: " bridge ",
+        challenge: true,
+        status: "active",
+      },
+    ],
+  });
+
+  assert.equal(summary.speculative_interests[0].probe_mode, "bridge");
+  assert.equal(summary.speculative_interests[0].challenge, true);
 });
 
 test("shouldAutoLoadRecommendations requires user scroll intent", () => {
@@ -222,6 +265,8 @@ test("normalizeDelightCandidate fills stable fallbacks and upgrades cover urls",
     delight_score: 0.72,
     delight_hook: "换个方向试试",
     cover_url: "https://i0.hdslb.com/bfs/archive/delight-cover.jpg",
+    content_url: "",
+    source_platform: "",
     state: "pending",
     response_message: "",
     chat_reply: "",

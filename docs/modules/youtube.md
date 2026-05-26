@@ -23,6 +23,7 @@ YouTube 模块负责把用户在 YouTube 上的长期兴趣信号接入 OpenBili
 | `yt_trending` discovery | ✅ | 优先通过 YouTube InnerTube browse API 拉 trending feed；当前 `FEtrending` 返回 400 时会降级抓取 YouTube 公开 topic 页（gaming / sports / news / podcasts / live）的 `ytInitialData` 视频，再进入 LLM 过滤 |
 | `yt_channel` discovery | ✅ | 从 DB 读取 `event_type=follow` 且 `metadata.source_platform="youtube"` 的订阅频道，优先 `scrapetube`，频道 handle URL 走 `yt-dlp` fallback 拉最新视频 |
 | 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立调度 `yt_search` / `yt_trending` / `yt_channel`，按 `min_interval_minutes` 与每日执行 ledger 控制频率和预算 |
+| 推荐点击回写 | ✅ | YouTube 推荐卡片打开时会把 `content_id / content_url / source_platform` 传给 `/api/recommendation-click`，事件和强画像信号保留 YouTube URL，不再退化成 B 站链接 |
 
 ## 公开 API
 

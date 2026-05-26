@@ -22,8 +22,6 @@ from openbiliclaw.soul.speculator import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 logger = logging.getLogger(__name__)
@@ -219,7 +217,6 @@ class ContinuousRefreshController:
     pool_source_shares: dict[str, int] = field(
         default_factory=lambda: dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
     )
-    hibernate_sleep_seconds: int = 3600
     # v0.3.63+: optional registry so detached tasks (manual-refresh
     # background work, per-strategy precompute fire-and-forget) can be
     # cancelled by ``RuntimeContext.rebuild_from_config`` before the
@@ -449,13 +446,6 @@ class ContinuousRefreshController:
             reason="manual",
         )
 
-    def _pool_full(self) -> bool:
-        """Quick check: is the candidate pool at/above the target count?"""
-        try:
-            return int(self.database.count_pool_candidates()) >= self.pool_target_count
-        except Exception:
-            return False
-
     def _enforce_pool_cap(self) -> bool:
         """Trim any overflow and report whether the pool is at/above target.
 
@@ -476,13 +466,6 @@ class ContinuousRefreshController:
             logger.exception("trim_topic_group_overflow failed")
 
         source_targets = self._source_target_counts()
-        # Augmented view that includes explicit 0 quotas for share=0
-        # platforms; trim/reactivate functions need these to actually
-        # enforce "user set this platform to 0" on the existing pool.
-        # Without this, an xhs item from a prior config would never be
-        # suppressed when the user toggles xhs share to 0 — it would
-        # sit in the pool until manually feedbacked.
-        source_trim_quotas = self._source_quotas_for_trim()
         reactivate_fn = getattr(self.database, "reactivate_under_quota_pool_sources", None)
         if callable(reactivate_fn):
             try:
@@ -518,7 +501,7 @@ class ContinuousRefreshController:
         if callable(trim_source_overflow_fn):
             try:
                 source_overflow_suppressed = trim_source_overflow_fn(
-                    source_share_quotas=source_trim_quotas,
+                    source_share_quotas=source_targets,
                 )
                 if source_overflow_suppressed > 0:
                     logger.info(
@@ -537,7 +520,7 @@ class ContinuousRefreshController:
             try:
                 trimmed = self.database.trim_pool_to_target_count(
                     target=self.pool_target_count,
-                    source_share_quotas=source_trim_quotas,
+                    source_share_quotas=source_targets,
                 )
             except Exception:
                 logger.exception("trim_pool_to_target_count failed")
@@ -644,23 +627,12 @@ class ContinuousRefreshController:
             return None
 
         disliked_phrases = self._load_disliked_topic_phrases()
-        marketing_filter = self._marketing_delight_filter()
         candidate: dict[str, Any] | None = None
         for row in candidates:
             title = str(row.get("title", "")).lower()
             tags_raw = str(row.get("tags", "")).lower()
             haystack = f"{title} {tags_raw}"
             if any(phrase in haystack for phrase in disliked_phrases if phrase):
-                continue
-            # 营销号 hard filter for the proactive push surface.
-            # Pushing a notification for a clickbait video is much
-            # worse than burying it under three rows of better
-            # content, so we skip the candidate entirely (vs the
-            # curator's soft demote on the recommendation list).
-            if marketing_filter is not None and marketing_filter(
-                str(row.get("title", "")),
-                str(row.get("description", "")),
-            ):
                 continue
             candidate = row
             break
@@ -673,6 +645,8 @@ class ContinuousRefreshController:
             "delight_score": float(candidate.get("delight_score", 0.0) or 0.0),
             "delight_hook": str(candidate.get("delight_hook", "")),
             "cover_url": str(candidate.get("cover_url", "")),
+            "content_url": str(candidate.get("content_url", "")),
+            "source_platform": str(candidate.get("source_platform", "") or "bilibili"),
         }
 
     def _load_disliked_topic_phrases(self) -> list[str]:
@@ -695,44 +669,6 @@ class ContinuousRefreshController:
         if not isinstance(raw, list):
             return []
         return [str(item).strip().lower() for item in raw if str(item).strip()]
-
-    def _marketing_delight_filter(self) -> Callable[[str, str], bool] | None:
-        """Return a (title, description) → ``is_clickbait?`` predicate.
-
-        Returns None when the marketing filter is disabled in config
-        — callers skip the per-candidate scoring in that case. The
-        returned closure compares each candidate's score against the
-        user-configured threshold (rather than the module default),
-        so a user who wants the filter more or less aggressive can
-        tune it via [recommendation] marketing_filter_threshold.
-
-        The proactive-delight surface is the natural hard-filter
-        site: any clickbait pushed as a notification has higher
-        pain (user opens the app, sees garbage) than the same
-        content sitting low in the recommendation feed. The
-        curator's soft demote handles the feed case; this handles
-        the push case.
-        """
-        config = getattr(
-            getattr(self, "recommendation_engine", None),
-            "config",
-            None,
-        )
-        rec_cfg = getattr(config, "recommendation", None) if config is not None else None
-        if rec_cfg is None or not getattr(rec_cfg, "marketing_filter_block_delight", True):
-            return None
-
-        from openbiliclaw.recommendation.marketing_filter import (
-            DEFAULT_THRESHOLD,
-            score_marketing_signal,
-        )
-
-        threshold = float(getattr(rec_cfg, "marketing_filter_threshold", DEFAULT_THRESHOLD))
-
-        def _is_clickbait(title: str, description: str) -> bool:
-            return score_marketing_signal(title, description=description).score >= threshold
-
-        return _is_clickbait
 
     def mark_delight_sent(self, bvid: str) -> None:
         """Persist delight notification delivery markers."""
@@ -847,16 +783,9 @@ class ContinuousRefreshController:
             else:
                 with suppress(Exception):
                     await self._on_profile_ready_if_first_time()
-                result = None
                 with suppress(Exception):
-                    result = await self.refresh_if_needed()
-                # Hibernate when pool is full — sleep longer instead of
-                # waking every check_interval_seconds just to find the
-                # pool still at cap.
-                if result and result.get("reason") == "pool_at_cap":
-                    await asyncio.sleep(self.hibernate_sleep_seconds)
-                else:
-                    await asyncio.sleep(self.check_interval_seconds)
+                    await self.refresh_if_needed()
+            await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_pool_precompute(self) -> None:
         """v0.3.60+: drain pool_expression / pool_topic_label independently.
@@ -1012,9 +941,6 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
-            if self._pool_full():
-                await asyncio.sleep(self.hibernate_sleep_seconds)
-                continue
             with suppress(Exception):
                 await self._tick_xhs_producer()
             await asyncio.sleep(self.check_interval_seconds)
@@ -1025,9 +951,6 @@ class ContinuousRefreshController:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
-            if self._pool_full():
-                await asyncio.sleep(self.hibernate_sleep_seconds)
-                continue
             with suppress(Exception):
                 await self._tick_douyin_producer()
             await asyncio.sleep(self.check_interval_seconds)
@@ -1037,9 +960,6 @@ class ContinuousRefreshController:
         while True:
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
-                continue
-            if self._pool_full():
-                await asyncio.sleep(self.hibernate_sleep_seconds)
                 continue
             with suppress(Exception):
                 await self._tick_youtube_producer()
@@ -1580,7 +1500,9 @@ class ContinuousRefreshController:
         cutoff = (now - timedelta(hours=self._PROBE_COOLDOWN_HOURS)).isoformat()
         probed = {d: t for d, t in probed.items() if t > cutoff}
         probed_axes = {axis: t for axis, t in probed_axes.items() if t > cutoff}
-        probed_distance_bands = {mode: t for mode, t in probed_distance_bands.items() if t > cutoff}
+        probed_distance_bands = {
+            mode: t for mode, t in probed_distance_bands.items() if t > cutoff
+        }
 
         top = choose_next_probe_candidate(
             specs,
@@ -1697,7 +1619,8 @@ class ContinuousRefreshController:
         if specifics:
             specific_hint = "（比如：" + "、".join(specifics[:3]) + "）"
         question = (
-            f"我猜【{domain}】{specific_hint}可能是你想避开的方向——{reason} 这个判断准不准？"
+            f"我猜【{domain}】{specific_hint}可能是你想避开的方向"
+            f"——{reason} 这个判断准不准？"
             if reason
             else f"我感觉【{domain}】{specific_hint}可能不是你想看的方向，这个判断准不准？"
         )
@@ -1782,12 +1705,6 @@ class ContinuousRefreshController:
         return plan
 
     def _source_target_counts(self) -> dict[str, int]:
-        """Per-source target counts that sum to ``pool_target_count``.
-
-        Only sources with positive share appear in the result. Callers
-        that need explicit zeros for share-disabled sources (e.g. the
-        trim-overflow pass) should use ``_source_quotas_for_trim`` instead.
-        """
         shares = self._normalized_pool_source_shares()
         total_share = sum(shares.values())
         remaining = self.pool_target_count
@@ -1802,45 +1719,6 @@ class ContinuousRefreshController:
             targets[source] = count
             remaining -= count
         return targets
-
-    def _source_quotas_for_trim(self) -> dict[str, int]:
-        """Quotas dict for the per-source trim/overflow pass.
-
-        ``_source_target_counts`` omits zero-share sources because
-        downstream code (refresh-plan, deficit calculation) uses
-        ``"source" not in shares`` as the disable signal. The trim
-        functions need the opposite — they iterate the dict and only
-        suppress items whose source IS present, so a missing entry
-        means "leave items of this source alone".
-
-        For strict enforcement of share=0 on the live pool — when a
-        user just lowered xhs from 2 to 0 and we want to suppress the
-        old xhs items still sitting in the pool — we explicitly add
-        the source back with quota 0. But ONLY for sources the user
-        actively set to 0 in ``self.pool_source_shares``; sources
-        missing from the raw config entirely are "untracked" and the
-        trim leaves their items alone (backward-compat — that's what
-        ``test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target``
-        verifies: the default config without youtube produces a quota
-        dict that doesn't mention youtube, so legacy youtube items in
-        the pool aren't surprise-suppressed).
-        """
-        targets = self._source_target_counts()
-        quotas = dict(targets)
-        raw = self.pool_source_shares or {}
-        for source, raw_share in raw.items():
-            source_key = str(source).strip().lower()
-            if not source_key or source_key in quotas:
-                continue
-            try:
-                share = int(raw_share)
-            except (TypeError, ValueError):
-                continue
-            # Only ``explicitly 0`` triggers a trim quota; anything else
-            # would be either positive (already in targets) or invalid.
-            if share == 0:
-                quotas[source_key] = 0
-        return quotas
 
     def _source_deficit(self, source_family: str) -> int:
         source_counts = self.database.count_pool_candidates_by_source()
@@ -1900,13 +1778,6 @@ class ContinuousRefreshController:
                 share = int(raw.get(source, 0))
             except (TypeError, ValueError):
                 share = 0
-            # Drop zero shares from the dict. A user setting share=0 in
-            # the popup is asking "exclude this platform" — downstream
-            # code uses "source not in shares" as the disable signal
-            # (e.g. _build_refresh_plan skips bilibili strategies when
-            # bilibili is absent). Strict enforcement of share=0 in the
-            # *existing* pool lives in _source_quotas_for_trim, which
-            # adds back explicit zeros for the trim-overflow pass.
             if share > 0:
                 normalized[source] = share
         for source, raw_share in raw.items():
@@ -1919,13 +1790,7 @@ class ContinuousRefreshController:
                 continue
             if share > 0:
                 normalized[source_key] = share
-        # All-zero / empty input falls back to defaults so the pool keeps
-        # refilling. Users who really want to disable everything should
-        # toggle ``enabled=False`` per source — that path goes through
-        # ``effective_pool_source_shares`` which strips disabled rows.
-        if not normalized:
-            return dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
-        return normalized
+        return normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
 
     def _requested_refresh_limit(
         self,

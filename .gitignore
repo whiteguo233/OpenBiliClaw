@@ -45,6 +45,7 @@ behavior_logs/
 
 # Secrets / local config (never commit)
 config.toml
+config.toml.*
 .env
 .env.local
 

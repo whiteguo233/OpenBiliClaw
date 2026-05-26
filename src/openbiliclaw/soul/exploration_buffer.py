@@ -72,11 +72,11 @@ def normalize_buffer_state(raw: object) -> dict[str, object]:
         domain = str(item.get("domain", "")).strip()
         if not domain:
             continue
-        specifics = (
-            [str(value).strip() for value in item.get("specifics", []) if str(value).strip()]
-            if isinstance(item.get("specifics"), list)
-            else []
-        )
+        specifics = [
+            str(value).strip()
+            for value in item.get("specifics", [])
+            if str(value).strip()
+        ] if isinstance(item.get("specifics"), list) else []
         first_seen = str(item.get("first_seen", ""))
         entry = {
             "domain": domain,

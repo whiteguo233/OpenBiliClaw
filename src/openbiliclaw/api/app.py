@@ -15,6 +15,7 @@ import tempfile
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _CONFIG_SAVE_LOCK = asyncio.Lock()
+_fire_and_forget_tasks: set[asyncio.Task[None]] = set()
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -372,6 +374,38 @@ def _normalize_source_platform(source: object) -> str:
     if source_key in {"bilibili", "bili", ""}:
         return "bilibili"
     return source_key
+
+
+def _infer_source_platform_from_url(url: object) -> str:
+    text = str(url or "").strip().lower()
+    if "youtube.com" in text or "youtu.be" in text:
+        return "youtube"
+    if "xiaohongshu.com" in text or "xhslink.com" in text:
+        return "xiaohongshu"
+    if "douyin.com" in text:
+        return "douyin"
+    if "bilibili.com" in text or "b23.tv" in text:
+        return "bilibili"
+    return ""
+
+
+def _fallback_recommendation_click_url(
+    *,
+    source_platform: str,
+    content_id: str,
+    bvid: str,
+) -> str:
+    """Build a canonical click URL when the recommendation row lacks one."""
+    item_id = (content_id or bvid).strip()
+    if not item_id:
+        return ""
+    if source_platform == "youtube":
+        return f"https://www.youtube.com/watch?v={quote(item_id, safe='')}"
+    if source_platform == "douyin":
+        return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if source_platform == "bilibili":
+        return f"https://www.bilibili.com/video/{quote(bvid or item_id, safe='')}"
+    return ""
 
 
 def _normalize_probe_mode_for_payload(value: object) -> str:
@@ -2379,23 +2413,39 @@ def create_app(
 
         Body:
         ``{ "bvid": "...", "title": "...", "response": "view"|"dislike"|"chat",
-        "message": "..." }``
+        "message": "..." }``. ``dismiss`` is accepted as a response so clients
+        can consume a delight recommendation without also calling
+        ``/api/delight/sent``.
         """
         from fastapi.responses import JSONResponse
 
         bvid = str(payload.get("bvid", "")).strip()
         title = str(payload.get("title", "")).strip()
-        response_type = str(payload.get("response", "")).strip().lower()
+        response_type = str(payload.get("response") or "").strip().lower()
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required")
-        if response_type not in {"view", "like", "dislike", "chat"}:
+        if response_type not in {"view", "like", "dislike", "chat", "dismiss"}:
             raise HTTPException(
                 status_code=422,
-                detail="response must be view, like, dislike, or chat",
+                detail="response must be view, like, dislike, chat, or dismiss",
             )
+
+        def mark_delight_consumed() -> None:
+            mark_sent = getattr(ctx.runtime_controller, "mark_delight_sent", None)
+            if callable(mark_sent):
+                mark_sent(bvid)
+            else:
+                ctx.database.mark_delight_notified(bvid)
 
         if response_type == "view":
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
+
+        if response_type == "dismiss":
+            try:
+                mark_delight_consumed()
+            except Exception:
+                logger.debug("Failed to dismiss delight bvid %s", bvid)
+            return JSONResponse(content={"ok": True, "action": "dismissed", "bvid": bvid})
 
         if response_type == "like":
             # User marks this delight as liked WITHOUT having opened the
@@ -2415,6 +2465,7 @@ def create_app(
                     "WHERE bvid = ?",
                     (bvid,),
                 )
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to record delight like for %s", bvid)
             label = title or bvid
@@ -2439,13 +2490,11 @@ def create_app(
             try:
                 ctx.database._execute_write(
                     "UPDATE content_cache SET pool_status = 'purged_by_dislike', "
-                    "feedback_type='dislike', "
-                    "feedback_at=CURRENT_TIMESTAMP, "
-                    "delight_notified=1, "
-                    "delight_notified_at=CURRENT_TIMESTAMP "
+                    "feedback_type='dislike', feedback_at=CURRENT_TIMESTAMP "
                     "WHERE bvid = ? AND COALESCE(pool_status, 'fresh') = 'fresh'",
                     (bvid,),
                 )
+                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to purge delight bvid %s", bvid)
             label = title or bvid
@@ -2509,6 +2558,8 @@ def create_app(
             "delight_chat",
             detail=f"你的反馈：{raw_message}\n阿b的回复：{reply}",
         )
+        with suppress(Exception):
+            mark_delight_consumed()
         await _publish_probe_event("delight.chat", f"关于「{label}」你说：{raw_message}", bvid)
         return JSONResponse(content={"ok": True, "action": "chat", "bvid": bvid, "reply": reply})
 
@@ -3493,26 +3544,42 @@ def create_app(
             ok = active_avoidance is not None
             if ok:
                 topics = topics_for_confirmed_avoidance(active_avoidance)
-                changes = await apply_new_dislikes(
-                    memory=ctx.memory_manager,
-                    database=getattr(ctx, "database", None)
-                    or getattr(ctx.memory_manager, "_database", None),
-                    embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
-                    llm_service=getattr(ctx, "llm_service", None),
-                    topics=topics,
-                )
+                summary = f"你确认了避开「{domain}」，已开始更新不喜欢方向。"
                 _record_probe_cognition(
-                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
+                    summary,
                     domain,
                     "confirmed",
                     source="avoidance_probe",
-                    detail="\n".join(changes) if changes else "",
                 )
-                await _publish_probe_event(
-                    "avoidance.confirmed",
-                    f"你确认了避开「{domain}」，已更新不喜欢方向。",
-                    domain,
-                )
+                await _publish_probe_event("avoidance.confirmed", summary, domain)
+
+                async def _apply_confirmed_avoidance() -> None:
+                    try:
+                        changes = await apply_new_dislikes(
+                            memory=ctx.memory_manager,
+                            database=getattr(ctx, "database", None)
+                            or getattr(ctx.memory_manager, "_database", None),
+                            embedding_service=getattr(ctx.soul_engine, "_embedding_service", None),
+                            llm_service=getattr(ctx, "llm_service", None),
+                            topics=topics,
+                        )
+                        if changes:
+                            _record_probe_cognition(
+                                f"避雷方向「{domain}」的不喜欢画像已更新。",
+                                domain,
+                                "confirmed",
+                                source="avoidance_probe",
+                                detail="\n".join(changes),
+                            )
+                    except Exception:
+                        logger.exception(
+                            "Background avoidance dislike writeback failed: %s",
+                            domain,
+                        )
+
+                task = asyncio.create_task(_apply_confirmed_avoidance())
+                _fire_and_forget_tasks.add(task)
+                task.add_done_callback(_fire_and_forget_tasks.discard)
             return {"ok": ok, "action": "confirmed", "domain": domain}
 
         if response_type == "reject":
@@ -3851,36 +3918,60 @@ def create_app(
             )
 
         bvid = (payload.bvid or "").strip()
+        content_id = (payload.content_id or "").strip()
+        content_url = (payload.content_url or "").strip()
+        source_platform_raw = (payload.source_platform or "").strip()
         title = (payload.title or "").strip()
         topic_label = (payload.topic_label or "").strip()
         up_name = (payload.up_name or "").strip()
 
         if recommendation is not None:
-            bvid = bvid or str(recommendation.get("bvid", "")).strip()
-            title = title or str(recommendation.get("title", "")).strip()
-            topic_label = topic_label or str(recommendation.get("topic_label", "")).strip()
-            up_name = up_name or str(recommendation.get("up_name", "")).strip()
+            bvid = bvid or str(recommendation.get("bvid", "") or "").strip()
+            content_id = content_id or str(recommendation.get("content_id", "") or "").strip()
+            content_url = content_url or str(recommendation.get("content_url", "") or "").strip()
+            source_platform_raw = (
+                source_platform_raw or str(recommendation.get("source_platform", "") or "").strip()
+            )
+            title = title or str(recommendation.get("title", "") or "").strip()
+            topic_label = topic_label or str(recommendation.get("topic_label", "") or "").strip()
+            up_name = up_name or str(recommendation.get("up_name", "") or "").strip()
 
+        content_id = content_id or bvid
+        bvid = bvid or content_id
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required.")
+        if not source_platform_raw:
+            source_platform_raw = _infer_source_platform_from_url(content_url)
+        source_platform = _normalize_source_platform(source_platform_raw)
+        if not content_url:
+            content_url = _fallback_recommendation_click_url(
+                source_platform=source_platform,
+                content_id=content_id,
+                bvid=bvid,
+            )
 
         # Persist the click as an event so history/query paths can see it.
         from openbiliclaw.sources.event_format import (
-            SOURCE_BILIBILI,
             build_event,
+            format_event_context,
         )
 
         click_extra_parts: list[str] = []
         if topic_label:
             click_extra_parts.append(f"主题:{topic_label}")
-        if up_name:
-            click_extra_parts.append(f"UP:{up_name}")
-        click_context = f"在 B 站点开了《{title}》"
-        if click_extra_parts:
-            click_context = f"{click_context}({','.join(click_extra_parts)})"
+        click_context = format_event_context(
+            event_type="click",
+            source_platform=source_platform,
+            title=title,
+            author=up_name,
+            extra=",".join(click_extra_parts),
+        )
         click_metadata: dict[str, object] = {
             "recommendation_id": payload.recommendation_id,
             "bvid": bvid,
+            "content_id": content_id,
+            "content_url": content_url,
+            "source_platform": source_platform,
             "topic_label": topic_label,
             "up_name": up_name,
             "source": "recommendation_click",
@@ -3898,9 +3989,9 @@ def create_app(
             await ctx.memory_manager.propagate_event(
                 build_event(
                     event_type="click",
-                    source_platform=SOURCE_BILIBILI,
+                    source_platform=source_platform,
                     title=title,
-                    url=f"https://www.bilibili.com/video/{bvid}" if bvid else "",
+                    url=content_url,
                     author=up_name,
                     context=click_context,
                     metadata=click_metadata,
@@ -3930,6 +4021,9 @@ def create_app(
                 recommendation_id=payload.recommendation_id,
                 topic_label=topic_label,
                 up_name=up_name,
+                content_id=content_id,
+                content_url=content_url,
+                source_platform=source_platform,
             )
             try:
                 ingest_result = await pipeline.ingest(signal)

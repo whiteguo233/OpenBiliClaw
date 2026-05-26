@@ -367,6 +367,34 @@ def test_database_mark_delight_notified(tmp_path: Path) -> None:
     assert candidate is None
 
 
+def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> None:
+    database = _make_database(tmp_path)
+    database.cache_content("BV1LIKE", title="已反馈", relevance_score=0.9)
+    database.cache_content("BV1FRESH", title="新惊喜", relevance_score=0.9)
+    database.update_delight_score(
+        "BV1LIKE",
+        delight_score=0.95,
+        delight_reason="liked reason",
+        delight_hook="liked hook",
+    )
+    database.update_delight_score(
+        "BV1FRESH",
+        delight_score=0.94,
+        delight_reason="fresh reason",
+        delight_hook="fresh hook",
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET feedback_type = 'like' WHERE bvid = ?",
+        ("BV1LIKE",),
+    )
+    database.conn.commit()
+
+    candidates = database.get_delight_candidates(min_delight_score=0.85)
+
+    assert [row["bvid"] for row in candidates] == ["BV1FRESH"]
+    assert database.count_delight_candidates(min_delight_score=0.85) == 1
+
+
 def test_database_count_delight_candidates(tmp_path: Path) -> None:
     database = _make_database(tmp_path)
     database.cache_content("BV1A", title="A", relevance_score=0.9)

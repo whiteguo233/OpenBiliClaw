@@ -4,6 +4,7 @@ import {
   buildFeedbackPayload,
   buildNextCognitionHistoryState,
   buildContentUrl,
+  buildRecommendationClickPayload,
   buildVideoUrl,
   formatRelativeTimestamp,
   getCommentSubmitUiState,
@@ -179,6 +180,7 @@ const elements = {
   chatInput: document.getElementById("chatInput"),
   chatSendButton: document.getElementById("chatSendButton"),
   chatStatus: document.getElementById("chatStatus"),
+  openWebButton: document.getElementById("openWebButton"),
   mobileQrButton: document.getElementById("mobileQrButton"),
   mobileQrOverlay: document.getElementById("mobileQrOverlay"),
   mobileQrBack: document.getElementById("mobileQrBack"),
@@ -647,6 +649,11 @@ function normalizeProbeType(type) {
 
 function isAvoidanceProbeType(type) {
   return normalizeProbeType(type) === "avoidance.probe";
+}
+
+function isChallengeProbe(probe) {
+  const mode = String(probe?.probe_mode || "").toLowerCase();
+  return Boolean(probe?.challenge) || mode === "lateral" || mode === "bridge" || mode === "wildcard";
 }
 
 function probeMessageKey(type, domain) {
@@ -1122,13 +1129,26 @@ function renderProbeCard() {
   const existing = container.querySelector(".probe-card");
   if (existing) existing.remove();
 
+  const challenge = isChallengeProbe(probe);
   const card = document.createElement("div");
-  card.className = "probe-card";
+  card.className = `probe-card ${challenge ? "is-challenge" : "is-interest"}`;
+
+  const kicker = document.createElement("div");
+  kicker.className = "probe-kicker";
+  kicker.textContent = challenge ? "挑战探针" : "兴趣确认";
+  card.append(kicker);
 
   const question = document.createElement("p");
   question.className = "probe-question";
   question.textContent = probe.question || `\u6211\u4ece\u4f60\u6700\u8fd1\u7684\u8f68\u8ff9\u91cc\u55c5\u5230\u4f60\u53ef\u80fd\u5bf9\u300c${probe.domain}\u300d\u611f\u5174\u8da3\u2014\u2014\u4f60\u81ea\u5df1\u8ba4\u4e0d\u8ba4\uff1f`;
   card.append(question);
+
+  const prompt = document.createElement("p");
+  prompt.className = "message-kind-copy";
+  prompt.textContent = challenge
+    ? "这是挑战方向，会把口味往侧边推一点；想继续试探就点喜欢，不准就直接否掉。"
+    : "想继续试探这个方向就点喜欢，不准就点不喜欢。";
+  card.append(prompt);
 
   if (probe.specifics && probe.specifics.length > 0) {
     const chips = document.createElement("div");
@@ -1338,6 +1358,24 @@ function closeMobileQrPanel() {
   if (overlay instanceof HTMLElement) overlay.hidden = true;
 }
 
+function bindOpenWeb() {
+  if (elements.openWebButton instanceof HTMLElement) {
+    elements.openWebButton.addEventListener("click", async () => {
+      const origin = await getBackendOrigin();
+      const url = origin + "/";
+      try {
+        if (globalThis.chrome?.tabs?.create) {
+          void globalThis.chrome.tabs.create({ url });
+          return;
+        }
+      } catch {
+        // Fall back to window.open below.
+      }
+      window.open(url, "_blank", "noopener");
+    });
+  }
+}
+
 function bindMobileQr() {
   if (elements.mobileQrButton instanceof HTMLElement) {
     elements.mobileQrButton.addEventListener("click", () => {
@@ -1396,8 +1434,10 @@ function renderMessagesList() {
 function buildMessageCard(probe) {
   const type = normalizeProbeType(probe?.type);
   const isAvoidance = isAvoidanceProbeType(type);
+  const challenge = !isAvoidance && isChallengeProbe(probe);
   const item = document.createElement("div");
   item.className = "message-item";
+  item.classList.add(isAvoidance ? "is-avoidance" : challenge ? "is-challenge" : "is-interest");
   item.dataset.domain = probe.domain;
   item.dataset.type = type;
 
@@ -1411,8 +1451,17 @@ function buildMessageCard(probe) {
 
   const eyebrow = document.createElement("div");
   eyebrow.className = "message-reason";
-  eyebrow.textContent = isAvoidance ? "避雷确认" : "兴趣确认";
+  eyebrow.textContent = isAvoidance ? "避雷确认" : challenge ? "挑战探针" : "兴趣确认";
   item.append(eyebrow);
+
+  const kindCopy = document.createElement("p");
+  kindCopy.className = "message-kind-copy";
+  kindCopy.textContent = isAvoidance
+    ? "想少看这类，就确认这是雷点；如果阿B猜错了，点不是。"
+    : challenge
+      ? "这是挑战方向，会把口味往侧边推一点；想继续试探就点喜欢，不准就点不喜欢。"
+    : "想继续试探这个方向，就点喜欢；不准就点不喜欢。";
+  item.append(kindCopy);
 
   const domain = document.createElement("div");
   domain.className = "message-domain";
@@ -1531,6 +1580,11 @@ function buildDelightCard(delight) {
   top.append(textCol);
   item.append(top);
 
+  const kindCopy = document.createElement("p");
+  kindCopy.className = "message-kind-copy";
+  kindCopy.textContent = "这不是口味确认，是一条可能让你意外喜欢的内容。";
+  item.append(kindCopy);
+
   // Reason
   if (delight.delight_reason) {
     const reason = document.createElement("p");
@@ -1556,7 +1610,7 @@ function buildDelightCard(delight) {
   viewBtn.className = "probe-btn is-view";
   viewBtn.textContent = "\u770B\u770B";
   viewBtn.addEventListener("click", () => {
-    const url = delight.content_url || `https://www.bilibili.com/video/${delight.bvid}`;
+    const url = buildContentUrl(delight);
     window.open(url, "_blank");
     respondToDelight(delight.bvid, "view", delight.title).catch(() => {});
     dismissMessageByBvid(delight.bvid);
@@ -2929,23 +2983,24 @@ function attachFeedbackRuntimeProgress(statusLine) {
  *   title?: string,
  *   topic_label?: string,
  *   up_name?: string,
+ *   content_id?: string,
+ *   content_url?: string,
+ *   source_platform?: string,
  * }} [context]
  */
 async function openRecommendation(bvid, context = {}) {
-  if (!bvid) {
-    setHint("这条卡片还没挂上 BV 号，稍后再试。", "error");
+  const url = buildContentUrl(context);
+  if (!url) {
+    setHint("这条卡片还没挂上链接，稍后再试。", "error");
     return;
   }
   // Fire-and-forget click report (best effort). Runs in parallel with tab.create.
-  void reportRecommendationClick({
-    bvid,
-    title: context.title || "",
-    recommendation_id:
-      typeof context.id === "number" ? context.id : null,
-    topic_label: context.topic_label || "",
-    up_name: context.up_name || "",
-  });
-  const url = buildContentUrl(context) || buildVideoUrl(bvid);
+  void reportRecommendationClick(
+    buildRecommendationClickPayload(
+      { ...context, bvid: bvid || context.bvid || context.content_id || "" },
+      url,
+    ),
+  );
   await chrome.tabs.create({ url });
 }
 
@@ -4034,12 +4089,23 @@ function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
   );
   for (const item of speculations) {
     if (!item || (item.status && item.status !== "active") || !item.domain) continue;
-    if (existingDomains.has(item.domain)) continue;
+    if (existingDomains.has(item.domain)) {
+      const existing = state.messages.find(
+        (m) => normalizeProbeType(m?.type) === normalizedType && m?.domain === item.domain,
+      );
+      if (existing) {
+        existing.probe_mode = item.probe_mode || "";
+        existing.challenge = Boolean(item.challenge);
+      }
+      continue;
+    }
     state.messages.push({
       type: normalizedType,
       domain: item.domain,
       reason: item.reason || "",
       specifics: Array.isArray(item.specifics) ? item.specifics : [],
+      probe_mode: item.probe_mode || "",
+      challenge: Boolean(item.challenge),
     });
     existingDomains.add(item.domain);
   }
@@ -5249,6 +5315,7 @@ async function initializePopup() {
   bindRefreshButton();
   bindActivityToggle();
   bindChat();
+  bindOpenWeb();
   bindMobileQr();
   bindSettings();
 

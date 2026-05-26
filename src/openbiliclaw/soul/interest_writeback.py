@@ -65,7 +65,9 @@ def merge_confirmed_interest(
         existing_names = {_normalize_domain(item.name) for item in existing.specifics}
         for specific in clean_specifics:
             if _normalize_domain(specific) not in existing_names:
-                existing.specifics.append(InterestSpecific(name=specific, weight=target_weight))
+                existing.specifics.append(
+                    InterestSpecific(name=specific, weight=target_weight)
+                )
                 existing_names.add(_normalize_domain(specific))
                 changed = True
         return changed

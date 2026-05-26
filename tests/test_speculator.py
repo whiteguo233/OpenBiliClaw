@@ -13,6 +13,7 @@ from openbiliclaw.soul.speculator import (
     CooldownEntry,
     InterestSpeculator,
     SpeculativeInterest,
+    SpeculativeSpecific,
     SpeculativeState,
     _event_matches_speculation,
     _tokenize,
@@ -584,6 +585,105 @@ async def test_force_tick_unblocked_when_active_full_of_confirmed(monkeypatch, t
     persisted = speculator._load_state()
     persisted_active_domains = {s.domain for s in persisted.active if s.status == "active"}
     assert persisted_active_domains == {f"全新方向{i}" for i in range(5)}
+
+
+async def test_force_tick_fills_challenge_slots_when_near_pool_full(tmp_path):
+    from openbiliclaw.soul.profile import OnionProfile
+
+    data_dir = tmp_path / "memory"
+    data_dir.mkdir()
+    near_rows = [
+        SpeculativeInterest(
+            domain=f"近距方向{i}",
+            reason="已有普通兴趣探针",
+            confidence=0.5,
+            weight=0.5,
+            created_at=datetime.now().isoformat(),
+            ttl_days=3,
+            status="active",
+            probe_mode="near",
+            specifics=[
+                SpeculativeSpecific(name=f"existing-{i}-a"),
+                SpeculativeSpecific(name=f"existing-{i}-b"),
+            ],
+        ).to_dict()
+        for i in range(5)
+    ]
+    save_speculative_state(
+        data_dir.parent,
+        SpeculativeState(active=[SpeculativeInterest.from_dict(row) for row in near_rows]),
+    )
+
+    fake_speculations = [
+        {
+            "domain": "近距额外方向",
+            "category": "娱乐",
+            "reason": "这是一段足够长的普通近距方向理由，用来证明普通池已经满了不会再塞。",
+            "confidence": 0.66,
+            "specifics": ["sub-a", "sub-b"],
+            "experience_mode": "knowledge",
+            "entry_load": "light",
+            "probe_mode": "near",
+        },
+        {
+            "domain": "横向挑战方向",
+            "category": "生活",
+            "reason": "这是一段足够长的横向挑战理由，用来测试挑战池可以独立进入。",
+            "confidence": 0.65,
+            "specifics": ["横向子方向A", "横向子方向B"],
+            "experience_mode": "wander_observe",
+            "entry_load": "light",
+            "probe_mode": "lateral",
+        },
+        {
+            "domain": "桥接挑战方向",
+            "category": "科技",
+            "reason": "这是一段足够长的桥接挑战理由，用来测试挑战池可以独立进入。",
+            "confidence": 0.64,
+            "specifics": ["桥接子方向A", "桥接子方向B"],
+            "experience_mode": "hands_on",
+            "entry_load": "heavy",
+            "probe_mode": "bridge",
+        },
+        {
+            "domain": "野卡挑战方向",
+            "category": "人文",
+            "reason": "这是一段足够长的野卡挑战理由，用来测试挑战池可以独立进入。",
+            "confidence": 0.63,
+            "specifics": ["野卡子方向A", "野卡子方向B"],
+            "experience_mode": "people_story",
+            "entry_load": "light",
+            "probe_mode": "wildcard",
+        },
+    ]
+
+    class _FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _FakeLLMService:
+        async def complete_structured_task(self, **_kw):
+            return _FakeResponse(json.dumps({"speculations": fake_speculations}))
+
+    speculator = InterestSpeculator(
+        llm_service=_FakeLLMService(),
+        data_dir=data_dir.parent,
+        max_active=5,
+    )
+
+    result = await speculator.force_tick(OnionProfile())
+
+    assert {item.probe_mode for item in result.generated} == {
+        "lateral",
+        "bridge",
+        "wildcard",
+    }
+    assert "近距额外方向" not in {item.domain for item in result.generated}
+
+    persisted = speculator._load_state()
+    active = [item for item in persisted.active if item.status == "active"]
+    assert sum(1 for item in active if item.probe_mode == "near") == 5
+    assert sum(1 for item in active if item.challenge) == 3
 
 
 # ---------------------------------------------------------------------------

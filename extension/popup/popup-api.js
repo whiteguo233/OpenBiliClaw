@@ -244,6 +244,9 @@ export async function submitFeedback(payload) {
  *
  * @param {{
  *   bvid: string,
+ *   content_id?: string,
+ *   content_url?: string,
+ *   source_platform?: string,
  *   title?: string,
  *   recommendation_id?: number | null,
  *   topic_label?: string,

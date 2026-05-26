@@ -2013,6 +2013,42 @@
       animation: probeSlideIn 0.3s ease-out;
     }
 
+    .probe-card.is-interest,
+    .message-item.is-interest {
+      background: linear-gradient(135deg, rgba(255, 248, 232, 0.98), rgba(255, 238, 210, 0.96));
+      border-color: rgba(221, 127, 45, 0.34);
+    }
+
+    .probe-card.is-challenge,
+    .message-item.is-challenge {
+      background: linear-gradient(135deg, rgba(246, 241, 255, 0.98), rgba(237, 232, 255, 0.96));
+      border-color: rgba(124, 58, 237, 0.28);
+    }
+
+    .message-item.is-avoidance {
+      background: linear-gradient(135deg, rgba(238, 247, 255, 0.98), rgba(225, 239, 252, 0.96));
+      border-color: rgba(59, 130, 246, 0.28);
+    }
+
+    .probe-card.is-challenge .probe-kicker,
+    .message-item.is-challenge .message-domain { color: #6d28d9; }
+    .message-item.is-challenge .message-reason { color: #5b21b6; }
+    .message-item.is-avoidance .message-domain { color: #1d4ed8; }
+    .message-item.is-avoidance .message-reason { color: #1e40af; }
+
+    .probe-kicker,
+    .message-kind-copy {
+      margin: 0 0 8px;
+      color: #7c5b2f;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .probe-card.is-challenge .message-kind-copy,
+    .message-item.is-challenge .message-kind-copy { color: #6d28d9; }
+    .message-item.is-avoidance .message-kind-copy { color: #1d4ed8; }
+
     @keyframes probeSlideIn {
       from { opacity: 0; transform: translateY(-8px); }
       to { opacity: 1; transform: translateY(0); }
@@ -2860,7 +2896,8 @@
     }
 
     .mobile-button,
-    .messages-button {
+    .messages-button,
+    .webui-button {
       width: 32px;
       height: 32px;
       border: 0;
@@ -2876,13 +2913,15 @@
     }
 
     .mobile-button:hover,
-    .messages-button:hover {
+    .messages-button:hover,
+    .webui-button:hover {
       background: var(--brand-soft);
       transform: translateY(-1px);
     }
 
     .mobile-button svg,
-    .messages-button svg {
+    .messages-button svg,
+    .webui-button svg {
       width: 16px;
       height: 16px;
       color: var(--text-secondary);
@@ -3067,6 +3106,7 @@
     }
     .message-item.is-delight .message-domain { color: #4c1d95; }
     .message-item.is-delight .message-reason { color: #6b21a8; }
+    .message-item.is-delight .message-kind-copy { color: #6b21a8; }
 
     .probe-btn.is-view {
       background: rgba(88, 166, 255, 0.12);
@@ -3549,6 +3589,9 @@
           </div>
         </div>
         <div class="hero-actions">
+          <button id="openWebButton" class="webui-button" type="button" title="在浏览器中打开 Web 版" aria-label="在浏览器中打开 Web 版">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
           <button id="mobileQrButton" class="mobile-button" type="button" title="手机打开" aria-label="显示移动端二维码">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h2v2h-2zM18 14h3M14 18h3M19 18h2v3h-5"/></svg>
           </button>

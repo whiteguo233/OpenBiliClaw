@@ -34,6 +34,25 @@ class TestDatabase:
             assert db.conn is not None
             db.close()
 
+    def test_initialize_creates_recommendation_read_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            recommendation_indexes = {
+                str(row["name"])
+                for row in db.conn.execute("PRAGMA index_list(recommendations)").fetchall()
+            }
+            content_indexes = {
+                str(row["name"])
+                for row in db.conn.execute("PRAGMA index_list(content_cache)").fetchall()
+            }
+
+            assert "idx_recommendations_created_id" in recommendation_indexes
+            assert "idx_content_cache_content_id" in content_indexes
+
+            db.close()
+
     def test_insert_and_get_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -1714,6 +1733,44 @@ class TestDatabase:
             assert row["source_platform"] == "xiaohongshu"
             assert row["content_url"] == tokenized_url
             assert row["content_id"] == note_id
+
+            db.close()
+
+    def test_get_recommendation_by_id_joins_multi_source_click_fields(self) -> None:
+        """Recommendation click hydration needs source-aware URL fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            video_id = "KPoJ7p9iy4Q"
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            db.cache_content(
+                bvid=video_id,
+                title="A YouTube deep dive",
+                up_name="YT Creator",
+                cover_url="https://i.ytimg.com/vi/KPoJ7p9iy4Q/hqdefault.jpg",
+                source="yt_search",
+                content_id=video_id,
+                content_url=video_url,
+                source_platform="youtube",
+                author_name="YT Creator",
+            )
+            rec_id = db.insert_recommendation(
+                video_id,
+                confidence=0.9,
+                expression="",
+                topic="技术长视频",
+                presented=0,
+            )
+
+            row = db.get_recommendation_by_id(rec_id)
+
+            assert row is not None
+            assert row["bvid"] == video_id
+            assert row["topic_label"] == "技术长视频"
+            assert row["content_id"] == video_id
+            assert row["content_url"] == video_url
+            assert row["source_platform"] == "youtube"
 
             db.close()
 

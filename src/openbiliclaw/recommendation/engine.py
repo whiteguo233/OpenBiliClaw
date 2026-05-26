@@ -1917,7 +1917,9 @@ class RecommendationEngine:
 
         return frozenset(
             key
-            for key in (normalize_amplification_key(value) for value in amplification_guard)
+            for key in (
+                normalize_amplification_key(value) for value in amplification_guard
+            )
             if key
         )
 

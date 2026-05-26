@@ -12,13 +12,11 @@
       notificationSent: "/notifications/sent",
       delightBatch: "/delight/pending-batch",
       delightRespond: "/delight/respond",
-      delightSent: "/delight/sent",
       profile: "/profile-summary",
       feedback: "/feedback",
       click: "/recommendation-click",
       chatTurns: "/chat/turns",
       interestProbeRespond: "/interest-probes/respond",
-      avoidanceProbePending: "/avoidance-probes/pending",
       avoidanceProbeRespond: "/avoidance-probes/respond",
       sourceShareSuggestion: "/config/source-share-suggestion",
       config: "/config?reveal_keys=true"
@@ -62,13 +60,12 @@
       messageListDomLocked: false,
       resolvingMessageKeys: new Set(),
       resolvedMessageResults: new Map(),
-      handledProbeDomains: new Set(),
       handledProbeKeys: new Set(),
       messageScrollTop: 0,
       messageChatDomain: "",
       messageChatPrompt: "",
-      messageChatScope: "chat",
-      messageChatSubjectId: "",
+      messageChatScope: "probe",
+      messageChatSubjectTitle: "",
       chat: [
         { role: "agent", text: "你可以直接告诉我最近想多看什么、少看什么，或者评价一条推荐为什么准/不准。" }
       ]
@@ -78,7 +75,6 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
-    const RUNTIME_REFRESH_DEBOUNCE_MS = 1000;
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -90,16 +86,108 @@
     ];
     let chatPlaceholderIndex = 0;
     let chatPlaceholderTimer = null;
+    let activityRailHeightFrame = 0;
     let backendHydrationTimer = null;
     let backendHydrationInFlight = false;
     let backendHydrationPending = false;
     let activityPageRefreshTimer = null;
     let activityPageRefreshInFlight = false;
     let activityPageRefreshPending = false;
-    let activityPageRefreshReset = false;
-    let delightQueueRefreshTimer = null;
-    let delightQueueRefreshInFlight = false;
-    let delightQueueRefreshPending = false;
+
+    function debounceAsync(fn, delayMs = 1000) {
+      let timer = null;
+      let inFlight = false;
+      let pending = false;
+      const run = async () => {
+        if (inFlight) { pending = true; return; }
+        inFlight = true;
+        try { await fn(); } finally {
+          inFlight = false;
+          if (pending) { pending = false; timer = window.setTimeout(run, 0); }
+        }
+      };
+      return () => {
+        if (timer !== null) window.clearTimeout(timer);
+        timer = window.setTimeout(() => { timer = null; run(); }, delayMs);
+      };
+    }
+
+    const scheduleDelightQueueRefresh = debounceAsync(() => fetchDelightQueue(), 1000);
+
+    async function runBackendHydration() {
+      if (backendHydrationInFlight) {
+        backendHydrationPending = true;
+        return;
+      }
+      backendHydrationInFlight = true;
+      try {
+        await hydrateFromBackend();
+      } finally {
+        backendHydrationInFlight = false;
+        if (backendHydrationPending) {
+          backendHydrationPending = false;
+          backendHydrationTimer = window.setTimeout(() => {
+            backendHydrationTimer = null;
+            void runBackendHydration();
+          }, 0);
+        }
+      }
+    }
+
+    function scheduleBackendHydration() {
+      if (backendHydrationTimer !== null) window.clearTimeout(backendHydrationTimer);
+      backendHydrationTimer = window.setTimeout(() => {
+        backendHydrationTimer = null;
+        void runBackendHydration();
+      }, 1000);
+    }
+
+    async function runActivityPageRefresh() {
+      if (activityPageRefreshInFlight) {
+        activityPageRefreshPending = true;
+        return;
+      }
+      activityPageRefreshInFlight = true;
+      try {
+        await loadActivityPage({ reset: true });
+      } finally {
+        activityPageRefreshInFlight = false;
+        if (activityPageRefreshPending) {
+          activityPageRefreshPending = false;
+          activityPageRefreshTimer = window.setTimeout(() => {
+            activityPageRefreshTimer = null;
+            void runActivityPageRefresh();
+          }, 0);
+        }
+      }
+    }
+
+    function scheduleActivityPageRefresh() {
+      if (activityPageRefreshTimer !== null) window.clearTimeout(activityPageRefreshTimer);
+      activityPageRefreshTimer = window.setTimeout(() => {
+        activityPageRefreshTimer = null;
+        void runActivityPageRefresh();
+      }, 1000);
+    }
+
+    function syncActivityRailHeight() {
+      const rail = document.querySelector('[data-od-id="activity-rail"]');
+      const delight = document.getElementById("delightBanner");
+      if (!rail || !delight || !window.matchMedia("(min-width: 1181px)").matches) {
+        rail?.style.removeProperty("--activity-rail-max-height");
+        return;
+      }
+      const height = Math.ceil(delight.getBoundingClientRect().height);
+      if (height > 0) rail.style.setProperty("--activity-rail-max-height", `${height}px`);
+    }
+
+    function scheduleActivityRailHeightSync() {
+      if (activityRailHeightFrame) cancelAnimationFrame(activityRailHeightFrame);
+      activityRailHeightFrame = requestAnimationFrame(() => {
+        activityRailHeightFrame = 0;
+        syncActivityRailHeight();
+      });
+    }
 
     function showFatal(error, context = "页面启动") {
       const message = error?.message || String(error || "未知错误");
@@ -128,6 +216,8 @@
 
     const DISMISS_ON_RESHUFFLE_KEY = "openbiliclaw.dismissOnReshuffle";
     state.dismissOnReshuffle = storageGet(DISMISS_ON_RESHUFFLE_KEY) === "1";
+    const SIDE_DRAWER_OPEN_KEY = "openbiliclaw.sideDrawerOpen";
+    const DELIGHT_QUEUE_LIMIT_KEY = "openbiliclaw.webui.delightQueueLimit";
 
     function normalizeBackendHost(host) {
       const trimmed = String(host || "").trim();
@@ -164,6 +254,28 @@
       return { host, port };
     }
 
+    function getDelightQueueLimit() {
+      const raw = $("#delightQueueLimit")?.value || storageGet(DELIGHT_QUEUE_LIMIT_KEY) || "20";
+      const limit = Number.parseInt(String(raw), 10);
+      if (!Number.isFinite(limit)) return 20;
+      return Math.max(1, Math.min(100, limit));
+    }
+
+    function restoreFrontendSettings() {
+      const limit = storageGet(DELIGHT_QUEUE_LIMIT_KEY);
+      setInput("delightQueueLimit", limit || "20");
+      renderReshuffleToggle();
+    }
+
+    function persistFrontendSettings() {
+      const limit = getDelightQueueLimit();
+      setInput("delightQueueLimit", String(limit));
+      storageSet(DELIGHT_QUEUE_LIMIT_KEY, String(limit));
+      storageSet(DISMISS_ON_RESHUFFLE_KEY, state.dismissOnReshuffle ? "1" : "0");
+      renderReshuffleToggle();
+      return { delightQueueLimit: limit, dismissOnReshuffle: state.dismissOnReshuffle };
+    }
+
     function getRuntimeStreamUrl() {
       return `${getApiBase().replace(/^http/, "ws")}/runtime-stream`;
     }
@@ -172,21 +284,41 @@
       return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
     }
 
+    // Decode source-provided entities for display text only; every later HTML or attribute output must still escape by context.
+    function decodeHtmlEntities(value) {
+      return String(value ?? "").replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos|#39);/g, (match, entity) => {
+        if (entity === "amp") return "&";
+        if (entity === "lt") return "<";
+        if (entity === "gt") return ">";
+        if (entity === "quot") return '"';
+        if (entity === "apos" || entity === "#39") return "'";
+        if (entity.startsWith("#x")) {
+          const codePoint = Number.parseInt(entity.slice(2), 16);
+          return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+        }
+        if (entity.startsWith("#")) {
+          const codePoint = Number.parseInt(entity.slice(1), 10);
+          return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+        }
+        return match;
+      });
+    }
+
     function normalizeRecommendation(item) {
       return {
         id: Number(item?.id ?? Date.now()),
         bvid: String(item?.bvid ?? item?.content_id ?? ""),
-        title: String(item?.title ?? "未命名内容"),
-        up: String(item?.up_name ?? item?.up ?? "未知创作者"),
+        title: decodeHtmlEntities(item?.title ?? "未命名内容"),
+        up: decodeHtmlEntities(item?.up_name ?? item?.up ?? "未知创作者"),
         cover_url: normalizeImageUrl(item?.cover_url ?? item?.cover ?? item?.pic ?? item?.thumbnail_url ?? item?.thumbnail ?? item?.image_url),
         content_url: String(item?.content_url ?? ""),
-        topic: String(item?.topic_label ?? item?.topic ?? "未归类"),
+        topic: decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类"),
         platform: String(item?.source_platform ?? item?.platform ?? "bilibili"),
         duration: String(item?.duration ?? ""),
         presented: Boolean(item?.presented),
         feedback_type: String(item?.feedback_type ?? item?.feedback ?? ""),
         pool_status: String(item?.pool_status ?? item?.status ?? ""),
-        reason: String(item?.expression ?? item?.reason ?? "后端暂未返回解释。")
+        reason: decodeHtmlEntities(item?.expression ?? item?.reason ?? "后端暂未返回解释。")
       };
     }
 
@@ -296,6 +428,83 @@
       }
     }
 
+    const MAIN_PAGE_IDS = ["homePage", "profilePage", "chatPage", "settingsPage"];
+
+    function showMainPage(pageId) {
+      MAIN_PAGE_IDS.forEach((id) => {
+        const page = document.getElementById(id);
+        if (!page) return;
+        if (id === pageId) page.removeAttribute("hidden");
+        else page.setAttribute("hidden", "");
+      });
+      document.body.classList.toggle("profile-page-open", pageId === "profilePage");
+      document.body.classList.toggle("chat-page-open", pageId === "chatPage");
+      document.body.classList.toggle("content-page-open", pageId !== "homePage");
+    }
+
+    function syncTopbarHeight() {
+      const topbar = document.querySelector(".topbar");
+      if (!topbar) return;
+      document.documentElement.style.setProperty("--topbar-height", `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+    }
+
+    function openHomePage() {
+      showMainPage("homePage");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function openProfilePage() {
+      closeMobileMenu();
+      document.querySelectorAll(".drawer.is-open, .overlay.is-open").forEach((panel) => closePanel(panel.id));
+      showMainPage("profilePage");
+      renderProfileDetails();
+      void refreshProfile().catch(() => {});
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function openChatPage() {
+      closeMobileMenu();
+      document.querySelectorAll(".drawer.is-open, .overlay.is-open").forEach((panel) => closePanel(panel.id));
+      showMainPage("chatPage");
+      const input = document.getElementById("chatInput");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      window.setTimeout(() => input?.focus(), 100);
+    }
+
+    function openSettingsPage(panel = "models") {
+      closeMobileMenu();
+      document.querySelectorAll(".drawer.is-open, .overlay.is-open").forEach((drawer) => closePanel(drawer.id));
+      setActiveSettingsPanel(panel || "models");
+      showMainPage("settingsPage");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function setSideDrawerOpen(open, { persist = true } = {}) {
+      const drawer = document.getElementById("sideDrawer");
+      drawer?.classList.toggle("is-open", open);
+      drawer?.setAttribute("aria-hidden", open ? "false" : "true");
+      document.body.classList.toggle("side-drawer-open", open);
+      const button = document.getElementById("sideDrawerBtn");
+      if (button) {
+        button.setAttribute("aria-expanded", open ? "true" : "false");
+        button.setAttribute("aria-label", open ? "收起侧边菜单" : "展开侧边菜单");
+      }
+      if (persist) storageSet(SIDE_DRAWER_OPEN_KEY, open ? "1" : "0");
+    }
+
+    function openSideDrawer(options) {
+      setSideDrawerOpen(true, options);
+    }
+
+    function closeSideDrawer(options) {
+      setSideDrawerOpen(false, options);
+    }
+
+    function toggleSideDrawer() {
+      const drawer = document.getElementById("sideDrawer");
+      setSideDrawerOpen(!drawer?.classList.contains("is-open"));
+    }
+
     function isMobileViewport() {
       return window.matchMedia?.("(max-width: 820px)").matches;
     }
@@ -320,17 +529,23 @@
     function openMobilePanel(id, options = {}) {
       closeMobileMenu();
       if (id === "messagesDrawer") {
-        hydrateInboxFromProfile();
+        hydrateInboxFromSpeculations(state.profile?.speculative_interests);
+        hydrateInboxFromSpeculations(state.profile?.speculative_avoidances, "avoidance.probe");
         state.messageListSnapshot = getRenderableMessages();
         returnToMessages();
         renderMessages();
         void refreshProfile().catch(() => {});
       }
       if (id === "activityDrawer") renderActivityHistory();
-      if (id === "settingsModal") setActiveSettingsPanel(options.settingsPanel || "models");
       const panel = document.getElementById(id);
       panel?.classList.add("from-mobile-menu");
       openPanel(id);
+    }
+
+    function openMobilePage(id, options = {}) {
+      if (id === "profilePage") openProfilePage();
+      if (id === "chatPage") openChatPage();
+      if (id === "settingsPage") openSettingsPage(options.settingsPanel || "models");
     }
 
     function returnToMobileMenu(event) {
@@ -364,9 +579,20 @@
       });
     }
 
+    function setDismissOnReshuffle(enabled, { persist = true, toast = false } = {}) {
+      state.dismissOnReshuffle = Boolean(enabled);
+      if (persist) storageSet(DISMISS_ON_RESHUFFLE_KEY, state.dismissOnReshuffle ? "1" : "0");
+      renderReshuffleToggle();
+      if (toast) showToast(state.dismissOnReshuffle ? "换一批前会忽略当前显示的推荐" : "换一批不会自动忽略当前推荐");
+    }
+
     function renderReshuffleToggle() {
-      const toggle = $("#dismissOnReshuffleToggle");
-      if (toggle && toggle.checked !== state.dismissOnReshuffle) toggle.checked = state.dismissOnReshuffle;
+      const toggles = [$("#dismissOnReshuffleToggle"), $("#dismissOnReshuffleSetting")];
+      toggles.forEach((toggle) => {
+        if (toggle && toggle.checked !== state.dismissOnReshuffle) toggle.checked = state.dismissOnReshuffle;
+      });
+      const settingText = $("#dismissOnReshuffleSettingText");
+      if (settingText) settingText.textContent = state.dismissOnReshuffle ? "开启" : "关闭";
     }
 
     function renderFilters() {
@@ -439,15 +665,15 @@
         const card = document.createElement("article");
         card.className = "video-card";
         card.innerHTML = `
-          <div class="cover" data-platform="${escapeHtml(item.platform)}">
-            <button class="cover-btn" type="button" aria-label="打开 ${escapeHtml(item.title)}">
-              ${coverImg(item)}
-            </button>
+          <button class="cover" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
+            ${coverImg(item)}
             <span class="platform">${escapeHtml(platformName(item.platform))}</span>
+          </button>
+          <div>
+            <p class="video-title">${escapeHtml(item.title)}</p>
+            <p class="video-meta">${escapeHtml(recommendationMeta(item))}</p>
           </div>
-          <p class="video-title">${escapeHtml(item.title)}</p>
-          <p class="video-meta">${escapeHtml(recommendationMeta(item))}</p>
-          <p class="reason" data-full-reason="${escapeHtml(item.reason)}">${escapeHtml(item.reason)}</p>
+          <p class="reason" role="button" tabindex="0" aria-expanded="false" title="${escapeHtml(item.reason)}"><span class="reason-text">${escapeHtml(item.reason)}</span></p>
           <div class="card-actions" aria-label="推荐反馈操作">
             <div class="card-feedback-icons" aria-label="喜欢或不感兴趣">
               <button class="feedback-icon-btn" data-action="like" type="button" aria-label="喜欢" title="喜欢">
@@ -469,10 +695,23 @@
               <button class="feedback-icon-btn mark-repost-btn" data-action="mark-as-repost" data-state="idle" type="button" aria-label="标记为搬运" title="检测是否为搬运内容"><svg class="mark-repost-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/><line x1="15" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>` : ""}
             </div>
             <div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>
+            <button class="small-btn composer-cancel" data-action="cancel-comment" type="button" aria-label="返回" title="返回">‹</button>
             <button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>
           </div>
           <p class="status-line"></p>`;
-        card.querySelector(".cover-btn").addEventListener("click", () => openRecommendation(item, card));
+        const reason = card.querySelector(".reason");
+        const toggleReason = () => {
+          const expanded = reason.classList.toggle("is-expanded");
+          reason.setAttribute("aria-expanded", expanded ? "true" : "false");
+        };
+        reason.addEventListener("click", toggleReason);
+        reason.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggleReason();
+          }
+        });
+        card.querySelector(".cover").addEventListener("click", () => openRecommendation(item, card));
         card.querySelectorAll("[data-action]").forEach((btn) => btn.addEventListener("click", () => handleCardAction(btn.dataset.action, item, card)));
         card.querySelector(".comment-field input").addEventListener("keydown", (event) => {
           if (event.key === "Enter") handleCardAction("send-comment", item, card);
@@ -502,32 +741,20 @@
       }));
     }
 
-    function openRecommendation(item, card) {
-      // Fire-and-forget the click POST so the redirect happens
-      // immediately. The backend's recommendation_click handler can
-      // take 30-60s (LLM pipeline ingest blocks the response), so
-      // awaiting it made the open-in-new-tab feel broken — users
-      // reported 'WebUI redirects to Bilibili are too slow, I wait
-      // a minute for it to jump'. Mobile UI does this same fire-and-
-      // forget pattern; failing-silently is the accepted tradeoff
-      // because the user has already navigated away by then anyway.
+    function trackRecommendationClick(item) {
       void requestJson(ENDPOINTS.click, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bvid: item.bvid,
-          title: item.title,
-          recommendation_id: item.id,
-          topic_label: item.topic,
-          up_name: item.up,
-        }),
-      }).catch(() => { /* click logging best-effort */ });
+        body: JSON.stringify({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic, up_name: item.up })
+      }).catch(() => {});
+    }
+
+    function openRecommendation(item, card) {
       const url = contentUrl(item);
-      card.querySelector(".status-line").textContent = url
-        ? "已打开真实内容链接，点击信号在后台记录。"
-        : "后端没有返回可打开链接。";
       if (url) window.open(url, "_blank", "noopener,noreferrer");
-      showToast(`打开：${item.title}`);
+      trackRecommendationClick(item);
+      card.querySelector(".status-line").textContent = url ? "已打开真实内容链接，点击信号会在后台记录。" : "后端没有返回可打开链接；点击信号会在后台记录。";
+      showToast(url ? `打开：${item.title}` : "后端没有返回可打开链接");
     }
 
     async function submitFeedback(item, feedback_type, note = "") {
@@ -539,7 +766,11 @@
       });
     }
 
-    function removeRecommendationCard(item, card, message, delayMs = 2400) {
+    function recommendationRemoveDelay() {
+      return isMobileViewport() ? 1000 : 2400;
+    }
+
+    function removeRecommendationCard(item, card, message, delayMs = recommendationRemoveDelay()) {
       const key = recommendationKey(item);
       window.setTimeout(() => {
         if (card) card.classList.add("is-removing");
@@ -594,27 +825,33 @@
 
     function openDelightComposer() {
       const actions = document.querySelector(".delight-main-actions");
+      const shell = actions?.closest(".delight-actions");
       const button = actions?.querySelector(".chat-action");
       if (!actions || !button || !state.delight) return;
+      shell?.classList.add("is-composing");
       actions.classList.add("is-composing");
       button.classList.add("is-send");
       button.dataset.delight = "send-comment";
       button.innerHTML = sendIcon;
       button.setAttribute("aria-label", "发送");
       button.setAttribute("title", "发送");
+      scheduleActivityRailHeightSync();
       requestAnimationFrame(() => $("#delightCommentInput")?.focus());
     }
 
     function closeDelightComposer() {
       const actions = document.querySelector(".delight-main-actions");
+      const shell = actions?.closest(".delight-actions");
       const button = actions?.querySelector(".chat-action");
       if (!actions || !button) return;
+      shell?.classList.remove("is-composing");
       actions.classList.remove("is-composing");
       button.classList.remove("is-send");
       button.dataset.delight = "chat";
       button.textContent = "聊一聊";
       button.removeAttribute("aria-label");
       button.removeAttribute("title");
+      scheduleActivityRailHeightSync();
     }
 
     async function handleCardAction(action, item, card) {
@@ -767,8 +1004,8 @@
       }
       // Feedback actions (like/dislike/dismiss/send-comment) past this point.
       // The pending check protects against double-submission of the same action.
+      if (action === "cancel-comment") { closeCardComposer(card); return; }
       if (card.dataset.feedbackPending === "true") return;
-      card.dataset.feedbackPending = "true";
       card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = true; });
       try {
         if (action === "send-comment") {
@@ -1364,16 +1601,14 @@
     }
 
     function speculativeHtml(items, options = {}) {
-      const kind = options.kind === "avoidance" ? "avoidance" : "interest";
-      const isAvoidance = kind === "avoidance";
+      const isAvoidance = options.kind === "avoidance";
       const list = asArray(items);
-      if (!list.length) {
-        return `<p class="video-meta">${isAvoidance ? "阿B 还没有正在确认的避雷方向。" : "阿B 还没有正在试探的新方向。"}</p>`;
-      }
+      if (!list.length) return `<p class="video-meta">${isAvoidance ? "阿B 暂时没有待确认的避雷方向。" : "阿B 还没有正在试探的新方向。"}</p>`;
       const statusLabels = { active: "待确认", pending: "待观察", confirmed: "已确认", deprecated: "已弃", rejected: "已排除" };
+      const fallbackTitle = isAvoidance ? "猜测避雷" : "猜测兴趣";
       return `<div class="speculative-list">${list.map((item) => {
         if (typeof item !== "object") return `<div class="speculative-item"><div class="spec-header"><span class="spec-domain">${escapeHtml(item)}</span></div></div>`;
-        const domain = item.domain || item.name || item.title || (isAvoidance ? "猜测避雷方向" : "猜测兴趣");
+        const domain = item.domain || item.name || item.title || fallbackTitle;
         const status = item.status || "active";
         const count = Number(item.confirmation_count ?? 0);
         const threshold = Number(item.confirmation_threshold ?? 3);
@@ -1383,7 +1618,7 @@
           name: s?.name || s?.label || valueList(s),
           count: Number(s?.confirmation_count ?? 0)
         })).filter((s) => s.name);
-        return `<div class="speculative-item is-status-${escapeHtml(status)}" data-spec-domain="${escapeHtml(domain)}" data-spec-type="${isAvoidance ? "avoidance.probe" : "interest.probe"}">
+        return `<div class="speculative-item is-status-${escapeHtml(status)}" data-spec-domain="${escapeHtml(domain)}">
           <div class="spec-header">
             <span class="spec-domain">${escapeHtml(domain)}</span>
             ${statusLabels[status] ? `<span class="spec-status">${escapeHtml(statusLabels[status])}</span>` : ""}
@@ -1392,8 +1627,8 @@
           ${confidence > 0 ? `<div class="spec-confidence-row"><div class="spec-confidence-bar"><div class="spec-confidence-fill" style="width:${Math.round(confidence * 100)}%"></div></div><span class="spec-confidence-label">置信度 ${Math.round(confidence * 100)}%</span></div>` : ""}
           ${item.reason ? `<p class="video-meta">${escapeHtml(item.reason)}</p>` : ""}
           ${specifics.length ? `<div class="spec-specifics">${specifics.map((s) => `<span class="spec-specific-chip">${escapeHtml(s.name)}${s.count > 0 ? `<span class="spec-specific-count">${s.count}</span>` : ""}</span>`).join("")}</div>` : ""}
-          <p class="spec-help">${isAvoidance ? `置信度表示阿B认为你可能想避开这个方向的把握；确认次数只来自明确负向信号，达到 ${threshold} 次后才会写入稳定避雷画像。` : `置信度表示阿B认为你会喜欢这个方向的把握；确认次数来自后端累计的正向确认信号（包括但不限于这里的“喜欢”），达到 ${threshold} 次后会进入更稳定的兴趣画像。`}</p>
-          ${status === "active" && domain ? `<div class="spec-actions"><button class="probe-btn is-confirm" type="button" data-spec-response="confirm">${isAvoidance ? "确实不喜欢" : "喜欢"}</button><button class="probe-btn is-reject" type="button" data-spec-response="reject">${isAvoidance ? "不是" : "不喜欢"}</button></div>` : ""}
+          <p class="spec-help">${isAvoidance ? `置信度表示阿B认为你会避开这个方向的把握；确认次数来自后端累计的避雷确认信号，达到 ${threshold} 次后会进入更稳定的避雷画像。` : `置信度表示阿B认为你会喜欢这个方向的把握；确认次数来自后端累计的正向确认信号（包括但不限于这里的“喜欢”），达到 ${threshold} 次后会进入更稳定的兴趣画像。`}</p>
+          ${status === "active" && domain ? `<div class="spec-actions"><button class="probe-btn is-confirm" type="button" data-spec-response="confirm" data-spec-type="${isAvoidance ? "avoidance.probe" : "interest.probe"}">${isAvoidance ? "确实不喜欢" : "喜欢"}</button><button class="probe-btn is-reject" type="button" data-spec-response="reject" data-spec-type="${isAvoidance ? "avoidance.probe" : "interest.probe"}">${isAvoidance ? "不是" : "不喜欢"}</button></div>` : ""}
         </div>`;
       }).join("")}</div>`;
     }
@@ -1476,7 +1711,7 @@
         ]),
         profileLayer("Speculate — 阿B 在试探的方向", [
           profileItem("猜测兴趣", speculativeHtml(profile.speculative_interests)),
-          profileItem("待确认避雷方向", speculativeHtml(profile.speculative_avoidances, { kind: "avoidance" })),
+          profileItem("猜测避雷", speculativeHtml(profile.speculative_avoidances, { kind: "avoidance" })),
           profileItem("阿B 最近新记住了什么", memoryHtml(firstValue(profile.recent_cognition_updates, profile.recent_memories)))
         ]),
         profileLayer("Signals — 正在推断中", [
@@ -1512,7 +1747,21 @@
     }
 
     function messageType(msg) {
-      return msg?.type === "probe" ? "interest.probe" : (msg?.type || "interest.probe");
+      const type = msg?.type === "probe" ? "interest.probe" : (msg?.type || "interest.probe");
+      return type === "avoidance" ? "avoidance.probe" : type;
+    }
+
+    function isAvoidanceProbe(type) {
+      return messageType({ type }) === "avoidance.probe";
+    }
+
+    function isChallengeProbe(item) {
+      const mode = String(item?.probe_mode || "").toLowerCase();
+      return Boolean(item?.challenge) || mode === "lateral" || mode === "bridge" || mode === "wildcard";
+    }
+
+    function probeKey(type, domain) {
+      return `${messageType({ type })}:${String(domain || "")}`;
     }
 
     function messageKey(msg) {
@@ -1520,22 +1769,11 @@
       return `${type}:${msg?.bvid || msg?.domain || msg?.title || msg?.reason || ""}`;
     }
 
-    function probeHandledKey(type, domain) {
-      return `${type}:${String(domain || "")}`;
-    }
-
-    function isProbeHandled(type, domain) {
-      if (!domain) return true;
-      const handledKey = probeHandledKey(type, domain);
-      return state.handledProbeKeys.has(handledKey) || (type === "interest.probe" && state.handledProbeDomains.has(String(domain)));
-    }
-
     function normalizeMessageItem(item) {
       if (!item) return null;
       const type = messageType(item);
       if (type === "delight") {
-        const normalized = normalizeDelight(item);
-        return normalized?.bvid ? normalized : null;
+        return null;
       }
       if (type === "notification") {
         const bvid = item.bvid || item.id || item.recommendation_id;
@@ -1550,11 +1788,11 @@
       }
       const domain = item.domain || item.name || item.title;
       if (!domain) return null;
-      const isAvoidanceProbe = type === "avoidance.probe";
+      const probeType = type === "avoidance.probe" || item.kind === "avoidance" ? "avoidance.probe" : "interest.probe";
       return {
-        type: isAvoidanceProbe ? "avoidance.probe" : "interest.probe",
+        type: probeType,
         domain: String(domain),
-        reason: item.reason || item.message || item.description || (isAvoidanceProbe ? "后端希望确认这个避雷方向。" : "后端希望确认这个兴趣方向。"),
+        reason: item.reason || item.message || item.description || (probeType === "avoidance.probe" ? "后端希望确认这个避雷方向。" : "后端希望确认这个兴趣方向。"),
         specifics: asArray(item.specifics || item.examples || item.children).map((s) => s?.name || s?.label || valueList(s)).filter(Boolean),
         probe_mode: item.probe_mode || "",
         challenge: Boolean(item.challenge),
@@ -1593,29 +1831,25 @@
       return Boolean($("#messagesDrawer")?.classList.contains("is-open"));
     }
 
-    function hydrateInboxFromProfile(profile = state.profile) {
-      hydrateInboxFromSpeculations(profile?.speculative_interests, "interest.probe");
-      hydrateInboxFromSpeculations(profile?.speculative_avoidances, "avoidance.probe");
-    }
-
     function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
       if (speculations == null || speculations === "") return;
+      const normalizedType = messageType({ type });
       const items = asArray(speculations);
       const active = items.filter((item) => item && item.domain && (!item.status || item.status === "active"));
       const activeDomains = new Set(active.map((item) => String(item.domain)));
       const preserveCurrentProbeList = isMessagesDrawerOpen();
       state.messages = state.messages.filter((msg) => {
-        if (messageType(msg) !== type) return true;
+        if (messageType(msg) !== normalizedType) return true;
         const domain = String(msg.domain || "");
-        if (!domain || isProbeHandled(type, domain)) return false;
+        if (!domain || state.handledProbeKeys.has(probeKey(normalizedType, domain))) return false;
         if (state.resolvingMessageKeys.has(messageKey(msg))) return true;
         return preserveCurrentProbeList || activeDomains.has(domain);
       });
-      const existing = new Set(state.messages.filter((msg) => messageType(msg) === type).map((msg) => String(msg.domain || "")));
+      const existing = new Set(state.messages.filter((msg) => messageType(msg) === normalizedType).map((msg) => String(msg.domain || "")));
       for (const item of active) {
         const domain = String(item.domain);
-        if (isProbeHandled(type, domain) || existing.has(domain)) continue;
-        state.messages.push(normalizeMessageItem({ ...item, type }));
+        if (state.handledProbeKeys.has(probeKey(normalizedType, domain)) || existing.has(domain)) continue;
+        state.messages.push(normalizeMessageItem({ ...item, type: normalizedType }));
         existing.add(domain);
       }
       syncMessageCount();
@@ -1623,23 +1857,6 @@
 
     function isMessageListLocked() {
       return Boolean(document.querySelector("#messageList .message-item.is-resolving, #messageList .message-item.is-resolved, #messageList .message-item.is-dismissing"));
-    }
-
-    function thumbsUpIconHtml() {
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg>`;
-    }
-
-    function thumbsDownIconHtml() {
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg>`;
-    }
-
-    function probeMessageCardHtml(msg) {
-      const isAvoidanceProbe = messageType(msg) === "avoidance.probe";
-      const confirmLabel = isAvoidanceProbe ? "确实不喜欢" : "喜欢";
-      const rejectLabel = isAvoidanceProbe ? "不是" : "不喜欢";
-      const confirmIcon = isAvoidanceProbe ? thumbsDownIconHtml() : thumbsUpIconHtml();
-      const rejectIcon = isAvoidanceProbe ? thumbsUpIconHtml() : thumbsDownIconHtml();
-      return `<p class="eyebrow">${isAvoidanceProbe ? "避雷确认" : "兴趣确认"}</p><h3>${escapeHtml(msg.domain)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="profile-chip-row">${asArray(msg.specifics).map((s) => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="${isAvoidanceProbe ? "确认或排除这个避雷判断" : "确认或排除这个兴趣"}"><button class="feedback-icon-btn" data-probe="confirm" type="button" aria-label="${confirmLabel}" title="${confirmLabel}">${confirmIcon}</button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-probe="reject" type="button" aria-label="${rejectLabel}" title="${rejectLabel}">${rejectIcon}</button></div><div class="message-primary-actions"><button class="small-btn" data-probe="chat">多聊聊</button></div></div>`;
     }
 
     function renderMessages() {
@@ -1653,24 +1870,34 @@
       if (state.messageListSnapshot && isMessagesDrawerOpen()) state.messageListSnapshot = messages;
       else state.messages = messages;
       syncMessageCount();
-      const filtered = messages.filter((m) => messageType(m) !== "delight");
-      if (!filtered.length) {
-        list.innerHTML = `<div class="empty-state">暂无待处理消息。兴趣确认和通知会出现在这里。</div>`;
+      if (!messages.length) {
+        list.innerHTML = `<div class="empty-state">暂无通知。兴趣确认、避雷确认和待通知候选都会出现在这里。</div>`;
         return;
       }
-      list.replaceChildren(...filtered.map((msg) => {
+      list.replaceChildren(...messages.map((msg) => {
         const el = document.createElement("article");
         const key = messageKey(msg);
         const resolvedResult = state.resolvedMessageResults.get(key);
         el.className = "message-item";
         el.dataset.messageKey = key;
-        if (messageType(msg) === "delight") {
-          return null; // delights shown in delight tray, not messages
-        } else if (messageType(msg) === "notification") {
+        if (messageType(msg) === "notification") {
+          el.classList.add("is-notification");
           el.innerHTML = `<p class="eyebrow">待通知候选</p><h3>${escapeHtml(msg.title)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="message-note">这类消息来自后端挑出的高置信推荐，用于插件通知；标记已通知后不会反复出现。</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="通知候选状态"><button class="feedback-icon-btn" data-notification-msg="dismiss" type="button" aria-label="标记已通知" title="标记已通知"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-notification-msg="view">去看看</button></div></div>`;
           el.querySelectorAll("[data-notification-msg]").forEach((btn) => btn.addEventListener("click", () => respondNotification(msg, btn.dataset.notificationMsg, el)));
         } else {
-          el.innerHTML = probeMessageCardHtml(msg);
+          const isAvoidance = messageType(msg) === "avoidance.probe";
+          const isChallenge = !isAvoidance && isChallengeProbe(msg);
+          el.classList.add(isAvoidance ? "is-avoidance-probe" : isChallenge ? "is-challenge-probe" : "is-interest-probe");
+          const eyebrow = isAvoidance ? "避雷确认" : isChallenge ? "挑战探针" : "兴趣确认";
+          const actionsLabel = isAvoidance ? "确认或排除这个避雷方向" : isChallenge ? "确认或排除这个挑战方向" : "确认或排除这个兴趣";
+          const confirmLabel = isAvoidance ? "确实不喜欢" : "喜欢";
+          const rejectLabel = isAvoidance ? "不是" : "不喜欢";
+          const kindCopy = isAvoidance
+            ? "想少看这类，就确认这是雷点；如果阿B猜错了，点不是。"
+            : isChallenge
+              ? "这是挑战方向，会把口味往侧边推一点；想继续试探就点喜欢，不准就点不喜欢。"
+            : "想继续探索这个方向，就点喜欢；不准就点不喜欢。";
+          el.innerHTML = `<p class="eyebrow">${eyebrow}</p><div class="message-note probe-kind-copy">${escapeHtml(kindCopy)}</div><h3>${escapeHtml(msg.domain)}</h3><p class="video-meta">${escapeHtml(msg.reason)}</p><div class="profile-chip-row">${asArray(msg.specifics).map((s) => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</div><div class="message-card-actions"><div class="card-feedback-icons" aria-label="${actionsLabel}"><button class="feedback-icon-btn" data-probe="confirm" type="button" aria-label="${confirmLabel}" title="${confirmLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg></button><span class="feedback-separator" aria-hidden="true">/</span><button class="feedback-icon-btn" data-probe="reject" type="button" aria-label="${rejectLabel}" title="${rejectLabel}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg></button></div><div class="message-primary-actions"><button class="small-btn" data-probe="chat">多聊聊</button></div></div>`;
           if (resolvedResult) {
             el.classList.add("is-resolved");
             const resolvedActions = el.querySelector(".message-card-actions");
@@ -1706,14 +1933,15 @@
       target.getBoundingClientRect();
       target.classList.add("is-dismissing");
       target.style.height = "0px";
-      window.setTimeout(finish, 260);
+      window.setTimeout(() => {
+        target.remove();
+        finish();
+      }, 260);
     }
 
     async function respondProbe(msg, response, el) {
       if (!el) return;
       const actions = el.querySelector(".message-card-actions");
-      const type = messageType(msg);
-      const isAvoidanceProbe = type === "avoidance.probe";
       if (response === "chat") {
         openMessageChat(msg);
         showToast("已在消息里打开聊天上下文");
@@ -1727,11 +1955,12 @@
       state.resolvingMessageKeys.add(key);
       actions?.querySelectorAll("button").forEach((button) => { button.disabled = true; });
       try {
-        const endpoint = isAvoidanceProbe ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
+        const isAvoidance = messageType(msg) === "avoidance.probe";
+        const endpoint = isAvoidance ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
         await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain: msg.domain, response, message: "" }) });
-        const result = isAvoidanceProbe
-          ? (response === "confirm" ? "已确认，后续推荐会避开这类方向。" : "已排除这个避雷判断。")
-          : (response === "confirm" ? "已确认，后续推荐会提高权重。" : "已搁置，后续会少试探这个方向。");
+        const result = isAvoidance
+          ? response === "confirm" ? "已确认避雷方向，后续会减少类似内容。" : "已搁置，暂时不作为避雷方向。"
+          : response === "confirm" ? "已确认，后续推荐会提高权重。" : "已搁置，后续会少试探这个方向。";
         state.resolvedMessageResults.set(key, result);
         el.classList.remove("is-resolving");
         el.classList.add("is-resolved");
@@ -1739,17 +1968,14 @@
           actions.classList.add("is-result");
           actions.innerHTML = `<div class="message-action-result" title="${escapeHtml(result)}">${escapeHtml(result)}</div>`;
         }
-        showToast(isAvoidanceProbe
-          ? (response === "confirm" ? "已确认这个避雷方向" : "已排除这个避雷判断")
-          : (response === "confirm" ? "已确认这个兴趣方向" : "已搁置这个兴趣方向"));
+        showToast(isAvoidance
+          ? response === "confirm" ? "已确认这个避雷方向" : "已搁置这个避雷方向"
+          : response === "confirm" ? "已确认这个兴趣方向" : "已搁置这个兴趣方向");
         setTimeout(() => {
           collapseMessageItem(key, el, () => {
             state.resolvingMessageKeys.delete(key);
             state.resolvedMessageResults.delete(key);
-            if (msg.domain) {
-              state.handledProbeKeys.add(probeHandledKey(type, msg.domain));
-              if (!isAvoidanceProbe) state.handledProbeDomains.add(String(msg.domain));
-            }
+            if (msg.domain) state.handledProbeKeys.add(probeKey(messageType(msg), msg.domain));
             state.messages = state.messages.filter((item) => messageKey(item) !== key);
             if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((item) => messageKey(item) !== key);
             state.messageListDomLocked = false;
@@ -1764,7 +1990,7 @@
         el.classList.remove("is-resolving");
         el.style.minHeight = "";
         actions?.querySelectorAll("button").forEach((button) => { button.disabled = false; });
-        showToast(`${isAvoidanceProbe ? "避雷反馈" : "兴趣反馈"}失败：${error.message || "后端不可用"}`);
+        showToast(`确认反馈失败：${error.message || "后端不可用"}`);
       }
     }
 
@@ -1778,32 +2004,182 @@
       const row = button.closest("[data-spec-domain]");
       const domain = row?.dataset.specDomain;
       const response = button.dataset.specResponse;
-      const type = row?.dataset.specType || "interest.probe";
-      const isAvoidanceProbe = type === "avoidance.probe";
       if (!domain || !response) return;
       row.querySelectorAll("[data-spec-response]").forEach((btn) => { btn.disabled = true; });
       try {
-        const endpoint = isAvoidanceProbe ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
+        const type = button.dataset.specType || "interest.probe";
+        const isAvoidance = isAvoidanceProbe(type);
+        const endpoint = isAvoidance ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
         const payload = { domain, response, message: "" };
-        if (!isAvoidanceProbe) payload.surface = "profile";
+        if (!isAvoidance) payload.surface = "profile";
         await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        const result = isAvoidanceProbe
+        const result = isAvoidance
           ? (response === "confirm" ? `好，「${escapeHtml(domain)}」会作为避雷方向处理。` : `好，「${escapeHtml(domain)}」不记成避雷。`)
           : (response === "confirm" ? `好，「${escapeHtml(domain)}」记住了。` : `好，「${escapeHtml(domain)}」先不看了。`);
         row.innerHTML = `<p class="spec-result">${result}</p>`;
-        state.handledProbeKeys.add(probeHandledKey(type, domain));
-        if (!isAvoidanceProbe) state.handledProbeDomains.add(String(domain));
-        state.messages = state.messages.filter((msg) => messageKey(msg) !== probeHandledKey(type, domain));
-        if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((msg) => messageKey(msg) !== probeHandledKey(type, domain));
+        const key = probeKey(type, domain);
+        state.handledProbeKeys.add(key);
+        state.messages = state.messages.filter((msg) => messageKey(msg) !== key);
+        if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((msg) => messageKey(msg) !== key);
         renderMessages();
-        showToast(isAvoidanceProbe
-          ? (response === "confirm" ? "已确认这个避雷方向" : "已排除这个避雷判断")
-          : (response === "confirm" ? "已确认这个猜测兴趣" : "已排除这个猜测兴趣"));
+        showToast(isAvoidance
+          ? response === "confirm" ? "已确认这个避雷方向" : "已排除这个避雷方向"
+          : response === "confirm" ? "已确认这个猜测兴趣" : "已排除这个猜测兴趣");
         setTimeout(() => { void refreshProfile(); }, 1200);
       } catch (error) {
         row.querySelectorAll("[data-spec-response]").forEach((btn) => { btn.disabled = false; });
-        showToast(`${isAvoidanceProbe ? "避雷反馈" : "兴趣反馈"}失败：${error.message || "后端不可用"}`);
+        showToast(`确认反馈失败：${error.message || "后端不可用"}`);
       }
+    }
+
+    function createClientTurnId(prefix = "webui") {
+      const suffix = window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      return `${prefix}-${suffix}`;
+    }
+
+    function normalizeDelightTurn(turn) {
+      if (!turn) return null;
+      const message = String(turn.message ?? turn.user_message ?? "");
+      const reply = String(turn.reply ?? turn.assistant_message ?? "");
+      const status = String(turn.status || (reply ? "completed" : "pending"));
+      const turnId = String(turn.turn_id ?? turn.id ?? "");
+      if (!turnId && !message && !reply) return null;
+      return {
+        turn_id: turnId,
+        message,
+        reply,
+        status,
+        error: String(turn.error ?? "")
+      };
+    }
+
+    function delightTurnList(turns) {
+      return asArray(turns).map(normalizeDelightTurn).filter(Boolean);
+    }
+
+    function upsertDelightTurn(turns, nextTurn) {
+      const normalized = normalizeDelightTurn(nextTurn);
+      const existing = delightTurnList(turns);
+      if (!normalized) return existing;
+      const index = existing.findIndex((turn) => turn.turn_id && turn.turn_id === normalized.turn_id);
+      if (index < 0) return [...existing, normalized];
+      return existing.map((turn, turnIndex) => turnIndex === index ? normalized : turn);
+    }
+
+    function mergeDelightTurnLists(currentTurns, incomingTurns) {
+      let merged = delightTurnList(currentTurns);
+      for (const turn of delightTurnList(incomingTurns)) merged = upsertDelightTurn(merged, turn);
+      return merged;
+    }
+
+    function mergeDelightItem(current, incoming) {
+      if (!current) return incoming;
+      return {
+        ...current,
+        ...incoming,
+        chat_turn_id: incoming.chat_turn_id || current.chat_turn_id || "",
+        chat_reply: incoming.chat_reply || current.chat_reply || "",
+        chat_draft: incoming.chat_draft || current.chat_draft || "",
+        response_message: incoming.response_message || current.response_message || "",
+        turns: mergeDelightTurnLists(current.turns, incoming.turns)
+      };
+    }
+
+    function renderDelightTurns(delight) {
+      const area = $("#delightTurns");
+      if (!area) return;
+      area.replaceChildren();
+      const turns = delightTurnList(delight?.turns);
+      if (!turns.length && !delight?.chat_reply) {
+        area.hidden = true;
+        scheduleActivityRailHeightSync();
+        return;
+      }
+      area.hidden = false;
+      if (!turns.length && delight?.chat_reply) {
+        const bubble = document.createElement("div");
+        bubble.className = "delight-turn-bubble is-assistant";
+        bubble.textContent = delight.chat_reply;
+        area.append(bubble);
+        scheduleActivityRailHeightSync();
+        return;
+      }
+      for (const turn of turns) {
+        if (turn.message) {
+          const userBubble = document.createElement("div");
+          userBubble.className = "delight-turn-bubble is-user";
+          userBubble.textContent = turn.message;
+          area.append(userBubble);
+        }
+        const assistantBubble = document.createElement("div");
+        const status = String(turn.status || "pending");
+        assistantBubble.className = `delight-turn-bubble is-assistant${status === "pending" ? " is-thinking" : ""}${status === "failed" ? " is-error" : ""}`;
+        assistantBubble.textContent = status === "pending"
+          ? "阿B 正在品你这句话…"
+          : status === "failed"
+            ? turn.error || "这句还没发出去，稍后再试。"
+            : turn.reply || "后端已完成这轮聊天。";
+        area.append(assistantBubble);
+      }
+      scheduleActivityRailHeightSync();
+    }
+
+    function updateDelightState(bvid, updates) {
+      const key = String(bvid || "");
+      if (!key) return null;
+      let current = null;
+      state.delights = state.delights.map((item) => {
+        if (String(item.bvid || "") !== key) return item;
+        current = { ...item, ...updates };
+        return current;
+      });
+      if (state.delight && String(state.delight.bvid || "") === key) {
+        state.delight = { ...state.delight, ...updates };
+        current = state.delight;
+      }
+      if (current && state.delight && String(state.delight.bvid || "") === key) {
+        renderDelightTurns(state.delight);
+        if ($("#delightStatus")) $("#delightStatus").textContent = state.delight.response_message || "";
+      }
+      return current;
+    }
+
+    function applyTurnToDelight(turn) {
+      const subjectId = String(turn?.subject_id || turn?.bvid || "");
+      if (!turn || (turn.scope && turn.scope !== "delight") || !subjectId) return null;
+      const existing = state.delights.find((item) => String(item.bvid || "") === subjectId)
+        || (state.delight && String(state.delight.bvid || "") === subjectId ? state.delight : null);
+      const entry = normalizeDelightTurn(turn);
+      if (!entry) return null;
+      const status = String(entry.status || "pending");
+      const updates = {
+        chat_turn_id: entry.turn_id,
+        turns: upsertDelightTurn(existing?.turns, entry),
+        response_message: status === "completed" ? "这句已经记下，后面会更会试探。" : status === "failed" ? "这句还没发出去，稍后再试。" : "阿B 正在品你这句话。"
+      };
+      if (status === "completed") {
+        updates.chat_reply = entry.reply || existing?.chat_reply || "";
+        updates.chat_draft = "";
+      }
+      return updateDelightState(subjectId, updates);
+    }
+
+    function pollChatTurnUntilSettled(turnId, fallbackTurn) {
+      const startedAt = Date.now();
+      const poll = async () => {
+        const latest = await requestJson(`${ENDPOINTS.chatTurns}/${encodeURIComponent(turnId)}`);
+        if (latest) {
+          const scopedTurn = { ...fallbackTurn, ...latest, scope: latest.scope || "delight", subject_id: latest.subject_id || fallbackTurn.subject_id };
+          applyTurnToDelight(scopedTurn);
+          if (latest.status === "completed" || latest.status === "failed") return;
+        }
+        if (Date.now() - startedAt > 180000) {
+          applyTurnToDelight({ ...fallbackTurn, status: "failed", error: "聊天处理超时，稍后可以在历史里继续查看。" });
+          return;
+        }
+        window.setTimeout(poll, 1200);
+      };
+      window.setTimeout(poll, 1200);
     }
 
     async function respondDelight(delight, response, el = null) {
@@ -1858,37 +2234,55 @@
         }
         return;
       }
+      if (response === "cancel-comment") { closeDelightComposer(); return; }
       if (response === "send-comment") {
         const input = $("#delightCommentInput");
         const note = input?.value?.trim() || "";
-        await requestJson(ENDPOINTS.delightRespond, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, response: "comment", title: delight.title, message: note }) });
+        if (!note) {
+          if ($("#delightStatus")) $("#delightStatus").textContent = "先写一句想聊的内容，再提交这轮对话。";
+          input?.focus();
+          return;
+        }
+        const turnId = createClientTurnId("delight");
+        const pendingTurn = { turn_id: turnId, session: "webui", scope: "delight", subject_id: delight.bvid, subject_title: delight.title || "", message: note, reply: "", status: "pending", error: "" };
+        applyTurnToDelight(pendingTurn);
         if (input) input.value = "";
         closeDelightComposer();
-        if ($("#delightStatus")) $("#delightStatus").textContent = note ? "已把这条聊天线索写回画像更新闭环。" : "已记录一次围绕这条惊喜推荐的聊天意图。";
-        showToast("已提交聊天线索");
+        try {
+          const turn = await requestJsonStrict(ENDPOINTS.chatTurns, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pendingTurn) });
+          const scopedTurn = { ...pendingTurn, ...(turn || {}), scope: turn?.scope || "delight", subject_id: turn?.subject_id || delight.bvid };
+          applyTurnToDelight(scopedTurn);
+          if (scopedTurn.turn_id && scopedTurn.status !== "completed" && scopedTurn.status !== "failed") pollChatTurnUntilSettled(scopedTurn.turn_id, scopedTurn);
+          showToast("已提交聊天线索");
+        } catch (error) {
+          applyTurnToDelight({ ...pendingTurn, status: "failed", error: error.message || "聊天提交失败，请稍后再试。" });
+          if (input) input.value = note;
+          showToast(`聊天提交失败：${error.message || "后端不可用"}`);
+        }
         return;
       }
       if (response === "view") {
         const url = delight.content_url || (delight.bvid ? `https://www.bilibili.com/video/${encodeURIComponent(delight.bvid)}` : "");
         if (url) window.open(url, "_blank", "noopener,noreferrer");
-        try {
-          await requestJson(ENDPOINTS.click, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, title: delight.title, recommendation_id: delight.id, topic_label: delight.topic, up_name: delight.up }) });
-        } catch (_) {}
+        trackRecommendationClick(delight);
         showToast(url ? "已打开惊喜推荐" : "后端没有返回可打开链接");
         return;
       }
       const feedbackToast = response === "like" ? "惊喜推荐已喜欢" : response === "dislike" ? "这类惊喜先少来点" : "已忽略这条惊喜推荐";
       const toastImmediately = response === "like" || response === "dislike";
       if (toastImmediately) showToast(feedbackToast);
-      if (response === "dismiss") {
-        await requestJson(ENDPOINTS.delightSent, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid }) });
-      } else {
-        await requestJson(ENDPOINTS.delightRespond, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bvid: delight.bvid, response, title: delight.title, message: "" }) });
-      }
-      state.messages = state.messages.filter((msg) => !(msg.type === "delight" && msg.bvid === delight.bvid));
+      await requestJson(ENDPOINTS.delightRespond, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bvid: delight.bvid,
+          response,
+          title: delight.title,
+          message: ""
+        })
+      });
       state.delights = state.delights.filter((item) => item.bvid !== delight.bvid);
       setActiveDelight(Math.min(state.delightIndex, state.delights.length - 1));
-      renderMessages();
       if (el) el.remove();
       if (!toastImmediately) showToast(feedbackToast);
     }
@@ -1898,23 +2292,23 @@
       const panel = $("#messagesPanel");
       const view = $("#messageChatView");
       const input = $("#messageChatInput");
-      const type = messageType(msg);
-      const isAvoidanceProbe = type === "avoidance.probe";
       state.messageScrollTop = panel?.scrollTop || 0;
+      const type = messageType(msg);
+      const isAvoidance = type === "avoidance.probe";
       state.messageChatDomain = msg.domain || "";
-      state.messageChatScope = isAvoidanceProbe ? "avoidance_probe" : "probe";
-      state.messageChatSubjectId = msg.domain || "";
+      state.messageChatScope = isAvoidance ? "avoidance_probe" : "probe";
       openPanel("messagesDrawer");
       drawer?.classList.add("is-chatting");
       if (view) view.hidden = false;
       const title = $("#messageChatTitle");
       const context = $("#messageChatContext");
       const prompt = msg.domain
-        ? `我想多聊聊「${msg.domain}」这个${isAvoidanceProbe ? "避雷" : "兴趣"}方向。`
-        : `我想多聊聊这个${isAvoidanceProbe ? "避雷" : "兴趣"}方向。`;
+        ? `我想多聊聊「${msg.domain}」这个${isAvoidance ? "避雷" : "兴趣"}方向。`
+        : `我想多聊聊这个${isAvoidance ? "避雷" : "兴趣"}方向。`;
       state.messageChatPrompt = prompt;
-      if (title) title.textContent = msg.domain ? `聊聊「${msg.domain}」` : `聊聊这个${isAvoidanceProbe ? "避雷方向" : "兴趣"}`;
-      if (context) context.textContent = msg.reason || `这轮对话会沿用消息里的${isAvoidanceProbe ? "避雷" : "兴趣"}上下文。`;
+      state.messageChatSubjectTitle = msg.domain || (isAvoidance ? "这个避雷方向" : "这个兴趣方向");
+      if (title) title.textContent = msg.domain ? `聊聊${isAvoidance ? "避雷" : "兴趣"}「${msg.domain}」` : `聊聊这个${isAvoidance ? "避雷" : "兴趣"}`;
+      if (context) context.textContent = msg.reason || `这轮对话会沿用消息里的${isAvoidance ? "避雷" : "兴趣"}上下文。`;
       if (input) {
         input.value = "";
         input.placeholder = "继续写你想补充的问题、偏好或例子";
@@ -1930,8 +2324,10 @@
       const view = $("#messageChatView");
       drawer?.classList.remove("is-chatting");
       if (view) view.hidden = true;
-      state.messageChatScope = "chat";
-      state.messageChatSubjectId = "";
+      state.messageChatDomain = "";
+      state.messageChatPrompt = "";
+      state.messageChatScope = "probe";
+      state.messageChatSubjectTitle = "";
       window.setTimeout(() => {
         if (panel) panel.scrollTop = state.messageScrollTop || 0;
       }, 0);
@@ -1973,9 +2369,13 @@
       // the real reply arrives.
       state.chat.push({ role: "agent", text: "…", pending: true });
       renderChat();
-      const payload = { session: "webui", scope: options.scope || "chat", message: payloadMessage };
-      if (options.subjectId) payload.subject_id = options.subjectId;
-      if (options.subjectTitle) payload.subject_title = options.subjectTitle;
+      const payload = {
+        session: "webui",
+        scope: options.scope || "chat",
+        subject_id: options.subjectId || "",
+        subject_title: options.subjectTitle || "",
+        message: payloadMessage
+      };
       const turn = await requestJson(ENDPOINTS.chatTurns, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!turn?.turn_id) {
         state.chat[state.chat.length - 1] = { role: "agent", text: "当前没有连上后端，聊天没有提交成功。请检查 FastAPI 地址后重试。" };
@@ -2086,8 +2486,6 @@
         last_notification_at: String(merged.last_notification_at ?? ""),
         unread_count: Number(merged.unread_count ?? state.messages.length ?? 0),
         pool_available_count: Number(merged.pool_available_count ?? merged.pool_available ?? merged.available_count ?? 0),
-        pool_raw_count: Number(merged.pool_raw_count ?? 0),
-        pool_pending_count: Number(merged.pool_pending_count ?? 0),
         pool_target_count: Number(merged.pool_target_count ?? state.config?.scheduler?.pool_target_count ?? 0),
         last_discovered_count: Number(merged.last_discovered_count ?? 0),
         last_replenished_count: Number(merged.last_replenished_count ?? 0),
@@ -2104,15 +2502,9 @@
       if (!runtime || !runtime.initialized) return null;
       const sufficient = runtime.pool_target_count > 0 && runtime.pool_available_count >= runtime.pool_target_count;
       if (runtime.manual_refresh_state === "running") {
-        if (runtime.pool_available_count === 0 && runtime.pool_pending_count > 0) {
-          return { available: `找到 ${runtime.pool_pending_count} 条素材，正在整理成可换内容`, replenished: "正在整理", topics: "整理好就能换，不会把素材数当可换数" };
-        }
         return runtime.pool_available_count > 0
           ? { available: `还有 ${runtime.pool_available_count} 条可换`, replenished: "后台继续在找更多", topics: "可以先换一批，新的随时进" }
           : { available: "暂无可换库存", replenished: "正在补货", topics: "后台还在继续给你找新的" };
-      }
-      if (runtime.pool_available_count === 0 && runtime.pool_pending_count > 0) {
-        return { available: `找到 ${runtime.pool_pending_count} 条素材，正在整理成可换内容`, replenished: "正在整理", topics: "整理好就能换，不会把素材数当可换数" };
       }
       return {
         available: `还有 ${runtime.pool_available_count} 条可换`,
@@ -2133,25 +2525,30 @@
       };
     }
 
-    function currentRecommendationSourceCount() {
-      const sources = new Set(
-        state.videos
-          .map((item) => platformName(item.platform || item.source_platform || item.source))
-          .map((label) => String(label || "").trim())
-          .filter(Boolean)
-      );
-      return sources.size;
+    function configuredSourceCount() {
+      const sources = state.config?.sources;
+      if (!sources || typeof sources !== "object") return 0;
+      const shares = state.config?.scheduler?.pool_source_shares || {};
+      return Object.entries(sources).reduce((count, [key, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return count;
+        if (Object.prototype.hasOwnProperty.call(value, "enabled")) {
+          return count + (value.enabled !== false ? 1 : 0);
+        }
+        if (Object.prototype.hasOwnProperty.call(shares, key)) {
+          return count + (Number(shares[key] ?? 0) > 0 ? 1 : 0);
+        }
+        return count;
+      }, 0);
     }
 
     function syncSourceMetric() {
-      const count = currentRecommendationSourceCount();
+      const count = configuredSourceCount();
       $("#metricSources").textContent = count ? String(count) : "—";
     }
 
     function getPoolRefreshLabel(runtime) {
       if (!runtime) return "—";
       if (runtime.manual_refresh_message) return runtime.manual_refresh_message;
-      if (runtime.pool_available_count === 0 && runtime.pool_pending_count > 0) return "正在整理素材";
       if (runtime.manual_refresh_state === "running") return runtime.pool_available_count > 0 ? "后台继续补货中" : "正在补货";
       if (runtime.manual_refresh_state === "success") return "刚同步完成";
       if (runtime.manual_refresh_state === "failed") return "刷新失败";
@@ -2261,21 +2658,44 @@
       const llm = config.llm || {};
       const provider = llm.default_provider || llm.provider;
       setSelect("llmProvider", provider);
-      setInput("llmConcurrency", llm.concurrency ?? 3);
-      setInput("llmTimeout", llm.timeout ?? 300);
+      const fallbackProvider = llm.fallback_provider || "";
+      setSelect("llmFallbackProvider", fallbackProvider);
+      setInput("llmTimeout", llm.timeout);
       setSelect("llmAuthMode", llm.openai?.auth_mode || "api_key");
       if (provider) {
         setInput("llmModel", llm[provider]?.model);
         setInput("llmApiKey", llm[provider]?.api_key);
         setInput("llmBaseUrl", llm[provider]?.base_url);
       }
+      if (fallbackProvider) {
+        setSelect("llmFallbackAuthMode", llm[fallbackProvider]?.auth_mode || "api_key");
+        setInput("llmFallbackModel", llm[fallbackProvider]?.model);
+        setInput("llmFallbackApiKey", llm[fallbackProvider]?.api_key);
+        setInput("llmFallbackBaseUrl", llm[fallbackProvider]?.base_url);
+      } else {
+        setSelect("llmFallbackAuthMode", "api_key");
+        setInput("llmFallbackModel", "");
+        setInput("llmFallbackApiKey", "");
+        setInput("llmFallbackBaseUrl", "");
+      }
       setInput("openrouterReferer", llm.openrouter?.http_referer);
       setInput("openrouterTitle", llm.openrouter?.x_title);
       setSelect("embeddingProvider", llm.embedding?.provider || "");
+      const embeddingFallbackProvider = llm.embedding?.fallback_provider || "";
+      setSelect("embeddingFallbackProvider", embeddingFallbackProvider);
       setInput("embeddingModel", llm.embedding?.model);
       setInput("embeddingApiKey", llm.embedding?.api_key);
       setInput("embeddingBaseUrl", llm.embedding?.base_url);
       setInput("embeddingSimilarity", llm.embedding?.similarity_threshold);
+      if (embeddingFallbackProvider) {
+        setInput("embeddingFallbackModel", llm[embeddingFallbackProvider]?.model);
+        setInput("embeddingFallbackApiKey", llm[embeddingFallbackProvider]?.api_key);
+        setInput("embeddingFallbackBaseUrl", llm[embeddingFallbackProvider]?.base_url);
+      } else {
+        setInput("embeddingFallbackModel", "");
+        setInput("embeddingFallbackApiKey", "");
+        setInput("embeddingFallbackBaseUrl", "");
+      }
       setSelect("moduleSoulProvider", llm.soul?.provider || "");
       setInput("moduleSoulModel", llm.soul?.model);
       setSelect("moduleDiscoveryProvider", llm.discovery?.provider || "");
@@ -2317,8 +2737,9 @@
       setInput("logUnmanagedTruncate", config.logging?.unmanaged_truncate_mb);
       setInput("logUnmanagedMaxAge", config.logging?.unmanaged_max_age_days);
 
-      if ($("#configStatus")) $("#configStatus").value = "配置已从后端加载。候选池来源字段已按原 sidebar 的 pool_source_shares 显示为占比/权重。";
+      if ($("#configStatus")) $("#configStatus").value = "配置已从后端加载。";
       if (state.runtimeStatus) applyRuntimeStatus(state.runtimeStatus);
+      restoreFrontendSettings();
     }
 
     function normalizeDelight(item) {
@@ -2326,11 +2747,16 @@
       return {
         type: "delight",
         bvid: String(item.bvid ?? item.content_id ?? ""),
-        title: String(item.title ?? "发现了一条你可能会意外喜欢的内容"),
-        reason: String(item.delight_reason ?? item.reason ?? item.delight_hook ?? item.message ?? "这条来自后端高惊喜分候选。"),
+        title: decodeHtmlEntities(item.title ?? "发现了一条你可能会意外喜欢的内容"),
+        reason: decodeHtmlEntities(item.delight_reason ?? item.reason ?? item.delight_hook ?? item.message ?? "这条来自后端高惊喜分候选。"),
         cover_url: normalizeImageUrl(item.cover_url ?? item.cover ?? item.pic ?? item.thumbnail_url ?? item.thumbnail ?? item.image_url),
         content_url: String(item.content_url ?? ""),
-        source_platform: String(item.source_platform ?? item.platform ?? "bilibili")
+        source_platform: String(item.source_platform ?? item.platform ?? "bilibili"),
+        chat_turn_id: String(item.chat_turn_id ?? ""),
+        chat_reply: String(item.chat_reply ?? item.reply ?? ""),
+        chat_draft: String(item.chat_draft ?? ""),
+        response_message: String(item.response_message ?? ""),
+        turns: delightTurnList(item.turns)
       };
     }
 
@@ -2359,20 +2785,23 @@
         state.delight = null;
         closeDelightComposer();
         renderDelightCover(null);
+        renderDelightTurns(null);
         $("#delightTitle").textContent = "暂无惊喜队列";
         $("#delightReason").textContent = "后端产生新的高惊喜候选后会通过实时流出现在这里。";
         if ($("#delightStatus")) $("#delightStatus").textContent = "";
         if ($("#delightCount")) $("#delightCount").textContent = "0/0";
         controls.forEach((btn) => { btn.disabled = true; });
+        scheduleActivityRailHeightSync();
         return;
       }
       state.delightIndex = Math.max(0, Math.min(index, state.delights.length - 1));
       state.delight = state.delights[state.delightIndex];
       closeDelightComposer();
       renderDelightCover(state.delight);
+      renderDelightTurns(state.delight);
       $("#delightTitle").textContent = state.delight.title;
       $("#delightReason").textContent = state.delight.reason;
-      if ($("#delightStatus")) $("#delightStatus").textContent = "";
+      if ($("#delightStatus")) $("#delightStatus").textContent = state.delight.response_message || "";
       if ($("#delightCount")) $("#delightCount").textContent = `${state.delightIndex + 1}/${state.delights.length}`;
       // Reset delight watch-later star to ☆ for the new bvid, then
       // lazy-lookup the saved state. The user-touched flag protects
@@ -2406,18 +2835,36 @@
         const action = btn.dataset.delight;
         btn.disabled = (action === "prev" && state.delightIndex === 0) || (action === "next" && state.delightIndex === state.delights.length - 1);
       });
+      scheduleActivityRailHeightSync();
     }
 
     function applyDelights(payload) {
-      const items = Array.isArray(payload?.items) ? payload.items : payload?.item ? [payload.item] : [];
+      const hasQueuePayload = Array.isArray(payload?.items) || Boolean(payload?.item);
+      if (!hasQueuePayload) return;
+      const items = Array.isArray(payload?.items) ? payload.items : payload.item ? [payload.item] : [];
       const normalized = items.map(normalizeDelight).filter(Boolean);
-      if (!normalized.length) return;
-      // Deduplicate: skip delights whose bvid already appears in recommendations.
+      const previousActiveBvid = String(state.delight?.bvid || "");
+      const existingByBvid = new Map(state.delights.map((item) => [String(item.bvid || ""), item]));
+      const merged = [];
+      for (const item of normalized) {
+        const key = String(item.bvid || "");
+        if (!key) continue;
+        const existingIndex = merged.findIndex((current) => String(current.bvid || "") === key);
+        const mergedItem = mergeDelightItem(existingByBvid.get(key) || merged[existingIndex], item);
+        if (existingIndex >= 0) merged[existingIndex] = mergedItem;
+        else merged.push(mergedItem);
+      }
+      // Dedup against the regular recommendations grid: a bvid that's
+      // already shown in the main feed shouldn't also show up as a
+      // delight. Fork-only behaviour — preserves the "delight is for
+      // *unexpected* picks the main feed wouldn't surface" semantic.
       const recBvids = new Set((state.videos || []).map((v) => v.bvid).filter(Boolean));
-      const deduped = normalized.filter((d) => !recBvids.has(d.bvid));
-      if (!deduped.length) { state.delights = []; setActiveDelight(0); return; }
+      const deduped = merged.filter((d) => !recBvids.has(d.bvid));
       state.delights = deduped;
-      setActiveDelight(0);
+      const nextIndex = previousActiveBvid
+        ? Math.max(0, state.delights.findIndex((item) => String(item.bvid || "") === previousActiveBvid))
+        : 0;
+      setActiveDelight(nextIndex);
       mergeMessages(normalized);
     }
 
@@ -2433,106 +2880,42 @@
     }
 
     async function fetchDelightQueue() {
-      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=20`);
+      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`);
       applyDelights(payload);
-    }
-
-    function scheduleBackendHydration({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
-      if (backendHydrationTimer !== null) window.clearTimeout(backendHydrationTimer);
-      backendHydrationTimer = window.setTimeout(() => {
-        backendHydrationTimer = null;
-        void runScheduledBackendHydration();
-      }, Math.max(0, delayMs));
-    }
-
-    async function runScheduledBackendHydration() {
-      if (backendHydrationInFlight) {
-        backendHydrationPending = true;
-        return;
-      }
-      backendHydrationInFlight = true;
-      try {
-        await hydrateFromBackend();
-      } finally {
-        backendHydrationInFlight = false;
-        if (backendHydrationPending) {
-          backendHydrationPending = false;
-          scheduleBackendHydration();
-        }
-      }
-    }
-
-    function scheduleActivityPageRefresh({ reset = true, delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
-      activityPageRefreshReset = activityPageRefreshReset || Boolean(reset);
-      if (activityPageRefreshTimer !== null) window.clearTimeout(activityPageRefreshTimer);
-      activityPageRefreshTimer = window.setTimeout(() => {
-        activityPageRefreshTimer = null;
-        void runScheduledActivityPageRefresh();
-      }, Math.max(0, delayMs));
-    }
-
-    async function runScheduledActivityPageRefresh() {
-      if (activityPageRefreshInFlight) {
-        activityPageRefreshPending = true;
-        return;
-      }
-      const reset = activityPageRefreshReset;
-      activityPageRefreshReset = false;
-      activityPageRefreshInFlight = true;
-      try {
-        await loadActivityPage({ reset });
-      } finally {
-        activityPageRefreshInFlight = false;
-        if (activityPageRefreshPending) {
-          activityPageRefreshPending = false;
-          scheduleActivityPageRefresh({ reset: activityPageRefreshReset });
-        }
-      }
-    }
-
-    function scheduleDelightQueueRefresh({ delayMs = RUNTIME_REFRESH_DEBOUNCE_MS } = {}) {
-      if (delightQueueRefreshTimer !== null) window.clearTimeout(delightQueueRefreshTimer);
-      delightQueueRefreshTimer = window.setTimeout(() => {
-        delightQueueRefreshTimer = null;
-        void runScheduledDelightQueueRefresh();
-      }, Math.max(0, delayMs));
-    }
-
-    async function runScheduledDelightQueueRefresh() {
-      if (delightQueueRefreshInFlight) {
-        delightQueueRefreshPending = true;
-        return;
-      }
-      delightQueueRefreshInFlight = true;
-      try {
-        await fetchDelightQueue();
-      } finally {
-        delightQueueRefreshInFlight = false;
-        if (delightQueueRefreshPending) {
-          delightQueueRefreshPending = false;
-          scheduleDelightQueueRefresh();
-        }
-      }
     }
 
     function handleRuntimeEvent(event) {
       if (!event?.type) return;
       applyRuntimeStatus({ ...event, live_summary: event.message || event.live_summary || event.type });
       if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
-      if (event.type === "activity.added") scheduleActivityPageRefresh({ reset: true });
-      if (event.type === "profile_updated" || event.type === "interest.confirmed" || event.type === "interest.rejected" || event.type === "interest.chat" || event.type === "avoidance.confirmed" || event.type === "avoidance.rejected" || event.type === "avoidance.chat") void refreshProfile();
+      if (event.type === "activity.added") scheduleActivityPageRefresh();
+      if (
+        event.type === "profile_updated" ||
+        event.type === "interest.confirmed" ||
+        event.type === "interest.rejected" ||
+        event.type === "interest.chat" ||
+        event.type === "avoidance.confirmed" ||
+        event.type === "avoidance.rejected" ||
+        event.type === "avoidance.chat"
+      ) void refreshProfile();
       if (event.type === "delight.candidate" && event.bvid) {
         const delight = normalizeDelight(event);
         if (delight) {
-          state.delights.push(delight);
-          setActiveDelight(state.delights.length - 1);
-          mergeMessages([delight]);
+          const key = String(delight.bvid || "");
+          const existingIndex = state.delights.findIndex((item) => String(item.bvid || "") === key);
+          if (existingIndex >= 0) {
+            state.delights[existingIndex] = mergeDelightItem(state.delights[existingIndex], delight);
+            if (state.delight && String(state.delight.bvid || "") === key) setActiveDelight(existingIndex);
+          } else {
+            state.delights.push(delight);
+            setActiveDelight(state.delights.length - 1);
+          }
         }
       }
       if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
-      if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [] }]);
+      if (event.type === "avoidance.probe" && event.domain) mergeMessages([{ type: "avoidance.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个避雷方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
     }
 
     function connectRuntimeStream() {
@@ -2558,7 +2941,8 @@
       const profile = payload?.profile || payload;
       if (profile && profile.initialized !== false) {
         state.profile = profile;
-        hydrateInboxFromProfile(profile);
+        hydrateInboxFromSpeculations(profile.speculative_interests);
+        hydrateInboxFromSpeculations(profile.speculative_avoidances, "avoidance.probe");
         renderRail();
         renderProfileDetails();
         renderMessages();
@@ -2566,15 +2950,16 @@
     }
 
     async function hydrateFromBackend() {
-      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, config] = await Promise.all([
+      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config] = await Promise.all([
         requestJson(ENDPOINTS.health),
         requestJson(ENDPOINTS.recommendations),
         requestJson(ENDPOINTS.runtimeStatus),
         requestJson(`${ENDPOINTS.activityFeed}?limit=5`),
         requestJson(ENDPOINTS.profile),
-        requestJson(`${ENDPOINTS.delightBatch}?limit=5`),
+        requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`),
         requestJson(ENDPOINTS.notificationPending),
-        requestJson(`${ENDPOINTS.chatTurns}?session=webui&limit=20`),
+        requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
+        requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
         requestJson(ENDPOINTS.config)
       ]);
       if (health) $("#statusLabel").textContent = "已连接本地后端";
@@ -2589,7 +2974,8 @@
       const profilePayload = profile?.profile || profile;
       if (profilePayload && profilePayload.initialized !== false) {
         state.profile = profilePayload;
-        hydrateInboxFromProfile(profilePayload);
+        hydrateInboxFromSpeculations(profilePayload.speculative_interests);
+        hydrateInboxFromSpeculations(profilePayload.speculative_avoidances, "avoidance.probe");
       }
       const chatItems = Array.isArray(chatTurns) ? chatTurns : asArray(chatTurns?.items);
       if (chatItems.length) {
@@ -2600,6 +2986,8 @@
       }
       applyRuntimeStatus(runtime?.status || runtime);
       applyDelights(delights);
+      const delightChatItems = Array.isArray(delightChatTurns) ? delightChatTurns : asArray(delightChatTurns?.items);
+      for (const turn of delightChatItems.filter(Boolean)) applyTurnToDelight({ ...turn, scope: turn.scope || "delight" });
       if (notification?.item) mergeMessages([{ ...notification.item, type: "notification" }]);
       applyConfig(config?.config || config);
       renderAll();
@@ -2610,17 +2998,29 @@
       for (const step of steps) {
         try { step(); } catch (error) { showFatal(error, step.name || "渲染"); }
       }
+      scheduleActivityRailHeightSync();
     }
 
     function buildConfigUpdate() {
       const provider = $("#llmProvider").value;
+      const fallbackProvider = getInput("llmFallbackProvider");
       const llmProviderConfig = { model: getInput("llmModel") };
       if (provider === "openai") llmProviderConfig.auth_mode = getInput("llmAuthMode") || "api_key";
       if (getInput("llmApiKey")) llmProviderConfig.api_key = getInput("llmApiKey");
       if (getInput("llmBaseUrl")) llmProviderConfig.base_url = getInput("llmBaseUrl");
+      const llmFallbackConfig = { model: getInput("llmFallbackModel") };
+      if (fallbackProvider === "openai") llmFallbackConfig.auth_mode = getInput("llmFallbackAuthMode") || "api_key";
+      if (getInput("llmFallbackApiKey")) llmFallbackConfig.api_key = getInput("llmFallbackApiKey");
+      if (getInput("llmFallbackBaseUrl")) llmFallbackConfig.base_url = getInput("llmFallbackBaseUrl");
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
+      const embeddingFallbackProvider = getInput("embeddingFallbackProvider");
+      const embeddingFallbackConfig = { model: getInput("embeddingFallbackModel") };
+      if (getInput("embeddingFallbackApiKey")) embeddingFallbackConfig.api_key = getInput("embeddingFallbackApiKey");
+      if (getInput("embeddingFallbackBaseUrl")) embeddingFallbackConfig.base_url = getInput("embeddingFallbackBaseUrl");
       const embedding = {
         provider: $("#embeddingProvider").value,
+        fallback_enabled: Boolean(embeddingFallbackProvider),
+        fallback_provider: embeddingFallbackProvider,
         model: getInput("embeddingModel"),
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82)
       };
@@ -2630,8 +3030,9 @@
       const llm = {
         ...(state.config?.llm || {}),
         default_provider: provider,
-        concurrency: getIntInput("llmConcurrency", 3),
-        timeout: getIntInput("llmTimeout", 300),
+        fallback_enabled: Boolean(fallbackProvider),
+        fallback_provider: fallbackProvider,
+        timeout: getIntInput("llmTimeout", 60),
         [provider]: { ...(state.config?.llm?.[provider] || {}), ...llmProviderConfig },
         embedding: { ...(state.config?.llm?.embedding || {}), ...embedding },
         soul: { ...(state.config?.llm?.soul || {}), provider: getInput("moduleSoulProvider"), model: getInput("moduleSoulModel") },
@@ -2639,6 +3040,18 @@
         recommendation: { ...(state.config?.llm?.recommendation || {}), provider: getInput("moduleRecommendationProvider"), model: getInput("moduleRecommendationModel") },
         evaluation: { ...(state.config?.llm?.evaluation || {}), provider: getInput("moduleEvaluationProvider"), model: getInput("moduleEvaluationModel") }
       };
+      if (fallbackProvider && fallbackProvider !== provider) {
+        llm[fallbackProvider] = {
+          ...(state.config?.llm?.[fallbackProvider] || {}),
+          ...llmFallbackConfig
+        };
+      }
+      if (embeddingFallbackProvider) {
+        llm[embeddingFallbackProvider] = {
+          ...(llm[embeddingFallbackProvider] || state.config?.llm?.[embeddingFallbackProvider] || {}),
+          ...embeddingFallbackConfig
+        };
+      }
       if (getInput("openrouterReferer") || getInput("openrouterTitle")) {
         llm.openrouter = {
           ...(llm.openrouter || {}),
@@ -2691,7 +3104,7 @@
           enabled: $("#schedulerEnabled").value === "on",
           pause_on_extension_disconnect: $("#pauseDisconnect").value === "pause",
           discovery_cron: getInput("discoveryCron"),
-          pool_target_count: getIntInput("poolTarget", 300),
+          pool_target_count: getIntInput("poolTarget", 600),
           account_sync_interval_hours: getIntInput("accountSyncInterval", 6),
           pool_source_shares: {
             bilibili: getIntInput("shareBilibili", 8),
@@ -2745,6 +3158,21 @@
       tab.addEventListener("click", () => setActiveSettingsPanel(tab.dataset.settingsTab));
     });
 
+    function setActiveModelSettingsPanel(groupName = "llm", panelName = "default") {
+      document.querySelectorAll(`[data-model-settings-tab][data-model-settings-group="${groupName}"]`).forEach((tab) => {
+        const isActive = tab.dataset.modelSettingsTab === panelName;
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      document.querySelectorAll(`[data-model-settings-panel][data-model-settings-group="${groupName}"]`).forEach((panel) => {
+        panel.hidden = panel.dataset.modelSettingsPanel !== panelName;
+      });
+    }
+
+    document.querySelectorAll("[data-model-settings-tab]").forEach((tab) => {
+      tab.addEventListener("click", () => setActiveModelSettingsPanel(tab.dataset.modelSettingsGroup, tab.dataset.modelSettingsTab));
+    });
+
     function startChatPlaceholderRotation() {
       const input = $("#chatInput");
       if (!input || chatPlaceholderTimer) return;
@@ -2755,18 +3183,9 @@
       }, 5000);
     }
 
-    safeBind("#railToggle", "click", () => {
-      const layout = document.querySelector(".layout");
-      if (!layout) return;
-      const collapsed = layout.classList.toggle("rail-collapsed");
-      const btn = $("#railToggle");
-      if (btn) {
-        btn.setAttribute("aria-label", collapsed ? "展开侧栏" : "收起侧栏");
-        const label = btn.querySelector(".rail-toggle-label");
-        if (label) label.textContent = collapsed ? "" : "收起侧栏";
-      }
-    });
-
+    safeBind("#sideDrawerBtn", "click", toggleSideDrawer);
+    safeBind(".brand", "click", (event) => { event.preventDefault(); openHomePage(); });
+    safeBind("#sideDrawerScrim", "click", closeSideDrawer);
     safeBind("#mobileMenuBtn", "click", openMobileMenu);
     safeBind("#mobileMenuClose", "click", closeMobileMenu);
     safeBind("#mobileSearchInput", "input", (event) => { state.query = event.target.value || ""; const desktopInput = $("#searchInput"); if (desktopInput) desktopInput.value = state.query; renderAll(); });
@@ -2774,41 +3193,55 @@
     document.querySelectorAll("[data-mobile-panel]").forEach((button) => {
       button.addEventListener("click", () => openMobilePanel(button.dataset.mobilePanel, { settingsPanel: button.dataset.settings }));
     });
+    document.querySelectorAll("[data-mobile-page]").forEach((button) => {
+      button.addEventListener("click", () => {
+        openMobilePage(button.dataset.mobilePage, { settingsPanel: button.dataset.settings });
+      });
+    });
     document.querySelectorAll("[data-mobile-back]").forEach((button) => {
       button.addEventListener("click", returnToMobileMenu);
     });
 
-    safeBind("#profileBtn", "click", () => openPanel("profileDrawer"));
+    safeBind("#profileBtn", "click", openProfilePage);
+    safeBind("#homeBtn", "click", openHomePage);
     safeBind("#profileMemoryMoreBtn", "click", loadMoreProfileMemory);
-    safeBind("#chatBtn", "click", () => openPanel("chatDrawer"));
+    safeBind("#chatBtn", "click", openChatPage);
     safeBind("#messagesBtn", "click", () => {
-      hydrateInboxFromProfile();
+      closeSideDrawer();
+      hydrateInboxFromSpeculations(state.profile?.speculative_interests);
+      hydrateInboxFromSpeculations(state.profile?.speculative_avoidances, "avoidance.probe");
       state.messageListSnapshot = getRenderableMessages();
       openPanel("messagesDrawer");
       returnToMessages();
       renderMessages();
       void refreshProfile().catch(() => {});
     });
-    safeBind("#activityBtn", "click", () => { renderActivityHistory(); openPanel("activityDrawer"); });
+    safeBind("#activityBtn", "click", () => { closeSideDrawer(); renderActivityHistory(); openPanel("activityDrawer"); });
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
     safeBind("#watchLaterBtn", "click", () => {
+      // Reset state so reopening doesn't show stale items; the
+      // backing fetch will repopulate. closeSideDrawer mirrors what
+      // upstream's other nav buttons do — the side drawer is the
+      // launcher for these drawers, so it should collapse when one
+      // of them opens.
+      if (typeof closeSideDrawer === "function") closeSideDrawer();
       state.watchLaterOffset = 0;
       state.watchLaterItems = [];
       loadWatchLaterPage();
       openPanel("watchLaterDrawer");
     });
     safeBind("#watchLaterMoreBtn", "click", () => loadWatchLaterPage());
-    safeBind("#settingsBtn", "click", () => { setActiveSettingsPanel("models"); openPanel("settingsModal"); });
-    safeBind("#openSettingsHero", "click", () => { setActiveSettingsPanel("models"); openPanel("settingsModal"); });
-    safeBind("#refreshBtn", "click", refreshRecommendations);
-    safeBind("#dismissOnReshuffleToggle", "change", (event) => {
-      state.dismissOnReshuffle = Boolean(event.target.checked);
-      storageSet(DISMISS_ON_RESHUFFLE_KEY, state.dismissOnReshuffle ? "1" : "0");
-      showToast(state.dismissOnReshuffle ? "换一批前会忽略当前显示的推荐" : "换一批不会自动忽略当前推荐");
+    safeBind("#settingsBtn", "click", () => openSettingsPage("models"));
+    safeBind("#openSettingsHero", "click", () => openSettingsPage("models"));
+    syncTopbarHeight();
+    window.addEventListener("resize", syncTopbarHeight);
+    ["#dismissOnReshuffleToggle", "#dismissOnReshuffleSetting"].forEach((selector) => {
+      safeBind(selector, "change", (event) => {
+        setDismissOnReshuffle(Boolean(event.target.checked), { toast: true });
+      });
     });
     safeBind("#reshuffleBtn", "click", reshuffle);
     safeBind("#loadMoreBtn", "click", appendMore);
-    safeBind("#loadMoreTopBtn", "click", appendMore);
     safeBind("#delightThumb", "click", () => respondDelight(state.delight, "view"));
     safeBind("#delightThumb", "keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -2822,10 +3255,25 @@
     safeBind("#resetFiltersBtn", "click", () => { state.query = ""; state.filter = "全部"; const input = $("#searchInput"); if (input) input.value = ""; renderAll(); });
     safeBind("#searchInput", "input", (event) => { state.query = event.target.value || ""; renderAll(); });
     safeBind("#searchForm", "submit", (event) => { event.preventDefault(); state.query = $("#searchInput")?.value || ""; renderAll(); });
+    window.addEventListener("resize", scheduleActivityRailHeightSync);
     safeBind("#chatForm", "submit", (event) => { event.preventDefault(); const input = $("#chatInput"); const text = input?.value?.trim() || ""; if (!text) return; input.value = ""; sendChat(text); });
     safeBind("#messageChatBackBtn", "click", returnToMessages);
-    safeBind("#messageChatForm", "submit", (event) => { event.preventDefault(); const input = $("#messageChatInput"); const text = input?.value?.trim() || ""; if (!text) return; input.value = ""; sendChat(text, { contextPrefix: state.messageChatPrompt, scope: state.messageChatScope || "probe", subjectId: state.messageChatSubjectId, subjectTitle: state.messageChatDomain }); });
+    safeBind("#messageChatForm", "submit", (event) => {
+      event.preventDefault();
+      const input = $("#messageChatInput");
+      const text = input?.value?.trim() || "";
+      if (!text) return;
+      input.value = "";
+      sendChat(text, {
+        contextPrefix: state.messageChatPrompt,
+        scope: state.messageChatScope,
+        subjectId: state.messageChatDomain,
+        subjectTitle: state.messageChatSubjectTitle
+      });
+    });
     safeBind("#llmProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), default_provider: $("#llmProvider")?.value || "" } }));
+    safeBind("#llmFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), fallback_provider: $("#llmFallbackProvider")?.value || "" } }));
+    safeBind("#embeddingFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), embedding: { ...(state.config?.llm?.embedding || {}), fallback_provider: $("#embeddingFallbackProvider")?.value || "" } } }));
     safeBind("#suggestSharesBtn", "click", async () => {
       const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
@@ -2848,7 +3296,8 @@
         submitBtn.textContent = "保存中…";
       }
       const endpoint = persistBackendEndpoint();
-      if ($("#configStatus")) $("#configStatus").value = `正在保存到 ${endpoint.host}:${endpoint.port}，后端热重载可能需要几秒。`;
+      const frontend = persistFrontendSettings();
+      if ($("#configStatus")) $("#configStatus").value = `正在保存到 ${endpoint.host}:${endpoint.port}，惊喜队列加载 ${frontend.delightQueueLimit} 条，换一批忽略当前${frontend.dismissOnReshuffle ? "已开启" : "已关闭"}，后端热重载可能需要几秒。`;
       try {
         const payload = buildConfigUpdate();
         const result = await requestJsonStrict(ENDPOINTS.config.replace("?reveal_keys=true", ""), {
@@ -2882,6 +3331,8 @@
     }));
 
     restoreBackendEndpoint();
+    restoreFrontendSettings();
+    setSideDrawerOpen(!isMobileViewport() && storageGet(SIDE_DRAWER_OPEN_KEY) !== "0", { persist: false });
     startChatPlaceholderRotation();
     // Prime the 稍后再看 count so the nav badge is accurate from
     // first render. Fire-and-forget — if the request fails the badge
@@ -2903,31 +3354,6 @@
       $("#statusLabel").textContent = "首屏渲染失败";
       $("#runtimeSummary").textContent = error?.message || "请检查后端返回的数据结构。";
     }
-    // Global reason tooltip
-    const _tip = document.createElement("div");
-    _tip.id = "reasonTooltip";
-    document.body.appendChild(_tip);
-    let _tipTarget = null;
-    document.addEventListener("mouseover", (e) => {
-      const reason = e.target.closest(".reason[data-full-reason]");
-      if (reason && reason !== _tipTarget) {
-        _tipTarget = reason;
-        _tip.textContent = reason.dataset.fullReason;
-        _tip.style.display = "block";
-        const rect = reason.getBoundingClientRect();
-        let top = rect.bottom + 8;
-        if (top + _tip.offsetHeight > window.innerHeight) top = rect.top - _tip.offsetHeight - 8;
-        let left = rect.left;
-        if (left + _tip.offsetWidth > window.innerWidth - 16) left = window.innerWidth - _tip.offsetWidth - 16;
-        _tip.style.top = Math.max(8, top) + "px";
-        _tip.style.left = Math.max(8, left) + "px";
-      }
-    });
-    document.addEventListener("mouseout", (e) => {
-      const reason = e.target.closest(".reason[data-full-reason]");
-      if (reason && !reason.contains(e.relatedTarget)) { _tip.style.display = "none"; _tipTarget = null; }
-    });
-
     hydrateFromBackend()
       .then(connectRuntimeStream)
       .catch((error) => {

@@ -1206,6 +1206,29 @@ body {
   border: 1px solid var(--line);
 }
 
+.message-card.is-interest-probe {
+  background: linear-gradient(135deg, #fff8e8, #fff0d5);
+  border-color: rgba(221, 127, 45, 0.28);
+}
+
+.message-card.is-challenge-probe {
+  background: linear-gradient(135deg, #f7f2ff, #ede9fe);
+  border-color: rgba(124, 58, 237, 0.28);
+}
+
+.message-card.is-avoidance-probe {
+  background: linear-gradient(135deg, #eef7ff, #e1effc);
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+.message-card.is-challenge-probe .message-card-type {
+  color: #6d28d9;
+}
+
+.message-card.is-avoidance-probe .message-card-type {
+  color: #1d4ed8;
+}
+
 .message-card-type {
   font-size: 11px;
   font-weight: 700;
@@ -1218,6 +1241,14 @@ body {
 }
 
 .message-card-type svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+.message-card-prompt {
+  margin: -2px 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
 
 .message-card-title {
   font-size: 15px;
@@ -1280,6 +1311,81 @@ body {
   background: var(--surface-soft);
   color: var(--text-secondary);
   border: 1px solid var(--line);
+}
+
+/* ── Inline Chat (within message cards) ──────────────────── */
+.inline-chat-area {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.inline-chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.inline-chat-input:focus {
+  border-color: var(--brand);
+}
+
+.inline-chat-send {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: var(--brand);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inline-chat-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.inline-chat-thinking {
+  width: 100%;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.inline-chat-reply {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.inline-chat-error {
+  width: 100%;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--error, #e53935);
 }
 
 /* ── Empty States ─────────────────────────────────────────── */

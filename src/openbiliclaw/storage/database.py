@@ -270,6 +270,7 @@ class Database:
         self._ensure_content_cache_pool_copy_columns()
         self._ensure_content_cache_delight_columns()
         self._ensure_content_cache_multisource_columns()
+        self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
         self._ensure_llm_usage_cache_columns()
@@ -2485,7 +2486,7 @@ class Database:
             """
             SELECT r.bvid, c.topic_key, c.topic_group, c.source, r.created_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             ORDER BY r.created_at DESC, r.id DESC
             LIMIT ?
             """,
@@ -2510,7 +2511,7 @@ class Database:
                    r.created_at,
                    r.presented_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE COALESCE(r.presented_at, r.created_at) >= ?
             ORDER BY COALESCE(r.presented_at, r.created_at) DESC, r.id DESC
             """,
@@ -2533,7 +2534,7 @@ class Database:
             SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key,
                    c.source, c.title, c.franchise_key
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.feedback_type IS NOT NULL
             ORDER BY r.feedback_at DESC
             LIMIT ?
@@ -2573,16 +2574,16 @@ class Database:
             """
             SELECT
                 r.*,
-                c.title AS title,
-                c.up_name AS up_name,
-                c.cover_url AS cover_url,
-                c.content_id AS content_id,
-                c.content_url AS content_url,
-                c.source_platform AS source_platform,
-                c.franchise_key AS franchise_key,
-                c.description AS description
+                COALESCE(c.title, '') AS title,
+                COALESCE(c.up_name, '') AS up_name,
+                COALESCE(c.cover_url, '') AS cover_url,
+                COALESCE(c.content_id, r.bvid) AS content_id,
+                COALESCE(c.content_url, '') AS content_url,
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.franchise_key, '') AS franchise_key,
+                COALESCE(c.description, '') AS description
             FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid
+            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE (
                 COALESCE(c.source_platform, '') != 'xiaohongshu'
                 OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
@@ -2631,7 +2632,7 @@ class Database:
                 c.notification_sent,
                 c.notified_at
             FROM recommendations AS r
-            JOIN content_cache AS c ON c.bvid = r.bvid
+            JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.presented = 0
               AND c.notification_sent = 0
               AND r.confidence >= ?
@@ -2747,9 +2748,16 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT r.*, c.title AS title, c.up_name AS up_name
+            SELECT
+                r.*,
+                r.topic AS topic_label,
+                c.title AS title,
+                c.up_name AS up_name,
+                COALESCE(c.content_id, r.bvid) AS content_id,
+                COALESCE(c.content_url, '') AS content_url,
+                COALESCE(c.source_platform, '') AS source_platform
             FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid
+            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             WHERE r.id = ?
             """,
             (recommendation_id,),
@@ -2990,6 +2998,15 @@ class Database:
             added = True
         if added:
             self.conn.execute("UPDATE content_cache SET content_id = bvid WHERE content_id = ''")
+
+    def _ensure_recommendation_read_indexes(self) -> None:
+        """Create indexes used by recommendation and activity-feed reads."""
+        self.conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_recommendations_created_id
+                ON recommendations (created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_content_cache_content_id
+                ON content_cache (content_id);
+        """)
 
     def _ensure_source_recipes_table(self) -> None:
         """Create the source_recipes table if it does not exist."""
@@ -3316,6 +3333,7 @@ class Database:
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
+              AND COALESCE(feedback_type, '') = ''
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
             ORDER BY delight_score DESC, relevance_score DESC, discovered_at DESC
             LIMIT ?
@@ -3370,6 +3388,7 @@ class Database:
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
+              AND COALESCE(feedback_type, '') = ''
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
             """,
             (min_delight_score,),

@@ -229,6 +229,9 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ 推荐/消息封面：UI -> /api/image-proxy -> 白名单 CDN -> UI    │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ 推荐点击：content_id/url/source_platform -> source-aware click signal │ │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
 │  │ runtime status：available/raw/pending 库存 -> 插件/移动/桌面 │   │
 │  └──────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
@@ -247,7 +250,9 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │     ContinuousRefreshController + B/XHS/DY/YT=8/1/1/1 │   │
 │  │     LLM gate: scheduler + extension presence          │   │
 │  │     XHS/Douyin/YouTube producers: 按平台缺口独立补池       │   │
+│  │     Hot reload one-shots: interest/avoidance force_tick │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │
+│  │     Interest probes: near 5 + challenge 3 独立 active 额度 │   │
 │  │     Probe memory: domain / axis / distance + exploration buffer │ │
 │  │     AccountSync: B 站账号增量 -> Memory/Soul bootstrap     │   │
 │  │     Pool readiness: servable/raw/pending 统一库存口径       │   │

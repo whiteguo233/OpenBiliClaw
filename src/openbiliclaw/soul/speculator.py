@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CHALLENGE_PROBE_MODES = {"lateral", "bridge", "wildcard"}
+_DEFAULT_CHALLENGE_MAX_ACTIVE = 3
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -666,6 +669,7 @@ class InterestSpeculator:
         cooldown_days: int = 7,
         confirmation_threshold: int = 3,
         max_active: int = 5,
+        challenge_max_active: int = _DEFAULT_CHALLENGE_MAX_ACTIVE,
         max_primary_interests: int = 15,
         max_secondary_interests: int = 60,
         min_confidence: float = 0.30,
@@ -677,6 +681,7 @@ class InterestSpeculator:
         self._cooldown_days = cooldown_days
         self._confirmation_threshold = confirmation_threshold
         self._max_active = max_active
+        self._challenge_max_active = challenge_max_active
         self._max_primary_interests = max_primary_interests
         self._max_secondary_interests = max_secondary_interests
         # Quality gate: discard candidates whose self-rated confidence
@@ -801,8 +806,13 @@ class InterestSpeculator:
         # flow regardless of how many interests are already
         # confirmed.
         active_count = sum(1 for s in state.active if s.status == "active")
+        near_slots, challenge_slots = _available_probe_slots(
+            state.active,
+            near_limit=self._max_active,
+            challenge_limit=self._challenge_max_active,
+        )
         can_generate = (
-            active_count < self._max_active
+            near_slots + challenge_slots > 0
             and active_count < self._max_primary_interests
             and self._llm_service is not None
         )
@@ -831,7 +841,15 @@ class InterestSpeculator:
                 len(result.rejected),
             )
         else:
-            logger.debug("Speculator force_tick: no-op (active full, nothing to expire/promote)")
+            near_count, challenge_count = _active_probe_slot_counts(state.active)
+            logger.debug(
+                "Speculator force_tick: no-op "
+                "(near=%d/%d, challenge=%d/%d, nothing to expire/promote)",
+                near_count,
+                self._max_active,
+                challenge_count,
+                self._challenge_max_active,
+            )
         return result
 
     def observe(self, events: list[dict[str, Any]]) -> int:
@@ -892,8 +910,14 @@ class InterestSpeculator:
                 continue
             if novelty_guard.is_duplicate_domain(domain):
                 continue
-            if len(state.active) >= self._max_active:
-                break
+            probe_mode = _normalize_probe_mode(seed.get("probe_mode"))
+            if not _probe_slot_available(
+                state.active,
+                probe_mode,
+                near_limit=self._max_active,
+                challenge_limit=self._challenge_max_active,
+            ):
+                continue
 
             state.active.append(
                 SpeculativeInterest(
@@ -905,7 +929,7 @@ class InterestSpeculator:
                     created_at=now.isoformat(),
                     ttl_days=self._default_ttl_days,
                     confirmation_threshold=self._confirmation_threshold,
-                    probe_mode=_normalize_probe_mode(seed.get("probe_mode")),
+                    probe_mode=probe_mode,
                 )
             )
             existing_domains.add(domain.lower())
@@ -993,7 +1017,13 @@ class InterestSpeculator:
         - interval not yet elapsed
         """
         active_count = sum(1 for s in state.active if s.status == "active")
-        if active_count >= self._max_active:
+        near_slots, challenge_slots = _available_probe_slots(
+            state.active,
+            near_limit=self._max_active,
+            challenge_limit=self._challenge_max_active,
+        )
+        available_slots = near_slots + challenge_slots
+        if available_slots <= 0:
             return False
 
         # Slot-aware throttle: when there's only 1 free slot, the dedup
@@ -1003,12 +1033,17 @@ class InterestSpeculator:
         # domains and adding 0 new probes, burning ~¥0.005 per tick on
         # nothing. Require at least 2 free slots so the candidate yield
         # is realistic for the LLM call cost.
-        if self._max_active - active_count < 2:
+        if available_slots < 2:
+            near_count, challenge_count = _active_probe_slot_counts(state.active)
             logger.debug(
-                "Speculation skipped: only %d slot(s) free of %d, "
+                "Speculation skipped: only %d slot(s) free "
+                "(near=%d/%d, challenge=%d/%d), "
                 "not worth an LLM call (most candidates would dedup-fail).",
-                self._max_active - active_count,
+                available_slots,
+                near_count,
                 self._max_active,
+                challenge_count,
+                self._challenge_max_active,
             )
             return False
 
@@ -1060,7 +1095,12 @@ class InterestSpeculator:
         cooldown_domains = [c.domain for c in state.cooldown]
         confirmed_domains = [d.domain for d in profile.interest.likes]
 
-        slots = self._max_active - sum(1 for s in state.active if s.status == "active")
+        near_slots, challenge_slots = _available_probe_slots(
+            state.active,
+            near_limit=self._max_active,
+            challenge_limit=self._challenge_max_active,
+        )
+        slots = near_slots + challenge_slots
         if slots <= 0:
             return state
 
@@ -1069,7 +1109,11 @@ class InterestSpeculator:
             existing_speculations=[s.domain for s in state.active],
             cooldown_domains=cooldown_domains,
             confirmed_domains=confirmed_domains,
-            count=min(max(slots * 2, 5), 7),
+            count=min(max(slots * 2, 5), 10),
+            probe_mode_request=_probe_mode_request_for_slots(
+                near_slots=near_slots,
+                challenge_slots=challenge_slots,
+            ),
         )
 
         try:
@@ -1172,14 +1216,20 @@ class InterestSpeculator:
             )
 
         existing_active = [s for s in state.active if s.status == "active"]
-        for candidate in _select_diverse_candidates(
+        for candidate in _select_candidates_for_probe_slots(
             candidates,
-            limit=slots,
+            near_limit=near_slots,
+            challenge_limit=challenge_slots,
             existing=existing_active,
             feedback_history=feedback_history,
         ):
-            if len(state.active) >= self._max_active:
-                break
+            if not _probe_slot_available(
+                state.active,
+                candidate.probe_mode,
+                near_limit=self._max_active,
+                challenge_limit=self._challenge_max_active,
+            ):
+                continue
             state.active.append(candidate)
             existing_domains.add(candidate.domain.lower())
 
@@ -1224,6 +1274,70 @@ def _normalize_entry_load(value: Any) -> str:
 def _normalize_probe_mode(value: Any) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     return text if text in {"near", "lateral", "bridge", "wildcard"} else "near"
+
+
+def _is_challenge_probe_mode(value: Any) -> bool:
+    return _normalize_probe_mode(value) in _CHALLENGE_PROBE_MODES
+
+
+def _active_probe_slot_counts(specs: list[SpeculativeInterest]) -> tuple[int, int]:
+    near_count = 0
+    challenge_count = 0
+    for spec in specs:
+        if spec.status != "active":
+            continue
+        if _is_challenge_probe_mode(spec.probe_mode):
+            challenge_count += 1
+        else:
+            near_count += 1
+    return near_count, challenge_count
+
+
+def _available_probe_slots(
+    specs: list[SpeculativeInterest],
+    *,
+    near_limit: int,
+    challenge_limit: int,
+) -> tuple[int, int]:
+    near_count, challenge_count = _active_probe_slot_counts(specs)
+    return (
+        max(0, near_limit - near_count),
+        max(0, challenge_limit - challenge_count),
+    )
+
+
+def _probe_slot_available(
+    specs: list[SpeculativeInterest],
+    probe_mode: Any,
+    *,
+    near_limit: int,
+    challenge_limit: int,
+) -> bool:
+    near_slots, challenge_slots = _available_probe_slots(
+        specs,
+        near_limit=near_limit,
+        challenge_limit=challenge_limit,
+    )
+    if _is_challenge_probe_mode(probe_mode):
+        return challenge_slots > 0
+    return near_slots > 0
+
+
+def _probe_mode_request_for_slots(*, near_slots: int, challenge_slots: int) -> str:
+    if near_slots <= 0 and challenge_slots > 0:
+        return (
+            "本轮普通 near 池已满，只补挑战探针。"
+            "所有候选的 probe_mode 必须从 lateral / bridge / wildcard 中选择，"
+            "不要输出 near。"
+        )
+    if challenge_slots <= 0 and near_slots > 0:
+        return "本轮挑战池已满，只补普通探针。所有候选的 probe_mode 必须是 near。"
+    if near_slots > 0 and challenge_slots > 0:
+        return (
+            f"本轮还有 {near_slots} 个 near 普通槽和 {challenge_slots} 个挑战槽；"
+            "请同时给 near 和 lateral / bridge / wildcard 候选，避免全部输出 near。"
+        )
+    return "本轮没有可用探针槽位。"
 
 
 def _candidate_priority(
@@ -1463,6 +1577,48 @@ def _select_diverse_candidates(
         context=context,
         avoid_axes=avoid_axes,
     )
+
+
+def _select_candidates_for_probe_slots(
+    candidates: list[SpeculativeInterest],
+    *,
+    near_limit: int,
+    challenge_limit: int,
+    existing: list[SpeculativeInterest] | None = None,
+    feedback_history: object | None = None,
+) -> list[SpeculativeInterest]:
+    selected: list[SpeculativeInterest] = []
+    context = list(existing or [])
+
+    if near_limit > 0:
+        near_candidates = [
+            candidate
+            for candidate in candidates
+            if not _is_challenge_probe_mode(candidate.probe_mode)
+        ]
+        selected.extend(
+            _select_diverse_candidates(
+                near_candidates,
+                limit=near_limit,
+                existing=context,
+                feedback_history=feedback_history,
+            )
+        )
+
+    if challenge_limit > 0:
+        challenge_candidates = [
+            candidate for candidate in candidates if _is_challenge_probe_mode(candidate.probe_mode)
+        ]
+        selected.extend(
+            _select_diverse_candidates(
+                challenge_candidates,
+                limit=challenge_limit,
+                existing=context + selected,
+                feedback_history=feedback_history,
+            )
+        )
+
+    return selected
 
 
 def build_probe_axis(*, experience_mode: Any, entry_load: Any) -> str:

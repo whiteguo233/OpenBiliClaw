@@ -152,6 +152,63 @@ class TestBackendAPI:
             await ctx.task_registry.cancel_all()
 
     @pytest.mark.asyncio
+    async def test_restart_tasks_detaches_avoidance_speculator_tick(self) -> None:
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class HangingAvoidanceSpeculator:
+            def __init__(self) -> None:
+                self.started = asyncio.Event()
+                self.calls: list[tuple[object, object | None]] = []
+
+            async def force_tick(
+                self,
+                profile: object,
+                *,
+                feedback_history: object | None = None,
+            ) -> None:
+                self.calls.append((profile, feedback_history))
+                self.started.set()
+                await asyncio.sleep(60)
+
+        class FakeSoulEngine:
+            def __init__(self, avoidance_speculator: HangingAvoidanceSpeculator) -> None:
+                self._avoidance_speculator = avoidance_speculator
+
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        feedback_history = [{"domain": "浅层热点复读", "response": "reject"}]
+        avoidance_speculator = HangingAvoidanceSpeculator()
+        cfg = Config()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(
+                load_discovery_runtime_state=lambda: {
+                    "avoidance_probe_feedback_history": feedback_history,
+                }
+            ),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=FakeSoulEngine(avoidance_speculator),
+            recommendation_engine=object(),
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        try:
+            await asyncio.wait_for(ctx.restart_background_tasks(app), timeout=0.5)
+            assert ctx.task_registry.stats().get("post_reload_avoidance_speculate") == 1
+            await asyncio.wait_for(avoidance_speculator.started.wait(), timeout=0.5)
+            assert avoidance_speculator.calls == [
+                ({"profile": "ok"}, feedback_history),
+            ]
+        finally:
+            await ctx.task_registry.cancel_all()
+
+    @pytest.mark.asyncio
     async def test_restart_tasks_swallows_detached_speculator_failure(self) -> None:
         from types import SimpleNamespace
 
@@ -3279,11 +3336,13 @@ class TestBackendAPI:
         history = memory.load_discovery_runtime_state()["avoidance_probe_feedback_history"]
         assert history[0]["response"] == "reject"
 
-    def test_avoidance_probe_confirm_uses_apply_new_dislikes(
+    def test_avoidance_probe_confirm_schedules_dislike_writeback(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        import time
+
         from fastapi.testclient import TestClient
 
         from openbiliclaw.api import app as app_module
@@ -3315,6 +3374,7 @@ class TestBackendAPI:
         calls: list[dict[str, object]] = []
 
         async def fake_apply_new_dislikes(**kwargs: object) -> list[str]:
+            await asyncio.sleep(0.02)
             calls.append(dict(kwargs))
             return ["新增不喜欢方向: 标题党热点解读"]
 
@@ -3339,14 +3399,19 @@ class TestBackendAPI:
             soul_engine=FakeSoulEngine(),
         )
         app.state.runtime_context.config = SimpleNamespace(data_path=tmp_path)
-        client = TestClient(app)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/avoidance-probes/respond",
+                json={"domain": "浅层热点复读", "response": "confirm"},
+            )
 
-        response = client.post(
-            "/api/avoidance-probes/respond",
-            json={"domain": "浅层热点复读", "response": "confirm"},
-        )
+            assert response.status_code == 200
+            assert calls == []
+            for _ in range(20):
+                time.sleep(0.02)
+                if calls:
+                    break
 
-        assert response.status_code == 200
         assert calls
         assert calls[0]["topics"] == ["标题党热点解读"]
         assert calls[0]["embedding_service"] is embedding_service
@@ -3686,6 +3751,78 @@ class TestBackendAPI:
         assert ingested_signal.payload["topic_label"] == "AI技术"
         assert ingested_signal.payload["up_name"] == "ML教程君"
 
+    def test_recommendation_click_endpoint_keeps_youtube_click_source_aware(self) -> None:
+        """YouTube recommendation clicks must not be persisted as Bilibili URLs."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self,
+                recommendation_id: int,
+            ) -> dict[str, object] | None:
+                if recommendation_id != 42:
+                    return None
+                return {
+                    "id": 42,
+                    "bvid": "KPoJ7p9iy4Q",
+                    "content_id": "KPoJ7p9iy4Q",
+                    "content_url": "https://www.youtube.com/watch?v=KPoJ7p9iy4Q",
+                    "source_platform": "youtube",
+                    "title": "A YouTube deep dive",
+                    "topic_label": "技术长视频",
+                    "up_name": "YT Creator",
+                }
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+                from openbiliclaw.soul.pipeline import IngestResult
+
+                return IngestResult(signals_accepted=1)
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"recommendation_id": 42},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bvid"] == "KPoJ7p9iy4Q"
+        assert memory.events, "YouTube click should be persisted"
+        event = memory.events[0]
+        assert event["url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+        assert "YouTube" in event["context"]
+        assert event["metadata"]["source_platform"] == "youtube"
+        assert event["metadata"]["content_id"] == "KPoJ7p9iy4Q"
+        assert event["metadata"]["content_url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+
+        signal = soul_engine.pipeline.ingested[0]
+        assert signal.payload["source_platform"] == "youtube"
+        assert signal.payload["content_id"] == "KPoJ7p9iy4Q"
+        assert signal.payload["content_url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+
     def test_recommendation_click_endpoint_persists_dwell_fields(self) -> None:
         """When the extension reports dwell on the click-through, those
         fields flow into the persisted click event so storage can classify
@@ -3916,6 +4053,90 @@ class TestBackendAPI:
         assert memory.events[0]["metadata"]["bvid"] == "BVresilient"
         # But layers_updated should be empty because ingest raised.
         assert response.json()["layers_updated"] == []
+
+    def test_delight_like_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "like"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "liked"
+        assert database.notified == ["BV1DL"]
+        assert any("feedback_type='like'" in query for query, _params in database.writes)
+
+    def test_delight_dislike_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "dislike"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "disliked"
+        assert database.notified == ["BV1DL"]
+        assert any("feedback_type='dislike'" in query for query, _params in database.writes)
+
+    def test_delight_dismiss_marks_candidate_consumed(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "dismiss"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "dismissed"
+        assert database.notified == ["BV1DL"]
+        assert database.writes == []
 
     def test_get_config_returns_llm_and_embedding_settings(
         self,
