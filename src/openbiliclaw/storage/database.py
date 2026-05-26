@@ -2573,25 +2573,47 @@ class Database:
         cursor = self.conn.execute(
             """
             SELECT
-                r.*,
-                COALESCE(c.title, '') AS title,
-                COALESCE(c.up_name, '') AS up_name,
-                COALESCE(c.cover_url, '') AS cover_url,
-                COALESCE(c.content_id, r.bvid) AS content_id,
-                COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform,
-                COALESCE(c.franchise_key, '') AS franchise_key,
-                COALESCE(c.description, '') AS description
-            FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            WHERE (
-                COALESCE(c.source_platform, '') != 'xiaohongshu'
-                OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
+                id, bvid, expression, topic, confidence, presented, feedback,
+                feedback_type, feedback_note, created_at, presented_at,
+                feedback_at, title, up_name, cover_url, content_id, content_url,
+                source_platform, franchise_key, description
+            FROM (
+                SELECT
+                    r.*,
+                    COALESCE(c.title, '') AS title,
+                    COALESCE(c.up_name, '') AS up_name,
+                    COALESCE(c.cover_url, '') AS cover_url,
+                    COALESCE(c.content_id, r.bvid) AS content_id,
+                    COALESCE(c.content_url, '') AS content_url,
+                    COALESCE(c.source_platform, '') AS source_platform,
+                    COALESCE(c.franchise_key, '') AS franchise_key,
+                    COALESCE(c.description, '') AS description,
+                    COALESCE(c.feedback_type, '') AS _c_feedback_type,
+                    COALESCE(c.delight_notified, 0) AS _c_delight_notified,
+                    COALESCE(c.pool_status, 'fresh') AS _c_pool_status,
+                    -- Dedup: when content_cache has both a bvid match
+                    -- AND a content_id match for the same r.bvid, pick
+                    -- the bvid match first. Without this the OR-join
+                    -- returns the same recommendation row twice (one
+                    -- per cache match), surfaced after mark-as-repost
+                    -- flips a row's content_url to a YT id that
+                    -- another row uses as bvid.
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
             )
-              AND COALESCE(r.feedback_type, '') = ''
-              AND COALESCE(c.feedback_type, '') NOT IN ('like', 'dislike')
-              AND COALESCE(c.delight_notified, 0) = 0
-              AND COALESCE(c.pool_status, 'fresh') != 'purged_by_dislike'
+            WHERE _match_rank = 1
+              AND (
+                source_platform != 'xiaohongshu'
+                OR content_url LIKE '%xsec_token=%'
+              )
+              AND COALESCE(feedback_type, '') = ''
+              AND _c_feedback_type NOT IN ('like', 'dislike')
+              AND _c_delight_notified = 0
+              AND _c_pool_status != 'purged_by_dislike'
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
@@ -2748,17 +2770,29 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT
-                r.*,
-                r.topic AS topic_label,
-                c.title AS title,
-                c.up_name AS up_name,
-                COALESCE(c.content_id, r.bvid) AS content_id,
-                COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform
-            FROM recommendations AS r
-            LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
-            WHERE r.id = ?
+            SELECT * FROM (
+                SELECT
+                    r.*,
+                    r.topic AS topic_label,
+                    c.title AS title,
+                    c.up_name AS up_name,
+                    COALESCE(c.content_id, r.bvid) AS content_id,
+                    COALESCE(c.content_url, '') AS content_url,
+                    COALESCE(c.source_platform, '') AS source_platform,
+                    -- Same dedup as get_recommendations: prefer the
+                    -- exact-bvid match in content_cache, fall back to
+                    -- content_id match. Without this, an OR join can
+                    -- pick the wrong row when both a bvid match and a
+                    -- content_id match exist.
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY (c.bvid = r.bvid) DESC, c.rowid
+                    ) AS _match_rank
+                FROM recommendations AS r
+                LEFT JOIN content_cache AS c ON c.bvid = r.bvid OR c.content_id = r.bvid
+                WHERE r.id = ?
+            )
+            WHERE _match_rank = 1
             """,
             (recommendation_id,),
         )

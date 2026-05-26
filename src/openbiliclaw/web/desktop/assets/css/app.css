@@ -152,13 +152,15 @@
     .top-message-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
     .message-dot { position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--danger); box-shadow: 0 0 0 2px var(--surface); }
     .message-dot[hidden] { display: none; }
-    /* 稍后再看 badge: numeric, sits in the same upper-right slot
-       as message-dot. min-width so single-digit and 2-digit
-       counts visually balance. */
-    .watch-later-count { position: absolute; top: 4px; left: 22px; min-width: 14px; height: 14px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--accent, #4f46e5); color: #fff; font-size: 10px; font-weight: 700; line-height: 14px; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+    /* 稍后再看 numeric count badge. The button is laid out as
+       [glyph] [label] [count] inside .side-drawer-nav .nav-action
+       which is a flex row (display:flex; gap:var(--space-3)). Using
+       margin-left:auto pushes the count to the right edge of the
+       row, mirroring how iOS/Android show notification counts on
+       list items. Min-width gives single- and double-digit counts
+       the same visual width. */
+    .watch-later-count { margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent, #4f46e5); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; display: inline-flex; align-items: center; justify-content: center; }
     .watch-later-count[hidden] { display: none; }
-    /* nav-action needs positioning for the absolute badge */
-    .nav-action { position: relative; }
     /* Watch-later list cards — horizontal layout: cover left,
        title/meta middle, actions right. Cover proxied through
        /api/image-proxy so xhs/youtube covers work behind referer
@@ -203,7 +205,7 @@
     .side-drawer-nav .nav-action { width: 100%; min-height: 40px; display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--fg-2); box-shadow: none; text-align: left; }
     .side-drawer-nav .nav-action:hover { background: color-mix(in oklab, var(--surface-warm), var(--accent) 6%); color: var(--fg); }
     .nav-glyph { width: 22px; height: 22px; display: inline-grid; place-items: center; border-radius: var(--radius-sm); background: var(--surface-warm); color: var(--fg-2); font-size: 13px; }
-    .side-drawer-nav .nav-action:nth-child(-n + 4) .nav-glyph { background: color-mix(in oklab, var(--surface-warm), var(--accent) 10%); color: var(--accent); }
+    .side-drawer-nav .nav-action:nth-child(-n + 5) .nav-glyph { background: color-mix(in oklab, var(--surface-warm), var(--accent) 10%); color: var(--accent); }
     .side-section { display: grid; gap: var(--space-3); padding: var(--space-4) 2px; border-bottom: 1px solid var(--border-soft); }
     .side-section h3 { color: var(--fg); font-size: 16px; letter-spacing: -0.01em; }
     .side-section p { margin: 0; color: var(--muted); }
