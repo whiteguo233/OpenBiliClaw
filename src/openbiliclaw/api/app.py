@@ -2459,8 +2459,6 @@ def create_app(
                 ctx.database._execute_write(
                     "UPDATE content_cache SET feedback_type='like', "
                     "feedback_at=CURRENT_TIMESTAMP, "
-                    "delight_notified=1, "
-                    "delight_notified_at=CURRENT_TIMESTAMP, "
                     "relevance_score=MIN(1.0, COALESCE(relevance_score, 0.5) + 0.15) "
                     "WHERE bvid = ?",
                     (bvid,),
