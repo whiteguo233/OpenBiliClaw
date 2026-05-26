@@ -365,3 +365,29 @@ unmanaged_max_age_days = 30
 # retained as disliked_topics evidence instead of being learned as a
 # positive interest.
 satisfaction_filter_enabled = true
+
+[quality_gate]
+# Active quality filter that runs before content enters the candidate pool.
+# Turn on to filter low-quality Bilibili content automatically.
+enabled = false
+# "reject" = hard block, "penalize" = soft downgrade (lower priority)
+mode = "reject"
+# Minimum follower count for a UP主 to pass the gate
+min_follower = 1000
+# UP主 level <= this value triggers rejection (Lv1-Lv2)
+max_level = 2
+# Minimum video view count
+min_views = 500
+# Whether to block enterprise/brand accounts
+ban_franchise_accounts = true
+# MIDs that bypass the quality gate entirely
+allowlist_mids = []
+# Clickbait title regex patterns (matched against title)
+clickbait_patterns = [
+    "震惊[！!]",
+    ".*月入.*万.*",
+    ".*千万别.*",
+    ".*不看后悔.*",
+    ".*保姆级.*全攻略.*",
+    ".*99%.*人不知道.*",
+]

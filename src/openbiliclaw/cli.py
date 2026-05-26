@@ -5841,5 +5841,248 @@ def browser_content(url: str) -> None:
     console.print(Panel(content, border_style="cyan"))
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# quality-gate command group
+# ═══════════════════════════════════════════════════════════════════════
+
+quality_gate_app = typer.Typer(help="QualityGate 质量门禁管理")
+app.add_typer(quality_gate_app, name="quality-gate")
+
+
+@quality_gate_app.command("suggest-patterns")
+def quality_gate_suggest_patterns(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="直接将建议的正则写入 config.toml",
+    ),
+) -> None:
+    """让 LLM 根据你的画像和最近不喜欢的内容，建议 Clickbait 正则模式。
+
+    分析来源：
+    - 近期被 dislike 的内容标题
+    - 用户画像中的 disliked_topics
+    - 画像中的兴趣关键词（让 LLM 避免对这些领域误杀）
+    """
+    _require_runtime_config()
+
+    from openbiliclaw.config import load_config, save_config
+    from openbiliclaw.llm.json_utils import extract_llm_json_object
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+
+    cfg = load_config()
+    database = _get_runtime_database()
+    memory = _build_memory_manager()
+    registry = _build_registry()
+    llm = LLMService(
+        registry=registry,
+        memory=memory,
+        module_overrides=module_overrides_from_config(cfg),
+        concurrency=cfg.llm.concurrency,
+    )
+
+    # ── Collect disliked content titles ────────────────────────────
+    disliked_titles: list[str] = []
+    try:
+        feedback_rows = database.get_feedback_signals(limit=50)
+        seen: set[str] = set()
+        for row in feedback_rows:
+            if row.get("feedback_type") == "dislike":
+                title = str(row.get("title", "")).strip()
+                if title and title not in seen:
+                    seen.add(title)
+                    disliked_titles.append(title)
+    except Exception:
+        pass
+
+    # Also pull from content_cache where pool_status = 'purged_by_dislike'
+    try:
+        cursor = database.conn.execute(
+            """
+            SELECT title FROM content_cache
+            WHERE COALESCE(pool_status, '') = 'purged_by_dislike'
+              AND title IS NOT NULL AND title != ''
+            ORDER BY last_scored_at DESC
+            LIMIT 30
+            """
+        )
+        for row in cursor.fetchall():
+            title = str(row["title"]).strip()
+            if title and title not in seen:
+                seen.add(title)
+                disliked_titles.append(title)
+    except Exception:
+        pass
+
+    # ── Collect disliked_topics from preference layer ─────────────
+    disliked_topics: list[str] = []
+    interest_domains: list[str] = []
+    try:
+        pref_data = memory.get_layer("preference").data
+        if isinstance(pref_data, dict):
+            # Try onion format first (nested under interest.dislikes)
+            interest_data = pref_data.get("interest", {})
+            if isinstance(interest_data, dict):
+                dislikes = interest_data.get("dislikes", [])
+                if isinstance(dislikes, list):
+                    for dom in dislikes:
+                        if isinstance(dom, dict):
+                            domain = str(dom.get("domain", "")).strip()
+                            if domain:
+                                disliked_topics.append(domain)
+                likes = interest_data.get("likes", [])
+                if isinstance(likes, list):
+                    for dom in likes:
+                        if isinstance(dom, dict):
+                            name = str(dom.get("domain", "")).strip()
+                            if name:
+                                interest_domains.append(name)
+                            for spec in dom.get("specifics", []):
+                                if isinstance(spec, dict):
+                                    sname = str(spec.get("name", "")).strip()
+                                    if sname:
+                                        interest_domains.append(sname)
+            # Legacy format: flat disliked_topics field
+            flat_disliked = pref_data.get("disliked_topics", [])
+            if isinstance(flat_disliked, list):
+                for t in flat_disliked:
+                    t = str(t).strip()
+                    if t and t not in disliked_topics:
+                        disliked_topics.append(t)
+            # Legacy format: flat interests
+            flat_interests = pref_data.get("interests", [])
+            if isinstance(flat_interests, list):
+                for tag in flat_interests:
+                    if isinstance(tag, dict):
+                        name = str(tag.get("name", "")).strip()
+                        if name:
+                            interest_domains.append(name)
+    except Exception:
+        pass
+
+    # ── Limit inputs to avoid blowing the context window ───────────
+    titles_sample = disliked_titles[:20]
+    disliked_sample = disliked_topics[:10]
+    interests_sample = interest_domains[:10]
+
+    # ── Build LLM prompt ──────────────────────────────────────────
+    if not titles_sample and not disliked_sample:
+        _print_status_panel(
+            "warning",
+            "没有足够的数据",
+            "数据库中尚未积累足够的不喜欢数据。建议先使用一段时间推荐功能"
+            "并提交反馈，再运行此命令。",
+        )
+        raise typer.Exit(code=0)
+
+    titles_block = "\n".join(f"  - {t}" for t in titles_sample) if titles_sample else "  (无)"
+    topics_block = (
+        "\n".join(f"  - {t}" for t in disliked_sample) if disliked_sample else "  (无)"
+    )
+    interests_block = (
+        "\n".join(f"  - {t}" for t in interests_sample) if interests_sample else "  (无)"
+    )
+
+    current_patterns_block = "\n".join(
+        f"  - {p}" for p in cfg.quality_gate.clickbait_patterns
+    ) if cfg.quality_gate.clickbait_patterns else "  (无)"
+
+    system_instruction = """\
+你是一个 Bilibili 内容质量过滤的正则表达式专家。
+
+用户已有的 clickbait 正则模式如下，请基于用户提供的数据（不喜欢的标题、
+不喜欢的主题、感兴趣的领域）分析这些正则是否合理，
+并推荐一套优化的正则模式列表。
+
+要求：
+1. 输出必须是严格 JSON 格式，不要附带解释。
+2. 使用 Python re 模块兼容的正则语法。
+3. 每条正则聚焦单一检测意图，不要太长。
+4. 正则不区分大小写（运行时自动加 re.IGNORECASE）。
+5. 避免对用户感兴趣的领域产生误杀——如果某个正则太宽泛会命中用户兴趣领域的内容，应该去掉或收紧。
+6. 至少输出 3 条，最多输出 12 条。
+7. 每条正则附带一条简短中文说明。
+
+输出格式：
+{"patterns": [{"pattern": "震惊[！!]", "reason": "震惊体标题"}, ...]}"""
+
+    user_input = f"""\
+## 用户已有的 clickbait 正则
+{current_patterns_block}
+
+## 用户最近 dislike 的内容标题（共 {len(disliked_titles)} 条，展示前 {len(titles_sample)} 条）
+{titles_block}
+
+## 用户不喜欢的主题领域
+{topics_block}
+
+## 用户感兴趣的领域（请避免对以下领域误杀）
+{interests_block}
+
+请基于以上信息，推荐一套优化的 clickbait 正则模式列表。"""
+
+    _print_page_title("QualityGate 正则建议", "正在通过 LLM 分析...")
+    console.print("[dim]分析中，这可能需要几秒钟...[/dim]")
+
+    try:
+        response = asyncio.run(
+            llm.complete_structured_task(
+                system_instruction=system_instruction,
+                user_input=user_input,
+                temperature=0.3,
+                max_tokens=4096,
+                caller="quality_gate.suggest_patterns",
+            )
+        )
+    except Exception as exc:
+        _print_status_panel("error", "LLM 调用失败", str(exc))
+        raise typer.Exit(code=1) from exc
+
+    payload = extract_llm_json_object(
+        str(response.content if hasattr(response, "content") else response),
+        wrapper_keys=("patterns", "result", "data", "output"),
+        item_predicate=lambda item: "pattern" in item,
+    )
+
+    if payload is None or "patterns" not in payload:
+        _print_status_panel("error", "解析失败", "LLM 返回的数据格式不正确，请重试。")
+        console.print(f"[dim]LLM 原始响应: {str(response)[:500]}[/dim]")
+        raise typer.Exit(code=1)
+
+    suggested = payload["patterns"]
+    if not isinstance(suggested, list):
+        _print_status_panel("error", "数据格式错误", "patterns 字段应为数组。")
+        raise typer.Exit(code=1)
+
+    _print_page_title("建议的 Clickbait 正则", f"共 {len(suggested)} 条")
+    table = Table(box=None)
+    table.add_column("#", style="dim")
+    table.add_column("正则", style="cyan")
+    table.add_column("说明", style="green")
+    for i, item in enumerate(suggested, 1):
+        pat = str(item.get("pattern", "")).strip()
+        reason = str(item.get("reason", "")).strip()
+        if pat:
+            table.add_row(str(i), pat, reason)
+    console.print(table)
+
+    if apply:
+        new_patterns = [str(item["pattern"]).strip() for item in suggested if "pattern" in item]
+        cfg.quality_gate.clickbait_patterns = new_patterns
+        if not cfg.quality_gate.enabled:
+            cfg.quality_gate.enabled = True
+        save_config(cfg)
+        _print_status_panel(
+            "success",
+            "已应用",
+            f"已将 {len(new_patterns)} 条正则写入 config.toml，QualityGate 已启用。",
+        )
+    else:
+        console.print()
+        console.print(
+            "[dim]提示: 添加 --apply 参数可将建议直接写入 config.toml[/dim]"
+        )
+
+
 if __name__ == "__main__":
     app()

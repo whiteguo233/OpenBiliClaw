@@ -349,6 +349,31 @@ class LoggingConfig:
 
 
 @dataclass
+class QualityGateConfig:
+    """Content quality gate configuration.
+
+    Active quality filter that runs before content enters the candidate pool.
+    Applies to Bilibili content only (non-Bilibili sources are always accepted).
+    """
+
+    enabled: bool = False
+    mode: str = "reject"  # "reject" = hard block, "penalize" = soft downgrade
+    min_follower: int = 1000
+    max_level: int = 2  # UP主 level <= this value triggers rejection
+    min_views: int = 500
+    ban_franchise_accounts: bool = True
+    allowlist_mids: list[int] = field(default_factory=list)
+    clickbait_patterns: list[str] = field(default_factory=lambda: [
+        "震惊[！!]",
+        ".*月入.*万.*",
+        ".*千万别.*",
+        ".*不看后悔.*",
+        ".*保姆级.*全攻略.*",
+        ".*99%.*人不知道.*",
+    ])
+
+
+@dataclass
 class SoulPreferenceConfig:
     """Preference-layer toggles.
 
@@ -398,6 +423,7 @@ class Config:
     # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
     # provider override): this carries soul-engine behavior toggles.
     soul: SoulConfig = field(default_factory=SoulConfig)
+    quality_gate: QualityGateConfig = field(default_factory=QualityGateConfig)
 
     @property
     def data_path(self) -> Path:
@@ -606,6 +632,30 @@ def _build_config(raw: dict[str, Any]) -> Config:
         ),
     )
 
+    quality_gate_raw = (
+        raw.get("quality_gate", {}) if isinstance(raw.get("quality_gate"), dict) else {}
+    )
+    quality_gate = QualityGateConfig(
+        enabled=bool(quality_gate_raw.get("enabled", False)),
+        mode=str(quality_gate_raw.get("mode", "reject")),
+        min_follower=int(quality_gate_raw.get("min_follower", 1000)),
+        max_level=int(quality_gate_raw.get("max_level", 2)),
+        min_views=int(quality_gate_raw.get("min_views", 500)),
+        ban_franchise_accounts=bool(quality_gate_raw.get("ban_franchise_accounts", True)),
+        allowlist_mids=[
+            int(m) for m in quality_gate_raw.get("allowlist_mids", [])
+            if str(m).strip().isdigit()
+        ],
+        clickbait_patterns=list(quality_gate_raw.get("clickbait_patterns", [
+            "震惊[！!]",
+            ".*月入.*万.*",
+            ".*千万别.*",
+            ".*不看后悔.*",
+            ".*保姆级.*全攻略.*",
+            ".*99%.*人不知道.*",
+        ])),
+    )
+
     return Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
@@ -691,6 +741,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
         storage=StorageConfig(**store_raw),
         logging=LoggingConfig(**logging_raw),
         soul=soul,
+        quality_gate=quality_gate,
     )
 
 
@@ -1178,6 +1229,26 @@ def _render_config_toml(config: Config) -> str:
             "# evidence instead of being learned as a positive interest.",
             "satisfaction_filter_enabled = "
             f"{_toml_bool(config.soul.preference.satisfaction_filter_enabled)}",
+            "",
+            "[quality_gate]",
+            f"enabled = {_toml_bool(config.quality_gate.enabled)}",
+            f"mode = {_toml_string(config.quality_gate.mode)}",
+            f"min_follower = {config.quality_gate.min_follower}",
+            f"max_level = {config.quality_gate.max_level}",
+            f"min_views = {config.quality_gate.min_views}",
+            f"ban_franchise_accounts = {_toml_bool(config.quality_gate.ban_franchise_accounts)}",
+            "allowlist_mids = [",
+            *[
+                f"    {mid},"
+                for mid in config.quality_gate.allowlist_mids
+            ],
+            "]",
+            "clickbait_patterns = [",
+            *[
+                f"    {_toml_string(pat)},"
+                for pat in config.quality_gate.clickbait_patterns
+            ],
+            "]",
             "",
         ]
     )

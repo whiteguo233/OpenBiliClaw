@@ -248,6 +248,7 @@ class Database:
         self._ensure_content_cache_pool_copy_columns()
         self._ensure_content_cache_delight_columns()
         self._ensure_content_cache_multisource_columns()
+        self._ensure_content_cache_quality_columns()
         self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
@@ -857,11 +858,13 @@ class Database:
                 content_id,
                 content_url,
                 source_platform,
-                author_name
+                author_name,
+                up_level,
+                follower_count
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?
+                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -939,7 +942,9 @@ class Database:
                     NULLIF(excluded.author_name, ''),
                     content_cache.author_name,
                     ''
-                )
+                ),
+                up_level = excluded.up_level,
+                follower_count = excluded.follower_count
             """,
             (
                 bvid,
@@ -966,6 +971,8 @@ class Database:
                 kwargs.get("content_url", ""),
                 kwargs.get("source_platform", "bilibili"),
                 kwargs.get("author_name", ""),
+                kwargs.get("up_level", 0),
+                kwargs.get("follower_count", 0),
             ),
         )
 
@@ -2876,6 +2883,18 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_content_cache_content_id
                 ON content_cache (content_id);
         """)
+
+    def _ensure_content_cache_quality_columns(self) -> None:
+        """Add QualityGate up_level/follower_count columns for existing databases."""
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        if "up_level" not in existing_columns:
+            self.conn.execute("ALTER TABLE content_cache ADD COLUMN up_level INTEGER DEFAULT 0")
+        if "follower_count" not in existing_columns:
+            sql = "ALTER TABLE content_cache ADD COLUMN follower_count INTEGER DEFAULT 0"
+            self.conn.execute(sql)
 
     def _ensure_source_recipes_table(self) -> None:
         """Create the source_recipes table if it does not exist."""
