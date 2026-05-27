@@ -42,13 +42,14 @@ Either command:
 3. Installs Python dependencies (`uv sync` preferred, `pip install -e .` fallback)
 4. Starts the backend and runs a health check against `/api/health`. Local one-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN; the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
 5. Confirms embedding, Bilibili cookie source, and XHS / Douyin / YouTube opt-in choices with the user when the installer is running interactively
-6. Automatically runs init after credentials and confirmations are complete, then prints a self-contained **status block** at the very end of stdout:
+6. Verifies the configured LLM provider and embedding service with real lightweight calls before init; if either fails, it blocks init with `status=service_check_failed`
+7. Automatically runs init after credentials, confirmations, and AI service checks are complete, then prints a self-contained **status block** at the very end of stdout:
 
 ```
 ================================================================
  OpenBiliClaw install complete / partial (credentials missing)
 ================================================================
-Status:      complete | running_with_missing_secrets | needs_secrets | needs_decisions | error
+Status:      complete | running_with_missing_secrets | needs_secrets | needs_decisions | service_check_failed | error
 Checkout:    <absolute path to the repo>
 Reused from: <path>                 (only present when reuse happened)
 Health URL:  http://127.0.0.1:8420/api/health
@@ -61,6 +62,13 @@ Next action (required — credentials are missing):
       do NOT add --skip-init)
   3. Curl the Health URL to confirm.
   4. Report the final state.
+
+ — or —
+
+Next action (AI service check failed):
+  1. Fix the failing LLM provider or embedding service shown in the status block.
+  2. Re-run the printed bootstrap command without --skip-init.
+     The bootstrap repeats the checks and only then runs init.
 
  — or —
 
@@ -80,6 +88,11 @@ Next action (init has been run automatically):
 states: continue the printed bootstrap command after asking the user,
 or wait for the browser extension to sync the Bilibili cookie, until
 bootstrap emits `init_complete` or a concrete blocker.
+`service_check_failed` means credentials and init choices were present,
+but the default LLM provider or embedding service failed its pre-init
+probe. Do not run `openbiliclaw init` manually around this; fix the
+provider/API key/base_url/model/Ollama issue and re-run bootstrap so the
+same gate can pass.
 
 If the block says `Status: needs_decisions`, credentials are present
 but init has deliberately not run. Ask the listed init choices, then
@@ -670,11 +683,17 @@ the runtime fallback would still work but adds a startup warning.
 > decisions are explicit (`--embedding-*` plus source flags:
 > `--yes-xhs` / `--no-xhs`, `--yes-douyin` / `--no-douyin`,
 > and `--yes-youtube` / `--no-youtube`),
-> `agent_bootstrap.py` will automatically run `openbiliclaw init` after
-> the backend is healthy: it pulls the user's Bilibili history,
-> generates the soul profile, and runs the first content discovery
-> pass. Without those explicit decisions, bootstrap returns
-> `status=needs_decisions` and waits for you to ask the user.
+> `agent_bootstrap.py` will first verify the configured LLM provider and
+> embedding service. Only if both checks pass will it automatically run
+> `openbiliclaw init`: it pulls the user's Bilibili history, generates
+> the soul profile, and runs the first content discovery pass. Without
+> explicit decisions, bootstrap returns `status=needs_decisions` and
+> waits for you to ask the user.
+>
+> If bootstrap emits `status=service_check_failed`, init has deliberately
+> **not** run. Surface the failing service and error to the user, help
+> them fix the provider/API key/base_url/model/Ollama issue, then re-run
+> the same bootstrap command without `--skip-init`.
 
 After running, **always**:
 

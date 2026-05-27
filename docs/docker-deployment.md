@@ -60,7 +60,7 @@ python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-fo
 docker compose ps
 ```
 
-`agent_bootstrap.py --mode docker` 是 Docker 部署的主入口：它会启动 compose，把宿主机确认后的 `config.toml` 同步到容器 `/app/runtime`，在 B 站 Cookie 通过扩展同步后继续自动运行 init。缺 LLM Key、缺 Cookie 或缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。
+`agent_bootstrap.py --mode docker` 是 Docker 部署的主入口：它会启动 compose，把宿主机确认后的 `config.toml` 同步到容器 `/app/runtime`，在 B 站 Cookie 通过扩展同步后继续自动运行 init。缺 LLM Key、缺 Cookie 或缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。凭据和选择齐全后，bootstrap 会先在容器运行时里真实验证 LLM provider 和 embedding 服务；如果返回 `service_check_failed`，说明 init 尚未运行，先修 API key / base_url / model / Ollama 后再重跑同一条 bootstrap 命令。
 
 **手动 fallback**：高级排查或重复初始化时，仍可直接运行：
 
@@ -86,7 +86,7 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 - **A.** 装浏览器扩展（推荐，零配置）—— [下载](https://github.com/whiteguo233/OpenBiliClaw/releases) 装好登录 B 站后，扩展会几秒内把 Cookie 自动推到 `http://127.0.0.1:8420/api/bilibili/cookie`。bootstrap 会等待 Cookie 到达并继续自动运行 init
 - **B.** 手动贴 Cookie —— 向导内附 F12 → Network 取 cookie 的 5 步教程
 
-最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏默认最多 300 条，关注默认最多 100 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
+最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。进入 init 前，`agent_bootstrap.py` 会对默认 LLM provider 和 embedding provider 各做一次轻量真实调用；任一失败都会阻止 init，避免生成空画像或半残推荐池。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏默认最多 300 条，关注默认最多 100 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
 
 AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外输出
 `BOOTSTRAP_STATUS status=progress message=init_progress` 事件。Agent 应把

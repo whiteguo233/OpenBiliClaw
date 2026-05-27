@@ -335,6 +335,21 @@ decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
 douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
 youtube_flag = ((init_decisions.get("youtube") or {}).get("flag") or "")
+service_checks = details.get("service_checks") or {}
+service_failed = service_checks.get("failed") or []
+service_errors = []
+services = service_checks.get("services") or {}
+for name in service_failed:
+    item = services.get(name) or {}
+    provider = str(item.get("provider") or "").strip()
+    model = str(item.get("model") or "").strip()
+    error = str(item.get("error") or "").strip()
+    label = name
+    if provider:
+        label += f"({provider}{('/' + model) if model else ''})"
+    if error:
+        label += f": {error}"
+    service_errors.append(label)
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
@@ -342,13 +357,15 @@ print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
 print(f"DOUYIN_FLAG={douyin_flag}")
 print(f"YOUTUBE_FLAG={youtube_flag}")
+print(f"SERVICE_FAILED={','.join(service_failed)}")
+print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
 '@
     # PS 5.1 (Windows 10/11 default) lacks the ?? null-coalescing operator
     # — that's a PS 7+ feature. Use a defensive fallback instead.
     $reuseArg = if ($null -ne $ReuseFrom) { $ReuseFrom } else { '' }
     $summary = & $PythonExe -c $parser $script:BootstrapLog $InstallDir "$Port" $ApiHost $reuseArg
 
-    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''; $douyinFlag = ''; $youtubeFlag = ''
+    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''; $douyinFlag = ''; $youtubeFlag = ''; $serviceFailed = ''; $serviceErrors = ''
     foreach ($line in $summary -split "`r?`n") {
         if ($line -like 'STATUS=*')     { $status    = $line.Substring(7) }
         elseif ($line -like 'HEALTH_URL=*') { $healthUrl = $line.Substring(11) }
@@ -357,6 +374,8 @@ print(f"YOUTUBE_FLAG={youtube_flag}")
         elseif ($line -like 'XHS_FLAG=*')   { $xhsFlag   = $line.Substring(9) }
         elseif ($line -like 'DOUYIN_FLAG=*') { $douyinFlag = $line.Substring(12) }
         elseif ($line -like 'YOUTUBE_FLAG=*') { $youtubeFlag = $line.Substring(13) }
+        elseif ($line -like 'SERVICE_FAILED=*') { $serviceFailed = $line.Substring(15) }
+        elseif ($line -like 'SERVICE_ERRORS=*') { $serviceErrors = $line.Substring(15) }
     }
     if (-not $xhsFlag) { $xhsFlag = '--no-xhs' }
     if (-not $douyinFlag) { $douyinFlag = '--no-douyin' }
@@ -383,6 +402,8 @@ print(f"YOUTUBE_FLAG={youtube_flag}")
         Write-Host 'install complete' -ForegroundColor Green
     } elseif ($status -eq 'needs_decisions') {
         Write-Host 'backend ready - waiting for init choices' -ForegroundColor Green
+    } elseif ($status -eq 'service_check_failed') {
+        Write-Host 'backend ready - AI service check failed before init' -ForegroundColor Yellow
     } elseif ($missingOnlyCookie) {
         Write-Host 'backend ready - waiting for browser extension to sync B站 Cookie' -ForegroundColor Green
     } elseif ($missing) {
@@ -410,6 +431,7 @@ print(f"YOUTUBE_FLAG={youtube_flag}")
     if ($missing) { Write-Host "Missing:     $missing" }
     else { Write-Host 'Missing:     (none)' }
     if ($decisions) { Write-Host "Init choices needed: $decisions" }
+    if ($serviceFailed) { Write-Host "AI service check failed: $serviceFailed" }
     Write-Host ''
 
     if ($status -eq 'needs_decisions') {
@@ -442,6 +464,21 @@ print(f"YOUTUBE_FLAG={youtube_flag}")
         Write-Host '     Use --yes-xhs / --yes-douyin / --yes-youtube only after'
         Write-Host '     the user says yes; otherwise keep the matching --no-* flag.'
         Write-Host '     This then runs init: B站 history, soul profile, first discovery.'
+    } elseif ($status -eq 'service_check_failed') {
+        Write-Host 'Next steps - init has NOT run because an AI service is not usable:'
+        Write-Host ''
+        if ($serviceErrors) {
+            Write-Host "  Failed check(s): $serviceErrors"
+            Write-Host ''
+        }
+        Write-Host '  1. Fix the failing service:'
+        Write-Host '       - llm: check provider, API key, base_url/model, quota, or Ollama chat model.'
+        Write-Host '       - embedding: check [llm.embedding], API key/base_url/model, or run Ollama + pull bge-m3.'
+        Write-Host '  2. Re-run the same bootstrap command after the fix (DO NOT add --skip-init).'
+        Write-Host '     It will repeat the service checks and only then run openbiliclaw init.'
+        Write-Host ''
+        Write-Host '  Verify the backend is still healthy:'
+        Write-Host "      Invoke-RestMethod $healthUrl"
     } elseif ($missingOnlyCookie) {
         Write-Host 'Next step - get your B站 Cookie to the backend (pick ONE):'
         Write-Host ''

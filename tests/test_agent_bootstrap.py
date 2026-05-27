@@ -401,7 +401,11 @@ def test_run_blocks_auto_init_when_pre_init_service_check_fails(
         "ensure_repo_checkout",
         lambda project_dir, _repo_url, _branch: project_dir,
     )
-    monkeypatch.setattr(bootstrap, "ensure_config_toml", lambda _project_dir: tmp_path / "config.toml")
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
     monkeypatch.setattr(bootstrap, "start_local_backend", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(bootstrap, "wait_for_health", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(

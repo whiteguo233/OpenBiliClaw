@@ -62,6 +62,23 @@ def test_docs_make_auto_init_primary_for_all_install_channels() -> None:
     assert "手动 fallback" in docker_doc
 
 
+def test_install_contract_blocks_init_when_ai_service_checks_fail() -> None:
+    install_sh = _read("scripts/install.sh")
+    install_ps1 = _read("scripts/install.ps1")
+    agent_doc = _read("docs/agent-install.md")
+    docker_doc = _read("docs/docker-deployment.md")
+    cli_doc = _read("docs/modules/cli.md")
+
+    assert "service_check_failed" in install_sh
+    assert "service_check_failed" in install_ps1
+    assert "AI service check failed before init" in install_sh
+    assert "AI service check failed before init" in install_ps1
+    assert "status=service_check_failed" in agent_doc
+    assert "default LLM provider or embedding service failed" in agent_doc
+    assert "service_check_failed" in docker_doc
+    assert "service_check_failed" in cli_doc
+
+
 def test_agent_install_llm_menu_numbering_matches_current_options() -> None:
     doc = _read("docs/agent-install.md")
 

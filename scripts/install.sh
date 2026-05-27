@@ -300,6 +300,21 @@ decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
 douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
 youtube_flag = ((init_decisions.get("youtube") or {}).get("flag") or "")
+service_checks = details.get("service_checks") or {}
+service_failed = service_checks.get("failed") or []
+service_errors = []
+services = service_checks.get("services") or {}
+for name in service_failed:
+    item = services.get(name) or {}
+    provider = str(item.get("provider") or "").strip()
+    model = str(item.get("model") or "").strip()
+    error = str(item.get("error") or "").strip()
+    label = name
+    if provider:
+        label += f"({provider}{('/' + model) if model else ''})"
+    if error:
+        label += f": {error}"
+    service_errors.append(label)
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
@@ -307,10 +322,12 @@ print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
 print(f"DOUYIN_FLAG={douyin_flag}")
 print(f"YOUTUBE_FLAG={youtube_flag}")
+print(f"SERVICE_FAILED={','.join(service_failed)}")
+print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
 PY
 )
     # Parse the KEY=VALUE lines back into shell variables.
-    local status health_url missing decisions xhs_flag douyin_flag youtube_flag
+    local status health_url missing decisions xhs_flag douyin_flag youtube_flag service_failed service_errors
     status=$(echo "$summary" | awk -F= '/^STATUS=/{sub(/^STATUS=/, ""); print; exit}')
     health_url=$(echo "$summary" | awk -F= '/^HEALTH_URL=/{sub(/^HEALTH_URL=/, ""); print; exit}')
     missing=$(echo "$summary" | awk -F= '/^MISSING=/{sub(/^MISSING=/, ""); print; exit}')
@@ -318,6 +335,8 @@ PY
     xhs_flag=$(echo "$summary" | awk -F= '/^XHS_FLAG=/{sub(/^XHS_FLAG=/, ""); print; exit}')
     douyin_flag=$(echo "$summary" | awk -F= '/^DOUYIN_FLAG=/{sub(/^DOUYIN_FLAG=/, ""); print; exit}')
     youtube_flag=$(echo "$summary" | awk -F= '/^YOUTUBE_FLAG=/{sub(/^YOUTUBE_FLAG=/, ""); print; exit}')
+    service_failed=$(echo "$summary" | awk -F= '/^SERVICE_FAILED=/{sub(/^SERVICE_FAILED=/, ""); print; exit}')
+    service_errors=$(echo "$summary" | awk -F= '/^SERVICE_ERRORS=/{sub(/^SERVICE_ERRORS=/, ""); print; exit}')
     if [ -z "$xhs_flag" ]; then
         xhs_flag="--no-xhs"
     fi
@@ -352,6 +371,8 @@ PY
         printf '%s OpenBiliClaw install complete%s\n' "$C_GREEN" "$C_RESET"
     elif [ "$status" = "needs_decisions" ]; then
         printf '%s OpenBiliClaw backend ready — waiting for init choices%s\n' "$C_GREEN" "$C_RESET"
+    elif [ "$status" = "service_check_failed" ]; then
+        printf '%s OpenBiliClaw backend ready — AI service check failed before init%s\n' "$C_YELLOW" "$C_RESET"
     elif [ "$missing_only_cookie" = "1" ]; then
         # Backend is up and configured; the extension will deliver the
         # cookie when the user installs it. This is the happy path, not
@@ -387,6 +408,9 @@ PY
     if [ -n "$decisions" ]; then
         echo "Init choices needed: $decisions"
     fi
+    if [ -n "$service_failed" ]; then
+        echo "AI service check failed: $service_failed"
+    fi
     echo ""
 
     if [ "$status" = "needs_decisions" ]; then
@@ -421,6 +445,21 @@ PY
         echo "     Use --yes-xhs / --yes-douyin / --yes-youtube only after"
         echo "     the user says yes; otherwise keep the matching --no-* flag."
         echo "     This then runs init: B站 history, soul profile, first discovery."
+    elif [ "$status" = "service_check_failed" ]; then
+        echo "Next steps — init has NOT run because an AI service is not usable:"
+        echo ""
+        if [ -n "$service_errors" ]; then
+            echo "  Failed check(s): $service_errors"
+            echo ""
+        fi
+        echo "  1. Fix the failing service:"
+        echo "       - llm: check provider, API key, base_url/model, quota, or Ollama chat model."
+        echo "       - embedding: check [llm.embedding], API key/base_url/model, or run Ollama + pull bge-m3."
+        echo "  2. Re-run the same bootstrap command after the fix (DO NOT add --skip-init)."
+        echo "     It will repeat the service checks and only then run openbiliclaw init."
+        echo ""
+        echo "  Verify the backend is still healthy:"
+        echo "      curl -sS $health_url"
     elif [ "$missing_only_cookie" = "1" ]; then
         echo "Next step — get your B站 Cookie to the backend (pick ONE):"
         echo ""

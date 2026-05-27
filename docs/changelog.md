@@ -6,6 +6,7 @@
 
 ## v0.3.91 / extension v0.3.50: XHS 自发布内容推荐池过滤（2026-05-27）
 
+- 一句话安装的 `agent_bootstrap.py` 在自动运行 `openbiliclaw init` 前新增 LLM provider + embedding 服务真实轻量校验；任一失败会返回 `service_check_failed` 并阻止 init，提示用户修 API key / base_url / model / Ollama 后重跑，避免生成空画像或半残推荐池。
 - 修复小红书登录用户自己发布的笔记被推荐回给自己的问题：`get_pool_candidates` / `count_pool_candidates` / `count_pool_readiness` 及后台整理查询（evaluation / copy / delight）在 SQL 层增加 self-author guard，排除 `up_name` 或 `author_name` 匹配自身昵称的小红书行；Bilibili 等其他平台不受影响，空昵称为安全 no-op。
 - `_purge_self_authored_pool_items` 现在同时匹配 `up_name` 和 `author_name` 两列（此前只查 `up_name`），改昵称后旧行也能被清理。
 - `_persist_xhs_self_info` 在 self_info 首次到达或内容变更时立即触发一次 purge，缩短"self_info 未到达"窗口期内自发布内容停留在池中的时间。
