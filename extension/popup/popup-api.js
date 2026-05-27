@@ -147,21 +147,27 @@ export async function refreshRecommendations() {
   return requestJson("/recommendations/refresh", { method: "POST" });
 }
 
-export async function reshuffleRecommendations() {
-  const payload = await requestJson("/recommendations/reshuffle", { method: "POST" });
+export async function reshuffleRecommendations(mode = "") {
+  const payload = await requestJson("/recommendations/reshuffle", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode }),
+  });
   return {
     ...payload,
     items: Array.isArray(payload.items) ? payload.items.map(normalizeRecommendation) : [],
   };
 }
 
-export async function appendRecommendations(excludedBvids = []) {
+export async function appendRecommendations(excludedBvids = [], mode = "") {
   const payload = await requestJson("/recommendations/append", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ excluded_bvids: excludedBvids }),
+    body: JSON.stringify({ excluded_bvids: excludedBvids, mode }),
   });
   return {
     ...payload,

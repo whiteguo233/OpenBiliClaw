@@ -62,6 +62,12 @@ class RecommendationListResponse(BaseModel):
     items: list[RecommendationOut]
 
 
+class RecommendationReshuffleIn(BaseModel):
+    """Request payload for reshuffling recommendations with optional mode."""
+
+    mode: str = ""
+
+
 class RecommendationReshuffleResponse(BaseModel):
     """Immediate recommendation reshuffle result."""
 
@@ -72,6 +78,7 @@ class RecommendationAppendIn(BaseModel):
     """Request payload for appending another recommendation page."""
 
     excluded_bvids: list[str] = Field(default_factory=list)
+    mode: str = ""
 
 
 class RecommendationRefreshResponse(BaseModel):

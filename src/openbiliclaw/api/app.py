@@ -70,6 +70,7 @@ from openbiliclaw.api.models import (
     RecommendationListResponse,
     RecommendationOut,
     RecommendationRefreshResponse,
+    RecommendationReshuffleIn,
     RecommendationReshuffleResponse,
     RuntimeStatusResponse,
     SchedulerConfigOut,
@@ -1902,14 +1903,18 @@ def create_app(
             asyncio.create_task(trigger())
 
     @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
-    async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
+    async def reshuffle_recommendations(
+        payload: RecommendationReshuffleIn = RecommendationReshuffleIn(),
+    ) -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
         except Exception:
             return RecommendationReshuffleResponse(items=[])
-        items = await ctx.recommendation_engine.reshuffle_recommendations(profile=profile, limit=10)
+        items = await ctx.recommendation_engine.reshuffle_recommendations(
+            profile=profile, limit=10, mode=payload.mode,
+        )
         await _trigger_replenishment_if_needed()
         return RecommendationReshuffleResponse(items=_serialize_recommendation_items(items))
 
@@ -1927,6 +1932,7 @@ def create_app(
             profile=profile,
             excluded_bvids=payload.excluded_bvids,
             limit=10,
+            mode=payload.mode,
         )
         await _trigger_replenishment_if_needed()
         return RecommendationReshuffleResponse(items=_serialize_recommendation_items(items))

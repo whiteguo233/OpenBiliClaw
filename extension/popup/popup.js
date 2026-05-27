@@ -71,6 +71,7 @@ import {
 
 const state = {
   activeTab: "recommend",
+  activeMode: "",
   online: false,
   recommendations: [],
   loadingMore: false,
@@ -189,6 +190,10 @@ const elements = {
   messagesOverlay: document.getElementById("messagesOverlay"),
   messagesBack: document.getElementById("messagesBack"),
   messagesList: document.getElementById("messagesList"),
+  modeDefault: document.getElementById("modeDefault"),
+  modeExplore: document.getElementById("modeExplore"),
+  modeProfessional: document.getElementById("modeProfessional"),
+  modeCasual: document.getElementById("modeCasual"),
 };
 
 async function setProxyImageSrc(image, coverUrl) {
@@ -3734,7 +3739,7 @@ async function loadMoreRecommendations() {
   state.loadingMore = true;
   setHint("再给你往下捞 10 条。", "info");
   try {
-    const result = await appendRecommendations(getDisplayedRecommendationBvids());
+    const result = await appendRecommendations(getDisplayedRecommendationBvids(), state.activeMode);
     const incoming = Array.isArray(result.items) ? result.items : [];
     const existing = new Set(getDisplayedRecommendationBvids());
     const appended = incoming.filter((item) => {
@@ -4128,7 +4133,7 @@ async function handleManualRefresh() {
     normalizeRuntimeStatus(state.runtimeStatus).pool_available_count > 0;
   setRefreshButtonState(true, "正在给你换一批…");
   try {
-    const result = await reshuffleRecommendations();
+    const result = await reshuffleRecommendations(state.activeMode);
     if (!Array.isArray(result.items)) {
       setHint("先执行 openbiliclaw init，再回来刷新。", "error");
       return;
@@ -4200,6 +4205,38 @@ function bindRefreshButton() {
   elements.refreshRecommendationsButton.addEventListener("click", () => {
     void handleManualRefresh();
   });
+}
+
+function setActiveMode(mode) {
+  state.activeMode = mode;
+  const buttons = [
+    elements.modeDefault,
+    elements.modeExplore,
+    elements.modeProfessional,
+    elements.modeCasual,
+  ];
+  for (const btn of buttons) {
+    if (!(btn instanceof HTMLButtonElement)) continue;
+    btn.classList.toggle("is-active", btn.dataset.mode === mode);
+  }
+}
+
+function bindModeButtons() {
+  const buttons = [
+    elements.modeDefault,
+    elements.modeExplore,
+    elements.modeProfessional,
+    elements.modeCasual,
+  ];
+  for (const btn of buttons) {
+    if (!(btn instanceof HTMLButtonElement)) continue;
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode || "";
+      if (mode === state.activeMode) return;
+      setActiveMode(mode);
+      void handleManualRefresh();
+    });
+  }
 }
 
 function bindActivityToggle() {
@@ -5064,6 +5101,7 @@ async function initializePopup() {
   bindProfileHistoryLoading();
   initRecommendationAutoLoadIntent();
   bindRefreshButton();
+  bindModeButtons();
   bindActivityToggle();
   bindChat();
   bindOpenWeb();
