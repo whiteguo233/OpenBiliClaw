@@ -25,6 +25,10 @@ test("runtime stream refresh handlers coalesce expensive frontend reloads", () =
     popupJs,
     /if \(event\.type === "refresh\.pool_updated"\) \{\s*void initializeRecommendations\(\);\s*\}/,
   );
+  assert.doesNotMatch(
+    popupJs,
+    /if \(event\.type === "refresh\.pool_updated"\) \{[\s\S]*?scheduleRecommendationsRefresh\(/,
+  );
 
   assert.match(desktopJs, /function scheduleBackendHydration/);
   assert.match(desktopJs, /function scheduleActivityPageRefresh/);
@@ -42,9 +46,10 @@ test("runtime stream refresh handlers coalesce expensive frontend reloads", () =
   const poolUpdatedBlock =
     mobileRecommendJs.match(/if \(type === "refresh\.pool_updated"\) \{[\s\S]*?\} else if/)?.[0] ?? "";
   assert.notEqual(poolUpdatedBlock, "", "mobile recommend stream handler should handle pool updates");
-  assert.match(mobileRecommendJs, /function scheduleRecommendationItemsRefresh/);
-  assert.match(mobileRecommendJs, /recommendationItemsRefreshInFlight/);
-  assert.match(poolUpdatedBlock, /scheduleRecommendationItemsRefresh\(\);/);
+  assert.match(poolUpdatedBlock, /mergeRuntimeStatusEvent/);
+  assert.match(poolUpdatedBlock, /rerenderHeaderOnly\(\);/);
+  assert.doesNotMatch(poolUpdatedBlock, /scheduleRecommendationItemsRefresh/);
+  assert.doesNotMatch(poolUpdatedBlock, /fetchRecommendations|loadData/);
   assert.doesNotMatch(poolUpdatedBlock, /loadData\(/);
 
   assert.match(mobileProfileJs, /function scheduleProfileRefresh/);

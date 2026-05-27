@@ -686,15 +686,9 @@ function connectRuntimeStream() {
         setHint("后端配置已热重载，正在刷新数据…", "success");
         scheduleRecommendationsRefresh();
       }
-      // Discovery refresh tick produced new pool items — silently refetch
-      // the recommendation list so the popup doesn't show stale content
-      // when the daemon's been quietly replenishing the pool. No setHint
-      // (event happens from the background refresh loop, not a user action,
-      // so a banner would be intrusive). No DOM jump because top-N items
-      // mostly persist across pool replenishments.
-      if (event.type === "refresh.pool_updated") {
-        scheduleRecommendationsRefresh();
-      }
+      // Pool updates are already merged into runtimeStatus above. Keep the
+      // current recommendation list intact so appended history is not replaced
+      // by the latest top window from /api/recommendations.
       // Activity log got a new behavior event — refresh the activity feed
       // so the popup's "刚刚看了..." panel stays current without polling.
       if (event.type === "activity.added") {

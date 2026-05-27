@@ -187,7 +187,7 @@ if web_dir.is_dir():
 ### WebSocket
 
 复用插件的 `runtime-stream` 协议，移动端关注的事件：
-- `refresh.pool_updated` → 刷新推荐列表
+- `refresh.pool_updated` → 更新池子状态 / header，不替换当前推荐列表
 - `delight.candidate` → 更新惊喜推荐
 - `profile_updated` → 刷新画像
 - `interest.probe` → 弹出探测通知

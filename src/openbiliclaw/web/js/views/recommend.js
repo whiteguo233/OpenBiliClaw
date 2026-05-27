@@ -63,10 +63,6 @@ let autoAppendExhausted = false;
 let autoAppendUserArmed = false;
 let autoAppendTouchY = null;
 let autoAppendIntentInitialized = false;
-const RECOMMENDATION_ITEMS_REFRESH_DEBOUNCE_MS = 1000;
-let recommendationItemsRefreshTimer = null;
-let recommendationItemsRefreshInFlight = false;
-let recommendationItemsRefreshPending = false;
 
 // ── Escape helper ────────────────────────────────────────────
 function esc(s) {
@@ -1119,41 +1115,6 @@ function hydrateRecommendSideChannels() {
     .catch(() => {});
 }
 
-function scheduleRecommendationItemsRefresh() {
-  if (recommendationItemsRefreshTimer !== null) {
-    clearTimeout(recommendationItemsRefreshTimer);
-  }
-  recommendationItemsRefreshTimer = setTimeout(
-    runScheduledRecommendationItemsRefresh,
-    RECOMMENDATION_ITEMS_REFRESH_DEBOUNCE_MS,
-  );
-}
-
-async function runScheduledRecommendationItemsRefresh() {
-  recommendationItemsRefreshTimer = null;
-  if (recommendationItemsRefreshInFlight) {
-    recommendationItemsRefreshPending = true;
-    return;
-  }
-  recommendationItemsRefreshInFlight = true;
-  try {
-    const recs = await fetchRecommendations();
-    const normalizedRecs = recs.map(normalizeRecommendation);
-    rememberRecommendationFeedback(normalizedRecs);
-    autoAppendExhausted = false;
-    resetAutoAppendIntent();
-    patchState({ recommendations: normalizedRecs });
-    render();
-  } catch { /* best-effort live refresh */ }
-  finally {
-    recommendationItemsRefreshInFlight = false;
-    if (recommendationItemsRefreshPending) {
-      recommendationItemsRefreshPending = false;
-      scheduleRecommendationItemsRefresh();
-    }
-  }
-}
-
 // ── Public API ───────────────────────────────────────────────
 export function initRecommendView(root) {
   $root = root;
@@ -1170,12 +1131,13 @@ export function initRecommendView(root) {
 export function onStreamEvent(payload) {
   const type = payload?.type || payload?.event;
   if (type === "refresh.pool_updated") {
-    // Merge runtime status and coalesce the recommendation list fetch.
+    // Merge pool status only. Do not replace recommendation cards here:
+    // users may have appended older cards that /api/recommendations would not
+    // return in its latest top window.
     patchState({
       runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, payload.data || payload),
     });
     rerenderHeaderOnly();
-    scheduleRecommendationItemsRefresh();
   } else if (type === "refresh.started" || type === "refresh.strategy") {
     patchState({ runtimeEvent: payload.data || payload });
     rerenderHeaderOnly();

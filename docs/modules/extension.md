@@ -15,7 +15,7 @@
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；移动 Web 推荐页首屏先渲染 `/api/recommendations`，再异步补 runtime status / activity / delight，慢请求不会让页面无限停在 loading；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
-| Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `refresh.pool_updated` / `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；补货事件密集时合并请求，移动推荐页只重拉推荐列表和 header，不再回到全量 `loadData()`。 |
+| Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；`refresh.pool_updated` 只合并池子状态并刷新 header / pool chips，不再重拉推荐列表，避免覆盖用户已经 append 出来的历史卡片。 |
 | 兴趣挑战探针 UI | ✅ | `interest.probe` 和 `speculative_interests` 会保留后端的 `probe_mode` / `challenge` metadata；profile 页确认会向 `/api/interest-probes/respond` 传 `surface="profile"`，写回为 `profile_confirmed`，而 inbox / runtime probe 卡片确认保持默认 `probe_confirmed`。插件 side panel、移动 Web 和桌面 Web 会把普通 `near` 兴趣探针与 `lateral/bridge/wildcard` 挑战探针拆成不同样式和提示：普通兴趣强调继续探索，挑战探针提示“把口味往侧边推一点”，区别于避雷探针。 |
 | 避雷探针 UI | ✅ | popup inbox 支持 `avoidance.probe`，按钮文案为「确实不喜欢 / 不是 / 多聊聊」；画像页显示 `speculative_avoidances` 的待确认避雷方向，确认后通过 `/api/avoidance-probes/respond` 写回后端。插件 side panel、移动 Web 和桌面 Web 会用避雷专属样式和“少看这类 / 猜错点不是”提示，区别于正向兴趣试探。 |
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
@@ -263,6 +263,7 @@ CLI 入口：
 - 设置页保存配置时会保留后端已有的高级字段：`save_config()` 会串行化 scheduler speculation / auto-update 和 logging unmanaged cleanup 字段，避免 UI 修改常用项时把隐藏高级项写回默认值
 - 推荐 tab 现已改成“换一批”，会调用 `/api/recommendations/reshuffle` 直接从 discovery pool 秒级换出一批新推荐
 - 推荐 tab 滚到底时会调用 `/api/recommendations/append` 继续往下续 10 条，不会把当前这一屏直接替换掉；首次渲染、切回推荐 tab 和追加完成后也会再检查一次底部距离，避免停在底部时没有新 scroll 事件导致续页卡住
+- 收到后台 `refresh.pool_updated` 时，推荐 tab 只更新池子数量、最近补货数量和方向提示；不会调用 `/api/recommendations` 替换当前列表，用户已续页出来的历史内容会保留到下一次主动“换一批”或页面重新初始化
 - popup API 现在会统一规范化推荐项，追加出来的 `cover_url` 也会被收敛成可直接加载的 `https://` 地址；推荐点击 payload 会保留 `content_id / content_url / source_platform`，因此 YouTube 等跨源卡片打开后也会被后端记成对应来源，而不是落回 B 站 BV 号语义
 - 推荐、惊喜推荐和消息内封面图会通过 `popup-helpers.buildImageProxyPath()` 生成 `/api/image-proxy?url=...`，再用 `popup-backend-config.getBackendOrigin()` 拼成当前后端绝对地址；图片加载失败时保留已有 wrapper fallback，不让卡片布局塌缩
 - `/api/recommendations/refresh` 仍保留为后台补货入口，用于继续往候选池里持续进货
