@@ -4,6 +4,13 @@
 
 ---
 
+## v0.3.92 / extension v0.3.51: OR-join 去重修复与稍后再看功能（2026-05-28）
+
+- 修复 `recommendations ↔ content_cache` 的 6 处 OR-join（`ON c.bvid = r.bvid OR c.content_id = r.bvid`）在多平台内容下产生重复行的问题，改用 COALESCE 子查询保证每条推荐最多匹配一条 content_cache 行。同时修复 curator 的 topic / UP / franchise fatigue 计算因重复行被放大的问题。
+- `get_recommendations()` 新增 `exclude_processed` 参数，API 层传 `True` 排除已反馈推荐，activity_feed 等调用者保持原行为。
+- 新增「稍后再看」本地书签功能：`watch_later` SQLite 表 + 4 个 API 端点（POST / DELETE / GET 单条 + GET 列表）。移动 Web、桌面 Web、插件 popup 的推荐卡和 delight 卡均增加 ☆/★ toggle 按钮，支持乐观 UI、失败回退和懒加载状态同步。
+- 感谢 [@jiaobenhaimo](https://github.com/jiaobenhaimo)（[#53](https://github.com/whiteguo233/OpenBiliClaw/pull/53)）发现 OR-join 重复行问题并提出稍后再看功能设计。
+
 ## v0.3.91 / extension v0.3.50: XHS 自发布内容推荐池过滤（2026-05-27）
 
 - 一句话安装的 `agent_bootstrap.py` 在自动运行 `openbiliclaw init` 前新增 LLM provider + embedding 服务真实轻量校验；任一失败会返回 `service_check_failed` 并阻止 init，提示用户修 API key / base_url / model / Ollama 后重跑，避免生成空画像或半残推荐池。
