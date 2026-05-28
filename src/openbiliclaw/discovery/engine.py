@@ -262,6 +262,9 @@ class DiscoveredContent:
     content_url: str = ""  # Direct clickable URL
     source_platform: str = ""  # "bilibili" | "xiaohongshu" | "web" | ...
     author_name: str = ""  # Universal author name; equals up_name for Bilibili
+    # ── QualityGate fields ──────────────────────────────────────────
+    up_level: int = 0  # UP主 level (Bilibili); 0 = unknown
+    follower_count: int = 0  # UP主 follower count; 0 = unknown
 
     def __post_init__(self) -> None:
         if not self.content_id and self.bvid:
@@ -302,6 +305,8 @@ class DiscoveredContent:
             "content_id": self.content_id or self.bvid,
             "content_url": self.content_url,
             "author_name": self.author_name or self.up_name,
+            "up_level": self.up_level,
+            "follower_count": self.follower_count,
         }
 
 
@@ -392,6 +397,199 @@ def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
     )
 
 
+# ═══════════════════════════════════════════════════════════════════
+# QualityGate — Rule-based content quality filter
+# ═══════════════════════════════════════════════════════════════════
+
+_CLICKBAIT_CACHE_SIZE = 64
+
+
+def _compile_clickbait_patterns(
+    patterns: list[str],
+) -> list[re.Pattern[str]]:
+    """Compile clickbait regex patterns, skipping invalid ones."""
+    compiled: list[re.Pattern[str]] = []
+    for pat in patterns:
+        try:
+            compiled.append(re.compile(pat, re.IGNORECASE))
+        except re.error:
+            logger.warning("QualityGate: invalid clickbait pattern %r, skipped", pat)
+    return compiled
+
+
+class QualityGateChecker:
+    """Rule-based content quality filter for Bilibili content.
+
+    Runs before :meth:`ContentDiscoveryEngine._cache_results` to
+    prevent low-quality content from entering the candidate pool.
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = False,
+        mode: str = "reject",
+        min_follower: int = 1000,
+        max_level: int = 2,
+        min_views: int = 500,
+        ban_franchise_accounts: bool = True,
+        allowlist_mids: list[int] | None = None,
+        clickbait_patterns: list[str] | None = None,
+        bilibili_client: Any = None,
+    ) -> None:
+        self._enabled = enabled
+        self._mode = mode
+        self._min_follower = min_follower
+        self._max_level = max_level
+        self._min_views = min_views
+        self._ban_franchise_accounts = ban_franchise_accounts
+        self._allowlist_mids = frozenset(allowlist_mids or [])
+        self._clickbait_patterns = _compile_clickbait_patterns(clickbait_patterns or [])
+        self._bilibili_client = bilibili_client
+        self._cache_hits = 0
+        self._api_calls = 0
+
+    @property
+    def stats(self) -> dict[str, int]:
+        return {"cache_hits": self._cache_hits, "api_calls": self._api_calls}
+
+    def _check_clickbait(self, title: str) -> bool:
+        """Return True if the title matches any clickbait pattern."""
+        if not self._clickbait_patterns or not title:
+            return False
+        lower = title.lower()
+        return any(p.search(lower) for p in self._clickbait_patterns)
+
+    async def check(
+        self,
+        item: DiscoveredContent,
+    ) -> tuple[str, str]:
+        """Run quality checks on a discovered content item.
+
+        Returns:
+            Tuple of (verdict, reason):
+            - ("pass", "") — content passes all checks
+            - ("reject", "reason") — content blocked by hard rule
+            - ("penalize", "reason") — content soft-downgraded
+        """
+        if not self._enabled:
+            return ("pass", "")
+
+        if not item.bvid:
+            return ("pass", "")
+
+        # Check clickbait patterns (fast, no API call)
+        if self._clickbait_patterns and self._check_clickbait(item.title):
+            reason = f"clickbait title: {item.title[:60]}"
+            return ("reject" if self._mode == "reject" else "penalize", reason)
+
+        # Check view count (available on item directly)
+        if self._min_views > 0 and item.view_count > 0 and item.view_count < self._min_views:
+            reason = f"view_count {item.view_count} < min_views {self._min_views}"
+            return ("reject" if self._mode == "reject" else "penalize", reason)
+
+        return ("pass", "")
+
+    async def check_up_card(
+        self,
+        item: DiscoveredContent,
+    ) -> tuple[str, str]:
+        """Run quality checks that require UP主 card info (API call).
+
+        Separated from :meth:`check` so API-bound checks can be
+        batched or skipped when the API client is unavailable.
+        """
+        if not self._enabled:
+            return ("pass", "")
+
+        if not item.bvid:
+            return ("pass", "")
+
+        up_mid = item.up_mid
+        if up_mid <= 0:
+            return ("pass", "")
+
+        # Allowlist bypass
+        if up_mid in self._allowlist_mids:
+            return ("pass", "")
+
+        # Fetch UP card info
+        card = None
+        if self._bilibili_client is not None:
+            try:
+                card = await self._bilibili_client.get_up_card(up_mid)
+                self._api_calls += 1
+            except Exception:
+                logger.debug("QualityGate: get_up_card(mid=%d) failed", up_mid, exc_info=True)
+                return ("pass", "")
+
+        if card is None:
+            return ("pass", "")
+
+        # Update item metadata
+        item.up_level = card.level
+        item.follower_count = card.follower_count
+
+        # Check follower count
+        if self._min_follower > 0 and card.follower_count < self._min_follower:
+            reason = (
+                f"follower_count {card.follower_count} < "
+                f"min_follower {self._min_follower} (mid={up_mid})"
+            )
+            return ("reject" if self._mode == "reject" else "penalize", reason)
+
+        # Check level
+        if self._max_level > 0 and card.level <= self._max_level and card.level > 0:
+            reason = f"up_level {card.level} <= max_level {self._max_level} (mid={up_mid})"
+            return ("reject" if self._mode == "reject" else "penalize", reason)
+
+        # Check franchise/brand account
+        if self._ban_franchise_accounts and card.official_verify == 1:
+            reason = f"enterprise/brand account (mid={up_mid})"
+            return ("reject" if self._mode == "reject" else "penalize", reason)
+
+        return ("pass", "")
+
+
+async def quality_gate_check_items(
+    items: list[DiscoveredContent],
+    gate: QualityGateChecker,
+) -> tuple[list[DiscoveredContent], list[str], list[str]]:
+    """Run QualityGate checks on a list of items.
+
+    Returns:
+        Tuple of (passed, rejected_reasons, penalized_reasons).
+    """
+    if not gate._enabled:
+        return items, [], []
+
+    passed: list[DiscoveredContent] = []
+    rejected_reasons: list[str] = []
+    penalized_reasons: list[str] = []
+
+    for item in items:
+        verdict, reason = await gate.check(item)
+        if verdict == "reject":
+            rejected_reasons.append(f"{item.bvid or item.content_id}: {reason}")
+            continue
+        if verdict == "penalize":
+            penalized_reasons.append(f"{item.bvid or item.content_id}: {reason}")
+            item.candidate_tier = "backfill"
+
+        # UP card check (needs API call)
+        up_verdict, up_reason = await gate.check_up_card(item)
+        if up_verdict == "reject":
+            rejected_reasons.append(f"{item.bvid or item.content_id}: {up_reason}")
+            continue
+        if up_verdict == "penalize":
+            penalized_reasons.append(f"{item.bvid or item.content_id}: {up_reason}")
+            item.candidate_tier = "backfill"
+
+        passed.append(item)
+
+    return passed, rejected_reasons, penalized_reasons
+
+
 async def _call_strategy_discover(
     strategy: DiscoveryStrategy,
     profile: SoulProfile,
@@ -429,6 +627,8 @@ class ContentDiscoveryEngine:
         embedding_service: SupportsEmbeddingService | None = None,
         target_primary_count: int = 20,
         backfill_target_count: int = 40,
+        bilibili_client: Any = None,
+        quality_gate: QualityGateChecker | None = None,
     ) -> None:
         self._strategies: list[DiscoveryStrategy] = []
         self._llm_service = llm_service
@@ -438,6 +638,8 @@ class ContentDiscoveryEngine:
         self._target_primary_count = max(1, target_primary_count)
         self._backfill_target_count = max(self._target_primary_count, backfill_target_count)
         self._eval_cache: dict[str, tuple[float, str, str, str, str]] = {}
+        self._bilibili_client = bilibili_client
+        self._quality_gate = quality_gate
         # v0.3.x negative-anchors cache: (timestamp, latest_event_id,
         # exemplars). Refreshes when either the latest event id changes
         # (new negative classified) or 5 minutes have elapsed.
@@ -549,6 +751,25 @@ class ContentDiscoveryEngine:
                 all_results,
                 limit=effective_limit,
             )
+
+        # Apply QualityGate filter before caching
+        if self._quality_gate is not None and self._quality_gate._enabled:
+            passed, rejected, penalized = await quality_gate_check_items(
+                final_results, self._quality_gate
+            )
+            if rejected:
+                logger.info(
+                    "QualityGate rejected %d item(s): %s",
+                    len(rejected),
+                    "; ".join(rejected[:10]),
+                )
+            if penalized:
+                logger.info(
+                    "QualityGate penalized %d item(s): %s",
+                    len(penalized),
+                    "; ".join(penalized[:10]),
+                )
+            final_results = passed
 
         self._cache_results(final_results)
         return final_results

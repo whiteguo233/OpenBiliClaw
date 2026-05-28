@@ -119,6 +119,17 @@ class CommentInfo:
     like_count: int = 0
 
 
+@dataclass
+class UpCardInfo:
+    """UP主 profile card info from space API."""
+
+    mid: int = 0
+    name: str = ""
+    level: int = 0
+    follower_count: int = 0
+    official_verify: int = 0  # -1=无认证, 0=个人认证, 1=企业/机构认证
+
+
 class BilibiliAPIClient:
     """Client for Bilibili's web API.
 
@@ -200,6 +211,7 @@ class BilibiliAPIClient:
     ]
 
     _WBI_KEY_TTL: float = 300.0  # Refresh WBI keys every 5 minutes
+    _UP_CARD_CACHE_TTL: float = 86400.0  # 24h cache for UP card info
 
     def __init__(self, cookie: str = "", *, min_request_interval: float = 0.2) -> None:
         self._cookie = cookie
@@ -207,6 +219,7 @@ class BilibiliAPIClient:
         self._last_request_at = 0.0
         self._cached_wbi_keys: tuple[str, str] | None = None
         self._wbi_keys_fetched_at: float = 0.0
+        self._up_card_cache: dict[int, tuple[float, UpCardInfo]] = {}
         self._client = httpx.AsyncClient(
             headers={
                 "User-Agent": (
@@ -398,6 +411,32 @@ class BilibiliAPIClient:
             danmaku_count=stat.get("danmaku", 0),
             pub_date=data.get("pubdate", ""),
         )
+
+    async def get_up_card(self, mid: int) -> UpCardInfo:
+        """Get UP主 profile card info by mid, with 24h cache.
+
+        Args:
+            mid: UP主 user ID.
+
+        Returns:
+            UpCardInfo dataclass with level, follower_count, etc.
+        """
+        now = time.monotonic()
+        cached = self._up_card_cache.get(mid)
+        if cached is not None and (now - cached[0]) < self._UP_CARD_CACHE_TTL:
+            return cached[1]
+
+        data = await self._get_json("/x/space/acc/info", params={"mid": mid})
+
+        info = UpCardInfo(
+            mid=mid,
+            name=str(data.get("name", "")),
+            level=int(data.get("level", 0)),
+            follower_count=int(data.get("follower", 0)),
+            official_verify=int(data.get("official_verify", -1)),
+        )
+        self._up_card_cache[mid] = (now, info)
+        return info
 
     async def search(
         self,
