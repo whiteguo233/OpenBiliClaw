@@ -6,6 +6,7 @@
 
 ## v0.3.92 / extension v0.3.51: OR-join 去重修复与稍后再看功能（2026-05-28）
 
+- 文档：全面重绘 `soul`、`recommendation` 与 Web HTML 三个模块的 HTML 架构图 / 流程图，并在文档导航和架构说明中补齐可视化入口。
 - 修复 `recommendations ↔ content_cache` 的 6 处 OR-join（`ON c.bvid = r.bvid OR c.content_id = r.bvid`）在多平台内容下产生重复行的问题，改用 COALESCE 子查询保证每条推荐最多匹配一条 content_cache 行。同时修复 curator 的 topic / UP / franchise fatigue 计算因重复行被放大的问题。
 - `get_recommendations()` 新增 `exclude_processed` 参数，API 层传 `True` 排除已反馈推荐，activity_feed 等调用者保持原行为。
 - 新增「稍后再看」本地书签功能：`watch_later` SQLite 表 + 4 个 API 端点（POST / DELETE / GET 单条 + GET 列表）。移动 Web、桌面 Web、插件 popup 的推荐卡和 delight 卡均增加 ☆/★ toggle 按钮，支持乐观 UI、失败回退和懒加载状态同步。

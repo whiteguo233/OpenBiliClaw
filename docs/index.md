@@ -18,6 +18,13 @@
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
 
+## 可视化架构图
+
+- [Soul 模块架构与流程图](diagrams/soul-architecture.html) — 行为信号、五层画像、增量学习、正向兴趣和避雷探针闭环
+- [Recommendation 模块架构与流程图](diagrams/recommendation-architecture.html) — 候选池 readiness、serve 热路径、PoolCurator、MMR 和反馈回流
+- [Web HTML 模块架构与流程图](diagrams/web-architecture.html) — `/web` 桌面端、`/m` 移动端、REST hydration、runtime-stream 和用户动作边界
+- [Discovery 模块架构图](diagrams/discovery-architecture.html) — 多源发现、刷新调度、评估优化和模块协议边界
+
 ## 模块文档
 
 | 模块 | 文档 | 对应代码 | 状态 |

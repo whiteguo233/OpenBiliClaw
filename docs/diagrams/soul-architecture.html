@@ -1,803 +1,497 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Soul Module Architecture</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
-    background: #0d1117;
-    color: #c9d1d9;
-    padding: 40px;
-    min-width: 1200px;
-  }
-  h1 { color: #58a6ff; font-size: 28px; margin-bottom: 8px; }
-  .subtitle { color: #8b949e; font-size: 14px; margin-bottom: 40px; }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soul 模块架构与流程图</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --soft-line: #e2e8f0;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --violet: #7c3aed;
+      --cyan: #0891b2;
+      --shadow: 0 14px 35px rgba(15, 23, 42, 0.08);
+    }
 
-  /* Layout */
-  .diagram-section { margin-bottom: 60px; }
-  .section-title {
-    color: #f0883e; font-size: 18px; font-weight: 600;
-    margin-bottom: 20px; padding-left: 12px;
-    border-left: 3px solid #f0883e;
-  }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
 
-  svg text { font-family: -apple-system, "PingFang SC", "Noto Sans SC", monospace; }
+    main {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
 
-  .legend {
-    display: flex; gap: 24px; flex-wrap: wrap;
-    margin-bottom: 32px; padding: 12px 16px;
-    background: #161b22; border-radius: 8px; border: 1px solid #30363d;
-  }
-  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .legend-swatch {
-    width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
-  }
-</style>
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 820px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .stamp {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--panel);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-top: 24px;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--soft-line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1.15fr 1.55fr 1.1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .lane {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .lane-title {
+      margin: 0 0 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .box {
+      position: relative;
+      min-height: 72px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: #fff;
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .box span, .box li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .box ul {
+      margin: 6px 0 0 18px;
+      padding: 0;
+    }
+
+    .box.soul { border-left-color: var(--violet); background: #f5f3ff; }
+    .box.llm { border-left-color: var(--amber); background: #fffbeb; }
+    .box.pipe { border-left-color: var(--green); background: #f0fdf4; }
+    .box.store { border-left-color: var(--cyan); background: #ecfeff; }
+    .box.risk { border-left-color: var(--red); background: #fef2f2; }
+
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 22px;
+    }
+
+    .stack {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+
+    .layer {
+      min-height: 112px;
+      border: 1px solid var(--line);
+      border-top: 6px solid var(--blue);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .layer:nth-child(1) { border-top-color: var(--violet); }
+    .layer:nth-child(2) { border-top-color: var(--amber); }
+    .layer:nth-child(3) { border-top-color: var(--green); }
+    .layer:nth-child(4) { border-top-color: var(--cyan); }
+    .layer:nth-child(5) { border-top-color: var(--blue); }
+
+    .layer strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .layer p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 120px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      width: 13px;
+      border-top: 2px solid var(--line);
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      margin-bottom: 10px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    code {
+      color: #1e40af;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    @media (max-width: 920px) {
+      main { width: min(100vw - 24px, 1180px); padding-top: 24px; }
+      header, .architecture, .split, .stack { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .step:not(:last-child)::after { display: none; }
+      .stamp { white-space: normal; }
+      section { padding: 18px; }
+    }
+  </style>
 </head>
 <body>
-
-<h1>Soul 模块架构全景</h1>
-<p class="subtitle">灵魂引擎 &mdash; 从行为事件到五层洋葱画像的完整数据流与猜测兴趣生命周期</p>
-
-<div class="legend">
-  <div class="legend-item"><div class="legend-swatch" style="background:#58a6ff"></div>外部输入/输出</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#f0883e"></div>LLM 调用</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#3fb950"></div>Pipeline 管道</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#bc8cff"></div>引擎编排</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#f778ba"></div>猜测兴趣</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#8b949e"></div>数据存储</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#da3633"></div>洋葱层 (内→外)</div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 1: Onion Profile Five-Layer Architecture              -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">1. 五层洋葱模型 &mdash; OnionProfile 分层结构</div>
-
-<svg width="1140" height="560" viewBox="0 0 1140 560">
-  <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-  </defs>
-
-  <!-- Concentric rings -->
-  <ellipse cx="350" cy="280" rx="330" ry="250" fill="none" stroke="#30363d" stroke-width="1.5" stroke-dasharray="6,4"/>
-  <ellipse cx="350" cy="280" rx="270" ry="205" fill="none" stroke="#484f58" stroke-width="1.5" stroke-dasharray="5,3"/>
-  <ellipse cx="350" cy="280" rx="210" ry="160" fill="none" stroke="#6e7681" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <ellipse cx="350" cy="280" rx="150" ry="115" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="3,3"/>
-  <ellipse cx="350" cy="280" rx="90" ry="70" fill="#161b22" stroke="#da3633" stroke-width="2.5"/>
-
-  <!-- Core (innermost) -->
-  <text x="350" y="260" text-anchor="middle" fill="#da3633" font-size="14" font-weight="700">Core</text>
-  <text x="350" y="278" text-anchor="middle" fill="#c9d1d9" font-size="9">core_traits / deep_needs</text>
-  <text x="350" y="293" text-anchor="middle" fill="#c9d1d9" font-size="9">MBTI (type + dimensions)</text>
-  <text x="350" y="310" text-anchor="middle" fill="#8b949e" font-size="8">48h / 8 signals</text>
-
-  <!-- Values -->
-  <text x="350" y="185" text-anchor="middle" fill="#f0883e" font-size="13" font-weight="600">Values</text>
-  <text x="350" y="200" text-anchor="middle" fill="#c9d1d9" font-size="9">values / motivational_drivers</text>
-  <text x="350" y="382" text-anchor="middle" fill="#8b949e" font-size="8">24h / 5 signals</text>
-
-  <!-- Interest -->
-  <text x="350" y="135" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">Interest</text>
-  <text x="350" y="150" text-anchor="middle" fill="#c9d1d9" font-size="9">likes (domain tree) / dislikes / favorite_up_users</text>
-  <text x="350" y="433" text-anchor="middle" fill="#8b949e" font-size="8">10min / 3 signals</text>
-
-  <!-- Role -->
-  <text x="350" y="90" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="600">Role</text>
-  <text x="350" y="105" text-anchor="middle" fill="#c9d1d9" font-size="9">life_stage / current_phase</text>
-  <text x="350" y="475" text-anchor="middle" fill="#8b949e" font-size="8">24h / 5 signals</text>
-
-  <!-- Surface (outermost) -->
-  <text x="350" y="45" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="600">Surface</text>
-  <text x="350" y="60" text-anchor="middle" fill="#c9d1d9" font-size="9">cognitive_style / style / context / exploration_openness</text>
-  <text x="350" y="518" text-anchor="middle" fill="#8b949e" font-size="8">5min / 3 signals</text>
-
-  <!-- Stability arrow -->
-  <line x1="700" y1="80" x2="700" y2="480" stroke="#484f58" stroke-width="1.5"/>
-  <polygon points="700,80 694,95 706,95" fill="#484f58"/>
-  <polygon points="700,480 694,465 706,465" fill="#484f58"/>
-  <text x="720" y="180" fill="#da3633" font-size="11">稳定</text>
-  <text x="720" y="400" fill="#58a6ff" font-size="11">易变</text>
-  <text x="720" y="280" fill="#8b949e" font-size="10">← 更新频率</text>
-
-  <!-- Right side: Interest Tree Detail -->
-  <rect x="780" y="30" width="340" height="240" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
-  <text x="950" y="55" text-anchor="middle" fill="#3fb950" font-size="14" font-weight="600">Interest Layer 树形结构</text>
-  <line x1="795" y1="65" x2="1105" y2="65" stroke="#30363d" stroke-width="1"/>
-
-  <!-- Tree example -->
-  <text x="810" y="90" fill="#3fb950" font-size="11" font-weight="600">likes:</text>
-  <text x="830" y="110" fill="#c9d1d9" font-size="10">+ 国际时事 (0.85)</text>
-  <text x="860" y="128" fill="#8b949e" font-size="9">- 中东局势深度解读 (0.9)</text>
-  <text x="860" y="143" fill="#8b949e" font-size="9">- 欧洲政治分析 (0.7)</text>
-  <text x="830" y="163" fill="#c9d1d9" font-size="10">+ 日本动画 (0.80)</text>
-  <text x="860" y="181" fill="#8b949e" font-size="9">- 咒术回战 (0.9)</text>
-  <text x="860" y="196" fill="#8b949e" font-size="9">- 进击的巨人 (0.8)</text>
-
-  <text x="810" y="220" fill="#da3633" font-size="11" font-weight="600">dislikes:</text>
-  <text x="830" y="238" fill="#8b949e" font-size="10">- 低质标题党</text>
-  <text x="830" y="253" fill="#8b949e" font-size="10">- 无脑带节奏</text>
-
-  <!-- MBTI Detail -->
-  <rect x="780" y="290" width="340" height="130" rx="10" fill="#161b22" stroke="#da3633" stroke-width="2"/>
-  <text x="950" y="315" text-anchor="middle" fill="#da3633" font-size="14" font-weight="600">MBTI 人格类型</text>
-  <line x1="795" y1="325" x2="1105" y2="325" stroke="#30363d" stroke-width="1"/>
-
-  <text x="810" y="348" fill="#c9d1d9" font-size="11">类型: INTJ (置信度: 75%)</text>
-  <text x="810" y="370" fill="#8b949e" font-size="10">E/I: Introversion (0.85)</text>
-  <text x="810" y="387" fill="#8b949e" font-size="10">S/N: Intuition (0.78)</text>
-  <text x="810" y="404" fill="#8b949e" font-size="10">T/F: Thinking (0.72)</text>
-
-  <!-- Portrait -->
-  <rect x="780" y="440" width="340" height="100" rx="10" fill="#161b22" stroke="#f0883e" stroke-width="2"/>
-  <text x="950" y="465" text-anchor="middle" fill="#f0883e" font-size="14" font-weight="600">personality_portrait</text>
-  <line x1="795" y1="475" x2="1105" y2="475" stroke="#30363d" stroke-width="1"/>
-  <text x="810" y="495" fill="#c9d1d9" font-size="9">"这是一个会主动追问复杂问题底层逻辑的人，</text>
-  <text x="810" y="510" fill="#c9d1d9" font-size="9">不太满足于结论本身，更在意因果链和结构感..."</text>
-  <text x="810" y="528" fill="#8b949e" font-size="8">Core 或 Values 变化时重新生成 (LLM)</text>
-</svg>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 1b: Multi-Source Profile Extension (NEW)              -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">1b. 多源行为融合 &mdash; source_platform_mix 与跨站信号</div>
-
-<svg width="1140" height="320" viewBox="0 0 1140 320">
-  <defs>
-    <marker id="arr1b" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-  </defs>
-
-  <!-- Bilibili events -->
-  <rect x="20" y="30" width="200" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="120" y="55" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="600">Bilibili Events</text>
-  <text x="120" y="75" text-anchor="middle" fill="#8b949e" font-size="9">view / search / like / coin</text>
-
-  <!-- XHS events -->
-  <rect x="260" y="30" width="200" height="60" rx="8" fill="#161b22" stroke="#da3633" stroke-width="2"/>
-  <text x="360" y="55" text-anchor="middle" fill="#da3633" font-size="12" font-weight="600">小红书 Events</text>
-  <text x="360" y="75" text-anchor="middle" fill="#8b949e" font-size="9">view / search / like / favorite</text>
-
-  <!-- Extension label -->
-  <rect x="480" y="30" width="180" height="60" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="570" y="55" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">Chrome Extension</text>
-  <text x="570" y="75" text-anchor="middle" fill="#8b949e" font-size="9">BehaviorEvent.source_platform</text>
-
-  <line x1="120" y1="90" x2="350" y2="130" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr1b)"/>
-  <line x1="360" y1="90" x2="350" y2="130" stroke="#da3633" stroke-width="1.5" marker-end="url(#arr1b)"/>
-
-  <!-- PreferenceAnalyzer -->
-  <rect x="200" y="135" width="300" height="50" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="2"/>
-  <text x="350" y="157" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">PreferenceAnalyzer</text>
-  <text x="350" y="175" text-anchor="middle" fill="#8b949e" font-size="9">compute_source_platform_mix() → EMA(α=0.3) 融合</text>
-
-  <line x1="350" y1="185" x2="350" y2="215" stroke="#484f58" stroke-width="1.5" marker-end="url(#arr1b)"/>
-
-  <!-- source_platform_mix output -->
-  <rect x="150" y="220" width="400" height="70" rx="10" fill="#161b22" stroke="#bc8cff" stroke-width="2"/>
-  <text x="350" y="243" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="600">source_platform_mix</text>
-  <text x="350" y="263" text-anchor="middle" fill="#c9d1d9" font-size="10">bilibili: 0.62 · xiaohongshu: 0.38</text>
-  <text x="350" y="280" text-anchor="middle" fill="#8b949e" font-size="9">PreferenceLayer 持久化 / to_llm_context() 自动注入</text>
-
-  <!-- Consumers -->
-  <line x1="550" y1="255" x2="650" y2="195" stroke="#484f58" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr1b)"/>
-  <line x1="550" y1="255" x2="650" y2="255" stroke="#484f58" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr1b)"/>
-
-  <rect x="660" y="175" width="200" height="35" rx="6" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
-  <text x="760" y="197" text-anchor="middle" fill="#f0883e" font-size="10">LLM prompts (源感知)</text>
-
-  <rect x="660" y="240" width="200" height="35" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="760" y="262" text-anchor="middle" fill="#3fb950" font-size="10">Discovery 策略 (配额分配)</text>
-
-  <!-- Safety note -->
-  <rect x="900" y="30" width="220" height="90" rx="8" fill="#2a0d0d" stroke="#da3633" stroke-width="1.5"/>
-  <text x="1010" y="55" text-anchor="middle" fill="#da3633" font-size="11" font-weight="600">⚠ xhs 安全设计</text>
-  <line x1="915" y1="65" x2="1105" y2="65" stroke="#30363d" stroke-width="1"/>
-  <text x="1010" y="82" text-anchor="middle" fill="#c9d1d9" font-size="8">后端不主动爬取小红书</text>
-  <text x="1010" y="95" text-anchor="middle" fill="#c9d1d9" font-size="8">扩展被动收集 + 后台标签页</text>
-  <text x="1010" y="108" text-anchor="middle" fill="#c9d1d9" font-size="8">严禁自动滚动</text>
-</svg>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 2: Signal Pipeline                                     -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">2. 信号管道 &mdash; ProfileUpdatePipeline 完整路径</div>
-
-<svg width="1140" height="780" viewBox="0 0 1140 780">
-  <defs>
-    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-    <marker id="arr2-green" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
-    </marker>
-    <marker id="arr2-orange" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
-    </marker>
-    <marker id="arr2-purple" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#bc8cff"/>
-    </marker>
-    <marker id="arr2-pink" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f778ba"/>
-    </marker>
-    <marker id="arr2-blue" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
-    </marker>
-  </defs>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Input sources (top row)                    -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <rect x="20" y="20" width="150" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="95" y="42" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Behavior Events</text>
-  <text x="95" y="58" text-anchor="middle" fill="#8b949e" font-size="8">view / search / follow</text>
-
-  <rect x="190" y="20" width="150" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="265" y="42" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Engagement</text>
-  <text x="265" y="58" text-anchor="middle" fill="#8b949e" font-size="8">like / favorite / coin</text>
-
-  <rect x="360" y="20" width="150" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="435" y="42" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Feedback</text>
-  <text x="435" y="58" text-anchor="middle" fill="#8b949e" font-size="8">like / dislike / comment</text>
-
-  <rect x="530" y="20" width="150" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="605" y="42" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Dialogue</text>
-  <text x="605" y="58" text-anchor="middle" fill="#8b949e" font-size="8">insight / turn</text>
-
-  <rect x="700" y="20" width="150" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="775" y="42" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Account Sync</text>
-  <text x="775" y="58" text-anchor="middle" fill="#8b949e" font-size="8">history / favorites / following</text>
-
-  <!-- Arrows to signal classification -->
-  <line x1="95" y1="70" x2="435" y2="100" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="265" y1="70" x2="435" y2="100" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="435" y1="70" x2="435" y2="100" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="605" y1="70" x2="435" y2="100" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="775" y1="70" x2="435" y2="100" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-
-  <!-- Signal Classification -->
-  <rect x="250" y="105" width="370" height="50" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
-  <text x="435" y="128" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">classify_signal()</text>
-  <text x="435" y="145" text-anchor="middle" fill="#8b949e" font-size="9">SignalType + payload &rarr; target OnionLayer set</text>
-
-  <line x1="435" y1="155" x2="435" y2="185" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr2-green)"/>
-
-  <!-- Ingest + Buffer -->
-  <rect x="200" y="190" width="470" height="55" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
-  <text x="435" y="213" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">ingest_batch() &mdash; 分层缓冲</text>
-  <text x="435" y="233" text-anchor="middle" fill="#8b949e" font-size="9">每个信号按 target_layers 分发到独立 LayerBuffer，evict 超限信号</text>
-
-  <!-- Speculator observe (side) -->
-  <rect x="720" y="190" width="200" height="55" rx="8" fill="#1e1028" stroke="#f778ba" stroke-width="1.5"/>
-  <text x="820" y="213" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="600">speculator.observe()</text>
-  <text x="820" y="233" text-anchor="middle" fill="#8b949e" font-size="9">关键词匹配猜测兴趣</text>
-  <line x1="670" y1="217" x2="718" y2="217" stroke="#f778ba" stroke-width="1" marker-end="url(#arr2-pink)"/>
-
-  <line x1="435" y1="245" x2="435" y2="275" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr2-green)"/>
-
-  <!-- Threshold Check -->
-  <polygon points="435,280 555,310 435,340 315,310" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="435" y="312" text-anchor="middle" fill="#3fb950" font-size="10">is_ready(threshold)?</text>
-  <text x="565" y="302" fill="#8b949e" font-size="9">Yes</text>
-  <text x="265" y="302" fill="#8b949e" font-size="9">No: wait</text>
-
-  <line x1="435" y1="340" x2="435" y2="370" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr2-green)"/>
-
-  <!-- Layer Update Dispatch -->
-  <rect x="120" y="375" width="640" height="50" rx="10" fill="#161b22" stroke="#bc8cff" stroke-width="2"/>
-  <text x="440" y="398" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="600">update_layer() &mdash; 分层更新分发</text>
-  <text x="440" y="415" text-anchor="middle" fill="#8b949e" font-size="9">layer_updaters.py &rarr; 按 OnionLayer 类型调用独立更新函数</text>
-
-  <!-- 5 layer update boxes -->
-  <line x1="200" y1="425" x2="200" y2="460" stroke="#58a6ff" stroke-width="1" marker-end="url(#arr2-blue)"/>
-  <line x1="330" y1="425" x2="330" y2="460" stroke="#3fb950" stroke-width="1" marker-end="url(#arr2-green)"/>
-  <line x1="460" y1="425" x2="460" y2="460" stroke="#bc8cff" stroke-width="1" marker-end="url(#arr2-purple)"/>
-  <line x1="590" y1="425" x2="590" y2="460" stroke="#f0883e" stroke-width="1" marker-end="url(#arr2-orange)"/>
-  <line x1="680" y1="425" x2="680" y2="460" stroke="#da3633" stroke-width="1"/>
-
-  <!-- Surface -->
-  <rect x="120" y="465" width="160" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="200" y="488" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">_update_surface()</text>
-  <text x="200" y="505" text-anchor="middle" fill="#8b949e" font-size="9">计算 depth_preference</text>
-  <text x="200" y="518" text-anchor="middle" fill="#8b949e" font-size="8">view/search 比例分析</text>
-
-  <!-- Interest -->
-  <rect x="250" y="465" width="160" height="60" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="330" y="488" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">_update_interest()</text>
-  <text x="330" y="505" text-anchor="middle" fill="#8b949e" font-size="9">PreferenceAnalyzer (LLM)</text>
-  <text x="330" y="518" text-anchor="middle" fill="#8b949e" font-size="8">合并 + 衰减 + 树化</text>
-
-  <!-- Role -->
-  <rect x="380" y="465" width="160" height="60" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
-  <text x="460" y="488" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">_update_role()</text>
-  <text x="460" y="505" text-anchor="middle" fill="#8b949e" font-size="9">生活阶段推断</text>
-  <text x="460" y="518" text-anchor="middle" fill="#8b949e" font-size="8">TODO: LLM delta</text>
-
-  <!-- Values -->
-  <rect x="510" y="465" width="160" height="60" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="590" y="488" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="600">_update_values()</text>
-  <text x="590" y="505" text-anchor="middle" fill="#8b949e" font-size="9">价值观更新</text>
-  <text x="590" y="518" text-anchor="middle" fill="#8b949e" font-size="8">TODO: LLM delta</text>
-
-  <!-- Core -->
-  <rect x="620" y="465" width="140" height="60" rx="8" fill="#161b22" stroke="#da3633" stroke-width="1.5"/>
-  <text x="690" y="488" text-anchor="middle" fill="#da3633" font-size="11" font-weight="600">_update_core()</text>
-  <text x="690" y="505" text-anchor="middle" fill="#8b949e" font-size="9">核心特质更新</text>
-  <text x="690" y="518" text-anchor="middle" fill="#8b949e" font-size="8">TODO: LLM delta</text>
-
-  <!-- Arrows converge -->
-  <line x1="200" y1="525" x2="420" y2="560" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="330" y1="525" x2="420" y2="560" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="460" y1="525" x2="435" y2="560" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="590" y1="525" x2="450" y2="560" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-  <line x1="690" y1="525" x2="465" y2="560" stroke="#484f58" stroke-width="1" marker-end="url(#arr2)"/>
-
-  <!-- Save profile -->
-  <rect x="280" y="565" width="320" height="40" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
-  <text x="440" y="583" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="600">_save_profile() + sync_profile_files()</text>
-  <text x="440" y="598" text-anchor="middle" fill="#8b949e" font-size="9">soul.json + soul_profile.json + soul_profile.md</text>
-
-  <line x1="440" y1="605" x2="440" y2="635" stroke="#484f58" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-  <!-- Portrait regeneration (conditional) -->
-  <polygon points="440,640 560,665 440,690 320,665" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="440" y="668" text-anchor="middle" fill="#f0883e" font-size="10">Core/Values 变化?</text>
-
-  <line x1="440" y1="690" x2="440" y2="715" stroke="#f0883e" stroke-width="1.5" marker-end="url(#arr2-orange)"/>
-  <text x="455" y="706" fill="#8b949e" font-size="9">Yes</text>
-
-  <rect x="280" y="720" width="320" height="40" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="2"/>
-  <text x="440" y="738" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">LLM: regenerate_portrait()</text>
-  <text x="440" y="753" text-anchor="middle" fill="#8b949e" font-size="9">重新生成 personality_portrait</text>
-
-  <!-- Changelog (side) -->
-  <rect x="720" y="565" width="200" height="55" rx="8" fill="#1a1a24" stroke="#8b949e" stroke-width="1.5"/>
-  <text x="820" y="588" text-anchor="middle" fill="#8b949e" font-size="11" font-weight="600">soul_changelog.md</text>
-  <text x="820" y="608" text-anchor="middle" fill="#6e7681" font-size="9">时间 / 层 / 变化 / 触发源 / 证据</text>
-  <line x1="600" y1="585" x2="718" y2="585" stroke="#8b949e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr2)"/>
-
-  <!-- Speculator seed (from interest update) -->
-  <rect x="720" y="465" width="200" height="60" rx="8" fill="#1e1028" stroke="#f778ba" stroke-width="1.5"/>
-  <text x="820" y="488" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="600">speculator.ingest_seeds()</text>
-  <text x="820" y="505" text-anchor="middle" fill="#8b949e" font-size="9">speculative_interests</text>
-  <text x="820" y="518" text-anchor="middle" fill="#8b949e" font-size="8">偏好分析附带 &rarr; 种子注入</text>
-  <line x1="410" y1="490" x2="250" y2="490" stroke="#f778ba" stroke-width="1" stroke-dasharray="3,3"/>
-  <line x1="330" y1="525" x2="718" y2="490" stroke="#f778ba" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr2-pink)"/>
-
-  <!-- Threshold detail (right side) -->
-  <rect x="880" y="280" width="240" height="150" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="1000" y="303" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">LayerThreshold 配置</text>
-  <line x1="895" y1="313" x2="1105" y2="313" stroke="#30363d" stroke-width="1"/>
-  <text x="910" y="335" fill="#58a6ff" font-size="10">Surface:  5min / 3 signals</text>
-  <text x="910" y="355" fill="#3fb950" font-size="10">Interest: 10min / 3 signals</text>
-  <text x="910" y="375" fill="#bc8cff" font-size="10">Role:     24h / 5 signals</text>
-  <text x="910" y="395" fill="#f0883e" font-size="10">Values:   24h / 5 signals</text>
-  <text x="910" y="415" fill="#da3633" font-size="10">Core:     48h / 8 signals</text>
-</svg>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 3: Speculative Interest Lifecycle                      -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">3. 猜测兴趣生命周期 &mdash; InterestSpeculator</div>
-
-<svg width="1140" height="620" viewBox="0 0 1140 620">
-  <defs>
-    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-    <marker id="arr3-pink" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f778ba"/>
-    </marker>
-    <marker id="arr3-green" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
-    </marker>
-    <marker id="arr3-red" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#da3633"/>
-    </marker>
-    <marker id="arr3-orange" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
-    </marker>
-  </defs>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Generation sources                         -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <!-- Source 1: Periodic LLM -->
-  <rect x="20" y="30" width="250" height="70" rx="10" fill="#1a1208" stroke="#f0883e" stroke-width="2"/>
-  <text x="145" y="55" text-anchor="middle" fill="#f0883e" font-size="13" font-weight="600">LLM: speculation_generation</text>
-  <text x="145" y="75" text-anchor="middle" fill="#8b949e" font-size="9">每 24h 生成 3-5 个猜测方向</text>
-  <text x="145" y="90" text-anchor="middle" fill="#8b949e" font-size="8">心理学桥接推理 + 排除冷却</text>
-
-  <!-- Source 2: Preference Analyzer seeds -->
-  <rect x="300" y="30" width="250" height="70" rx="10" fill="#161b22" stroke="#f778ba" stroke-width="2"/>
-  <text x="425" y="55" text-anchor="middle" fill="#f778ba" font-size="13" font-weight="600">PreferenceAnalyzer 种子</text>
-  <text x="425" y="75" text-anchor="middle" fill="#8b949e" font-size="9">偏好分析时附带 speculative_interests</text>
-  <text x="425" y="90" text-anchor="middle" fill="#8b949e" font-size="8">事件驱动，低频补充</text>
-
-  <!-- Arrows to Active -->
-  <line x1="145" y1="100" x2="350" y2="140" stroke="#f0883e" stroke-width="1.5" marker-end="url(#arr3-orange)"/>
-  <line x1="425" y1="100" x2="350" y2="140" stroke="#f778ba" stroke-width="1.5" marker-end="url(#arr3-pink)"/>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Active State                               -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <rect x="150" y="145" width="400" height="110" rx="12" fill="#1e1028" stroke="#f778ba" stroke-width="2.5"/>
-  <text x="350" y="173" text-anchor="middle" fill="#f778ba" font-size="16" font-weight="700">Active (活跃猜测)</text>
-  <text x="350" y="195" text-anchor="middle" fill="#c9d1d9" font-size="10">domain / category / reason / confidence</text>
-  <text x="350" y="215" text-anchor="middle" fill="#c9d1d9" font-size="10">ttl_days=14 / confirmation_count / threshold=3</text>
-  <text x="350" y="235" text-anchor="middle" fill="#8b949e" font-size="9">最多 5 个活跃猜测 (max_active=5)</text>
-
-  <!-- Observation arrow (from events) -->
-  <rect x="620" y="145" width="230" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="735" y="168" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="600">User Events</text>
-  <text x="735" y="188" text-anchor="middle" fill="#8b949e" font-size="9">view / search / like / favorite</text>
-
-  <line x1="620" y1="175" x2="552" y2="200" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr3)"/>
-  <text x="585" y="180" fill="#58a6ff" font-size="9">observe()</text>
-  <text x="585" y="192" fill="#8b949e" font-size="8">关键词匹配</text>
-
-  <!-- Observation detail -->
-  <rect x="620" y="230" width="230" height="70" rx="8" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="735" y="253" text-anchor="middle" fill="#c9d1d9" font-size="10" font-weight="600">匹配策略 (无 LLM)</text>
-  <text x="735" y="270" text-anchor="middle" fill="#8b949e" font-size="9">1. domain 子串匹配</text>
-  <text x="735" y="285" text-anchor="middle" fill="#8b949e" font-size="9">2. 中文关键词切分匹配</text>
-  <text x="735" y="300" text-anchor="middle" fill="#8b949e" font-size="9">3. token 交集 &ge; 2</text>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Decision diamond                           -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <line x1="350" y1="255" x2="350" y2="300" stroke="#f778ba" stroke-width="1.5" marker-end="url(#arr3-pink)"/>
-
-  <polygon points="350,305 470,345 350,385 230,345" fill="#161b22" stroke="#f778ba" stroke-width="2"/>
-  <text x="350" y="340" text-anchor="middle" fill="#f778ba" font-size="11" font-weight="600">确认 &ge; threshold?</text>
-  <text x="350" y="358" text-anchor="middle" fill="#8b949e" font-size="9">or TTL 到期?</text>
-
-  <!-- Promote path (left) -->
-  <line x1="230" y1="345" x2="120" y2="345" stroke="#3fb950" stroke-width="2" marker-end="url(#arr3-green)"/>
-  <text x="170" y="338" fill="#3fb950" font-size="10" font-weight="600">确认 &ge; 3</text>
-
-  <rect x="20" y="310" width="100" height="70" rx="10" fill="#0d2818" stroke="#3fb950" stroke-width="2.5"/>
-  <text x="70" y="337" text-anchor="middle" fill="#3fb950" font-size="14" font-weight="700">Promote</text>
-  <text x="70" y="355" text-anchor="middle" fill="#c9d1d9" font-size="9">转正</text>
-  <text x="70" y="370" text-anchor="middle" fill="#8b949e" font-size="8">weight=0.3</text>
-
-  <!-- Promote -> InterestLayer -->
-  <line x1="70" y1="380" x2="70" y2="430" stroke="#3fb950" stroke-width="2" marker-end="url(#arr3-green)"/>
-
-  <rect x="20" y="435" width="280" height="55" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="160" y="458" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">InterestLayer.likes.append()</text>
-  <text x="160" y="478" text-anchor="middle" fill="#8b949e" font-size="9">InterestDomain(source="speculated", weight=0.3)</text>
-
-  <!-- Reject path (right) -->
-  <line x1="470" y1="345" x2="580" y2="345" stroke="#da3633" stroke-width="2" marker-end="url(#arr3-red)"/>
-  <text x="530" y="338" fill="#da3633" font-size="10" font-weight="600">TTL 到期</text>
-
-  <rect x="580" y="310" width="100" height="70" rx="10" fill="#2a1215" stroke="#da3633" stroke-width="2.5"/>
-  <text x="630" y="337" text-anchor="middle" fill="#da3633" font-size="14" font-weight="700">Reject</text>
-  <text x="630" y="355" text-anchor="middle" fill="#c9d1d9" font-size="9">拒绝</text>
-  <text x="630" y="370" text-anchor="middle" fill="#8b949e" font-size="8">14 天未确认</text>
-
-  <!-- Reject -> Cooldown -->
-  <line x1="630" y1="380" x2="630" y2="430" stroke="#da3633" stroke-width="2" marker-end="url(#arr3-red)"/>
-
-  <rect x="530" y="435" width="280" height="75" rx="10" fill="#161b22" stroke="#da3633" stroke-width="2"/>
-  <text x="670" y="458" text-anchor="middle" fill="#da3633" font-size="14" font-weight="700">Cooldown (冷却)</text>
-  <text x="670" y="478" text-anchor="middle" fill="#c9d1d9" font-size="10">domain + cooldown_until</text>
-  <text x="670" y="498" text-anchor="middle" fill="#8b949e" font-size="9">默认 30 天内不再猜测该方向</text>
-
-  <!-- Cooldown -> expired -->
-  <line x1="670" y1="510" x2="670" y2="545" stroke="#484f58" stroke-width="1" marker-end="url(#arr3)"/>
-
-  <rect x="570" y="550" width="200" height="35" rx="6" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="670" y="573" text-anchor="middle" fill="#8b949e" font-size="10">冷却到期 &rarr; 可重新猜测</text>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Storage                                    -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <rect x="880" y="30" width="240" height="100" rx="10" fill="#1a1a24" stroke="#8b949e" stroke-width="2"/>
-  <text x="1000" y="55" text-anchor="middle" fill="#8b949e" font-size="13" font-weight="600">speculative_state.json</text>
-  <line x1="895" y1="65" x2="1105" y2="65" stroke="#30363d" stroke-width="1"/>
-  <text x="910" y="85" fill="#c9d1d9" font-size="9">active: [SpeculativeInterest...]</text>
-  <text x="910" y="100" fill="#c9d1d9" font-size="9">cooldown: [CooldownEntry...]</text>
-  <text x="910" y="115" fill="#c9d1d9" font-size="9">last_generation_at / total_promoted / total_rejected</text>
-
-  <!-- Discovery integration -->
-  <rect x="880" y="160" width="240" height="85" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="1000" y="183" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="600">Discovery 集成</text>
-  <line x1="895" y1="193" x2="1105" y2="193" stroke="#30363d" stroke-width="1"/>
-  <text x="910" y="212" fill="#c9d1d9" font-size="9">SearchStrategy: 画像摘要含猜测</text>
-  <text x="910" y="228" fill="#c9d1d9" font-size="9">ExploreStrategy: 猜测作为 hint</text>
-  <text x="910" y="244" fill="#c9d1d9" font-size="9">&rarr; 主动探索猜测方向的内容</text>
-
-  <!-- Config -->
-  <rect x="880" y="280" width="240" height="130" rx="10" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="1000" y="303" text-anchor="middle" fill="#c9d1d9" font-size="12" font-weight="600">配置项 [scheduler]</text>
-  <line x1="895" y1="313" x2="1105" y2="313" stroke="#30363d" stroke-width="1"/>
-  <text x="910" y="333" fill="#8b949e" font-size="9">speculation_interval_hours = 24</text>
-  <text x="910" y="350" fill="#8b949e" font-size="9">speculation_ttl_days = 14</text>
-  <text x="910" y="367" fill="#8b949e" font-size="9">speculation_cooldown_days = 30</text>
-  <text x="910" y="384" fill="#8b949e" font-size="9">speculation_confirmation_threshold = 3</text>
-  <text x="910" y="401" fill="#8b949e" font-size="9">speculation_max_active = 5</text>
-
-  <!-- Bridge example -->
-  <rect x="880" y="440" width="240" height="150" rx="10" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="1000" y="463" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">心理学桥接示例</text>
-  <line x1="895" y1="473" x2="1105" y2="473" stroke="#30363d" stroke-width="1"/>
-  <text x="910" y="493" fill="#c9d1d9" font-size="9">策略游戏 + 数据分析</text>
-  <text x="920" y="508" fill="#3fb950" font-size="9">&rarr; 博弈论科普</text>
-  <text x="910" y="530" fill="#c9d1d9" font-size="9">日本动画 + 高审美门槛</text>
-  <text x="920" y="545" fill="#3fb950" font-size="9">&rarr; 欧美独立动画</text>
-  <text x="910" y="567" fill="#c9d1d9" font-size="9">深度时事 + 历史兴趣</text>
-  <text x="920" y="582" fill="#3fb950" font-size="9">&rarr; 地缘政治纪录片</text>
-</svg>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 4: SoulEngine Orchestration                           -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">4. SoulEngine 编排全景 &mdash; 模块协作与数据流</div>
-
-<svg width="1140" height="520" viewBox="0 0 1140 520">
-  <defs>
-    <marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-    <marker id="arr4-blue" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
-    </marker>
-    <marker id="arr4-orange" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
-    </marker>
-    <marker id="arr4-green" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
-    </marker>
-    <marker id="arr4-pink" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f778ba"/>
-    </marker>
-  </defs>
-
-  <!-- SoulEngine (central) -->
-  <rect x="380" y="20" width="320" height="80" rx="12" fill="#161b22" stroke="#bc8cff" stroke-width="2.5"/>
-  <text x="540" y="50" text-anchor="middle" fill="#bc8cff" font-size="18" font-weight="700">SoulEngine</text>
-  <text x="540" y="72" text-anchor="middle" fill="#8b949e" font-size="10">编排器 &mdash; 协调所有分析器和管道</text>
-  <text x="540" y="88" text-anchor="middle" fill="#8b949e" font-size="9">soul/engine.py</text>
-
-  <!-- Left column: Analyzers -->
-  <rect x="20" y="140" width="210" height="55" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="125" y="163" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">PreferenceAnalyzer</text>
-  <text x="125" y="183" text-anchor="middle" fill="#8b949e" font-size="9">LLM 偏好提取 + 合并 + 衰减</text>
-
-  <rect x="20" y="210" width="210" height="55" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="125" y="233" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">AwarenessAnalyzer</text>
-  <text x="125" y="253" text-anchor="middle" fill="#8b949e" font-size="9">近期事件 &rarr; 觉察笔记</text>
-
-  <rect x="20" y="280" width="210" height="55" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="125" y="303" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">InsightAnalyzer</text>
-  <text x="125" y="323" text-anchor="middle" fill="#8b949e" font-size="9">觉察 + 偏好 &rarr; 洞察假设</text>
-
-  <rect x="20" y="350" width="210" height="55" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="125" y="373" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">ProfileBuilder</text>
-  <text x="125" y="393" text-anchor="middle" fill="#8b949e" font-size="9">初始化画像 &rarr; OnionProfile</text>
-
-  <rect x="20" y="420" width="210" height="55" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="125" y="443" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">DialogueInsightAnalyzer</text>
-  <text x="125" y="463" text-anchor="middle" fill="#8b949e" font-size="9">聊天 &rarr; 候选长期理解信号</text>
-
-  <!-- Center: Pipeline + Speculator -->
-  <rect x="300" y="140" width="280" height="65" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
-  <text x="440" y="165" text-anchor="middle" fill="#3fb950" font-size="14" font-weight="600">ProfileUpdatePipeline</text>
-  <text x="440" y="185" text-anchor="middle" fill="#8b949e" font-size="9">ingest() / tick() / flush()</text>
-  <text x="440" y="198" text-anchor="middle" fill="#8b949e" font-size="8">分层缓冲 + 阈值触发 + 层更新分发</text>
-
-  <rect x="300" y="225" width="280" height="60" rx="10" fill="#1e1028" stroke="#f778ba" stroke-width="2"/>
-  <text x="440" y="250" text-anchor="middle" fill="#f778ba" font-size="14" font-weight="600">InterestSpeculator</text>
-  <text x="440" y="270" text-anchor="middle" fill="#8b949e" font-size="9">generate() / observe() / promote() / expire()</text>
-
-  <!-- Arrows from engine to components -->
-  <line x1="440" y1="100" x2="440" y2="138" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arr4)"/>
-  <line x1="440" y1="100" x2="125" y2="138" stroke="#bc8cff" stroke-width="1" stroke-dasharray="4,3"/>
-
-  <!-- Pipeline -> Speculator -->
-  <line x1="440" y1="205" x2="440" y2="223" stroke="#3fb950" stroke-width="1" marker-end="url(#arr4-green)"/>
-
-  <!-- Right column: Memory + Storage -->
-  <rect x="660" y="140" width="220" height="145" rx="10" fill="#1a1a24" stroke="#8b949e" stroke-width="2"/>
-  <text x="770" y="165" text-anchor="middle" fill="#8b949e" font-size="14" font-weight="600">MemoryManager</text>
-  <line x1="675" y1="175" x2="865" y2="175" stroke="#30363d" stroke-width="1"/>
-  <text x="685" y="195" fill="#c9d1d9" font-size="9">event.json</text>
-  <text x="685" y="210" fill="#c9d1d9" font-size="9">preference.json</text>
-  <text x="685" y="225" fill="#c9d1d9" font-size="9">awareness.json</text>
-  <text x="685" y="240" fill="#c9d1d9" font-size="9">insight.json</text>
-  <text x="685" y="255" fill="#c9d1d9" font-size="9">soul.json</text>
-  <text x="685" y="270" fill="#f778ba" font-size="9">speculative_state.json</text>
-
-  <line x1="580" y1="170" x2="658" y2="170" stroke="#8b949e" stroke-width="1" marker-end="url(#arr4)"/>
-
-  <!-- Storage files -->
-  <rect x="660" y="310" width="220" height="100" rx="10" fill="#1a1a24" stroke="#8b949e" stroke-width="1.5"/>
-  <text x="770" y="333" text-anchor="middle" fill="#8b949e" font-size="12" font-weight="600">持久化文件</text>
-  <line x1="675" y1="343" x2="865" y2="343" stroke="#30363d" stroke-width="1"/>
-  <text x="685" y="363" fill="#c9d1d9" font-size="9">soul_profile.json (结构化)</text>
-  <text x="685" y="378" fill="#c9d1d9" font-size="9">soul_profile.md (人类可读)</text>
-  <text x="685" y="393" fill="#c9d1d9" font-size="9">soul_changelog.md (变更日志)</text>
-  <line x1="770" y1="285" x2="770" y2="308" stroke="#8b949e" stroke-width="1" marker-end="url(#arr4)"/>
-
-  <!-- LLM Service (far right) -->
-  <rect x="930" y="140" width="190" height="70" rx="10" fill="#1a1208" stroke="#f0883e" stroke-width="2"/>
-  <text x="1025" y="168" text-anchor="middle" fill="#f0883e" font-size="14" font-weight="600">LLM Service</text>
-  <text x="1025" y="190" text-anchor="middle" fill="#8b949e" font-size="9">complete_structured_task()</text>
-  <text x="1025" y="203" text-anchor="middle" fill="#8b949e" font-size="8">multi-provider (OpenAI/Claude/Gemini)</text>
-
-  <line x1="930" y1="175" x2="882" y2="175" stroke="#f0883e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr4-orange)"/>
-
-  <!-- Bottom: Output consumers -->
-  <rect x="300" y="360" width="280" height="50" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="440" y="383" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="600">OnionProfile (输出)</text>
-  <text x="440" y="400" text-anchor="middle" fill="#8b949e" font-size="9">五层画像 + portrait + awareness + insights</text>
-
-  <line x1="440" y1="285" x2="440" y2="358" stroke="#f778ba" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr4-pink)"/>
-
-  <!-- Consumers -->
-  <line x1="350" y1="410" x2="200" y2="465" stroke="#484f58" stroke-width="1" marker-end="url(#arr4)"/>
-  <line x1="440" y1="410" x2="440" y2="465" stroke="#484f58" stroke-width="1" marker-end="url(#arr4)"/>
-  <line x1="530" y1="410" x2="660" y2="465" stroke="#484f58" stroke-width="1" marker-end="url(#arr4)"/>
-
-  <rect x="100" y="468" width="180" height="40" rx="6" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="190" y="493" text-anchor="middle" fill="#58a6ff" font-size="11">Discovery Engine</text>
-
-  <rect x="340" y="468" width="180" height="40" rx="6" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="430" y="493" text-anchor="middle" fill="#58a6ff" font-size="11">Recommendation</text>
-
-  <rect x="580" y="468" width="180" height="40" rx="6" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="670" y="493" text-anchor="middle" fill="#58a6ff" font-size="11">Chat / Dialogue</text>
-
-  <!-- Summary stats -->
-  <rect x="30" y="488" width="50" height="24" rx="4" fill="#1a1208" stroke="#f0883e" stroke-width="1"/>
-  <text x="55" y="505" text-anchor="middle" fill="#f0883e" font-size="9">LLM</text>
-  <text x="95" y="505" fill="#8b949e" font-size="9">: 5 个分析器 + 1 个猜测生成器</text>
-</svg>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<!-- SECTION 5: Init vs Incremental Flow                           -->
-<!-- ═══════════════════════════════════════════════════════════════ -->
-<div class="diagram-section">
-<div class="section-title">5. 初始化 vs 增量更新 &mdash; 两条画像构建路径</div>
-
-<svg width="1140" height="420" viewBox="0 0 1140 420">
-  <defs>
-    <marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#484f58"/>
-    </marker>
-    <marker id="arr5-purple" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#bc8cff"/>
-    </marker>
-    <marker id="arr5-green" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto-start-auto">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
-    </marker>
-  </defs>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Lane 1: Init                               -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <rect x="30" y="30" width="480" height="350" rx="12" fill="#1c1536" stroke="#bc8cff" stroke-width="2"/>
-  <text x="270" y="58" text-anchor="middle" fill="#bc8cff" font-size="16" font-weight="700">初始化路径 (Init)</text>
-  <text x="270" y="78" text-anchor="middle" fill="#8b949e" font-size="10">SoulEngine.build_initial_profile(history)</text>
-
-  <rect x="50" y="95" width="440" height="30" rx="4" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="270" y="115" text-anchor="middle" fill="#58a6ff" font-size="10">1. 拉取浏览历史 + 收藏夹 + 关注列表 (500+)</text>
-
-  <line x1="270" y1="125" x2="270" y2="140" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="50" y="145" width="440" height="30" rx="4" fill="#1a1208" stroke="#f0883e" stroke-width="1"/>
-  <text x="270" y="165" text-anchor="middle" fill="#f0883e" font-size="10">2. analyze_events() &rarr; PreferenceAnalyzer (LLM)</text>
-
-  <line x1="270" y1="175" x2="270" y2="190" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="50" y="195" width="440" height="30" rx="4" fill="#1a1208" stroke="#f0883e" stroke-width="1"/>
-  <text x="270" y="215" text-anchor="middle" fill="#f0883e" font-size="10">3. ProfileBuilder.build() (LLM) &rarr; 完整 OnionProfile</text>
-
-  <line x1="270" y1="225" x2="270" y2="240" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="50" y="245" width="440" height="30" rx="4" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="270" y="265" text-anchor="middle" fill="#c9d1d9" font-size="10">4. populate_from_flat_preference() + from_legacy()</text>
-
-  <line x1="270" y1="275" x2="270" y2="290" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="50" y="295" width="440" height="30" rx="4" fill="#1a1a24" stroke="#8b949e" stroke-width="1"/>
-  <text x="270" y="315" text-anchor="middle" fill="#8b949e" font-size="10">5. soul.json + soul_profile.json + soul_profile.md</text>
-
-  <text x="270" y="355" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">特点: 一次性全量生成，2 次 LLM 调用</text>
-  <text x="270" y="372" text-anchor="middle" fill="#8b949e" font-size="9">适用: 首次使用 / openbiliclaw init</text>
-
-  <!-- ══════════════════════════════════════════ -->
-  <!-- Lane 2: Incremental                        -->
-  <!-- ══════════════════════════════════════════ -->
-
-  <rect x="550" y="30" width="560" height="350" rx="12" fill="#0d2818" stroke="#3fb950" stroke-width="2"/>
-  <text x="830" y="58" text-anchor="middle" fill="#3fb950" font-size="16" font-weight="700">增量更新路径 (Pipeline)</text>
-  <text x="830" y="78" text-anchor="middle" fill="#8b949e" font-size="10">ProfileUpdatePipeline.ingest() + tick()</text>
-
-  <rect x="570" y="95" width="520" height="30" rx="4" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="830" y="115" text-anchor="middle" fill="#58a6ff" font-size="10">1. 事件流入 (view/search/like/feedback/chat/sync)</text>
-
-  <line x1="830" y1="125" x2="830" y2="140" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="570" y="145" width="520" height="30" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="830" y="165" text-anchor="middle" fill="#3fb950" font-size="10">2. classify_signal() &rarr; 按层分发到 LayerBuffer</text>
-
-  <line x1="830" y1="175" x2="830" y2="190" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="570" y="195" width="520" height="30" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="830" y="215" text-anchor="middle" fill="#3fb950" font-size="10">3. threshold check (min_signals + min_interval)</text>
-
-  <line x1="830" y1="225" x2="830" y2="240" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="570" y="245" width="250" height="30" rx="4" fill="#1a1208" stroke="#f0883e" stroke-width="1"/>
-  <text x="695" y="265" text-anchor="middle" fill="#f0883e" font-size="10">4. update_layer() (LLM)</text>
-
-  <rect x="840" y="245" width="250" height="30" rx="4" fill="#1e1028" stroke="#f778ba" stroke-width="1"/>
-  <text x="965" y="265" text-anchor="middle" fill="#f778ba" font-size="10">4b. speculator.observe()</text>
-
-  <line x1="830" y1="275" x2="830" y2="295" stroke="#484f58" stroke-width="1" marker-end="url(#arr5)"/>
-
-  <rect x="570" y="300" width="250" height="30" rx="4" fill="#1a1a24" stroke="#8b949e" stroke-width="1"/>
-  <text x="695" y="320" text-anchor="middle" fill="#8b949e" font-size="10">5. save + changelog</text>
-
-  <rect x="840" y="300" width="250" height="30" rx="4" fill="#1e1028" stroke="#f778ba" stroke-width="1"/>
-  <text x="965" y="320" text-anchor="middle" fill="#f778ba" font-size="10">5b. speculator.tick()</text>
-
-  <text x="830" y="355" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">特点: 持续增量，按层独立更新</text>
-  <text x="830" y="372" text-anchor="middle" fill="#8b949e" font-size="9">适用: 日常使用 / 60s tick / 事件驱动</text>
-
-  <!-- Bottom comparison -->
-  <rect x="30" y="395" width="1080" height="20" rx="4" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="270" y="410" text-anchor="middle" fill="#bc8cff" font-size="9">Init: 全量一次 &rarr; 完整画像</text>
-  <text x="570" y="410" text-anchor="middle" fill="#8b949e" font-size="9">|</text>
-  <text x="830" y="410" text-anchor="middle" fill="#3fb950" font-size="9">Pipeline: 持续增量 &rarr; 分层渐进更新 + 猜测兴趣探索</text>
-</svg>
-</div>
-
+<main>
+  <header>
+    <div>
+      <h1>Soul 模块架构与流程图</h1>
+      <p class="subtitle">`soul/` 是用户理解核心：把跨平台行为、对话和反馈变成偏好、觉察、洞察、五层画像，并驱动正向兴趣探针与避雷探针。</p>
+    </div>
+    <div class="stamp">docs/diagrams/soul-architecture.html</div>
+  </header>
+
+  <section aria-labelledby="legend-title">
+    <h2 id="legend-title">图例</h2>
+    <div class="legend">
+      <span class="pill"><span class="dot" style="background: var(--blue)"></span>外部输入与 API</span>
+      <span class="pill"><span class="dot" style="background: var(--green)"></span>Pipeline / runtime tick</span>
+      <span class="pill"><span class="dot" style="background: var(--amber)"></span>LLM 分析器</span>
+      <span class="pill"><span class="dot" style="background: var(--violet)"></span>Soul 编排与画像</span>
+      <span class="pill"><span class="dot" style="background: var(--cyan)"></span>Memory / SQLite / JSON</span>
+      <span class="pill"><span class="dot" style="background: var(--red)"></span>长期边界与负反馈</span>
+    </div>
+  </section>
+
+  <section aria-labelledby="arch-title">
+    <h2 id="arch-title">1. 架构图：行为信号到五层画像</h2>
+    <div class="architecture">
+      <div class="lane">
+        <p class="lane-title">Inputs</p>
+        <div class="box">
+          <strong>跨平台事件</strong>
+          <span>Bilibili / 小红书 / 抖音 / YouTube / Web 的 `view`、`favorite`、`like`、`follow`、`search`。</span>
+        </div>
+        <div class="box">
+          <strong>推荐反馈与点击</strong>
+          <span>`recommendation_click`、`like`、`dislike`、`comment`、`dismiss`，带 `content_id / source_platform`。</span>
+        </div>
+        <div class="box">
+          <strong>Durable chat turns</strong>
+          <span>`scope=chat / delight / probe / avoidance_probe`，完成后进入受控学习链路。</span>
+        </div>
+      </div>
+
+      <div class="lane">
+        <p class="lane-title">Soul Core</p>
+        <div class="box soul">
+          <strong>SoulEngine</strong>
+          <span>统一编排 `analyze_events()`、`build_initial_profile()`、`learn_from_dialogue()`、即时 cognition card 和画像读取。</span>
+        </div>
+        <div class="box pipe">
+          <strong>ProfileUpdatePipeline</strong>
+          <span>把新增 `ProfileSignal` 分层汇聚；空闲 tick 会驱动 speculator / avoidance lifecycle，不阻塞 API。</span>
+        </div>
+        <div class="mini-grid">
+          <div class="box llm">
+            <strong>PreferenceAnalyzer</strong>
+            <span>过滤 quick-exit，保留明确负反馈，输出偏好、避雷、推测兴趣 seed。</span>
+          </div>
+          <div class="box llm">
+            <strong>ProfileBuilder</strong>
+            <span>基于 history + preference + awareness + insight 生成 `OnionProfile`。</span>
+          </div>
+          <div class="box llm">
+            <strong>Awareness / Insight</strong>
+            <span>半日节流，把近期行为变成观察笔记和可验证假设。</span>
+          </div>
+          <div class="box llm">
+            <strong>DialogueInsightAnalyzer</strong>
+            <span>从聊天中提取 goal / value / interest / dislike / state 候选信号。</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="lane">
+        <p class="lane-title">Outputs</p>
+        <div class="box store">
+          <strong>Memory layers</strong>
+          <span>`events`、`preference`、`awareness`、`insight`、`soul`，并镜像到画像 JSON / Markdown。</span>
+        </div>
+        <div class="box risk">
+          <strong>Interest / Avoidance probes</strong>
+          <span>正向探针验证潜在兴趣；避雷探针只在确认后写入 `disliked_topics` 并清候选池。</span>
+        </div>
+        <div class="box">
+          <strong>Downstream consumers</strong>
+          <span>Discovery、Recommendation、Web / 插件画像页、OpenClaw skill 都读取同一份 profile summary。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="layers-title">
+    <h2 id="layers-title">2. 五层 OnionProfile</h2>
+    <div class="stack">
+      <div class="layer">
+        <strong>Core</strong>
+        <p>核心特质、深层需求、MBTI。变更慢，要求强证据和 diff protection。</p>
+      </div>
+      <div class="layer">
+        <strong>Values</strong>
+        <p>价值观、驱动力、长期追求。每周期有限 add/remove，避免画像漂移。</p>
+      </div>
+      <div class="layer">
+        <strong>Interest</strong>
+        <p>领域树、specifics、喜欢与不喜欢方向、UP / 作者偏好。</p>
+      </div>
+      <div class="layer">
+        <strong>Role</strong>
+        <p>生活阶段、当前任务、正在经历的上下文。适合中频更新。</p>
+      </div>
+      <div class="layer">
+        <strong>Surface</strong>
+        <p>语气、内容形态、探索开放度和近期状态。更贴近当前体验。</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="flow-title">
+    <h2 id="flow-title">3. 流程图：初始化画像</h2>
+    <div class="flow">
+      <div class="step">
+        <span class="step-num">1</span>
+        <strong>收集首轮信号</strong>
+        <p>B 站 API + XHS / 抖音 / YouTube 插件 bootstrap task，统一转成事件。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <strong>写入事件层</strong>
+        <p>去重、补 `source_platform`，保留原始 task-result 供排障。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <strong>偏好分析</strong>
+        <p>`PreferenceAnalyzer` 提取 likes / dislikes / source mix / speculative seeds。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <strong>画像构建</strong>
+        <p>`ProfileBuilder` 输出五层 `OnionProfile`，兼容旧 flat schema。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">5</span>
+        <strong>启动探针</strong>
+        <p>`force_tick()` 立即生成正向与避雷候选，受 active quota 约束。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">6</span>
+        <strong>下游可读</strong>
+        <p>`/api/profile-summary`、推荐表达、发现 prompt、OpenClaw 共享使用。</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="incremental-title">
+    <h2 id="incremental-title">4. 流程图：增量学习与探针回写</h2>
+    <div class="split">
+      <div>
+        <h2>行为 / 反馈增量</h2>
+        <div class="flow" style="grid-template-columns: 1fr;">
+          <div class="step">
+            <span class="step-num">1</span>
+            <strong>新事件进入 memory</strong>
+            <p>账号同步、推荐点击、显式反馈、插件 task-result 都会变成事件。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">2</span>
+            <strong>即时与批量并行</strong>
+            <p>单条 `dislike/comment` 生成 cognition card；批量达到阈值后重跑偏好分析。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">3</span>
+            <strong>CognitionCycle</strong>
+            <p>awareness 失败不推进节流时间；下次 tick 可以马上重试。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">4</span>
+            <strong>LayerUpdaters</strong>
+            <p>Interest / Surface 更快更新，Role / Values / Core 需要更强证据。</p>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h2>探针闭环</h2>
+        <div class="flow" style="grid-template-columns: 1fr;">
+          <div class="step">
+            <span class="step-num">1</span>
+            <strong>InterestSpeculator</strong>
+            <p>生成 `near / lateral / bridge / wildcard`，普通池和挑战池分配额。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">2</span>
+            <strong>用户确认或聊天</strong>
+            <p>强正向直接确认，弱正向先进 `short_term_exploration_buffer`。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">3</span>
+            <strong>AvoidanceSpeculator</strong>
+            <p>只消费高确信负向信号；被动 quick-exit 不自动写长期避雷。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">4</span>
+            <strong>写回与清池</strong>
+            <p>`apply_new_dislikes()` 写 `preference.disliked_topics`，同步 `soul` layer 并 purge pool。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
 </body>
 </html>

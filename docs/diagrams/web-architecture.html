@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web HTML 模块架构与流程图</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --soft-line: #e2e8f0;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --violet: #7c3aed;
+      --cyan: #0891b2;
+      --shadow: 0 14px 35px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 880px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .stamp {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--panel);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    section {
+      margin-top: 24px;
+      padding: 24px;
+      background: var(--panel);
+      border: 1px solid var(--soft-line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1.1fr 1.4fr 1.1fr;
+      gap: 18px;
+    }
+
+    .lane {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .lane-title {
+      margin: 0 0 2px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .box {
+      min-height: 74px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: #fff;
+    }
+
+    .box strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    .box span, .box li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .box ul {
+      margin: 6px 0 0 18px;
+      padding: 0;
+    }
+
+    .static { border-left-color: var(--cyan); background: #ecfeff; }
+    .state { border-left-color: var(--violet); background: #f5f3ff; }
+    .api { border-left-color: var(--blue); background: #eff6ff; }
+    .stream { border-left-color: var(--green); background: #f0fdf4; }
+    .action { border-left-color: var(--amber); background: #fffbeb; }
+    .risk { border-left-color: var(--red); background: #fef2f2; }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .module {
+      min-height: 130px;
+      border: 1px solid var(--line);
+      border-top: 6px solid var(--blue);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .module:nth-child(1) { border-top-color: var(--cyan); }
+    .module:nth-child(2) { border-top-color: var(--violet); }
+    .module:nth-child(3) { border-top-color: var(--green); }
+    .module:nth-child(4) { border-top-color: var(--amber); }
+    .module:nth-child(5) { border-top-color: var(--blue); }
+    .module:nth-child(6) { border-top-color: var(--red); }
+
+    .module strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .module p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 126px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      width: 13px;
+      border-top: 2px solid var(--line);
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      margin-bottom: 10px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    code {
+      color: #1e40af;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    @media (max-width: 980px) {
+      main { width: min(100vw - 24px, 1180px); padding-top: 24px; }
+      header, .architecture, .split, .module-grid { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .step:not(:last-child)::after { display: none; }
+      .stamp { white-space: normal; }
+      section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Web HTML 模块架构与流程图</h1>
+      <p class="subtitle">`src/openbiliclaw/web/` 承载两套静态 HTML 前端：桌面端 `/web` 与移动端 `/m`。它们只调用本地 FastAPI，不采集平台行为，也不负责 Cookie 同步。</p>
+    </div>
+    <div class="stamp">docs/diagrams/web-architecture.html</div>
+  </header>
+
+  <section aria-labelledby="legend-title">
+    <h2 id="legend-title">图例</h2>
+    <div class="legend">
+      <span class="pill"><span class="dot" style="background: var(--cyan)"></span>静态 HTML / CSS / JS</span>
+      <span class="pill"><span class="dot" style="background: var(--violet)"></span>前端状态与视图模型</span>
+      <span class="pill"><span class="dot" style="background: var(--blue)"></span>REST API</span>
+      <span class="pill"><span class="dot" style="background: var(--green)"></span>runtime-stream</span>
+      <span class="pill"><span class="dot" style="background: var(--amber)"></span>用户动作</span>
+      <span class="pill"><span class="dot" style="background: var(--red)"></span>降级与边界</span>
+    </div>
+  </section>
+
+  <section aria-labelledby="arch-title">
+    <h2 id="arch-title">1. 架构图：FastAPI 托管的双 Web 入口</h2>
+    <div class="architecture">
+      <div class="lane">
+        <p class="lane-title">Static Surfaces</p>
+        <div class="box static">
+          <strong>桌面端 Web</strong>
+          <span>`/web` mount 到 `web/desktop/`，`index.html + assets/js/app.js + assets/css/app.css`，大屏推荐首页。</span>
+        </div>
+        <div class="box static">
+          <strong>移动端 Web</strong>
+          <span>`/m` mount 到 `web/`，`index.html + js/* + css/app.css`，手机端推荐、画像、对话、消息。</span>
+        </div>
+        <div class="box static">
+          <strong>根路径跳转</strong>
+          <span>`/` 302 到 `/web`；手机入口由插件二维码生成 `/m/` URL。</span>
+        </div>
+      </div>
+
+      <div class="lane">
+        <p class="lane-title">Frontend Runtime</p>
+        <div class="box state">
+          <strong>移动端模块化 SPA</strong>
+          <span>`app.js` 路由和 shell，`state.js` 集中状态，`api.js` 请求，`stream.js` WebSocket，`views/*` 渲染各 tab。</span>
+        </div>
+        <div class="box state">
+          <strong>桌面端单页控制器</strong>
+          <span>`desktop/assets/js/app.js` 管理推荐、画像、聊天、设置、消息、delight 队列与本地 endpoint 设置。</span>
+        </div>
+        <div class="box stream">
+          <strong>runtime-stream 合并刷新</strong>
+          <span>`activity.added / profile_updated / refresh.pool_updated / interest.probe / avoidance.probe` 进入 debounce / single-flight。</span>
+        </div>
+      </div>
+
+      <div class="lane">
+        <p class="lane-title">Backend API</p>
+        <div class="box api">
+          <strong>推荐 API</strong>
+          <span>`/api/recommendations`、`/reshuffle`、`/append`、`/refresh`、`/recommendation-click`、`/feedback`。</span>
+        </div>
+        <div class="box api">
+          <strong>画像 / 聊天 / 探针</strong>
+          <span>`/profile-summary`、`/chat/turns`、`/interest-probes/*`、`/avoidance-probes/*`。</span>
+        </div>
+        <div class="box api">
+          <strong>配置与资源代理</strong>
+          <span>`/config`、`/runtime-status`、`/image-proxy`。图片代理做白名单、redirect、类型和 10MB 校验。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="modules-title">
+    <h2 id="modules-title">2. 前端模块边界</h2>
+    <div class="module-grid">
+      <div class="module">
+        <strong>Shell / routing</strong>
+        <p>移动端 hash tab 默认进入 `recommend`；桌面端通过 nav / drawer 切换首页、画像、聊天、设置。</p>
+      </div>
+      <div class="module">
+        <strong>State model</strong>
+        <p>移动端 `state.js` 用订阅模式统一 `recommendations / profile / messages / runtimeStatus / chatTurns`。</p>
+      </div>
+      <div class="module">
+        <strong>Stream client</strong>
+        <p>WebSocket 只负责接收 runtime events；断线后按退避重连，页面仍保留最近一次 REST 状态。</p>
+      </div>
+      <div class="module">
+        <strong>View models</strong>
+        <p>`view-models.js` 把后端推荐、池子状态、平台标签和反馈 payload 规范化，DOM 渲染前先清洗。</p>
+      </div>
+      <div class="module">
+        <strong>Desktop controller</strong>
+        <p>桌面端把 endpoint、本地存储、设置表单、delight 内聊、watch-later 和推荐卡片动作放在单控制器中。</p>
+      </div>
+      <div class="module">
+        <strong>Boundaries</strong>
+        <p>Web UI 不读取平台 Cookie、不执行 XHS/DY/YT 任务、不采集站内行为；这些仍归浏览器插件。</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="hydrate-title">
+    <h2 id="hydrate-title">3. 流程图：页面启动与实时同步</h2>
+    <div class="flow">
+      <div class="step">
+        <span class="step-num">1</span>
+        <strong>StaticFiles 返回 HTML</strong>
+        <p>FastAPI 挂载 `/web` 和 `/m`；浏览器加载 CSS 与 JS。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <strong>初始化 shell</strong>
+        <p>渲染导航、状态栏、空态和当前 tab 容器。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <strong>首屏 REST hydration</strong>
+        <p>先取推荐列表；runtime status、activity、delight、profile 并行或异步补齐。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <strong>连接 runtime-stream</strong>
+        <p>建立 WebSocket 后接收池子、探针、画像、活动和降级事件。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">5</span>
+        <strong>合并状态</strong>
+        <p>`refresh.pool_updated` 只更新池子数字和 header，不覆盖用户 append 出来的推荐列表。</p>
+      </div>
+      <div class="step">
+        <span class="step-num">6</span>
+        <strong>局部重渲染</strong>
+        <p>推荐卡片、消息、画像、聊天 pending turn 按当前状态增量刷新。</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="interaction-title">
+    <h2 id="interaction-title">4. 流程图：核心用户动作</h2>
+    <div class="split">
+      <div>
+        <h2>推荐流</h2>
+        <div class="flow" style="grid-template-columns: 1fr;">
+          <div class="step">
+            <span class="step-num">1</span>
+            <strong>换一批 / 续页</strong>
+            <p>主动 reshuffle 替换当前列表；append 传 `excluded_bvids`，保留已看的历史卡片。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">2</span>
+            <strong>打开推荐</strong>
+            <p>先 POST `/recommendation-click`，再打开 `content_url`；封面统一走 `/image-proxy`。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">3</span>
+            <strong>反馈 / 稍后再看</strong>
+            <p>`like / dislike / dismiss` 调反馈 API；watch-later 调本地书签端点并做乐观 UI。</p>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h2>画像、聊天、探针</h2>
+        <div class="flow" style="grid-template-columns: 1fr;">
+          <div class="step">
+            <span class="step-num">1</span>
+            <strong>读取画像摘要</strong>
+            <p>`/profile-summary` 暴露五层画像、认知更新、正向兴趣和避雷候选。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">2</span>
+            <strong>Durable chat</strong>
+            <p>提交 `/chat/turns` 后轮询 turn 状态；reload 后按 session / scope 恢复 pending 与历史。</p>
+          </div>
+          <div class="step">
+            <span class="step-num">3</span>
+            <strong>Probe respond</strong>
+            <p>普通兴趣、挑战兴趣和避雷探针走不同文案，但都调用后端 respond API 写回真实语义。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="failure-title">
+    <h2 id="failure-title">5. 降级与边界</h2>
+    <div class="architecture">
+      <div class="box risk">
+        <strong>后端离线</strong>
+        <span>Web UI 显示连接失败 / 缓存配置；不会伪造默认配置或继续提交不可达请求。</span>
+      </div>
+      <div class="box risk">
+        <strong>推荐慢请求</strong>
+        <span>移动端首屏有超时兜底，慢请求不会让页面一直停在 loading。</span>
+      </div>
+      <div class="box risk">
+        <strong>权限边界</strong>
+        <span>Cookie 同步、平台页面任务和行为采集都必须由插件执行，Web 端只作为本地 API 客户端。</span>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

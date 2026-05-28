@@ -10,7 +10,12 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 4. **多源适配层（v0.3.0+）** — `SourceAdapter` 协议下的 B 站 / 小红书 / 抖音 / YouTube / 通用 Web 源
 5. **多层网状记忆存储** — Core / Episodic / Semantic / Working Memory（SQLite + 向量索引 + JSON）
 
-详见 [项目 Spec](spec.md) 中的架构图。
+详见 [项目 Spec](spec.md) 中的架构图。模块级可视化图放在 `docs/diagrams/`：
+
+- [Soul 模块架构与流程图](diagrams/soul-architecture.html)
+- [Recommendation 模块架构与流程图](diagrams/recommendation-architecture.html)
+- [Web HTML 模块架构与流程图](diagrams/web-architecture.html)
+- [Discovery 模块架构图](diagrams/discovery-architecture.html)
 
 ## 模块职责
 
