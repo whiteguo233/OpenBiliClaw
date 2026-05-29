@@ -72,7 +72,7 @@ class _RecordingSoulEngine:
 @pytest.fixture
 def e2e_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[TestClient, "Database", _RecordingMemoryManager]:
+) -> tuple[TestClient, Database, _RecordingMemoryManager]:
     from openbiliclaw.storage.database import Database
 
     db = Database(tmp_path / "e2e.db")
@@ -116,7 +116,7 @@ _XHS_TOKEN_URL = "https://www.xiaohongshu.com/explore/{note_id}?xsec_token=TOKEN
 
 
 def _seed_xhs_row(
-    db: "Database",
+    db: Database,
     bvid: str,
     *,
     up_name: str = "",
@@ -145,7 +145,7 @@ def _seed_xhs_row(
     db.cache_content(bvid, **kwargs)
 
 
-def _seed_bili_row(db: "Database", bvid: str, *, up_name: str = "") -> None:
+def _seed_bili_row(db: Database, bvid: str, *, up_name: str = "") -> None:
     """Insert a fully-classified Bilibili row."""
     db.cache_content(
         bvid,
@@ -171,7 +171,7 @@ class TestXhsSelfContentFilterE2E:
 
     def test_full_lifecycle(
         self,
-        e2e_env: tuple[TestClient, "Database", _RecordingMemoryManager],
+        e2e_env: tuple[TestClient, Database, _RecordingMemoryManager],
     ) -> None:
         client, db, memory = e2e_env
 
@@ -289,7 +289,7 @@ class TestXhsSelfContentFilterE2E:
 
     def test_case_insensitive_matching(
         self,
-        e2e_env: tuple[TestClient, "Database", _RecordingMemoryManager],
+        e2e_env: tuple[TestClient, Database, _RecordingMemoryManager],
     ) -> None:
         """Nickname matching must be case-insensitive."""
         _, db, _ = e2e_env
@@ -305,7 +305,7 @@ class TestXhsSelfContentFilterE2E:
 
     def test_idempotent_self_info_no_double_purge(
         self,
-        e2e_env: tuple[TestClient, "Database", _RecordingMemoryManager],
+        e2e_env: tuple[TestClient, Database, _RecordingMemoryManager],
     ) -> None:
         """Sending the same self_info twice must not error or re-suppress."""
         client, db, _ = e2e_env
@@ -332,7 +332,7 @@ class TestXhsSelfContentFilterE2E:
 
     def test_nickname_change_triggers_new_purge(
         self,
-        e2e_env: tuple[TestClient, "Database", _RecordingMemoryManager],
+        e2e_env: tuple[TestClient, Database, _RecordingMemoryManager],
     ) -> None:
         """When the user changes their XHS nickname, the new nickname
         triggers a fresh purge pass."""

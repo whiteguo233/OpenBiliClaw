@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 
 from openbiliclaw.api.app import create_app
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
