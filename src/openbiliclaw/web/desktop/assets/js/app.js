@@ -229,9 +229,23 @@
       element.addEventListener(eventName, handler);
     }
 
+    function locationApiDefault() {
+      try {
+        const loc = window.location;
+        if (loc && /^https?:$/.test(loc.protocol) && loc.hostname) {
+          return { host: loc.hostname, port: loc.port || (loc.protocol === "https:" ? "443" : "80") };
+        }
+      } catch { /* file:// or no window — fall through */ }
+      return { host: "127.0.0.1", port: "8420" };
+    }
+
     function getApiBase() {
-      const host = normalizeBackendHost($("#backendHost")?.value || storageGet("openbiliclaw.webui.backendHost") || "127.0.0.1");
-      const port = String($("#backendPort")?.value || storageGet("openbiliclaw.webui.backendPort") || "8420").trim() || "8420";
+      // Default to the origin the page is served from, so a non-default backend
+      // port "just works" and a profile edit never silently writes to a
+      // different backend on :8420. An explicit saved/typed setting still wins.
+      const def = locationApiDefault();
+      const host = normalizeBackendHost($("#backendHost")?.value || storageGet("openbiliclaw.webui.backendHost") || def.host);
+      const port = String($("#backendPort")?.value || storageGet("openbiliclaw.webui.backendPort") || def.port).trim() || def.port;
       return `http://${host}:${port}/api`;
     }
 
@@ -243,8 +257,9 @@
     }
 
     function persistBackendEndpoint() {
-      const host = normalizeBackendHost($("#backendHost")?.value || "127.0.0.1");
-      const port = String($("#backendPort")?.value || "8420").trim() || "8420";
+      const def = locationApiDefault();
+      const host = normalizeBackendHost($("#backendHost")?.value || def.host);
+      const port = String($("#backendPort")?.value || def.port).trim() || def.port;
       setInput("backendHost", host);
       setInput("backendPort", port);
       storageSet("openbiliclaw.webui.backendHost", host);

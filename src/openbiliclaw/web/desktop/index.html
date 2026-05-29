@@ -353,8 +353,8 @@
 
         <div class="settings-panel" data-settings-panel="frontend" hidden>
           <p class="settings-section-title">前端相关设置</p>
-          <label class="settings-field"><span>后端地址</span><input id="backendHost" value="127.0.0.1"></label>
-          <label class="settings-field"><span>后端端口</span><input id="backendPort" value="8420" inputmode="numeric"></label>
+          <label class="settings-field"><span>后端地址</span><input id="backendHost" placeholder="默认跟随当前页面地址"></label>
+          <label class="settings-field"><span>后端端口</span><input id="backendPort" inputmode="numeric" placeholder="默认跟随当前页面端口"></label>
           <label class="settings-field"><span>惊喜推荐加载数量</span><input id="delightQueueLimit" value="20" inputmode="numeric" min="1" max="100"></label>
           <label class="settings-field full settings-switch-field" title="开启：换一批前先将当前显示的推荐标记为忽略；关闭：只重排当前推荐池，不反馈当前内容。">
             <span>换一批时忽略当前</span>
