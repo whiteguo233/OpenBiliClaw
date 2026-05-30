@@ -2773,7 +2773,14 @@ const EDIT_FIELD_ORDER = [
   "surface.style.depth_preference",
 ];
 
+function setProfileEditingLayout(editing) {
+  if (elements.viewProfile instanceof HTMLElement) {
+    elements.viewProfile.classList.toggle("is-profile-editing", editing);
+  }
+}
+
 function syncProfileEditChrome(initialized) {
+  setProfileEditingLayout(profileEditing);
   if (elements.profileEditBar instanceof HTMLElement) {
     elements.profileEditBar.hidden = !initialized;
   }
@@ -2800,6 +2807,7 @@ async function refreshEditPanel() {
 
 async function enterProfileEditMode() {
   profileEditing = true;
+  setProfileEditingLayout(true);
   if (elements.profileCard instanceof HTMLElement) elements.profileCard.hidden = true;
   if (elements.profileEditPanel instanceof HTMLElement) elements.profileEditPanel.hidden = false;
   if (elements.profileEditHint instanceof HTMLElement) elements.profileEditHint.hidden = false;
@@ -2811,6 +2819,7 @@ async function enterProfileEditMode() {
 
 function exitProfileEditMode({ refresh = true } = {}) {
   profileEditing = false;
+  setProfileEditingLayout(false);
   if (elements.profileEditPanel instanceof HTMLElement) {
     elements.profileEditPanel.hidden = true;
     elements.profileEditPanel.replaceChildren();

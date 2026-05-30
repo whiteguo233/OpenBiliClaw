@@ -4,6 +4,10 @@
 
 ---
 
+## extension v0.3.59: 画像编辑态布局修复（2026-05-31）
+
+- 修复插件画像页编辑态布局不一致：进入「编辑画像」后，side panel 现在会给画像 tab 加 `is-profile-editing` 页面态，用 CSS 强制让只读画像卡片退出布局、编辑面板占据原位置；避免只读内容仍显示、编辑控件跑到整页底部，行为对齐移动 Web 与桌面 Web 的替换式编辑态。
+
 ## extension v0.3.58: 收藏 / 稍后再看 toggle 写入中竞态修复（2026-05-31）
 
 - 修复收藏 / 稍后再看 toggle 在「写入进行中卡片重渲染」时被回滚的竞态：新注册按钮发出的状态 GET 读到写入前的旧快照、又在 add/remove 成功之后才返回，会把刚确认的 toggle 盖回旧值。现在 bvid 仍 `busy` 时就丢弃该 hydration（不只看 mutation version 是否 bump），并在写入成功后再 bump 一次版本号让期间发起的 GET 失效；补 `popup-saved-sync.test.ts` 回归。

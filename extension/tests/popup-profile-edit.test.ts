@@ -30,6 +30,17 @@ test("profile view exposes an edit toggle + panel and edit-mode wiring", () => {
   assert.match(js, /function syncProfileEditChrome\(/);
 });
 
+test("profile edit mode is a page-level replacement state", () => {
+  const html = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const js = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(html, /\.view\.is-profile-editing\s+#profileCard\s*\{[\s\S]*display:\s*none\s*!important/);
+  assert.match(html, /\.view\.is-profile-editing\s+#profileEditPanel\s*\{[\s\S]*display:\s*flex\s*!important/);
+  assert.match(js, /function setProfileEditingLayout\(/);
+  assert.match(js, /elements\.viewProfile\.classList\.toggle\("is-profile-editing", editing\)/);
+  assert.match(js, /setProfileEditingLayout\(profileEditing\)/);
+});
+
 test("edit panel covers the un-truncated editable fields", () => {
   const js = readFileSync(resolve("popup", "popup.js"), "utf8");
   for (const path of [
