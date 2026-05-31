@@ -7,6 +7,7 @@
 - [项目主页](index.html) — GitHub Pages 首页，一句话安装、插件下载、GitHub 入口和产品卖点概览
 - [主页 SEO 维护指南](seo.md) — Search Console / Bing 提交清单、sitemap / OG / JSON-LD 长期维护要点
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
+- [隐私权政策](privacy.md) — Chrome Web Store / 插件数据收集披露与本地优先数据流说明
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
@@ -17,6 +18,7 @@
 - [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体 WebFetch 的短契约,配合 README 的短粘贴语句
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
+- [后端与浏览器插件自动更新 SPEC](specs/auto-update.md) — 后端源码自动应用、插件 sideload 更新提示与未来原生更新通道边界
 
 ## 可视化架构图
 

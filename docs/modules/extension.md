@@ -58,7 +58,8 @@ extension/
 ├── scripts/
 │   ├── build.mjs
 │   ├── package.mjs
-│   └── package-firefox.mjs
+│   ├── package-firefox.mjs
+│   └── chrome-webstore-upload.mjs
 ├── popup/
 │   ├── popup.html
 │   ├── popup.js
@@ -364,6 +365,15 @@ npm run build
 - 下载入口：GitHub Releases 页面中查找最新的 `extension-v*` release
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
 - `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
+
+Chrome Web Store 上传自动化走官方 API v2，不使用第三方上传 action：
+
+- 本地上传：`cd extension && npm run webstore:upload -- --zip openbiliclaw-extension-vX.Y.Z.zip`
+- 本地上传并提交审核：`cd extension && npm run webstore:upload -- --zip openbiliclaw-extension-vX.Y.Z.zip --publish`
+- GitHub Actions：手动运行 `Publish Chrome Web Store Package` workflow；默认只上传 zip，不提交审核，勾选 `publish` 才调用 Chrome Web Store `publish` API。
+- 需要在本地环境变量或 GitHub Secrets 设置：`CHROME_WEBSTORE_CLIENT_ID`、`CHROME_WEBSTORE_CLIENT_SECRET`、`CHROME_WEBSTORE_REFRESH_TOKEN`、`CHROME_WEBSTORE_PUBLISHER_ID`、`CHROME_WEBSTORE_EXTENSION_ID`。
+- `CHROME_WEBSTORE_REFRESH_TOKEN` 必须由拥有该 Chrome Web Store item 管理权限的 Google 账号生成，OAuth scope 为 `https://www.googleapis.com/auth/chromewebstore`。
+- Chrome Web Store 隐私权政策网址可填写 `https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/privacy.md`；该文档说明插件单一用途、权限理由、数据类型、本地后端数据流和无远程代码声明。
 
 后端桌面包不走 GitHub Release 分发；后端源码更新只通过 `backend-v*` tag 标记，浏览器插件的 GitHub Release 保持为唯一下载包通道。
 

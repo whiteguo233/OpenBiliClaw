@@ -8,6 +8,9 @@
 
 - 对齐插件端收藏 / 稍后再看与 PC Web、移动 Web：side panel tab bar 新增独立「稍后」页，推荐卡和 delight banner 都提供「时钟=稍后再看」「星星=收藏」两个互相独立的 SVG toggle；列表移除、推荐卡和惊喜横幅继续共用 `popup-saved-sync.js` 同步同一 bvid 的状态。
 - 新增 `popup-saved-surfaces-e2e.test.ts`，以真实 HTTP mock 后端跑插件 `popup-api` 往返，并断言稍后再看 / 收藏互相独立、UI 布线完整；补充真实 Chrome 浏览器端到端冒烟，验证 420px side panel 下五 tab 等宽、无横向溢出、保存按钮选中态和列表移除同步。
+- 新增 `docs/specs/auto-update.md`，锁定后端源码自动应用、插件 sideload 自动提示、以及未来商店 / 签名自托管更新通道的边界；明确 `backend-v*` 优先级、更新 API 状态合同和插件不可静默自替换的浏览器限制。
+- 新增 Chrome Web Store API v2 上传自动化：`extension/scripts/chrome-webstore-upload.mjs` 可用官方 OAuth refresh token 上传 Chrome-compatible zip，并可选提交审核；新增手动 GitHub Actions workflow `Publish Chrome Web Store Package`，默认只上传不发布。
+- 新增 `docs/privacy.md`，补齐 Chrome Web Store 隐私权政策页面：说明插件单一用途、权限理由、处理的数据类型、本地后端数据流、无远程代码、无出售或无关第三方传输。
 
 ## extension v0.3.60: 「阿B 最近新记住了什么」改为点击加载更多（2026-05-31）
 

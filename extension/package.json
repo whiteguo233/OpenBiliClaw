@@ -14,7 +14,8 @@
     "package": "node scripts/package.mjs",
     "package:only": "node scripts/package.mjs --no-build",
     "package:firefox": "node scripts/package-firefox.mjs",
-    "package:firefox:only": "node scripts/package-firefox.mjs --no-build"
+    "package:firefox:only": "node scripts/package-firefox.mjs --no-build",
+    "webstore:upload": "node scripts/chrome-webstore-upload.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.29",

@@ -1,0 +1,77 @@
+name: Publish Chrome Web Store Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Submit the uploaded package for Chrome Web Store review"
+        required: true
+        default: false
+        type: boolean
+      staged:
+        description: "Use staged publish after review approval"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    name: Upload Chrome-compatible extension package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm ci
+        working-directory: extension
+
+      - name: Build Chrome-compatible extension archive
+        run: npm run package
+        working-directory: extension
+
+      - name: Locate Chrome-compatible extension archive
+        id: archive
+        shell: bash
+        run: |
+          version="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("extension/manifest.json", "utf8")).version)')"
+          archive="extension/openbiliclaw-extension-v${version}.zip"
+          if [ ! -f "$archive" ]; then
+            echo "missing Chrome-compatible extension archive: $archive"
+            exit 1
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "Chrome Web Store archive: $archive"
+
+      - name: Upload package to Chrome Web Store
+        env:
+          CHROME_WEBSTORE_CLIENT_ID: ${{ secrets.CHROME_WEBSTORE_CLIENT_ID }}
+          CHROME_WEBSTORE_CLIENT_SECRET: ${{ secrets.CHROME_WEBSTORE_CLIENT_SECRET }}
+          CHROME_WEBSTORE_REFRESH_TOKEN: ${{ secrets.CHROME_WEBSTORE_REFRESH_TOKEN }}
+          CHROME_WEBSTORE_PUBLISHER_ID: ${{ secrets.CHROME_WEBSTORE_PUBLISHER_ID }}
+          CHROME_WEBSTORE_EXTENSION_ID: ${{ secrets.CHROME_WEBSTORE_EXTENSION_ID }}
+          SHOULD_PUBLISH: ${{ inputs.publish }}
+          SHOULD_STAGE: ${{ inputs.staged }}
+          ARCHIVE_PATH: ${{ steps.archive.outputs.archive }}
+        run: |
+          args=(--zip "$ARCHIVE_PATH")
+          if [ "$SHOULD_PUBLISH" = "true" ]; then
+            args+=(--publish)
+            if [ "$SHOULD_STAGE" = "true" ]; then
+              args+=(--staged)
+            fi
+          elif [ "$SHOULD_STAGE" = "true" ]; then
+            echo "staged=true ignored because publish=false"
+          fi
+          node extension/scripts/chrome-webstore-upload.mjs "${args[@]}"
