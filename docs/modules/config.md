@@ -358,8 +358,10 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 | `avoidance_speculation_cooldown_days` | int | `7` | 不喜欢领域探针被否认或过期后的冷却天数 |
 | `avoidance_speculation_confirmation_threshold` | int | `3` | 自动确认不喜欢领域所需显式负向信号数；用户直接确认不受此阈值限制 |
 | `avoidance_speculation_max_active` | int | `5` | 最多同时活跃的不喜欢领域探针数，不占 `speculation_max_active` |
-| `auto_update_enabled` | bool | `false` | 是否启用自动检查并应用新版本；默认关闭，避免本地开发或 release 漂移时自动重启 |
-| `auto_update_check_interval_hours` | int | `6` | 自动更新检查间隔（小时） |
+| `auto_update_enabled` | bool | `false` | 是否启用后端自动检查并应用新版本；默认关闭，只影响后端源码，不更新浏览器插件 |
+| `auto_update_check_interval_hours` | int | `6` | 后端自动更新检查间隔（小时）；手动检查不受该间隔限制 |
+| `auto_update_allow_prerelease` | bool | `false` | 是否允许 `backend-vX.Y.Z-rc/beta/dev` 预发布 tag 被后端自动更新选择；默认忽略 |
+| `auto_update_allowed_remotes` | list[str] | OpenBiliClaw GitHub HTTPS / SSH | 允许自动更新快进的 `origin` 精确 allowlist；unknown remote 或带 userinfo/credential 的 URL 都会以 `untrusted_remote` 拒绝 |
 
 > 运行时护栏：
 > 即使 `pool_target_count` 设得较高，单次 refresh 里的 discover wave 也由 `discovery_limit` 控制（默认 `30`，最大 `60`），避免一次性把全部缺口都打满。

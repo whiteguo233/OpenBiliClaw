@@ -123,3 +123,19 @@ test("Chrome and Firefox manifests avoid all-sites host permission", () => {
     assert.equal(manifest.host_permissions?.includes("*://*.youtube.com/*"), true);
   }
 });
+
+test("Chrome and Firefox manifests do not request tabs permission", () => {
+  const root = process.cwd();
+  const chromeManifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {
+    permissions?: string[];
+  };
+  const firefoxManifest = JSON.parse(
+    readFileSync(join(root, "manifest.firefox.json"), "utf8"),
+  ) as {
+    permissions?: string[];
+  };
+
+  for (const manifest of [chromeManifest, firefoxManifest]) {
+    assert.equal(manifest.permissions?.includes("tabs"), false);
+  }
+});

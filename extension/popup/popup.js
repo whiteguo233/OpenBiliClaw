@@ -54,6 +54,9 @@ import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
+  fetchUpdateStatus,
+  checkBackendUpdate,
+  applyBackendUpdate,
   fetchChatTurn,
   fetchChatTurns,
   fetchConfig,
@@ -106,6 +109,7 @@ const state = {
   runtimeStatus: null,
   runtimeEvent: null,
   runtimeConfig: null,
+  backendUpdateStatus: null,
   activityFeed: null,
   activityExpanded: false,
   activityLoadingMore: false,
@@ -126,6 +130,8 @@ const state = {
   pendingAvoidanceProbe: null,
   messages: [],
 };
+
+let backendUpdateStatusRefresh = null;
 
 const RUNTIME_REFRESH_DEBOUNCE_MS = 1000;
 let recommendationsRefreshTimer = null;
@@ -958,6 +964,15 @@ function connectRuntimeStream() {
       if (event.type === "config_reloaded") {
         setHint("后端配置已热重载，正在刷新数据…", "success");
         scheduleRecommendationsRefresh();
+      }
+      if (
+        event.type === "backend_update_available" ||
+        event.type === "backend_update_failed" ||
+        event.type === "backend_restart_pending"
+      ) {
+        if (typeof backendUpdateStatusRefresh === "function") {
+          void backendUpdateStatusRefresh();
+        }
       }
       // Pool updates are already merged into runtimeStatus above. Keep the
       // current recommendation list intact so appended history is not replaced
@@ -5139,6 +5154,64 @@ function bindSettings() {
     }
   }
 
+  function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value || "—";
+  }
+
+  function getExtensionVersionLabel() {
+    try {
+      const manifest = globalThis.chrome?.runtime?.getManifest?.();
+      return manifest?.version || "—";
+    } catch {
+      return "—";
+    }
+  }
+
+  function renderBackendUpdateStatus(payload) {
+    const backend = {
+      ...(state.backendUpdateStatus || {}),
+      ...(payload?.backend || payload || {}),
+    };
+    state.backendUpdateStatus = backend;
+    setText("backendUpdateCurrent", backend.current_version || "—");
+    setText("backendUpdateLatest", backend.latest_version || backend.latest_tag || "—");
+    setText("backendUpdateState", backend.state || "unknown");
+    setText("backendUpdateLastCheck", backend.last_check_at || "—");
+    const backendErrorText =
+      backend.last_error || (backend.reason && backend.reason !== "none" ? backend.reason : "—");
+    setText("backendUpdateError", backendErrorText);
+    setText("extensionVersionValue", getExtensionVersionLabel());
+
+    const applyBtn = document.getElementById("backendUpdateApply");
+    if (applyBtn instanceof HTMLButtonElement) {
+      const canApply = backend.state === "update_available" && Boolean(backend.latest_tag);
+      applyBtn.hidden = !canApply;
+      applyBtn.dataset.tag = backend.latest_tag || "";
+    }
+  }
+
+  async function loadBackendUpdateStatus() {
+    try {
+      const payload = await fetchUpdateStatus();
+      renderBackendUpdateStatus(payload);
+      return payload;
+    } catch {
+      renderBackendUpdateStatus({
+        state: "unknown",
+        current_version: "—",
+        latest_version: "—",
+        latest_tag: "",
+        last_check_at: "",
+        last_error: "后端不可达",
+        reason: "github_unreachable",
+      });
+      return null;
+    }
+  }
+
+  backendUpdateStatusRefresh = loadBackendUpdateStatus;
+
   function showProviderFields(provider) {
     for (const el of overlay.querySelectorAll(".settings-provider-fields")) {
       el.classList.toggle("is-active", el.dataset.provider === provider);
@@ -5640,6 +5713,38 @@ function bindSettings() {
     };
   }
 
+  const backendCheckBtn = document.getElementById("backendUpdateCheck");
+  const backendApplyBtn = document.getElementById("backendUpdateApply");
+  if (backendCheckBtn instanceof HTMLButtonElement) {
+    backendCheckBtn.addEventListener("click", async () => {
+      backendCheckBtn.disabled = true;
+      try {
+        const payload = await checkBackendUpdate();
+        renderBackendUpdateStatus(payload);
+        showToast("后端更新检查完成", "success");
+      } catch {
+        showToast("后端更新检查失败", "error");
+      } finally {
+        backendCheckBtn.disabled = false;
+      }
+    });
+  }
+  if (backendApplyBtn instanceof HTMLButtonElement) {
+    backendApplyBtn.addEventListener("click", async () => {
+      const tag = backendApplyBtn.dataset.tag || "";
+      backendApplyBtn.disabled = true;
+      try {
+        const payload = await applyBackendUpdate(tag);
+        renderBackendUpdateStatus({ state: payload.state, reason: payload.reason, latest_tag: tag });
+        showToast("后端更新已开始，稍后会重启", "success");
+      } catch {
+        showToast("后端更新未能开始", "error");
+      } finally {
+        backendApplyBtn.disabled = false;
+      }
+    });
+  }
+
   gearBtn.addEventListener("click", async () => {
     overlay.hidden = false;
     toast.hidden = true;
@@ -5651,6 +5756,7 @@ function bindSettings() {
     // populates even when the backend is unreachable — which is the whole
     // point of changing it.
     await populateBackendEndpoint();
+    void loadBackendUpdateStatus();
     void authControl.reload();
     try {
       const cfg = await fetchConfig();

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import ipaddress
 import logging
 import os
@@ -11,21 +10,20 @@ import re
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
-import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
     ActivityFeedResponse,
+    BackendUpdateStatusOut,
     BehaviorEventBatchIn,
     BilibiliConfigOut,
     BilibiliCookieIn,
@@ -84,6 +82,9 @@ from openbiliclaw.api.models import (
     SourceShareSuggestionIn,
     SourceShareSuggestionResponse,
     StorageConfigOut,
+    UpdateApplyIn,
+    UpdateCheckIn,
+    UpdateStatusResponse,
     WatchLaterAddIn,
     WatchLaterItem,
     WatchLaterListResponse,
@@ -91,13 +92,25 @@ from openbiliclaw.api.models import (
     XiaohongshuSourceConfigOut,
     YoutubeSourceConfigOut,
 )
+from openbiliclaw.runtime.image_cache import (
+    CoverFetchError,
+    cleanup_image_cache,
+    fetch_cover_bytes,
+    save_image_bytes,
+)
+from openbiliclaw.runtime.image_cache import (
+    image_cache_dir as _image_cache_dir,
+)
+from openbiliclaw.runtime.image_cache import (
+    image_cache_key as _image_cache_key,
+)
 from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -132,28 +145,10 @@ _RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 _BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
-_IMAGE_PROXY_ALLOWED_SUFFIXES = (
-    "hdslb.com",
-    "xhscdn.com",
-    "pstatp.com",
-    "douyinpic.com",
-    "douyinvod.com",
-    "ytimg.com",
-    "ggpht.com",
-)
-_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
-_IMAGE_PROXY_SPOOL_MEMORY_BYTES = 1024 * 1024
-_IMAGE_PROXY_TIMEOUT_SECONDS = 10.0
-_IMAGE_PROXY_MAX_REDIRECTS = 3
+# Cover-image fetch/whitelist constants live in openbiliclaw.runtime.image_cache
+# (shared by the proxy route and the prefetch sweep). Only the disk-cache age cap
+# is referenced directly from here, by the startup cleanup call.
 _IMAGE_CACHE_MAX_AGE_DAYS = 30
-_IMAGE_PROXY_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
-_IMAGE_PROXY_UPSTREAM_HEADERS = {
-    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
-    ),
-}
 
 
 def _default_route_ip() -> str | None:
@@ -481,79 +476,6 @@ def _normalize_cognition_update(item: dict[str, object]) -> CognitionUpdateSumma
     )
 
 
-def _is_image_proxy_host_allowed(hostname: str) -> bool:
-    host = hostname.rstrip(".").lower()
-    return any(
-        host == suffix or host.endswith(f".{suffix}") for suffix in _IMAGE_PROXY_ALLOWED_SUFFIXES
-    )
-
-
-def _parse_image_proxy_url(raw_url: str) -> httpx.URL:
-    try:
-        parsed = httpx.URL(raw_url)
-    except httpx.InvalidURL as exc:
-        raise HTTPException(status_code=400, detail="Invalid URL") from exc
-    if parsed.scheme not in {"http", "https"} or not parsed.host:
-        raise HTTPException(status_code=400, detail="Invalid URL")
-    if parsed.userinfo:
-        raise HTTPException(status_code=400, detail="Invalid URL")
-    if not _is_image_proxy_host_allowed(parsed.host):
-        raise HTTPException(status_code=403, detail="Domain not in whitelist")
-    return parsed
-
-
-def _validate_image_proxy_content_headers(headers: httpx.Headers) -> str:
-    content_type = str(headers.get("content-type", "")).strip()
-    if not content_type.lower().startswith("image/"):
-        raise HTTPException(status_code=400, detail="Not an image")
-    content_length = headers.get("content-length")
-    if content_length:
-        try:
-            size = int(content_length)
-        except ValueError as exc:
-            raise HTTPException(status_code=502, detail="Invalid upstream content length") from exc
-        if size > _IMAGE_PROXY_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="Image too large")
-    return content_type
-
-
-def _iter_spooled_file(file_obj: BinaryIO) -> Iterator[bytes]:
-    try:
-        while True:
-            chunk = file_obj.read(64 * 1024)
-            if not chunk:
-                break
-            yield chunk
-    finally:
-        file_obj.close()
-
-
-def _image_cache_dir() -> Path:
-    from pathlib import Path
-
-    d = Path("data/image-cache")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _normalize_cache_url(url: str) -> str:
-    """Normalize URLs with expiring tokens so the same image always maps to the same cache key.
-
-    XHS CDN URLs: ``https://sns-webpic-qc.xhscdn.com/{timestamp}/{token}/{path}``
-    — the ``{timestamp}/{token}`` changes on every regeneration but ``{path}`` is stable.
-    """
-    import re
-
-    m = re.match(r"(https?://[^/]*xhscdn\.com)/\d{12}/[0-9a-f]+/(.*)", url)
-    if m:
-        return f"{m.group(1)}/{m.group(2)}"
-    return url
-
-
-def _image_cache_key(url: str) -> str:
-    return hashlib.sha256(_normalize_cache_url(url).encode()).hexdigest()
-
-
 def _image_cache_lookup(url: str) -> tuple[Path, str] | None:
     """Return (path, content_type) if a cached copy exists."""
     key = _image_cache_key(url)
@@ -564,17 +486,6 @@ def _image_cache_lookup(url: str) -> tuple[Path, str] | None:
         if candidate.stat().st_size > 0:
             return candidate, content_type
     return None
-
-
-def _image_cache_save(url: str, data: bytes, content_type: str) -> None:
-    """Persist image bytes to disk cache."""
-    key = _image_cache_key(url)
-    ext = content_type.split("/")[-1].split(";")[0].strip()
-    if ext not in {"jpeg", "jpg", "png", "webp", "avif", "gif"}:
-        ext = "jpg"
-    path = _image_cache_dir() / f"{key}.{ext}"
-    with suppress(Exception):
-        path.write_bytes(data)
 
 
 def _image_cache_response(url: str) -> FileResponse | None:
@@ -591,62 +502,6 @@ def _image_cache_response(url: str) -> FileResponse | None:
             "X-Image-Cache": "hit",
         },
     )
-
-
-def _image_cache_cleanup() -> int:
-    """Remove cached images older than _IMAGE_CACHE_MAX_AGE_DAYS. Returns count removed."""
-    import time
-
-    cache_dir = _image_cache_dir()
-    cutoff = time.time() - _IMAGE_CACHE_MAX_AGE_DAYS * 86400
-    removed = 0
-    with suppress(Exception):
-        for f in cache_dir.iterdir():
-            if f.is_file() and f.stat().st_mtime < cutoff:
-                f.unlink(missing_ok=True)
-                removed += 1
-    return removed
-
-
-async def _send_image_proxy_request(client: httpx.AsyncClient, url: httpx.URL) -> httpx.Response:
-    current = url
-    seen: set[str] = set()
-    for _ in range(_IMAGE_PROXY_MAX_REDIRECTS + 1):
-        current = _parse_image_proxy_url(str(current))
-        current_key = str(current)
-        if current_key in seen:
-            raise HTTPException(status_code=502, detail="Redirect loop")
-        seen.add(current_key)
-        request = client.build_request("GET", current_key, headers=_IMAGE_PROXY_UPSTREAM_HEADERS)
-        response = await client.send(request, stream=True)
-        if response.status_code in _IMAGE_PROXY_REDIRECT_STATUSES:
-            location = response.headers.get("location", "").strip()
-            await response.aclose()
-            if not location:
-                raise HTTPException(status_code=502, detail="Invalid redirect")
-            current = current.join(location)
-            continue
-        return response
-    raise HTTPException(status_code=502, detail="Too many redirects")
-
-
-async def _read_image_proxy_body(response: httpx.Response) -> BinaryIO:
-    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - returned after validation.
-        max_size=_IMAGE_PROXY_SPOOL_MEMORY_BYTES,
-        mode="w+b",
-    )
-    total = 0
-    try:
-        async for chunk in response.aiter_bytes():
-            total += len(chunk)
-            if total > _IMAGE_PROXY_MAX_BYTES:
-                raise HTTPException(status_code=413, detail="Image too large")
-            spool.write(chunk)
-        spool.seek(0)
-        return cast("BinaryIO", spool)
-    except Exception:
-        spool.close()
-        raise
 
 
 def create_app(
@@ -761,7 +616,10 @@ def create_app(
         if ctx.auto_update_service is None:
             from openbiliclaw.runtime.updater import AutoUpdateService
 
-            ctx.auto_update_service = AutoUpdateService(enabled=True)
+            ctx.auto_update_service = AutoUpdateService(
+                enabled=False,
+                event_publisher=getattr(ctx.event_hub, "publish", None),
+            )
     else:
         # Production path: build everything from config.
         try:
@@ -1340,50 +1198,27 @@ def create_app(
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(
         url: str = Query(..., description="URL-encoded image URL to proxy"),
-    ) -> StreamingResponse | FileResponse:
+    ) -> Response | FileResponse:
         """Proxy whitelisted remote cover images through the local backend.
 
-        Successfully fetched images are cached to ``data/image-cache/``.
-        When the upstream fails (e.g. expired XHS CDN tokens), the cached
-        copy is served instead.
+        Fetch + whitelist / redirect / size validation live in
+        ``openbiliclaw.runtime.image_cache.fetch_cover_bytes`` (shared with the
+        discovery-time prefetch sweep). Successfully fetched images are cached to
+        ``data/image-cache/``; when the upstream fails (e.g. an expired XHS CDN
+        token) the cached copy is served instead.
         """
-
-        parsed = _parse_image_proxy_url(url)
         try:
-            async with httpx.AsyncClient(
-                timeout=_IMAGE_PROXY_TIMEOUT_SECONDS,
-                follow_redirects=False,
-            ) as client:
-                response = await _send_image_proxy_request(client, parsed)
-                try:
-                    if response.status_code < 200 or response.status_code >= 300:
-                        raise HTTPException(status_code=502, detail="Upstream request failed")
-                    content_type = _validate_image_proxy_content_headers(response.headers)
-                    spool = await _read_image_proxy_body(response)
-                finally:
-                    await response.aclose()
-        except httpx.TimeoutException as exc:
-            # Network-level upstream failures may use a cached copy.
-            if cached := _image_cache_response(url):
-                return cached
-            raise HTTPException(status_code=504, detail="Upstream request timed out") from exc
-        except httpx.HTTPError as exc:
-            if cached := _image_cache_response(url):
-                return cached
-            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
-        except HTTPException as exc:
+            data, content_type = await fetch_cover_bytes(url)
+        except CoverFetchError as exc:
+            # Validation failures (400/403/413) surface as-is; upstream / network
+            # failures (>=500) fall back to a cached copy when one exists.
             if exc.status_code >= 500 and (cached := _image_cache_response(url)):
                 return cached
-            raise
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
-        # Cache the successfully fetched image.
-        spool.seek(0)
-        image_bytes = spool.read()
-        spool.seek(0)
-        _image_cache_save(url, image_bytes, content_type)
-
-        return StreamingResponse(
-            _iter_spooled_file(spool),
+        save_image_bytes(url, data, content_type)
+        return Response(
+            content=data,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",
@@ -1772,11 +1607,23 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_refresh_loop() -> None:
-        # Clean up expired image cache on startup.
+        # Prune the cover-image cache on startup (consumed + unsaved content,
+        # plus aged orphans). The periodic pass runs from RefreshRuntime.
         try:
-            removed = _image_cache_cleanup()
-            if removed:
-                logger.info("Image cache cleanup: removed %d expired files", removed)
+            result = cleanup_image_cache(
+                database=getattr(ctx, "database", None),
+                max_age_days=_IMAGE_CACHE_MAX_AGE_DAYS,
+            )
+            if result.removed:
+                logger.info(
+                    "Image cache cleanup: removed %d cover files (%.1f MB freed; "
+                    "%d consumed, %d aged orphans, %d unrefetchable protected)",
+                    result.removed,
+                    result.freed_bytes / (1024 * 1024),
+                    result.removed_consumed,
+                    result.removed_aged_orphans,
+                    result.protected_unrefetchable,
+                )
         except Exception:
             logger.debug("Image cache cleanup failed", exc_info=True)
 
@@ -2524,6 +2371,67 @@ def create_app(
         if callable(get_update_status):
             payload.update(get_update_status())
         return RuntimeStatusResponse(**payload)
+
+    def _backend_update_status() -> BackendUpdateStatusOut:
+        get_update_status = getattr(ctx.auto_update_service, "get_update_status", None)
+        if callable(get_update_status):
+            status = get_update_status()
+            return BackendUpdateStatusOut.model_validate(
+                dict(status) if isinstance(status, dict) else {}
+            )
+        get_runtime_update_status = getattr(ctx.auto_update_service, "get_runtime_status", None)
+        if callable(get_runtime_update_status):
+            runtime_status = dict(get_runtime_update_status())
+            return BackendUpdateStatusOut(
+                state=str(runtime_status.get("backend_update_state", "unknown")),
+                auto_update_enabled=bool(runtime_status.get("auto_update_enabled", False)),
+                current_version=str(runtime_status.get("current_version", "")),
+                latest_version=str(runtime_status.get("latest_remote_version", "")),
+                latest_tag=str(runtime_status.get("latest_remote_version", "")),
+                last_check_at=str(runtime_status.get("last_update_check_at", "")),
+                last_error=str(runtime_status.get("last_update_error", "")),
+                reason=str(runtime_status.get("backend_update_reason", "none")),
+            )
+        return BackendUpdateStatusOut(
+            state="disabled",
+            auto_update_enabled=False,
+            current_version="",
+            latest_version="",
+            latest_tag="",
+            last_check_at="",
+            last_error="",
+            reason="none",
+        )
+
+    @app.get("/api/update-status", response_model=UpdateStatusResponse)
+    async def update_status() -> UpdateStatusResponse:
+        return UpdateStatusResponse(backend=_backend_update_status())
+
+    @app.post("/api/update/check", response_model=UpdateStatusResponse)
+    async def update_check(_payload: UpdateCheckIn | None = None) -> UpdateStatusResponse:
+        check_now = getattr(ctx.auto_update_service, "check_now", None)
+        if callable(check_now):
+            backend = await check_now()
+        else:
+            backend = _backend_update_status()
+        return UpdateStatusResponse(backend=BackendUpdateStatusOut.model_validate(backend))
+
+    @app.post("/api/update/apply")
+    async def update_apply(payload: UpdateApplyIn) -> JSONResponse:
+        request_apply = getattr(ctx.auto_update_service, "request_apply", None)
+        if not callable(request_apply):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "target": "backend",
+                    "state": "unsupported",
+                    "reason": "unsupported_install_mode",
+                    "accepted": False,
+                    "observe_via": "runtime-stream",
+                },
+            )
+        status_code, body = await request_apply(tag=payload.tag)
+        return JSONResponse(status_code=int(status_code), content=body)
 
     @app.get("/api/notifications/pending", response_model=PendingNotificationResponse)
     async def pending_notification() -> PendingNotificationResponse:
@@ -5301,6 +5209,8 @@ def create_app(
                 avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
                 auto_update_enabled=cfg.scheduler.auto_update_enabled,
                 auto_update_check_interval_hours=cfg.scheduler.auto_update_check_interval_hours,
+                auto_update_allow_prerelease=cfg.scheduler.auto_update_allow_prerelease,
+                auto_update_allowed_remotes=list(cfg.scheduler.auto_update_allowed_remotes),
             ),
             storage=StorageConfigOut(db_path=cfg.storage.db_path),
             logging=LoggingConfigOut(
@@ -5386,6 +5296,11 @@ def create_app(
             if isinstance(value, str):
                 return value.strip().lower() in {"1", "true", "yes", "y", "on"}
             return bool(value)
+
+        def _string_list(value: object) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            return [str(item).strip() for item in value if str(item).strip()]
 
         # Apply top-level scalars
         if "language" in update:
@@ -5621,11 +5536,17 @@ def create_app(
                 "avoidance_speculation_max_active",
                 "auto_update_enabled",
                 "auto_update_check_interval_hours",
+                "auto_update_allow_prerelease",
+                "auto_update_allowed_remotes",
                 "feedback_batch_threshold",
             ):
                 if key in sdata:
                     current_val = getattr(cfg.scheduler, key)
-                    if key == "extension_disconnect_grace_seconds":
+                    if key == "auto_update_allowed_remotes":
+                        next_remotes = _string_list(sdata[key])
+                        if next_remotes:
+                            setattr(cfg.scheduler, key, next_remotes)
+                    elif key == "extension_disconnect_grace_seconds":
                         setattr(
                             cfg.scheduler,
                             key,

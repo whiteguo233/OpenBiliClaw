@@ -27,8 +27,7 @@
         "cookies",
         "notifications",
         "scripting",
-        "storage",
-        "tabs"
+        "storage"
     ],
     "host_permissions": [
         "*://*.bilibili.com/*",

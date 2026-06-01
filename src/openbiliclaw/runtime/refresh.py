@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from openbiliclaw.config import SchedulerConfig
 from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+from openbiliclaw.runtime.image_cache import (
+    cleanup_image_cache,
+    prefetch_cover,
+    select_prefetch_targets,
+)
 from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import (
@@ -27,6 +32,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
+# How often the cover-image disk cache is pruned of consumed + unsaved covers.
+# The bulk one-shot prune runs at API startup; this is the steady-state sweep.
+_IMAGE_CACHE_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
+# Discovery-time cover prefetch: cache covers while their CDN token is still fresh
+# (XHS signed URLs expire fast). Runs often, scans recent discoveries newest-first,
+# and is bounded per tick so it never floods a CDN.
+_COVER_PREFETCH_INTERVAL_SECONDS = 60
+_COVER_PREFETCH_RECENT_HOURS = 12
+_COVER_PREFETCH_SCAN = 300
+_COVER_PREFETCH_MAX_FETCH = 40
 _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "bilibili": 8,
 }
@@ -110,6 +125,10 @@ class SupportsEventDatabase(Protocol):
         raw_source_share_quotas: dict[str, int] | None = None,
     ) -> int: ...
     def evict_stale_pool_items(self, *, max_age_days: int = 14) -> int: ...
+    def iter_cover_lifecycle(self) -> list[tuple[str, str, bool]]: ...
+    def iter_servable_cover_urls(
+        self, *, recent_hours: int = 12, limit: int = 300
+    ) -> list[str]: ...
     def get_notification_candidate(
         self,
         *,
@@ -780,7 +799,9 @@ class ContinuousRefreshController:
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
-            └─ _loop_proactive_push()    60s   delight + interest probe
+            ├─ _loop_proactive_push()    60s   delight + interest probe
+            ├─ _loop_image_cache_cleanup() 6h  prune consumed+unsaved covers
+            └─ _loop_cover_prefetch()    60s   cache fresh-token covers (XHS)
         """
         if self._llm_work_allowed():
             with suppress(Exception):
@@ -794,6 +815,8 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_proactive_push()),
+            asyncio.create_task(self._loop_image_cache_cleanup()),
+            asyncio.create_task(self._loop_cover_prefetch()),
         ]
         try:
             await asyncio.gather(*tasks)
@@ -1056,6 +1079,71 @@ class ContinuousRefreshController:
                         }
                     )
             await asyncio.sleep(self.proactive_push_interval_seconds)
+
+    async def _loop_image_cache_cleanup(self) -> None:
+        """Periodically prune the cover-image disk cache.
+
+        Evicts cached covers of consumed, unsaved content (the user has seen and
+        passed on them, and they are not in favorites / watch-later). Covers of
+        saved or still-pending content are kept, and un-refetchable covers (XHS
+        rotating-token URLs) are protected — the cached copy is their only durable
+        source once the upstream token expires. The bulk first pass runs at API
+        startup; this is the steady-state sweep.
+        """
+        while True:
+            await asyncio.sleep(_IMAGE_CACHE_CLEANUP_INTERVAL_SECONDS)
+            try:
+                result = cleanup_image_cache(database=self.database)
+            except Exception:
+                logger.debug("image cache cleanup tick failed", exc_info=True)
+                continue
+            if result.removed:
+                logger.info(
+                    "image cache cleanup: removed %d cover files (%.1f MB freed; "
+                    "%d consumed, %d aged orphans, %d unrefetchable protected)",
+                    result.removed,
+                    result.freed_bytes / (1024 * 1024),
+                    result.removed_consumed,
+                    result.removed_aged_orphans,
+                    result.protected_unrefetchable,
+                )
+
+    async def _prefetch_uncached_covers(
+        self,
+        *,
+        scan: int = _COVER_PREFETCH_SCAN,
+        max_fetch: int = _COVER_PREFETCH_MAX_FETCH,
+    ) -> int:
+        """Cache covers for recently discovered, still-servable content.
+
+        Fixes the «封面 502» failure mode: cover images were previously fetched only
+        when a card was displayed, by which point a short-lived XHS signed token had
+        often expired. Prefetching right after discovery saves the image while the
+        token is fresh. Un-refetchable (XHS rotating-token) covers are tried first
+        since re-fetchable ones (Bilibili etc.) never expire. Best-effort and bounded.
+        """
+        candidates = self.database.iter_servable_cover_urls(
+            recent_hours=_COVER_PREFETCH_RECENT_HOURS,
+            limit=scan,
+        )
+        targets = select_prefetch_targets(candidates, max_fetch=max_fetch)
+        fetched = 0
+        for url in targets:
+            if await prefetch_cover(url):
+                fetched += 1
+        return fetched
+
+    async def _loop_cover_prefetch(self) -> None:
+        """Periodically cache discovered covers while their CDN token is fresh."""
+        while True:
+            try:
+                cached = await self._prefetch_uncached_covers()
+            except Exception:
+                logger.debug("cover prefetch tick failed", exc_info=True)
+                cached = 0
+            if cached:
+                logger.info("cover prefetch: cached %d new covers", cached)
+            await asyncio.sleep(_COVER_PREFETCH_INTERVAL_SECONDS)
 
     async def _tick_xhs_producer(self) -> None:
         """Invoke the xhs search task producer if one is configured."""

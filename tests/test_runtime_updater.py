@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import subprocess
 from typing import TYPE_CHECKING
 
 import httpx
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
     ("tag", "expected"),
     [
         ("backend-v0.3.71", (0, 3, 71)),
-        ("backend-v0.3.71-rc1", (0, 3, 71)),
+        ("backend-v0.3.71-rc1", None),
         ("extension-v0.3.24", None),
         ("v0.3.71", (0, 3, 71)),
         ("0.3.71", (0, 3, 71)),
@@ -95,6 +97,35 @@ async def test_fetch_latest_version_uses_tags_and_returns_highest_backend_tag() 
 
 
 @pytest.mark.asyncio
+async def test_fetch_latest_version_prefers_backend_tag_over_higher_legacy_tag() -> None:
+    _FakeAsyncClient.pages = {
+        1: [
+            {"name": "v0.3.90"},
+            {"name": "0.3.91"},
+            {"name": "backend-v0.3.89"},
+        ],
+    }
+
+    service = updater.AutoUpdateService()
+
+    assert await service._fetch_latest_version() == "backend-v0.3.89"
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_version_ignores_prerelease_by_default() -> None:
+    _FakeAsyncClient.pages = {
+        1: [
+            {"name": "backend-v0.3.100-rc1"},
+            {"name": "backend-v0.3.99-beta.1"},
+        ],
+    }
+
+    service = updater.AutoUpdateService()
+
+    assert await service._fetch_latest_version() == ""
+
+
+@pytest.mark.asyncio
 async def test_fetch_latest_version_finds_backend_tag_on_later_page() -> None:
     _FakeAsyncClient.pages = {
         1: [{"name": "extension-v0.3.24"}],
@@ -150,3 +181,385 @@ async def test_check_now_reports_no_backend_tag_for_extension_only_tags(
     assert result == {"checked": True, "updated": False, "reason": "no_backend_tag_yet"}
     assert "no_backend_tag_yet" in caplog.text
     assert "Already up-to-date" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_manual_check_reports_update_available_when_auto_apply_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeAsyncClient.pages = {1: [{"name": "backend-v0.3.92"}], 2: []}
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.91")
+    service = updater.AutoUpdateService(enabled=False)
+
+    backend = await service.check_now()
+
+    assert backend["state"] == "update_available"
+    assert backend["auto_update_enabled"] is False
+    assert backend["current_version"] == "0.3.91"
+    assert backend["latest_version"] == "0.3.92"
+    assert backend["latest_tag"] == "backend-v0.3.92"
+    assert backend["reason"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_manual_check_publishes_backend_update_available_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeAsyncClient.pages = {1: [{"name": "backend-v0.3.92"}], 2: []}
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.91")
+    events: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        events.append(event)
+
+    service = updater.AutoUpdateService(enabled=False, event_publisher=_publish)
+
+    await service.check_now()
+
+    assert events == [
+        {
+            "type": "backend_update_available",
+            "current_version": "0.3.91",
+            "latest_version": "0.3.92",
+            "latest_tag": "backend-v0.3.92",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_check_reports_prerelease_ignored_when_only_newer_rc_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeAsyncClient.pages = {1: [{"name": "backend-v0.3.92-rc1"}], 2: []}
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.91")
+    service = updater.AutoUpdateService(enabled=False)
+
+    backend = await service.check_now()
+
+    assert backend["state"] == "up_to_date"
+    assert backend["reason"] == "prerelease_ignored"
+    assert backend["latest_tag"] == ""
+
+
+@pytest.mark.asyncio
+async def test_request_apply_blocks_dirty_worktree_before_install_or_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    subprocess = pytest.importorskip("subprocess")
+    for command in (
+        ["git", "init"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, text=True)
+    (tmp_path / "README.md").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/whiteguo233/OpenBiliClaw.git"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    restarted = False
+
+    def _restart() -> None:
+        nonlocal restarted
+        restarted = True
+
+    service = updater.AutoUpdateService(enabled=False)
+    monkeypatch.setattr(service, "_restart_process", _restart)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+
+    assert status_code == 409
+    assert payload == {
+        "target": "backend",
+        "state": "blocked",
+        "reason": "dirty_worktree",
+        "accepted": False,
+        "observe_via": "runtime-stream",
+    }
+    assert restarted is False
+
+
+@pytest.mark.asyncio
+async def test_request_apply_rejects_second_concurrent_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    service = updater.AutoUpdateService(enabled=False)
+
+    async def _guard(_tag: str) -> str:
+        return ""
+
+    async def _apply(_tag: str) -> None:
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(service, "_check_apply_guards", _guard)
+    monkeypatch.setattr(service, "_apply_update_to_tag", _apply)
+
+    first_status, first_payload = await service.request_apply(tag="backend-v0.3.92")
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+    second_status, second_payload = await service.request_apply(tag="backend-v0.3.92")
+    release.set()
+    if service._apply_task is not None:
+        await asyncio.wait_for(service._apply_task, timeout=0.5)
+
+    assert first_status == 202
+    assert first_payload["accepted"] is True
+    assert second_status == 409
+    assert second_payload == {
+        "target": "backend",
+        "state": "applying",
+        "reason": "already_applying",
+        "accepted": False,
+        "observe_via": "runtime-stream",
+    }
+
+
+@pytest.mark.parametrize(
+    "remote_url",
+    [
+        "https://github.com/someone-else/OpenBiliClaw.git",
+        "https://token@github.com/whiteguo233/OpenBiliClaw.git",
+    ],
+)
+@pytest.mark.asyncio
+async def test_request_apply_rejects_untrusted_and_credentialed_remotes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    remote_url: str,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    service = updater.AutoUpdateService(enabled=False)
+
+    async def _run_command(command, _root, *, timeout):
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(command, 0, f"{remote_url}\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(service, "_run_command", _run_command)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+
+    assert status_code == 409
+    assert payload["state"] == "blocked"
+    assert payload["reason"] == "untrusted_remote"
+
+
+@pytest.mark.asyncio
+async def test_request_apply_blocks_merge_or_rebase_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "MERGE_HEAD").write_text("abc123\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    service = updater.AutoUpdateService(enabled=False)
+
+    async def _run_command(command, _root, *, timeout):
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command, 0, "https://github.com/whiteguo233/OpenBiliClaw.git\n", ""
+            )
+        if command == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(service, "_run_command", _run_command)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+
+    assert status_code == 409
+    assert payload["state"] == "blocked"
+    assert payload["reason"] == "merge_or_rebase_in_progress"
+
+
+@pytest.mark.asyncio
+async def test_request_apply_reports_missing_tag_and_diverged_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    service = updater.AutoUpdateService(enabled=False)
+    rev_parse_calls = 0
+
+    async def _run_command(command, _root, *, timeout):
+        nonlocal rev_parse_calls
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command, 0, "https://github.com/whiteguo233/OpenBiliClaw.git\n", ""
+            )
+        if command == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        if command == ["git", "fetch", "--tags", "origin"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == ["git", "rev-parse", "--verify", "backend-v0.3.92^{commit}"]:
+            rev_parse_calls += 1
+            return subprocess.CompletedProcess(
+                command,
+                1 if rev_parse_calls == 1 else 0,
+                "abc123\n" if rev_parse_calls > 1 else "",
+                "",
+            )
+        if command == ["git", "merge-base", "--is-ancestor", "HEAD", "backend-v0.3.92"]:
+            return subprocess.CompletedProcess(command, 1, "", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(service, "_run_command", _run_command)
+
+    missing_status, missing_payload = await service.request_apply(tag="backend-v0.3.92")
+    diverged_status, diverged_payload = await service.request_apply(tag="backend-v0.3.92")
+
+    assert missing_status == 409
+    assert missing_payload["reason"] == "missing_target_tag"
+    assert diverged_status == 409
+    assert diverged_payload["reason"] == "branch_not_fast_forwardable"
+
+
+@pytest.mark.asyncio
+async def test_successful_apply_fetches_merges_syncs_and_publishes_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    calls: list[list[str]] = []
+    events: list[dict[str, object]] = []
+    restarted = False
+
+    async def _publish(event: dict[str, object]) -> None:
+        events.append(event)
+
+    async def _run_command(command, _root, *, timeout):
+        calls.append(list(command))
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command, 0, "https://github.com/whiteguo233/OpenBiliClaw.git\n", ""
+            )
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def _restart() -> None:
+        nonlocal restarted
+        restarted = True
+
+    service = updater.AutoUpdateService(enabled=False, event_publisher=_publish)
+    monkeypatch.setattr(service, "_run_command", _run_command)
+    monkeypatch.setattr(service, "_restart_process", _restart)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+    if service._apply_task is not None:
+        await asyncio.wait_for(service._apply_task, timeout=0.5)
+
+    assert status_code == 202
+    assert payload["accepted"] is True
+    assert ["git", "fetch", "--tags", "origin"] in calls
+    assert ["git", "merge", "--ff-only", "backend-v0.3.92"] in calls
+    assert ["uv", "sync"] in calls
+    assert restarted is True
+    assert events == [{"type": "backend_restart_pending", "latest_tag": "backend-v0.3.92"}]
+
+
+@pytest.mark.asyncio
+async def test_apply_dependency_failure_publishes_backend_update_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    events: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        events.append(event)
+
+    async def _run_command(command, _root, *, timeout):
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "https://github.com/whiteguo233/OpenBiliClaw.git\n",
+                "",
+            )
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        if command == ["uv", "sync"]:
+            return subprocess.CompletedProcess(command, 1, "", "dependency failed")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    service = updater.AutoUpdateService(enabled=False, event_publisher=_publish)
+    monkeypatch.setattr(service, "_run_command", _run_command)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+    if service._apply_task is not None:
+        await asyncio.wait_for(service._apply_task, timeout=0.5)
+
+    assert status_code == 202
+    assert payload["accepted"] is True
+    assert service.get_update_status()["state"] == "error"
+    assert service.get_update_status()["reason"] == "dependency_sync_failed"
+    assert events == [{"type": "backend_update_failed", "reason": "dependency_sync_failed"}]
+
+
+@pytest.mark.asyncio
+async def test_apply_restart_failure_logs_and_publishes_backend_update_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    events: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        events.append(event)
+
+    async def _run_command(command, _root, *, timeout):
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "https://github.com/whiteguo233/OpenBiliClaw.git\n",
+                "",
+            )
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def _restart() -> None:
+        raise RuntimeError("exec failed")
+
+    service = updater.AutoUpdateService(enabled=False, event_publisher=_publish)
+    monkeypatch.setattr(service, "_run_command", _run_command)
+    monkeypatch.setattr(service, "_restart_process", _restart)
+
+    with caplog.at_level(logging.ERROR):
+        status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+        if service._apply_task is not None:
+            await asyncio.wait_for(service._apply_task, timeout=0.5)
+
+    assert status_code == 202
+    assert payload["accepted"] is True
+    assert service.get_update_status()["state"] == "error"
+    assert service.get_update_status()["reason"] == "restart_failed"
+    assert "Auto-update restart failed" in caplog.text
+    assert events == [
+        {"type": "backend_restart_pending", "latest_tag": "backend-v0.3.92"},
+        {"type": "backend_update_failed", "reason": "restart_failed"},
+    ]

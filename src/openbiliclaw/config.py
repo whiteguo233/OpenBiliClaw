@@ -45,6 +45,10 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "douyin": 1,
     "youtube": 1,
 }
+_DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
+    "https://github.com/whiteguo233/OpenBiliClaw.git",
+    "git@github.com:whiteguo233/OpenBiliClaw.git",
+]
 _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
     "claude": "llm.claude.api_key",
@@ -221,6 +225,10 @@ class SchedulerConfig:
     # pipeline is reliable.
     auto_update_enabled: bool = False
     auto_update_check_interval_hours: int = 6
+    auto_update_allow_prerelease: bool = False
+    auto_update_allowed_remotes: list[str] = field(
+        default_factory=lambda: list(_DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES)
+    )
 
 
 @dataclass
@@ -727,6 +735,9 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     default=5,
                     min_value=1,
                 ),
+                "auto_update_allowed_remotes": _normalize_auto_update_allowed_remotes(
+                    sched_raw.get("auto_update_allowed_remotes")
+                ),
             }
         ),
         storage=StorageConfig(**store_raw),
@@ -1059,6 +1070,14 @@ def _normalize_scheduler_int(
     if max_value is not None and normalized > max_value:
         return default
     return normalized
+
+
+def _normalize_auto_update_allowed_remotes(value: object) -> list[str]:
+    """Normalize auto-update remote allowlist into non-empty string URLs."""
+    if not isinstance(value, list):
+        return list(_DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES)
+    remotes = [str(item).strip() for item in value if str(item).strip()]
+    return remotes or list(_DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES)
 
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
@@ -1596,6 +1615,10 @@ def _render_config_toml(
             f"auto_update_enabled = {_toml_bool(config.scheduler.auto_update_enabled)}",
             "auto_update_check_interval_hours = "
             f"{config.scheduler.auto_update_check_interval_hours}",
+            "auto_update_allow_prerelease = "
+            f"{_toml_bool(config.scheduler.auto_update_allow_prerelease)}",
+            "auto_update_allowed_remotes = "
+            f"{_toml_str_list(config.scheduler.auto_update_allowed_remotes)}",
             "",
             "[scheduler.pool_source_shares]",
             f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 8))}",

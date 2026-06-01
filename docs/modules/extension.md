@@ -262,11 +262,12 @@ CLI 入口：
 - 从 `/api/recommendations` 拉取推荐列表
 - 从 `/api/profile-summary` 同步 `speculative_interests` 与 `speculative_avoidances`，分别渲染待确认兴趣和待确认避雷方向；正向兴趣项会保留 `probe_mode` / `challenge`，profile 页面点击“喜欢”会带 `surface="profile"`，不和 runtime inbox 的默认 probe 确认混在一起
 - 收到 `avoidance.probe` runtime 事件后在 inbox 渲染避雷确认卡；`confirm` 调 `/api/avoidance-probes/respond` 且语义为“确实不喜欢”，`reject` 表示“不排斥”，`chat` 进入 `scope=avoidance_probe` 的 durable turn
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM 显式备选 provider、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/显式备选 provider、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、自动更新、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣和避雷探针参数、完整日志路径和日志清理参数
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM provider/key/model、LLM 显式备选 provider、DeepSeek reasoning、OpenRouter headers、embedding provider/key/model/显式备选 provider、per-module LLM override、B 站浏览器、通用 source 浏览器、Bilibili / 小红书 / 抖音 / YouTube source 开关、各源 discovery 预算、数据目录、SQLite 路径、调度、后端自动更新开关与检查间隔、候选池平台配比、真实 refresh / proactive push / speculator idle 频率、猜测兴趣和避雷探针参数、完整日志路径和日志清理参数
 - 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
 - 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues，保存按钮显示“保存并提示重启”；保存响应带 `restart_required=true` 时用 warning tone 提示用户重启 daemon
 - 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
 - 设置页保存配置时会保留后端已有的高级字段：`save_config()` 会串行化 scheduler speculation / auto-update 和 logging unmanaged cleanup 字段，避免 UI 修改常用项时把隐藏高级项写回默认值
+- 设置页“版本与更新”只展示后端更新状态并调用 `/api/update-status`、`/api/update/check`、`/api/update/apply` 的 backend target；插件版本行只读取本地 manifest 版本并链接 GitHub Releases。
 - 推荐 tab 现已改成“换一批”，会调用 `/api/recommendations/reshuffle` 直接从 discovery pool 秒级换出一批新推荐
 - 推荐 tab 滚到底时会调用 `/api/recommendations/append` 继续往下续 10 条，不会把当前这一屏直接替换掉；首次渲染、切回推荐 tab 和追加完成后也会再检查一次底部距离，避免停在底部时没有新 scroll 事件导致续页卡住
 - 收到后台 `refresh.pool_updated` 时，推荐 tab 只更新池子数量、最近补货数量和方向提示；不会调用 `/api/recommendations` 替换当前列表，用户已续页出来的历史内容会保留到下一次主动“换一批”或页面重新初始化
@@ -367,6 +368,7 @@ npm run build
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
 - `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
 - v0.3.62 起，Chrome / Firefox 发布包移除 `http://*/*` 宽泛主机权限，只保留四个受支持内容平台和 `127.0.0.1` / `localhost` 本机后端权限，避免 Chrome Web Store 把插件标为“所有网站权限”。
+- v0.3.64 起，Chrome / Firefox 发布包不再声明 `tabs` permission；后台任务仍可使用 `chrome.tabs.create/update/remove/onUpdated/sendMessage` 打开、导航和清理受支持平台任务页，发布包仅保留实际需要的最小 permission 集合。
 - 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新，GitHub zip / sideload 用户按 release 页面下载新版并重新加载。
 
 Chrome Web Store 上传自动化走官方 API v2，不使用第三方上传 action：

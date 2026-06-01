@@ -572,9 +572,15 @@ class RuntimeContext:
             new_auto_update = AutoUpdateService(
                 enabled=new_config.scheduler.auto_update_enabled,
                 check_interval_hours=new_config.scheduler.auto_update_check_interval_hours,
+                allow_prerelease=new_config.scheduler.auto_update_allow_prerelease,
+                allowed_remotes=new_config.scheduler.auto_update_allowed_remotes,
+                event_publisher=getattr(self.event_hub, "publish", None),
             )
         except Exception:
-            new_auto_update = AutoUpdateService(enabled=True)
+            new_auto_update = AutoUpdateService(
+                enabled=False,
+                event_publisher=getattr(self.event_hub, "publish", None),
+            )
 
         # ── Atomic swap ─────────────────────────────────────────────
         # All construction succeeded → assign attributes.

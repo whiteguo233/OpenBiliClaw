@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   appendRecommendations,
   cacheConfigSnapshot,
+  applyBackendUpdate,
+  checkBackendUpdate,
   fetchPendingDelight,
   fetchActivityFeed,
   fetchChatTurn,
@@ -11,6 +13,7 @@ import {
   fetchConfig,
   fetchProfileSummary,
   fetchSourceShareSuggestion,
+  fetchUpdateStatus,
   fetchWatchLater,
   readCachedConfigSnapshot,
   requestJson,
@@ -212,6 +215,40 @@ test("fetchActivityFeed loads popup activity summaries", async () => {
     headline: "阿B 刚记下了你最近更吃深拆",
     items: [],
   });
+});
+
+test("backend update API helpers use backend-only update endpoints", async () => {
+  const calls: { url: string; options: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, options: RequestInit = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        if (url.endsWith("/api/update/apply")) {
+          return { target: "backend", state: "applying", reason: "none", accepted: true };
+        }
+        return {
+          backend: {
+            state: "update_available",
+            latest_tag: "backend-v0.3.92",
+          },
+        };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  await fetchUpdateStatus();
+  await checkBackendUpdate();
+  await applyBackendUpdate("backend-v0.3.92");
+
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/update-status");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[1].url, "http://127.0.0.1:8420/api/update/check");
+  assert.equal(calls[1].options.method, "POST");
+  assert.equal(calls[1].options.body, JSON.stringify({ include_backend: true }));
+  assert.equal(calls[2].url, "http://127.0.0.1:8420/api/update/apply");
+  assert.equal(calls[2].options.method, "POST");
+  assert.equal(calls[2].options.body, JSON.stringify({ target: "backend", tag: "backend-v0.3.92" }));
 });
 
 test("watch-later popup API helpers use the shared backend endpoint", async () => {

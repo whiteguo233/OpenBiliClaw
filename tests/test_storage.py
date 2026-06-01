@@ -94,6 +94,65 @@ class TestDatabase:
 
             db.close()
 
+    def test_iter_cover_lifecycle_reports_status_and_saved_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content("BV1shown", cover_url="https://i1.hdslb.com/a.jpg", source="search")
+            db.cache_content("BV1fresh", cover_url="https://i1.hdslb.com/b.jpg", source="search")
+            db.cache_content("BV1fav", cover_url="https://i1.hdslb.com/c.jpg", source="search")
+            db.cache_content("BV1wl", cover_url="https://i1.hdslb.com/d.jpg", source="search")
+            db.cache_content("BV1bare", cover_url="", source="search")
+
+            db.conn.execute("UPDATE content_cache SET pool_status='shown' WHERE bvid='BV1shown'")
+            db.conn.execute("UPDATE content_cache SET pool_status='fresh' WHERE bvid='BV1fresh'")
+            db.conn.commit()
+            db.add_to_favorites("BV1fav")
+            db.add_to_watch_later("BV1wl")
+
+            rows = {cover: (status, saved) for cover, status, saved in db.iter_cover_lifecycle()}
+
+            assert rows["https://i1.hdslb.com/a.jpg"] == ("shown", False)
+            assert rows["https://i1.hdslb.com/b.jpg"] == ("fresh", False)
+            assert rows["https://i1.hdslb.com/c.jpg"][1] is True  # favorite -> saved
+            assert rows["https://i1.hdslb.com/d.jpg"][1] is True  # watch-later -> saved
+            assert "" not in rows  # empty cover_url rows are excluded
+
+            db.close()
+
+    def test_iter_servable_cover_urls_recent_and_servable_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content("BV1fresh", cover_url="https://i1.hdslb.com/fresh.jpg", source="s")
+            db.cache_content("BV1shown", cover_url="https://i1.hdslb.com/shown.jpg", source="s")
+            db.cache_content("BV1stale", cover_url="https://i1.hdslb.com/stale.jpg", source="s")
+            db.cache_content("BV1saved", cover_url="https://i1.hdslb.com/saved.jpg", source="s")
+            db.cache_content("BV1old", cover_url="https://i1.hdslb.com/old.jpg", source="s")
+
+            db.conn.execute("UPDATE content_cache SET pool_status='fresh' WHERE bvid='BV1fresh'")
+            db.conn.execute("UPDATE content_cache SET pool_status='shown' WHERE bvid='BV1shown'")
+            db.conn.execute("UPDATE content_cache SET pool_status='stale' WHERE bvid='BV1stale'")
+            db.conn.execute("UPDATE content_cache SET pool_status='stale' WHERE bvid='BV1saved'")
+            db.conn.execute(
+                "UPDATE content_cache SET discovered_at=datetime('now','-2 days') "
+                "WHERE bvid='BV1old'"
+            )
+            db.conn.commit()
+            db.add_to_favorites("BV1saved")  # saved -> included even though stale
+
+            urls = db.iter_servable_cover_urls(recent_hours=12, limit=100)
+
+            assert "https://i1.hdslb.com/fresh.jpg" in urls  # fresh -> servable
+            assert "https://i1.hdslb.com/shown.jpg" in urls  # shown -> servable
+            assert "https://i1.hdslb.com/saved.jpg" in urls  # stale but saved -> kept
+            assert "https://i1.hdslb.com/stale.jpg" not in urls  # stale + unsaved -> excluded
+            assert "https://i1.hdslb.com/old.jpg" not in urls  # outside recency window
+
+            db.close()
+
     def test_cache_content_persists_relevance_and_candidate_tier(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

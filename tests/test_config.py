@@ -988,6 +988,11 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     config.scheduler.speculation_max_secondary_interests = 66
     config.scheduler.auto_update_enabled = True
     config.scheduler.auto_update_check_interval_hours = 12
+    config.scheduler.auto_update_allow_prerelease = True
+    config.scheduler.auto_update_allowed_remotes = [
+        "https://github.com/example/OpenBiliClaw.git",
+        "git@github.com:example/OpenBiliClaw.git",
+    ]
     config.logging.aggregate_budget_mb = 444
     config.logging.unmanaged_truncate_mb = 55
     config.logging.unmanaged_max_age_days = 6
@@ -1004,6 +1009,11 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     assert loaded.scheduler.speculation_max_secondary_interests == 66
     assert loaded.scheduler.auto_update_enabled is True
     assert loaded.scheduler.auto_update_check_interval_hours == 12
+    assert loaded.scheduler.auto_update_allow_prerelease is True
+    assert loaded.scheduler.auto_update_allowed_remotes == [
+        "https://github.com/example/OpenBiliClaw.git",
+        "git@github.com:example/OpenBiliClaw.git",
+    ]
     assert loaded.logging.aggregate_budget_mb == 444
     assert loaded.logging.unmanaged_truncate_mb == 55
     assert loaded.logging.unmanaged_max_age_days == 6

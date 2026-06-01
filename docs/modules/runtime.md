@@ -18,8 +18,8 @@
 | Runtime event stream | ✅ | `/api/runtime-stream` 向扩展推送状态、Cookie sync 请求、配置重载和 presence 事件；`RuntimeEventHub.publish()` 会返回是否至少有一个订阅者接收，供一次性事件判断是否真正投递。 |
 | 兴趣探针投递保护 | ✅ | `interest.probe` 只有成功投递到 runtime stream 后才写入 `probed_domains` / `probed_axes` / `probed_distance_bands` 冷却状态；事件 payload 会带 `probe_mode` 与 `challenge`，前端离线时不会消耗 active probe。普通 `near` 探针与挑战探针使用独立 active 额度，运行时选择时仍统一仲裁。 |
 | 避雷探针投递与仲裁 | ✅ | `avoidance.probe` 与 `interest.probe` 共用 proactive push 循环；每轮最多投递一个 probe，并用 `last_probe_kind` 在正向/负向都有候选时轮流选择，避免探针频率翻倍。 |
-| 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验。 |
-| 自动更新 | ✅ | `AutoUpdateService` 周期性检查 backend git tag，发现新 backend 版本后执行 `git pull --ff-only` 与依赖同步。 |
+| 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验；成功封面写入 `data/image-cache/`（小红书 token 归一化），并按「已消费且未保存」定期清理、保护无法重抓的封面。 |
+| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、手动 check/apply、apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。 |
 | 账号同步 | ✅ | `AccountSyncService` 同步 B 站账号历史、收藏和关注等信号；历史按 `view_at + 同秒 bvid 集合` 增量导入，收藏 / 关注只把新增 ID 转成画像事件，避免重放旧信号。 |
 | 多源 bootstrap 去重 | ✅ | `/api/sources/{xhs,dy,yt}/task-result` 会用 `source_bootstrap_state.json` 过滤跨任务旧 identity key；任务结果仍完整保留，只有新增项进入 memory / profile pipeline。 |
 | 扩展任务 claim / 复用 | ✅ | XHS / 抖音 / YouTube bootstrap 任务在扩展 poll 时用短生命周期 SQLite 连接标记 `in_progress`，CLI 默认复用 6 小时内近期任务，避免重复打开前台 tab 全量扫描，也避免 FastAPI 并发 poll 在共享 connection 上嵌套事务。 |
@@ -33,16 +33,17 @@
 ```python
 from openbiliclaw.runtime.updater import AutoUpdateService
 
-service = AutoUpdateService(enabled=True, check_interval_hours=6)
-result = await service.check_and_update_now()
+service = AutoUpdateService(enabled=False, check_interval_hours=6)
+backend = await service.check_now()
+status_code, apply_payload = await service.request_apply(tag="backend-v0.3.92")
 ```
 
-`AutoUpdateService.check_and_update_now()` 返回字典结果：
+核心调用：
 
-- `{"checked": False, "reason": "disabled"}`：自动更新关闭。
-- `{"checked": True, "updated": False, "reason": "no_backend_tag_yet"}`：GitHub tag 列表中没有可用 backend tag。
-- `{"checked": True, "updated": False, "current_version": "...", "remote_version": "..."}`：已是最新 backend 版本。
-- `{"checked": True, "updated": True, ...}`：已应用更新并尝试重启当前进程。
+- `check_now()`：立即检查 GitHub tags，只刷新后端更新状态，不自动应用。
+- `request_apply(tag="backend-vX.Y.Z")`：先检查 git repo、可信 `origin`、worktree clean、未 merge/rebase、目标 tag 存在且当前 HEAD 可 fast-forward，再返回 `202/applying` 并在后台执行 `git merge --ff-only <tag>`、依赖同步和 `os.execv` 重启。
+- `check_and_update_if_due()` / `check_and_update_now()`：供后台调度使用；只有 `scheduler.auto_update_enabled=true` 时才会定时自动应用。
+- `get_update_status()`：返回 `/api/update-status` 使用的 backend 状态对象。
 
 ### Degraded RuntimeContext
 
@@ -93,6 +94,18 @@ result = await service.check_and_update_now()
 
 成功响应会带 `Cache-Control: public, max-age=86400` 和 `X-Content-Type-Options: nosniff`，并写入本地图片缓存。缓存回退只用于上游网络失败、超时或 5xx 类上游错误；URL / redirect 白名单失败、非图片 Content-Type、超过 10MB 等校验类错误会保留 403 / 400 / 413 等明确状态，不会被统一折叠成 502。该接口按本地单用户后端设计，默认只应暴露在 `127.0.0.1` 或用户可信局域网；若用 `--host 0.0.0.0` 对外监听，应在反向代理层自行加访问控制。
 
+#### 封面磁盘缓存与清理
+
+成功抓取的封面以 `sha256(归一化 URL)` 为键写入 `data/image-cache/`（键与清理逻辑集中在 `openbiliclaw.runtime.image_cache`，由 `api.app` 复用，保证单一真源）。小红书 `sns-webpic-qc.xhscdn.com/{timestamp}/{token}/{path}` 这类带轮换 token 的 URL 会先剥掉 `{timestamp}/{token}` 前缀再算键，因此 token 过期重新生成后仍命中同一份缓存——这是小红书封面在签名失效后仍能展示的关键。
+
+`cleanup_image_cache` 负责按消费状态清理：启动时全量执行一次，运行时由 `RefreshRuntime._loop_image_cache_cleanup` 每 6 小时增量执行。清理规则为「已消费且未保存」——`content_cache.pool_status` 属于 `shown / feedbacked / stale / purged_by_dislike`、且 bvid 不在 `favorites` / `watch_later`（经 `Database.iter_cover_lifecycle` 联表判定）的封面会被删除；`fresh` / `suppressed`（待展示 / 可能复活）以及任一被收藏或加入稍后再看的封面始终保留。B 站等 URL 稳定、可随时重抓的来源安全释放空间（实测可回收数百 MB）；而带过期 token、删除后无法重抓的小红书封面默认受保护不删（缓存是其唯一副本），可用 `protect_unrefetchable=False` 关闭。无任何 `content_cache` 行引用、且文件超过 30 天的孤儿封面会作为增长上限兜底被移除（降级模式下数据库不可用时仅执行这条规则）。
+
+#### 发现即缓存（封面预取）
+
+白名单 / redirect / 大小 / 类型校验的抓取核心 `fetch_cover_bytes` 是唯一真源，由 proxy 路由和预取共用；失败抛 `CoverFetchError`（携带 400/403/413/502/504），proxy 路由再映射回对应 HTTP 状态。
+
+`RefreshRuntime._loop_cover_prefetch` 每 60 秒做一次「发现即缓存」：从 `Database.iter_servable_cover_urls` 取最近 12 小时内、仍可展示（`fresh / shown / suppressed` 或已保存）的封面（最新优先），`select_prefetch_targets` 过滤掉非白名单和已缓存项、把**无法重抓的小红书封面排在最前**，每轮最多抓 40 张写入缓存。这修复了此前封面只在「展示时」才懒加载、而小红书签名 token 早已过期导致 502 破图的问题——预取趁 token 新鲜时就把图落盘；最近窗口也避免对 token 已死的旧内容反复重试。预取按 `content_cache.cover_url` 原始值（可能是 `//` 或 `http://`）归一化后再抓，落盘 key 与 proxy 查找一致，故预取的封面 proxy 能直接命中。
+
 ### AccountSyncService
 
 ```python
@@ -140,6 +153,8 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 |--------|--------|------|
 | `scheduler.auto_update_enabled` | `false` | 是否启用后台自动更新检查。 |
 | `scheduler.auto_update_check_interval_hours` | `6` | 自动更新检查间隔。 |
+| `scheduler.auto_update_allow_prerelease` | `false` | 是否允许 `backend-vX.Y.Z-rc/beta/dev` 预发布 tag 进入候选。 |
+| `scheduler.auto_update_allowed_remotes` | OpenBiliClaw GitHub HTTPS / SSH | 允许自动更新快进的 `origin` 精确 allowlist；unknown remote 或带凭据 URL 会被拒绝。 |
 | `scheduler.enabled` | `true` | 后台 LLM / embedding 总开关。 |
 | `scheduler.pause_on_extension_disconnect` | `false` | 浏览器插件断开后是否暂停后台 LLM / embedding 工作。 |
 | `scheduler.extension_disconnect_grace_seconds` | `90` | 插件断开后的宽限秒数。 |
@@ -162,10 +177,12 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 
 后端自动更新只认 backend source tag：
 
-- backend 源码更新发布为 git tag：`backend-vX.Y.Z`。
-- legacy 安装仍兼容 `vX.Y.Z` 和裸 semver `X.Y.Z`。
+- backend 源码更新发布为 git tag：`backend-vX.Y.Z`，这是唯一 canonical 后端 tag。
+- legacy 安装仍 fallback 兼容 `vX.Y.Z` 和裸 semver `X.Y.Z`，但只在没有稳定 `backend-v*` 候选时使用；远端同时存在 `backend-v0.3.89` 和 `v0.3.90` 时选择 `backend-v0.3.89`。
 - 浏览器扩展 release 使用 `extension-vX.Y.Z`，必须被后端自动更新忽略。
 - GitHub `/releases/latest` 当前由扩展 artifact 占用，不能代表后端源码版本；`AutoUpdateService._fetch_latest_version()` 直接查询 `/tags`，分页过滤 backend tag 后选择最高版本。
+- 默认忽略 prerelease；若只有更新的 `backend-vX.Y.Z-rc/beta/dev`，状态上报 `up_to_date` + `prerelease_ignored`。
+- 浏览器插件更新不由 `AutoUpdateService` 管理：Chrome Web Store / Edge Add-ons / AMO 版本交给浏览器原生更新，GitHub zip / sideload 用户按插件 release 文档手动下载和重新加载。
 
 这样可以避免后端 `0.3.64` 把 `extension-v0.3.24` 解析成 `(0,)` 并误报 "Already up-to-date"。
 

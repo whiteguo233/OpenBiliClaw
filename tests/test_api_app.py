@@ -1494,6 +1494,133 @@ class TestBackendAPI:
             "last_account_sync_error": "",
         }
 
+    def test_update_status_returns_backend_only_and_ignores_extension_metadata(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeAutoUpdateService:
+            def get_update_status(self) -> dict[str, object]:
+                return {
+                    "state": "update_available",
+                    "auto_update_enabled": False,
+                    "current_version": "0.3.91",
+                    "latest_version": "0.3.92",
+                    "latest_tag": "backend-v0.3.92",
+                    "last_check_at": "2026-05-31T12:00:00+00:00",
+                    "last_error": "",
+                    "reason": "none",
+                }
+
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            auto_update_service=FakeAutoUpdateService(),
+        )
+        client = TestClient(app)
+
+        response = client.get(
+            "/api/update-status?extension_version=0.3.92&extension_family=chrome",
+            headers={
+                "X-OpenBiliClaw-Extension-Version": "0.3.92",
+                "X-OpenBiliClaw-Extension-Family": "chrome",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "backend": {
+                "state": "update_available",
+                "auto_update_enabled": False,
+                "current_version": "0.3.91",
+                "latest_version": "0.3.92",
+                "latest_tag": "backend-v0.3.92",
+                "last_check_at": "2026-05-31T12:00:00+00:00",
+                "last_error": "",
+                "reason": "none",
+            }
+        }
+
+    def test_update_check_ignores_legacy_extension_metadata(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeAutoUpdateService:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def check_now(self) -> dict[str, object]:
+                self.calls += 1
+                return {
+                    "state": "up_to_date",
+                    "auto_update_enabled": False,
+                    "current_version": "0.3.92",
+                    "latest_version": "0.3.92",
+                    "latest_tag": "backend-v0.3.92",
+                    "last_check_at": "2026-05-31T12:00:00+00:00",
+                    "last_error": "",
+                    "reason": "none",
+                }
+
+        service = FakeAutoUpdateService()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            auto_update_service=service,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/update/check?extension_version=0.3.92&extension_family=firefox",
+            headers={"X-OpenBiliClaw-Extension-Version": "0.3.92"},
+            json={"include_backend": True, "include_extension": True},
+        )
+
+        assert response.status_code == 200
+        assert service.calls == 1
+        assert response.json()["backend"]["state"] == "up_to_date"
+        assert "extension" not in response.json()
+
+    def test_update_apply_validates_backend_only_target_before_lock(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeAutoUpdateService:
+            def __init__(self) -> None:
+                self.apply_calls: list[dict[str, object]] = []
+
+            async def request_apply(self, *, tag: str = "") -> tuple[int, dict[str, object]]:
+                self.apply_calls.append({"tag": tag})
+                return (
+                    202,
+                    {
+                        "target": "backend",
+                        "state": "applying",
+                        "reason": "none",
+                        "accepted": True,
+                        "observe_via": "runtime-stream",
+                    },
+                )
+
+        service = FakeAutoUpdateService()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            auto_update_service=service,
+        )
+        client = TestClient(app)
+
+        accepted = client.post(
+            "/api/update/apply?extension_version=0.3.92",
+            json={"target": "backend", "tag": "backend-v0.3.92"},
+        )
+        rejected = client.post("/api/update/apply", json={"target": "extension"})
+
+        assert accepted.status_code == 202
+        assert accepted.json()["state"] == "applying"
+        assert service.apply_calls == [{"tag": "backend-v0.3.92"}]
+        assert rejected.status_code == 422
+        assert service.apply_calls == [{"tag": "backend-v0.3.92"}]
+
     def test_runtime_stream_websocket_receives_published_events(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -1513,6 +1640,43 @@ class TestBackendAPI:
             assert websocket.receive_json() == {
                 "type": "refresh.started",
                 "message": "开始给你补候选了",
+            }
+
+    def test_runtime_stream_accepts_and_discards_extension_metadata(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect(
+            "/api/runtime-stream?extension_version=0.3.92&extension_family=chrome"
+        ) as websocket:
+            websocket.send_json(
+                {
+                    "type": "extension_metadata",
+                    "extension_version": "0.3.92",
+                    "extension_family": "chrome",
+                }
+            )
+            asyncio.run(
+                hub.publish(
+                    {
+                        "type": "backend_update_available",
+                        "latest_tag": "backend-v0.3.92",
+                    }
+                )
+            )
+            assert websocket.receive_json() == {
+                "type": "backend_update_available",
+                "latest_tag": "backend-v0.3.92",
             }
 
     def test_runtime_stream_websocket_updates_shared_presence(self) -> None:
@@ -5179,6 +5343,11 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.scheduler.speculation_ttl_days = 8
         cfg.scheduler.auto_update_enabled = True
         cfg.scheduler.auto_update_check_interval_hours = 10
+        cfg.scheduler.auto_update_allow_prerelease = True
+        cfg.scheduler.auto_update_allowed_remotes = [
+            "https://github.com/example/OpenBiliClaw.git",
+            "git@github.com:example/OpenBiliClaw.git",
+        ]
         cfg.logging.file_level = "WARNING"
         cfg.logging.directory = "runtime-logs"
         cfg.logging.filename = "backend.log"
@@ -5230,6 +5399,11 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["scheduler"]["speculation_ttl_days"] == 8
         assert data["scheduler"]["auto_update_enabled"] is True
         assert data["scheduler"]["auto_update_check_interval_hours"] == 10
+        assert data["scheduler"]["auto_update_allow_prerelease"] is True
+        assert data["scheduler"]["auto_update_allowed_remotes"] == [
+            "https://github.com/example/OpenBiliClaw.git",
+            "git@github.com:example/OpenBiliClaw.git",
+        ]
         assert data["logging"]["file_level"] == "WARNING"
         assert data["logging"]["directory"] == "runtime-logs"
         assert data["logging"]["filename"] == "backend.log"
@@ -5399,6 +5573,11 @@ class TestEmbeddingAndCompatProviderE2E:
                     "speculation_max_secondary_interests": 66,
                     "auto_update_enabled": True,
                     "auto_update_check_interval_hours": 10,
+                    "auto_update_allow_prerelease": True,
+                    "auto_update_allowed_remotes": [
+                        "https://github.com/example/OpenBiliClaw.git",
+                        "git@github.com:example/OpenBiliClaw.git",
+                    ],
                 },
                 "storage": {"db_path": "runtime-data/openbiliclaw.db"},
                 "logging": {
@@ -5458,6 +5637,11 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.scheduler.speculation_interval_minutes == 21
         assert cfg.scheduler.auto_update_enabled is True
         assert cfg.scheduler.auto_update_check_interval_hours == 10
+        assert cfg.scheduler.auto_update_allow_prerelease is True
+        assert cfg.scheduler.auto_update_allowed_remotes == [
+            "https://github.com/example/OpenBiliClaw.git",
+            "git@github.com:example/OpenBiliClaw.git",
+        ]
         assert cfg.storage.db_path == "runtime-data/openbiliclaw.db"
         assert cfg.logging.file_level == "WARNING"
         assert cfg.logging.max_file_size_mb == 123

@@ -53,6 +53,14 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgProactivePushInterval",
     "cfgSpeculatorIdleInterval",
     "cfgAccountSyncInterval",
+    "backendUpdateCurrent",
+    "backendUpdateLatest",
+    "backendUpdateState",
+    "backendUpdateLastCheck",
+    "backendUpdateCheck",
+    "backendUpdateApply",
+    "backendUpdateError",
+    "extensionVersionValue",
     "cfgAutoUpdateInterval",
     "cfgPoolShareBilibili",
     "cfgPoolShareXhs",
@@ -156,6 +164,21 @@ test("settings page organizes backend config into tabs", () => {
     assert.match(popupHtml, new RegExp(`data-settings-panel="${name}"`));
     assert.match(popupJs, new RegExp(`"${name}"`));
   }
+});
+
+test("settings page exposes backend-only update controls and plugin release fallback", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupHtml, /版本与更新/);
+  assert.match(popupHtml, /id="cfgAutoUpdate"/);
+  assert.match(popupHtml, /自动更新后端/);
+  assert.match(popupHtml, /此开关不会更新浏览器插件/);
+  assert.match(popupHtml, /href="https:\/\/github\.com\/whiteguo233\/OpenBiliClaw\/releases"/);
+  assert.match(popupJs, /fetchUpdateStatus/);
+  assert.match(popupJs, /checkBackendUpdate/);
+  assert.match(popupJs, /applyBackendUpdate/);
+  assert.doesNotMatch(popupJs, /extension_auto_apply|extension_update_available/);
 });
 
 test("settings page round-trips YouTube source budgets", () => {

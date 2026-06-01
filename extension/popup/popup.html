@@ -3737,6 +3737,54 @@
       line-height: 1.5;
     }
 
+    .settings-status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .settings-status-cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.62);
+      min-width: 0;
+    }
+
+    .settings-status-cell span {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+    }
+
+    .settings-status-cell strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 12.5px;
+      color: var(--text-main);
+      word-break: break-word;
+    }
+
+    .settings-secondary-btn {
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--text-main);
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .settings-secondary-btn:hover { border-color: var(--sky); }
+
+    .settings-link {
+      color: var(--brand-strong);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
     .settings-field-row label {
       text-transform: none;
       font-size: 13px;
@@ -4755,6 +4803,37 @@
       </div>
 
       <div id="settingsPanelScheduler" class="settings-panel" data-settings-panel="scheduler" role="tabpanel" aria-labelledby="settingsTabScheduler" hidden>
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x21BB;</span> 版本与更新</h3>
+        <div class="settings-status-grid" aria-label="后端更新状态">
+          <div class="settings-status-cell">
+            <span>后端当前</span>
+            <strong id="backendUpdateCurrent">—</strong>
+          </div>
+          <div class="settings-status-cell">
+            <span>后端最新</span>
+            <strong id="backendUpdateLatest">—</strong>
+          </div>
+          <div class="settings-status-cell">
+            <span>状态</span>
+            <strong id="backendUpdateState">unknown</strong>
+          </div>
+          <div class="settings-status-cell">
+            <span>上次检查</span>
+            <strong id="backendUpdateLastCheck">—</strong>
+          </div>
+        </div>
+        <p class="settings-hint">自动更新只作用于后端源码：开启并保存后，后台定时检查可信 backend tag，满足安全条件才会快进、同步依赖并重启后端；浏览器扩展由商店自动更新或由 GitHub zip 用户手动重载。</p>
+        <div class="settings-actions">
+          <button id="backendUpdateCheck" type="button" class="settings-secondary-btn">立即检查</button>
+          <button id="backendUpdateApply" type="button" class="settings-secondary-btn" hidden>立即应用</button>
+        </div>
+        <p class="settings-hint">最近错误：<span id="backendUpdateError">—</span></p>
+        <div class="settings-status-cell">
+          <span>插件版本</span>
+          <strong><span id="extensionVersionValue">—</span> · <a class="settings-link" href="https://github.com/whiteguo233/OpenBiliClaw/releases" target="_blank" rel="noopener">GitHub Releases</a></strong>
+        </div>
+      </div>
       <!-- Scheduler -->
       <div class="settings-section">
         <h3><span class="section-icon">&#x23F0;</span> 调度</h3>
@@ -4814,8 +4893,9 @@
         </div>
         <div class="settings-field-row">
           <input id="cfgAutoUpdate" type="checkbox">
-          <label for="cfgAutoUpdate">自动更新</label>
+          <label for="cfgAutoUpdate">自动更新后端</label>
         </div>
+        <p class="settings-hint">此开关不会更新浏览器插件；插件商店安装由浏览器处理，zip / 开发者模式加载需要手动下载新版并重新加载。</p>
         <div class="settings-field">
           <label for="cfgAutoUpdateInterval">自动更新检查间隔小时</label>
           <input id="cfgAutoUpdateInterval" type="number" min="1" step="1" placeholder="6">

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -754,6 +756,40 @@ class SchedulerConfigOut(BaseModel):
     avoidance_speculation_max_active: int = 5
     auto_update_enabled: bool = False
     auto_update_check_interval_hours: int = 6
+    auto_update_allow_prerelease: bool = False
+    auto_update_allowed_remotes: list[str] = Field(default_factory=list)
+
+
+class BackendUpdateStatusOut(BaseModel):
+    state: str = "unknown"
+    auto_update_enabled: bool = False
+    current_version: str = ""
+    latest_version: str = ""
+    latest_tag: str = ""
+    last_check_at: str = ""
+    last_error: str = ""
+    reason: str = "none"
+
+
+class UpdateStatusResponse(BaseModel):
+    backend: BackendUpdateStatusOut
+
+
+class UpdateCheckIn(BaseModel):
+    include_backend: bool = True
+
+
+class UpdateApplyIn(BaseModel):
+    target: Literal["backend"]
+    tag: str = ""
+
+
+class UpdateApplyResponse(BaseModel):
+    target: str = "backend"
+    state: str
+    reason: str = "none"
+    accepted: bool
+    observe_via: str = "runtime-stream"
 
 
 class StorageConfigOut(BaseModel):

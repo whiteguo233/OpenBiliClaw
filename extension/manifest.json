@@ -10,8 +10,7 @@
         "notifications",
         "scripting",
         "sidePanel",
-        "storage",
-        "tabs"
+        "storage"
     ],
     "host_permissions": [
         "*://*.bilibili.com/*",

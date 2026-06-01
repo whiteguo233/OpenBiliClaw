@@ -18,11 +18,12 @@
 - [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体 WebFetch 的短契约,配合 README 的短粘贴语句
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
-- [后端与浏览器插件自动更新 SPEC](specs/auto-update.md) — 后端源码自动应用、插件 sideload 更新提示与未来原生更新通道边界
+- [后端自动更新 SPEC](specs/auto-update.md) — 后端源码自动应用、默认关闭的更新开关、git 安全边界与插件商店原生更新边界
 
 ## 可视化架构图
 
 - [Soul 模块架构与流程图](diagrams/soul-architecture.html) — 行为信号、五层画像、增量学习、正向兴趣和避雷探针闭环
+- [Soul 更新变化流程图](diagrams/soul-update-flow.html) — 用 SVG 说明事件、反馈、对话、探针和手动编辑如何影响五层画像
 - [Recommendation 模块架构与流程图](diagrams/recommendation-architecture.html) — 候选池 readiness、serve 热路径、PoolCurator、MMR 和反馈回流
 - [Web HTML 模块架构与流程图](diagrams/web-architecture.html) — `/web` 桌面端、`/m` 移动端、REST hydration、runtime-stream 和用户动作边界
 - [Discovery 模块架构图](diagrams/discovery-architecture.html) — 多源发现、刷新调度、评估优化和模块协议边界

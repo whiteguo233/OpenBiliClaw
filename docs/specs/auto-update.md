@@ -1,19 +1,20 @@
-# 后端与浏览器插件自动更新 SPEC
+# 后端自动更新 SPEC
 
 **Created:** 2026-05-31
 **Updated:** 2026-05-31
-**Ambiguity score:** 0.14 (gate: <= 0.20)
-**Requirements:** 10 locked
+**Ambiguity score:** 0.10 (gate: <= 0.20)
+**Requirements:** 8 locked
 
 ## Goal
 
-为 OpenBiliClaw 建立一套可解释、可拒绝不安全状态、符合浏览器平台限制的更新机制：
+为 OpenBiliClaw 后端建立一套可解释、可手动触发、默认关闭、能拒绝不安全状态的源码自动更新机制：
 
-- 后端在源码安装场景下可以自动发现并应用新的 `backend-vX.Y.Z` 版本。
-- 浏览器插件自动发现 `extension-vX.Y.Z` 新版本，并在当前 sideload / 开发者模式分发下明确提示用户更新。
-- 未来如果插件进入 Chrome Web Store / Edge Add-ons / AMO 或签名自托管通道，同一套版本检测与 UI 可以降级为状态展示，由浏览器原生更新机制完成真正自动安装。
+- 后端在 git 源码安装场景下可以自动发现新的 `backend-vX.Y.Z` 版本。
+- 用户显式开启后，后端可以在安全条件满足时自动快进到目标 tag、同步依赖并重启当前进程。
+- 用户没有开启自动更新时，仍可在设置页手动检查和手动应用后端更新。
+- 浏览器插件不再纳入 OpenBiliClaw 自建自动更新系统；Chrome Web Store / Edge Add-ons / AMO 版本交给浏览器原生更新通道，GitHub zip / sideload 用户按文档手动更新。
 
-核心原则：**后端可以自动应用；当前分发方式下的插件不能承诺静默自替换**。插件端的首版自动更新定义为“自动检测 + 明确提示 + 下载/重装引导”，而不是绕过浏览器安全模型写入扩展目录。
+核心原则：**自动更新只控制后端源码；浏览器插件由浏览器分发平台或用户手动安装流程负责。**
 
 ## Background
 
@@ -21,21 +22,22 @@
 
 - 后端源码版本用 `backend-vX.Y.Z` tag 标记，`.github/workflows/release-backend.yml` 目前只校验 tag 与 `pyproject.toml` 版本一致，不发布后端桌面包。
 - 浏览器插件用 `extension-vX.Y.Z` tag 发布 GitHub Release，`.github/workflows/release-extension.yml` 会上传 `openbiliclaw-extension-vX.Y.Z.zip` 和 `openbiliclaw-extension-vX.Y.Z-firefox.zip`。
+- Chrome Web Store 上传已独立为手动 workflow：`.github/workflows/publish-chrome-webstore.yml`。它可以用 GitHub Secrets 上传 Chrome-compatible zip，并在显式 `publish=true` 时提交审核。
 - 后端已有 `src/openbiliclaw/runtime/updater.py`：周期性查询 GitHub `/tags`，过滤 `backend-v*`，忽略 `extension-v*`，发现新版本后执行 `git pull --ff-only`、依赖同步和进程重启。
 - 配置已有 `scheduler.auto_update_enabled=false` 和 `scheduler.auto_update_check_interval_hours=6`，默认关闭。
-- README 当前指导用户下载 extension zip 并通过开发者模式 / 临时加载安装插件。
 
-浏览器平台限制决定插件不能按“后端 self-update”方式实现：
+插件更新不再由后端查询 `extension-v*` release 或由 side panel 维护更新横幅：
 
-- Chrome 官方文档说明 Chrome 只有 Chrome Web Store 和受管自托管两种正式分发机制；Windows/macOS 上自托管安装只能通过企业策略。
-- Chromium/Edge 自托管更新依赖 manifest `update_url`、更新 XML、`.crx` 包，并要求新包使用同一私钥签名；这不等于当前 zip + 开发者模式加载。
-- Firefox 自分发自动更新需要签名 XPI 与 manifest `browser_specific_settings.gecko.update_url`，AMO 上架则由 Firefox 自动更新；临时加载插件没有持久自动更新语义。
+- Chrome Web Store / Edge Add-ons / AMO 安装的扩展由浏览器原生机制自动检查和安装更新。
+- GitHub zip、开发者模式加载、Firefox 临时加载等 sideload 场景没有可靠的静默自替换语义，继续按 README / release 文档手动下载和重新加载。
+- 后端自动更新 API 不需要返回插件 latest、插件下载资产、插件 dismiss 状态，也不提供 `target="extension"` 的 apply 流程。
+- 为兼容未来或旧客户端，后端更新 API 必须忽略任何扩展版本 / 浏览器族 headers 或 query params；这些 metadata 不参与响应形状、状态机或更新判断。
 
 ## Chosen Approach
 
-采用三层更新模型。
+采用单层后端更新模型。
 
-### Layer 1: 后端源码自动更新
+### 后端源码自动更新
 
 后端继续以 `backend-v*` tag 为权威版本来源，但补齐安全边界：
 
@@ -45,31 +47,22 @@
 - 依赖同步沿用当前检测逻辑：存在 `uv.lock` 时执行 `uv sync`，否则执行 `python -m pip install -e .`。
 - 成功后重启当前进程；如果是 systemd、Docker 或外部 supervisor 管理，首版只支持当前 `os.execv` 重启，不主动操作外部 supervisor。
 
-### Layer 2: 插件版本自动发现与提示
+### 插件更新边界
 
-插件每次打开 side panel、建立 runtime stream 或进入设置页时，把自身版本和浏览器族发送给后端。HTTP 请求使用 headers；runtime stream 由于浏览器 `WebSocket` 构造器不能设置自定义 headers，必须使用 query params 或连接建立后的第一条 client message。后端统一查询 `extension-v*` GitHub Release，并返回最新插件版本和对应资产下载地址。
+OpenBiliClaw 后端和插件 UI 不实现插件自动更新检测。插件更新由安装渠道负责：
 
-当前 sideload/开发者模式安装下：
+- Chrome / Edge 商店版本由浏览器自动更新。
+- Firefox AMO 版本由 Firefox 自动更新。
+- GitHub Release zip / sideload 用户从 release 页面下载新版并按浏览器要求重新加载。
 
-- 插件发现新版本后显示持久更新横幅和设置页状态。
-- 横幅提供“打开下载页/复制安装步骤/稍后提醒”动作。
-- 每个新版本只在用户关闭后静默一段时间，状态保存在 `chrome.storage.local`。
-- 不尝试覆盖插件目录，不尝试自动下载后调用 `chrome.runtime.reload()` 假装完成更新。
-
-### Layer 3: 未来原生插件自动更新通道
-
-如果后续切到商店或签名自托管：
-
-- Chrome / Edge 商店版本由浏览器自动更新，OpenBiliClaw 只展示当前版本、最新版本和“浏览器会自动更新”的状态。
-- 企业自托管 / Linux CRX 使用 `update_url` + XML + 同一私钥签名包，只作为受管部署文档，不作为普通用户默认路径。
-- Firefox AMO 或签名自分发 XPI 使用 AMO / `gecko.update_url` 更新机制，插件 UI 同样只做状态展示与故障提示。
+设置页可以展示当前插件版本和一个固定的 GitHub Releases 链接，作为 sideload fallback 和发布历史入口。v1 不按安装来源分流到 Chrome Web Store / Edge Add-ons / AMO，不做 latest 比较、不解析 extension release 资产、不维护更新横幅或关闭提醒状态。
 
 ## Requirements
 
-1. **统一更新状态 API**
-   - Current: `/api/runtime-status` 只合并已有 auto updater 字段，插件端没有独立版本状态。
-   - Target: 新增 `GET /api/update-status`，返回 `backend` 与 `extension` 两个对象；`/api/runtime-status` 可保留摘要字段。
-   - Acceptance: 无插件版本 metadata 时也能返回 backend 状态；带插件版本时返回 extension 当前/最新/下载 URL/状态。
+1. **后端更新状态 API**
+   - Current: `/api/runtime-status` 只合并已有 auto updater 字段。
+   - Target: 新增 `GET /api/update-status`，返回单一 `backend` 对象；`/api/runtime-status` 可保留摘要字段。
+   - Acceptance: 响应不依赖任何插件 metadata，固定返回 `backend` 对象且不包含 `extension` 对象；旧客户端发送的扩展版本 / 浏览器族 headers 或 query params 必须被忽略，不能改变响应或报错。
 
 2. **后端版本发现**
    - Current: `AutoUpdateService._fetch_latest_version()` 查询 `/tags` 并过滤 backend-like tag；当前实现把 `backend-v*`、legacy `v*` 和裸 semver 放进同一个候选池，且 `_parse_backend_version("backend-v0.3.100-rc1")` 会解析成 `(0, 3, 100)`。远端历史里 `v0.3.90` 与 `backend-v0.3.89` 并存时，当前 `max()` 会选择裸 `v0.3.90`，而不是 canonical backend tag。
@@ -91,34 +84,23 @@
 5. **手动检查与手动应用**
    - Current: 只有后台定时检查。
    - Target: 新增 `POST /api/update/check` 和 `POST /api/update/apply`；默认受现有本机/扩展可信来源规则保护。
-   - Acceptance: 设置页点击“立即检查”不需要等待后台 interval；`auto_update_enabled=false` 时仍允许用户手动检查和手动应用，但不会自动定时应用。
+   - Acceptance: 设置页点击“立即检查”不需要等待后台 interval；`auto_update_enabled=false` 时仍允许用户手动检查和手动应用，但不会自动定时应用；`POST /api/update/apply` 的 `target` 只允许 `"backend"`，其他 target 返回验证错误且不会进入 apply 流程。
 
-6. **插件版本发现**
-   - Current: 插件只能靠用户看 GitHub Releases。
-   - Target: 后端查询 GitHub Releases API，过滤 `extension-v*`，选择最高稳定 semver，并解析 Chrome-compatible zip 与 Firefox zip 资产 URL。GitHub tags 只能作为无资产的 status-only fallback，不能用于生成下载 URL。
-   - Acceptance: GitHub latest release 即使不是插件 release，也不影响 extension latest 计算；缺少目标浏览器资产时返回 `state="asset_missing"`。
-
-7. **设置页版本与更新 UI**
-   - Current: popup/side panel 没有版本与更新入口。
-   - Target: 设置页新增“版本与更新”区块：显示后端当前/最新、插件当前/最新、上次检查时间、错误；提供“自动更新”开关，绑定 `scheduler.auto_update_enabled`，缺省为关闭；提供“检查间隔（小时）”数字输入，绑定 `scheduler.auto_update_check_interval_hours`；推荐页或设置页显示插件新版本横幅。
+6. **设置页后端版本与更新 UI**
+   - Current: popup/side panel 没有专门的后端版本与更新入口。
+   - Target: 设置页新增“版本与更新”区块：显示后端当前/最新、上次检查时间、错误；提供“自动更新”开关，绑定 `scheduler.auto_update_enabled`，缺省为关闭；提供“检查间隔（小时）”数字输入，绑定 `scheduler.auto_update_check_interval_hours`；提供“立即检查”和安全时的“立即应用”。
    - Acceptance: 首次安装或缺省配置时开关显示关闭；用户打开并保存后写入 `scheduler.auto_update_enabled=true` 并刷新后端更新调度；用户关闭并保存后写入 `false`，停止后续定时自动应用；修改检查间隔并保存后刷新调度间隔；这些设置不影响“立即检查”和“立即应用”。
 
-8. **插件安装边界文案**
-   - Current: README 只说明下载 zip 和加载，未解释自动更新限制。
-   - Target: 文档明确区分“后端自动应用”和“插件 sideload 自动提示”；不能写“插件会自动静默更新”。
-   - Acceptance: README、README_EN、`docs/modules/extension.md`、`docs/modules/runtime.md` 均说明当前插件更新需要用户确认/重新加载。
+7. **运行时事件推送**
+   - Current: runtime stream 已可推状态事件，但无后端更新事件。
+   - Target: 后端发现 `backend_update_available`、`backend_update_failed`、`backend_restart_pending` 时推 runtime event。
+   - Acceptance: 已打开 side panel / Web 的用户无需刷新页面即可看到后端更新状态变化。
 
-9. **运行时事件推送**
-   - Current: runtime stream 已可推状态事件，但无更新事件。
-   - Target: 后端发现 `backend_update_available`、`extension_update_available`、`backend_update_failed`、`backend_restart_pending` 时推 runtime event。
-   - Acceptance: 已打开 side panel 的用户无需刷新页面即可看到更新状态变化。
-
-10. **测试覆盖**
-    - Current: `tests/test_runtime_updater.py` 覆盖 backend tag filtering，extension 只有 release utils 测试。
-    - Target: 新增/扩展 Python 和 extension node tests，覆盖版本解析、GitHub payload、apply guard、API schema、popup banner 和 dismiss 逻辑。
-    - Acceptance: 定向验证命令通过：
-      - `pytest tests/test_runtime_updater.py tests/test_api_app.py -k "update" -q`
-      - `cd extension && node --test --experimental-strip-types tests/*update*.test.ts tests/release-utils.test.ts`
+8. **测试覆盖**
+   - Current: `tests/test_runtime_updater.py` 覆盖 backend tag filtering。
+   - Target: 新增/扩展 Python tests，覆盖版本解析、GitHub payload、apply guard、API schema、状态机和 runtime events。
+   - Acceptance: 定向验证命令通过：
+     - `pytest tests/test_runtime_updater.py tests/test_api_app.py -k "update" -q`
 
 ## API Shape
 
@@ -135,29 +117,9 @@
     "last_check_at": "2026-05-31T12:00:00Z",
     "last_error": "",
     "reason": "none"
-  },
-  "extension": {
-    "state": "update_available",
-    "reason": "none",
-    "current_version": "0.3.61",
-    "latest_version": "0.3.62",
-    "latest_tag": "extension-v0.3.62",
-    "browser_family": "chromium",
-    "release_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.62",
-    "asset_name": "openbiliclaw-extension-v0.3.62.zip",
-    "asset_url": "https://github.com/whiteguo233/OpenBiliClaw/releases/download/extension-v0.3.62/openbiliclaw-extension-v0.3.62.zip",
-    "last_check_at": "2026-05-31T12:00:00Z",
-    "last_error": ""
   }
 }
 ```
-
-Request metadata:
-
-- HTTP update/status requests should send `X-OpenBiliClaw-Extension-Version: <manifest.version>`.
-- HTTP update/status requests should send `X-OpenBiliClaw-Extension-Family: chromium|firefox`.
-- Runtime stream must use `?extension_version=<manifest.version>&extension_family=chromium|firefox` or send the same metadata as the first client message after connect; it cannot rely on custom WebSocket headers.
-- Backend may also accept `extension_version` and `extension_family` query params for tests and CLI diagnostics.
 
 Settings page config writes use the existing config API and must preserve unrelated scheduler fields. The relevant persisted fields are:
 
@@ -176,8 +138,7 @@ Settings page config writes use the existing config API and must preserve unrela
 
 ```json
 {
-  "include_backend": true,
-  "include_extension": true
+  "include_backend": true
 }
 ```
 
@@ -213,9 +174,9 @@ Apply outcomes are:
 | Backend apply accepted | `202 Accepted` | `applying` | `none` | `true` |
 | Backend apply already in progress | `409 Conflict` | `applying` | `already_applying` | `false` |
 | Backend apply blocked by local state | `409 Conflict` | `blocked` | stable backend blocked reason | `false` |
-| Extension apply requested in sideload channel | `409 Conflict` | `unsupported` | `extension_auto_apply_unsupported` | `false` |
+| Invalid target, including `extension` | `422 Unprocessable Entity` | n/a | validation error | n/a |
 
-Apply response `state` and `reason` are target-scoped and follow this Apply outcomes table, not the backend status state-to-reason table below. The extension apply response may use `state="unsupported"` with `reason="extension_auto_apply_unsupported"` even when `GET /api/update-status` reports `extension.state="update_available"`; the update exists, but the current extension distribution channel cannot self-apply it.
+`target` is an enum with one valid v1 value: `"backend"`. `target="extension"` and any unknown target are request validation errors, not update-state transitions; they must not reuse backend `state` / `reason` values and must not enter the apply lock.
 
 ## Backend State Values
 
@@ -269,96 +230,16 @@ Stable backend `reason` values are part of the contract and must not overlap wit
 - `no_backend_tag_yet`
 - `prerelease_ignored`
 
-Apply-specific response values used by `POST /api/update/apply`:
-
-Apply response `state` values:
-
-- `unsupported`: requested target cannot self-apply in the current distribution channel.
-
-Apply response `reason` values:
-
-- `extension_auto_apply_unsupported`: `target="extension"` was requested, but the current sideload extension channel only supports update detection and user-guided reinstall.
-
-## Extension State Values
-
-Extension update object is always present in `GET /api/update-status`. Without extension metadata it returns:
-
-```json
-{
-  "state": "unknown",
-  "reason": "no_extension_metadata",
-  "current_version": "",
-  "latest_version": "",
-  "latest_tag": "",
-  "browser_family": "",
-  "release_url": "",
-  "asset_name": "",
-  "asset_url": "",
-  "last_check_at": "",
-  "last_error": ""
-}
-```
-
-Extension `state` values:
-
-- `unknown`: no extension version/family was provided.
-- `checking`: extension release check is in flight.
-- `up_to_date`: installed extension version is at or above latest stable extension release.
-- `update_available`: latest stable extension release is newer and the browser-family asset is present.
-- `asset_missing`: matching release exists but the Chrome-compatible or Firefox asset is missing for this browser family.
-- `error`: GitHub request or payload parsing failed.
-
-Extension `reason` values:
-
-- `none`
-- `no_extension_metadata`
-- `github_unreachable`
-- `github_payload_invalid`
-- `missing_browser_asset`
-- `prerelease_ignored`
-
-Extension state-to-reason mapping:
-
-| State | Allowed reasons |
-|-------|-----------------|
-| `unknown` | `no_extension_metadata` |
-| `checking` | `none` |
-| `up_to_date` | `none`, `prerelease_ignored` |
-| `update_available` | `none` |
-| `asset_missing` | `missing_browser_asset` |
-| `error` | `github_unreachable`, `github_payload_invalid` |
-
-If the only newer extension releases are prereleases, report `state="up_to_date"` with `reason="prerelease_ignored"` unless a future extension prerelease opt-in is explicitly added. `asset_missing` always pairs with `reason="missing_browser_asset"` to keep state and reason namespaces distinct.
-
-## Extension Update UX
+## Settings UX
 
 Settings page “版本与更新” controls:
 
 - Toggle: `自动更新`, persisted as `scheduler.auto_update_enabled`, default off.
 - Numeric input: `检查间隔（小时）`, persisted as `scheduler.auto_update_check_interval_hours`, default `6`.
 - Backend status row: current version, latest version, state, last check time, last error, `立即检查`, and `立即应用` when safe.
-- Extension status row: current version, latest version, state, last check time, last error, and download/install actions when an update is available.
+- Optional plugin version row: current extension version read locally from the extension manifest/runtime and a fixed link to the GitHub Releases page. This row must be informational only; it does not detect install channel, does not call backend update APIs, does not ask the backend to echo the extension version through config/status APIs, and does not claim to manage plugin updates. Store-installed users receive browser-native updates; the GitHub link is only a fallback / release-history entry.
 
-Opening the toggle should make the consequence explicit: scheduled backend updates may run `git fetch`, fast-forward to a trusted `backend-v*` tag, sync dependencies, and restart the backend process. The copy must not imply that enabling this switch silently updates the browser extension; sideloaded extensions still require user confirmation and reload.
-
-The side panel update notice should be factual and action-oriented:
-
-- Title: `插件有新版本`
-- Body: `当前 v0.3.61，最新 v0.3.62。当前开发者模式安装需要你下载新版并重新加载。`
-- Primary action: `打开下载页`
-- Secondary action: `查看安装步骤`
-- Tertiary action: `稍后提醒`
-
-Dismiss state:
-
-```json
-{
-  "dismissedExtensionUpdateTag": "extension-v0.3.62",
-  "dismissedExtensionUpdateAt": "2026-05-31T12:00:00Z"
-}
-```
-
-Default silence window: fixed 24 hours in v1; do not add a config field unless product requirements change. A newer tag must break the silence window by semver comparison, not lexical comparison.
+Opening the toggle should make the consequence explicit: scheduled backend updates may run `git fetch`, fast-forward to a trusted `backend-v*` tag, sync dependencies, and restart the backend process. The copy must not imply that enabling this switch updates the browser extension.
 
 Backend update UX is a passive settings/status row in v1, not a recommendation-page banner: show the default-off auto-update toggle, current/latest state, “立即检查”, and “立即应用” when safe. Do not add backend dismiss state unless a future design introduces proactive backend banners.
 
@@ -368,16 +249,17 @@ Backend update UX is a passive settings/status row in v1, not a recommendation-p
 
 - Backend update status API and manual check/apply endpoints.
 - Backend apply guardrails around git state, remote, target tag and concurrency.
-- Extension release discovery through backend.
-- Extension version metadata on update/status HTTP requests and runtime-stream query params or first client message.
-- Side panel settings section, default-off auto-update toggle, and update banner.
-- Runtime stream update events.
+- Side panel settings section and default-off auto-update toggle.
+- Runtime stream backend update events.
 - README / module docs update.
-- Python and extension tests.
+- Python tests.
 
 **Out of scope:**
 
-- Chrome Web Store / Edge Add-ons / AMO publication.
+- Extension release discovery through backend.
+- Using extension version metadata on update/status HTTP requests or runtime stream. Receiving and ignoring legacy metadata is in scope for compatibility.
+- Extension update banners, dismiss windows, download asset parsing, or `target="extension"` apply support.
+- Chrome Web Store / Edge Add-ons / AMO publication automation. That remains in the separate `Publish Chrome Web Store Package` workflow and release docs.
 - Signing CRX/XPI packages.
 - Managing CRX private keys or Firefox signing credentials.
 - Enterprise policy installation.
@@ -391,16 +273,21 @@ Backend update UX is a passive settings/status row in v1, not a recommendation-p
 - `auto_update_enabled` remains default `false`; absent config must be treated as disabled in both backend scheduler and settings UI.
 - Settings UI must not enable scheduled backend apply until the user explicitly turns on the auto-update switch and saves the config.
 - Automatic backend apply must not run if local files are dirty.
+- `POST /api/update/apply` must validate `target` as `"backend"` only. Extension and unknown targets are `422` validation errors, not supported update states.
 - Backend apply must not use GitHub `/releases/latest`.
-- Extension latest discovery must filter by `extension-v*`; it must not assume the newest GitHub Release belongs to the plugin.
-- Extension update UI must avoid implying the browser has already updated the plugin.
+- Backend latest selection must ignore `extension-v*`.
+- Extension version/family metadata sent by old or future clients must be ignored by backend update APIs.
 - Update status responses must not include cookies, API keys, local paths, git remotes with credentials, or command stdout/stderr that could contain secrets.
 - Git command stderr may be logged locally at debug/warning level, but API responses should use stable summarized reasons.
+- Plugin copy must state that browser extension updates are handled by the browser/store channel or by manual sideload reloads, not by the backend auto-update toggle.
 
 ## Acceptance Criteria
 
-- [ ] `GET /api/update-status` returns backend status with current version even when no extension metadata is provided.
-- [ ] `GET /api/update-status` with extension metadata returns extension current/latest/version comparison.
+- [ ] `GET /api/update-status` returns backend status with current version and no `extension` object.
+- [ ] `GET /api/update-status` ignores extension version / family headers and query params sent by legacy clients.
+- [ ] `POST /api/update/check` ignores extension version / family headers and query params sent by legacy clients and returns the same response shape as without them.
+- [ ] `POST /api/update/apply` with `target="backend"` ignores extension version / family headers and query params sent by legacy clients and is not rejected as a malformed request because of that metadata.
+- [ ] `/api/runtime-stream` accepts and discards `extension_version` / `extension_family` query params and any first-message extension metadata without changing emitted backend update events.
 - [ ] Backend latest selection ignores `extension-v*`.
 - [ ] Backend latest selection ignores prerelease suffixes by default.
 - [ ] Dirty git worktree prevents backend apply.
@@ -416,37 +303,32 @@ Backend update UX is a passive settings/status row in v1, not a recommendation-p
 - [ ] Saving the switch off writes `scheduler.auto_update_enabled=false` and prevents future scheduled backend apply.
 - [ ] Saving a changed `检查间隔（小时）` writes `scheduler.auto_update_check_interval_hours` and hot-reloads the scheduler interval.
 - [ ] `auto_update_enabled=false` prevents scheduled apply but not manual check or manual backend apply.
-- [ ] The switch copy states it controls backend scheduled updates only and does not silently update sideloaded browser extensions.
-- [ ] `POST /api/update/apply` with `target="extension"` returns `409 Conflict`, `state="unsupported"`, `reason="extension_auto_apply_unsupported"`, and `accepted=false`.
-- [ ] Extension release discovery finds Chrome and Firefox assets from an `extension-v*` release.
-- [ ] Invalid extension release payload reports `state="error"` and `reason="github_payload_invalid"`.
-- [ ] Missing browser-specific asset returns `asset_missing`.
-- [ ] Extension prerelease-only results report `state="up_to_date"` and `reason="prerelease_ignored"`.
-- [ ] Side panel shows update notice when extension latest is greater than current.
-- [ ] Dismissed update notice stays hidden for the same tag during the silence window.
-- [ ] A newer extension tag shows the notice even if the previous tag was dismissed.
-- [ ] Runtime stream emits `backend_update_available`, `extension_update_available`, `backend_update_failed`, and `backend_restart_pending`.
-- [ ] README / README_EN document current plugin update limitation.
-- [ ] Runtime and extension module docs describe the update contract.
-- [ ] Targeted Python and extension tests pass.
+- [ ] `POST /api/update/apply` with `target="extension"` or an unknown target returns `422 Unprocessable Entity` and does not enter the apply lock.
+- [ ] The switch copy states it controls backend scheduled updates only and does not update browser extensions.
+- [ ] Optional plugin version row reads the current version locally from the extension manifest/runtime, links to GitHub Releases only, and does not attempt install-channel detection, backend echo, or latest-version comparison.
+- [ ] Runtime stream emits `backend_update_available`, `backend_update_failed`, and `backend_restart_pending`.
+- [ ] README / README_EN document browser extension updates as store-native or manual sideload reloads.
+- [ ] Runtime module docs describe the backend update contract.
+- [ ] Extension module docs point plugin release/store updates to the release workflow and browser store channel, not the backend auto-update API.
+- [ ] Targeted Python tests pass.
 
 ## Ambiguity Report
 
 | Dimension | Score | Min | Status | Notes |
 |-----------|-------|-----|--------|-------|
-| Goal Clarity | 0.92 | 0.75 | PASS | 后端自动应用、插件自动提示、未来原生通道分层明确 |
-| Boundary Clarity | 0.90 | 0.70 | PASS | 当前不做商店发布、签名、自托管和插件静默替换 |
-| Constraint Clarity | 0.86 | 0.65 | PASS | 浏览器平台限制、git 安全边界、默认关闭均锁定 |
-| Acceptance Criteria | 0.86 | 0.70 | PASS | API、后端 guard、插件 UI、docs、tests 均有 pass/fail |
-| **Ambiguity** | **0.14** | **<=0.20** | **PASS** | |
+| Goal Clarity | 0.94 | 0.75 | PASS | 自动更新范围明确收窄为后端源码 |
+| Boundary Clarity | 0.94 | 0.70 | PASS | 插件更新、商店发布、sideload 替换均明确出界 |
+| Constraint Clarity | 0.88 | 0.65 | PASS | git 安全边界、默认关闭、插件不由 toggle 管理均锁定 |
+| Acceptance Criteria | 0.86 | 0.70 | PASS | API、后端 guard、UI、docs、tests 均有 pass/fail |
+| **Ambiguity** | **0.10** | **<=0.20** | PASS | |
 
 ## Approach Trade-offs
 
 | Approach | Pros | Cons | Decision |
 |----------|------|------|----------|
-| 商店优先，直接发布 Chrome Web Store / Edge / AMO | 插件真正自动更新，用户体验最好 | 需要账号、审核、隐私材料、发布节奏和商店政策成本；不解决当前 sideload 用户 | Future |
-| 自托管 CRX/XPI `update_url` | 可控，理论上可自建更新 manifest | Chrome Windows/macOS 普通用户不可直接使用自托管安装；需要签名密钥管理；当前 zip 分发不兼容 | Future/Enterprise |
-| 混合模型：后端自动应用，插件自动发现 + 引导更新 | 符合当前架构，能快速落地，不误导用户 | 插件仍需用户手动确认和重新加载 | Chosen |
+| 后端-only 自动更新，插件交给商店/浏览器 | 范围清晰；避免维护插件 latest/dismiss/asset 逻辑；符合当前 Chrome Web Store 发布方向 | sideload 用户不会收到内置更新提示 | Chosen |
+| 混合模型：后端自动应用，插件自动发现 + 引导更新 | 能照顾 GitHub zip/sideload 用户 | 增加 API/UI/测试复杂度；与商店原生自动更新重复；容易让用户误解插件也由后端更新 | Rejected |
+| 自托管 CRX/XPI `update_url` | 可控，理论上可自建更新 manifest | Chrome Windows/macOS 普通用户不可直接使用自托管安装；需要签名密钥管理；当前 zip 分发不兼容 | Future/Enterprise only |
 
 ## Research Notes
 
@@ -458,15 +340,5 @@ Backend update UX is a passive settings/status row in v1, not a recommendation-p
 
 ## Interview Log
 
-| Round | Perspective | Question summary | Decision locked |
-|-------|-------------|------------------|-----------------|
-| 0 | Researcher | 当前后端是否已有更新能力 | 有 `AutoUpdateService`，但应用阶段需要补 git 安全 guard 与状态机 |
-| 0 | Researcher | 当前插件发布形态 | `extension-v*` GitHub Release zip，Chrome-compatible 与 Firefox zip 分开 |
-| 1 | Platform reviewer | sideload 插件能否静默自更新 | 不能作为普通用户能力承诺；只能自动发现并引导用户更新 |
-| 1 | Product reviewer | 是否现在上商店或做 CRX/XPI 签名 | 不纳入首版，作为 future native channel |
-| 2 | Security reviewer | 后端自动执行远端代码的保护 | 默认关闭，clean worktree、可信 remote、fast-forward-only、稳定 reason |
-| 2 | UX reviewer | 已打开插件如何知道有更新 | runtime stream + update-status API + dismissible banner |
-
----
-
-*Next step: convert this SPEC into an implementation plan with tests-first tasks.*
+- 2026-05-31: 初始目标是后端与插件两端自动更新；review 后补齐 API、状态机、配置项、插件 sideload 限制。
+- 2026-05-31: Chrome Web Store 上传与权限收窄流程落地后，决策改为后端-only 自动更新；插件更新交给浏览器商店原生通道，GitHub zip/sideload 作为手动 fallback。

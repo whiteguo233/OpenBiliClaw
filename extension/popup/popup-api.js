@@ -187,6 +187,26 @@ export async function fetchRuntimeStatus() {
   return requestJson("/runtime-status", { method: "GET" });
 }
 
+export async function fetchUpdateStatus() {
+  return requestJson("/update-status", { method: "GET" });
+}
+
+export async function checkBackendUpdate() {
+  return requestJson("/update/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ include_backend: true }),
+  });
+}
+
+export async function applyBackendUpdate(tag = "") {
+  return requestJson("/update/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target: "backend", tag }),
+  });
+}
+
 export async function fetchActivityFeed({ limit, before } = {}) {
   const params = new URLSearchParams();
   if (typeof limit === "number") params.set("limit", String(limit));

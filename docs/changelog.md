@@ -7,9 +7,14 @@
 ## extension v0.3.64: 保存列表头图与窄宽度头部修复（2026-06-01）
 
 - 浏览器插件版本提升到 `0.3.64`，准备发布 `extension-v0.3.64`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.64.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.64-firefox.zip`。
+- 响应 Chrome Web Store `Purple Potassium` 权限拒审：Chrome / Firefox manifest 移除不必要的 `tabs` permission，保留现有 `activeTab`、`scripting`、`sidePanel`、`cookies`、`notifications`、`alarms`、`storage` 与受支持平台 / 本机后端 host 权限；新增 manifest 回归测试防止重新声明 `tabs`。
+- 新增 `docs/diagrams/soul-update-flow.html`，用自包含 SVG HTML 梳理 Soul 事件、反馈、对话、探针、手动编辑到五层 OnionProfile 的更新路径，并同步文档导航。
 - 修复插件 side panel「稍后」和「收藏」列表无头图的问题：保存列表条目现在归一化封面 URL，按固定 16:9 缩略图展示，并继续通过后端 `/api/image-proxy` 加载平台 CDN 图片。
 - 修复插件 side panel 默认窄宽度下顶部工具按钮和左侧标题 / 状态重叠的问题：460px 以下宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列。
+- 落地后端-only 自动更新首版：新增 `/api/update-status`、`/api/update/check`、`/api/update/apply`，后端 canonical `backend-v*` tag 优先级、prerelease 默认忽略、可信 remote / dirty worktree / fast-forward guard、apply 锁、runtime stream 事件和设置页“版本与更新”入口；插件更新继续交给浏览器商店或 sideload 手动重载。
 - 刷新 README 截图与文案：桌面 / 移动端 Web 截图改用真实运行环境的浏览器实拍（桌面首页 / 推荐网格 / 画像+实时看板，移动推荐 / 画像 / 对话），替换 5 月那批已过时的旧图，并同步中英文 README 与现状——移动端底部 Tab 由「推荐 / 画像 / 对话」三个更正为「推荐 / 稍后 / 收藏 / 画像 / 对话」五个、惊喜卡与推荐卡补「稍后再看 / 收藏」动作、桌面卡片描述从「横向双卡片」改为「封面在上的网格」、测试数由 800+/650+ 统一为 1900+；英文 README 补回「用户交流群 / 功能预览截图表 / 更多截图」三块，补技术栈 YouTube 与 Docker 行，并刷新 Roadmap 与局域网访问说明对齐中文。
+- 封面磁盘缓存（`data/image-cache/`）新增消费感知定期清理：`content_cache.pool_status` 为 `shown / feedbacked / stale / purged_by_dislike`、且不在收藏 / 稍后再看的封面会被清掉（B 站等 URL 稳定、可重抓来源安全释放空间，实测可回收数百 MB），`fresh` / `suppressed` 与已保存项始终保留；带过期 token、无法重抓的小红书封面默认受保护不删（缓存是其唯一副本），并移除超 30 天的孤儿文件作增长兜底。启动时全量执行、运行时每 6 小时由 `RefreshRuntime._loop_image_cache_cleanup` 增量执行；缓存键与清理逻辑抽到新模块 `openbiliclaw.runtime.image_cache`（`api.app` 复用），新增 `Database.iter_cover_lifecycle` 联表判定保存态。
+- 修复小红书封面大面积 502 破图：根因是封面只在「展示时」才懒加载，而小红书签名 URL 的 token 寿命短、等内容被刷出来时多半已过期（实测 775 张中仅 40 张曾被缓存）。新增「发现即缓存」预取——`RefreshRuntime._loop_cover_prefetch` 每 60 秒从 `Database.iter_servable_cover_urls` 取最近 12 小时内仍可展示的封面，`select_prefetch_targets` 把无法重抓的小红书封面排在最前、过滤已缓存 / 非白名单，趁 token 新鲜时落盘（每轮上限 40 张）。同时把 proxy 的白名单 / redirect / 大小校验抽成共享的 `fetch_cover_bytes`（`CoverFetchError`），proxy 路由与预取共用同一抓取核心，避免 SSRF 校验重复实现。
 
 ## extension v0.3.63: 惊喜推荐正向反馈保留（2026-06-01）
 

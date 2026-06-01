@@ -339,8 +339,13 @@ speculator_idle_interval_minutes = 30    # Idle interval before checking specula
 # avoidance_speculation_confirmation_threshold = 3  # 确认避雷方向需要的显式负向信号数
 # avoidance_speculation_max_active = 5         # 最多同时活跃的避雷方向
 # --- 自动更新 ---
-auto_update_enabled = false        # 是否自动检查并应用新版本（git pull + uv sync）
+auto_update_enabled = false        # 是否自动检查并应用后端新版本（默认关闭）
 auto_update_check_interval_hours = 6  # 检查间隔（小时）
+auto_update_allow_prerelease = false  # 是否允许 backend-vX.Y.Z-rc/beta/dev 预发布 tag
+auto_update_allowed_remotes = [
+  "https://github.com/whiteguo233/OpenBiliClaw.git",
+  "git@github.com:whiteguo233/OpenBiliClaw.git",
+] # 只有 origin 精确匹配这些远端时才允许自动快进；带凭据的 URL 一律拒绝
 
 [scheduler.pool_source_shares]
 # Candidate-pool source mix by platform family. The saved default 8:1:1:1
