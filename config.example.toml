@@ -52,6 +52,8 @@ timeout = 300
 # 旧兼容开关；实际 fallback 只在 fallback_provider 非空时发生。
 fallback_enabled = false
 # 第二个备选 provider；默认空 = 不 fallback，不再自动尝试其它 provider。
+# 设为 "ollama" 可让本地 Ollama 兜底 chat，但需在 [llm.ollama] 配好 chat 模型
+# （或本地已 `ollama pull llama3`）——bge-m3 只能做 embedding，不能兜底 chat。
 fallback_provider = ""
 
 [llm.openai]

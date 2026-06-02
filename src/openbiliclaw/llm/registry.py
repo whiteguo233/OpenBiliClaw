@@ -494,20 +494,31 @@ def _ollama_is_chat_capable(config: Config) -> bool:
     """Decide whether the registered Ollama instance can serve chat
     completions, or only embedding requests.
 
-    The user opts in to chat capability by either:
+    The user opts in to chat capability by any of:
       * setting ``[llm.ollama] model`` (their explicit chat model), or
-      * picking ``ollama`` as ``[llm].default_provider``, OR using it in
-        any per-module override.
+      * picking ``ollama`` as ``[llm].default_provider``, or
+      * naming ``ollama`` as ``[llm].fallback_provider`` — an explicit
+        request to use local Ollama as the chat fallback, or
+      * using it in any per-module override.
 
     If none of those are true and we only registered Ollama because the
     embedding section pointed there, treat it as embedding-only. The
     fallback chain will skip it for chat completions, avoiding the
     "All providers failed (..., ollama). Last error: ollama request
     failed: 404" path when the only model on disk is bge-m3.
+
+    Note: when chat capability comes *solely* from ``fallback_provider``
+    (no explicit ``[llm.ollama] model``), the provider is built with the
+    ``llama3`` default — so the user must have a chat model pulled
+    locally for the fallback to actually serve requests. That's the
+    user's stated intent though, so a 404 at fallback time is a louder,
+    more honest failure than silently dropping Ollama from the chain.
     """
     if config.llm.ollama.model.strip():
         return True
     if config.llm.default_provider.strip().lower() == "ollama":
+        return True
+    if config.llm.fallback_provider.strip().lower() == "ollama":
         return True
     for module in ("soul", "discovery", "recommendation", "evaluation"):
         module_cfg = getattr(config.llm, module, None)

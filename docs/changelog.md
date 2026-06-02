@@ -4,6 +4,10 @@
 
 ---
 
+## v0.3.98: Ollama 作 chat fallback 时识别修复（2026-06-02）
+
+- 修复「把本地 Ollama 设为 chat 兜底却静默失效」的 bug：`_ollama_is_chat_capable()` 此前只认 `[llm.ollama] model` / `[llm].default_provider` / 模块 override 三个入口，唯独不认 `[llm].fallback_provider = "ollama"`。当用户把全局 `fallback_provider` 设为 `ollama` 但没单独填 `[llm.ollama] model`（常见于本地已用 Ollama 跑 `bge-m3` embedding 的场景），Ollama 会被判为 embedding-only 并被 `_fallback_order()` 从 chat 兜底链里剔除——主 provider 失败时直接抛 `LLMFallbackError`，既不兜底也没有任何告警。现在新增第四个识别入口尊重用户意图（未配 `model` 时用 `llama3` 默认，需本地已 `ollama pull` 对应 chat 模型）；补 `test_ollama_named_as_fallback_provider_is_chat_capable_without_model` 回归，并在 `config.example.toml` 补充 `fallback_provider` 的 Ollama 使用提示。
+
 ## extension v0.3.65: Chrome Web Store tabs 权限拒审修复（2026-06-02）
 
 - 浏览器插件版本提升到 `0.3.65`，准备发布 `extension-v0.3.65`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.65.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.65-firefox.zip`。

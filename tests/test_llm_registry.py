@@ -1241,3 +1241,55 @@ async def test_ollama_with_explicit_chat_model_is_chat_capable() -> None:
 
     response = await registry.complete([{"role": "user", "content": "hi"}])
     assert response.provider == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_ollama_named_as_fallback_provider_is_chat_capable_without_model() -> None:
+    """Regression: ``[llm].fallback_provider = "ollama"`` is an explicit
+    request to use local Ollama as the chat fallback, even when the user
+    never separately filled ``[llm.ollama] model``.
+
+    Pre-fix, ``_ollama_is_chat_capable`` only honoured ``[llm.ollama]
+    model`` / ``default_provider`` / per-module overrides, so an Ollama
+    named *only* as the fallback provider got tagged embedding-only and
+    was silently dropped from the chat fallback chain. The primary
+    failure then raised ``LLMFallbackError`` instead of routing to
+    Ollama — fallback never fired and there was no warning. This is the
+    exact config shape from the bug report: default cloud provider +
+    fallback_provider=ollama + embedding=ollama + empty [llm.ollama]
+    model.
+    """
+    cfg = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            fallback_enabled=True,
+            fallback_provider="ollama",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            # No explicit chat model — Ollama is named ONLY as the
+            # fallback provider. It still must be chat-capable.
+            ollama=LLMProviderConfig(
+                api_key="ollama",
+                model="",
+                base_url="http://localhost:11434/v1",
+            ),
+            # Embedding also points at Ollama — this is the exact shape
+            # that used to tag the provider embedding-only.
+            embedding=EmbeddingConfig(provider="ollama", model="bge-m3"),
+        )
+    )
+
+    registry = build_llm_registry(
+        cfg,
+        provider_overrides={
+            "openai": FakeProvider("openai", errors=[LLMProviderError("primary failed")]),
+            "ollama": FakeProvider(
+                "ollama", responses=[LLMResponse(content="ok", provider="ollama")]
+            ),
+        },
+    )
+
+    assert registry.is_chat_capable("ollama") is True
+    assert registry._fallback_order() == ["openai", "ollama"]
+
+    response = await registry.complete([{"role": "user", "content": "hi"}])
+    assert response.provider == "ollama"
