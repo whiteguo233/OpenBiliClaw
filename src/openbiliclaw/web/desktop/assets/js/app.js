@@ -2988,7 +2988,12 @@
     function handleRuntimeEvent(event) {
       if (!event?.type) return;
       applyRuntimeStatus({ ...event, live_summary: event.message || event.live_summary || event.type });
-      if (["refresh.pool_updated", "recommendation.reshuffled", "config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      // refresh.pool_updated / recommendation.reshuffled are pool-status signals, not
+      // list-replacement signals: hydrating here would wipe locally appended cards
+      // (/api/recommendations only returns the latest top window). Header/pool counts
+      // still update via applyRuntimeStatus above; user-initiated 换一批 / 加载更多 replace
+      // the list explicitly. Matches recommend.js + popup.js (fix 79042ce).
+      if (["config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
       if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||

@@ -325,7 +325,7 @@
         </div>
         <div class="box stream">
           <strong>runtime-stream 合并刷新</strong>
-          <span>`activity.added / profile_updated / refresh.pool_updated / interest.probe / avoidance.probe` 进入 debounce / single-flight。</span>
+          <span>`activity.added / profile_updated / config_reloaded / init_completed / interest.probe / avoidance.probe` 进入 debounce / single-flight；`refresh.pool_updated` 只做状态合并，不触发 hydrate。</span>
         </div>
       </div>
 

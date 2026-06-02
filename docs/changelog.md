@@ -4,6 +4,11 @@
 
 ---
 
+## v0.3.99: 桌面 Web 推荐列表不再被池更新冲掉（2026-06-03）
+
+- 修复桌面 Web `/web` 在下滑浏览时推荐卡片会突然整批替换的 bug：根因是桌面前端把「后端推荐池更新」当成了「整页推荐需重新同步」。`web/desktop/assets/js/app.js` 的 runtime-stream 处理器收到 `refresh.pool_updated`（以及后端实际从不下发的 `recommendation.reshuffled`）时会调用 `scheduleBackendHydration()` → `hydrateFromBackend()`，后者无条件执行 `state.videos = normalizeRecommendationList(...)`，用 `/api/recommendations` 的「最新 top 窗口」（`created_at DESC, id DESC`）替换当前列表——把用户「加载更多」追加的历史卡片一并冲掉。此问题在 2026-05-27（`79042ce`）已对插件 popup 和移动 Web `recommend.js` 修过，但桌面 Web（早 5 天于 05-22 创建）当时被漏掉。现在 `refresh.pool_updated` / `recommendation.reshuffled` 不再触发 hydrate，只保留 `config_reloaded` / `init_completed` 这类真·重新水合流程；池子数量 / header 仍由处理器开头无条件的 `applyRuntimeStatus(...)` 更新，用户主动「换一批」/「加载更多」/反馈删除继续各自直接改 `state.videos`，行为与移动 Web、插件对齐。
+- 测试：`tests/test_desktop_web_pool_status.py` 新增 `test_desktop_pool_update_does_not_replace_recommendation_list`，断言桌面 hydrate 触发列表不含 `refresh.pool_updated` / `recommendation.reshuffled` 且保留 `config_reloaded` / `init_completed`；扩展端 `runtime-refresh-coalescing.test.ts` 补桌面对称守卫（此前只校验 hydrate 被防抖、未校验 pool_updated 不应触发 hydrate，正是这次 bug 溜过的原因）。同步 `docs/diagrams/web-architecture.html` runtime-stream 合并刷新说明。
+
 ## v0.3.98: Ollama 作 chat fallback 时识别修复（2026-06-02）
 
 - 修复「把本地 Ollama 设为 chat 兜底却静默失效」的 bug：`_ollama_is_chat_capable()` 此前只认 `[llm.ollama] model` / `[llm].default_provider` / 模块 override 三个入口，唯独不认 `[llm].fallback_provider = "ollama"`。当用户把全局 `fallback_provider` 设为 `ollama` 但没单独填 `[llm.ollama] model`（常见于本地已用 Ollama 跑 `bge-m3` embedding 的场景），Ollama 会被判为 embedding-only 并被 `_fallback_order()` 从 chat 兜底链里剔除——主 provider 失败时直接抛 `LLMFallbackError`，既不兜底也没有任何告警。现在新增第四个识别入口尊重用户意图（未配 `model` 时用 `llama3` 默认，需本地已 `ollama pull` 对应 chat 模型）；补 `test_ollama_named_as_fallback_provider_is_chat_capable_without_model` 回归，并在 `config.example.toml` 补充 `fallback_provider` 的 Ollama 使用提示。

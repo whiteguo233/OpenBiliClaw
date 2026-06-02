@@ -43,6 +43,18 @@ test("runtime stream refresh handlers coalesce expensive frontend reloads", () =
     /if \(event\.type === "activity\.added"\) void loadActivityPage\(\{ reset: true \}\);/,
   );
 
+  // refresh.pool_updated / recommendation.reshuffled are pool-status signals,
+  // not list-replacement signals: hydrating on them would wipe locally appended
+  // ("加载更多") cards. Only broad-reload flows (config_reloaded / init_completed)
+  // may hydrate. Mirrors the popup + mobile recommend guards below.
+  const desktopHydrationTrigger =
+    desktopJs.match(/if \(\[[^\]]*\]\.includes\(event\.type\)\) scheduleBackendHydration\(\);/)?.[0] ?? "";
+  assert.notEqual(desktopHydrationTrigger, "", "desktop should still hydrate on broad-reload events");
+  assert.doesNotMatch(desktopHydrationTrigger, /refresh\.pool_updated/);
+  assert.doesNotMatch(desktopHydrationTrigger, /recommendation\.reshuffled/);
+  assert.match(desktopHydrationTrigger, /config_reloaded/);
+  assert.match(desktopHydrationTrigger, /init_completed/);
+
   const poolUpdatedBlock =
     mobileRecommendJs.match(/if \(type === "refresh\.pool_updated"\) \{[\s\S]*?\} else if/)?.[0] ?? "";
   assert.notEqual(poolUpdatedBlock, "", "mobile recommend stream handler should handle pool updates");
