@@ -26,11 +26,12 @@
 
 ---
 
-## 📌 Cross-Platform Candidates Share One Evaluation Pool (2026-06-04)
+## 📌 Login Autostart + Local Ollama Preflight (2026-06-05)
 
-- **Bilibili / Xiaohongshu / Douyin / YouTube now align after discovery** — each source only fetches raw candidates first, then writes them into `discovery_candidates`.
-- **One mixed-source evaluator decides fit** — the backend claims mixed batches, scores them against the Soul profile, source context, and recent negative examples, then admits accepted items into the recommendation pool.
-- **The recommendation pool cap still gates discovery** — when `pool_available_count >= pool_target_count`, discovery and candidate draining stop instead of overfilling the staging pool.
+- **The extension settings page can enable login autostart** — the General tab now registers the local backend as a current-user login item through the local API.
+- **Current-user scope on all three desktop OSes** — macOS LaunchAgent, Windows HKCU Run, and Linux XDG autostart; no system service and no administrator permission required.
+- **Local Ollama gets a startup preflight** — when the current config needs the default `localhost:11434` Ollama daemon, `openbiliclaw start` probes it and can launch `ollama serve` in the background.
+- **Guarded config writes** — environment-managed settings, `config.local.toml` shadowing, and unsupported platforms produce explicit messages instead of creating a login item that will miss API keys or cookies.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -480,7 +481,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
 │      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
-│      (Cookies · XHS/DY/YT tasks · init bridge)        │
+│      (Cookies · XHS/DY/YT tasks · init bridge · autostart setting) │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
                          │ + Mobile/Desktop Web (/m · /web) · optional [api.auth] password gate (local free / LAN needs password)
@@ -493,7 +494,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │(Profile+Probe)│(5-Layer+Buffer)│(Eval Pool+Neg.)│(Guarded Mix)│
 ├─────────┴──────────┴───────────┴────────────────────┤
 │ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
-│ Runtime: Account sync + producers + probe arbiter(distance/quota)│
+│ Runtime: account sync + producers + probe arbiter + autostart/Ollama │
 │ Runtime status: pool_available/raw/pending/eval_count      │
 │ SQLite: events · discovery_candidates · content_cache   │
 │         recommendations · chat_turns · avoidance_state  │
@@ -543,11 +544,11 @@ OpenBiliClaw/
 │   ├── sources/               # Source adapters and XHS/Douyin/YouTube task bridges
 │   ├── youtube/               # Google Takeout import parser
 │   ├── api/                   # Local FastAPI (config rollback / degraded mode / popup API)
-│   ├── runtime/               # Refresh, presence gate, speculator one-shots, degraded RuntimeContext
+│   ├── runtime/               # Refresh, presence gate, autostart/Ollama, degraded RuntimeContext
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
 │   └── storage/               # Data storage layer
-├── extension/                 # Chrome browser extension (Bilibili + XHS + Douyin + YouTube + degraded config recovery)
+├── extension/                 # Chrome browser extension (Bilibili + XHS + Douyin + YouTube + autostart/config recovery)
 ├── skills/                    # Built-in Skill definitions
 ├── docs/                      # Documentation
 └── tests/                     # Tests (1900+)
@@ -581,7 +582,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.100 / extension v0.3.66: off-site refill budgets align with Bilibili (2026-06-03)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.101 / extension v0.3.67: login autostart and local Ollama preflight (2026-06-05)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 

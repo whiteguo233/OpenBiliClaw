@@ -224,6 +224,9 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ 后台 LLM 请求暂停配置（设置页调度区 + presence gate）          │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ 开机自启动开关：/api/autostart-status + apply（本机可写）     │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
 │  │ 配置离线缓存 + 降级模式修复 UI（保存后提示重启）              │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -259,6 +262,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │     ContinuousRefreshController + B/XHS/DY/YT=8/1/1/1 │   │
 │  │     DiscoveryCandidatePipeline: raw candidates -> mixed batch eval -> pool │ │
 │  │     LLM gate: scheduler + extension presence          │   │
+│  │     Autostart: user login item + Ollama preflight/self-heal │ │
 │  │     XHS/Douyin/YouTube producers: 按平台缺口独立补池       │   │
 │  │     Hot reload one-shots: interest/avoidance force_tick │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │

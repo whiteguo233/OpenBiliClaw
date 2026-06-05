@@ -4,6 +4,16 @@
 
 ---
 
+## v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）
+
+- 新增当前用户作用域开机自启动能力：macOS 写 `~/Library/LaunchAgents/com.openbiliclaw.daemon.plist`，Windows 写 HKCU Run + `openbiliclaw-autostart.pyw`，Linux 写 XDG `~/.config/autostart/openbiliclaw.desktop`；不写系统级服务、不要求 root / 管理员权限，Docker / 未知平台明确返回不支持。
+- 新增 `[autostart] enabled/manage_ollama` 配置段，并为 `save_config()` 加入 autostart provenance：普通配置保存默认保留磁盘上的 `[autostart].enabled`，只有 `/api/autostart/apply` 和 `openbiliclaw autostart enable/disable` 以 `autostart_authoritative=true` 权威写入，避免陈旧快照覆盖用户刚切换的登录项。
+- `openbiliclaw start` 增加自启动 reconcile：数据库健康后、API 启动前，按当前 LLM / embedding 配置判断是否需要本机 Ollama；只有默认 `localhost:11434` 需要且未运行时才尝试后台拉起 `ollama serve`，远端 / 自定义 loopback 端口只探测不强拉。若 `[autostart].enabled=true` 但系统注册缺失，会在没有 env-managed 配置风险时自动补注册。
+- 新增 API：`GET /api/autostart-status` 远程可读、降级模式可读，返回固定无敏字段；`POST /api/autostart/apply` 仅 trusted-local 可写，带 env / `config.local.toml` shadow / unsupported guard，开启时先写 config 后注册 OS，关闭时先注销 OS 后写 config，失败尽量回滚到操作前状态。
+- 新增 CLI：`openbiliclaw autostart status|enable|disable`，并在 `config-show` 中展示开机自启动配置 / 系统注册状态。CLI 与 API 使用同一套 env-managed、shadow 和方向化事务规则。
+- 插件 `extension v0.3.67` 设置页通用 tab 新增「开机自启动」开关：打开时读状态，切换时即时调用 apply；不可管理时按 `env_managed` / `shadowed` / `unsupported_*` reason 禁用并展示行内提示。提示明确该开关只影响下次登录拉起后端，不启停当前进程；本机 Ollama 可能随启动预检一起拉起。
+- 后端源码版本提升到 `v0.3.101`，准备发布 `backend-v0.3.101`；浏览器插件版本提升到 `extension-v0.3.67`。
+
 ## v0.3.100: 统一 discovery 待评估池与外站补池预算（2026-06-04）
 
 - 新增 `discovery_candidates` 持久化待评估池和 `DiscoveryCandidatePipeline`：B 站、小红书、抖音、YouTube raw candidates 先统一进入 `pending_eval`，再由共享 evaluator 混源 batch 评估并 admission 到 `content_cache`。来源差异只保留为取数方式、配额和 prompt 上下文，不再各走一套喜好判断流程。
