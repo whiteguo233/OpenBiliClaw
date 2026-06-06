@@ -91,3 +91,22 @@ async def test_run_init_backfill_releases_lock_on_cancel() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert ctrl._refresh_lock.locked() is False
+
+
+def test_llm_work_gate_blocks_while_init_active() -> None:
+    """gui-init D1: the controller's background loops pause while a guided init
+    is active (account_sync already gates on the same predicate)."""
+    ctrl = _ctrl(_FakeDB([0]), _FakeDisc())
+    baseline = ctrl._llm_work_allowed()  # no init check wired → underlying gate
+
+    ctrl.init_active_check = lambda: True
+    assert ctrl._llm_work_allowed() is False  # forced off regardless of baseline
+
+    ctrl.init_active_check = lambda: False
+    assert ctrl._llm_work_allowed() == baseline  # back to the underlying gate
+
+    def _boom() -> bool:
+        raise RuntimeError("boom")
+
+    ctrl.init_active_check = _boom  # defensive: a raising check never crashes
+    assert ctrl._llm_work_allowed() == baseline

@@ -614,6 +614,10 @@ class RuntimeContext:
             youtube_producer=new_youtube_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
+            # gui-init D1: pause the controller's background loops while a guided
+            # init is active (account_sync already gates on the same predicate).
+            # init's own run_init_backfill bypasses _llm_work_allowed.
+            init_active_check=lambda: self.init_coordinator.init_active(),
             task_registry=self.task_registry,
         )
 

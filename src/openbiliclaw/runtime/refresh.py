@@ -27,6 +27,8 @@ from openbiliclaw.soul.speculator import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 logger = logging.getLogger(__name__)
@@ -225,6 +227,11 @@ class ContinuousRefreshController:
     youtube_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
     presence: PresenceTracker = field(default_factory=PresenceTracker)
+    # gui-init D1: optional init-aware gate. When it returns True (a guided init
+    # is active) ALL background loops pause so they don't race init's explicit
+    # analyze/build. ``run_init_backfill`` bypasses this (it never calls
+    # ``_llm_work_allowed``), so init's own discovery is not self-blocked.
+    init_active_check: Callable[[], bool] | None = None
     signal_event_threshold: int = 6
     event_refresh_minutes: int = 0
     trending_refresh_hours: int = 3
@@ -322,6 +329,15 @@ class ContinuousRefreshController:
 
     def _llm_work_allowed(self) -> bool:
         """Return whether daemon-owned background LLM / embedding work can run."""
+        # Pause every background loop while a guided init is active (gui-init
+        # D1) — the continuous refresh / soul-pipeline / producer ticks all gate
+        # on this, so init's explicit analyze/build/backfill runs uncontended.
+        if self.init_active_check is not None:
+            try:
+                if self.init_active_check():
+                    return False
+            except Exception:
+                pass
         allowed = background_llm_work_allowed(self.scheduler_config, self.presence)
         if allowed != self._last_llm_gate_allowed:
             logger.info(
