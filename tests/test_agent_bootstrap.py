@@ -155,6 +155,51 @@ def test_apply_embedding_config_writes_embedding_owned_credentials(tmp_path: Pat
     assert 'api_key = "sk-embedding"' in text
 
 
+def test_docker_run_rewrites_default_ollama_embedding_to_compose_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_config(
+        tmp_path,
+        embedding_provider="",
+        embedding_model="",
+    )
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "docker",
+            "--skip-start",
+            "--embedding-provider",
+            "ollama",
+            "--embedding-model",
+            "bge-m3",
+            "--no-xhs",
+            "--no-douyin",
+            "--no-youtube",
+        ]
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+
+    returncode = bootstrap.run(args)
+
+    config = bootstrap.read_simple_toml(tmp_path / "config.toml")
+    assert returncode == 0
+    assert config["llm"]["embedding"]["provider"] == "ollama"
+    assert config["llm"]["embedding"]["model"] == "bge-m3"
+    assert config["llm"]["embedding"]["base_url"] == "http://ollama:11434/v1"
+
+
 def test_should_auto_wire_embedding_when_unconfigured_local() -> None:
     # Flag-driven install that never passed --embedding-* and left embedding
     # empty → default to local Ollama so dedup isn't silently disabled.

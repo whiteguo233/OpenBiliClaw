@@ -18,6 +18,7 @@
 #
 # Examples:
 #     INSTALL_DIR=$HOME/obc curl -fsSL .../install.sh | bash
+#     MODE=docker curl -fsSL .../install.sh | bash
 #     REUSE_FROM=$HOME/workspace/OpenBiliClaw curl -fsSL .../install.sh | bash
 #     SKIP_START=1 curl -fsSL .../install.sh | bash      # prepare only
 #

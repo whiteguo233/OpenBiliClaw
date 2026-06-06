@@ -73,6 +73,20 @@ def test_docs_make_auto_init_primary_for_all_install_channels() -> None:
     assert "手动 fallback" in docker_doc
 
 
+def test_docker_docs_promote_human_one_line_installer_contract() -> None:
+    install_sh = _read("scripts/install.sh")
+    docker_doc = _read("docs/docker-deployment.md")
+
+    assert "MODE=docker curl -fsSL .../install.sh | bash" in install_sh
+    assert "MODE=docker curl -fsSL https://raw.githubusercontent.com" in docker_doc
+    assert "human Docker one-line installer asks the same LLM provider first" in docker_doc
+    assert "http://ollama:11434/v1" in docker_doc
+    assert "127.0.0.1:8420/api/bilibili/cookie" in docker_doc
+    assert "init` 是 v0.3.20+ 的交互式向导" not in docker_doc
+    assert "在 Docker 里跑时也会弹一个交互式问题" not in docker_doc
+    assert "写到 `[llm.openai]` 同段" not in docker_doc
+
+
 def test_install_contract_blocks_init_when_ai_service_checks_fail() -> None:
     install_sh = _read("scripts/install.sh")
     install_ps1 = _read("scripts/install.ps1")

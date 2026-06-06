@@ -15,6 +15,13 @@ Pick the command for the user's shell — **detect the platform from the user's 
 curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
 ```
 
+For an explicit Docker install on macOS / Linux / WSL2, set `MODE=docker`
+on the same one-liner:
+
+```bash
+MODE=docker curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
+```
+
 > ⚠️ **Detect, don't guess.** On a native Windows host (no WSL),
 > `bash` may resolve to `C:\Windows\System32\bash.exe`, which is the
 > Microsoft WSL launcher — not Git Bash. If WSL isn't actually
@@ -32,6 +39,12 @@ curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scrip
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.ps1 -UseBasicParsing | iex
 ```
 
+For an explicit Docker Desktop install on native Windows:
+
+```powershell
+$env:MODE="docker"; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.ps1 -UseBasicParsing | iex
+```
+
 > The leading `[Net.ServicePointManager]...Tls12` line is **required on PowerShell 5.1** (the default that ships with Windows 10/11). PS 5.1 defaults to TLS 1.0/1.1, but GitHub.com only accepts TLS 1.2+. Without the prefix, `iwr` fails with "underlying connection was closed" and the user blames the installer. Users on PowerShell 7+ can omit the prefix. Compatible from v0.3.9 forward — the script itself also re-applies the same setting once it starts running, so any subsequent HTTPS calls (git, pip, uv) inside the script are also covered.
 > v0.3.71+ also sets `NO_PROXY/no_proxy=localhost,127.0.0.1,::1` in `install.sh`, `install.ps1`, and `agent_bootstrap.py` before local health checks. This keeps corporate/VPN proxies from intercepting `http://127.0.0.1:<port>/api/health` on native Windows.
 
@@ -40,8 +53,8 @@ Either command:
 1. Clones the OpenBiliClaw repo (default `~/OpenBiliClaw` on Unix, `%USERPROFILE%\OpenBiliClaw` on Windows; override with the `INSTALL_DIR` env var)
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses** its LLM API keys and Bilibili cookie so the user never has to retype them
 3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source
-4. Installs Python dependencies (`uv sync` preferred, `pip install -e .` fallback)
-5. Starts the backend and runs a health check against `/api/health`. Local one-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN; the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
+4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`
+5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN; the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
    - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
 6. Verifies the configured LLM provider and embedding service with real lightweight calls before init; if either fails, it blocks init with `status=service_check_failed`
 7. Automatically runs init after credentials, confirmations, and AI service checks are complete, then prints a self-contained **status block** at the very end of stdout:
@@ -246,6 +259,9 @@ near-identical content under different ids). This is skipped under
 Docker (the container can't reach the host's Ollama at `localhost`) and
 when you explicitly disable embedding via `--embedding-provider ""`.
 Emits `embedding_auto_ollama` in the progress stream when it fires.
+In Docker human one-line installs, the default `ollama` + `bge-m3`
+embedding choice is instead pointed at the compose sidecar
+`http://ollama:11434/v1` before config is copied into `/app/runtime`.
 
 ### Step 1 — Pick an LLM service
 
@@ -420,12 +436,13 @@ event with a manual-install URL. Tell the user that exact URL and ask
 them to install Ollama from there, then re-run the same bootstrap
 command — config already on disk, only the Ollama phase will rerun.
 
-Inside Docker mode the bootstrap **does not** auto-install Ollama. The
-container talks to the host's Ollama at `host.docker.internal:11434`,
-so installing it inside the container would be the wrong target. The
-user must run the host-side `ollama` themselves; the bootstrap just
-checks `[llm.ollama] base_url`. Tell Docker users to install Ollama
-on their host first.
+Inside Docker mode the bootstrap **does not** auto-install Ollama for
+the chat LLM. If the user chooses chat provider `ollama`, tell them to
+run host-side Ollama and set `[llm.ollama] base_url` to
+`http://host.docker.internal:11434/v1` so the container can reach it.
+This is separate from embedding: the default Docker embedding path uses
+the compose sidecar at `http://ollama:11434/v1` and does not require a
+host Ollama install.
 
 ### Step 3 — Embedding (向量化)
 
@@ -534,12 +551,12 @@ users into thinking the install crashed.) Tell the user:
 
 Then poll `GET /api/runtime-status` (or watch for the
 `bilibili_cookie_synced` event on `ws://127.0.0.1:8420/api/runtime-stream`)
-to detect when the cookie has arrived, and run init via:
+to detect when the cookie has arrived. If the original bootstrap wait
+timed out, re-run the printed `agent_bootstrap.py` command so service
+checks and source choices still gate init:
 
 ```bash
-docker exec -it openbiliclaw-backend openbiliclaw init   # docker mode
-# or
-uv run openbiliclaw init                                  # local + uv
+python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie
 ```
 
 **If user picks B**: collect the cookie string, run with

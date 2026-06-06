@@ -64,6 +64,13 @@ HEALTH_POLL_INTERVAL = 2.0
 LOCAL_NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")
 DOCKER_CONTAINER_NAME = "openbiliclaw-backend"
 DOCKER_RUNTIME_ROOT = "/app/runtime"
+DOCKER_OLLAMA_BASE_URL = "http://ollama:11434/v1"
+LOCAL_OLLAMA_BASE_URLS = (
+    "http://localhost:11434",
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:11434",
+    "http://127.0.0.1:11434/v1",
+)
 DEFAULT_BILIBILI_FAVORITE_LIMIT = 300
 DEFAULT_BILIBILI_FOLLOW_LIMIT = 100
 
@@ -2026,6 +2033,38 @@ def apply_embedding_config(
     return {"written": written, "provider": target_provider}
 
 
+def _is_local_ollama_base_url(base_url: str) -> bool:
+    normalized = base_url.strip().rstrip("/")
+    return not normalized or normalized in LOCAL_OLLAMA_BASE_URLS
+
+
+def align_docker_runtime_config(project_dir: Path) -> dict[str, Any]:
+    """Rewrite host-only config values before copying them into Docker runtime."""
+
+    config_path = project_dir / "config.toml"
+    config = read_simple_toml(config_path)
+    embedding_cfg = config.get("llm", {}).get("embedding", {})
+    provider = str(embedding_cfg.get("provider", "") or "").strip().lower()
+    base_url = str(embedding_cfg.get("base_url", "") or "").strip()
+    written: list[str] = []
+
+    if provider == "ollama" and _is_local_ollama_base_url(base_url):
+        update_config_secret(
+            config_path,
+            "llm.embedding",
+            "base_url",
+            DOCKER_OLLAMA_BASE_URL,
+        )
+        base_url = DOCKER_OLLAMA_BASE_URL
+        written.append("llm.embedding.base_url")
+
+    return {
+        "written": written,
+        "embedding_provider": provider,
+        "embedding_base_url": base_url,
+    }
+
+
 def parse_module_override(spec: str) -> tuple[str, str, str]:
     """Parse --module-override values shaped like ``module=provider:model``.
 
@@ -2835,6 +2874,16 @@ def run(args: argparse.Namespace) -> int:
     if mode == "auto":
         mode = "docker" if detect_docker() else "local"
     emit(BootstrapResult("ok", "mode_selected", {"mode": mode}))
+    if mode == "docker":
+        docker_config_summary = align_docker_runtime_config(project_dir)
+        if docker_config_summary["written"]:
+            emit(
+                BootstrapResult(
+                    "ok",
+                    "docker_runtime_config_aligned",
+                    docker_config_summary,
+                )
+            )
 
     # v0.3.95+: revive the embedding→Ollama safety net. Embedding is fully
     # decoupled from the chat provider (v0.3.32+), so an install that sets
