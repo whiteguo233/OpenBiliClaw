@@ -1396,9 +1396,7 @@ def create_app(
 
         supported, detail = _init_runtime_supported()
         if not supported:
-            return JSONResponse(
-                {"error": "unsupported_runtime", "detail": detail}, status_code=409
-            )
+            return JSONResponse({"error": "unsupported_runtime", "detail": detail}, status_code=409)
         if not force and _health_profile_ready() is True:
             return JSONResponse(
                 {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
@@ -1441,9 +1439,7 @@ def create_app(
         cancelled = await coord.cancel_current_run(run["run_id"])
         if not cancelled:
             return JSONResponse({"error": "not_running"}, status_code=409)
-        return JSONResponse(
-            {"cancelling": True, "run_id": run["run_id"]}, status_code=202
-        )
+        return JSONResponse({"cancelling": True, "run_id": run["run_id"]}, status_code=202)
 
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(

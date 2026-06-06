@@ -103,9 +103,7 @@ class BackgroundTaskRegistry:
                     timeout=grace_seconds,
                 )
             except TimeoutError:
-                logger.warning(
-                    "task %r did not exit within %.1fs of cancel", name, grace_seconds
-                )
+                logger.warning("task %r did not exit within %.1fs of cancel", name, grace_seconds)
         for task in tasks:
             self._tasks.pop(task, None)
         return len(tasks)
