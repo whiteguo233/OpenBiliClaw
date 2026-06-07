@@ -1552,28 +1552,38 @@ def create_app(
     ) -> Response | FileResponse:
         """Proxy whitelisted remote cover images through the local backend.
 
-        Fetch + whitelist / redirect / size validation live in
-        ``openbiliclaw.runtime.image_cache.fetch_cover_bytes`` (shared with the
-        discovery-time prefetch sweep). Successfully fetched images are cached to
-        ``data/image-cache/``; when the upstream fails (e.g. an expired XHS CDN
-        token) the cached copy is served instead.
+        Cache-first: a cached copy IS the image for that URL (the URL identifies
+        it), so serve it immediately instead of paying a ~2s upstream round-trip
+        on every load. The old code re-fetched on the success path and only read
+        the cache when the upstream failed, so covers stayed slow even when
+        cached. On a miss, fetch via ``image_cache.fetch_cover_bytes`` (whitelist
+        / redirect / size validation), cache it, and serve. ``X-Image-Cache``
+        reports hit/miss; slow misses are logged for diagnosis.
         """
+        if cached := _image_cache_response(url):
+            return cached
+
+        started = time.monotonic()
         try:
             data, content_type = await fetch_cover_bytes(url)
         except CoverFetchError as exc:
             # Validation failures (400/403/413) surface as-is; upstream / network
-            # failures (>=500) fall back to a cached copy when one exists.
+            # failures (>=500) fall back to a cached copy when one appeared.
             if exc.status_code >= 500 and (cached := _image_cache_response(url)):
                 return cached
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
         save_image_bytes(url, data, content_type)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if elapsed_ms > 800:
+            logger.debug("image-proxy MISS %dms %s", elapsed_ms, url[:100])
         return Response(
             content=data,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",
                 "X-Content-Type-Options": "nosniff",
+                "X-Image-Cache": "miss",
             },
         )
 

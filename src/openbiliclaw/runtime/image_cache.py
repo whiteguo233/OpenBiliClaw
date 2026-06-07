@@ -29,15 +29,36 @@ import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
-_CACHE_DIR = Path("data/image-cache")
+# Resolved lazily (and cached) under the configured data dir — NOT a relative
+# "data/image-cache", which resolved against the process CWD (the read-only
+# install dir on packaged Windows) instead of the user's data dir.
+_CACHE_DIR: Path | None = None
+
+
+def _resolve_cache_dir() -> Path:
+    """Locate the image cache under the configured data dir.
+
+    Uses ``Config.data_path`` (which honours ``OPENBILICLAW_PROJECT_ROOT`` and a
+    custom ``data_dir``), so the cache lives with the user's data — e.g.
+    ``%LOCALAPPDATA%/OpenBiliClaw/data/image-cache`` — not next to the packaged
+    executable. Falls back to the env-aware project root if config can't load yet.
+    """
+    try:
+        from openbiliclaw.config import load_config
+
+        return load_config().data_path / "image-cache"
+    except Exception:  # noqa: BLE001 — config not ready → still env-aware fallback
+        from openbiliclaw.config import _project_root
+
+        return _project_root() / "data" / "image-cache"
 
 # XHS CDN signed URL: https://sns-webpic-qc.xhscdn.com/{ts:12}/{token:hex}/{path}
 # The {ts}/{token} prefix rotates on every regeneration; {path} is stable.
@@ -93,7 +114,10 @@ def is_refetchable(url: str) -> bool:
 
 
 def image_cache_dir() -> Path:
-    """Return the cache directory, creating it if needed."""
+    """Return the cache directory (resolved once, under the data dir), creating it."""
+    global _CACHE_DIR
+    if _CACHE_DIR is None:
+        _CACHE_DIR = _resolve_cache_dir()
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return _CACHE_DIR
 
