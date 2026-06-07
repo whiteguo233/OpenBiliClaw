@@ -5,14 +5,21 @@ desktop application packaged via PyInstaller.
 
 The layout differs between onedir and macOS ``.app`` bundle outputs:
 
-* **onedir** (``dist/OpenBiliClaw/OpenBiliClaw``) — the executable lives
-  next to user-writable ``data/``, ``logs/``, and ``config.toml``.
+* **onedir** (``dist/OpenBiliClaw/OpenBiliClaw``) — the executable and its
+  bundled resources (``config.example.toml``, ``ollama``) live in the install
+  directory, which Setup overwrites on upgrade and may remove on uninstall.
+  User data therefore lives in a per-user root
+  (``%LOCALAPPDATA%\\OpenBiliClaw`` on Windows); any data an older build left
+  next to the executable is migrated there on first launch.
 * **macOS .app** (``OpenBiliClaw.app/Contents/MacOS/OpenBiliClaw``) —
   the bundle itself is treated as read-only.  User data must live
   outside the bundle, by macOS convention in
   ``~/Library/Application Support/OpenBiliClaw``.  The bundled default
   template ``config.example.toml`` is placed under ``Contents/Resources``
   by PyInstaller and seeded into the user's data dir on first launch.
+
+In both packaged layouts the read-only bundle provides the template config +
+``ollama`` while user data lives under :func:`_user_data_root`.
 """
 
 from __future__ import annotations
@@ -25,6 +32,10 @@ import threading
 import webbrowser
 from contextlib import suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def _is_macos_app_bundle(exe_dir: Path) -> bool:
@@ -37,9 +48,80 @@ def _macos_app_bundle_root(exe_dir: Path) -> Path:
     return exe_dir.parent.parent
 
 
+def _user_data_root_for(
+    os_name: str, platform: str, home: Path, environ: Mapping[str, str]
+) -> Path:
+    """Pure resolver for the per-user data root (params injected for testing).
+
+    Uses each OS's conventional per-user location, independent of the install
+    directory:
+
+    * Windows — ``%LOCALAPPDATA%\\OpenBiliClaw``
+    * macOS   — ``~/Library/Application Support/OpenBiliClaw``
+    * other   — ``$XDG_DATA_HOME/OpenBiliClaw`` (``~/.local/share`` fallback)
+    """
+    if os_name == "nt":
+        base = environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+        return Path(base) / "OpenBiliClaw"
+    if platform == "darwin":
+        return home / "Library" / "Application Support" / "OpenBiliClaw"
+    base = environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
+    return Path(base) / "OpenBiliClaw"
+
+
 def _user_data_root() -> Path:
-    """Return the writable user-data root on macOS."""
-    return Path.home() / "Library" / "Application Support" / "OpenBiliClaw"
+    """Return the per-user, writable data root for the packaged app.
+
+    Kept independent of the (upgrade-overwritten, uninstall-removed) install
+    directory. See :func:`_user_data_root_for` for the per-OS mapping.
+    """
+    return _user_data_root_for(os.name, sys.platform, Path.home(), os.environ)
+
+
+# Names older builds wrote next to the executable under ``{app}``; relocated to
+# the per-user data root on the first launch of a relocation-aware build.
+_LEGACY_DATA_ENTRIES = ("config.toml", "data", "logs")
+
+
+def _migrate_legacy_install_dir_data(install_dir: Path, project_root: Path) -> None:
+    """Relocate pre-relocation user data out of the install directory.
+
+    Builds before this change kept ``config.toml`` / ``data/`` / ``logs/`` next
+    to the executable under ``{app}``. That entangled user data with the install
+    dir — it got locked during upgrades and risked deletion on uninstall. User
+    data now lives under :func:`_user_data_root`; on the first launch of a new
+    build, move anything an old build left behind in the install dir.
+
+    Best-effort and idempotent: skips when the new root already holds a config
+    or database (already migrated / fresh new-layout install), never clobbers an
+    existing destination, and never raises (a failed move just falls back to a
+    fresh data dir rather than crashing startup). Must run BEFORE the new
+    ``data/`` / ``logs/`` dirs are created, so a whole-directory move lands
+    cleanly instead of nesting inside a freshly-made empty dir.
+    """
+    if install_dir == project_root:
+        return  # dev fallback / any same-dir layout: nothing to relocate
+    already_migrated = (project_root / "config.toml").exists() or (
+        project_root / "data" / "openbiliclaw.db"
+    ).exists()
+    if already_migrated:
+        return
+    legacy = [name for name in _LEGACY_DATA_ENTRIES if (install_dir / name).exists()]
+    if not legacy:
+        return
+    project_root.mkdir(parents=True, exist_ok=True)
+    moved: list[str] = []
+    for name in legacy:
+        destination = project_root / name
+        if destination.exists():
+            continue  # never overwrite something already in the new root
+        try:
+            shutil.move(str(install_dir / name), str(destination))
+            moved.append(name)
+        except Exception as exc:  # noqa: BLE001 — best-effort; fall back to fresh
+            print(f"[OpenBiliClaw] 历史数据迁移跳过 {name}: {exc}")
+    if moved:
+        print(f"[OpenBiliClaw] 已将历史数据迁移到 {project_root}: {', '.join(moved)}")
 
 
 def _resolve_runtime_paths() -> tuple[Path, Path]:
@@ -47,7 +129,7 @@ def _resolve_runtime_paths() -> tuple[Path, Path]:
 
     ``project_root`` is where ``config.toml`` / ``data/`` / ``logs/`` live.
     ``bundled_resources`` is the read-only directory holding the default
-    ``config.example.toml`` shipped with the package.
+    ``config.example.toml`` (and bundled ``ollama``) shipped with the package.
     """
     if not getattr(sys, "frozen", False):
         # Development fallback
@@ -60,8 +142,13 @@ def _resolve_runtime_paths() -> tuple[Path, Path]:
         bundled_resources = exe_dir.parent / "Resources"
         return project_root, bundled_resources
 
-    # onedir layout: everything sits alongside the executable
-    return exe_dir, exe_dir
+    # onedir layout (Windows): the install dir is overwritten on upgrade and may
+    # be removed on uninstall, so user data lives in a per-user root instead of
+    # next to the executable. The install dir still provides the bundled template
+    # config + ollama as read-only resources.
+    project_root = _user_data_root()
+    bundled_resources = exe_dir
+    return project_root, bundled_resources
 
 
 def _seed_default_config(project_root: Path, bundled_resources: Path) -> bool:
@@ -246,6 +333,10 @@ def _ensure_embedding_model_async() -> None:
 
 def main() -> None:
     project_root, bundled_resources = _resolve_runtime_paths()
+    # Windows onedir upgrades: relocate any user data older builds left in the
+    # install dir into the per-user root, BEFORE we create fresh data/ + logs/
+    # (a whole-dir move must not land inside a freshly-made empty dir).
+    _migrate_legacy_install_dir_data(bundled_resources, project_root)
     project_root.mkdir(parents=True, exist_ok=True)
     os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(project_root)
 

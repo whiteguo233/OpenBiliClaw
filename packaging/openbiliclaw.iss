@@ -34,10 +34,10 @@ DisableProgramGroupPage=yes
 ; this keeps install friction as low as possible (SmartScreen may still warn).
 PrivilegesRequired=lowest
 ; Upgrades fail with "files in use" if the previous OpenBiliClaw is still
-; running (it holds OpenBiliClaw.exe + bundled ollama + data\ open). Force the
-; Restart Manager to close anything holding our files, and the [Code] below
-; also taskkills the process tree as a belt-and-suspenders fallback (PyInstaller
-; console apps don't always cooperate with RM).
+; running (it holds OpenBiliClaw.exe + the bundled ollama it spawned open).
+; Force the Restart Manager to close anything holding our files, and the [Code]
+; below also taskkills the process tree as a belt-and-suspenders fallback
+; (PyInstaller console apps don't always cooperate with RM).
 CloseApplications=force
 RestartApplications=no
 ArchitecturesAllowed=x64compatible
@@ -66,9 +66,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
-; NOTE: user data (config.toml, data\, logs\) lives next to the exe under {app}.
-; We intentionally do NOT delete it on uninstall so reinstalling preserves the
-; user's profile/database. Removing {app} fully is the user's choice.
+; NOTE: user data (config.toml, data\, logs\) lives under %LOCALAPPDATA%\OpenBiliClaw,
+; NOT under {app} — see packaging/entry.py (_user_data_root). Keeping it out of the
+; install dir means upgrades never lock the database and uninstall never touches the
+; user's profile. The app migrates data left in {app} by older builds on first run.
 
 [Code]
 procedure StopRunningInstance;

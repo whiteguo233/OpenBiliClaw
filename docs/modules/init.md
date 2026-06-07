@@ -64,7 +64,7 @@
 
 ## 插件 UI（extension）
 
-推荐 tab 未初始化空状态渲染前置清单 + 「开始初始化」按钮 + 进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
+推荐 tab 未初始化空状态给「开始初始化」按钮（点击驱动校验：点击时拉 `/api/init-status`，前置未通过则展示前置清单 + 原因、不启动初始化；全通过才启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
 
 ## 测试
 
