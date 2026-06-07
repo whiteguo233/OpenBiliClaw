@@ -103,9 +103,10 @@ jobs:
       - name: Stage bundled Ollama (CPU runner only — bge-m3 embedding is CPU)
         shell: pwsh
         run: |
-          # Recent ollama: older 0.18.2 popped a visible console window for the
-          # model "runner" subprocess on Windows (the flashing users saw); newer
-          # releases spawn it hidden. Keep this current.
+          # Keep ollama current (0.18.2 was ancient). NOTE: even 0.30.6 still
+          # spawns its model runner (llama-server.exe) with its own console on
+          # Windows — the next step flips those exes to the GUI subsystem so no
+          # console window is ever allocated.
           $ver = "0.30.6"
           Invoke-WebRequest "https://github.com/ollama/ollama/releases/download/v$ver/ollama-windows-amd64.zip" -OutFile ollama.zip
           Expand-Archive ollama.zip -DestinationPath ollama_win -Force
@@ -122,6 +123,17 @@ jobs:
               Where-Object { $_.Name -match 'cuda|rocm' } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
+
+      - name: Make bundled ollama windowless (PE subsystem console -> GUI)
+        shell: pwsh
+        run: |
+          # ollama spawns llama-server.exe with its own console (visible window /
+          # conhost flashing). A GUI-subsystem exe never allocates a console, so
+          # flip ollama.exe + every bundled runner exe to GUI. Doesn't affect the
+          # stdout/stderr pipes ollama reads or the runner's HTTP port.
+          $exes = @("dist\OpenBiliClaw\ollama.exe")
+          $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+          python packaging\patch_pe_subsystem.py @exes
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
