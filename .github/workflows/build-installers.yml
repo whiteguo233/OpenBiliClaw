@@ -30,9 +30,9 @@ jobs:
           - { runner: macos-14, arch: arm64 } # Apple Silicon
           - { runner: macos-13, arch: x64 } # Intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -57,7 +57,7 @@ jobs:
       - name: Build .app + .dmg (auto-bundles ollama)
         run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}-${{ matrix.arch }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openbiliclaw-macos-installer-${{ matrix.arch }}
           path: |
@@ -69,9 +69,9 @@ jobs:
     name: Windows installer (.exe)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -117,7 +117,7 @@ jobs:
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.ver.outputs.bare }} packaging\openbiliclaw.iss
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openbiliclaw-windows-installer
           path: dist/release/*.exe
