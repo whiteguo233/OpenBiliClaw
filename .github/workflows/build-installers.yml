@@ -18,8 +18,17 @@ permissions:
 
 jobs:
   macos:
-    name: macOS installer (.dmg, arm64)
-    runs-on: macos-latest
+    name: macOS installer (.dmg, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native per-arch builds: each bundles its own ollama + wheels. A
+          # universal2 build isn't viable because the bundled ollama binary
+          # (and some wheels) ship per-architecture only.
+          - { runner: macos-14, arch: arm64 } # Apple Silicon
+          - { runner: macos-13, arch: x64 } # Intel
     steps:
       - uses: actions/checkout@v4
 
@@ -46,11 +55,11 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Build .app + .dmg (auto-bundles ollama)
-        run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}"
+        run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: openbiliclaw-macos-installer
+          name: openbiliclaw-macos-installer-${{ matrix.arch }}
           path: |
             dist/release/*.dmg
             dist/release/*.zip
