@@ -2433,7 +2433,17 @@ def create_app(
         # silent: any error returns the original empty list, leaving
         # the popup's "正在补货" state intact and giving the regular
         # refresh tick another chance.
-        if not rows and ctx.recommendation_engine is not None and ctx.soul_engine is not None:
+        # gui-init D1: this empty-history bootstrap calls serve(), which WRITES
+        # (recommendation rows + pool "shown" markers). It's a side-effecting
+        # GET, so the deny-by-default middleware (POST/PUT/PATCH/DELETE) doesn't
+        # cover it — skip it during an active init so a read can't serve from /
+        # mark a half-built pool. The post-init refresh tick serves normally.
+        if (
+            not rows
+            and not _init_active_now()
+            and ctx.recommendation_engine is not None
+            and ctx.soul_engine is not None
+        ):
             with suppress(Exception):
                 pool_count_fn = getattr(ctx.database, "count_pool_candidates", None)
                 pool_count = int(pool_count_fn()) if callable(pool_count_fn) else 0

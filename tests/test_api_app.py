@@ -6943,3 +6943,38 @@ class TestGuidedInitEndpoints:
         # Init's own bootstrap collectors depend on task-results landing —
         # the writer gate must let them through (never 409 init_running).
         assert not (resp.status_code == 409 and resp.json().get("error") == "init_running")
+
+    def test_recommendations_get_skips_serve_bootstrap_during_init(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.storage.database import Database
+
+        served: list[int] = []
+
+        class _FakeRec:
+            async def serve(self, profile: object, limit: int = 10) -> list[object]:
+                served.append(limit)
+                return []
+
+        class _FakeSoul:
+            def is_profile_ready(self) -> bool:
+                return True
+
+            async def get_profile(self) -> object:
+                return object()
+
+        db = Database(tmp_path / "rec.db")
+        db.initialize()
+        # Pretend the pool has scored candidates so the empty-history bootstrap
+        # would normally call serve() (a side-effecting write).
+        db.count_pool_candidates = lambda **_kw: 5  # type: ignore[method-assign]
+        app = create_app(memory_manager=object(), database=db, soul_engine=_FakeSoul())
+        app.state.auth_gate.is_trusted_local = lambda request: True
+        app.state.runtime_context.recommendation_engine = _FakeRec()
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            resp = client.get("/api/recommendations")
+        assert resp.status_code == 200
+        # serve() (writes recommendation rows + marks pool shown) must NOT run on
+        # a half-built pool during init — the side-effecting GET is gated too.
+        assert served == []
