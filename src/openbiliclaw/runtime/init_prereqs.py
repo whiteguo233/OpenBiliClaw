@@ -17,8 +17,15 @@ from openbiliclaw.bilibili.auth import AuthManager
 
 logger = logging.getLogger(__name__)
 
-_CHAT_READY_TTL = 30.0
-_CHAT_PROBE_TIMEOUT = 8.0
+# Strict readiness: a prereq is "ok" only when a REAL probe request succeeds.
+# Success caches longer; a failure/timeout caches briefly so a service that
+# just came up (or finished a cold model load) greens within seconds rather
+# than staying red for the full success-TTL. Timeout is generous enough to
+# cover a cold Ollama load but still fails (not optimistically passes) if the
+# service never answers.
+_CHAT_OK_TTL = 30.0
+_CHAT_FAIL_TTL = 8.0
+_CHAT_PROBE_TIMEOUT = 15.0
 _BILI_OK_TTL = 60.0
 _BILI_FAIL_TTL = 10.0
 _BILI_PROBE_TIMEOUT = 12.0
@@ -49,10 +56,12 @@ class InitPrereqs:
         registry = getattr(self._ctx, "llm_registry", None)
         if registry is None:
             return False
-        if time.monotonic() - self._chat_at < _CHAT_READY_TTL:
+        ttl = _CHAT_OK_TTL if self._chat_value else _CHAT_FAIL_TTL
+        if time.monotonic() - self._chat_at < ttl:
             return self._chat_value
         async with self._chat_lock:
-            if time.monotonic() - self._chat_at < _CHAT_READY_TTL:
+            ttl = _CHAT_OK_TTL if self._chat_value else _CHAT_FAIL_TTL
+            if time.monotonic() - self._chat_at < ttl:
                 return self._chat_value
             try:
                 provider = registry.get()  # default chat provider
@@ -60,10 +69,12 @@ class InitPrereqs:
                     await asyncio.wait_for(provider.health_check(), timeout=_CHAT_PROBE_TIMEOUT)
                 )
             except TimeoutError:
-                # Cold model load, not a hard failure — be optimistic and let
-                # the init pipeline surface a real error if it's truly down.
-                logger.debug("Chat readiness probe timed out; optimistic ready")
-                ready = True
+                # Strict: the prereq must confirm a REAL request succeeded. A
+                # timeout means we could NOT confirm the provider answers within
+                # a (generous, cold-load-tolerant) window → report not-ready so
+                # the checklist never greenlights an unverified chat service.
+                logger.debug("Chat readiness probe timed out; reporting not ready")
+                ready = False
             except Exception:
                 logger.debug("Chat readiness probe errored", exc_info=True)
                 ready = False

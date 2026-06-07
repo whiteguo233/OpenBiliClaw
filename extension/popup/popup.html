@@ -2748,6 +2748,16 @@
       color: var(--text-main);
     }
 
+    .init-checklist li.init-checking {
+      color: var(--text-secondary);
+      animation: init-checking-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes init-checking-pulse {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+
     .init-checklist li .init-row {
       display: flex;
       align-items: center;

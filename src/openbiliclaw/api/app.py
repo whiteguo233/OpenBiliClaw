@@ -135,7 +135,12 @@ _fire_and_forget_tasks: set[asyncio.Task[None]] = set()
 # would flash on every popup-open-after-idle. A genuinely-missing model 404s
 # *fast*, so it still resolves to not-ready well within the cap.
 _EMBEDDING_READY_TTL_SECONDS = 30.0
-_EMBEDDING_PROBE_TIMEOUT_SECONDS = 6.0
+# Strict readiness (gui-init): a failure/timeout caches briefly so a service
+# that finished a cold model load greens within seconds; the probe timeout is
+# generous enough for a cold Ollama load but still fails (does not optimistically
+# pass) if the embedding service never answers.
+_EMBEDDING_FAIL_TTL_SECONDS = 8.0
+_EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -1239,29 +1244,33 @@ def create_app(
             # Legacy service without a live probe — "built" is the best signal.
             return True
 
-        if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+        _embedding_ttl = (
+            _EMBEDDING_READY_TTL_SECONDS if _embedding_ready_value else _EMBEDDING_FAIL_TTL_SECONDS
+        )
+        if time.monotonic() - _embedding_ready_checked_at < _embedding_ttl:
             return _embedding_ready_value
 
         async with _embedding_ready_lock:
             # Another request may have refreshed the cache while we waited.
-            if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+            _embedding_ttl = (
+                _EMBEDDING_READY_TTL_SECONDS
+                if _embedding_ready_value
+                else _EMBEDDING_FAIL_TTL_SECONDS
+            )
+            if time.monotonic() - _embedding_ready_checked_at < _embedding_ttl:
                 return _embedding_ready_value
             try:
                 ready = bool(
                     await asyncio.wait_for(probe(), timeout=_EMBEDDING_PROBE_TIMEOUT_SECONDS)
                 )
             except TimeoutError:
-                # Probe exceeded the cap — almost always Ollama cold-loading the
-                # model, not a real failure (a missing model 404s fast and lands
-                # in the `except Exception` branch below as a hard `False`).
-                # Report optimistically ready and cache it like any result, so
-                # concurrent / repeat polls during the multi-second load share
-                # one answer instead of each re-probing and stacking 6s waits.
-                # (A brief stale-OK is far better than flashing the banner.)
-                logger.debug(
-                    "Embedding readiness probe timed out (model loading?); optimistic ready"
-                )
-                ready = True
+                # Strict (gui-init): a prereq is "ok" only on a confirmed real
+                # embedding round-trip. A timeout (even a cold model load) within
+                # the generous window means we could NOT confirm it works → report
+                # not-ready, and the short fail-TTL re-probes soon so it greens
+                # quickly once the load finishes.
+                logger.debug("Embedding readiness probe timed out; reporting not ready")
+                ready = False
             except Exception:
                 logger.debug("Embedding readiness probe errored", exc_info=True)
                 ready = False
@@ -1307,9 +1316,15 @@ def create_app(
         coord = ctx.init_coordinator
         prereqs = ctx.init_prereqs
         run = coord.get_status()
-        bili = await prereqs.bilibili_check()
-        chat = await prereqs.chat_ready()
-        embedding = await _health_embedding_ready()
+        # Probe the three services concurrently — each is a real (now strict)
+        # request with a generous cold-load timeout, so running them sequentially
+        # could stack to ~40s. gather() bounds the wait to the slowest single
+        # probe (TTL-cached, so steady-state polls are instant).
+        bili, chat, embedding = await asyncio.gather(
+            prereqs.bilibili_check(),
+            prereqs.chat_ready(),
+            _health_embedding_ready(),
+        )
         platforms = prereqs.enabled_platforms()
         initialized = bool(_health_profile_ready())
         trusted = _get_auth_gate().is_trusted_local(request)

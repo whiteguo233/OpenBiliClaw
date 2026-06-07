@@ -43,10 +43,12 @@ export function buildInitChecklist(status) {
     },
     {
       key: "llm",
-      label: "AI 服务已配置",
+      label: "AI 服务可用",
       ok: Boolean(prereq.llm_ready),
       hard: true,
-      hint: prereq.llm_ready ? "" : "到设置页填好 LLM provider 的 API Key。",
+      hint: prereq.llm_ready
+        ? ""
+        : "AI 服务没通过实时请求测试 —— 到设置页填好 LLM provider 的 API Key,或确认服务可达。",
     },
     {
       key: "embedding",

@@ -827,7 +827,7 @@ class TestBackendAPI:
 
         assert service.calls == 1
 
-    def test_health_endpoint_optimistic_when_probe_times_out(
+    def test_health_endpoint_strict_when_probe_times_out(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import asyncio
@@ -836,15 +836,16 @@ class TestBackendAPI:
 
         import openbiliclaw.api.app as appmod
 
-        # A slow probe (Ollama cold-loading bge-m3) must NOT flip the banner on:
-        # a timeout means "loading", reported as optimistically ready, not the
-        # hard `False` reserved for a fast explicit failure (missing model 404).
+        # gui-init: readiness is now STRICT — a probe that doesn't answer within
+        # the (generous, cold-load-tolerant) window can't be confirmed working,
+        # so it reports not-ready instead of optimistically green. The short
+        # fail-TTL re-probes soon so it greens once the load actually finishes.
         monkeypatch.setattr(appmod, "_EMBEDDING_PROBE_TIMEOUT_SECONDS", 0.05)
 
         class _SlowProbeService:
             async def probe(self) -> bool:
                 await asyncio.sleep(0.5)  # exceeds the cap → times out
-                return False  # would say not-ready, but never resolves in time
+                return True
 
         class EmbeddingSoulEngine:
             def __init__(self) -> None:
@@ -858,7 +859,7 @@ class TestBackendAPI:
         response = client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json()["embedding_ready"] is True
+        assert response.json()["embedding_ready"] is False
 
     def test_detect_lan_ip_prefers_rfc1918_interface_over_benchmark_tun(
         self, monkeypatch: pytest.MonkeyPatch

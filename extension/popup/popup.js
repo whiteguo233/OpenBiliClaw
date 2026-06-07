@@ -797,11 +797,60 @@ function renderInitPanel(status) {
   }
 }
 
+function renderInitPanelChecking() {
+  // Loading state: the prereq probes are real (now strict) requests — B站
+  // cookie + chat LLM + embedding — so /api/init-status can take a dozen
+  // seconds on a cold backend. Show "检查中" immediately instead of a blank
+  // panel so the user knows it's working (not stuck).
+  if (!(elements.initPanel instanceof HTMLElement)) {
+    return;
+  }
+  elements.initPanel.hidden = false;
+  if (elements.initChecklist instanceof HTMLElement) {
+    elements.initChecklist.replaceChildren();
+    const li = document.createElement("li");
+    li.className = "init-checking";
+    li.textContent = "正在检查前置条件（B 站 / AI 服务 / 向量模型，实时请求测试，可能要十几秒）…";
+    elements.initChecklist.append(li);
+  }
+  if (elements.initProgress instanceof HTMLElement) {
+    elements.initProgress.hidden = true;
+  }
+  if (elements.initStartBtn instanceof HTMLButtonElement) {
+    elements.initStartBtn.textContent = "检查中…";
+    elements.initStartBtn.disabled = true;
+  }
+  if (elements.initStartReason instanceof HTMLElement) {
+    elements.initStartReason.hidden = true;
+  }
+}
+
+function renderInitPanelCheckFailed() {
+  if (!(elements.initChecklist instanceof HTMLElement)) {
+    return;
+  }
+  elements.initChecklist.replaceChildren();
+  const li = document.createElement("li");
+  li.className = "init-checking";
+  li.textContent = "前置检查没拉到（后端可能在忙或重启中），稍后自动重试…";
+  elements.initChecklist.append(li);
+  if (elements.initStartBtn instanceof HTMLButtonElement) {
+    elements.initStartBtn.textContent = "检查中…";
+    elements.initStartBtn.disabled = true;
+  }
+}
+
 async function refreshInitPanel() {
+  renderInitPanelChecking();
   let status = null;
   try {
     status = await fetchInitStatus();
   } catch {
+    renderInitPanelCheckFailed();
+    clearInitPolling();
+    initPollTimer = setTimeout(() => {
+      void refreshInitPanel();
+    }, 4000);
     return null;
   }
   renderInitPanel(status);
