@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openbiliclaw import __version__
 from openbiliclaw.api.app import create_app
 
 
@@ -1509,7 +1510,7 @@ class TestBackendAPI:
             "last_account_sync_at": "2026-03-14T18:00:00+00:00",
             "last_account_sync_error": "",
             "auto_update_enabled": False,
-            "current_version": "0.3.102",
+            "current_version": __version__,
             "latest_remote_version": "",
             "last_update_check_at": "",
             "last_update_error": "",
