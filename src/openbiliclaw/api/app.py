@@ -141,6 +141,7 @@ _EMBEDDING_READY_TTL_SECONDS = 30.0
 # pass) if the embedding service never answers.
 _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+_AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -672,6 +673,7 @@ def create_app(
     app.state.degraded = bool(getattr(ctx, "degraded", False))
     app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
     app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
+    last_auto_replenish_at: float | None = None
 
     # ── Password gate (LAN/remote auth) ─────────────────────────────
     app.state.auth_gate = AuthGate(_auth_cfg, getattr(ctx, "database", None))
@@ -2716,21 +2718,65 @@ def create_app(
         except Exception:
             logger.exception("Background discovery candidate drain failed")
 
-    async def _trigger_replenishment_if_needed() -> None:
+    def _pool_available_count() -> int | None:
+        """Return the best available servable-pool count for hot-path guards."""
+        get_runtime_status = getattr(ctx.runtime_controller, "get_runtime_status", None)
+        if callable(get_runtime_status):
+            with suppress(Exception):
+                status = get_runtime_status()
+                if isinstance(status, dict) and "pool_available_count" in status:
+                    return max(0, int(status.get("pool_available_count") or 0))
+
+        readiness = getattr(ctx.database, "count_pool_readiness", None)
+        if callable(readiness):
+            with suppress(Exception):
+                counts = readiness()
+                if isinstance(counts, dict) and "available" in counts:
+                    return max(0, int(counts.get("available") or 0))
+
+        count_pool = getattr(ctx.database, "count_pool_candidates", None)
+        if callable(count_pool):
+            with suppress(Exception):
+                return max(0, int(count_pool()))
+        return None
+
+    async def _trigger_replenishment_if_needed(*, force: bool = False) -> None:
         """Fire a background Discovery refresh when the pool runs low."""
-        curator = getattr(ctx.recommendation_engine, "_curator", None)
-        if curator is None or not hasattr(curator, "needs_replenishment"):
-            return
-        if not curator.needs_replenishment():
-            return
         trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
-        if callable(trigger):
+        if not callable(trigger):
+            return
+        if not force:
+            curator = getattr(ctx.recommendation_engine, "_curator", None)
+            if curator is None or not hasattr(curator, "needs_replenishment"):
+                return
+            if not curator.needs_replenishment():
+                return
+
+        nonlocal last_auto_replenish_at
+        now = time.monotonic()
+        if (
+            last_auto_replenish_at is not None
+            and now - last_auto_replenish_at < _AUTO_REPLENISH_DEBOUNCE_SECONDS
+        ):
+            logger.debug(
+                "Auto replenishment skipped by debounce (elapsed=%.1fs)",
+                now - last_auto_replenish_at,
+            )
+            return
+
+        last_auto_replenish_at = now
+        try:
             logger.info("Pool low — triggering automatic replenishment")
-            asyncio.create_task(trigger())
+            await trigger()
+        except Exception:
+            logger.exception("Automatic replenishment trigger failed")
 
     @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
     async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count() == 0:
+            await _trigger_replenishment_if_needed(force=True)
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -2745,6 +2791,9 @@ def create_app(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count() == 0:
+            await _trigger_replenishment_if_needed(force=True)
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()

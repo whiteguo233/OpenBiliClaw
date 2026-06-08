@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 _DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434"
+_DEFAULT_OLLAMA_KEEP_ALIVE = "24h"
 
 console = Console()
 
@@ -112,6 +113,8 @@ def _ollama_start_serve_background() -> bool:
         return False
 
     try:
+        env = os.environ.copy()
+        env.setdefault("OLLAMA_KEEP_ALIVE", _DEFAULT_OLLAMA_KEEP_ALIVE)
         if os.name == "nt":
             # CREATE_NO_WINDOW (not DETACHED_PROCESS): give `ollama serve` a
             # hidden console that its child `ollama runner` inherits, so neither
@@ -127,6 +130,7 @@ def _ollama_start_serve_background() -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
         else:
             proc = subprocess.Popen(
@@ -135,6 +139,7 @@ def _ollama_start_serve_background() -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
     except Exception as exc:
         console.print(f"[red]启动 ollama serve 失败: {exc}[/red]")

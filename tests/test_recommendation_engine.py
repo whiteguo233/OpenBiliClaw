@@ -915,6 +915,61 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_serve_returns_immediately_when_pool_available_count_is_zero() -> None:
+    class EmptyPoolDatabase:
+        def count_pool_readiness(self, *, xhs_self_nickname: str = "") -> dict[str, int]:
+            return {"available": 0, "raw": 0, "pending": 0}
+
+        def get_pool_candidates(
+            self, *, limit: int, xhs_self_nickname: str = ""
+        ) -> list[dict[str, object]]:
+            raise AssertionError("empty available pool should not load candidates")
+
+        def batch_insert_recommendations(self, rows: list[dict[str, object]]) -> list[int]:
+            raise AssertionError("empty available pool should not write recommendations")
+
+    engine = RecommendationEngine(llm=_DummyLLM(), database=EmptyPoolDatabase())  # type: ignore[arg-type]
+
+    recommendations = await engine.serve(_build_profile(), limit=5)
+
+    assert recommendations == []
+
+
+@pytest.mark.asyncio
+async def test_append_returns_immediately_when_exclusions_empty_candidates() -> None:
+    class ExplodingCurator:
+        def build_context(self) -> object:
+            raise AssertionError("empty candidate list should not call curator")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BV1ONLY",
+            title="唯一候选",
+            up_name="UPA",
+            source="search",
+            relevance_score=0.95,
+            relevance_reason="唯一候选理由。",
+        )
+        engine = RecommendationEngine(
+            llm=_DummyLLM(),
+            database=db,
+            curator=ExplodingCurator(),  # type: ignore[arg-type]
+        )
+
+        recommendations = await engine.append_recommendations(
+            profile=_build_profile(),
+            excluded_bvids=["BV1ONLY"],
+            limit=5,
+        )
+
+        assert recommendations == []
+        assert db.get_recommendations(limit=10) == []
+
+
+@pytest.mark.asyncio
 async def test_reshuffle_recommendations_hides_missing_precomputed_copy() -> None:
     """v0.3.57+: rows without pool_expression/pool_topic_label are hidden by
     the pool gate; reshuffle should return zero recommendations rather than

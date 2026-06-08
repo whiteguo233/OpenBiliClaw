@@ -50,6 +50,7 @@
 | v0.3.57 pool gate on precomputed copy | ✅ | `get_pool_candidates` / `count_pool_candidates` SQL 加 `AND COALESCE(pool_expression, '') != '' AND COALESCE(pool_topic_label, '') != ''` —— 未 precompute 的 row 对 serve() 不可见,消除"discovery 完成→precompute 完成"60–90s 窗口内 popup 显示占位模板的旧 bug。`engine.py:320` 的 `_fallback_expression` 路径变成 race-window 安全网,触发即 `logger.warning("Pool gate leak: ...")` |
 | v0.3.66 pool gate on classification | ✅ | `get_pool_candidates` / `count_pool_candidates` 现在同样要求 `style_key` 与 `topic_group` 非空；`get_pool_candidates_needing_copy` 也只挑已分类但缺文案的候选，避免未分类跨源内容先生成 copy 后绕过 serve 分类口径 |
 | v0.3.91 servable pool count | ✅ | `count_pool_candidates()` 在读取前刷新 SQLite/WAL snapshot，并默认应用与 `get_pool_candidates()` 相同的 `max_per_topic_group=3` 候选窗口；新增 `count_pool_readiness()` 拆分 `available/raw/pending`；`serve()` 零候选 warning 会输出 `raw/servable/pending`，用于定位“池子有素材但暂不可换”的真实原因。 |
+| v0.3.102 空池热路径短路 | ✅ | `/api/recommendations/reshuffle` 与 `/api/recommendations/append` 在 `pool_available_count=0` 时立即返回空数组，不再读取画像或调用推荐引擎，并只按 30 秒 debounce 触发一次自动补货；`RecommendationEngine.serve()` 在可用池为 0、或候选被 `excluded_bvids` / 最近已看过滤到 0 后直接返回，跳过 curator、MMR embedding 和推荐历史写入。 |
 | v0.3.x available-target pool refill | ✅ | `count_pool_available_candidates_by_source()` 按 `count_pool_candidates()` 同口径统计各平台族的真实可换数量；`count_pool_raw_material_by_source()` 统计 fresh / 非 dislike / 未推荐 / 未看过的 raw material（含 `discovery_candidates` 待评估素材）用于 raw ceiling。补池不再因为 raw/linkable B 站库存达到 300 而停在前端 246 可换，raw trim 也不会在可换未达标时把库存压回 `pool_target_count`。 |
 | v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
 | v0.3.91 新兴趣放大保护 | ✅ | 新确认兴趣会生成 amplification key，`PoolCurator` 用最近 24h 推荐历史计算滚动占比，超过 25% 的方向会被降权；最终批量选择还会硬限制同一新方向最多 `max(1, floor(limit * 0.25))` 条，避免刚确认的兴趣短期刷屏 |
@@ -120,6 +121,8 @@ items = await engine.reshuffle_recommendations(
 - 如果高分候选前排被同一 `style_key` 占满，回填阶段会放宽风格限流，优先保证整批数量尽量补到请求上限
 - 如果候选缺少 `topic_key`，才退回 `tags` 和标题/来源兜底做软限流
 - 快路径现在不会现场调用 LLM，也不会再给整批卡片写同一个 fallback topic；只消费 pool 里已经预生成好的 `expression/topic_label`
+- 若 API 看到 `pool_available_count=0`，`/api/recommendations/reshuffle` 会直接返回 `items=[]` 并按 30 秒 debounce 触发一次后台补货，不再为必然为空的结果读取画像或进入推荐引擎
+- 若引擎内部发现可用池为 0，或候选被最近已看过滤到 0，会直接返回空数组，跳过 curator scoring、MMR embedding 和推荐历史写入
 - 如果某条候选暂时还没预生成好推荐文案，这两个字段会保持为空，交给前端直接隐藏
 - 命中候选后会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
 - runtime 会把 discovery pool 持续补到 `pool_target_count` 个“真实可换”候选，默认目标现在是 `300`（允许配置到 `600`）；达到目标后停止 discover，等可换数掉回目标以下再补货。raw 素材库存不是 `pool_target_count` 的硬上限：当 topic window、预生成、分类或 XHS token 让 raw 与 available 之间存在折损时，raw 可增长到 `max(pool_target_count * 2, pool_target_count + 120)`，再由 raw ceiling trim 控制成本。补货和 trim 会按 `[scheduler.pool_source_shares]` 做平台级配比，默认保存 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1，但小红书、抖音、YouTube 默认关闭，运行时有效配比默认只有 B 站；显式启用某个平台后才会按保存 share 获得配额。少量补货时 discovery 会收缩 LLM 评估窗口，只评估可被当前平台可换缺口和 raw headroom 吸收的过采样候选
@@ -142,6 +145,8 @@ items = await engine.append_recommendations(
 
 - 用于 popup 和移动 Web 推荐流的续页，不会清空当前列表
 - 会先排除前端已经展示过的 `excluded_bvids`
+- 若 API 看到 `pool_available_count=0`，会立即返回 `items=[]` 并按 30 秒 debounce 触发一次后台补货；不会读取画像或进入推荐引擎
+- 若 `excluded_bvids` 或最近已看过滤把候选清空，引擎直接返回空数组，不执行 curator、MMR embedding 或推荐历史写入
 - 仍然走 discovery pool 快路径，不等待新一轮 discover 完成
 - 同样复用 `topic_key + style_key + source` 的多样性选择逻辑，并只读取 pool 内已预生成好的推荐文案
 - 追加命中的内容也会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`

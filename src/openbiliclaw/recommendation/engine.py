@@ -302,11 +302,22 @@ class RecommendationEngine:
         Returns:
             List of personalized recommendations.
         """
+        label = "realtime" if expression_mode == "realtime" else "pool"
         multiplier = 4 if excluded_bvids else 3
         pool_readiness = self._pool_readiness_counts()
         servable_pool_count = pool_readiness["available"]
         raw_pool_count = pool_readiness["raw"]
         pending_pool_count = pool_readiness["pending"]
+        if servable_pool_count <= 0:
+            logger.info(
+                "serve(/%s) skipped: no servable pool candidates (raw=%d pending=%d)",
+                label,
+                raw_pool_count,
+                pending_pool_count,
+            )
+            self._last_served_bvids = frozenset()
+            return []
+
         candidates = self._load_pool_candidates(limit=max(limit * multiplier, 40))
         loaded_count = len(candidates)
         if excluded_bvids:
@@ -314,28 +325,12 @@ class RecommendationEngine:
         after_exclude_count = len(candidates)
         candidates = self._exclude_recently_viewed(candidates)
         after_viewed_count = len(candidates)
-
-        # Online supergroup merging — collapses semantically-equivalent
-        # topic_groups within this batch (e.g. 动漫/动漫产业/动漫文化) so
-        # the diversifier sees them as a single bucket. Adds 50–200ms of
-        # embedding I/O to the hot path, traded for batch-level richness
-        # that no offline precompute can guarantee at serve time.
-        await self._merge_topic_supergroups(candidates)
-
-        label = "realtime" if expression_mode == "realtime" else "pool"
-        prev_bvids = self._last_served_bvids
-
-        # Surface "pool says N but serve loads 0" mismatches with enough
-        # readiness detail to distinguish pending material from query drift.
-        if servable_pool_count > 0 and after_viewed_count == 0:
+        if after_viewed_count == 0:
             logger.warning(
-                "serve(/%s) loaded 0 candidates from servable=%d "
-                "(raw=%d pending=%d) — likely cause: "
-                "all items lack required fields (style_key/topic_group), filtered "
-                "by excluded_bvids (%d → %d), or already viewed (%d → 0). "
-                "Inspect content_cache rows directly: "
-                "SELECT count(*), source, source_platform FROM content_cache "
-                "WHERE pool_status='fresh' GROUP BY source, source_platform;",
+                "serve(/%s) loaded 0 usable candidates from servable=%d "
+                "(raw=%d pending=%d) after filters: loaded=%d "
+                "after_exclude=%d after_viewed=%d. Skipping curator, "
+                "MMR embeddings, and recommendation writes.",
                 label,
                 servable_pool_count,
                 raw_pool_count,
@@ -344,7 +339,21 @@ class RecommendationEngine:
                 after_exclude_count,
                 after_viewed_count,
             )
-        elif servable_pool_count != loaded_count:
+            self._last_served_bvids = frozenset()
+            return []
+
+        # Online supergroup merging — collapses semantically-equivalent
+        # topic_groups within this batch (e.g. 动漫/动漫产业/动漫文化) so
+        # the diversifier sees them as a single bucket. Adds 50–200ms of
+        # embedding I/O to the hot path, traded for batch-level richness
+        # that no offline precompute can guarantee at serve time.
+        await self._merge_topic_supergroups(candidates)
+
+        prev_bvids = self._last_served_bvids
+
+        # Surface "pool says N but serve loads fewer" mismatches with enough
+        # readiness detail to distinguish pending material from query drift.
+        if servable_pool_count != loaded_count:
             logger.info(
                 "serve(/%s) pool/load mismatch: count=%d → loaded=%d"
                 " → after_exclude=%d → after_viewed=%d (raw=%d pending=%d)",

@@ -2132,6 +2132,80 @@ class TestBackendAPI:
             ]
         }
 
+    def test_empty_pool_append_and_reshuffle_skip_recommendation_path_and_debounce_refresh(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        import openbiliclaw.api.app as app_module
+
+        monkeypatch.setattr(app_module.time, "monotonic", lambda: 1000.0)
+
+        class FakeDatabase:
+            def count_pool_candidates(self) -> int:
+                return 0
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.profile_calls = 0
+
+            async def get_profile(self) -> dict[str, object]:
+                self.profile_calls += 1
+                raise AssertionError("empty pool should not load the profile")
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def reshuffle_recommendations(
+                self, *, profile: object, limit: int = 10
+            ) -> list[object]:
+                self.calls += 1
+                raise AssertionError("empty pool should not call reshuffle")
+
+            async def append_recommendations(
+                self, *, profile: object, excluded_bvids: list[str], limit: int = 10
+            ) -> list[object]:
+                self.calls += 1
+                raise AssertionError("empty pool should not call append")
+
+        class FakeRuntimeController:
+            def __init__(self) -> None:
+                self.trigger_calls = 0
+
+            def get_runtime_status(self) -> dict[str, object]:
+                return {"pool_available_count": 0}
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                self.trigger_calls += 1
+                return {"accepted": True, "state": "running", "reason": "started"}
+
+        soul = FakeSoulEngine()
+        rec = FakeRecommendationEngine()
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=soul,
+            recommendation_engine=rec,
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        reshuffle = client.post("/api/recommendations/reshuffle")
+        append = client.post(
+            "/api/recommendations/append",
+            json={"excluded_bvids": ["BV1OLD"]},
+        )
+
+        assert reshuffle.status_code == 200
+        assert reshuffle.json() == {"items": []}
+        assert append.status_code == 200
+        assert append.json() == {"items": []}
+        assert soul.profile_calls == 0
+        assert rec.calls == 0
+        assert runtime.trigger_calls == 1
+
     def test_pending_notification_endpoint_returns_single_candidate(self) -> None:
         from fastapi.testclient import TestClient
 
