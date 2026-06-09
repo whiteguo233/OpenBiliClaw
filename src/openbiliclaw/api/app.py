@@ -4782,9 +4782,121 @@ def create_app(
 
     @app.get("/api/sources")
     def list_sources() -> dict[str, Any]:
-        """Return all source recipes."""
+        """Return source recipes plus built-in platform source status.
+
+        ``source_recipes`` is user-managed discovery recipes, so a fresh install
+        may legitimately have zero rows.  The settings/popup UI however needs a
+        stable platform-level source list (Bilibili/XHS/Douyin/YouTube/X) to
+        decide whether a backend source exists.  Surface those built-ins from
+        runtime config and append any custom recipes for backward compatibility.
+        """
         recipes = ctx.database.get_all_recipes()
-        return {"items": recipes}
+
+        runtime_config = getattr(ctx, "config", None) or config
+        scheduler = getattr(runtime_config, "scheduler", None)
+        shares = getattr(scheduler, "pool_source_shares", {}) or {}
+        sources_cfg = getattr(runtime_config, "sources", None)
+
+        def _cfg_enabled(name: str, default: bool = False) -> bool:
+            src_cfg = getattr(sources_cfg, name, None) if sources_cfg is not None else None
+            return bool(getattr(src_cfg, "enabled", default))
+
+        def _share(name: str, default: int = 1) -> int:
+            try:
+                return int(shares.get(name, default))
+            except Exception:
+                return default
+
+        def _has_x_cookie() -> bool:
+            tw_cfg = getattr(sources_cfg, "twitter", None) if sources_cfg is not None else None
+            cookie_env = str(getattr(tw_cfg, "cookie_env", "OPENBILICLAW_X_COOKIE") or "OPENBILICLAW_X_COOKIE")
+            cookie = resolve_x_cookie(data_dir=runtime_config.data_path, cookie_env=cookie_env)
+            return all(f"{name}=" in cookie for name in _X_REQUIRED_COOKIE_NAMES)
+
+        def _x_health_state() -> str:
+            if not hasattr(ctx.database, "conn"):
+                return "unknown"
+            from openbiliclaw.storage.x_health import XSourceHealthStore
+
+            return str(XSourceHealthStore(ctx.database).get().get("state", "ok") or "ok")
+
+        builtins = [
+            {
+                "id": "builtin-bilibili",
+                "source_type": "bilibili",
+                "source_platform": "bilibili",
+                "name": "Bilibili",
+                "label": "Bilibili",
+                "strategy": "builtin",
+                "config": {},
+                "target_share": _share("bilibili", 2),
+                "enabled": _cfg_enabled("bilibili", True),
+                "created_by": "system",
+                "status": "ok",
+                "ready": True,
+            },
+            {
+                "id": "builtin-xiaohongshu",
+                "source_type": "xiaohongshu",
+                "source_platform": "xiaohongshu",
+                "name": "小红书",
+                "label": "小红书",
+                "strategy": "builtin",
+                "config": {},
+                "target_share": _share("xiaohongshu", 4),
+                "enabled": _cfg_enabled("xiaohongshu", False),
+                "created_by": "system",
+                "status": "ok" if _cfg_enabled("xiaohongshu", False) else "disabled",
+                "ready": _cfg_enabled("xiaohongshu", False),
+            },
+            {
+                "id": "builtin-douyin",
+                "source_type": "douyin",
+                "source_platform": "douyin",
+                "name": "抖音",
+                "label": "抖音",
+                "strategy": "builtin",
+                "config": {},
+                "target_share": _share("douyin", 3),
+                "enabled": _cfg_enabled("douyin", False),
+                "created_by": "system",
+                "status": "ok" if _cfg_enabled("douyin", False) else "disabled",
+                "ready": _cfg_enabled("douyin", False),
+            },
+            {
+                "id": "builtin-youtube",
+                "source_type": "youtube",
+                "source_platform": "youtube",
+                "name": "YouTube",
+                "label": "YouTube",
+                "strategy": "builtin",
+                "config": {},
+                "target_share": _share("youtube", 1),
+                "enabled": _cfg_enabled("youtube", False),
+                "created_by": "system",
+                "status": "ok" if _cfg_enabled("youtube", False) else "disabled",
+                "ready": _cfg_enabled("youtube", False),
+            },
+            {
+                "id": "builtin-twitter",
+                "source_type": "twitter",
+                "source_platform": "twitter",
+                "name": "X",
+                "label": "X",
+                "strategy": "builtin",
+                "config": {"status_endpoint": "/api/sources/x/status"},
+                "target_share": _share("twitter", 1),
+                "enabled": _cfg_enabled("twitter", False),
+                "created_by": "system",
+                "status": _x_health_state(),
+                "ready": _cfg_enabled("twitter", False) and _has_x_cookie(),
+                "has_cookie": _has_x_cookie(),
+            },
+        ]
+        recipe_ids = {str(item.get("id", "")) for item in recipes if isinstance(item, dict)}
+        items = [item for item in builtins if item["id"] not in recipe_ids]
+        items.extend(recipes)
+        return {"items": items}
 
     @app.post("/api/sources", status_code=201)
     def create_source(payload: dict[str, Any]) -> dict[str, Any]:

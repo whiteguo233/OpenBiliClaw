@@ -59,6 +59,62 @@ class TestBackendAPI:
         assert 'href="/web/assets/css/app.css?v=' in response.text
         assert 'src="/web/assets/js/app.js?v=' in response.text
 
+    def test_sources_lists_builtin_platform_statuses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        class FakeRecipeStore:
+            def get_all_recipes(self) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "custom-rss",
+                        "source_type": "rss",
+                        "name": "Custom RSS",
+                        "strategy": "poll",
+                    }
+                ]
+
+        project_root = tmp_path / "sources-runtime"
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+        cfg = Config()
+        cfg.sources.twitter.enabled = True
+        cfg.scheduler.pool_source_shares["twitter"] = 6
+        save_config(cfg, project_root / "config.toml")
+
+        app = create_app(
+            memory_manager=object(),
+            database=FakeRecipeStore(),
+            soul_engine=object(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/sources")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        by_id = {item["id"]: item for item in items}
+        assert {
+            "builtin-bilibili",
+            "builtin-xiaohongshu",
+            "builtin-douyin",
+            "builtin-youtube",
+            "builtin-twitter",
+            "custom-rss",
+        } <= set(by_id)
+        twitter = by_id["builtin-twitter"]
+        assert twitter["source_type"] == "twitter"
+        assert twitter["source_platform"] == "twitter"
+        assert twitter["enabled"] is True
+        assert twitter["target_share"] == 6
+        assert twitter["status"] == "unknown"
+        assert twitter["ready"] is False
+        assert twitter["config"]["status_endpoint"] == "/api/sources/x/status"
+
     @pytest.mark.asyncio
     async def test_runtime_context_presence_survives_rebuild(
         self,
