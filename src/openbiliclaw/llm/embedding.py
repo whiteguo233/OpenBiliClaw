@@ -90,12 +90,18 @@ class EmbeddingCache:
             raise RuntimeError("EmbeddingCache not initialized")
         return self._conn
 
-    def get(self, key: str) -> list[float] | None:
+    def get(self, key: str, model: str = "") -> list[float] | None:
         with self._lock:
-            row = self.conn.execute(
-                "SELECT vector FROM embedding_cache WHERE text_key = ?",
-                (key,),
-            ).fetchone()
+            if model:
+                row = self.conn.execute(
+                    "SELECT vector FROM embedding_cache WHERE text_key = ? AND model = ?",
+                    (key, model),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT vector FROM embedding_cache WHERE text_key = ?",
+                    (key,),
+                ).fetchone()
         if row is None:
             return None
         try:
@@ -140,6 +146,7 @@ class EmbeddingService:
         provider: SupportsEmbed,
         *,
         model: str = "gemini-embedding-001",
+        cache_model: str | None = None,
         cache_size: int = 500,
         similarity_threshold: float = 0.82,
         persistent_cache: EmbeddingCache | None = None,
@@ -147,6 +154,7 @@ class EmbeddingService:
     ) -> None:
         self._provider = provider
         self._model = model
+        self._cache_model = cache_model or model
         # OrderedDict + move_to_end on hit gives us proper LRU instead of
         # FIFO. With a 500-key cache and bursty access patterns (delight
         # scoring iterates the same like_texts repeatedly), FIFO would
@@ -184,7 +192,7 @@ class EmbeddingService:
             self._l1_cache.move_to_end(key)
             return cached
         if self._l2_cache is not None:
-            persisted = self._l2_cache.get(key)
+            persisted = self._l2_cache.get(key, model=self._cache_model)
             if persisted is not None:
                 self._l1_cache[key] = persisted
                 return persisted
@@ -237,7 +245,7 @@ class EmbeddingService:
 
         if self._l2_cache is not None:
             try:
-                self._l2_cache.put(key, vector, model=self._model)
+                self._l2_cache.put(key, vector, model=self._cache_model)
             except Exception:
                 logger.debug("L2 cache write failed", exc_info=True)
 

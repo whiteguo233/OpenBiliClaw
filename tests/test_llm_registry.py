@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import asyncio
 
 import pytest
 
@@ -18,6 +19,7 @@ from openbiliclaw.llm.base import (
 )
 from openbiliclaw.llm.gemini_provider import gemini_sdk_available
 from openbiliclaw.llm.registry import (
+    EmbeddingFailoverProvider,
     RegistryBuildError,
     build_embedding_service,
     build_llm_registry,
@@ -34,6 +36,10 @@ class FakeProvider(LLMProvider):
     health: bool = True
     call_count: int = 0
     models: list[str | None] = field(default_factory=list)
+    embed_vectors: list[list[float]] = field(default_factory=list)
+    embed_errors: list[Exception] = field(default_factory=list)
+    embed_call_count: int = 0
+    embed_models: list[str | None] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -56,6 +62,15 @@ class FakeProvider(LLMProvider):
         if self.responses:
             return self.responses.pop(0)
         return LLMResponse(content="ok", provider=self.provider_name, model="fake")
+
+    async def embed(self, text: str, *, model: str | None = None) -> list[float]:
+        self.embed_call_count += 1
+        self.embed_models.append(model)
+        if self.embed_errors:
+            raise self.embed_errors.pop(0)
+        if self.embed_vectors:
+            return self.embed_vectors.pop(0)
+        return [1.0, 0.0]
 
     async def health_check(self) -> bool:
         return self.health
@@ -734,6 +749,92 @@ def test_embedding_does_not_auto_fallback_without_explicit_fallback_provider(tmp
 
 
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
+def test_embedding_gemini_uses_dedicated_base_url(tmp_path) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat-test"),
+            embedding=EmbeddingConfig(
+                provider="gemini",
+                model="gemini-embedding-001",
+                api_key="dedicated-gemini-embedding-key",
+                base_url="https://proxy.example.test/gemini",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert service._provider.name == "gemini"
+    assert service._model == "gemini-embedding-001"
+    api_client = service._provider._client._api_client
+    assert api_client._http_options.base_url == "https://proxy.example.test/gemini/"
+
+
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
+def test_embedding_gemini_same_provider_fails_over_to_chat_gemini(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm import registry as registry_mod
+
+    class StubGeminiProvider:
+        supports_embedding = True
+
+        def __init__(self, api_key: str, model: str, base_url: str | None = None, **_: object) -> None:
+            self.api_key = api_key
+            self.model = model
+            self.base_url = base_url
+            self.name = "gemini"
+
+        async def embed(self, text: str, *, model: str | None = None) -> list[float]:
+            if model != "gemini-embedding-001":
+                raise AssertionError(f"unexpected embedding model {model!r}")
+            if self.api_key == "primary-embedding-key":
+                raise LLMProviderError("primary quota exhausted")
+            return [0.25, 0.5, 0.75]
+
+        async def generate(self, messages, model: str | None = None):  # noqa: ANN001
+            raise AssertionError("embedding failover must not be used for chat generation")
+
+        async def health_check(self) -> bool:
+            return True
+
+    monkeypatch.setattr(registry_mod, "GeminiProvider", StubGeminiProvider)
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            gemini=LLMProviderConfig(
+                api_key="fallback-chat-gemini-key",
+                base_url="https://generativelanguage.googleapis.com",
+            ),
+            embedding=EmbeddingConfig(
+                provider="gemini",
+                model="gemini-embedding-001",
+                api_key="primary-embedding-key",
+                base_url="https://primary-gemini.example.test",
+                fallback_enabled=True,
+                fallback_provider="gemini",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert service._provider.name == "gemini_failover"
+    assert service._provider.primary.api_key == "primary-embedding-key"
+    assert service._provider.fallback.api_key == "fallback-chat-gemini-key"
+    assert service._provider.fallback.base_url == "https://generativelanguage.googleapis.com"
+
+    vector = asyncio.run(service._provider.embed("semantic duplicate", model="gemini-embedding-001"))
+    assert vector == [0.25, 0.5, 0.75]
+
+
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_embedding_uses_explicit_fallback_provider(tmp_path) -> None:
     config = Config(
         llm=LLMConfig(
@@ -1293,3 +1394,91 @@ async def test_ollama_named_as_fallback_provider_is_chat_capable_without_model()
 
     response = await registry.complete([{"role": "user", "content": "hi"}])
     assert response.provider == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_embedding_failover_provider_uses_fallback_model_after_primary_error() -> None:
+    primary = FakeProvider("gemini", embed_errors=[LLMProviderError("quota exhausted")])
+    fallback = FakeProvider("ollama", embed_vectors=[[0.1, 0.2, 0.3]])
+    provider = EmbeddingFailoverProvider(
+        primary,
+        fallback,
+        name="gemini_failover_ollama",
+        primary_model="gemini-embedding-001",
+        fallback_model="bge-m3",
+    )
+
+    vector = await provider.embed("hello", model="service-level-model")
+
+    assert vector == [0.1, 0.2, 0.3]
+    assert primary.embed_call_count == 1
+    assert fallback.embed_call_count == 1
+    assert primary.embed_models == ["gemini-embedding-001"]
+    assert fallback.embed_models == ["bge-m3"]
+
+
+@pytest.mark.asyncio
+async def test_embedding_failover_provider_uses_fallback_model_after_empty_vector() -> None:
+    primary = FakeProvider("gemini", embed_vectors=[[]])
+    fallback = FakeProvider("ollama", embed_vectors=[[0.4, 0.5]])
+    provider = EmbeddingFailoverProvider(
+        primary,
+        fallback,
+        name="gemini_failover_ollama",
+        primary_model="gemini-embedding-001",
+        fallback_model="bge-m3",
+    )
+
+    vector = await provider.embed("hello", model="service-level-model")
+
+    assert vector == [0.4, 0.5]
+    assert primary.embed_models == ["gemini-embedding-001"]
+    assert fallback.embed_models == ["bge-m3"]
+
+
+def test_build_embedding_service_wraps_runtime_embedding_fallback_with_isolated_models(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm import registry as registry_mod
+
+    primary = FakeProvider("gemini", embed_errors=[LLMProviderError("429")])
+    fallback = FakeProvider("ollama", embed_vectors=[[0.7, 0.8]])
+
+    def fake_build(candidate: str, emb_cfg: EmbeddingConfig, config: Config, requested_name: str):
+        if candidate == "gemini":
+            return primary, "gemini-embedding-001"
+        if candidate == "ollama":
+            return fallback, "bge-m3"
+        return None
+
+    monkeypatch.setattr(registry_mod, "_build_dedicated_embedding_provider", fake_build)
+
+    service = build_embedding_service(
+        Config(
+            data_dir=tmp_path,
+            llm=LLMConfig(
+                embedding=EmbeddingConfig(
+                    provider="gemini",
+                    model="gemini-embedding-001",
+                    api_key="gemini-key",
+                    output_dimensionality=1024,
+                    fallback_provider="ollama",
+                    fallback_enabled=True,
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                ),
+                ollama=LLMProviderConfig(base_url="http://localhost:11434/v1", model="bge-m3"),
+            ),
+        ),
+        LLMRegistry(),
+    )
+
+    assert service is not None
+    assert isinstance(service._provider, EmbeddingFailoverProvider)
+
+    vector = asyncio.run(service.embed("runtime fallback model isolation"))
+
+    assert vector == [0.7, 0.8]
+    assert primary.embed_models == ["gemini-embedding-001"]
+    assert fallback.embed_models == ["bge-m3"]
+    assert service._cache_model == "gemini-embedding-001#dim=1024"

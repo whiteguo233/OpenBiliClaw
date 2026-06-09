@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .base import LLMProvider, LLMProviderError, LLMRegistry
+from .base import LLMProvider, LLMProviderError, LLMRegistry, LLMResponse
 from .claude_provider import ClaudeProvider
 from .gemini_provider import GeminiProvider, gemini_sdk_available
 from .ollama_provider import OllamaProvider
@@ -23,6 +23,76 @@ logger = logging.getLogger(__name__)
 
 class RegistryBuildError(LLMProviderError):
     """Raised when no usable providers can be created from config."""
+
+
+class EmbeddingFailoverProvider(LLMProvider):
+    """Embedding-only provider that retries a secondary provider on failure."""
+
+    supports_embedding = True
+
+    def __init__(
+        self,
+        primary: LLMProvider,
+        fallback: LLMProvider,
+        *,
+        name: str,
+        primary_model: str | None = None,
+        fallback_model: str | None = None,
+    ) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self._name = name
+        self._primary_model = primary_model or None
+        self._fallback_model = fallback_model or None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        reasoning_effort: str | None = None,
+        model: str | None = None,
+    ) -> LLMResponse:
+        raise LLMProviderError(f"{self.name} is embedding-only")
+
+    async def embed(self, text: str, *, model: str | None = None) -> list[float]:
+        primary_kwargs = {}
+        primary_model = self._primary_model or model
+        if primary_model is not None:
+            primary_kwargs["model"] = primary_model
+        try:
+            vector = await self.primary.embed(text, **primary_kwargs)  # type: ignore[attr-defined]
+            if vector:
+                return vector
+            logger.warning(
+                "Embedding provider %s returned an empty vector; retrying with fallback %s",
+                self.primary.name,
+                self.fallback.name,
+            )
+        except Exception:
+            logger.warning(
+                "Embedding provider %s failed; retrying with fallback %s",
+                self.primary.name,
+                self.fallback.name,
+                exc_info=True,
+            )
+
+        fallback_kwargs = {}
+        if self._fallback_model is not None:
+            fallback_kwargs["model"] = self._fallback_model
+        try:
+            return await self.fallback.embed(text, **fallback_kwargs)  # type: ignore[attr-defined]
+        except Exception as fallback_exc:
+            raise LLMProviderError(
+                f"embedding failover failed: primary={self.primary.name}, "
+                f"fallback={self.fallback.name}: {fallback_exc}"
+            ) from fallback_exc
 
 
 @dataclass
@@ -162,13 +232,54 @@ def build_embedding_service(
         chosen_provider: LLMProvider | None = None
         chosen_name = ""
         chosen_model = ""
-        for candidate in fallback_order:
-            built = _build_dedicated_embedding_provider(candidate, emb_cfg, config, requested_name)
-            if built is None:
-                continue
-            chosen_provider, chosen_model = built
-            chosen_name = candidate
-            break
+        if (
+            requested_name == "gemini"
+            and fallback_provider == "gemini"
+            and bool(getattr(emb_cfg, "fallback_enabled", False))
+        ):
+            primary_built = _build_dedicated_embedding_provider("gemini", emb_cfg, config, requested_name)
+            fallback_built = _build_gemini_chat_embedding_provider(config, emb_cfg)
+            if primary_built is not None and fallback_built is not None:
+                primary_provider, primary_model = primary_built
+                fallback_provider_obj, fallback_model = fallback_built
+                chosen_provider = EmbeddingFailoverProvider(
+                    primary_provider,
+                    fallback_provider_obj,
+                    name="gemini_failover",
+                    primary_model=primary_model,
+                    fallback_model=fallback_model,
+                )
+                chosen_model = primary_model
+                chosen_name = "gemini"
+
+        if chosen_provider is None and requested_name and fallback_provider and requested_name != fallback_provider:
+            primary_built = _build_dedicated_embedding_provider(
+                requested_name, emb_cfg, config, requested_name
+            )
+            fallback_built = _build_dedicated_embedding_provider(
+                fallback_provider, emb_cfg, config, requested_name
+            )
+            if primary_built is not None and fallback_built is not None:
+                primary_provider, primary_model = primary_built
+                fallback_provider_obj, fallback_model = fallback_built
+                chosen_provider = EmbeddingFailoverProvider(
+                    primary_provider,
+                    fallback_provider_obj,
+                    name=f"{requested_name}_failover_{fallback_provider}",
+                    primary_model=primary_model,
+                    fallback_model=fallback_model,
+                )
+                chosen_model = primary_model
+                chosen_name = requested_name
+
+        if chosen_provider is None:
+            for candidate in fallback_order:
+                built = _build_dedicated_embedding_provider(candidate, emb_cfg, config, requested_name)
+                if built is None:
+                    continue
+                chosen_provider, chosen_model = built
+                chosen_name = candidate
+                break
 
         if chosen_provider is None:
             requested_label = requested_name or "(not configured)"
@@ -201,15 +312,50 @@ def build_embedding_service(
         except Exception:
             logger.debug("Failed to init embedding L2 cache", exc_info=True)
 
+        output_dimensionality = int(getattr(emb_cfg, "output_dimensionality", 0) or 0)
+        cache_model = chosen_model
+        if chosen_name == "gemini" and output_dimensionality > 0:
+            cache_model = f"{chosen_model}#dim={output_dimensionality}"
+
         return EmbeddingService(
             cast("SupportsEmbed", chosen_provider),
             model=chosen_model,
+            cache_model=cache_model,
             similarity_threshold=emb_cfg.similarity_threshold,
             persistent_cache=l2_cache,
         )
     except Exception:
         return None
 
+
+def _build_gemini_chat_embedding_provider(
+    config: Config,
+    emb_cfg: Any,
+) -> tuple[LLMProvider, str] | None:
+    """Build Gemini embedding fallback from chat-side [llm.gemini] credentials."""
+    chat_gemini = getattr(config.llm, "gemini", None)
+    if chat_gemini is None:
+        return None
+    api_key = str(getattr(chat_gemini, "api_key", "") or "").strip()
+    if not api_key:
+        api_key = _gemini_env_api_key()
+    if not api_key or not gemini_sdk_available():
+        return None
+    base_url = str(getattr(chat_gemini, "base_url", "") or "").strip() or None
+    effective_model = (
+        emb_cfg.model.strip()
+        or str(getattr(chat_gemini, "model", "") or "").strip()
+        or _DEFAULT_EMBEDDING_MODEL_BY_PROVIDER["gemini"]
+    )
+    return (
+        GeminiProvider(
+            api_key=api_key,
+            model=effective_model,
+            base_url=base_url,
+            embedding_output_dimensionality=int(getattr(emb_cfg, "output_dimensionality", 0) or 0),
+        ),
+        effective_model,
+    )
 
 def _build_dedicated_embedding_provider(
     candidate: str,
@@ -308,7 +454,12 @@ def _build_dedicated_embedding_provider(
         if not api_key or not gemini_sdk_available():
             return None
         return (
-            GeminiProvider(api_key=api_key, model=effective_model),
+            GeminiProvider(
+                api_key=api_key,
+                model=effective_model,
+                base_url=base_url,
+                embedding_output_dimensionality=int(getattr(emb_cfg, "output_dimensionality", 0) or 0),
+            ),
             effective_model,
         )
 

@@ -129,6 +129,7 @@ class EmbeddingConfig:
     model: str = "gemini-embedding-001"
     api_key: str = ""
     base_url: str = ""
+    output_dimensionality: int = 0
     similarity_threshold: float = 0.82
     fallback_enabled: bool = False
     fallback_provider: str = ""
@@ -608,6 +609,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     "model",
                     "api_key",
                     "base_url",
+                    "output_dimensionality",
                     "similarity_threshold",
                     "fallback_enabled",
                     "fallback_provider",
@@ -1613,6 +1615,7 @@ def _render_config_toml(
             f"model = {_toml_string(config.llm.embedding.model)}",
             f"api_key = {_toml_string(config.llm.embedding.api_key)}",
             f"base_url = {_toml_string(config.llm.embedding.base_url)}",
+            f"output_dimensionality = {config.llm.embedding.output_dimensionality}",
             f"similarity_threshold = {config.llm.embedding.similarity_threshold}",
             f"fallback_enabled = {_toml_bool(config.llm.embedding.fallback_enabled)}",
             f"fallback_provider = {_toml_string(config.llm.embedding.fallback_provider)}",
