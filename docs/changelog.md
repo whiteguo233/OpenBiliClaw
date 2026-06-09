@@ -6,6 +6,8 @@
 
 ## v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）
 
+- 推荐池排序新增内容发布时间权重：B 站 search / trending / related_chain 从 `pubdate` / `senddate` / `ctime` 归一化 `published_at`，`discovery_candidates` 与 `content_cache` 持久化该字段，`PoolCurator` 以独立 `publication_recency` 分量按内容发布时间上浮近期发布内容，和入池 `discovered_at` freshness 分离。
+- 推荐池排序新增时间上下文权重：`PoolCurator` 在原有入池新鲜度之外增加 `time_context` 分量，并由 `RecommendationEngine.serve()` 传入画像里的 `preferences.context.time_of_day_patterns`，让当前早/午/晚/深夜时段更匹配的短内容或深度内容小幅上浮；同时将 freshness 权重提升到 `0.25`。
 - 新增当前用户作用域开机自启动能力：macOS 写 `~/Library/LaunchAgents/com.openbiliclaw.daemon.plist`，Windows 写 HKCU Run + `openbiliclaw-autostart.pyw`，Linux 写 XDG `~/.config/autostart/openbiliclaw.desktop`；不写系统级服务、不要求 root / 管理员权限，Docker / 未知平台明确返回不支持。
 - 新增 `[autostart] enabled/manage_ollama` 配置段，并为 `save_config()` 加入 autostart provenance：普通配置保存默认保留磁盘上的 `[autostart].enabled`，只有 `/api/autostart/apply` 和 `openbiliclaw autostart enable/disable` 以 `autostart_authoritative=true` 权威写入，避免陈旧快照覆盖用户刚切换的登录项。
 - `openbiliclaw start` 增加自启动 reconcile：数据库健康后、API 启动前，按当前 LLM / embedding 配置判断是否需要本机 Ollama；只有默认 `localhost:11434` 需要且未运行时才尝试后台拉起 `ollama serve`，远端 / 自定义 loopback 端口只探测不强拉。若 `[autostart].enabled=true` 但系统注册缺失，会在没有 env-managed 配置风险时自动补注册；若 `[autostart].enabled=false` 但系统登录项仍残留，会自动移除该当前用户登录项。

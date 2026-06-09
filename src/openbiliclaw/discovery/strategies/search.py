@@ -24,6 +24,7 @@ from openbiliclaw.discovery.strategies._utils import (
     clean_text,
     interest_anchors,
     normalize_match_text,
+    normalize_published_at,
     parse_duration,
     search_cooldown_remaining,
     to_int,
@@ -518,6 +519,13 @@ class SearchStrategy(DiscoveryStrategy):
             topic_key=self._topic_key_from_query(query),
             topic_group=self._topic_group_from_query(query),
             description=description,
+            published_at=normalize_published_at(
+                item.get("published_at"),
+                item.get("pubdate"),
+                item.get("senddate"),
+                item.get("ctime"),
+                item.get("created_at"),
+            ),
             style_key=ContentDiscoveryEngine.infer_style_key(
                 title=title,
                 description=description,

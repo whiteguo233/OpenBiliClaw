@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
@@ -267,6 +268,35 @@ async def test_search_strategy_uses_llm_queries_and_searches_each_query() -> Non
     await strategy.discover(_build_profile(), limit=20)
 
     assert bilibili_client.calls == ["纪录片 原理", "摄影 构图"]
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_maps_bilibili_publish_time() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    pubdate = 1_710_000_000
+    llm_service = FakeLLMService('{"queries": ["纪录片"]}')
+    bilibili_client = FakeBilibiliClient(
+        {
+            "纪录片": [
+                {
+                    "bvid": "BV1PUB",
+                    "title": "发布较新的纪录片",
+                    "author": "UP",
+                    "pubdate": pubdate,
+                }
+            ],
+        }
+    )
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(_build_profile(), limit=20)
+
+    assert results[0].published_at == datetime.fromtimestamp(pubdate, UTC).isoformat()
 
 
 @pytest.mark.asyncio

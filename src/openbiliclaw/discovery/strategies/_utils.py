@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, TypeVar, cast, runtime_checkable
 
 if TYPE_CHECKING:
@@ -136,6 +137,50 @@ def parse_duration(raw_value: object) -> int:
             hours, minutes, seconds = parts
             return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
     return to_int(raw_value)
+
+
+def normalize_published_at(*values: object) -> str:
+    """Return a normalized ISO timestamp for source-provided publish times."""
+    for value in values:
+        normalized = _normalize_timestamp_value(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _normalize_timestamp_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int | float):
+        return _epoch_to_iso(float(value))
+    text = str(value).strip()
+    if not text:
+        return ""
+    numeric_text = text.replace(".", "", 1)
+    if numeric_text.isdigit():
+        try:
+            return _epoch_to_iso(float(text))
+        except ValueError:
+            return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _epoch_to_iso(raw_seconds: float) -> str:
+    if raw_seconds <= 0:
+        return ""
+    seconds = raw_seconds / 1000 if raw_seconds >= 10_000_000_000 else raw_seconds
+    try:
+        return datetime.fromtimestamp(seconds, UTC).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return ""
 
 
 def normalize_match_text(value: str) -> str:

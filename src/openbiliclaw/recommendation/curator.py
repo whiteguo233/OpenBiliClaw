@@ -41,7 +41,9 @@ class ScoringWeights:
     """
 
     relevance: float = 0.30
-    freshness: float = 0.20
+    freshness: float = 0.25
+    publication_recency: float = 0.15
+    time_context: float = 0.10
     topic_fatigue: float = 0.25
     source_monotony: float = 0.15
     serendipity: float = 0.20
@@ -73,7 +75,8 @@ class ScoringContext:
     feedback: FeedbackSignals = field(default_factory=FeedbackSignals)
     newly_confirmed_amplification_keys: frozenset[str] = field(default_factory=frozenset)
     over_budget_amplification_keys: frozenset[str] = field(default_factory=frozenset)
-    now: datetime = field(default_factory=lambda: datetime.now(UTC))
+    time_of_day_patterns: str = ""
+    now: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ class ScoringContext:
 # ---------------------------------------------------------------------------
 
 _FRESHNESS_HALF_LIFE_DAYS: float = 3.0
+_PUBLICATION_RECENCY_HALF_LIFE_DAYS: float = 7.0
 _FEEDBACK_DISLIKE_UP_PENALTY: float = 0.20
 _FEEDBACK_DISLIKE_TOPIC_PENALTY: float = 0.10
 # Softer than topic penalty — franchise propagation is a heuristic
@@ -140,6 +144,7 @@ class PoolCurator:
         *,
         newly_confirmed_amplification_keys: set[str] | frozenset[str] | None = None,
         rolling_window_hours: int = 24,
+        time_of_day_patterns: str = "",
     ) -> ScoringContext:
         """Build a scoring context from recent recommendation history."""
         signals = self._database.get_recent_recommendation_signals(
@@ -229,6 +234,7 @@ class PoolCurator:
             ),
             newly_confirmed_amplification_keys=normalized_amplification_keys,
             over_budget_amplification_keys=frozenset(over_budget_keys),
+            time_of_day_patterns=time_of_day_patterns.strip(),
         )
 
     def score_candidates(
@@ -252,10 +258,15 @@ class PoolCurator:
                 )
                 * w.freshness
             )
-            fatigue = (
-                self._combined_topic_fatigue(item, context)
-                * w.topic_fatigue
+            published = (
+                self._publication_recency_score(item.published_at, context.now)
+                * w.publication_recency
             )
+            time_context = (
+                self._time_context_score(item, context.time_of_day_patterns, context.now)
+                * w.time_context
+            )
+            fatigue = self._combined_topic_fatigue(item, context) * w.topic_fatigue
             monotony = (
                 self._source_monotony(
                     item.source_strategy,
@@ -265,7 +276,7 @@ class PoolCurator:
             )
             bonus = self._serendipity_bonus(item.source_strategy) * w.serendipity
 
-            score = base + fresh - fatigue - monotony + bonus
+            score = base + fresh + published + time_context - fatigue - monotony + bonus
 
             # Feedback adjustments (additive, outside weight system)
             score += self._feedback_adjustment(item, context.feedback)
@@ -290,18 +301,48 @@ class PoolCurator:
     @staticmethod
     def _freshness_score(timestamp_str: str, now: datetime) -> float:
         """Sigmoid decay: ~1.0 at age 0, ~0.5 at half-life, ~0.1 at 2× half-life."""
+        return PoolCurator._timestamp_recency_score(
+            timestamp_str,
+            now,
+            half_life_days=_FRESHNESS_HALF_LIFE_DAYS,
+        )
+
+    @staticmethod
+    def _publication_recency_score(timestamp_str: str, now: datetime) -> float:
+        """Score the content's source publish time, independent of pool ingest time."""
+        return PoolCurator._timestamp_recency_score(
+            timestamp_str,
+            now,
+            half_life_days=_PUBLICATION_RECENCY_HALF_LIFE_DAYS,
+        )
+
+    @staticmethod
+    def _timestamp_recency_score(
+        timestamp_str: str,
+        now: datetime,
+        *,
+        half_life_days: float,
+    ) -> float:
+        """Sigmoid recency decay with a neutral score for unknown timestamps."""
         if not timestamp_str:
             return 0.5
         try:
-            discovered = datetime.fromisoformat(
-                timestamp_str.replace(" ", "T"),
+            timestamp = datetime.fromisoformat(
+                timestamp_str.replace("Z", "+00:00").replace(" ", "T"),
             )
-            if discovered.tzinfo is None:
-                discovered = discovered.replace(tzinfo=UTC)
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=UTC)
         except ValueError:
             return 0.5
-        age_days = max(0.0, (now - discovered).total_seconds() / 86400.0)
-        return 1.0 / (1.0 + math.exp((age_days - _FRESHNESS_HALF_LIFE_DAYS) / 1.0))
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        age_days = max(0.0, (now - timestamp.astimezone(now.tzinfo)).total_seconds() / 86400.0)
+        exponent = age_days - half_life_days
+        if exponent >= 50.0:
+            return 0.0
+        if exponent <= -50.0:
+            return 1.0
+        return 1.0 / (1.0 + math.exp(exponent))
 
     @staticmethod
     def _topic_fatigue(topic: str, recent_topics: tuple[str, ...]) -> float:
@@ -370,6 +411,89 @@ class PoolCurator:
         if source_strategy == "trending":
             return 0.5
         return 0.0
+
+    @staticmethod
+    def _time_bucket(now: datetime) -> str:
+        hour = now.hour
+        if 5 <= hour < 11:
+            return "morning"
+        if 11 <= hour < 14:
+            return "noon"
+        if 14 <= hour < 18:
+            return "afternoon"
+        if 18 <= hour < 23:
+            return "evening"
+        return "night"
+
+    @staticmethod
+    def _time_context_score(
+        item: DiscoveredContent,
+        time_of_day_patterns: str,
+        now: datetime,
+    ) -> float:
+        """Boost candidates whose style matches the current time-of-day profile.
+
+        The profile stores this signal as natural language, so this is a
+        conservative keyword heuristic. It only adds a small positive score
+        when the user's pattern explicitly mentions the current bucket or a
+        matching content style; otherwise it stays neutral.
+        """
+        profile_text = time_of_day_patterns.strip().lower()
+        if not profile_text:
+            return 0.0
+
+        bucket = PoolCurator._time_bucket(now)
+        bucket_terms = {
+            "morning": ("morning", "am", "早上", "上午", "晨间", "通勤"),
+            "noon": ("noon", "lunch", "午间", "中午", "午休"),
+            "afternoon": ("afternoon", "下午", "午后"),
+            "evening": ("evening", "pm", "晚上", "傍晚", "晚间", "下班"),
+            "night": ("night", "late", "深夜", "夜间", "睡前"),
+        }
+        if not any(term in profile_text for term in bucket_terms[bucket]):
+            return 0.0
+
+        style = (item.style_key or "").strip().lower()
+        topic = f"{item.topic_key} {item.topic_group} {' '.join(item.tags)}".lower()
+        duration = max(0, int(item.duration or 0))
+
+        light_terms = (
+            "light",
+            "short",
+            "casual",
+            "quick",
+            "轻松",
+            "短",
+            "快",
+            "娱乐",
+            "资讯",
+            "新闻",
+        )
+        deep_terms = (
+            "deep",
+            "long",
+            "analysis",
+            "essay",
+            "tutorial",
+            "深度",
+            "长",
+            "解析",
+            "教程",
+            "纪录",
+        )
+
+        wants_light = any(term in profile_text for term in light_terms)
+        wants_deep = any(term in profile_text for term in deep_terms)
+        is_light = any(term in style or term in topic for term in light_terms) or (
+            duration > 0 and duration <= 8 * 60
+        )
+        is_deep = any(term in style or term in topic for term in deep_terms) or duration >= 20 * 60
+
+        if wants_light and is_light:
+            return 1.0
+        if wants_deep and is_deep:
+            return 1.0
+        return 0.35
 
     @staticmethod
     def _feedback_adjustment(
@@ -447,6 +571,14 @@ class PoolCurator:
                 )
                 * w.freshness
             )
+            published = (
+                self._publication_recency_score(item.published_at, context.now)
+                * w.publication_recency
+            )
+            time_context = (
+                self._time_context_score(item, context.time_of_day_patterns, context.now)
+                * w.time_context
+            )
             monotony = (
                 self._source_monotony(
                     item.source_strategy,
@@ -479,7 +611,7 @@ class PoolCurator:
                 fatigue = self._combined_topic_fatigue(item, context)
             fatigue *= w.topic_fatigue
 
-            score = base + fresh - fatigue - monotony + bonus
+            score = base + fresh + published + time_context - fatigue - monotony + bonus
 
             # Embedding-based feedback adjustment
             if embedding_service is not None and topic_label:

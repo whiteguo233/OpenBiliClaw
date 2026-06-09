@@ -369,7 +369,9 @@ class RecommendationEngine:
         score_override: dict[str, float] | None = None
         amplification_guard: frozenset[str] = frozenset()
         if self._curator is not None:
-            context = self._curator.build_context()
+            context = self._curator.build_context(
+                time_of_day_patterns=profile.preferences.context.time_of_day_patterns,
+            )
             score_override = self._curator.score_candidates(candidates, context)
             amplification_guard = context.over_budget_amplification_keys
 
@@ -1122,7 +1124,7 @@ class RecommendationEngine:
                 content.relevance_reason = "classification_failed"
                 continue
             score_value = result.get("score", 0.0)
-            if not isinstance(score_value, (int, float, str)):
+            if not isinstance(score_value, int | float | str):
                 score_value = 0.0
             score = max(0.0, min(1.0, float(score_value)))
             reason = str(result.get("reason", "")).strip()
@@ -2404,6 +2406,7 @@ class RecommendationEngine:
                 candidate_tier=str(row.get("candidate_tier", "primary") or "primary"),
                 discovered_at=str(row.get("discovered_at", "")),
                 last_scored_at=str(row.get("last_scored_at", "")),
+                published_at=str(row.get("published_at", "")),
                 content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                 content_url=str(row.get("content_url", "")),
                 source_platform=str(row.get("source_platform", "") or "bilibili"),
