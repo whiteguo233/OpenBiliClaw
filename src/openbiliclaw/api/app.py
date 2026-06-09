@@ -6669,7 +6669,13 @@ def create_app(
                     error="Embedding service could not be built from the submitted config.",
                     latency_ms=int((time.perf_counter() - started) * 1000),
                 )
-            ok = bool(await asyncio.wait_for(service.probe(), timeout=15.0))
+            probe = getattr(service, "probe", None)
+            if not callable(probe):
+                # Legacy/stub embedding service without a live probe —
+                # building it successfully is the best signal we have.
+                ok = True
+            else:
+                ok = bool(await asyncio.wait_for(probe(), timeout=15.0))
             return ConfigServiceProbeResponse(
                 ok=ok,
                 kind="embedding",
