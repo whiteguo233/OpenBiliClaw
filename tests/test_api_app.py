@@ -1579,6 +1579,9 @@ class TestBackendAPI:
             "last_account_sync_at": "2026-03-14T18:00:00+00:00",
             "last_account_sync_error": "",
             "auto_update_enabled": False,
+            # The shared fixture points OPENBILICLAW_PROJECT_ROOT at a tmp dir
+            # without .git, so the real AutoUpdateService reports unsupported.
+            "install_mode": "unsupported",
             "current_version": __version__,
             "latest_remote_version": "",
             "last_update_check_at": "",
