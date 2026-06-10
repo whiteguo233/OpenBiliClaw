@@ -119,9 +119,24 @@ jobs:
       - name: Create GitHub Release and upload extension package
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --generate-notes
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
           fi
-          gh release upload "$RELEASE_TAG" release-artifacts/openbiliclaw-extension-v*.zip --clobber
+          expected="${RELEASE_TAG#extension-v}"
+          for asset in \
+            "release-artifacts/openbiliclaw-extension-v${expected}.zip" \
+            "release-artifacts/openbiliclaw-extension-v${expected}-firefox.zip"
+          do
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          done

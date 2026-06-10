@@ -157,6 +157,7 @@ jobs:
       - name: Publish GitHub pre-release
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           notes_file="$(mktemp)"
@@ -169,9 +170,25 @@ jobs:
 
           自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/Library/Application Support/OpenBiliClaw`（mac）/ `%LOCALAPPDATA%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
           EOF
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --prerelease --generate-notes --notes-file "$notes_file"
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --generate-notes --notes-file "$notes_file"
           else
-            gh release edit "$RELEASE_TAG" --prerelease --notes-file "$notes_file"
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --notes-file "$notes_file"
           fi
-          gh release upload "$RELEASE_TAG" release-artifacts/*.dmg release-artifacts/*.exe --clobber
+          shopt -s nullglob
+          assets=(release-artifacts/*.dmg release-artifacts/*.exe)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No installer assets found"
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          done
