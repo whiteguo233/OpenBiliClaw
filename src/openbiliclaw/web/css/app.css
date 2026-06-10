@@ -220,6 +220,30 @@ body {
   content: "封面加载失败";
 }
 
+/* No-cover text card for text-first sources (X tweet/thread). */
+.card-cover-frame.is-text-card {
+  display: flex;
+  align-items: flex-start;
+  aspect-ratio: auto;
+  min-height: 96px;
+  padding: 12px 14px;
+  background: var(--surface-soft);
+}
+
+.card-cover-text {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--text-secondary, var(--text-muted));
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .card-body {
   padding: 12px 14px;
 }

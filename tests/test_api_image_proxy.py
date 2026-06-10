@@ -22,6 +22,9 @@ def _isolate_runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
     project_root = tmp_path / "runtime"
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    # image_cache_dir() caches its resolved path in a module global; reset it so
+    # each test resolves under its own tmp project root (no cross-test leakage).
+    monkeypatch.setattr("openbiliclaw.runtime.image_cache._CACHE_DIR", None)
     cfg = Config()
     cfg.llm.default_provider = "ollama"
     cfg.llm.ollama.model = "llama3"
@@ -143,6 +146,35 @@ def test_bilibili_image_success(client: TestClient, fake_httpx: FakeHTTPX) -> No
     assert resp.headers["cache-control"] == "public, max-age=86400"
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.content == b"demo"
+
+
+def test_image_proxy_serves_cache_first_on_second_request(
+    client: TestClient, fake_httpx: FakeHTTPX
+) -> None:
+    # Regression: covers were re-downloaded on every request (cache only read on
+    # upstream failure), so cached images stayed ~2s slow. The success path must
+    # serve the cached copy first.
+    url = "https://i1.hdslb.com/bfs/archive/cached.jpg"
+    fake_httpx.add(
+        url,
+        status_code=200,
+        headers={"content-type": "image/jpeg", "content-length": "4"},
+        chunks=[b"demo"],
+    )
+
+    first = client.get("/api/image-proxy", params={"url": url})
+    assert first.status_code == 200
+    assert first.headers.get("x-image-cache") == "miss"
+    assert first.content == b"demo"
+
+    # Drop the upstream entirely: a second request must NOT re-fetch — if it did,
+    # the fake returns 404 and the proxy would 404 (no cache fallback for <500).
+    fake_httpx.responses.clear()
+
+    second = client.get("/api/image-proxy", params={"url": url})
+    assert second.status_code == 200
+    assert second.headers.get("x-image-cache") == "hit"
+    assert second.content == b"demo"
 
 
 def test_xhscdn_image_success(client: TestClient, fake_httpx: FakeHTTPX) -> None:

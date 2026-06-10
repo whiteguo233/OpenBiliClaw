@@ -262,6 +262,65 @@ class TestDatabase:
 
             db.close()
 
+    def test_cache_content_persists_body_text_and_content_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            content_id = "1790000000000000001"
+            db.cache_content(
+                content_id,
+                title="A thread on systems",
+                source="search",
+                source_platform="twitter",
+                content_id=content_id,
+                content_url="https://x.com/handle/status/1790000000000000001",
+                author_name="@handle",
+                content_type="thread",
+                body_text="1/ long-form note_tweet body ...",
+            )
+
+            cursor = db.conn.execute("SELECT * FROM content_cache WHERE bvid = ?", (content_id,))
+            row = cursor.fetchone()
+            assert row is not None
+            # content_cache accepts and returns body_text / content_type.
+            assert row["content_type"] == "thread"
+            assert row["body_text"].startswith("1/ long-form")
+            # bvid compatibility (Codex R1 M5): non-Bilibili rows reuse
+            # content_id as bvid so existing bvid-keyed joins still match.
+            assert row["bvid"] == content_id
+            assert row["content_id"] == content_id
+
+            db.close()
+
+    def test_twitter_pool_candidate_round_trips_through_serve_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            content_id = "1790000000000000002"
+            _seed_visible(
+                db,
+                content_id,
+                title="A thread on systems",
+                source="search",
+                source_platform="twitter",
+                content_id=content_id,
+                content_url="https://x.com/handle/status/1790000000000000002",
+                author_name="@handle",
+                content_type="thread",
+                body_text="1/ long-form note_tweet body ...",
+                relevance_score=0.9,
+            )
+
+            candidates = db.get_pool_candidates(limit=10)
+            row = next(c for c in candidates if c["bvid"] == content_id)
+            assert row["content_type"] == "thread"
+            assert row["body_text"].startswith("1/ long-form")
+            assert row["source_platform"] == "twitter"
+
+            db.close()
+
     def test_get_cached_content_returns_cached_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

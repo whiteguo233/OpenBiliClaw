@@ -282,6 +282,11 @@ def _is_public(request: Request) -> bool:
         return True
     if path == "/api/autostart/apply":
         return True
+    # guided-init status is remote-readable (can_manage flags local-only); the
+    # write endpoints (init / init/cancel) are whitelisted too but self-gate via
+    # is_trusted_local in their handlers (gui-init spec §2).
+    if path in ("/api/init-status", "/api/init", "/api/init/cancel"):
+        return True
     # gate management bypasses the middleware so its handler can enforce
     # trusted-local itself and return a specific 403 local_only for every
     # non-local caller (remote OR cross-origin loopback), instead of a generic

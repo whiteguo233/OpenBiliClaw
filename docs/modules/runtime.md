@@ -9,20 +9,22 @@
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 后台刷新控制 | ✅ | `ContinuousRefreshController` 按 scheduler 配置补充候选池，并通过 source policy 计算各平台有效配比；注入 `DiscoveryCandidatePipeline` 后，B 站主补货先生产 raw candidates，再进入统一待评估池。 |
-| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube discovery raw candidates 先写入 `discovery_candidates`，runtime 调 `drain_discovery_candidates_once()` 混源 batch 评估并 admission 到 `content_cache`；`DiscoveryCandidatePipeline` 自带共享 drain lock，producer 直接触发也不会并发 admission；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
+| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube、X discovery raw candidates 先写入 `discovery_candidates`，runtime 调 `drain_discovery_candidates_once()` 混源 batch 评估并 admission 到 `content_cache`；`DiscoveryCandidatePipeline` 自带共享 drain lock，producer 直接触发也不会并发 admission；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
 | 候选池文案预计算状态同步 | ✅ | 独立 `_loop_pool_precompute()` 将 fresh 候选补齐 `pool_expression` / `pool_topic_label` 后，会同步更新 `last_replenished_count` 并推送 `refresh.pool_updated`；前端消费该事件时只刷新池子状态，不全量替换推荐列表，避免覆盖已 append 的历史内容。 |
 | 候选池真实可换计数 | ✅ | `pool_available_count` 现在只表示后端当前可立即 `serve()` 的候选，并按默认每 `topic_group` 最多 3 条的候选窗口计数；runtime status / runtime stream 另带 `pool_raw_count`、`pool_pending_count`、`pool_pending_eval_count`、`pool_evaluated_pending_count` 区分素材库存、待评估和已评估待入池内容。 |
 | embedding 后台预热 | ✅ | refresh 完成前只保证候选入池与文案可用；`prewarm_supergroup_embeddings()` / `prewarm_pool_mmr_embeddings()` 作为后台 task 运行，慢本地 embedding 后端不会占住 refresh lock 或让界面长时间停在“正在补货”。 |
 | YouTube 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立运行 `yt_search` / `yt_trending` / `yt_channel`，只在 YouTube 平台族低于 quota 时由 `_loop_youtube_producer()` tick，按每日 ledger 和 `min_interval_minutes` 控制执行。 |
+| X 后台 discovery producer | ✅ | `XDiscoveryProducer.produce_if_due()` 在 X 平台族低于 quota 且源健康就绪时，由独立 loop tick 触发 `search` / `feed`（For-You）/ `creator`（账号订阅）三个策略；按 `daily_*_budget` / `min_interval_minutes` / `request_interval_seconds` 节流，For-You 压到很低的每日频次并在连续失败后自动暂停。只 enqueue raw candidates 进 `discovery_candidates`，不写 `content_cache`、不调评估器。`enabled=false` 时是 no-op，不 import `twitter_cli`。 |
+| X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
 | 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 浏览器 presence gate | ✅ | `background_llm_work_allowed()` 结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作。 |
 | Runtime event stream | ✅ | `/api/runtime-stream` 向扩展推送状态、Cookie sync 请求、配置重载和 presence 事件；`RuntimeEventHub.publish()` 会返回是否至少有一个订阅者接收，供一次性事件判断是否真正投递。 |
 | 兴趣探针投递保护 | ✅ | `interest.probe` 只有成功投递到 runtime stream 后才写入 `probed_domains` / `probed_axes` / `probed_distance_bands` 冷却状态；事件 payload 会带 `probe_mode` 与 `challenge`，前端离线时不会消耗 active probe。普通 `near` 探针与挑战探针使用独立 active 额度，运行时选择时仍统一仲裁。 |
 | 避雷探针投递与仲裁 | ✅ | `avoidance.probe` 与 `interest.probe` 共用 proactive push 循环；每轮最多投递一个 probe，并用 `last_probe_kind` 在正向/负向都有候选时轮流选择，避免探针频率翻倍。 |
 | 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验；成功封面写入 `data/image-cache/`（小红书 token 归一化），并按「已消费且未保存」定期清理、保护无法重抓的封面。 |
-| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。 |
+| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。dirty worktree guard 豁免仅 `uv.lock` 的改动（发布 tag 带过期 lock 时 `uv sync` 必然改写它），apply 前会重置 `uv.lock` 再快进。`detect_install_mode()` 上报 `frozen / git / unsupported` 安装形态，桌面冻结包据此在前端禁用自动更新开关。 |
 | 开机自启动管理 | ✅ | `runtime.autostart` 提供 macOS LaunchAgent、Windows HKCU Run + `.pyw`、Linux XDG autostart 三套当前用户作用域 manager；`/api/autostart-status`、`/api/autostart/apply`、`openbiliclaw autostart` 和插件设置页共用 env / shadow guard 与方向化 enable/disable 事务。 |
-| Ollama 启动预检 | ✅ | `runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。 |
+| Ollama 启动预检与生命周期 | ✅ | `runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。托管启动会给子进程默认传入 `OLLAMA_KEEP_ALIVE=24h`（若用户已设置则保留用户值），减少 `bge-m3` / `llama-server` 在 UI 请求间隔中卸载再冷启动。`_ollama_start_serve_background()` 现在记录**亲手拉起**的 `Popen` 句柄（复用外部已运行实例时句柄留空），`stop_managed_ollama()` 据此在退出时停掉整棵进程树（Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`），对外部托管的 Ollama 一律不动 —— 桌面托盘「退出」经此调用，clean quit 不再遗留孤儿 `ollama serve` / `llama-server` runner。 |
 | 账号同步 | ✅ | `AccountSyncService` 同步 B 站账号历史、收藏和关注等信号；历史按 `view_at + 同秒 bvid 集合` 增量导入，收藏 / 关注只把新增 ID 转成画像事件，避免重放旧信号。 |
 | 多源 bootstrap 去重 | ✅ | `/api/sources/{xhs,dy,yt}/task-result` 会用 `source_bootstrap_state.json` 过滤跨任务旧 identity key；任务结果仍完整保留，只有新增项进入 memory / profile pipeline。 |
 | 扩展任务 claim / 复用 | ✅ | XHS / 抖音 / YouTube bootstrap 任务在扩展 poll 时用短生命周期 SQLite 连接标记 `in_progress`，CLI 默认复用 6 小时内近期任务，避免重复打开前台 tab 全量扫描，也避免 FastAPI 并发 poll 在共享 connection 上嵌套事务。 |
@@ -44,10 +46,11 @@ status_code, apply_payload = await service.request_apply(tag="backend-v0.3.92")
 核心调用：
 
 - `check_now()`：立即检查 GitHub tags，只刷新后端更新状态，不自动应用。
-- `request_apply(tag="backend-vX.Y.Z")`：先检查 git repo、可信 `origin`、worktree clean、未 merge/rebase、目标 tag 存在且当前 HEAD 可 fast-forward，再返回 `202/applying` 并在后台执行 `git merge --ff-only <tag>`、依赖同步和 `os.execv` 重启。
+- `request_apply(tag="backend-vX.Y.Z")`：先检查 git repo、可信 `origin`、worktree clean（仅 `uv.lock` 改动豁免——发布 tag 携带过期 lock 时安装侧 `uv sync` 必然改写它，不能因此永久阻塞更新）、未 merge/rebase、目标 tag 存在且当前 HEAD 可 fast-forward，再返回 `202/applying` 并在后台执行 `git checkout -- uv.lock`、`git merge --ff-only <tag>`、依赖同步和 `os.execv` 重启。
 - `check_and_update_if_due()` / `check_and_update_now()`：供后台调度使用；只有 `scheduler.auto_update_enabled=true` 时才会定时自动应用。
-- `get_update_status()`：返回 `/api/update-status` 使用的 backend 状态对象。
-- `get_runtime_status()`：返回 `/api/runtime-status` 合并用的自动更新摘要，包含当前版本、最新远端版本、上次检查、错误和状态原因。
+- `detect_install_mode()`（模块级函数）：上报安装形态——`frozen`（PyInstaller 桌面包，结构上无法 git 自更新）、`git`（installer / agent / dev 克隆）、`unsupported`（其他）。
+- `get_update_status()`：返回 `/api/update-status` 使用的 backend 状态对象，含 `install_mode`。
+- `get_runtime_status()`：返回 `/api/runtime-status` 合并用的自动更新摘要，包含当前版本、最新远端版本、上次检查、错误、状态原因和 `install_mode`。
 
 ### ContinuousRefreshController
 
@@ -59,7 +62,12 @@ result = await controller.drain_discovery_candidates_once(batch_size=30)
 
 - `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。
 - `drain_discovery_candidates_once(batch_size=...)`：由 XHS task-result / 被动采集等外部来源入队后触发，也可由 refresh plan 内部调用；它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube 多入口并发 admission。
+- `run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`：图形化引导初始化（gui-init）stage 4 的发现补池。持 `_refresh_lock` 与连续 refresh 串行，绝不与之争 `content_cache`；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
 - `_pool_count_payload()`：统一生成 runtime status / runtime stream 的池子字段，包含 pending eval 与 evaluated pending 拆分。
+
+### InitCoordinator + InitPrereqs（引导初始化）
+
+`InitCoordinator`（`runtime/init_coordinator.py`，惰性挂在 `RuntimeContext.init_coordinator`）是图形化引导初始化的生命周期所有者：`init_runs` 持久化状态机、单写者进度事件（`_write_lock` 串行化，并行 stage 3/4 的 `sequence` 不丢更新）、`BEGIN IMMEDIATE` 单飞预定、启动 `reconcile_on_boot()`（崩溃残留 `starting/running` 判失败）、协作取消、bootstrap task 归属（供写者门控放行 init 自己的 task-result）。`InitPrereqs`（`runtime/init_prereqs.py`）提供 TTL 缓存 + 单飞的 `chat_ready()` / `bilibili_check()` / `enabled_platforms()` 前置探测。共享流水线 `cli.run_guided_init`、`/api/init*` 端点和 init 期间写者门控详见 [init 模块文档](init.md)。
 
 ### Degraded RuntimeContext
 
@@ -93,6 +101,7 @@ result = await controller.drain_discovery_candidates_once(batch_size=30)
 `GET /api/runtime-status` 会保留自动更新摘要字段，供插件和 Web 前端在统一 runtime 状态对象中读取：
 
 - `auto_update_enabled`：当前后台定时自动更新是否开启；关闭时仍允许手动检查和手动 apply。
+- `install_mode`：安装形态（`frozen` / `git` / `unsupported`）。桌面 Web 设置页在非 `git` 时禁用自动更新开关并提示用安装包升级。
 - `current_version`：本地后端版本。
 - `latest_remote_version`：最近一次检查得到的后端远端版本。
 - `last_update_check_at`：最近一次检查时间。
@@ -106,13 +115,14 @@ result = await controller.drain_discovery_candidates_once(batch_size=30)
 - `True`：至少一个订阅者队列接收了事件。
 - `False`：当前没有订阅者，或所有订阅者队列都未接收事件。
 
-`ContinuousRefreshController._publish_probe_if_available()` 使用这个返回值保护主动探针：只有 `interest.probe` 或 `avoidance.probe` 实际进入至少一个 runtime stream 后，才会把本次 domain / axis / probe distance 写入 `discovery_runtime.json` 的短期去重状态，并更新 `last_probe_kind`。普通状态事件仍可忽略返回值。
+`ContinuousRefreshController._publish_probe_if_available()` 使用这个返回值保护主动探针：只有 `interest.probe` 或 `avoidance.probe` 实际进入至少一个 runtime stream 后，才会把本次 domain / axis / probe distance 写入 `discovery_runtime.json` 的短期去重状态，并更新 `last_probe_kind`。这些写入走 `MemoryManager.update_discovery_runtime_state()` 的原子读改写，和 API 反馈历史、短期探索 buffer 合并，避免后台循环用旧状态覆盖用户刚点击过的探针反馈。普通状态事件仍可忽略返回值。
 
 主动探针仲裁规则：
 
 - 每轮 proactive push 最多发布一条 probe；惊喜推荐仍走独立 `delight.candidate` 逻辑。
 - 正向和负向都有候选时，根据上一次成功投递的 `last_probe_kind` 反向优先，形成 `interest -> avoidance -> interest` 的轮转。
 - 发布失败（例如没有订阅者）时不写 `last_probe_kind`，也不消耗 `probed_domains` / `probed_avoidance_domains`。
+- runtime 只会投递 `status="active"` 的正向/负向探针；已经确认、拒绝或过期的旧候选即使仍残留在某次内存快照中，也不会再次进入 `interest.probe` / `avoidance.probe` 事件流。
 - `interest.probe` 正向探针还会记录 `probed_distance_bands`，并在下一次选择时优先尝试没在冷却窗口内问过的 `near/lateral/bridge/wildcard` 档位。
 - `interest.probe` runtime event 暴露 `probe_mode` 和 `challenge`，移动 Web、桌面 Web、插件 inbox 与 OpenClaw 都可以把挑战探针和普通确认区分开；`near` 普通池最多 5 条，`lateral/bridge/wildcard` 挑战池另有 3 条 active 额度。
 - `avoidance.probe` 选取会避开近期 `probed_avoidance_domains` / `probed_avoidance_axes`，并读取 `avoidance_probe_feedback_history` 中用户否认过的方向。
@@ -199,6 +209,24 @@ result = await producer.produce_if_due(limit=20)
 - `budget_exhausted`：当天 `yt_search` / `yt_trending` / `yt_channel` 的执行 ledger 已耗尽。
 - `disabled` / `no_profile` / `error`：分别表示配置关闭、画像不可用或所有策略失败。
 
+### XDiscoveryProducer
+
+```python
+from openbiliclaw.runtime.x_producer import XDiscoveryProducer
+
+result = await producer.produce_if_due(limit=20)
+```
+
+X (Twitter) 的 steady-state discovery 走服务端 cookie 重放（对标抖音 direct，但用 `twitter-cli` 取代 XBogus 签名）。`produce_if_due()` 在 `[sources.twitter].enabled=true`、X 平台族低于 quota、源健康就绪、距上次执行已过 `min_interval_minutes` 时，依次跑三个策略：
+
+- `search`：从 Soul 画像生成关键词，调 `XClient.search()`。
+- `feed`：拉推荐流 For-You（`XClient.for_you()`）。这是最高曝光、最易被注意的行为，被压到很低的每日频次，并在连续失败后由 `XSourceHealthStore.feed_allowed()` 自动暂停。
+- `creator`：对 `x_creator_subscriptions` 里到期的订阅逐个调 `XClient.user_tweets(handle)`，按 `creator_refresh_hours` 控制刷新节奏。
+
+每条推文经 `discovery.x_normalize.normalize_tweet()` 映射为 `DiscoveredContent`（`content_type ∈ {tweet, thread}`、`body_text` 带全文），enqueue 进 `discovery_candidates` 待评估池——producer **只 fetch，不写 `content_cache`、不调评估器**，由共享混源 evaluator 完成 admission。每个策略 run 都把成功 / 失败结果回写 `XSourceHealthStore`（成功 `record_success()`，失败 `record_error(exc)` 按 401/403/429 落对应健康态）。预算护栏：`daily_search_budget` / `daily_feed_budget` / `daily_creator_budget`（`0` = 不设上限）+ 两次请求间 `request_interval_seconds` 间隔。`enabled=false` 时整条路径 no-op，绝不 import `twitter_cli` / `curl_cffi`。
+
+X 客户端 `XClient`（`sources/x_client.py`）封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`，全程只读，方法用 `asyncio.to_thread` 包成 async；底层 `TwitterAPIError` / `AuthenticationError` 映射为 `XMissingCookieError` / `XAuthError`(401) / `XBlockedError`(403) / `XRateLimitError`(429)，供源健康状态机分流退避。
+
 ### Source Bootstrap Task Results
 
 XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
@@ -244,6 +272,7 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 - GitHub `/releases/latest` 当前由扩展 artifact 占用，不能代表后端源码版本；`AutoUpdateService._fetch_latest_version()` 直接查询 `/tags`，分页过滤 backend tag 后选择最高版本。
 - 默认忽略 prerelease；若只有更新的 `backend-vX.Y.Z-rc/beta/dev`，状态上报 `up_to_date` + `prerelease_ignored`。
 - 浏览器插件更新不由 `AutoUpdateService` 管理：Chrome Web Store / Edge Add-ons / AMO 版本交给浏览器原生更新，GitHub zip / sideload 用户按插件 release 文档手动下载和重新加载。
+- **版本 bump 必须重新 lock**：发布提交除 `pyproject.toml` / `openbiliclaw.__version__` 外必须同步运行 `uv lock`（或 `uv sync`）并提交 `uv.lock`。tag 携带过期 lock 时，安装侧首次 `uv sync` 会改写 `uv.lock` 把 worktree 弄脏，历史上曾让所有 git 安装的自动更新永久卡在 `dirty_worktree`。`tests/test_release_consistency.py` 断言三处版本一致；updater 守卫额外豁免仅 `uv.lock` 的脏改动作为存量安装兜底。
 
 这样可以避免后端 `0.3.64` 把 `extension-v0.3.24` 解析成 `(0,)` 并误报 "Already up-to-date"。
 
@@ -261,4 +290,4 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 
 刷新调度不使用 `scheduler.discovery_cron`。该字段仅保留为旧配置兼容；实际触发由 `refresh_check_interval_seconds` 轮询、候选池缺口、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours` 和 `discovery_limit` 共同决定。
 
-`ContinuousRefreshController.run_forever()` 当前并行启动 refresh、pool precompute、soul pipeline、XHS producer、Douyin producer、YouTube producer 和 proactive push 七条 loop。共享的 `background_llm_work_allowed()` gate 覆盖所有 daemon-owned LLM / embedding 工作；YouTube 与 XHS / Douyin 一样会在 gate 关闭时跳过 tick。不同点是 YouTube 不通过扩展任务队列做 steady-state discovery，而是在后端直接调用 YouTube strategies；`yt_tasks` 只保留给 bootstrap profile 导入。三类外站 producer 和 B 站主 refresh 都会优先把 raw candidates 交给同一个 `DiscoveryCandidatePipeline`，后续混源 batch 评估和入池逻辑一致，并由 pipeline drain lock 串行化。
+`ContinuousRefreshController.run_forever()` 当前并行启动 refresh、pool precompute、soul pipeline、XHS producer、Douyin producer、YouTube producer、X producer 和 proactive push 八条 loop。共享的 `background_llm_work_allowed()` gate 覆盖所有 daemon-owned LLM / embedding 工作；YouTube / X 与 XHS / Douyin 一样会在 gate 关闭时跳过 tick。不同点是 YouTube 和 X 都不通过扩展任务队列做 steady-state discovery，而是在后端直接调用各自 strategies（X 经 `XClient` 服务端 cookie 重放）；`yt_tasks` 只保留给 bootstrap profile 导入，X 没有 init 期 bootstrap 任务。四类外站 producer 和 B 站主 refresh 都会优先把 raw candidates 交给同一个 `DiscoveryCandidatePipeline`，后续混源 batch 评估和入池逻辑一致，并由 pipeline drain lock 串行化。

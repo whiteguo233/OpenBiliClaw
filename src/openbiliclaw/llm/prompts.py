@@ -1014,7 +1014,9 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "10. When content_batch items include source_platform/source_strategy/content_type, "
     "use those per-item fields as the authoritative platform context. "
     "Do not lower or raise preference score merely because content comes from a "
-    "different platform; score every item against the same Soul-profile rubric.\n"
+    "different platform; score every item against the same Soul-profile rubric. "
+    "对 content_type 为 tweet / thread 的纯文本条目(标题往往只是正文首行),"
+    "请以该条目的 body_text 字段为内容主体来判断匹配度,而不是只看 title。\n"
     "11. 当 user 消息携带 `<negative_examples>` 时,把这些标题视为用户最近"
     "**明确不喜欢**的样本——理由可能是快速划走 (`quick_exit`) 或显式负反馈"
     " (`explicit_negative`)。\n"
@@ -1134,6 +1136,8 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
    xiaohongshu 用更生活化的姐妹/朋友语气;其他平台保持中性朋友感。
 3. expression 要解释"为什么这条内容会对上这个人的胃口",必须引用至少一个具体内容细节
    (如视频/笔记标题中的关键词、作者特点、或内容的独特切入角度),不要说空话。
+   如果 content_summary.content_type 是 tweet / thread,标题只是正文首行,
+   请以 content_summary.body_text 为内容主体来引用具体细节。
 4. topic_label 需要是轻度个性化的主题标签,不要只写泛分类词。
 5. 避免机械解释腔、广告腔和"根据你的兴趣""你可能会喜欢"这类算法套话。
 6. 禁止使用以下模板词:信息密度、高质量、深度好文、值得一看、强烈推荐、不容错过。
@@ -1214,7 +1218,7 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
     "3. expression 像朋友私聊。bilibili 用'老 B 友'语境,xiaohongshu 用更生活化的姐妹/朋友语气,"
     "其他平台保持中性朋友感。必须引用至少一个具体内容细节(标题关键词、作者特点、独特切入角度),"
-    "不要说空话。\n"
+    "不要说空话。content_type 为 tweet / thread 的纯文本条目,以 body_text 字段为内容主体来引用。\n"
     "4. 避免:算法套话、信息密度、高质量、深度好文、值得一看、强烈推荐。\n"
     "5. explore 来源的内容要解释陌生领域和用户认知偏好的关联。\n"
     "6. 每条 expression 的开头措辞必须不同,禁止重复同一句式。\n"
@@ -1289,6 +1293,8 @@ _DELIGHT_REASON_SYSTEM_PROMPT = (
     "4. 不要用:强烈推荐、值得一看、高质量、信息密度等套话。\n"
     "5. reason_stub 提供了打分信号的线索,用它来组织 delight_reason 的叙事方向。\n"
     "6. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。\n"
+    "7. content_summary.content_type 为 tweet / thread 时,标题只是正文首行,"
+    "请以 content_summary.body_text 为内容主体来组织叙事。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "{\n"

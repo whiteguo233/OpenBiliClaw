@@ -42,8 +42,8 @@ test("recommendation auto-load checks again after render and append", () => {
   assert.match(popupJs, /recommendationAutoLoadUserArmed/);
   assert.match(popupJs, /initRecommendationAutoLoadIntent\(\)/);
   assert.match(popupJs, /shouldAutoLoadRecommendations/);
-  assert.match(popupJs, /queueRecommendationLoadCheck\(\);\n\s*return;\n\s*}/);
-  assert.match(popupJs, /finally \{\n\s*state\.loadingMore = false;\n\s*queueRecommendationLoadCheck\(\);/);
+  assert.match(popupJs, /queueRecommendationLoadCheck\(\);\r?\n\s*return;\r?\n\s*}/);
+  assert.match(popupJs, /finally \{\r?\n\s*state\.loadingMore = false;\r?\n\s*queueRecommendationLoadCheck\(\);/);
 });
 
 test("recommendation covers do not rely on native lazy loading inside the popup scroller", () => {
@@ -51,4 +51,14 @@ test("recommendation covers do not rely on native lazy loading inside the popup 
 
   assert.match(popupJs, /const image = document\.createElement\("img"\);/);
   assert.doesNotMatch(popupJs, /image\.loading = "lazy"/);
+});
+
+test("runtime stream first connect does not re-fetch recommendations after startup load", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupJs, /let hasRuntimeStreamConnected = false;/);
+  assert.match(
+    popupJs,
+    /onConnect\(\) \{[\s\S]*?if \(!state\.online\) \{[\s\S]*?setStatus\(true\);[\s\S]*?if \(hasRuntimeStreamConnected\) \{[\s\S]*?scheduleRecommendationsRefresh\(\{ delayMs: 0 \}\);[\s\S]*?\}[\s\S]*?\}[\s\S]*?hasRuntimeStreamConnected = true;/,
+  );
 });

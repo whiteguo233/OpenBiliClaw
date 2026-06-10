@@ -79,3 +79,33 @@ def test_embedding_cache_get_rejects_non_numeric_vectors(tmp_path: Path) -> None
     cache.conn.commit()
 
     assert cache.get("bad-vector") is None
+
+
+def test_embedding_cache_is_thread_safe_across_threads(tmp_path: Path) -> None:
+    # Regression: discovery candidate post-processing and recommendation prewarm
+    # touch the cache from worker threads other than the one that opened it. A
+    # bare sqlite3 connection (check_same_thread=True) raises "SQLite objects
+    # created in a thread can only be used in that same thread".
+    import threading
+
+    cache = EmbeddingCache(tmp_path / "embedding-cache.db")
+    cache.initialize()  # connection opened on this (main) thread
+
+    errors: list[Exception] = []
+    results: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            cache.put("k", [0.1, 0.2, 0.3], model="bge-m3")
+            results["get"] = cache.get("k")
+            results["count"] = cache.count()
+        except Exception as exc:  # noqa: BLE001 — capture for assertion
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+
+    assert errors == [], f"cache raised across threads: {errors}"
+    assert results["get"] == [0.1, 0.2, 0.3]
+    assert results["count"] == 1

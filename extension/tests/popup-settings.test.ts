@@ -33,7 +33,9 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgXhsDailyCreatorBudget",
     "cfgXhsTaskInterval",
     "cfgDouyinEnabled",
+    "cfgDouyinCookie",
     "cfgDouyinCookieEnv",
+    "cfgTwitterCookie",
     "cfgDouyinDailySearchBudget",
     "cfgDouyinDailyHotBudget",
     "cfgDouyinDailyFeedBudget",
@@ -205,9 +207,11 @@ test("settings page round-trips YouTube source budgets", () => {
     popupJs,
     /setVal\("cfgYoutubeMinInterval", cfg\.sources\?\.youtube\?\.min_interval_minutes\)/,
   );
-  assert.match(popupJs, /daily_search_budget: getInt\("cfgYoutubeDailySearchBudget", 6\)/);
-  assert.match(popupJs, /daily_trending_budget: getInt\("cfgYoutubeDailyTrendingBudget", 50\)/);
-  assert.match(popupJs, /daily_channel_budget: getInt\("cfgYoutubeDailyChannelBudget", 10\)/);
+  // Empty-field fallbacks must mirror the backend dataclass defaults
+  // (budgets: 0 = uncapped) so popup and web settings write the same values.
+  assert.match(popupJs, /daily_search_budget: getInt\("cfgYoutubeDailySearchBudget", 0\)/);
+  assert.match(popupJs, /daily_trending_budget: getInt\("cfgYoutubeDailyTrendingBudget", 0\)/);
+  assert.match(popupJs, /daily_channel_budget: getInt\("cfgYoutubeDailyChannelBudget", 0\)/);
   assert.match(popupJs, /request_interval_seconds: getInt\("cfgYoutubeRequestInterval", 2\)/);
   assert.match(popupJs, /min_interval_minutes: getInt\("cfgYoutubeMinInterval", 60\)/);
 
@@ -220,6 +224,34 @@ test("settings page round-trips YouTube source budgets", () => {
   ]) {
     assert.match(popupHtml, new RegExp(`id="${id}"`));
   }
+});
+
+test("settings page round-trips douyin and x cookies like the bilibili card", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  // Plaintext cookie textareas, same shape as the bilibili card.
+  assert.match(popupHtml, /<textarea id="cfgBiliCookie"/);
+  assert.match(popupHtml, /<textarea id="cfgDouyinCookie"/);
+  assert.match(popupHtml, /<textarea id="cfgTwitterCookie"/);
+
+  assert.match(popupJs, /setVal\("cfgDouyinCookie", cfg\.sources\?\.douyin\?\.cookie\)/);
+  assert.match(popupJs, /setVal\("cfgTwitterCookie", cfg\.sources\?\.twitter\?\.cookie\)/);
+
+  // An empty textarea is omitted from the payload so saving the form can
+  // never wipe a synced cookie (bilibili included).
+  assert.match(
+    popupJs,
+    /\.\.\.\(getVal\("cfgBiliCookie"\) \? \{ cookie: getVal\("cfgBiliCookie"\) \} : \{\}\)/,
+  );
+  assert.match(
+    popupJs,
+    /\.\.\.\(getVal\("cfgDouyinCookie"\) \? \{ cookie: getVal\("cfgDouyinCookie"\) \} : \{\}\)/,
+  );
+  assert.match(
+    popupJs,
+    /\.\.\.\(getVal\("cfgTwitterCookie"\) \? \{ cookie: getVal\("cfgTwitterCookie"\) \} : \{\}\)/,
+  );
 });
 
 test("settings page round-trips OpenAI auth mode", () => {
@@ -259,6 +291,19 @@ test("settings page round-trips explicit LLM and embedding fallback providers", 
     popupJs,
     /fallback_provider: embeddingFallbackProvider/,
   );
+});
+
+test("settings page exposes and wires LLM and embedding probe buttons", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupHtml, /id="cfgProbeLlm"/);
+  assert.match(popupHtml, /id="cfgProbeEmbedding"/);
+  assert.match(popupHtml, /id="cfgProbeLlmStatus"/);
+  assert.match(popupHtml, /id="cfgProbeEmbeddingStatus"/);
+  assert.match(popupJs, /probeConfigService\("llm", collectForm\(\)\)/);
+  assert.match(popupJs, /probeConfigService\("embedding", collectForm\(\)\)/);
+  assert.match(popupJs, /function renderProbeResult/);
 });
 
 test("settings page placeholders match config example defaults", () => {

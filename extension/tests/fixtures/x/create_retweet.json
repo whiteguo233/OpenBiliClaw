@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. queryId is rotated by X; the parser matches the CreateRetweet operation name, not this id.",
+  "url": "https://x.com/i/api/graphql/ojPdsZsimiJrUGLR1sjUtA/CreateRetweet",
+  "requestBody": "{\"variables\":{\"tweet_id\":\"1790000000000000003\",\"dark_request\":false},\"queryId\":\"ojPdsZsimiJrUGLR1sjUtA\"}",
+  "responseBody": "{\"data\":{\"create_retweet\":{\"retweet_results\":{\"result\":{\"rest_id\":\"1790000000000099003\",\"legacy\":{\"full_text\":\"RT @someone: ...\"}}}}}}"
+}

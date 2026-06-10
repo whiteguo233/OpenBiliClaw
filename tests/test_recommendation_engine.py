@@ -363,17 +363,58 @@ async def test_serve_zero_candidates_warning_includes_readiness_counts(
         )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
-        caplog.set_level(logging.WARNING)
-        result = await engine.serve(
-            _build_profile(),
-            limit=1,
-            excluded_bvids=frozenset({"BV1READY"}),
+        try:
+            caplog.set_level(logging.WARNING)
+            result = await engine.serve(
+                _build_profile(),
+                limit=1,
+                excluded_bvids=frozenset({"BV1READY"}),
+            )
+
+            assert result == []
+            assert "raw=1" in caplog.text
+            assert "servable=1" in caplog.text
+            assert "pending=0" in caplog.text
+        finally:
+            db.close()
+
+
+@pytest.mark.asyncio
+async def test_serve_empty_after_exclusions_skips_curator_context() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BV1READY",
+            title="宸茬粡鍦ㄦ睜瀛愰噷",
+            source="search",
+            relevance_score=0.9,
         )
 
+        class ExplodingCurator:
+            def build_context(self) -> object:
+                raise AssertionError("empty candidate batch should return before curator")
+
+            def score_candidates(self, candidates: object, context: object) -> dict[str, float]:
+                raise AssertionError("empty candidate batch should return before scoring")
+
+        engine = RecommendationEngine(
+            llm=_DummyLLM(),
+            database=db,
+            curator=ExplodingCurator(),  # type: ignore[arg-type]
+        )
+
+        try:
+            result = await engine.serve(
+                _build_profile(),
+                limit=1,
+                excluded_bvids=frozenset({"BV1READY"}),
+            )
+        finally:
+            db.close()
+
         assert result == []
-        assert "raw=1" in caplog.text
-        assert "servable=1" in caplog.text
-        assert "pending=0" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -773,6 +814,69 @@ async def test_generate_expression_passes_style_key_to_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_expression_passes_body_text_for_text_items() -> None:
+    """Task 11: text-first X items have low-information titles, so the
+    expression builder must see ``body_text`` in its USER message."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _DummyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="1790000000000000001",
+                content_id="1790000000000000001",
+                title="1/ on resilient systems",
+                up_name="@handle",
+                source_platform="twitter",
+                content_type="thread",
+                cover_url="",
+                duration=0,
+                body_text="1/ BODY_MARKER long-form note_tweet on systems design ...",
+                style_key="deep_dive",
+                topic_group="系统设计",
+                relevance_score=0.8,
+            ),
+            _build_profile(),
+        )
+
+        user_input = str(llm.calls[0]["user_input"])
+        assert "BODY_MARKER" in user_input
+        assert '"body_text"' in user_input
+        # body_text must never leak into the cached system prompt.
+        assert "BODY_MARKER" not in str(llm.calls[0]["system_instruction"])
+
+
+@pytest.mark.asyncio
+async def test_select_diversified_batch_tolerates_text_items_without_cover() -> None:
+    """Task 11: ranking / diversity / MMR must not assume a cover_url or a
+    non-zero duration. Text-first X items (empty cover, duration 0) must
+    rank without raising or dropping out."""
+    text_items = [
+        DiscoveredContent(
+            bvid=f"179000000000000000{i}",
+            content_id=f"179000000000000000{i}",
+            title=f"{i}/ thread on systems",
+            up_name="@handle",
+            source_platform="twitter",
+            content_type="thread",
+            cover_url="",
+            duration=0,
+            body_text=f"{i}/ long-form body about topic {i}",
+            topic_group=f"主题{i}",
+            relevance_score=0.9 - i * 0.05,
+        )
+        for i in range(5)
+    ]
+
+    selected = RecommendationEngine._select_diversified_batch(text_items, limit=3)
+
+    assert len(selected) == 3
+    assert all(item.source_platform == "twitter" for item in selected)
+
+
+@pytest.mark.asyncio
 async def test_record_feedback_updates_recommendation_feedback_fields() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
@@ -861,6 +965,7 @@ async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expres
         history = db.get_recommendations(limit=10)
         assert history[0]["expression"] == "这条会接住你最近想把地缘链路顺清楚的状态。"
         assert history[0]["topic"] == "你最近那股想把地缘链路顺清楚的状态"
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -912,6 +1017,62 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
         history = db.get_recommendations(limit=10)
         assert history[0]["expression"] == "第三条已经提前备好了推荐理由。"
         assert history[0]["topic"] == "第三条提前备好的话题"
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_serve_returns_immediately_when_pool_available_count_is_zero() -> None:
+    class EmptyPoolDatabase:
+        def count_pool_readiness(self, *, xhs_self_nickname: str = "") -> dict[str, int]:
+            return {"available": 0, "raw": 0, "pending": 0}
+
+        def get_pool_candidates(
+            self, *, limit: int, xhs_self_nickname: str = ""
+        ) -> list[dict[str, object]]:
+            raise AssertionError("empty available pool should not load candidates")
+
+        def batch_insert_recommendations(self, rows: list[dict[str, object]]) -> list[int]:
+            raise AssertionError("empty available pool should not write recommendations")
+
+    engine = RecommendationEngine(llm=_DummyLLM(), database=EmptyPoolDatabase())  # type: ignore[arg-type]
+
+    recommendations = await engine.serve(_build_profile(), limit=5)
+
+    assert recommendations == []
+
+
+@pytest.mark.asyncio
+async def test_append_returns_immediately_when_exclusions_empty_candidates() -> None:
+    class ExplodingCurator:
+        def build_context(self) -> object:
+            raise AssertionError("empty candidate list should not call curator")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "BV1ONLY",
+            title="唯一候选",
+            up_name="UPA",
+            source="search",
+            relevance_score=0.95,
+            relevance_reason="唯一候选理由。",
+        )
+        engine = RecommendationEngine(
+            llm=_DummyLLM(),
+            database=db,
+            curator=ExplodingCurator(),  # type: ignore[arg-type]
+        )
+
+        recommendations = await engine.append_recommendations(
+            profile=_build_profile(),
+            excluded_bvids=["BV1ONLY"],
+            limit=5,
+        )
+
+        assert recommendations == []
+        assert db.get_recommendations(limit=10) == []
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "xiaohongshu": False,
         "douyin": False,
         "youtube": False,
+        "twitter": False,
     }
 
 
@@ -32,8 +33,9 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "xiaohongshu": False,
         "douyin": False,
         "youtube": False,
+        "twitter": False,
     }
-    assert effective_pool_source_shares(config) == {"bilibili": 8}
+    assert effective_pool_source_shares(config) == {"bilibili": 5}
 
 
 def test_effective_pool_source_shares_drop_disabled_bilibili() -> None:
@@ -93,7 +95,7 @@ def test_effective_pool_source_shares_fall_back_to_defaults() -> None:
 
     assert DEFAULT_POOL_SOURCE_SHARES["youtube"] == 1
     assert effective_pool_source_shares(config) == {
-        "bilibili": 8,
+        "bilibili": 5,
         "douyin": 1,
     }
 
@@ -110,10 +112,10 @@ def test_suggest_pool_source_shares_uses_damped_event_counts() -> None:
     )
 
     assert suggestion == {
-        "bilibili": 8,
-        "xiaohongshu": 3,
+        "bilibili": 5,
+        "xiaohongshu": 2,
         "douyin": 1,
-        "youtube": 5,
+        "youtube": 3,
     }
 
 

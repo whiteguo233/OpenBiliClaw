@@ -160,6 +160,38 @@ def test_put_config_round_trips_explicit_fallback_providers(monkeypatch, tmp_pat
     assert body["llm"]["embedding"]["fallback_provider"] == "ollama"
 
 
+def test_put_config_round_trips_embedding_output_dimensionality(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={"llm": {"embedding": {"output_dimensionality": 768}}},
+    )
+
+    assert response.status_code == 200
+    assert load_config_from_path(config_path).llm.embedding.output_dimensionality == 768
+
+    get_response = client.get("/api/config")
+    assert get_response.status_code == 200
+    body = get_response.json()
+    assert body["llm"]["embedding"]["output_dimensionality"] == 768
+
+
+def test_put_config_rejects_invalid_embedding_output_dimensionality(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
+
+    response = client.put(
+        "/api/config",
+        json={"llm": {"embedding": {"output_dimensionality": "wide"}}},
+    )
+
+    assert response.status_code == 400
+    assert load_config_from_path(config_path).llm.embedding.output_dimensionality == 1024
+
+
 def test_put_config_ignores_whitespace_only_chat_provider_api_key(monkeypatch, tmp_path) -> None:
     client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _base_config())
 
@@ -229,3 +261,158 @@ def test_put_config_ignores_empty_embedding_model_and_base_url(monkeypatch, tmp_
     embedding = load_config_from_path(config_path).llm.embedding
     assert embedding.model == "text-embedding-3-small"
     assert embedding.base_url == "https://embed.example.com/v1"
+
+
+# ── Source cookie guards (bilibili masked/empty echo; dy/x file routing) ──
+
+
+def _cookie_config(tmp_path: Path) -> Config:
+    from openbiliclaw.config import BilibiliConfig
+
+    cfg = _base_config()
+    cfg.data_dir = str(tmp_path / "data")
+    cfg.bilibili = BilibiliConfig(
+        auth_method="cookie",
+        cookie="SESSDATA=real-sess; bili_jct=real-csrf; DedeUserID=42",
+    )
+    return cfg
+
+
+def test_put_config_ignores_masked_bilibili_cookie_echo(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _cookie_config(tmp_path))
+
+    response = client.put(
+        "/api/config",
+        json={"bilibili": {"cookie": "SESS************ID=42"}},
+    )
+
+    assert response.status_code == 200
+    assert load_config_from_path(config_path).bilibili.cookie == (
+        "SESSDATA=real-sess; bili_jct=real-csrf; DedeUserID=42"
+    )
+
+
+def test_put_config_ignores_empty_bilibili_cookie(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _cookie_config(tmp_path))
+
+    response = client.put("/api/config", json={"bilibili": {"cookie": ""}})
+
+    assert response.status_code == 200
+    assert load_config_from_path(config_path).bilibili.cookie == (
+        "SESSDATA=real-sess; bili_jct=real-csrf; DedeUserID=42"
+    )
+
+
+def test_put_config_writes_real_new_bilibili_cookie(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _cookie_config(tmp_path))
+
+    response = client.put(
+        "/api/config",
+        json={"bilibili": {"cookie": "SESSDATA=new-sess; bili_jct=new-csrf; DedeUserID=43"}},
+    )
+
+    assert response.status_code == 200
+    assert load_config_from_path(config_path).bilibili.cookie == (
+        "SESSDATA=new-sess; bili_jct=new-csrf; DedeUserID=43"
+    )
+
+
+def test_put_config_routes_douyin_cookie_to_data_file(monkeypatch, tmp_path) -> None:
+    from openbiliclaw.sources.douyin_auth import DouyinCookieManager
+
+    monkeypatch.delenv("OPENBILICLAW_DOUYIN_COOKIE", raising=False)
+    cfg = _cookie_config(tmp_path)
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, cfg)
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"douyin": {"cookie": "sessionid=dy-sess; ttwid=dy-tw"}}},
+    )
+
+    assert response.status_code == 200
+    # Secret lands in data/douyin_cookie.json, never in config.toml.
+    assert DouyinCookieManager(cfg.data_path).load_cookie() == "sessionid=dy-sess; ttwid=dy-tw"
+    assert "dy-sess" not in config_path.read_text(encoding="utf-8")
+
+
+def test_put_config_routes_x_cookie_to_data_file(monkeypatch, tmp_path) -> None:
+    from openbiliclaw.sources.x_auth import XCookieManager
+
+    monkeypatch.delenv("OPENBILICLAW_X_COOKIE", raising=False)
+    cfg = _cookie_config(tmp_path)
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, cfg)
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"twitter": {"cookie": "auth_token=x-at; ct0=x-csrf"}}},
+    )
+
+    assert response.status_code == 200
+    assert XCookieManager(cfg.data_path).load_cookie() == "auth_token=x-at; ct0=x-csrf"
+    assert "x-at" not in config_path.read_text(encoding="utf-8")
+
+
+def test_put_config_ignores_masked_douyin_cookie_echo(monkeypatch, tmp_path) -> None:
+    from openbiliclaw.sources.douyin_auth import DouyinCookieManager
+
+    monkeypatch.delenv("OPENBILICLAW_DOUYIN_COOKIE", raising=False)
+    cfg = _cookie_config(tmp_path)
+    manager = DouyinCookieManager(cfg.data_path)
+    manager.set_cookie("sessionid=dy-real", source="test")
+    client, _cfg, _config_path = _make_client(monkeypatch, tmp_path, cfg)
+
+    response = client.put(
+        "/api/config",
+        json={"sources": {"douyin": {"cookie": "sess************real"}}},
+    )
+
+    assert response.status_code == 200
+    assert manager.load_cookie() == "sessionid=dy-real"
+
+
+def test_put_config_empty_cookie_env_keeps_existing_name(monkeypatch, tmp_path) -> None:
+    client, _cfg, config_path = _make_client(monkeypatch, tmp_path, _cookie_config(tmp_path))
+
+    response = client.put(
+        "/api/config",
+        json={
+            "sources": {
+                "douyin": {"cookie_env": ""},
+                "twitter": {"cookie_env": ""},
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    saved = load_config_from_path(config_path)
+    assert saved.sources.douyin.cookie_env == "OPENBILICLAW_DOUYIN_COOKIE"
+    assert saved.sources.twitter.cookie_env == "OPENBILICLAW_X_COOKIE"
+
+
+def test_get_config_exposes_douyin_and_x_cookies_like_bilibili(monkeypatch, tmp_path) -> None:
+    from openbiliclaw.sources.douyin_auth import DouyinCookieManager
+    from openbiliclaw.sources.x_auth import XCookieManager
+
+    monkeypatch.delenv("OPENBILICLAW_DOUYIN_COOKIE", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_X_COOKIE", raising=False)
+    cfg = _cookie_config(tmp_path)
+    DouyinCookieManager(cfg.data_path).set_cookie(
+        "sessionid=dy-sess-1234567890; ttwid=dy-tw", source="test"
+    )
+    XCookieManager(cfg.data_path).set_cookie(
+        "auth_token=x-at-1234567890; ct0=x-csrf", source="test"
+    )
+    client, _cfg, _config_path = _make_client(monkeypatch, tmp_path, cfg)
+
+    masked = client.get("/api/config").json()
+    assert "****" in masked["sources"]["douyin"]["cookie"]
+    assert "dy-sess-1234567890" not in masked["sources"]["douyin"]["cookie"]
+    assert "****" in masked["sources"]["twitter"]["cookie"]
+    assert "****" in masked["bilibili"]["cookie"]
+
+    revealed = client.get("/api/config?reveal_keys=true").json()
+    assert revealed["sources"]["douyin"]["cookie"] == "sessionid=dy-sess-1234567890; ttwid=dy-tw"
+    assert revealed["sources"]["twitter"]["cookie"] == "auth_token=x-at-1234567890; ct0=x-csrf"
+    assert revealed["bilibili"]["cookie"] == (
+        "SESSDATA=real-sess; bili_jct=real-csrf; DedeUserID=42"
+    )

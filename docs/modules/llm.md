@@ -1,6 +1,6 @@
 # LLM 多模型支持
 
-> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带显式备选 Provider、retry 和健康检查。
+> 统一的多 LLM Provider 接口，支持 OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible，带显式备选 Provider、retry 和健康检查。
 
 ## 概述
 
@@ -16,21 +16,23 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter，带 retry + 超时 |
+| 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible，带 retry + 超时 |
 | 2.2 Provider Registry | ✅ | 自动注册 + 可配置 fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
 | v0.3.75 Per-module LLM 路由生效 | ✅ | `LLMService` 按 caller bucket 路由 `[llm.soul/discovery/recommendation/evaluation]`，通过 `LLMRegistry.complete_provider()` 精确调用 chat-capable provider；provider 错误不 spill 到 default，拼错 provider INFO 一次后降级 |
-| v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
+| v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
 | 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
 | v0.3.0 Ollama embedding 兜底 | ✅ | `OllamaProvider.embed()` 走原生 `/api/embeddings`，配合 `bge-m3` 模型可在 Mac/Win/Linux CPU 跑相似度计算，不需要额外的 embedding API Key |
 | v0.3.0 EmbeddingService 双层缓存 | ✅ | L1 内存 + L2 SQLite 持久化；`build_embedding_service` 按 provider 自动选默认 model（gemini→gemini-embedding-001 / openai→text-embedding-3-small / ollama→bge-m3） |
+| v0.3.113 Embedding 目标维度 | ✅ | `[llm.embedding].output_dimensionality` 默认 1024，与 Ollama `bge-m3` 对齐；Gemini 传 `output_dimensionality`，`provider = "openai"` 且模型为 `text-embedding-3-*` 时传 `dimensions`，Ollama / OpenRouter / 泛 OpenAI-compatible 等未确认支持的后端不传。L2 cache 仅在 provider 确认支持目标维度时按 `model#dim=N` 签名隔离，同一文本的不同维度向量不会互相覆盖，也不会把未生效的兼容后端标成伪维度 |
 | v0.3.97 EmbeddingService 实时探活 | ✅ | `EmbeddingService.probe()` 绕过 L1/L2 缓存直接打一次 provider，返回是否拿到非空向量；供 `/api/health.embedding_ready` 做**实时**就绪判定（缓存命中的旧成功不会掩盖 provider 已掉线 / 模型没拉）。`/api/health` 侧自带 TTL + single-flight，probe 不缓存结果、每次都真打 |
+| v0.3.114 配置页服务探测 | ✅ | `POST /api/config/probe-service` 对用户当前表单草稿做无写入真实探测：LLM 走临时 `LLMRegistry.complete_provider()`，embedding 走临时 `EmbeddingService.probe()`，结果供 PCWeb / 插件设置页行内展示 |
 | v0.3.20 Embedding fallback 能力识别 | ✅ | `LLMProvider.supports_embedding` 类属性显式声明 provider 是否真的有 embeddings endpoint。Claude / DeepSeek / OpenRouter 标 `False`（前者无 API、后两者继承自 OpenAIProvider 但实际后端不路由 embeddings）；OpenAI / Gemini / Ollama 标 `True`。当前只在 `[llm.embedding].fallback_provider` 非空时尝试一个显式备选 provider |
 | v0.3.89.1 OpenRouter embedding 显式路径 | ✅ | `[llm.embedding].provider = "openrouter"` 现在会被 `_build_dedicated_embedding_provider` 构造成 `OpenRouterProvider` 实例（必须配 `model = "<vendor>/<model>"`，例如 `google/gemini-embedding-2-preview`；无显式 model 时拒绝构建，避免 404）。`OpenRouterProvider.supports_embedding` 仍保持 `False` —— 只有用户显式在 `[llm.embedding]` 选 openrouter 才走这条路径，不污染 chat-side 的自动回退链。`[llm.openrouter]` 的 `http_referer` / `x_title` 也会透传给 embedding 实例，让 OpenRouter 后台账单与 chat 流量归一 |
 | v0.3.20 OpenAI Provider embed | ✅ | `OpenAIProvider.embed()` 走 `/v1/embeddings`，默认 `text-embedding-3-small`。OpenAI 用户没显式配 embedding 时不再静默返回 None。失败返回 `[]`（与 Ollama / Gemini 一致），调用方降级处理 |
 | v0.3.31 DeepSeek 空内容兜底 | ✅ | DeepSeek 返回 HTTP 200 但 `content=""` 时，provider 会重试一次；`reasoning_effort` 开启时仍先关闭 thinking 重试，普通模式则原参数重试，避免 explore / structured task 因一次空内容直接降级为空结果 |
-| v0.3.32 Embedding 与 LLM Provider 解耦 | ✅ | `EmbeddingConfig` 拥有独立的 `api_key` / `base_url`；`build_embedding_service` 直接构造一个独立 provider 实例（不走 chat-side `LLMRegistry`），并把旧的 `embedding_wants_ollama` 自动注册 hack 删掉 |
+| v0.3.32 Embedding 与 LLM Provider 解耦 | ✅ | `EmbeddingConfig` 拥有独立的 `api_key` / `base_url` / `output_dimensionality`；`build_embedding_service` 直接构造一个独立 provider 实例（不走 chat-side `LLMRegistry`），切换 chat 模型不会改变 embedding provider / model / 维度，并把旧的 `embedding_wants_ollama` 自动注册 hack 删掉 |
 | v0.3.x 显式 fallback provider | ✅ | 自动 fallback 链已移除。`LLMRegistry.complete()` 只在 `[llm].fallback_provider` 非空时按 `default_provider → fallback_provider` 尝试；embedding 只在 `[llm.embedding].fallback_provider` 非空时尝试一个备选 provider，空 provider 不再跟随 `[llm].default_provider` |
 | v0.3.98 Ollama 作 chat fallback 识别 | ✅ | `_ollama_is_chat_capable()` 新增第四个入口：`[llm].fallback_provider = "ollama"`。此前只认 `[llm.ollama] model` / `default_provider` / 模块 override，导致用户把本地 Ollama 设为 chat 兜底、却没单独配 `[llm.ollama] model` 时，Ollama 被判为 embedding-only 并被 `_fallback_order()` 静默剔除，主 provider 失败直接 `LLMFallbackError`。现在尊重该意图（无 `model` 时用 `llama3` 默认，需本地已 `ollama pull` chat 模型；`bge-m3` 这类 embedding 模型仍无法兜底 chat）|
 | v0.3.32 OpenAI 协议兼容 provider | ✅ | 新增 `openai_compatible` 一级 provider（独立 `[llm.openai_compatible]` block），用于 Groq / Together / Azure OpenAI / vLLM / 自建等任何走 OpenAI 协议的服务。底层复用 `OpenAIProvider`，但 `provider_name="openai_compatible"`，与 `[llm.openai]` 互不干扰。`base_url` 必填（缺失会被 `_collect_config_issues` 拦下、`_maybe_openai_compatible_provider` 拒绝注册）。embedding 段也接受 `openai_compatible` |
@@ -123,8 +125,8 @@ from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.config import load_config
 
 registry = build_llm_registry(load_config())
-print(registry.available_providers)  # ["openai", "gemini", "deepseek", "ollama", "openrouter"]
-print(registry.default_provider)     # "openai"
+print(registry.available_providers)  # ["openai", "claude", "gemini", "deepseek", "ollama", "openrouter", "openai_compatible"]
+print(registry.default_provider)     # "deepseek"
 
 # 默认不 fallback；如需备选，设置 [llm].fallback_provider 为第二个 provider
 response = await registry.complete([{"role": "user", "content": "hi"}])
@@ -141,6 +143,19 @@ assert registry.is_chat_capable("ollama") in (True, False)
 results = await registry.health_check_all()
 # {"openai": HealthCheckResult(available=True, is_default=True), ...}
 ```
+
+### 配置草稿探测 API
+
+```http
+POST /api/config/probe-service
+```
+
+该接口面向设置页，不写配置文件。后端会把请求中的 `config.llm` 合并到当前配置的内存副本，然后按 `kind` 真实打一次目标服务：
+
+- `kind="llm"`：构建临时 `LLMRegistry`，校验 `default_provider` 是 chat-capable，再调用 `complete_provider(provider, ...)` 发送最小 chat completion。
+- `kind="embedding"`：构建临时 `EmbeddingService`，调用 `probe()` 绕过 L1/L2 cache 获取一次真实向量。
+
+失败以 `ok=false` 的正常响应返回，前端可直接显示 provider / model / latency / error；详见 [配置参考](config.md)。
 
 ### LLMService
 
@@ -251,7 +266,7 @@ LLMServiceError           # Service 层基类
 
 ```toml
 [llm]
-default_provider = "openai"  # "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter"
+default_provider = "deepseek"  # "deepseek" | "openai" | "claude" | "gemini" | "ollama" | "openrouter" | "openai_compatible"
 
 [llm.openai]
 api_key = ""

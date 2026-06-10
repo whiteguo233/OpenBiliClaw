@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from datetime import datetime, timedelta
@@ -24,6 +25,35 @@ from openbiliclaw.soul.speculator import (
     promote_ready,
     save_speculative_state,
 )
+
+
+class _PausingSpeculationLLM:
+    def __init__(self, domain: str = "城市基础设施观察") -> None:
+        self.domain = domain
+        self.started = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def complete_structured_task(self, **_kwargs: object) -> object:
+        self.started.set()
+        await self.resume.wait()
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "interests": [
+                        {
+                            "domain": self.domain,
+                            "category": "人文",
+                            "reason": "用户喜欢系统结构拆解,这个方向提供城市系统视角。",
+                            "specifics": ["排水系统", "道路层级"],
+                            "confidence": 0.55,
+                            "probe_mode": "near",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tokenization
@@ -973,6 +1003,90 @@ def test_user_confirm_speculation_records_source_and_confirmed_at():
         assert spec.status == "confirmed"
         assert spec.confirmation_source == "profile_confirmed"
         assert spec.confirmed_at
+
+
+def test_user_confirm_speculation_returns_false_for_missing_domain(tmp_path: Path) -> None:
+    speculator = InterestSpeculator(llm_service=None, data_dir=tmp_path)
+
+    assert speculator.user_confirm_speculation("不存在") is False
+
+
+def test_user_reject_speculation_returns_false_for_missing_domain(tmp_path: Path) -> None:
+    speculator = InterestSpeculator(llm_service=None, data_dir=tmp_path)
+
+    assert speculator.user_reject_speculation("不存在") is False
+
+
+async def test_force_tick_does_not_restore_user_confirmed_interest(tmp_path: Path) -> None:
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_speculative_state(
+        tmp_path,
+        SpeculativeState(active=[SpeculativeInterest(domain="建筑美学", status="active")]),
+    )
+    llm = _PausingSpeculationLLM()
+    speculator = InterestSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    task = asyncio.create_task(speculator.force_tick(OnionProfile()))
+    await llm.started.wait()
+
+    assert speculator.user_confirm_speculation("建筑美学") is True
+    llm.resume.set()
+    await task
+
+    state = load_speculative_state(tmp_path)
+    assert all(not (item.domain == "建筑美学" and item.status == "active") for item in state.active)
+
+
+async def test_force_tick_does_not_restore_user_rejected_interest(tmp_path: Path) -> None:
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_speculative_state(
+        tmp_path,
+        SpeculativeState(active=[SpeculativeInterest(domain="建筑美学", status="active")]),
+    )
+    llm = _PausingSpeculationLLM()
+    speculator = InterestSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    task = asyncio.create_task(speculator.force_tick(OnionProfile()))
+    await llm.started.wait()
+
+    assert speculator.user_reject_speculation("建筑美学") is True
+    llm.resume.set()
+    await task
+
+    state = load_speculative_state(tmp_path)
+    assert all(item.domain != "建筑美学" for item in state.active)
+    assert any(item.domain == "建筑美学" for item in state.cooldown)
+
+
+async def test_force_tick_loader_blocks_duplicate_after_confirmed_item_was_promoted(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_speculative_state(tmp_path, SpeculativeState(active=[]))
+    llm = _PausingSpeculationLLM(domain="建筑美学")
+    speculator = InterestSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    def _loader() -> list[dict[str, object]]:
+        return [
+            {
+                "domain": "建筑美学",
+                "response": "confirm",
+                "created_at": "2026-06-09T10:00:00",
+            }
+        ]
+
+    task = asyncio.create_task(
+        speculator.force_tick(OnionProfile(), feedback_history_loader=_loader)
+    )
+    await llm.started.wait()
+    llm.resume.set()
+    await task
+
+    state = load_speculative_state(tmp_path)
+    assert all(item.domain != "建筑美学" for item in state.active)
 
 
 async def test_speculator_tick_promotes():

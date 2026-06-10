@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import sqlite3
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import Protocol
@@ -54,24 +55,26 @@ class EmbeddingCache:
     Stores text → vector mappings in a dedicated table so embeddings
     computed during discovery survive process restarts and are reusable
     during recommendation serving without any API calls.
+
+    Thread-safe: the cache is read/written from background discovery and
+    recommendation-prewarm workers running on different threads, so the single
+    connection is opened with ``check_same_thread=False`` and every access is
+    serialized by an ``RLock`` (a bare ``sqlite3`` connection otherwise raises
+    "SQLite objects created in a thread can only be used in that same thread").
     """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
 
     def initialize(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), timeout=10.0)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(
-            """CREATE TABLE IF NOT EXISTS embedding_cache (
-                text_key TEXT PRIMARY KEY,
-                vector   TEXT NOT NULL,
-                model    TEXT DEFAULT ''
-            )"""
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn = sqlite3.connect(str(self._db_path), timeout=10.0, check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._ensure_schema()
+            self._conn.commit()
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -79,11 +82,56 @@ class EmbeddingCache:
             raise RuntimeError("EmbeddingCache not initialized")
         return self._conn
 
-    def get(self, key: str) -> list[float] | None:
-        row = self.conn.execute(
-            "SELECT vector FROM embedding_cache WHERE text_key = ?",
-            (key,),
+    def _ensure_schema(self) -> None:
+        table_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'embedding_cache'"
         ).fetchone()
+        if table_exists is None:
+            self._create_cache_table()
+            return
+
+        columns = self.conn.execute("PRAGMA table_info(embedding_cache)").fetchall()
+        column_names = {str(row[1]) for row in columns}
+        pk_columns = [
+            str(row[1]) for row in sorted(columns, key=lambda row: int(row[5] or 0)) if row[5]
+        ]
+        if column_names >= {"text_key", "vector", "model"} and pk_columns == ["text_key", "model"]:
+            return
+
+        self.conn.execute("ALTER TABLE embedding_cache RENAME TO embedding_cache_legacy")
+        self._create_cache_table()
+        legacy_columns = {str(row[1]) for row in columns}
+        if {"text_key", "vector"} <= legacy_columns:
+            model_expr = "COALESCE(model, '')" if "model" in legacy_columns else "''"
+            self.conn.execute(
+                f"""INSERT OR REPLACE INTO embedding_cache (text_key, model, vector)
+                    SELECT text_key, {model_expr}, vector
+                    FROM embedding_cache_legacy"""
+            )
+        self.conn.execute("DROP TABLE embedding_cache_legacy")
+
+    def _create_cache_table(self) -> None:
+        self.conn.execute(
+            """CREATE TABLE embedding_cache (
+                text_key TEXT NOT NULL,
+                model    TEXT NOT NULL DEFAULT '',
+                vector   TEXT NOT NULL,
+                PRIMARY KEY (text_key, model)
+            )"""
+        )
+
+    def get(self, key: str, model: str = "") -> list[float] | None:
+        with self._lock:
+            if model:
+                row = self.conn.execute(
+                    "SELECT vector FROM embedding_cache WHERE text_key = ? AND model = ?",
+                    (key, model),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT vector FROM embedding_cache WHERE text_key = ? ORDER BY model LIMIT 1",
+                    (key,),
+                ).fetchone()
         if row is None:
             return None
         try:
@@ -92,15 +140,17 @@ class EmbeddingCache:
             return None
 
     def put(self, key: str, vector: list[float], model: str = "") -> None:
-        self.conn.execute(
-            """INSERT OR REPLACE INTO embedding_cache (text_key, vector, model)
-               VALUES (?, ?, ?)""",
-            (key, json.dumps(vector), model),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO embedding_cache (text_key, vector, model)
+                   VALUES (?, ?, ?)""",
+                (key, json.dumps(vector), model),
+            )
+            self.conn.commit()
 
     def count(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()
+        with self._lock:
+            row = self.conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()
         return row[0] if row else 0
 
 
@@ -126,6 +176,7 @@ class EmbeddingService:
         provider: SupportsEmbed,
         *,
         model: str = "gemini-embedding-001",
+        cache_model: str | None = None,
         cache_size: int = 500,
         similarity_threshold: float = 0.82,
         persistent_cache: EmbeddingCache | None = None,
@@ -133,6 +184,7 @@ class EmbeddingService:
     ) -> None:
         self._provider = provider
         self._model = model
+        self._cache_model = cache_model or model
         # OrderedDict + move_to_end on hit gives us proper LRU instead of
         # FIFO. With a 500-key cache and bursty access patterns (delight
         # scoring iterates the same like_texts repeatedly), FIFO would
@@ -170,7 +222,7 @@ class EmbeddingService:
             self._l1_cache.move_to_end(key)
             return cached
         if self._l2_cache is not None:
-            persisted = self._l2_cache.get(key)
+            persisted = self._l2_cache.get(key, model=self._cache_model)
             if persisted is not None:
                 self._l1_cache[key] = persisted
                 return persisted
@@ -223,7 +275,7 @@ class EmbeddingService:
 
         if self._l2_cache is not None:
             try:
-                self._l2_cache.put(key, vector, model=self._model)
+                self._l2_cache.put(key, vector, model=self._cache_model)
             except Exception:
                 logger.debug("L2 cache write failed", exc_info=True)
 

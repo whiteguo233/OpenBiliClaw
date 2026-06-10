@@ -370,3 +370,15 @@ def test_feedback_event_uses_natural_language_context() -> None:
     assert "封面太花哨" in event["context"]
     assert event["metadata"]["feedback_type"] == "dislike"
     assert event["metadata"]["source_platform"] == SOURCE_BILIBILI
+
+
+def test_twitter_label_and_context_render() -> None:
+    """X (twitter) source renders with the 'X' platform label."""
+    rendered = format_event_context(
+        event_type="favorite",
+        source_platform="twitter",
+        title="A thread on systems",
+        author="@handle",
+    )
+    assert rendered.startswith("在X")  # _PLATFORM_LABELS["twitter"] == "X"
+    assert "《A thread on systems》" in rendered

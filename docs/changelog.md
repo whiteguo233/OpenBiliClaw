@@ -4,6 +4,129 @@
 
 ---
 
+## v0.3.115: 自动更新解卡（2026-06-10）
+
+修复「配置页开了自动更新却永远不更新」的静默失效：发布 tag 携带过期 `uv.lock`（版本 bump 时漏跑 `uv lock`），安装侧首次 `uv sync` 即把 worktree 弄脏，所有 git 克隆安装（一键脚本 / AI 安装）的自动更新从装机起被 `dirty_worktree` 守卫永久拦截，且无任何日志或 UI 反馈。
+
+- updater 守卫现豁免仅 `uv.lock` 的脏改动（其他任何脏文件仍然拦截），apply 前先 `git checkout -- uv.lock` 再 `git merge --ff-only`；实测脏安装 0.3.109 → 0.3.114 全链路（GitHub tag 检查 → 快进合并 → `uv sync` → 重启）走通。
+- 重新生成 `uv.lock` 并新增 `tests/test_release_consistency.py`：`pyproject.toml` / `openbiliclaw.__version__` / `uv.lock` 三处版本必须一致，发布 bump 漏跑 `uv lock` 时测试直接红，防止再次带脏种子发布。
+- `/api/update-status` 与 `/api/runtime-status` 新增 `install_mode`（`frozen` / `git` / `unsupported`）：桌面安装包（PyInstaller 冻结 bundle，无 git 仓库）结构上不支持后端 git 自更新，现在会如实上报而非静默无效。
+- 桌面 Web 设置页「自动更新」开关下新增状态行：展示更新状态、阻塞原因（本地化文案，如「代码目录有未提交改动」「本地代码与发布版本分叉」）、当前 / 最新版本与上次检查时间，设置页打开和保存配置后自动刷新；冻结安装包模式下禁用开关并提示「请下载并安装新版安装包」。
+- 存量 git 安装升级提示：旧版 updater 代码仍会被脏 `uv.lock` 卡住，无法自动升到本版。在安装目录手动执行一次 `git checkout -- uv.lock && git pull`（或重跑一键安装脚本，会复用现有目录与配置）即可解卡，此后自动更新恢复正常。
+
+## v0.3.114 / extension v0.3.74: 来源 Cookie 配置对齐（2026-06-10）
+
+插件 side panel 与桌面 Web 配置页的五大来源卡片对齐到 B 站卡片的形态：抖音 / X 也能直接查看并手动粘贴明文 Cookie，状态彩点不再误报，保存配置不会意外清掉已同步的 Cookie。
+
+- 抖音 / X 来源卡片新增明文 Cookie 文本框（插件 + 桌面 Web 同步）：`GET /api/config` 的 `sources.douyin.cookie` / `sources.twitter.cookie` 返回 `resolve_douyin_cookie()` / `resolve_x_cookie()` 解析后的当前凭据（默认脱敏，`reveal_keys=true` 明文）；`PUT /api/config` 把非空值路由到 `data/douyin_cookie.json` / `data/x_cookie.json`（与扩展自动同步同一存储，secrets 不进 `config.toml`），X 粘贴含 `auth_token`+`ct0` 的有效 Cookie 时同时解除 `missing_cookie`/`expired_cookie`/`blocked` 的 re-login 封锁。小红书（token 嗅探）与 YouTube（无需登录）维持差异化说明。
+- 插件 side panel 与桌面 Web 的「模型」设置页新增 LLM / embedding 测试按钮：点击会把当前表单草稿 POST 到 `/api/config/probe-service` 做无写入真实连通性探测，LLM 走最小 chat completion，embedding 走 `EmbeddingService.probe()` 绕过缓存取一次向量，结果以 provider / model / latency / error 行内展示，方便保存前确认配置有效。
+- 修复 `/api/sources/status` 两处误报：X 的健康表默认行是 `ok`，此前从未跑过 X discovery 时即使没有任何 cookie 也显示「正常，cookie 有效」，现在 `ok` 态会再用 `resolve_x_cookie()` 校验凭据存在，缺失即报 `missing_cookie`；B 站状态此前只看 `config.toml` 镜像，现在回落读 `data/bilibili_cookie.json`（CLI 二维码登录只写文件的场景不再误报「未配置」）。
+- `PUT /api/config` 给 `bilibili.cookie` 补上与 `api_key` 同级的防护：脱敏回显（连续 `****`）与空值不再覆盖现有 Cookie；`cookie_env` 空值保留现名。插件 popup 保存时空 Cookie 字段直接省略（对齐桌面 Web 已有行为）。
+- 插件 cookie 自动同步的重试 alarm 按平台拆分（`-bili` / `-dy` / `-x`）：一个平台同步成功不再把另一平台刚排的快速重试重置回 60 分钟，登录某平台也只触发该平台的同步；旧共享 alarm 名兼容一轮后清除。
+- 配置页 parity 杂项：插件 popup 空字段回退值与后端默认对齐（各源预算 0 = 不限，YouTube 6/50/10、抖音 30/5/30、小红书 30/10 的旧回退移除），预算输入框 placeholder 统一标注「0 = 不限」；桌面 Web `xhsEnabled` 缺省渲染与候选池 `pool_target_count` 回退值（600→300）对齐后端默认。
+- 代码组织：`XCookieManager` / `resolve_x_cookie` 迁至 `sources/x_auth.py`（对标 `sources/douyin_auth.py`），`api.app` 保留 re-export 兼容旧导入。
+
+## v0.3.113: Embedding 维度独立配置（2026-06-10）
+
+Embedding 与 chat LLM 的配置边界进一步收紧：embedding 默认目标维度统一为 1024，并显式暴露到配置 API 与桌面 Web 设置页。
+
+- 新增 `[llm.embedding].output_dimensionality`，默认 `1024`，与本地 Ollama `bge-m3` 对齐；设为 `0` 时使用 provider 原生默认维度。Gemini embedding 会传 `output_dimensionality`，官方 OpenAI `text-embedding-3-*` 会传 `dimensions`，Ollama / OpenRouter / 泛 OpenAI-compatible 等未确认支持的后端不传伪参数。
+- `EmbeddingService` 的 L2 cache 迁移为 `(text_key, model)` 复合主键，并仅在 provider 确认支持目标维度时按 `model#dim=N` 签名读写，避免同一文本的不同维度向量互相覆盖，同时不把未生效的兼容后端伪装成指定维度。
+- 升级影响：既有 Gemini / 官方 OpenAI embedding 用户会从 provider 原生默认维度切到 1024 目标维度；项目当前只把向量持久化在 L2 `embedding_cache.db`，旧 L2 cache 不会被新签名复用，首次推荐/预热会按 1024 重新生成。若确实要继续使用 provider 原生维度，可把 `output_dimensionality` 设为 `0`。
+- `/api/config` 与桌面 Web 设置页新增「Embedding 维度」字段。切换 chat LLM provider / model 不会影响 embedding provider / model / 维度，embedding 继续由 `[llm.embedding]` 独立控制。
+- 修复 Gemini provider 的 timeout 单位：Google GenAI SDK 使用毫秒，配置里的秒级 timeout 现在会转换后再传入；该修复同时影响 Gemini chat 与 embedding 调用，避免请求被过早超时。
+
+## v0.3.112 / extension v0.3.73: 探针反馈重复推送修复（2026-06-10）
+
+修复用户在安装包/常驻进程场景下点过兴趣探针或避雷探针后，旧探针仍可能从后台推送、画像页或消息缓存里重新出现的问题。
+
+- 探针反馈状态改为原子更新：`discovery_runtime.json` 的正向/避雷反馈历史、短期探索 buffer、probe 冷却 map 与 `last_probe_kind` 都通过进程内锁 + 文件锁 + 临时文件原子替换写入；旧快照保存会和磁盘最新状态合并，不再覆盖用户刚点过的确认/拒绝记录。
+- 正向 `InterestSpeculator` 与负向 `AvoidanceSpeculator` 在 `tick/force_tick` 生成前会重新读取最新反馈历史；确认、拒绝和聊天产生的已处理反馈都会进入 novelty guard，避免同一个 domain/specific 被再次生成。runtime 主动推送也只选择 `active` 候选，确认/拒绝后的 stale 探针不会继续被推到前端。
+- 插件 side panel、移动 Web 和桌面 Web 统一增加本地 handled probe key：用户点击确认、拒绝或探针内聊后，当前 domain 会立即从 inbox/profile/pending hydration 中隐藏；如果后端返回 stale/`ok=false`，前端只移除旧卡片并刷新画像，不再显示误导性的成功提示。
+
+## v0.3.111 / extension v0.3.73: 图形化初始化入口对齐（2026-06-09）
+
+桌面 Web、安装包首启向导和浏览器插件的首次初始化入口统一到同一套 guided-init 判断与进度流，避免 fresh install 用户被带回命令行。
+
+- 补齐桌面 Web / 安装包首启的图形化初始化入口：`/setup/` 从三步配置向导扩展为「连接 AI → 连接 B站 → 初始化 → 完成」，第 3 步复用 `/api/init-status` / `POST /api/init` / `runtime-stream` 展示来源勾选、前置清单和四阶段进度，不再调用只广播事件的 `/api/init-completed`；`/web` 在 `runtime-status.initialized=false` 且没有推荐数、候选池可用数、待整理数、最近发现 / 补货数等插件同款“初始化后信号”时渲染同款「开始初始化」面板，隐藏示例推荐卡和加载更多按钮，避免后端标记短暂滞后时误回初始化页。补充 Playwright 浏览器流验收（成功进度、前置失败、启动冲突、终态重试、stream 静默 watchdog、PC Web 与插件入口条件对齐）和真实 `/api/init` → `InitCoordinator` → `/api/runtime-stream` 后端契约测试；CI 新增 `web-guided-init-e2e` job（依赖基础 test、缓存 Chromium）后运行。
+- 浏览器插件版本推进到 `extension-v0.3.73`，`manifest.json` / `package.json` / `package-lock.json` 版本重新对齐；插件全量测试补齐桌面 Web init 终态刷新断言，确认 `init_completed` 走权威 init status 刷新而不是重复 broad hydration。
+
+## v0.3.110 / extension v0.3.72: macOS 安装包签名封印修复（2026-06-09）
+
+macOS 桌面安装包在无 Apple Developer 账号下改为后处理完成后 ad-hoc 重签，避免 Gatekeeper 把封印失效误报为“已损坏”。
+
+- 修复无 Apple Developer 账号场景下的 macOS 安装包封印失效：PyInstaller 产出的 `.app` 会带 ad-hoc 签名，但构建脚本随后把随包 `ollama` 等资源写进 bundle，导致 Gatekeeper 报“已损坏”。现在 macOS build 在所有 bundle 后处理完成后执行 `codesign --force --deep --sign -` 并立刻 `codesign --verify --deep --strict`，DMG 打包前保证 `.app` 至少处于内部自洽的 ad-hoc 签名状态；文档和 Release 文案同步补充可信来源下的 `xattr` / 本机重签处理命令。仍未做 Apple Developer ID 签名 / notarization。
+
+## v0.3.109 / extension v0.3.72: 配置页对齐与统一来源接入状态（2026-06-09）
+
+桌面 Web 配置页补齐到与插件设置页同等的可配置面，五大来源新增统一的「接入状态」彩点，并修复一个 `GET /api/config` 漏返回的字段。
+
+- 桌面 Web 设置页与插件设置页对齐：补齐此前只在插件暴露的配置项——模型 tab 的 `llm.concurrency` 与 DeepSeek `reasoning_effort`；平台源 tab 的完整 X(Twitter) 源块 + `GET /api/sources/x/status` 源健康提示、YouTube `min_interval_minutes`、候选池 X 占比；调度 tab 的 9 个真实 runtime 参数（断开宽限 / 刷新轮询 / 行为触发阈值 / 反馈积累阈值 / 热门 + 探索刷新小时 / 单轮发现上限 / 主动推送轮询 / 猜测器空闲检查）；通用 tab 的局域网访问密码与开机自启（复用 `/auth/admin`、`/autostart/apply`，桌面 Web 同源 loopback 视为可信本机）。同时移除桌面 Web 仍残留、runtime 已不消费的 `discovery_cron` 旧字段，与插件保持一致（后端 `[scheduler].discovery_cron` 兼容字段保留）。
+- 修复 `GET /api/config` 漏返回 `scheduler.feedback_batch_threshold`：该字段 `config.py` 有、`PUT /api/config` 也接受，但 `SchedulerConfigOut` 漏了它 → 插件端与 web 端的「反馈分析积累阈值」都显示空、保存会被静默重置为默认 3。现补进响应模型与构造逻辑。
+- 新增统一来源接入状态：新后端端点 `GET /api/sources/status`（`SourcesStatusResponse`）用纯本地信号（B站 cookie 登录字段、抖音 cookie 文件/环境变量、带 `xsec_token` 的小红书缓存条数、X 实时健康存储）给每个来源给出一致的登录 / cookie 状态，不发任何对外平台请求。桌面 Web 设置页平台源 tab 顶部新增「来源接入状态」彩点列表，插件设置页每张来源卡片也加上同款状态行——五个来源（B站 / 小红书 / 抖音 / YouTube / X）现在都像原来只有 X 那样直观展示登录态。诚实标注：只有 X 是实时校验的「正常」，其余按本地 cookie/令牌是否就绪显示「就绪 / 未配置」，YouTube 标「公开源 · 无需登录」。
+
+## v0.3.108 / extension v0.3.71: X（Twitter）内容源接入（2026-06-09）
+
+第六个内容源 X（Twitter）：服务端 cookie 重放发现 + 浏览器扩展互动捕获 + `init` 历史偏好回填，源健康 / 配置 / 设置页全链路与既有源对齐。
+
+- 新增 X 发现源（`source_platform="twitter"`，标签「X」）：`XAdapter` 服务端 cookie 重放，分发 `search`（画像关键词）/ `feed`（For-You）/ `creator`（账号订阅）三策略，经 `x_normalize.normalize_tweet()` 转 `DiscoveredContent`（`content_type ∈ {tweet, thread}` + `body_text` 全文）入统一候选池；后台 `XDiscoveryProducer` 按预算 + 源健康调度。`twitter-cli`（可选 extra `openbiliclaw[x]`，Apache-2.0，自带 curl_cffi TLS 指纹）全程只读、lazy import（`enabled=false` 路径绝不 import）。
+- 扩展侧：MAIN-world GraphQL tap 把用户在 x.com 的点赞 / 转推 / 回复 / 打开推文 / 关注捕获为 `BEHAVIOR_EVENT`；登录 x.com 后自动把 `auth_token`+`ct0` cookie 同步到后端供服务端重放；X 文本卡片渲染并将 `body_text` 透传进 LLM prompt。
+- `init` 历史偏好回填：`openbiliclaw init`（CLI + 图形化）新增拉取用户**自己的** X 点赞 / 收藏（`XClient.likes()` / `bookmarks()`，底层 `fetch_user_likes` / `fetch_bookmarks`），转成 `like` / `favorite` 事件喂画像——与 B 站收藏回填同一通路；X 无扩展任务、服务端直拉、cookie 未同步时静默跳过。
+- 新增 `openbiliclaw fetch-x` 命令：独立触发 X 点赞 / 收藏拉取（对应 `fetch-xhs` / `fetch-douyin` / `fetch-youtube`），`--dry-run` 只看不写，不需 daemon。
+- 修复 X 源健康恢复死锁：`missing_cookie` / `expired_cookie` / `blocked` 这类 re-login 状态原本无法自动恢复（`is_ready()` 会永久 park 住 producer），现 `/api/sources/x/cookie` 收到有效 cookie 即调 `XSourceHealthStore.clear_relogin_block()` 解封——cookie 过期重登后发现能自动续上。
+- 修复设置页 X 开关：`PUT /api/config` 之前静默丢弃 `sources.twitter`、`GET /api/config` 也不返回它 → 设置页开关存不下、刷新即丢；现补齐 `TwitterSourceConfigOut` + `update_config` 的 twitter 分支，X 启用开关与候选池 X 占比端到端持久化。
+- 配置：`config.toml` 的 `[sources.twitter]`（enabled / mode / cookie_env / 预算 / 间隔）与 `[scheduler.pool_source_shares].twitter` 全链路读写；`init` 平台清单纳入 twitter。
+
+## v0.3.104 / extension v0.3.69: Windows 安装包版本元数据修复（2026-06-09）
+
+- 修复 Windows 安装包 / 主程序版本属性不完整：`OpenBiliClaw.exe` 现在由 PyInstaller 写入 `FileVersion` / `ProductVersion` / `OriginalFilename` 等 VERSIONINFO 资源，Windows 资源管理器、任务管理器和诊断脚本都能看到正确版本。
+- 修复 Inno Setup 安装器自身 `FileVersion` 为空的问题：CI 会传入纯数字四段 `VersionInfoVersion`，同时保留展示用 `ProductVersion` / `DisplayVersion`，带 commit stamp 的手动 artifact 也不会写坏 PE 数值版本。
+- `release-desktop.yml` 与手动 `build-installers.yml` 均同步传递版本元数据，避免自动发布包和手动构建包版本显示不一致。
+
+## v0.3.103 / extension v0.3.69: 桌面安装包运行体验修复（2026-06-09）
+
+- 修复 Windows 桌面安装包推荐流在低库存 / 空库存时的卡顿与“突然整批换内容”：`/api/recommendations/reshuffle` 与 `/append` 在可用池为 0 时立即返回空列表，并通过后台任务 + 30 秒防抖触发补货，不再让用户滚动交互等待补货链路。
+- 修复桌面 Web 图片加载慢：追加推荐卡片先渲染，再异步预热封面；首屏 delight 封面改为 eager/high priority/async decode，避免原生 lazy loading 拖慢第一屏观感。
+- 修复安装包升级后仍像“没更新”的静态资源缓存问题：`/web` 与 `/web/` 动态注入 CSS/JS `?v=` 指纹，并返回 `Cache-Control: no-store`，确保新安装包打开的是新前端代码。
+- 补充回归测试覆盖空池补货、推荐引擎空候选短路、桌面 Web 图片加载优先级与静态资源 cache-bust；桌面安装包由 `desktop-v0.3.103` tag 触发自动发布。
+
+## v0.3.102 / extension v0.3.69: 图形化引导初始化（GUI guided init）（2026-06-07）
+
+- 统一桌面安装包与 AI / 脚本安装的用户数据目录：打包版默认改用 `~/OpenBiliClaw` / `%USERPROFILE%\OpenBiliClaw`，与一键安装共用 `config.toml`、`data/`、`logs/`；旧安装包写在 `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` 的数据会在首启时非覆盖拷贝到统一目录。若用户先运行安装包、后运行一键脚本，脚本现在能在已有用户数据目录里补齐源码 checkout，不再因目录非空失败。
+- README 用户交流群区块新增微信用户群二维码入口，并保留原 QQ 群二维码，方便用户按常用平台加入社区。
+- PC Web 顶部新增 GitHub Star 强引导：复用插件的 GitHub-Buttons 风格，显示“好用求 Star”入口并缓存实时 star 数，点击跳转项目仓库。
+- 新增 Chrome Web Store 商店页文案源 `docs/chrome-webstore-listing.md`：补齐项目主页、GitHub 项目页、Releases / AI 部署说明、插件安装使用步骤、后端依赖、本地优先隐私说明和提交前检查清单；`docs/index.md` 与插件模块文档同步挂入口，避免商店公开页只剩短概述、缺少安装和使用引导。
+- 修复桌面安装包入口忽略 `config.toml [api].host` / `[api].port` 的问题：打包版现在与 `openbiliclaw start` 一样默认按配置监听（默认 `0.0.0.0:8420`，手机 `/m/` 可达），仍保留 `OPENBILICLAW_HOST` / `OPENBILICLAW_PORT` 作为显式环境变量覆盖。
+- 抽出共享异步初始化流水线 `cli.run_guided_init`：`openbiliclaw init` 的四阶段（拉取 + 入库 / 分析偏好 / 生成画像 ‖ 发现补池）原先内联在 CLI 命令里、被四处独立 `asyncio.run` 包着，无法被后端复用。现在合并为一个协程，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动、后端在服务事件循环里直接 `await`，互不嵌套 loop。bootstrap 采集器仍是同步实现但改走 `asyncio.to_thread`，不冻结 API loop；唯一与路径相关的发现补池步骤以 `discover_backfill` 注入（CLI 传一次性引擎、后端传持锁的 `controller.run_init_backfill`）。CLI 行为 / 输出 / 退出码零回归。
+- 新增 `InitCoordinator`（`runtime/init_coordinator.py`）+ `init_runs` 持久化状态机（`storage/database.py`）：单飞启动用 `BEGIN IMMEDIATE` CAS 预定（TOCTOU 收口在 DB），单写者串行化状态写入 + 进度事件（`_write_lock` 保证并行 stage 3/4 的 `sequence` 不丢更新），协作式取消，启动 reconcile 把崩溃残留的 `starting/running` 行判失败，避免 `/api/init-status` 永远报 running。
+- 新增 `GET /api/init-status`：权威进度 + 前置清单（B站登录 / LLM / embedding / 已启用平台 + `is_profile_ready`），远程可读、降级可读、远程 `can_manage=false`；前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）TTL 缓存 + 单飞，避免轮询打爆 chat provider / `validate_cookie`。LLM / embedding 改为严格真实探测：各发一次最小真实请求，超时 / 失败一律判未就绪（不再乐观放行 —— 让“状态检查通过”真正代表服务可用），成功 / 失败分别用长 / 短 TTL 缓存（修好后能快速复检），probe 全程经 `asyncio.gather` 并发以压低首检延迟。
+- 新增 `POST /api/init` + `POST /api/init/cancel`（仅本机）：占坑前先做廉价拒绝（`unsupported_runtime` / `already_initialized`），再 `try_start` 单飞、临界区内复验前置（缺则复位 idle、不留 stuck `starting` 行），经任务注册表后台跑 wrapper；wrapper 是唯一状态 / 事件写者，终态落 `completed/failed/cancelled` 并发 `init_progress/completed/failed` 事件。
+- init 期间写者门控（deny-by-default）：中间件对所有 `POST/PUT/PATCH/DELETE` 默认返回 `409 init_running`，仅放行 init 必需路径（`/api/init(/cancel)`、`/api/bilibili/cookie`、`/api/auth/*`、精确段匹配的 `/api/sources/<src>/{kick,task-result}`）；两个有副作用的 GET 另行门控（`/api/recommendations` 空历史 bootstrap serve 跳过、`/api/sources/*/next-task` 只派发 init-owned 任务）；后台循环经 `background_llm_work_allowed()`（account_sync / startup）+ `ContinuousRefreshController` 注入的 `init_active_check`（连续 refresh / soul / producer）全部暂停；`/api/bilibili/cookie` 同值 no-op / 异值 409；`/api/sources/*/task-result` 放行但 init 期跳过池写、仅对 init-owned 结果 propagate 且跳过增量画像管线；init 任务豁免热重载取消（`cancel_all(exclude={"guided_init"})`）。整套门控经 9 轮 Codex 对抗验收收敛至 PASS。
+- 插件推荐 tab 引导初始化：未初始化空状态不再叫用户去命令行，而是给一个「开始初始化」按钮（点击驱动校验：点击时置「检查中…」加载态并实时拉 `/api/init-status`，前置未通过则展示前置清单 + 原因、按钮复位、不启动初始化；全通过才启动，避免空等一个上来就慢的预检）+ 启动后进度条（订阅 `runtime-stream` 的 `init_progress/failed/completed` + 3s 轮询兜底，完成自动加载推荐 / 画像）；DOM 无关逻辑抽到 `popup-init-control.js` 并单测。画像 / 画像编辑空状态文案改为指向推荐页初始化。
+- 引导初始化按数据来源勾选：「开始初始化」面板新增平台来源勾选（B 站为必选基座、勾选禁用；小红书 / 抖音 / YouTube 可选，默认不勾），并配文案提示「使用某平台前需在当前浏览器登录该平台账号、未在设置开启的平台先去设置开启」。复选框静态渲染（idle 面板秒开，不引入慢探测）；点击时按 `/api/init-status` 的 `enabled_platforms` 校验：勾了未开启的平台会提示去设置而非静默跳过。`POST /api/init` 新增可选 `sources` 入参，后端经 `_select_init_platforms` 把选择收窄为 `选择 ∩ 配置已开启`（无法初始化未配置的来源），B 站恒为基座；不传 `sources` 时维持「用全部已开启平台」的旧行为（CLI 路径不变）。前后端各补单测（`init-control.test.ts` 来源勾选 / 需开启判定、`test_api_app.py` `_select_init_platforms` + `sources` 驱动 include 开关）。
+- 插件头部窄宽度对齐修复 + GitHub Star 按钮：side panel 默认窄宽（<460px）下头部不再把操作图标挤到品牌下方、右浮成空一截的第二行；改为**始终单行**布局（品牌左、图标右、整体垂直居中），窄屏隐藏装饰性 eyebrow、状态徽标仅在空间不足时紧凑换到标题下、图标压到 28px，宽屏（≥460px）维持原样（含修复 `.webui-button{width:32px}` 因源码靠后盖过 `@media` 压缩规则的坑，改用 `.hero-actions button` 提高优先级）。Star 引导做成大项目常见的 **GitHub-Buttons 双段样式**（`[🐙 Star | 数量]`）：Octocat + 「Star」动作块 + 实时 star 数小盒，右对齐放在功能键图标列的**下一行**（`.hero-sub` 内，与 hero 文案同排靠右）。star 数由 popup.js 拉 `api.github.com/repos/...`（CORS `*`，无需加 host 权限）并 `localStorage` 缓存 12h；失败 / 限流则只显示 `[🐙 Star]`。点击仍是**打开仓库** —— 直接点 star 必须带 GitHub OAuth / 会话认证，连 GitHub 官方 star 按钮组件也只是跳转，故不做。用 chrome-devtools 在 360 / 400 / 560px 实测三档、窄宽不与文案重叠；`tests/popup-layout.test.ts` 改判 GitHub-Buttons 样式 Star 按钮（含 count 拉取）断言。
+- 真号端到端验证：隔离数据目录跑真 B站 Cookie + 真 LLM + 本机 ollama embedding，CLI `openbiliclaw init` 与 API `POST /api/init` 均退出码 0 / `completed`、画像生成、发现项落 `content_cache`，`sequence` 在并行 stage 3/4 下严格递增。
+- 桌面安装包升级修复（接 v0.3.101 桌面打包）：Windows 重装 / 升级不再因旧实例占用文件报 “files in use” —— `packaging/openbiliclaw.iss` 加 `CloseApplications=force` + `[Code] PrepareToInstall` 在拷贝文件前 `taskkill /T /F` 强制关闭运行中的 OpenBiliClaw 进程树（含其拉起的 ollama），并留 0.8s 让句柄释放；同时把用户数据从安装目录迁出，升级不再锁库、卸载不再误删画像，旧版遗留在安装目录的 `config.toml` / `config.local.toml` / `data` / `logs` 首启自动迁移（幂等、不覆盖已有、移动失败降级为留在原地不崩）。新增 `tests/test_packaging_entry.py` 覆盖跨 OS 数据根解析、onedir 安装目录 / 数据目录分离与迁移各分支。
+- 桌面应用改为**托盘常驻(Windows + macOS 对齐)**:打包从控制台程序改为窗口化(`openbiliclaw.spec` `console=False`),启动后不再弹命令行窗口 —— Windows 常驻右下角系统托盘、macOS 常驻右上角菜单栏(`.app` 设 `LSUIElement=true` 做无 Dock 的菜单栏代理)。uvicorn 跑在后台线程、`pystray` 托盘图标占前台主线程,右键菜单含「打开 Web 界面 / 查看运行日志(弹实时 tail:Windows PowerShell 控制台、mac Terminal `tail -f`)/ 退出 OpenBiliClaw」,关掉任何窗口都不停后端,只有菜单「退出」会优雅停服(`server.should_exit`)。窗口化无 stdout,故 `entry.py` 首启即把 stdout/stderr 重定向到 `logs/desktop.log`(`print` 不再崩)、`__main__` 兜底把异常写 `logs/crash.log`。托盘门控 `_should_use_tray`:frozen + (`os.name=="nt"` 或 `sys.platform=="darwin"`) + pystray 可用,其它平台 / dev 维持前台 server;`spec` 按平台打包(Windows: pystray + Pillow;macOS: 另加 pyobjc Foundation/AppKit/Quartz;Linux 排除 pystray)。`_resolve_runtime_paths` 新增尊重预设 `OPENBILICLAW_PROJECT_ROOT`(便携 / 多实例 / 隔离测试)。`pyproject` packaging extra 加 `pystray`/`Pillow`/(darwin)`pyobjc-*`,CI 两端统一 `pip install -e ".[packaging]"`。**macOS 已在本机端到端实测**:隔离数据根 + 8499 端口跑打包 `.app`,`/api/health` 200、进程在 tray loop 下常驻、stdout 落 `desktop.log`、无 crash、`LSUIElement` 生效、真实用户数据未被污染;Windows 由 CI 验证可打包,托盘交互待真机确认。`tests/test_packaging_entry.py` 加托盘门控 + 日志重定向 no-op + `OPENBILICLAW_PROJECT_ROOT` override 断言。
+- macOS 安装包补 **Intel(x86_64)支持**:真机实测发现 CI 原只产 arm64 `.dmg`,Intel mac 装会报 `incorrect executable format`。`build-installers.yml` 的 mac job 改为矩阵双架构原生构建(`macos-14` → arm64、`macos-13` → x64,各自打包对应架构的 ollama + wheels;universal2 因 ollama 为单架构二进制不可行),产物拆为 `openbiliclaw-macos-installer-arm64` / `openbiliclaw-macos-installer-x64`,`.dmg` 文件名带架构后缀。Apple 芯片与 Intel mac 均可安装。
+- 修复 embedding 缓存 SQLite 跨线程崩溃:后台 discovery 候选后处理(`_normalize_topic_groups`)与推荐预热(`prewarm_supergroup_embeddings`)在 worker 线程读 L2 缓存时报 `sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread`,导致发现/推荐池静默变质(健康检查仍 OK)。`EmbeddingCache` 改为 `check_same_thread=False` + `RLock` 串行化所有连接操作(主 `Database` 早已 `check_same_thread=False`,故仅此缓存受影响);新增跨线程回归用例。
+- CI 维护:升级所有工作流的 GitHub Actions 到 Node 24 版本(`checkout@v6`、`setup-python@v6`、`setup-node@v6`、`upload-artifact@v7`、`download-artifact@v8`),清掉 "Node.js 20 actions are deprecated" 弃用告警(6/16 起强制 Node 24、9/16 移除 Node 20)。`windows-latest` 自动迁移到 `windows-2025` 镜像,无需改动。
+- 修复 Windows 托盘应用 ollama 子进程弹控制台窗口:`ollama serve` 原用 `DETACHED_PROCESS`,使其子进程 `ollama runner` 没有可继承的控制台、转而**自己分配可见 conhost 窗口**(用户看到的"命令行一闪一闪"像在重启)。改用 `CREATE_NO_WINDOW`——给 serve 一个隐藏控制台、runner 继承之,两者都不弹窗(主应用 `console=False` 已在托盘改造中修过)。**真机复测仍有窗口闪 → 进一步定位为 ollama 自己 spawn 的 runner(`llama-server.exe`)用 `CREATE_NEW_CONSOLE` 起、有独立 conhost,`serve` 的 flag 管不到。** 随包 ollama 顺带从 `0.18.2` 升到 `0.30.6`(但 0.30.6 实测仍弹),**真解是把随包 `ollama.exe` + `lib/` 下所有 runner exe 的 PE 子系统从 console(3) 改成 GUI(2)**(`packaging/patch_pe_subsystem.py`,打包后跑)—— GUI 子系统的 exe 永不分配控制台,无论谁用什么 flag 起它都不弹窗 / 无 conhost,且不影响 stdout/stderr 管道与 runner HTTP 端口。`tests/test_patch_pe_subsystem.py` 覆盖 console→GUI 翻转 / 已 GUI 不动 / 非 PE 跳过。
+- 安装包版本号打上 commit SHA:`build-installers.yml` 把版本后缀加上 `${GITHUB_SHA:0:7}`(如 `0.3.102-guiinit.f1f2b38`),写进安装包文件名 + Windows「程序和功能」显示的版本。以前每次构建都叫 `0.3.102-guiinit`、无法分辨装的是哪版代码;现在一眼可核对所装即所编。
+- 桌面应用**单实例**:装好后多次点图标(或自启动 + 手动启动并发)不再开多个后端/托盘 —— `entry.py` 首启取 OS 级文件锁(`openbiliclaw.lock`,Windows `msvcrt.locking` / 类 Unix `fcntl.flock`,进程退出或崩溃由系统自动释放,无 stale 锁,优于 PID 文件)。锁忙时第二次启动直接打开现有实例的 Web 界面并退出,不再起新后端。锁按数据根目录隔离(便携 / 多 profile / `OPENBILICLAW_PROJECT_ROOT` 覆盖可并存)。仅 frozen 包启用(dev 不限)。已在 mac 真实 frozen app 双启动实测(实例 2 退出、实例 1 续服、端口仍只一个后端);Windows `msvcrt` 路径同逻辑,由单测 + 真机确认。`tests/test_packaging_entry.py` 加锁互斥 / 跨目录可并存断言。
+- 修复封面加载慢(图片代理不读缓存):`/api/image-proxy` 原来每次都先去上游重拉图,只有上游失败才读本地缓存,已缓存的封面也要 ~2s。改为**缓存优先** —— 命中直接回本地文件(`X-Image-Cache: hit`),未命中才下载 + 缓存(`X-Image-Cache: miss`,慢 miss 记 debug 耗时日志);同一 URL 第二次起从磁盘秒回。`tests/test_api_image_proxy.py` 加缓存优先回归用例(清空上游后第二次仍 200 + hit)。
+- 修复图片缓存写到安装目录:`image_cache._CACHE_DIR` 原是相对路径 `data/image-cache`,按进程 CWD(打包后 = 只读安装目录)解析,导致缓存落在 `…\Programs\OpenBiliClaw\data\image-cache`。改为按配置 `Config.data_path`(尊重 `OPENBILICLAW_PROJECT_ROOT` / `data_dir`)解析并缓存一次,落到统一用户数据目录(`~/OpenBiliClaw/data/image-cache` / `%USERPROFILE%\OpenBiliClaw\data\image-cache`)。安装目录里的旧缓存可重建,不迁移。
+- 修复 Windows 打包版推荐空池 / 低库存运行时体验:`/api/recommendations/reshuffle` 与 `/append` 在 `pool_available_count=0` 时立即返回 `items=[]`,不再读取画像或进入推荐引擎昂贵路径,并通过 30 秒 debounce 只触发一次自动补货;`RecommendationEngine.serve()` 在可用池为 0、或候选被 `excluded_bvids` / 最近已看过滤到 0 后直接返回,跳过 curator scoring、MMR embedding 与推荐历史写入。托管 Ollama 启动默认给子进程传 `OLLAMA_KEEP_ALIVE=24h`(保留用户显式值),减少 `bge-m3` / `llama-server` 在 UI 请求间隔中反复卸载冷启动。新增 API / recommendation / ollama supervisor 回归测试。
+- 修复桌面托盘应用三处运行期问题(接随包 ollama 治理):**① 后端静默退出无迹可循** —— 托盘版 uvicorn 跑在 daemon 线程,线程内未捕获异常会静默终结(`__main__` 兜底只看主线程),结果托盘还在、后端已死且无 `crash.log`;`entry.py:_run_server_in_tray` 现在给线程目标包一层 try/except,异常写 `logs/crash.log` + 打印,后端线程崩溃不再无声。**② 托管 ollama 退出后变孤儿** —— `_ollama_start_serve_background` 原先丢弃 `Popen` 句柄,托盘「退出」只停后端不停 ollama,留下孤儿 `ollama serve` + `llama-server` runner(与 Windows 事件日志里 `llama-server.exe` 触发 `RADAR_PRE_LEAK_64` 资源泄漏告警吻合);新增 `runtime/ollama_supervisor.stop_managed_ollama()`,只停**本进程亲手拉起**的 ollama(整棵进程树:Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`),对**外部已在运行、被我们复用**的 ollama(句柄为 `None`)一律不动,`entry.py` 在托盘退出 `finally` 调用它,clean quit 不再留孤儿。**③ 日志中文乱码** —— 打包版绕过 `openbiliclaw start`、从不调 `configure_logging`,输出只裸落 `desktop.log`、无结构化 `openbiliclaw.log`,且 `desktop.log` 是无 BOM 的 UTF-8,Windows 中文区查看器猜成 GBK → 乱码;现在首启 best-effort 调 `configure_logging(..., sweep_unmanaged=False)`(拿与 CLI 同款的轮转 UTF-8 `openbiliclaw.log`,不误删运行中的活跃 `desktop.log`),并在**新建** `desktop.log` 时写 UTF-8 BOM(追加旧文件不重复写)。`tests/test_ollama_supervisor.py` 加托管句柄记录 / 复用不记录 / 停树发进程组信号 / 幂等断言,`tests/test_packaging_entry.py` 加新建写 BOM / 追加不重复 BOM 断言。注:`RADAR_PRE_LEAK_64` 是 ollama 自带 `llama-server` 退出时的堆资源回收行为(其二进制内部、非本项目代码),清理孤儿可减少残留;B站搜索限流属站点反爬的外部因素。
+- 桌面应用启动加「启动中」反馈(解决"点了没反应"):窗口化托盘应用从双击到托盘图标出现,要等 Python 启动 + 本机 Ollama 预检(最长约 15s)+ 后端装配,这中间没有任何窗口/提示,用户以为没点上、反复点。**Windows** 接入 PyInstaller 原生启动闪屏 —— `packaging/make_splash.py` 在打包时生成 `build/splash.png`(有 CJK 字体渲染中文「正在启动,请稍候…」、否则降级英文,生成的 PNG 不出豆腐块),`openbiliclaw.spec` 仅 Windows 接 `Splash` 目标;exe 一启动(Python 还没加载)就由 bootloader 在 OS 层画出闪屏,`entry.py` 在托盘图标即将出现时 `_close_splash()` 无缝关掉,selftest / 单实例 busy / 前台回退 / 启动崩溃各路径也都会关闭、绝不卡屏。**macOS** 因 PyInstaller 闪屏不支持(菜单栏代理又无 Dock 弹跳),改在启动早期 `_notify_starting()` 发一条系统通知。Splash 接入对 PIL / `Splash` 缺失做降级(打不出闪屏也不让构建失败)。`tests/test_make_splash.py` 验证生成合法 PNG / 尺寸 / 自动建目录,`tests/test_packaging_entry.py` 验证 `_close_splash` 无 `pyi_splash` 时静默 no-op、`_notify_starting` 仅在 frozen+darwin 触发。
+- README 首屏转化优化：中英文 README 改为「10 秒看懂 / OpenBiliClaw in 10 Seconds」Hero + 快速开始 CTA，首屏直接展示 Chrome Web Store 安装、AI 助手部署后端与 Star 支持；用户交流群、最近更新、隐私速览下移到功能预览 / 页尾之后。新增 `docs/images/hero-demo-zh.gif` / `hero-demo-en.gif` / `hero-demo.gif` / `hero-demo.png`，由 `scripts/build_readme_hero_demo.py` 复用现有桌面 / 移动端截图生成四步 storyboard（跨平台信号、本地画像、推荐理由、反馈调教），不引入外部素材。
+- 修复插件窄宽下「开始初始化」按钮被裁剪且滚不到:`.empty-state` 卡片在 `.view`(`flex: 1`)的弹性列里会被压缩,叠加自身 `overflow: hidden` 把底部「开始初始化」按钮裁掉;而压缩后 `.view` 恰好填满 `.content`,导致没有可滚动的溢出 —— 短 / 窄视口下按钮既看不到、也滚不到。给 `.empty-state` 加 `flex-shrink: 0` 固定自然高度,卡片改为溢出进 `.content` 滚动区,按钮恢复可滚动可达。用真实 Chrome(chrome-devtools)在窄视口实测:修复前 `scrollable=false` / 按钮被裁 149px,修复后 `scrollable=true` / 滚到底按钮完整可见。`tests/popup-layout.test.ts` 加 `.empty-state { flex-shrink: 0 }` 断言防回归。
+- 修复 macOS 托盘「查看运行日志」点了没反应:旧实现用 `osascript … tell application "Terminal"` 拉起实时 tail,但这需要 Apple Events 自动化授权,**未签名的打包 .app 会被静默拒绝**,而代码用 `subprocess.Popen` 发射后不查结果、拒绝错误吞掉、兜底也不触发 —— 于是菜单项毫无反应(「打开 Web 界面」走 `webbrowser.open` 无需授权,所以正常)。改为把一段 `tail -f` 写进 `logs/view-logs.command`、用 `open -a Terminal <file>` 以**文档方式**打开(Terminal 直接运行该脚本,无需自动化授权),并用 `subprocess.run` 查返回码,失败才回退到默认应用打开日志文件。`tests/test_packaging_entry.py` 加 mac 分支(写 `.command` + `open -a Terminal`)与失败回退断言。
+- README 把**桌面安装包**提升为与「AI 一句话部署」并列的安装方式:中英文 README 快速开始 + 安装与部署详情各新增「下载桌面安装包」一路(macOS `.dmg` / Windows `.exe`,自带本地 embedding、常驻菜单栏/托盘),并写清未签名应用首次打开的 Gatekeeper / SmartScreen 绕过步骤。配套**部分翻转后端 source-only 策略**:后端源码仍 source-only(`backend-v*` 只是 git tag),但桌面安装包二进制改为发布到 **Releases 的实验性预发布**(`build-installers.yml` 的 Actions 产物 ~90 天过期且需登录,无法做文档长期链接;Releases 才耐久免登录),`build-installers.yml` 头注释同步更新说明现状。
+- 新增桌面安装包**自动发布工作流** `release-desktop.yml`:推 `desktop-v*` tag(如 `desktop-v0.3.102`)即自动构建 macOS arm64 `.dmg` + Windows `.exe` 并发布为 GitHub **实验性预发布**(`permissions: contents: write` + `softprops/action-gh-release`,内置未签名应用绕过说明),不必再手动 `gh release create`。对标插件的 `release-extension.yml`。Intel x64 `.dmg` 不进自动发布(macos-13 runner 排队过久,会拖垮整次 publish 的门控),仍由手动 `build-installers.yml` 按需产出后补挂;`publish` 用 `if: always()` 保证单条构建腿失败也能把另一条发出去。
+- GitHub Pages 项目首页(`docs/index.html`)与 README 对齐:`#install` 区把**桌面安装包**提升为与「AI 一句话部署」并列的安装方式 —— 标题/引导文案改为「下载安装包或交给 AI 部署」二选一,操作区新增「下载桌面安装包」按钮(→ Releases),并加一张「桌面安装包(最省事)」说明卡(自带本地 embedding、托盘常驻、未签名首启绕过)。中英 i18n 同步(`installTitle`/`installLead`/新增 `installDesktop`/`desktopNoteTitle`/`desktopNoteText`),用真实 Chrome 在中英双语下渲染核验按钮与说明卡均正确出现;`docs/index.md` 首页描述同步。
+- README 插件安装改为**优先推荐从 Releases 装**:Chrome 应用商店受审核排期影响,版本通常滞后 Releases 几天到一两周,故中英文 README 的「快速开始」与「安装详情」都把「从 Releases 下载最新 `extension-v*` zip 手动安装」列为推荐(最新),Chrome 应用商店降为「省事/自动更新但可能滞后」的备选。GitHub Pages 首页(`docs/index.html`)同步:`#install` 的「Firefox / 手动下载」按钮改为「下载插件 · Releases 最新」,「插件是主要入口」说明卡补充「最新版从 Releases 装、商店可能滞后」(中英 i18n 同步,真实 Chrome 双语渲染核验)。
+
 ## v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）
 
 - 推荐池排序新增内容发布时间权重：B 站 search / trending / related_chain 从 `pubdate` / `senddate` / `ctime` 归一化 `published_at`，`discovery_candidates` 与 `content_cache` 持久化该字段，`PoolCurator` 以独立 `publication_recency` 分量按内容发布时间上浮近期发布内容，和入池 `discovered_at` freshness 分离。
@@ -14,6 +137,12 @@
 - 新增 API：`GET /api/autostart-status` 远程可读、降级模式可读，返回固定无敏字段；`POST /api/autostart/apply` 仅 trusted-local 可写，带 env / `config.local.toml` shadow / unsupported guard，开启时先写 config 后注册 OS，关闭时先注销 OS 后写 config，失败尽量回滚到操作前状态。
 - 新增 CLI：`openbiliclaw autostart status|enable|disable`，并在 `config-show` 中展示开机自启动配置 / 系统注册状态。CLI 与 API 使用同一套 env-managed、shadow 和方向化事务规则。
 - 插件 `extension v0.3.67` 设置页通用 tab 新增「开机自启动」开关：打开时读状态，切换时即时调用 apply；不可管理时按 `env_managed` / `shadowed` / `unsupported_*` reason 禁用并展示行内提示。提示明确该开关只影响下次登录拉起后端，不启停当前进程；本机 Ollama 可能随启动预检一起拉起。
+- 修复一句话安装默认 LLM 分叉：`config.example.toml`、运行时默认值和 bootstrap 缺省检查统一改为 DeepSeek，避免新装先提示缺 `llm.openai.api_key`、随后又引导用户选择 DeepSeek；自动写入 Ollama embedding 后，bootstrap 状态现在从 config 回读 `ollama/bge-m3`，不再输出空 provider。
+- 修复一句话安装复用旧配置时的 OpenAI-compatible 路径：`agent_bootstrap.py` 现在把 `openai_compatible` 作为受支持远程 provider，缺失检查会报告 `llm.openai_compatible.api_key/base_url`，复用旧安装会同步远程 provider 的非空 `api_key/model/base_url`，避免只复用 `default_provider=openai_compatible` 后服务检查失败。
+- 人类直接运行 Bash / PowerShell 一行安装脚本时，`agent_bootstrap.py --interactive-confirm` 现在会先收集完整安装向导选项（LLM provider / API Key / base_url / model → embedding → B 站 Cookie → 小红书 / 抖音 / YouTube opt-in）再安装依赖、启动后端和运行 init；选「中转站 / OpenAI 协议兼容服务」会写入 `[llm.openai_compatible]`，AI-agent 非交互 `--llm-preset` 兼容路径保持不变。
+- Docker 一行安装显式对齐人类安装向导：`MODE=docker curl ... | bash` 会先收集同一组选项，再启动 compose、同步配置到 `/app/runtime`、等待宿主机浏览器扩展向 `127.0.0.1:8420` 推送 B 站 Cookie 并自动 init；默认 `ollama` embedding 在 Docker runtime 中改写到 compose sidecar `http://ollama:11434/v1`，避免把宿主机 `localhost:11434` 复制进容器。
+- 新增桌面安装包打包链路：`packaging/build.py` 现可产出 macOS `.app` + `.dmg`（拖拽到 Applications）与 Windows onedir + Inno Setup `.exe`（`packaging/openbiliclaw.iss`）；把 ~35MB 的 Ollama 二进制打进包（Windows 连 `lib/` runner 一并携带、裁掉 GPU runner），`entry.py` 首启把 `[llm.embedding].provider` 默认翻为 `ollama`（保留模板注释）、注入随包 ollama 到 PATH、跑 loopback preflight 并后台拉取 `bge-m3`，做到本地 embedding 开箱即用；`entry.py` 另加 `OPENBILICLAW_HOST/PORT` 与 `OPENBILICLAW_SELFTEST` 自检。新增手动触发的 `.github/workflows/build-installers.yml`（`workflow_dispatch` 专用，`permissions: contents: read`，只产 Actions artifact——**不创建 GitHub Release、不随 tag 触发**）；后端发布仍维持 source-only 策略。`pyproject` 新增 `packaging` extra（`pyinstaller`）。
+- 新增打包应用首启 UI 引导向导：`src/openbiliclaw/web/setup/` 自包含三步向导（① 连接 AI：选 provider + 填 key，写 `PUT /api/config` → ② 连接 B站：装扩展自动同步 + 轮询检测 → ③ 完成：embedding 已就绪打勾，`POST /api/init-completed` 跳 `/web`），`api/app.py` 挂在 `/setup`，`entry.py` 首启自动打开它（不再打开 health JSON）。**同时修复 `web/`（整个网页 UI + 向导）从未进 PyInstaller 包、导致 `/web`/`/m`/`/setup` 在安装版一律 404 的老问题**——`packaging/openbiliclaw.spec` 的 datas 现含 `openbiliclaw/web`。
 - 后端源码版本提升到 `v0.3.101`，准备发布 `backend-v0.3.101`；浏览器插件版本提升到 `extension-v0.3.67`。
 
 ## v0.3.100: 统一 discovery 待评估池与外站补池预算（2026-06-04）

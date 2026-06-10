@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. queryId is rotated by X; the parser matches the CreateBookmark operation name, not this id.",
+  "url": "https://x.com/i/api/graphql/aoDbu3RHznuiSkQ9aNM67Q/CreateBookmark",
+  "requestBody": "{\"variables\":{\"tweet_id\":\"1790000000000000002\"},\"queryId\":\"aoDbu3RHznuiSkQ9aNM67Q\"}",
+  "responseBody": "{\"data\":{\"tweet_bookmark_put\":\"Done\"}}"
+}

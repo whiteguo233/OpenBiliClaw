@@ -22,6 +22,13 @@ import {
 } from "../api.js";
 import { setUnreadCount, navigateToTab } from "../app.js";
 import {
+  forgetHandledProbe,
+  mergeProbeNotifications,
+  rememberHandledProbe,
+  removeProbeFromNotifications,
+  shouldDisplayProbeFromWebSocket,
+} from "./probe-notification-helpers.js";
+import {
   normalizeChatTurn,
   normalizeProfileSummary,
   normalizeActivityFeed,
@@ -373,6 +380,7 @@ function renderOverlay() {
       const domain = btn.dataset.domain;
       const action = btn.dataset.probe;
       const isAvoidance = btn.dataset.probeKind === "avoidance";
+      const probeType = isAvoidance ? "avoidance.probe" : "interest.probe";
       const card = btn.closest(".message-card");
       if (action === "chat") {
         expandInlineChatOnCard(card, {
@@ -386,39 +394,22 @@ function renderOverlay() {
         return;
       }
       setProbeCardBusy(card, true);
+      rememberHandledProbe(domain, probeType);
       try {
         const resp = isAvoidance
           ? await respondToAvoidanceProbe(domain, action)
           : await respondToProbe(domain, action);
         if (resp && resp.ok === false) {
-          // Backend no longer recognises this probe (already handled/rotated).
-          const card = btn.closest(".message-card");
-          if (card) {
-            const errEl = document.createElement("div");
-            errEl.className = "inline-chat-error";
-            errEl.textContent = "这条已处理或已过期，正在刷新…";
-            card.appendChild(errEl);
-          }
-          // Refresh notifications from backend
-          setTimeout(() => {
-            notifications = notifications.filter((n) => {
-              const sameDomain = (n.domain || n.title) === domain;
-              const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
-              return !(sameDomain && sameKind);
-            });
-            updateBadgeCount();
-            renderOverlay();
-          }, 1500);
+          notifications = removeProbeFromNotifications(notifications, domain, probeType);
+          updateBadgeCount();
+          renderOverlay();
           return;
         }
-        notifications = notifications.filter((n) => {
-          const sameDomain = (n.domain || n.title) === domain;
-          const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
-          return !(sameDomain && sameKind);
-        });
+        notifications = removeProbeFromNotifications(notifications, domain, probeType);
         updateBadgeCount();
         renderOverlay();
       } catch {
+        forgetHandledProbe(domain, probeType);
         setProbeCardBusy(card, false);
       }
     });
@@ -535,15 +526,7 @@ export async function loadNotifications({ includeDelights = false } = {}) {
         ? avoidanceProbeData.map((p) => ({ ...p, type: "avoidance.probe" }))
         : []),
     ];
-    // Merge any WebSocket-received probes not yet in the persisted list
-    const persistedDomains = new Set(probes.map((p) => `${p.type || "interest.probe"}:${p.domain}`));
-    for (const n of notifications) {
-      const key = `${n.type || "interest.probe"}:${n.domain}`;
-      if (n.domain && !persistedDomains.has(key)) {
-        probes.push(n);
-      }
-    }
-    notifications = probes;
+    notifications = mergeProbeNotifications(probes, notifications);
     if (includeDelights) {
       delightMsgs = delightData;
     }
@@ -582,8 +565,8 @@ export function onStreamEvent(payload) {
   const type = payload?.type || payload?.event;
   if (type === "interest.probe" || type === "avoidance.probe") {
     const item = payload.data || payload;
-    if (item.domain) {
-      notifications.push({ ...item, type });
+    if (shouldDisplayProbeFromWebSocket(item, type)) {
+      notifications = mergeProbeNotifications(notifications, [{ ...item, type }]);
       updateBadgeCount();
     }
   } else if (type === "delight.liked") {
@@ -678,6 +661,11 @@ function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placehol
     chatArea.appendChild(thinking);
 
     const turnId = `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const isProbeScope = scope === "probe" || scope === "avoidance_probe";
+    const probeType = scope === "avoidance_probe" ? "avoidance.probe" : "interest.probe";
+    if (isProbeScope) {
+      rememberHandledProbe(subjectId, probeType);
+    }
     try {
       const turn = await startChatTurn({
         turnId,
@@ -697,12 +685,9 @@ function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placehol
         chatArea.appendChild(replyEl);
         setTimeout(() => {
           const domain = subjectId;
-          const isAvoidance = scope === "avoidance_probe";
-          notifications = notifications.filter((n) => {
-            const sameDomain = (n.domain || n.title) === domain;
-            const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
-            return !(sameDomain && sameKind);
-          });
+          if (isProbeScope) {
+            notifications = removeProbeFromNotifications(notifications, domain, probeType);
+          }
           updateBadgeCount();
           renderOverlay();
         }, 3500);
@@ -730,6 +715,9 @@ function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placehol
       thinking.remove();
       sendBtn.disabled = false;
       input.disabled = false;
+      if (isProbeScope) {
+        forgetHandledProbe(subjectId, probeType);
+      }
       const errEl = document.createElement("div");
       errEl.className = "inline-chat-error";
       errEl.textContent = "后台正忙，等一下再聊。";

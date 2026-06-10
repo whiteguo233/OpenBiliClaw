@@ -75,6 +75,23 @@ def _project_root() -> Path:
     return Path.cwd()
 
 
+def detect_install_mode() -> str:
+    """Best-effort install-mode detection for update-status surfaces.
+
+    - ``frozen``: PyInstaller desktop bundle. There is no git checkout to
+      fast-forward, so backend self-update is structurally unsupported —
+      users update by installing a newer desktop package.
+    - ``git``: the project root is a git checkout (one-line installer,
+      agent install, or dev checkout) — the auto-update flow can apply.
+    - ``unsupported``: anything else (e.g. a bare pip install).
+    """
+    if getattr(sys, "frozen", False):
+        return "frozen"
+    if (_project_root() / ".git").exists():
+        return "git"
+    return "unsupported"
+
+
 def _parse_version(v: str) -> tuple[int, ...]:
     """Parse a version string like 'v0.2.1' or '0.2.1' into a comparable tuple."""
     v = v.strip().lstrip("vV")
@@ -144,6 +161,25 @@ def _remote_has_credentials(remote_url: str) -> bool:
     if parsed.scheme in {"http", "https"}:
         return bool(parsed.username or parsed.password)
     return False
+
+
+def _dirty_paths_besides_uv_lock(porcelain: str) -> list[str]:
+    """Return dirty paths from ``git status --porcelain``, ignoring uv.lock.
+
+    ``uv sync`` rewrites uv.lock whenever a release tag ships a stale lock
+    (the version bump forgot ``uv lock``), so virtually every install has a
+    modified uv.lock from day one. That alone must not block updates — the
+    apply flow resets uv.lock before merging and re-syncs afterwards.
+    """
+    dirty: list[str] = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].strip().strip('"')
+        if path == "uv.lock":
+            continue
+        dirty.append(path)
+    return dirty
 
 
 def _merge_or_rebase_in_progress(root: Path, git_dir_text: str) -> bool:
@@ -324,6 +360,7 @@ class AutoUpdateService:
         return {
             "state": state,
             "auto_update_enabled": self.enabled,
+            "install_mode": detect_install_mode(),
             "current_version": openbiliclaw.__version__,
             "latest_version": self._latest_remote_version,
             "latest_tag": self._latest_tag,
@@ -336,6 +373,7 @@ class AutoUpdateService:
         """Expose update status for the runtime-status API."""
         return {
             "auto_update_enabled": self.enabled,
+            "install_mode": detect_install_mode(),
             "current_version": openbiliclaw.__version__,
             "latest_remote_version": self._latest_remote_version,
             "last_update_check_at": (
@@ -448,7 +486,7 @@ class AutoUpdateService:
         status = await self._run_git(["status", "--porcelain"], root)
         if status.returncode != 0:
             return "unsupported_install_mode"
-        if status.stdout.strip():
+        if _dirty_paths_besides_uv_lock(status.stdout):
             return "dirty_worktree"
 
         git_dir = await self._run_git(["rev-parse", "--git-dir"], root)
@@ -474,6 +512,11 @@ class AutoUpdateService:
         """Fast-forward to *tag*, reinstall dependencies, and restart."""
         root = _project_root()
         try:
+            # Drop the local uv.lock rewrite (stale-lock releases make uv sync
+            # dirty it on install) so --ff-only is not refused for "local
+            # changes would be overwritten"; the post-merge sync regenerates it.
+            await self._run_git(["checkout", "--", "uv.lock"], root)
+
             merge = await self._run_git(["merge", "--ff-only", tag], root, timeout=120)
             if merge.returncode != 0:
                 await self._mark_apply_failed("branch_not_fast_forwardable")

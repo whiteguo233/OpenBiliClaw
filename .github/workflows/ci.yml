@@ -12,15 +12,18 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+        # Include the optional `x` extra (twitter-cli) so the X-source test
+        # suite (tests/test_x_client.py etc.) can construct real tweet objects
+        # and run; without it those tests error with ModuleNotFoundError.
+        run: python -m pip install -e ".[dev,x]"
 
       - name: Run Ruff
         run: python -m ruff check src/ tests/
@@ -37,10 +40,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -67,3 +70,34 @@ jobs:
             exit 1
           fi
           echo "Firefox manifest version $firefox_version matches manifest.json"
+
+  web-guided-init-e2e:
+    name: Web guided-init E2E
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev,browser]"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run web guided-init E2E
+        run: python -m pytest -q tests/test_web_guided_init_e2e.py

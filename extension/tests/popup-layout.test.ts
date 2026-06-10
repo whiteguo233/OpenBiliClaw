@@ -31,18 +31,53 @@ test("popup header exposes a local mobile web QR entry", () => {
   assert.doesNotMatch(popupHtml, /api\.qrserver|chart\.googleapis/);
 });
 
-test("popup header moves utility icons below the brand on narrow side-panel widths", () => {
+test("popup header stays a single row with inline icons at narrow side-panel widths", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  // The header's narrow-width rules live in the @media(max-width:460px) block
+  // that opens with a comment. Anchor on `{` + comment to grab only this one.
   const narrowHeaderQuery =
-    popupHtml.match(/@media \(max-width: 460px\)\s*\{[\s\S]*?\.hero-actions[\s\S]*?\}/)?.[0] ?? "";
+    popupHtml.match(/@media \(max-width: 460px\) \{\s*\/\*[\s\S]*?\n {4}\}/)?.[0] ?? "";
 
   assert.match(narrowHeaderQuery, /\.hero-top\s*\{/);
-  assert.match(narrowHeaderQuery, /grid-template-columns:\s*1fr;/);
-  assert.match(narrowHeaderQuery, /\.hero-actions\s*\{/);
-  assert.match(narrowHeaderQuery, /width:\s*100%;/);
-  assert.match(narrowHeaderQuery, /justify-content:\s*flex-end;/);
+  // It must NOT collapse into a single stacked column — that old layout floated
+  // the action buttons onto an awkward, empty-gap second row.
+  assert.doesNotMatch(narrowHeaderQuery, /grid-template-columns:\s*1fr;/);
+  // Declutter: the decorative eyebrow is hidden so brand + icons fit one row.
+  assert.match(narrowHeaderQuery, /\.eyebrow\s*\{\s*display:\s*none;/);
+  // The status badge wraps just under the title only when space is tight.
   assert.match(narrowHeaderQuery, /\.brand-title-row\s*\{/);
   assert.match(narrowHeaderQuery, /flex-wrap:\s*wrap;/);
+  // The one-word title clips with an ellipsis (not overlap) if a drag gets tight.
+  assert.match(narrowHeaderQuery, /\.hero h1\s*\{[\s\S]*?text-overflow:\s*ellipsis;/);
+  // Compact icons via `.hero-actions button` — higher specificity than the base
+  // `.webui-button { width: 32px }` that comes later in source.
+  assert.match(narrowHeaderQuery, /\.hero-actions button\s*\{[\s\S]*?width:\s*28px;/);
+});
+
+test("popup shows a GitHub-Buttons style Star button (icon + label + live count)", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const heroSub = popupHtml.match(/<div class="hero-sub">[\s\S]*?<\/div>\s*<\/header>/)?.[0] ?? "";
+  const heroActions = popupHtml.match(/<div class="hero-actions">[\s\S]*?<\/div>/)?.[0] ?? "";
+
+  // The familiar two-part GitHub-Buttons look (used by big repos): an Octocat +
+  // "Star" action chip joined to a live star-count box, on the row below the
+  // action icons (in .hero-sub, right of the hero copy).
+  assert.match(heroSub, /id="starButton"/);
+  assert.match(heroSub, /class="gh-star-mark"/); // Octocat SVG
+  assert.match(heroSub, /<span>Star<\/span>/); // text label
+  assert.match(heroSub, /id="starCount"/); // live count box
+  // Two-part chip + count styling exists.
+  assert.match(popupHtml, /\.gh-star-left\s*\{/);
+  assert.match(popupHtml, /\.gh-star-count\s*\{/);
+  // Not in the action-icon strip, and the old banner is gone.
+  assert.doesNotMatch(heroActions, /id="starButton"/);
+  assert.doesNotMatch(popupHtml, /id="starCta"/);
+  // Click opens the repo (direct-star needs GitHub auth); count is fetched/cached.
+  assert.match(popupJs, /STAR_REPO_URL\s*=\s*"https:\/\/github\.com\/whiteguo233\/OpenBiliClaw"/);
+  assert.match(popupJs, /bindStarButton\(\);/);
+  assert.match(popupJs, /api\.github\.com\/repos\/\$\{STAR_REPO_SLUG\}/);
+  assert.match(popupJs, /loadStarCount/);
 });
 
 test("recommendation header uses a compact top row with status chips", () => {
@@ -161,6 +196,18 @@ test("popup page is structured for side panel browsing", () => {
   assert.match(shellBlock, /min-width:\s*0;/);
   assert.doesNotMatch(bodyBlock, /width:\s*392px;/);
   assert.doesNotMatch(bodyBlock, /height:\s*560px;/);
+});
+
+test("init empty-state keeps full height so its start button stays scroll-reachable", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const emptyStateBlock = popupHtml.match(/\.empty-state\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  // In the flex column (.view { flex: 1 }) a shrinkable .empty-state got
+  // compressed in a short / narrow side panel; overflow:hidden then clipped the
+  // init "开始初始化" button AND the view fit exactly, so .content had nothing
+  // to scroll. flex-shrink:0 pins natural height → the tall card overflows into
+  // the .content scroller and the button is reachable again.
+  assert.match(emptyStateBlock, /flex-shrink:\s*0;/);
 });
 
 test("settings tabs use stable compact panels", () => {

@@ -43,6 +43,14 @@ const entrypoints = [
     entry: resolve(root, "src/content/youtube.ts"),
     outfile: resolve(root, `${outDir}/content/youtube.js`),
   },
+  {
+    entry: resolve(root, "src/content/x.ts"),
+    outfile: resolve(root, `${outDir}/content/x.js`),
+  },
+  {
+    entry: resolve(root, "src/main/x-graphql-tap.ts"),
+    outfile: resolve(root, `${outDir}/main/x-graphql-tap.js`),
+  },
 ];
 
 for (const target of entrypoints) {

@@ -2,6 +2,8 @@
     const DEFAULT_API_BASE = "http://127.0.0.1:8420/api";
     const ENDPOINTS = {
       health: "/health",
+      initStatus: "/init-status",
+      startInit: "/init",
       recommendations: "/recommendations",
       refresh: "/recommendations/refresh",
       reshuffle: "/recommendations/reshuffle",
@@ -19,6 +21,8 @@
       interestProbeRespond: "/interest-probes/respond",
       avoidanceProbeRespond: "/avoidance-probes/respond",
       sourceShareSuggestion: "/config/source-share-suggestion",
+      configProbe: "/config/probe-service",
+      updateStatus: "/update-status",
       config: "/config?reveal_keys=true",
       watchLater: "/watch-later",
       favorites: "/favorites",
@@ -33,6 +37,10 @@
       profile: null,
       editingProfile: false,
       profileEditState: null,
+      initStatus: null,
+      initReason: "",
+      initBusy: false,
+      initSelectedSources: ["bilibili"],
       activity: null,
       activityItems: [],
       activityCursor: "",
@@ -73,6 +81,27 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const INIT_SOURCE_OPTIONS = [
+      { key: "bilibili", label: "B 站", required: true },
+      { key: "xiaohongshu", label: "小红书", required: false },
+      { key: "douyin", label: "抖音", required: false },
+      { key: "youtube", label: "YouTube", required: false },
+      { key: "twitter", label: "X", required: false }
+    ];
+    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_REASON_TEXT = {
+      unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
+      already_running: "初始化正在进行中。",
+      bilibili_not_logged_in: "还没检测到 B 站登录。",
+      llm_not_ready: "AI 服务还没配好或当前不可用。",
+      already_initialized: "已经初始化过了；如需重建，请到设置页。",
+      local_only: "只能在本机发起初始化。",
+      internal_error: "初始化过程中出错了，请稍后重试。",
+      none: ""
+    };
+    const INIT_STATUS_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
+    const INIT_STATUS_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
+    const INIT_STATUS_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -88,6 +117,9 @@
     let backendHydrationTimer = null;
     let backendHydrationInFlight = false;
     let backendHydrationPending = false;
+    let initPollTimer = null;
+    let initRefreshInFlight = false;
+    let initRefreshPending = false;
     let activityPageRefreshTimer = null;
     let activityPageRefreshInFlight = false;
     let activityPageRefreshPending = false;
@@ -216,6 +248,68 @@
     state.dismissOnReshuffle = storageGet(DISMISS_ON_RESHUFFLE_KEY) === "1";
     const SIDE_DRAWER_OPEN_KEY = "openbiliclaw.sideDrawerOpen";
     const DELIGHT_QUEUE_LIMIT_KEY = "openbiliclaw.webui.delightQueueLimit";
+    const STAR_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw";
+    const STAR_REPO_SLUG = "whiteguo233/OpenBiliClaw";
+    const STAR_COUNT_CACHE_KEY = "openbiliclaw.webui.starCount";
+    const STAR_COUNT_TTL_MS = 12 * 60 * 60 * 1000;
+
+    function formatStarCount(n) {
+      if (typeof n !== "number" || !Number.isFinite(n)) return "";
+      if (n >= 10000) return `${(n / 1000).toFixed(0)}k`;
+      if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+      return String(n);
+    }
+
+    function showStarCount(n) {
+      const el = $("#starCount");
+      const text = formatStarCount(n);
+      if (el && text) {
+        el.textContent = text;
+        el.hidden = false;
+      }
+    }
+
+    async function loadStarCount() {
+      const el = $("#starCount");
+      if (!(el instanceof HTMLElement)) return;
+      let cachedTime = 0;
+      try {
+        const raw = storageGet(STAR_COUNT_CACHE_KEY);
+        if (raw) {
+          const { n, t } = JSON.parse(raw);
+          if (typeof n === "number") {
+            showStarCount(n);
+            cachedTime = typeof t === "number" ? t : 0;
+          }
+        }
+      } catch {
+        cachedTime = 0;
+      }
+      if (Date.now() - cachedTime < STAR_COUNT_TTL_MS) return;
+      try {
+        const res = await fetch(`https://api.github.com/repos/${STAR_REPO_SLUG}`, {
+          headers: { Accept: "application/vnd.github+json" },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const n = data?.stargazers_count;
+        if (typeof n === "number") {
+          showStarCount(n);
+          storageSet(STAR_COUNT_CACHE_KEY, JSON.stringify({ n, t: Date.now() }));
+        }
+      } catch {
+        // Offline / rate-limited: keep the CTA visible without a count.
+      }
+    }
+
+    function bindStarButton() {
+      const button = $("#starButton");
+      if (!(button instanceof HTMLElement)) return;
+      button.addEventListener("click", () => {
+        window.open(STAR_REPO_URL, "_blank", "noopener,noreferrer");
+      });
+      void loadStarCount();
+    }
 
     function normalizeBackendHost(host) {
       const trimmed = String(host || "").trim();
@@ -571,6 +665,322 @@
       window.setTimeout(() => toast.classList.remove("is-open"), 2600);
     }
 
+    function describeInitReason(reason) {
+      if (!reason || reason === "none") return "";
+      return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function initEnabledPlatforms(status) {
+      const platforms = status?.prerequisites?.enabled_platforms;
+      return Array.isArray(platforms) ? platforms.map(String) : [];
+    }
+
+    function initSourceLabels(keys) {
+      const byKey = new Map(INIT_SOURCE_OPTIONS.map((opt) => [opt.key, opt.label]));
+      return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
+    }
+
+    function buildInitChecklist(status) {
+      const prereq = status?.prerequisites || {};
+      const enabled = initEnabledPlatforms(status);
+      return [
+        {
+          key: "bilibili",
+          label: "B 站已登录",
+          ok: Boolean(prereq.bilibili_logged_in),
+          hard: true,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。"
+        },
+        {
+          key: "llm",
+          label: "AI 服务可用",
+          ok: Boolean(prereq.llm_ready),
+          hard: true,
+          hint: "到设置页填好 LLM provider 的 API Key，或确认本地 / 远端模型服务可达。"
+        },
+        {
+          key: "embedding",
+          label: "向量模型可用（推荐，非必须）",
+          ok: Boolean(prereq.embedding_ready),
+          hard: false,
+          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但语义检索会弱一些。"
+        },
+        {
+          key: "platforms",
+          label: enabled.length
+            ? `已启用来源：${initSourceLabels(enabled).join("、")}`
+            : "数据来源：仅 B 站（可在设置里开启更多平台）",
+          ok: true,
+          hard: false,
+          hint: ""
+        }
+      ];
+    }
+
+    function initSelectedSourcesNeedingEnable(selected, status) {
+      const checked = new Set(Array.isArray(selected) ? selected : []);
+      const enabled = new Set(initEnabledPlatforms(status));
+      return INIT_SOURCE_OPTIONS
+        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .map((opt) => opt.key);
+    }
+
+    function initProgressView(status) {
+      const total = status?.total_stages || 4;
+      const stages = Array.isArray(status?.stages) ? status.stages : [];
+      const doneCount = stages.filter((stage) => stage.status === "ok").length;
+      const running = Boolean(status?.running);
+      const failedStage = stages.find((stage) => stage.status === "failed" || stage.status === "cancelled");
+      const current = status?.current_stage || 0;
+      const currentStage = stages.find((stage) => stage.n === current);
+      const rawPct = ((doneCount + (running ? 0.5 : 0)) / total) * 100;
+      const pct = Math.max(0, Math.min(100, Math.round(rawPct)));
+      return {
+        active: running,
+        failed: Boolean(failedStage),
+        pct: running ? Math.max(pct, 1) : pct,
+        stageLabel: currentStage ? `${currentStage.n}/${total} ${currentStage.label}` : "",
+        failedReason: failedStage?.reason || ""
+      };
+    }
+
+    function selectedInitSourcesFromDom() {
+      const checked = Array.from(document.querySelectorAll("input[data-init-source]"))
+        .filter((input) => input.checked)
+        .map((input) => input.value);
+      if (!checked.includes("bilibili")) checked.push("bilibili");
+      return checked;
+    }
+
+    function initChecklistMarkup(status) {
+      if (!status) {
+        return '<li class="init-hint-row">点「开始初始化」会先检查 B 站登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+      }
+      return buildInitChecklist(status)
+        .map((row) => {
+          const mark = row.ok ? "✓" : row.hard ? "✗" : "•";
+          const hint = !row.ok && row.hint ? `<p class="init-hint">${escapeHtml(row.hint)}</p>` : "";
+          return `<li class="${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}"><div class="init-row"><span class="init-mark">${mark}</span><span>${escapeHtml(row.label)}</span></div>${hint}</li>`;
+        })
+        .join("");
+    }
+
+    function initSourcesMarkup() {
+      const selected = new Set(state.initSelectedSources || ["bilibili"]);
+      const rows = INIT_SOURCE_OPTIONS.map((opt) => {
+        const checked = opt.required || selected.has(opt.key) ? " checked" : "";
+        const disabled = opt.required ? " disabled" : "";
+        const label = opt.required ? `${opt.label}（必选）` : opt.label;
+        return `<label class="init-source-row"><input type="checkbox" value="${escapeHtml(opt.key)}" data-init-source="${escapeHtml(opt.key)}"${checked}${disabled}><span>${escapeHtml(label)}</span></label>`;
+      }).join("");
+      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源</p>${rows}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
+    }
+
+    function initOnboardingPhase(status, progress) {
+      if (state.initBusy) return "busy";
+      if (Boolean(status?.initialized)) return "completed";
+      if (Boolean(status?.running)) return "running";
+      if (progress.failed) return "failed";
+      return "idle";
+    }
+
+    function updateInitOnboardingStatus(section, status, progress, reason, buttonLabel, buttonDisabled) {
+      const checklist = section.querySelector(".init-checklist");
+      if (checklist) checklist.innerHTML = initChecklistMarkup(status);
+      const progressBox = section.querySelector(".init-progress");
+      const progressFill = section.querySelector(".init-progress-fill");
+      const progressText = progressBox?.querySelector("p");
+      const progressLabel = progress.failed
+        ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。")
+        : progress.active
+          ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）`
+          : "等待开始";
+      if (progressBox) progressBox.hidden = !(Boolean(status?.running) || progress.failed);
+      if (progressFill) progressFill.style.width = `${progress.pct}%`;
+      if (progressText) progressText.textContent = progressLabel;
+      const reasonText = section.querySelector(".init-reason");
+      if (reasonText) {
+        reasonText.hidden = !reason;
+        reasonText.textContent = reason;
+      }
+      const startButton = section.querySelector('[data-init-action="start"]');
+      if (startButton) {
+        startButton.disabled = buttonDisabled;
+        startButton.textContent = buttonLabel;
+      }
+    }
+
+    function renderInitOnboarding() {
+      if (!grid) return;
+      const status = state.initStatus;
+      const progress = initProgressView(status);
+      const isRunning = Boolean(status?.running);
+      const alreadyInitialized = Boolean(status?.initialized);
+      const showProgress = isRunning || progress.failed;
+      const reason = state.initReason || describeInitReason(status?.reason) || status?.detail || "";
+      const phase = initOnboardingPhase(status, progress);
+      const buttonLabel = state.initBusy
+        ? "检查中…"
+        : isRunning
+          ? "初始化进行中…"
+          : alreadyInitialized
+            ? "已初始化"
+            : progress.failed
+              ? "重试初始化"
+              : "开始初始化";
+      const buttonDisabled = state.initBusy || isRunning || alreadyInitialized;
+      const existing = grid.querySelector(".init-onboarding");
+      if (existing?.dataset.initPhase === phase && phase !== "idle" && phase !== "busy") {
+        updateInitOnboardingStatus(existing, status, progress, reason, buttonLabel, buttonDisabled);
+        const loadMore = $("#loadMoreBtn");
+        if (loadMore) loadMore.hidden = true;
+        return;
+      }
+      grid.innerHTML = `
+        <section class="init-onboarding" aria-label="引导初始化" data-init-phase="${escapeHtml(phase)}">
+          <div class="init-onboarding-copy">
+            <p class="eyebrow">Guided init</p>
+            <h3>还没完成初始化</h3>
+            <p class="video-meta">先检查 B 站登录和 AI 服务，通过后在这里一步步拉取数据、生成画像、补齐首轮内容池。</p>
+          </div>
+          ${isRunning ? "" : initSourcesMarkup()}
+          <ul class="init-checklist">${initChecklistMarkup(status)}</ul>
+          <div class="init-progress"${showProgress ? "" : " hidden"}>
+            <div class="init-progress-track"><div class="init-progress-fill" style="width:${progress.pct}%"></div></div>
+            <p>${escapeHtml(progress.failed ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。") : progress.active ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）` : "等待开始")}</p>
+          </div>
+          <p class="init-reason"${reason ? "" : " hidden"}>${escapeHtml(reason)}</p>
+          <div class="init-actions">
+            <button class="small-btn primary" type="button" data-init-action="start"${buttonDisabled ? " disabled" : ""}>${escapeHtml(buttonLabel)}</button>
+            <button class="small-btn" type="button" data-init-action="settings">打开设置</button>
+          </div>
+        </section>`;
+      const loadMore = $("#loadMoreBtn");
+      if (loadMore) loadMore.hidden = true;
+      grid.querySelector('[data-init-action="start"]')?.addEventListener("click", () => {
+        void handleDesktopStartInitClick();
+      });
+      grid.querySelector('[data-init-action="settings"]')?.addEventListener("click", () => {
+        openSettingsPage("sources");
+      });
+      grid.querySelectorAll("input[data-init-source]").forEach((input) => {
+        input.addEventListener("change", () => {
+          state.initSelectedSources = selectedInitSourcesFromDom();
+        });
+      });
+    }
+
+    function clearInitPolling() {
+      if (initPollTimer !== null) {
+        window.clearTimeout(initPollTimer);
+        initPollTimer = null;
+      }
+    }
+
+    function scheduleInitStatusRefresh(delayMs = INIT_STATUS_POLL_MS) {
+      clearInitPolling();
+      initPollTimer = window.setTimeout(() => {
+        initPollTimer = null;
+        void refreshInitStatus();
+      }, delayMs);
+    }
+
+    async function refreshInitStatus({ schedule = true } = {}) {
+      if (initRefreshInFlight) {
+        initRefreshPending = true;
+        return;
+      }
+      initRefreshInFlight = true;
+      clearInitPolling();
+      const wasInitialized = Boolean(state.initStatus?.initialized);
+      try {
+        const status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
+        state.initStatus = status;
+        state.initReason = "";
+        renderAll();
+        if (status?.initialized) {
+          clearInitPolling();
+          initRefreshPending = false;
+          if (!wasInitialized) {
+            scheduleBackendHydration();
+            showToast("初始化完成，正在加载推荐");
+          }
+          return;
+        }
+        if (status?.running) {
+          scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
+        } else if (!status?.running) {
+          clearInitPolling();
+        }
+      } catch (error) {
+        scheduleInitStatusRefresh(INIT_STATUS_POLL_MS);
+        state.initReason = error?.message || "初始化状态读取失败。";
+        renderAll();
+      } finally {
+        initRefreshInFlight = false;
+        if (initRefreshPending) {
+          initRefreshPending = false;
+          void refreshInitStatus({ schedule });
+        }
+      }
+    }
+
+    async function handleDesktopStartInitClick() {
+      const selected = selectedInitSourcesFromDom();
+      state.initSelectedSources = selected;
+      state.initBusy = true;
+      state.initReason = "";
+      renderAll();
+      let status = null;
+      try {
+        status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
+        state.initStatus = status;
+      } catch (error) {
+        state.initReason = error?.message || "前置检查没拉到，稍后再试。";
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (status.running) {
+        state.initBusy = false;
+        renderAll();
+        clearInitPolling();
+        scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
+        return;
+      }
+      const needEnable = initSelectedSourcesNeedingEnable(selected, status);
+      if (needEnable.length > 0) {
+        state.initReason = `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；先打开设置开启对应平台，或取消勾选后再点一次。`;
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (!status.can_start) {
+        state.initReason = describeInitReason(status.reason) || status.detail || "以下条件未满足，无法开始初始化。";
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      try {
+        const started = await requestJsonStrict(ENDPOINTS.startInit, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: selected }),
+          timeoutMs: 60000
+        });
+        state.initStatus = { ...(state.initStatus || {}), ...started };
+        state.initBusy = false;
+        showToast("初始化已开始");
+        renderAll();
+        scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
+      } catch (error) {
+        const code = error?.details?.error || error?.details?.reason;
+        state.initReason = describeInitReason(code) || error?.message || "初始化没能启动，请稍后重试。";
+        state.initBusy = false;
+        renderAll();
+      }
+    }
+
     function openPanel(id) { document.getElementById(id)?.classList.add("is-open"); }
     function closePanel(id) {
       const panel = document.getElementById(id);
@@ -630,6 +1040,10 @@
       setActiveSettingsPanel(panel || "models");
       showMainPage("settingsPage");
       window.scrollTo({ top: 0, behavior: "smooth" });
+      void renderSourcesStatus();
+      void lanAuthControl?.reload();
+      void bootAutostartControl?.reload();
+      void refreshUpdateStatus();
     }
 
     // ── Saved pages: 稍后再看 (watch-later) & 收藏 (favorites) ──────
@@ -978,6 +1392,12 @@
     }
 
     function renderVideos() {
+      if (shouldShowInitOnboarding(state.runtimeStatus)) {
+        renderInitOnboarding();
+        return;
+      }
+      const loadMore = $("#loadMoreBtn");
+      if (loadMore) loadMore.hidden = false;
       const items = filteredVideos();
       if (!items.length) {
         const message = state.query.trim()
@@ -1519,7 +1939,14 @@
 
     function speculativeHtml(items, options = {}) {
       const isAvoidance = options.kind === "avoidance";
-      const list = asArray(items);
+      const probeType = isAvoidance ? "avoidance.probe" : "interest.probe";
+      const list = asArray(items).filter((item) => {
+        if (typeof item !== "object") return !state.handledProbeKeys.has(probeKey(probeType, item));
+        const domain = item.domain || item.name || item.title;
+        if (!domain || state.handledProbeKeys.has(probeKey(probeType, domain))) return false;
+        const status = String(item.status || "active").trim().toLowerCase();
+        return status === "active" || status === "pending";
+      });
       if (!list.length) return `<p class="video-meta">${isAvoidance ? "阿B 暂时没有待确认的避雷方向。" : "阿B 还没有正在试探的新方向。"}</p>`;
       const statusLabels = { active: "待确认", pending: "待观察", confirmed: "已确认", deprecated: "已弃", rejected: "已排除" };
       const fallbackTitle = isAvoidance ? "猜测避雷" : "猜测兴趣";
@@ -1801,7 +2228,7 @@
         return html;
       }
       if (!editState.initialized || !editState.fields) {
-        html += `<p class="video-meta">画像还没攒起来，先跑一遍 openbiliclaw init 再回来编辑。</p>`;
+        html += `<p class="video-meta">画像还没攒起来，回到首页推荐区点「开始初始化」后再回来编辑。</p>`;
         return html;
       }
       html += `<p class="video-meta profile-edit-note">标签 / 兴趣类增删即时生效；文本与滑杆类改完点「保存」才生效。改动都不会被后续自动重建覆盖，删错了点「恢复 AI 建议」即可。</p>`;
@@ -1908,11 +2335,15 @@
     }
 
     function probeKey(type, domain) {
-      return `${messageType({ type })}:${String(domain || "")}`;
+      const normalizedDomain = String(domain || "").trim().toLowerCase();
+      return normalizedDomain ? `${messageType({ type })}:${normalizedDomain}` : "";
     }
 
     function messageKey(msg) {
       const type = messageType(msg);
+      if (type === "interest.probe" || type === "avoidance.probe") {
+        return probeKey(type, msg?.domain || msg?.title);
+      }
       return `${type}:${msg?.bvid || msg?.domain || msg?.title || msg?.reason || ""}`;
     }
 
@@ -1936,6 +2367,9 @@
       const domain = item.domain || item.name || item.title;
       if (!domain) return null;
       const probeType = type === "avoidance.probe" || item.kind === "avoidance" ? "avoidance.probe" : "interest.probe";
+      if (state.handledProbeKeys.has(probeKey(probeType, domain))) return null;
+      const status = String(item.status || "active").trim().toLowerCase();
+      if (status !== "active" && status !== "pending") return null;
       return {
         type: probeType,
         domain: String(domain),
@@ -1982,22 +2416,23 @@
       if (speculations == null || speculations === "") return;
       const normalizedType = messageType({ type });
       const items = asArray(speculations);
-      const active = items.filter((item) => item && item.domain && (!item.status || item.status === "active"));
-      const activeDomains = new Set(active.map((item) => String(item.domain)));
+      const active = items.filter((item) => item && item.domain && (!item.status || item.status === "active") && !state.handledProbeKeys.has(probeKey(normalizedType, item.domain)));
+      const activeKeys = new Set(active.map((item) => probeKey(normalizedType, item.domain)));
       const preserveCurrentProbeList = isMessagesDrawerOpen();
       state.messages = state.messages.filter((msg) => {
         if (messageType(msg) !== normalizedType) return true;
         const domain = String(msg.domain || "");
         if (!domain || state.handledProbeKeys.has(probeKey(normalizedType, domain))) return false;
         if (state.resolvingMessageKeys.has(messageKey(msg))) return true;
-        return preserveCurrentProbeList || activeDomains.has(domain);
+        return preserveCurrentProbeList || activeKeys.has(probeKey(normalizedType, domain));
       });
-      const existing = new Set(state.messages.filter((msg) => messageType(msg) === normalizedType).map((msg) => String(msg.domain || "")));
+      const existing = new Set(state.messages.filter((msg) => messageType(msg) === normalizedType).map((msg) => probeKey(normalizedType, msg.domain)));
       for (const item of active) {
         const domain = String(item.domain);
-        if (state.handledProbeKeys.has(probeKey(normalizedType, domain)) || existing.has(domain)) continue;
+        const key = probeKey(normalizedType, domain);
+        if (!key || state.handledProbeKeys.has(key) || existing.has(key)) continue;
         state.messages.push(normalizeMessageItem({ ...item, type: normalizedType }));
-        existing.add(domain);
+        existing.add(key);
       }
       syncMessageCount();
     }
@@ -2101,10 +2536,23 @@
       el.classList.add("is-resolving");
       state.resolvingMessageKeys.add(key);
       actions?.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      const probeType = messageType(msg);
+      const domain = msg.domain || "";
+      const handledKey = probeKey(probeType, domain);
+      if (handledKey) state.handledProbeKeys.add(handledKey);
       try {
-        const isAvoidance = messageType(msg) === "avoidance.probe";
+        const isAvoidance = probeType === "avoidance.probe";
         const endpoint = isAvoidance ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
-        await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain: msg.domain, response, message: "" }) });
+        const apiResp = await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain: msg.domain, response, message: "" }) });
+        if (apiResp && apiResp.ok === false) {
+          state.resolvingMessageKeys.delete(key);
+          state.messages = state.messages.filter((item) => messageKey(item) !== key);
+          if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((item) => messageKey(item) !== key);
+          state.messageListDomLocked = false;
+          renderMessages();
+          void refreshProfile();
+          return;
+        }
         const result = isAvoidance
           ? response === "confirm" ? "已确认避雷方向，后续会减少类似内容。" : "已搁置，暂时不作为避雷方向。"
           : response === "confirm" ? "已确认，后续推荐会提高权重。" : "已搁置，后续会少试探这个方向。";
@@ -2122,7 +2570,6 @@
           collapseMessageItem(key, el, () => {
             state.resolvingMessageKeys.delete(key);
             state.resolvedMessageResults.delete(key);
-            if (msg.domain) state.handledProbeKeys.add(probeKey(messageType(msg), msg.domain));
             state.messages = state.messages.filter((item) => messageKey(item) !== key);
             if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((item) => messageKey(item) !== key);
             state.messageListDomLocked = false;
@@ -2136,6 +2583,7 @@
         state.messageListDomLocked = false;
         el.classList.remove("is-resolving");
         el.style.minHeight = "";
+        if (handledKey) state.handledProbeKeys.delete(handledKey);
         actions?.querySelectorAll("button").forEach((button) => { button.disabled = false; });
         showToast(`确认反馈失败：${error.message || "后端不可用"}`);
       }
@@ -2153,19 +2601,27 @@
       const response = button.dataset.specResponse;
       if (!domain || !response) return;
       row.querySelectorAll("[data-spec-response]").forEach((btn) => { btn.disabled = true; });
+      const type = button.dataset.specType || "interest.probe";
+      const key = probeKey(type, domain);
+      if (key) state.handledProbeKeys.add(key);
       try {
-        const type = button.dataset.specType || "interest.probe";
         const isAvoidance = isAvoidanceProbe(type);
         const endpoint = isAvoidance ? ENDPOINTS.avoidanceProbeRespond : ENDPOINTS.interestProbeRespond;
         const payload = { domain, response, message: "" };
         if (!isAvoidance) payload.surface = "profile";
-        await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const apiResp = await requestJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (apiResp && apiResp.ok === false) {
+          row.remove();
+          state.messages = state.messages.filter((msg) => messageKey(msg) !== key);
+          if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((msg) => messageKey(msg) !== key);
+          renderMessages();
+          void refreshProfile();
+          return;
+        }
         const result = isAvoidance
           ? (response === "confirm" ? `好，「${escapeHtml(domain)}」会作为避雷方向处理。` : `好，「${escapeHtml(domain)}」不记成避雷。`)
           : (response === "confirm" ? `好，「${escapeHtml(domain)}」记住了。` : `好，「${escapeHtml(domain)}」先不看了。`);
         row.innerHTML = `<p class="spec-result">${result}</p>`;
-        const key = probeKey(type, domain);
-        state.handledProbeKeys.add(key);
         state.messages = state.messages.filter((msg) => messageKey(msg) !== key);
         if (state.messageListSnapshot) state.messageListSnapshot = state.messageListSnapshot.filter((msg) => messageKey(msg) !== key);
         renderMessages();
@@ -2174,6 +2630,7 @@
           : response === "confirm" ? "已确认这个猜测兴趣" : "已排除这个猜测兴趣");
         setTimeout(() => { void refreshProfile(); }, 1200);
       } catch (error) {
+        if (key) state.handledProbeKeys.delete(key);
         row.querySelectorAll("[data-spec-response]").forEach((btn) => { btn.disabled = false; });
         showToast(`确认反馈失败：${error.message || "后端不可用"}`);
       }
@@ -2588,11 +3045,11 @@
       const payload = await requestJson(ENDPOINTS.append, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ excluded_bvids: state.videos.map((v) => v.bvid) }) });
       if (payload?.items?.length) {
         const freshItems = normalizeRecommendationList(payload.items);
-        // Preload + decode the new covers before re-rendering so they appear
-        // without the placeholder flash.
-        await warmCoverImages(freshItems, { waitForDecode: true });
         state.videos = state.videos.concat(freshItems);
         renderAll();
+        // Keep decoding off the interaction path: slow first-miss covers should
+        // not delay the new recommendation cards from appearing.
+        void warmCoverImages(freshItems, { waitForDecode: true }).catch(() => {});
         showToast(freshItems.length ? "已加载更多推荐" : "后端返回的内容都已反馈过");
       } else {
         showToast("加载更多失败：后端没有返回新候选");
@@ -2620,6 +3077,7 @@
         last_notification_at: String(merged.last_notification_at ?? ""),
         unread_count: Number(merged.unread_count ?? state.messages.length ?? 0),
         pool_available_count: Number(merged.pool_available_count ?? merged.pool_available ?? merged.available_count ?? 0),
+        pool_pending_count: Number(merged.pool_pending_count ?? 0),
         pool_target_count: Number(merged.pool_target_count ?? state.config?.scheduler?.pool_target_count ?? 0),
         last_discovered_count: Number(merged.last_discovered_count ?? 0),
         last_replenished_count: Number(merged.last_replenished_count ?? 0),
@@ -2629,6 +3087,21 @@
         runtime_event_type: incomingType || String(merged.runtime_event_type || ""),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")
       };
+    }
+
+    function hasPostInitRuntimeSignals(runtime) {
+      return Boolean(runtime) && (
+        runtime.recommendation_count > 0 ||
+        runtime.pool_available_count > 0 ||
+        runtime.pool_pending_count > 0 ||
+        runtime.last_replenished_count > 0 ||
+        runtime.last_discovered_count > 0
+      );
+    }
+
+    function shouldShowInitOnboarding(status) {
+      const runtime = normalizeRuntimeStatus(status);
+      return Boolean(status) && runtime.initialized === false && !hasPostInitRuntimeSignals(runtime);
     }
 
     function getPoolStatusSummary(status) {
@@ -2762,21 +3235,191 @@
       if (el && value !== undefined && value !== null) el.value = String(value);
     }
 
+    // Unified per-source login / cookie status (GET /api/sources/status),
+    // rendered as a uniform colored-dot list in the 平台源 settings tab.
+    const SOURCE_STATUS_DOT = {
+      ok: "#2ecc71", ready: "#2ecc71", no_auth: "#9aa0a6",
+      missing: "#e0a800", missing_cookie: "#e0a800", rate_limited: "#e0a800",
+      expired_cookie: "#e74c3c", blocked: "#e74c3c"
+    };
+    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter"];
+
+    async function renderSourcesStatus() {
+      const list = $("#sourceStatusList");
+      if (!list) return;
+      let data = null;
+      try { data = await requestJson("/sources/status"); } catch { data = null; }
+      SOURCE_STATUS_KEYS.forEach((key) => {
+        const row = list.querySelector(`[data-source-status="${key}"]`);
+        if (!row) return;
+        const dot = row.querySelector(".src-dot");
+        const detail = row.querySelector(".src-detail");
+        const item = data?.[key];
+        if (!item) {
+          if (detail) detail.textContent = "状态暂不可用（后端未连接）。";
+          if (dot) dot.style.color = "#9aa0a6";
+          row.style.opacity = "1";
+          return;
+        }
+        if (detail) detail.textContent = (item.enabled ? "" : "（未启用）") + (item.detail || "");
+        if (dot) dot.style.color = SOURCE_STATUS_DOT[item.state] || "#9aa0a6";
+        row.style.opacity = item.enabled ? "1" : "0.6";
+      });
+    }
+
+    // LAN password-gate control. The web UI is served from 127.0.0.1, so it is a
+    // trusted-local client (same-origin loopback) and may manage /api/auth/admin,
+    // exactly like the extension's popup-auth-control.
+    let lanAuthControl = null;
+    let bootAutostartControl = null;
+
+    function initLanAuthControl() {
+      const checkbox = $("#authEnabled");
+      const password = $("#authPassword");
+      const passwordField = $("#authPasswordField");
+      const saveRow = $("#authSaveRow");
+      const saveBtn = $("#authSave");
+      const hint = $("#authHint");
+      if (!checkbox) return { reload: async () => {} };
+      let current = null;
+      const setHint = (msg) => { if (hint) hint.textContent = msg; };
+      function syncEditing() {
+        const can = Boolean(current && current.can_manage);
+        const enabling = checkbox.checked;
+        if (passwordField) passwordField.hidden = !(can && enabling);
+        if (saveRow) saveRow.hidden = !(can && enabling);
+      }
+      function applyServerState() {
+        const can = Boolean(current && current.can_manage);
+        checkbox.checked = Boolean(current && current.enabled);
+        checkbox.disabled = !can;
+        syncEditing();
+        if (!current) setHint("无法读取后端鉴权状态。");
+        else if (!can) setHint(current.env_managed ? "由环境变量管理，请改环境变量并重启后端。" : "仅本机 / 浏览器插件可修改此设置。");
+        else if (current.enabled) setHint("已开启：局域网 / 远程设备访问需要登录密码（本机与插件免登录）。");
+        else setHint("已关闭：局域网访问无需密码。");
+      }
+      async function load() {
+        current = await requestJson("/auth/status");
+        applyServerState();
+        return current;
+      }
+      async function apply(enabled) {
+        const pwd = password ? String(password.value || "") : "";
+        if (enabled && !pwd.trim()) { setHint("请输入要设置的访问密码。"); if (password?.focus) password.focus(); return; }
+        setHint("保存中…");
+        try {
+          const payload = enabled ? { enabled: true, password: pwd } : { enabled: false };
+          const result = await requestJsonStrict("/auth/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (result && result.ok === false) { setHint("保存失败，请重试。"); await load(); return; }
+          if (password) password.value = "";
+          await load();
+        } catch (err) {
+          const status = err?.status;
+          if (status === 403) setHint("仅本机 / 插件可修改此设置。");
+          else if (status === 409) setHint("由环境变量管理，无法在此修改。");
+          else if (status === 400) setHint("开启密码门禁需要先设置密码。");
+          else setHint("无法连接后端或保存失败，请重试。");
+          await load();
+        }
+      }
+      checkbox.addEventListener("change", () => {
+        if (!checkbox.checked) void apply(false);
+        else { syncEditing(); if (password?.focus) password.focus(); }
+      });
+      saveBtn?.addEventListener("click", () => void apply(true));
+      void load();
+      return { reload: load };
+    }
+
+    // Boot autostart control — mirrors the extension's popup-autostart-control.
+    function initBootAutostartControl() {
+      const checkbox = $("#autostartEnabled");
+      const hint = $("#autostartHint");
+      if (!checkbox) return { reload: async () => {} };
+      let current = null;
+      let busy = false;
+      const setHint = (msg) => { if (hint) hint.textContent = msg; };
+      function disabledHint(status) {
+        const reason = status?.reason || "";
+        if (reason === "env_managed") return "检测到环境变量配置，登录会话可能拿不到这些值；请先写入 config.toml。";
+        if (reason === "shadowed") return "config.local.toml 正在覆盖开关，无法在此修改。";
+        if (reason === "unsupported_docker_runtime") return "当前在 Docker / 容器环境中，不能注册桌面登录自启动。";
+        if (reason === "unsupported_platform") return "当前平台暂不支持开机自启动。";
+        if (reason === "local_only") return "仅本机 / 浏览器插件可修改此设置。";
+        return "当前环境不能在这里修改开机自启动。";
+      }
+      function enabledHint(status) {
+        const ollama = status?.manage_ollama ? "；本机 Ollama 配置会在需要时顺带拉起" : "";
+        if (status?.registered === false) return `配置已开启，但系统注册缺失；下次后端启动会尝试修复${ollama}。`;
+        return `已开启：下次登录系统会拉起后端，不启停当前进程${ollama}。`;
+      }
+      function activeHint(status) {
+        if (!status) return "无法读取开机自启动状态。";
+        if (!status.can_manage) return disabledHint(status);
+        if (status.enabled) return enabledHint(status);
+        return "已关闭：不会注册登录自启动；当前后端进程不受影响。";
+      }
+      function applyServerState() {
+        const can = Boolean(current && current.can_manage);
+        checkbox.checked = Boolean(current && current.enabled);
+        checkbox.disabled = busy || !can;
+        setHint(activeHint(current));
+      }
+      async function load() {
+        current = await requestJson("/autostart-status");
+        applyServerState();
+        return current;
+      }
+      async function apply(enabled) {
+        busy = true;
+        checkbox.disabled = true;
+        setHint(enabled ? "正在开启开机自启动…" : "正在关闭开机自启动…");
+        try {
+          const result = await requestJsonStrict("/autostart/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: Boolean(enabled) }) });
+          current = result || current;
+          busy = false;
+          applyServerState();
+          await load();
+        } catch (err) {
+          busy = false;
+          const status = err?.status;
+          current = err?.details || current;
+          if (status === 403) setHint("仅本机 / 浏览器插件可修改此设置。");
+          else if (status === 409) setHint(disabledHint(current));
+          else setHint("无法连接后端或保存失败，请重试。");
+          await load();
+        }
+      }
+      checkbox.addEventListener("change", () => void apply(Boolean(checkbox.checked)));
+      void load();
+      return { reload: load };
+    }
+
     function applyConfig(config) {
       if (!config || typeof config !== "object") return;
       state.config = config;
       const scheduler = config.scheduler || {};
       setSelect("schedulerEnabled", scheduler.enabled === false ? "off" : "on");
       setSelect("pauseDisconnect", scheduler.pause_on_extension_disconnect === false ? "keep" : "pause");
-      setInput("discoveryCron", scheduler.discovery_cron);
+      setInput("extensionDisconnectGrace", scheduler.extension_disconnect_grace_seconds);
       setInput("poolTarget", scheduler.pool_target_count);
       setInput("accountSyncInterval", scheduler.account_sync_interval_hours);
+      setInput("refreshCheckInterval", scheduler.refresh_check_interval_seconds);
+      setInput("signalEventThreshold", scheduler.signal_event_threshold);
+      setInput("feedbackBatchThreshold", scheduler.feedback_batch_threshold);
+      setInput("trendingRefreshHours", scheduler.trending_refresh_hours);
+      setInput("exploreRefreshHours", scheduler.explore_refresh_hours);
+      setInput("discoveryLimit", scheduler.discovery_limit);
+      setInput("proactivePushInterval", scheduler.proactive_push_interval_seconds);
+      setInput("speculatorIdleInterval", scheduler.speculator_idle_interval_minutes);
       setSelect("autoUpdate", scheduler.auto_update_enabled === true ? "on" : "off");
       setInput("autoUpdateInterval", scheduler.auto_update_check_interval_hours);
       setInput("shareBilibili", scheduler.pool_source_shares?.bilibili);
       setInput("shareXhs", scheduler.pool_source_shares?.xiaohongshu);
       setInput("shareDouyin", scheduler.pool_source_shares?.douyin);
       setInput("shareYoutube", scheduler.pool_source_shares?.youtube);
+      setInput("shareTwitter", scheduler.pool_source_shares?.twitter);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -2794,6 +3437,7 @@
       setSelect("llmProvider", provider);
       const fallbackProvider = llm.fallback_provider || "";
       setSelect("llmFallbackProvider", fallbackProvider);
+      setInput("llmConcurrency", llm.concurrency ?? 3);
       setInput("llmTimeout", llm.timeout);
       setSelect("llmAuthMode", llm.openai?.auth_mode || "api_key");
       if (provider) {
@@ -2814,12 +3458,14 @@
       }
       setInput("openrouterReferer", llm.openrouter?.http_referer);
       setInput("openrouterTitle", llm.openrouter?.x_title);
+      setSelect("deepseekReasoning", llm.deepseek?.reasoning_effort || "");
       setSelect("embeddingProvider", llm.embedding?.provider || "");
       const embeddingFallbackProvider = llm.embedding?.fallback_provider || "";
       setSelect("embeddingFallbackProvider", embeddingFallbackProvider);
       setInput("embeddingModel", llm.embedding?.model);
       setInput("embeddingApiKey", llm.embedding?.api_key);
       setInput("embeddingBaseUrl", llm.embedding?.base_url);
+      setInput("embeddingOutputDimensionality", llm.embedding?.output_dimensionality ?? 1024);
       setInput("embeddingSimilarity", llm.embedding?.similarity_threshold);
       if (embeddingFallbackProvider) {
         setInput("embeddingFallbackModel", llm[embeddingFallbackProvider]?.model);
@@ -2846,11 +3492,12 @@
       setSelect("bilibiliEnabled", config.sources?.bilibili?.enabled === false ? "off" : "on");
       setInput("sourcesBrowserCdp", config.sources?.browser?.cdp_url);
       setSelect("sourcesBrowserHeaded", config.sources?.browser?.headed === true ? "on" : "off");
-      setSelect("xhsEnabled", config.sources?.xiaohongshu?.enabled === false ? "off" : "on");
+      setSelect("xhsEnabled", config.sources?.xiaohongshu?.enabled === true ? "on" : "off");
       setInput("xhsDailySearchBudget", config.sources?.xiaohongshu?.daily_search_budget);
       setInput("xhsDailyCreatorBudget", config.sources?.xiaohongshu?.daily_creator_budget);
       setInput("xhsTaskInterval", config.sources?.xiaohongshu?.task_interval_seconds);
       setSelect("douyinEnabled", config.sources?.douyin?.enabled === true ? "on" : "off");
+      setInput("douyinCookie", config.sources?.douyin?.cookie);
       setInput("douyinCookieEnv", config.sources?.douyin?.cookie_env);
       setInput("douyinDailySearchBudget", config.sources?.douyin?.daily_search_budget);
       setInput("douyinDailyHotBudget", config.sources?.douyin?.daily_hot_budget);
@@ -2861,6 +3508,16 @@
       setInput("youtubeDailyTrendingBudget", config.sources?.youtube?.daily_trending_budget);
       setInput("youtubeDailyChannelBudget", config.sources?.youtube?.daily_channel_budget);
       setInput("youtubeRequestInterval", config.sources?.youtube?.request_interval_seconds);
+      setInput("youtubeMinInterval", config.sources?.youtube?.min_interval_minutes);
+      setSelect("twitterEnabled", config.sources?.twitter?.enabled === true ? "on" : "off");
+      setInput("twitterCookie", config.sources?.twitter?.cookie);
+      setInput("twitterCookieEnv", config.sources?.twitter?.cookie_env);
+      setInput("twitterDailySearchBudget", config.sources?.twitter?.daily_search_budget);
+      setInput("twitterDailyFeedBudget", config.sources?.twitter?.daily_feed_budget);
+      setInput("twitterDailyCreatorBudget", config.sources?.twitter?.daily_creator_budget);
+      setInput("twitterRequestInterval", config.sources?.twitter?.request_interval_seconds);
+      setInput("twitterMinInterval", config.sources?.twitter?.min_interval_minutes);
+      void renderSourcesStatus();
 
       setSelect("logLevel", config.logging?.level || "INFO");
       setSelect("logFileLevel", config.logging?.file_level || "DEBUG");
@@ -2903,10 +3560,12 @@
       if (!url) return;
       const image = document.createElement("img");
       if (isCrossOriginBase()) image.crossOrigin = "anonymous";
-      image.src = url;
       image.alt = "";
-      image.loading = "lazy";
+      image.loading = "eager";
+      image.fetchPriority = "high";
+      image.decoding = "async";
       image.referrerPolicy = "no-referrer";
+      image.src = url;
       image.addEventListener("error", () => {
         image.remove();
         thumb.classList.remove("has-image");
@@ -3011,7 +3670,10 @@
       // (/api/recommendations only returns the latest top window). Header/pool counts
       // still update via applyRuntimeStatus above; user-initiated 换一批 / 加载更多 replace
       // the list explicitly. Matches recommend.js + popup.js (fix 79042ce).
-      if (["config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      if (["config_reloaded"].includes(event.type)) scheduleBackendHydration();
+      if (["init_progress", "init_failed", "init_completed"].includes(event.type)) {
+        void refreshInitStatus({ schedule: event.type === "init_progress" });
+      }
       if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||
@@ -3146,16 +3808,20 @@
         fallback_enabled: Boolean(embeddingFallbackProvider),
         fallback_provider: embeddingFallbackProvider,
         model: getInput("embeddingModel"),
+        output_dimensionality: Math.max(0, getIntInput("embeddingOutputDimensionality", 1024)),
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82)
       };
       if (getInput("embeddingApiKey")) embedding.api_key = getInput("embeddingApiKey");
       if (getInput("embeddingBaseUrl")) embedding.base_url = getInput("embeddingBaseUrl");
       const cookie = getInput("biliCookie");
+      const douyinCookie = getInput("douyinCookie");
+      const twitterCookie = getInput("twitterCookie");
       const llm = {
         ...(state.config?.llm || {}),
         default_provider: provider,
         fallback_enabled: Boolean(fallbackProvider),
         fallback_provider: fallbackProvider,
+        concurrency: getIntInput("llmConcurrency", 3),
         timeout: getIntInput("llmTimeout", 60),
         [provider]: { ...(state.config?.llm?.[provider] || {}), ...llmProviderConfig },
         embedding: { ...(state.config?.llm?.embedding || {}), ...embedding },
@@ -3181,6 +3847,13 @@
           ...(llm.openrouter || {}),
           http_referer: getInput("openrouterReferer"),
           x_title: getInput("openrouterTitle")
+        };
+      }
+      const deepseekReasoning = getInput("deepseekReasoning");
+      if (deepseekReasoning || provider === "deepseek" || fallbackProvider === "deepseek") {
+        llm.deepseek = {
+          ...(llm.deepseek || state.config?.llm?.deepseek || {}),
+          reasoning_effort: deepseekReasoning
         };
       }
       return {
@@ -3210,6 +3883,7 @@
           douyin: {
             enabled: $("#douyinEnabled").value === "on",
             mode: "direct",
+            ...(douyinCookie ? { cookie: douyinCookie } : {}),
             cookie_env: getInput("douyinCookieEnv"),
             daily_search_budget: getIntInput("douyinDailySearchBudget", 0),
             daily_hot_budget: getIntInput("douyinDailyHotBudget", 0),
@@ -3221,20 +3895,41 @@
             daily_search_budget: getIntInput("youtubeDailySearchBudget", 0),
             daily_trending_budget: getIntInput("youtubeDailyTrendingBudget", 0),
             daily_channel_budget: getIntInput("youtubeDailyChannelBudget", 0),
-            request_interval_seconds: getIntInput("youtubeRequestInterval", 2)
+            request_interval_seconds: getIntInput("youtubeRequestInterval", 2),
+            min_interval_minutes: getIntInput("youtubeMinInterval", 60)
+          },
+          twitter: {
+            enabled: $("#twitterEnabled").value === "on",
+            mode: "cookie",
+            ...(twitterCookie ? { cookie: twitterCookie } : {}),
+            cookie_env: getInput("twitterCookieEnv"),
+            daily_search_budget: getIntInput("twitterDailySearchBudget", 0),
+            daily_feed_budget: getIntInput("twitterDailyFeedBudget", 0),
+            daily_creator_budget: getIntInput("twitterDailyCreatorBudget", 0),
+            request_interval_seconds: getIntInput("twitterRequestInterval", 3),
+            min_interval_minutes: getIntInput("twitterMinInterval", 60)
           }
         },
         scheduler: {
           enabled: $("#schedulerEnabled").value === "on",
           pause_on_extension_disconnect: $("#pauseDisconnect").value === "pause",
-          discovery_cron: getInput("discoveryCron"),
-          pool_target_count: getIntInput("poolTarget", 600),
+          extension_disconnect_grace_seconds: getIntInput("extensionDisconnectGrace", 90),
+          pool_target_count: getIntInput("poolTarget", 300),
           account_sync_interval_hours: getIntInput("accountSyncInterval", 6),
+          refresh_check_interval_seconds: getIntInput("refreshCheckInterval", 60),
+          signal_event_threshold: getIntInput("signalEventThreshold", 6),
+          feedback_batch_threshold: getIntInput("feedbackBatchThreshold", 3),
+          trending_refresh_hours: getIntInput("trendingRefreshHours", 3),
+          explore_refresh_hours: getIntInput("exploreRefreshHours", 12),
+          discovery_limit: getIntInput("discoveryLimit", 30),
+          proactive_push_interval_seconds: getIntInput("proactivePushInterval", 120),
+          speculator_idle_interval_minutes: getIntInput("speculatorIdleInterval", 30),
           pool_source_shares: {
             bilibili: getIntInput("shareBilibili", 8),
             xiaohongshu: getIntInput("shareXhs", 1),
             douyin: getIntInput("shareDouyin", 1),
-            youtube: getIntInput("shareYoutube", 1)
+            youtube: getIntInput("shareYoutube", 1),
+            twitter: getIntInput("shareTwitter", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -3260,6 +3955,166 @@
           unmanaged_max_age_days: getIntInput("logUnmanagedMaxAge", 30)
         }
       };
+    }
+
+    const UPDATE_REASON_TEXT = {
+      dirty_worktree: "代码目录有未提交改动，更新被阻止",
+      unsupported_install_mode: "当前安装方式不支持自动更新",
+      untrusted_remote: "git 远端不在允许列表，更新被阻止",
+      branch_not_fast_forwardable: "本地代码与发布版本分叉，无法快进更新",
+      merge_or_rebase_in_progress: "代码目录正在合并 / 变基，更新暂缓",
+      github_unreachable: "无法访问 GitHub 检查更新",
+      missing_target_tag: "远端未找到目标版本标签",
+      dependency_sync_failed: "更新后依赖安装失败",
+      restart_failed: "更新后重启失败",
+      no_backend_tag_yet: "远端暂无后端发布标签",
+      prerelease_ignored: "仅有预发布版本，已忽略",
+      already_applying: "正在更新中"
+    };
+
+    function formatUpdateCheckTime(iso) {
+      if (!iso) return "";
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function describeUpdateStatus(backend) {
+      const reasonKey = backend.reason && backend.reason !== "none" ? String(backend.reason) : "";
+      const reasonText = UPDATE_REASON_TEXT[reasonKey] || reasonKey;
+      const current = backend.current_version ? `v${backend.current_version}` : "";
+      const latest = backend.latest_version ? `v${backend.latest_version}` : "";
+      const checkedAt = formatUpdateCheckTime(backend.last_check_at);
+      const suffix = checkedAt ? `（${checkedAt} 检查）` : "";
+      switch (backend.state) {
+        case "disabled":
+          return { text: `自动更新未开启${current ? `，当前版本 ${current}` : ""}。`, tone: "" };
+        case "checking":
+          return { text: "正在检查更新…", tone: "" };
+        case "up_to_date":
+          return { text: `已是最新版本${current ? ` ${current}` : ""}${reasonText ? `（${reasonText}）` : ""}${suffix}`, tone: "success" };
+        case "update_available":
+          return { text: `发现新版本 ${latest}（当前 ${current}），${backend.auto_update_enabled ? "将在下个检查周期自动更新" : "开启自动更新后将自动升级"}${suffix}`, tone: "" };
+        case "applying":
+          return { text: `正在更新到 ${latest || "新版本"}…`, tone: "" };
+        case "restart_pending":
+          return { text: "更新完成，等待后端重启生效。", tone: "success" };
+        case "blocked":
+          return { text: `更新被阻止：${reasonText || "未知原因"}${suffix}`, tone: "error" };
+        case "unsupported":
+          return { text: reasonText || "当前安装方式不支持自动更新。", tone: "error" };
+        case "error":
+          return { text: `更新检查出错：${reasonText || backend.last_error || "未知错误"}${suffix}`, tone: "error" };
+        default:
+          return { text: `尚未检查更新${current ? `，当前版本 ${current}` : ""}。`, tone: "" };
+      }
+    }
+
+    function renderUpdateStatus(backend) {
+      const line = $("#updateStatusLine");
+      if (!line) return;
+      if (!backend || typeof backend !== "object") {
+        line.hidden = true;
+        return;
+      }
+      const mode = String(backend.install_mode || "");
+      // Older backends predate install_mode — keep the toggle usable there.
+      const unsupportedInstall = Boolean(mode) && mode !== "git";
+      const toggle = $("#autoUpdate");
+      const interval = $("#autoUpdateInterval");
+      if (toggle) toggle.disabled = unsupportedInstall;
+      if (interval) interval.disabled = unsupportedInstall;
+      if (unsupportedInstall) {
+        line.dataset.tone = "error";
+        line.textContent = mode === "frozen"
+          ? "桌面安装包不支持后端自动更新，请下载并安装新版安装包获取更新。"
+          : "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
+      } else {
+        const { text, tone } = describeUpdateStatus(backend);
+        line.dataset.tone = tone;
+        line.textContent = text;
+      }
+      line.hidden = false;
+    }
+
+    async function refreshUpdateStatus() {
+      const line = $("#updateStatusLine");
+      try {
+        const payload = await requestJson(ENDPOINTS.updateStatus);
+        renderUpdateStatus(payload?.backend || null);
+      } catch {
+        if (line) line.hidden = true;
+      }
+    }
+
+    function formatProbeResult(result) {
+      const ok = Boolean(result?.ok);
+      const provider = result?.provider ? ` ${result.provider}` : "";
+      const model = result?.model ? ` / ${result.model}` : "";
+      const latency = Number.isFinite(Number(result?.latency_ms)) && Number(result.latency_ms) > 0
+        ? ` (${Math.round(Number(result.latency_ms))}ms)`
+        : "";
+      const detail = result?.message || result?.error || (ok ? "服务可用" : "服务不可用");
+      return `${ok ? "可用" : "不可用"}${provider}${model}${latency}: ${detail}`;
+    }
+
+    async function probeConfigService(kind, config) {
+      return await requestJsonStrict(ENDPOINTS.configProbe, {
+        method: "POST",
+        timeoutMs: 35000,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, config })
+      });
+    }
+
+    function renderProbeResult(statusEl, result) {
+      if (!statusEl) return;
+      statusEl.dataset.tone = result?.ok ? "success" : "error";
+      statusEl.textContent = formatProbeResult(result);
+      const configStatus = $("#configStatus");
+      if (configStatus) configStatus.value = formatProbeResult(result);
+    }
+
+    function renderProbePending(statusEl, label) {
+      if (!statusEl) return;
+      statusEl.dataset.tone = "pending";
+      statusEl.textContent = `${label} 探测中…`;
+    }
+
+    async function runLlmConfigProbe() {
+      const button = $("#probeLlm");
+      const statusEl = $("#probeLlmStatus");
+      if (button) button.disabled = true;
+      renderProbePending(statusEl, "LLM");
+      try {
+        const result = await probeConfigService("llm", buildConfigUpdate());
+        renderProbeResult(statusEl, result);
+      } catch (error) {
+        renderProbeResult(statusEl, {
+          ok: false,
+          error: configErrorMessage(error?.details) || error?.message || "LLM 探测失败"
+        });
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function runEmbeddingConfigProbe() {
+      const button = $("#probeEmbedding");
+      const statusEl = $("#probeEmbeddingStatus");
+      if (button) button.disabled = true;
+      renderProbePending(statusEl, "Embedding");
+      try {
+        const result = await probeConfigService("embedding", buildConfigUpdate());
+        renderProbeResult(statusEl, result);
+      } catch (error) {
+        renderProbeResult(statusEl, {
+          ok: false,
+          error: configErrorMessage(error?.details) || error?.message || "Embedding 探测失败"
+        });
+      } finally {
+        if (button) button.disabled = false;
+      }
     }
 
     document.addEventListener("click", (event) => {
@@ -3346,6 +4201,7 @@
     safeBind("#activityMoreBtn", "click", () => loadActivityPage());
     safeBind("#settingsBtn", "click", () => openSettingsPage("models"));
     safeBind("#openSettingsHero", "click", () => openSettingsPage("models"));
+    bindStarButton();
     syncTopbarHeight();
     window.addEventListener("resize", syncTopbarHeight);
     ["#dismissOnReshuffleToggle", "#dismissOnReshuffleSetting"].forEach((selector) => {
@@ -3380,6 +4236,10 @@
       const text = input?.value?.trim() || "";
       if (!text) return;
       input.value = "";
+      if (state.messageChatDomain && (state.messageChatScope === "probe" || state.messageChatScope === "avoidance_probe")) {
+        const probeType = state.messageChatScope === "avoidance_probe" ? "avoidance.probe" : "interest.probe";
+        state.handledProbeKeys.add(probeKey(probeType, state.messageChatDomain));
+      }
       sendChat(text, {
         contextPrefix: state.messageChatPrompt,
         scope: state.messageChatScope,
@@ -3390,14 +4250,19 @@
     safeBind("#llmProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), default_provider: $("#llmProvider")?.value || "" } }));
     safeBind("#llmFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), fallback_provider: $("#llmFallbackProvider")?.value || "" } }));
     safeBind("#embeddingFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), embedding: { ...(state.config?.llm?.embedding || {}), fallback_provider: $("#embeddingFallbackProvider")?.value || "" } } }));
+    safeBind("#probeLlm", "click", () => { void runLlmConfigProbe(); });
+    safeBind("#probeEmbedding", "click", () => { void runEmbeddingConfigProbe(); });
+    lanAuthControl = initLanAuthControl();
+    bootAutostartControl = initBootAutostartControl();
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
         setInput("shareXhs", shares.xiaohongshu);
         setInput("shareDouyin", shares.douyin);
         setInput("shareYoutube", shares.youtube);
+        if (shares.twitter !== undefined) setInput("shareTwitter", shares.twitter);
         showToast("已应用来源占比建议");
       } else {
         showToast("没有拿到占比建议");
@@ -3428,6 +4293,7 @@
         if ($("#configStatus")) $("#configStatus").value = `${message}${suffix}`;
         showToast(result?.restart_required ? "配置已保存，需要重启后端" : "配置已保存");
         void hydrateFromBackend();
+        void refreshUpdateStatus();
       } catch (error) {
         const message = configErrorMessage(error.details) || error.message || "未知错误";
         if ($("#configStatus")) $("#configStatus").value = `保存失败：\n${message}`;

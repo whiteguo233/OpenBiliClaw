@@ -47,6 +47,54 @@ def test_bootstrap_connects_to_loopback_when_binding_all_interfaces() -> None:
     assert bootstrap._connect_host_for_bind_host("192.168.1.100") == "192.168.1.100"
 
 
+def test_is_user_data_only_root_accepts_packaged_data_root(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (tmp_path / "config.local.toml").write_text("[api]\nport = 18420\n", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "logs").mkdir()
+
+    assert bootstrap._is_user_data_only_root(tmp_path)
+
+
+def test_is_user_data_only_root_rejects_unknown_entries(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (tmp_path / "random.txt").write_text("not ours\n", encoding="utf-8")
+
+    assert not bootstrap._is_user_data_only_root(tmp_path)
+
+
+def test_ensure_repo_checkout_clones_into_existing_user_data_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "OpenBiliClaw"
+    project_dir.mkdir()
+    (project_dir / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (project_dir / "data").mkdir()
+    (project_dir / "data" / "openbiliclaw.db").write_bytes(b"existing db")
+
+    def fake_run_streaming(cmd: list[str], **_kwargs: object) -> None:
+        clone_dir = Path(cmd[-1])
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        (clone_dir / ".git").mkdir()
+        (clone_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (clone_dir / "config.example.toml").write_text("[general]\n", encoding="utf-8")
+        (clone_dir / "src").mkdir()
+        (clone_dir / "src" / "marker.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap, "which", lambda name: "git" if name == "git" else None)
+    monkeypatch.setattr(bootstrap, "run_streaming", fake_run_streaming)
+
+    result = bootstrap.ensure_repo_checkout(project_dir, "https://example/repo.git", "main")
+
+    assert result == project_dir.resolve()
+    assert (project_dir / ".git").exists()
+    assert (project_dir / "pyproject.toml").exists()
+    assert (project_dir / "config.example.toml").exists()
+    assert (project_dir / "config.toml").read_text(encoding="utf-8") == "language = 'zh'\n"
+    assert (project_dir / "data" / "openbiliclaw.db").read_bytes() == b"existing db"
+
+
 def _write_minimal_config(
     tmp_path: Path,
     *,
@@ -155,6 +203,51 @@ def test_apply_embedding_config_writes_embedding_owned_credentials(tmp_path: Pat
     assert 'api_key = "sk-embedding"' in text
 
 
+def test_docker_run_rewrites_default_ollama_embedding_to_compose_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_config(
+        tmp_path,
+        embedding_provider="",
+        embedding_model="",
+    )
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "docker",
+            "--skip-start",
+            "--embedding-provider",
+            "ollama",
+            "--embedding-model",
+            "bge-m3",
+            "--no-xhs",
+            "--no-douyin",
+            "--no-youtube",
+        ]
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+
+    returncode = bootstrap.run(args)
+
+    config = bootstrap.read_simple_toml(tmp_path / "config.toml")
+    assert returncode == 0
+    assert config["llm"]["embedding"]["provider"] == "ollama"
+    assert config["llm"]["embedding"]["model"] == "bge-m3"
+    assert config["llm"]["embedding"]["base_url"] == "http://ollama:11434/v1"
+
+
 def test_should_auto_wire_embedding_when_unconfigured_local() -> None:
     # Flag-driven install that never passed --embedding-* and left embedding
     # empty → default to local Ollama so dedup isn't silently disabled.
@@ -184,6 +277,255 @@ def test_should_not_auto_wire_embedding_under_docker() -> None:
     )
 
 
+def test_detect_missing_secrets_defaults_to_deepseek_when_provider_absent(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                "",
+                "[llm.deepseek]",
+                'api_key = ""',
+                "",
+                "[bilibili]",
+                'cookie = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    status = bootstrap.detect_missing_secrets(tmp_path)
+
+    assert status["provider"] == "deepseek"
+    assert status["missing"] == ["llm.deepseek.api_key", "bilibili.cookie"]
+
+
+def test_parser_accepts_openai_compatible_provider(tmp_path: Path) -> None:
+    args = bootstrap.build_arg_parser().parse_args(
+        ["--project-dir", str(tmp_path), "--provider", "openai_compatible"]
+    )
+
+    assert args.provider == "openai_compatible"
+
+
+def test_detect_missing_secrets_flags_openai_compatible_connection_fields(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "openai_compatible"',
+                "",
+                "[llm.openai_compatible]",
+                'api_key = ""',
+                'base_url = ""',
+                "",
+                "[bilibili]",
+                'cookie = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    status = bootstrap.detect_missing_secrets(tmp_path)
+
+    assert status["provider"] == "openai_compatible"
+    assert status["missing"] == [
+        "llm.openai_compatible.api_key",
+        "llm.openai_compatible.base_url",
+        "bilibili.cookie",
+    ]
+
+
+def test_reuse_config_secrets_copies_openai_compatible_connection(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    source = tmp_path / "source"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "deepseek"',
+                "",
+                "[llm.openai_compatible]",
+                'api_key = ""',
+                'model = ""',
+                'base_url = ""',
+                "",
+                "[bilibili]",
+                'cookie = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "openai_compatible"',
+                "",
+                "[llm.openai_compatible]",
+                'api_key = "sk-relay"',
+                'model = "relay-model"',
+                'base_url = "https://relay.example/v1"',
+                "",
+                "[bilibili]",
+                'cookie = "SESSDATA=test; bili_jct=test; DedeUserID=1"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    summary = bootstrap.reuse_config_secrets(target, source)
+    status = bootstrap.detect_missing_secrets(target)
+    target_config = bootstrap.read_simple_toml(target / "config.toml")
+
+    assert "llm.openai_compatible.api_key" in summary["reused"]
+    assert "llm.openai_compatible.model" in summary["reused"]
+    assert "llm.openai_compatible.base_url" in summary["reused"]
+    assert status["missing"] == []
+    assert target_config["llm"]["default_provider"] == "openai_compatible"
+    assert target_config["llm"]["openai_compatible"]["api_key"] == "sk-relay"
+    assert target_config["llm"]["openai_compatible"]["model"] == "relay-model"
+    assert target_config["llm"]["openai_compatible"]["base_url"] == "https://relay.example/v1"
+
+
+def test_reuse_config_secrets_copies_remote_provider_model_and_base_url(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    source = tmp_path / "source"
+    target.mkdir()
+    source.mkdir()
+    (target / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "deepseek"',
+                "",
+                "[llm.openrouter]",
+                'api_key = ""',
+                'model = ""',
+                'base_url = ""',
+                "",
+                "[bilibili]",
+                'cookie = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (source / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "openrouter"',
+                "",
+                "[llm.openrouter]",
+                'api_key = "sk-router"',
+                'model = "anthropic/claude-sonnet-4-6"',
+                'base_url = "https://openrouter.ai/api/v1"',
+                "",
+                "[bilibili]",
+                'cookie = "SESSDATA=test; bili_jct=test; DedeUserID=1"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    summary = bootstrap.reuse_config_secrets(target, source)
+    target_config = bootstrap.read_simple_toml(target / "config.toml")
+
+    assert "llm.openrouter.api_key" in summary["reused"]
+    assert "llm.openrouter.model" in summary["reused"]
+    assert "llm.openrouter.base_url" in summary["reused"]
+    assert target_config["llm"]["default_provider"] == "openrouter"
+    assert target_config["llm"]["openrouter"]["api_key"] == "sk-router"
+    assert target_config["llm"]["openrouter"]["model"] == "anthropic/claude-sonnet-4-6"
+    assert target_config["llm"]["openrouter"]["base_url"] == "https://openrouter.ai/api/v1"
+
+
+def test_run_reports_auto_wired_embedding_from_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "config.toml").write_text(
+        "\n".join(
+            [
+                "[llm]",
+                'default_provider = "deepseek"',
+                "",
+                "[llm.deepseek]",
+                'api_key = ""',
+                "",
+                "[llm.embedding]",
+                'provider = ""',
+                'model = ""',
+                'base_url = ""',
+                "",
+                "[bilibili]",
+                'cookie = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-install",
+            "--skip-start",
+        ]
+    )
+
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_ollama_ready",
+        lambda _models: {"running": True, "pulled": ["bge-m3"]},
+    )
+
+    returncode = bootstrap.run(args)
+
+    output = capsys.readouterr().out
+    status_lines = [
+        json.loads(line.removeprefix("BOOTSTRAP_STATUS: "))
+        for line in output.splitlines()
+        if line.startswith("BOOTSTRAP_STATUS: ")
+    ]
+    final = status_lines[-1]
+
+    assert returncode == 0
+    assert final["message"] == "skipped_start"
+    assert final["details"]["init_decisions"]["embedding"] == {
+        "source": "config",
+        "provider": "ollama",
+        "model": "bge-m3",
+        "explicit": True,
+    }
+
+
 def test_build_init_command_appends_all_source_flags_for_local(tmp_path: Path) -> None:
     command = bootstrap.build_init_command(
         "local",
@@ -205,6 +547,459 @@ def test_build_init_command_appends_all_source_flags_for_local(tmp_path: Path) -
         "--bilibili-follow-limit",
         "80",
     ]
+
+
+def test_human_install_choice_parser_accepts_numbers_and_aliases() -> None:
+    assert bootstrap.resolve_human_llm_choice("") == "deepseek"
+    assert bootstrap.resolve_human_llm_choice("1") == "deepseek"
+    assert bootstrap.resolve_human_llm_choice("2") == "openai_compatible"
+    assert bootstrap.resolve_human_llm_choice("relay") == "openai_compatible"
+    assert bootstrap.resolve_human_llm_choice("ollama") == "ollama"
+    assert bootstrap.resolve_human_llm_choice("bad") is None
+
+
+def test_secret_presence_label_never_includes_secret_value() -> None:
+    assert "sk-test" not in bootstrap.mask_secret_for_prompt("sk-test")
+    assert bootstrap.mask_secret_for_prompt("") == "not set"
+
+
+def test_collect_human_install_wizard_refuses_without_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    with pytest.raises(RuntimeError, match="interactive confirmation requires a terminal"):
+        bootstrap.collect_human_install_wizard()
+
+
+def test_human_install_answers_reject_unknown_provider() -> None:
+    with pytest.raises(ValueError, match="unknown provider"):
+        bootstrap.HumanInstallAnswers(provider="openai-compat")
+
+
+def test_collect_human_llm_defaults_to_deepseek() -> None:
+    prompts: list[tuple[str, str]] = []
+    plain_inputs = iter(["", ""])
+    secret_inputs = iter(["sk-deepseek"])
+    answer = bootstrap.collect_human_llm_config(
+        input_func=lambda prompt: prompts.append(("plain", prompt)) or next(plain_inputs),
+        secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
+    )
+
+    assert answer.provider == "deepseek"
+    assert answer.llm_api_key == "sk-deepseek"
+    assert answer.llm_model == "deepseek-v4-flash"
+    assert answer.llm_base_url is None
+    assert any(kind == "secret" and "API Key" in prompt for kind, prompt in prompts)
+
+
+def test_collect_human_llm_openai_compat_relay_collects_triplet() -> None:
+    prompts: list[tuple[str, str]] = []
+    plain_inputs = iter(["2", "", "https://relay.example/v1", ""])
+    secret_inputs = iter(["sk-relay"])
+    answer = bootstrap.collect_human_llm_config(
+        input_func=lambda prompt: prompts.append(("plain", prompt)) or next(plain_inputs),
+        secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
+    )
+
+    assert answer.provider == "openai_compatible"
+    assert answer.provider in bootstrap.SUPPORTED_PROVIDERS
+    assert answer.llm_base_url == "https://relay.example/v1"
+    assert answer.llm_api_key == "sk-relay"
+    assert answer.llm_model == "gpt-5-nano"
+    assert any(kind == "secret" and "API Key" in prompt for kind, prompt in prompts)
+
+
+def test_collect_human_llm_openai_compat_numeric_preset_uses_vendor_defaults() -> None:
+    plain_inputs = iter(["2", "2", "", ""])
+    secret_inputs = iter(["sk-kimi"])
+
+    answer = bootstrap.collect_human_llm_config(
+        input_func=lambda _prompt: next(plain_inputs),
+        secret_input_func=lambda _prompt: next(secret_inputs),
+    )
+
+    assert answer.provider == "openai_compatible"
+    assert answer.llm_base_url == "https://api.moonshot.ai/v1"
+    assert answer.llm_api_key == "sk-kimi"
+    assert answer.llm_model == "kimi-k2.6"
+
+
+def test_collect_human_llm_ollama_needs_no_api_key() -> None:
+    plain_inputs = iter(["7", "qwen2.5:7b"])
+    secret_prompts: list[str] = []
+    answer = bootstrap.collect_human_llm_config(
+        input_func=lambda _prompt: next(plain_inputs),
+        secret_input_func=lambda prompt: secret_prompts.append(prompt) or "",
+    )
+
+    assert answer.provider == "ollama"
+    assert answer.llm_api_key == ""
+    assert answer.llm_model == "qwen2.5:7b"
+    assert secret_prompts == []
+
+
+def test_collect_human_llm_does_not_reuse_key_across_providers() -> None:
+    prompts: list[tuple[str, str]] = []
+    plain_inputs = iter(["3", ""])
+    secret_inputs = iter(["", "sk-openai"])
+
+    answer = bootstrap.collect_human_llm_config(
+        input_func=lambda prompt: prompts.append(("plain", prompt)) or next(plain_inputs),
+        secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
+        existing_provider="deepseek",
+        existing_api_key="sk-old-deepseek",
+    )
+
+    assert answer.provider == "openai"
+    assert answer.llm_api_key == "sk-openai"
+    assert all("press Enter to reuse" not in prompt for _kind, prompt in prompts)
+
+
+def test_prompt_secret_converts_getpass_warning_to_runtime_error() -> None:
+    import getpass
+
+    def raise_getpass_warning(_prompt: str) -> str:
+        raise getpass.GetPassWarning("echo cannot be disabled")
+
+    with pytest.raises(RuntimeError, match="cannot disable terminal echo"):
+        bootstrap._prompt_secret(raise_getpass_warning, "API Key")
+
+
+def test_collect_human_install_wizard_default_path() -> None:
+    prompts: list[tuple[str, str]] = []
+    plain_inputs = iter(
+        [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
+    )
+    secret_inputs = iter(["sk-deepseek"])
+
+    answer = bootstrap.collect_human_install_wizard(
+        input_func=lambda prompt: prompts.append(("plain", prompt)) or next(plain_inputs),
+        secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
+    )
+
+    assert answer.provider == "deepseek"
+    assert answer.embedding_provider == "ollama"
+    assert answer.embedding_model == "bge-m3"
+    assert answer.bilibili_favorite_limit == 300
+    assert answer.bilibili_follow_limit == 100
+    assert answer.xhs is False
+    assert answer.douyin is False
+    assert answer.youtube is False
+    assert answer.cookie_mode == "extension"
+    assert any(kind == "secret" and "API Key" in prompt for kind, prompt in prompts)
+
+
+def test_collect_human_install_wizard_manual_cookie() -> None:
+    prompts: list[tuple[str, str]] = []
+    plain_inputs = iter(
+        [
+            "7",
+            "qwen2.5:7b",
+            "3",
+            "120",
+            "80",
+            "n",
+            "y",
+            "n",
+            "manual",
+        ]
+    )
+    secret_inputs = iter(["SESSDATA=test; bili_jct=test; DedeUserID=1"])
+
+    answer = bootstrap.collect_human_install_wizard(
+        input_func=lambda prompt: prompts.append(("plain", prompt)) or next(plain_inputs),
+        secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
+    )
+
+    assert answer.provider == "ollama"
+    assert answer.embedding_provider == ""
+    assert answer.embedding_model == ""
+    assert answer.douyin is True
+    assert answer.cookie_mode == "manual"
+    assert answer.bilibili_cookie.startswith("SESSDATA=")
+    assert any(kind == "secret" and "Cookie" in prompt for kind, prompt in prompts)
+
+
+def test_apply_human_install_answers_sets_all_bootstrap_args(tmp_path: Path) -> None:
+    args = bootstrap.build_arg_parser().parse_args(["--project-dir", str(tmp_path)])
+    answers = bootstrap.HumanInstallAnswers(
+        provider="deepseek",
+        llm_api_key="sk-test",
+        llm_model="deepseek-v4-flash",
+        embedding_provider="ollama",
+        embedding_model="bge-m3",
+        xhs=False,
+        douyin=True,
+        youtube=False,
+        cookie_mode="manual",
+        bilibili_cookie="SESSDATA=test",
+        bilibili_favorite_limit=120,
+        bilibili_follow_limit=80,
+    )
+
+    bootstrap.apply_human_install_answers_to_args(args, answers)
+
+    assert args.provider == "deepseek"
+    assert args.llm_api_key == "sk-test"
+    assert args.llm_model == "deepseek-v4-flash"
+    assert args.embedding_provider == "ollama"
+    assert args.embedding_model == "bge-m3"
+    assert args.no_xhs is True
+    assert args.yes_douyin is True
+    assert args.no_youtube is True
+    assert args.bilibili_cookie == "SESSDATA=test"
+    assert args.bilibili_favorite_limit == 120
+    assert args.bilibili_follow_limit == 80
+
+
+def test_apply_human_install_answers_does_not_clear_existing_secret_on_empty_answer(
+    tmp_path: Path,
+) -> None:
+    args = bootstrap.build_arg_parser().parse_args(
+        ["--project-dir", str(tmp_path), "--llm-api-key", "explicit"]
+    )
+    answers = bootstrap.HumanInstallAnswers(provider="deepseek", llm_api_key="")
+
+    bootstrap.apply_human_install_answers_to_args(args, answers)
+
+    assert args.llm_api_key == "explicit"
+
+
+def test_apply_human_install_answers_reconciles_extension_wait_flag(
+    tmp_path: Path,
+) -> None:
+    for cookie_mode, expected_wait in [
+        ("extension", True),
+        ("manual", False),
+        ("existing", False),
+    ]:
+        args = bootstrap.build_arg_parser().parse_args(
+            [
+                "--project-dir",
+                str(tmp_path),
+                "--wait-for-extension-cookie",
+            ]
+        )
+        answers = bootstrap.HumanInstallAnswers(
+            provider="deepseek",
+            cookie_mode=cookie_mode,
+            bilibili_cookie="SESSDATA=test" if cookie_mode == "manual" else "",
+        )
+
+        bootstrap.apply_human_install_answers_to_args(args, answers)
+
+        assert args.wait_for_extension_cookie is expected_wait
+
+
+def test_run_interactive_confirm_collects_full_human_install_choices(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_minimal_config(tmp_path)
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-install",
+            "--skip-start",
+            "--interactive-confirm",
+        ]
+    )
+
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "collect_human_install_wizard",
+        lambda **_kwargs: bootstrap.HumanInstallAnswers(
+            provider="deepseek",
+            llm_api_key="sk-new",
+            llm_model="deepseek-v4-flash",
+            embedding_provider="ollama",
+            embedding_model="bge-m3",
+            xhs=False,
+            douyin=False,
+            youtube=False,
+            cookie_mode="manual",
+            bilibili_cookie="SESSDATA=test; bili_jct=test; DedeUserID=1",
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_ollama_ready",
+        lambda _models: {"running": True, "pulled": ["bge-m3"]},
+    )
+
+    returncode = bootstrap.run(args)
+
+    text = (tmp_path / "config.toml").read_text(encoding="utf-8")
+    output = capsys.readouterr().out
+
+    assert returncode == 0
+    assert 'default_provider = "deepseek"' in text
+    assert 'api_key = "sk-new"' in text
+    assert 'provider = "ollama"' in text
+    assert args.wait_for_extension_cookie is False
+    assert "sk-new" not in output
+    assert "SESSDATA=test" not in output
+
+
+def test_run_interactive_confirm_without_tty_returns_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_minimal_config(tmp_path)
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-install",
+            "--skip-start",
+            "--interactive-confirm",
+        ]
+    )
+
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    returncode = bootstrap.run(args)
+
+    output = capsys.readouterr().out
+    assert returncode == 2
+    assert "interactive confirmation requires a terminal" in output
+
+
+def test_run_interactive_confirm_getpass_warning_returns_interactive_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_minimal_config(tmp_path)
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-install",
+            "--skip-start",
+            "--interactive-confirm",
+        ]
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "collect_human_install_wizard",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("cannot disable terminal echo for secret prompt")
+        ),
+    )
+
+    returncode = bootstrap.run(args)
+
+    output = capsys.readouterr().out
+    status_lines = [
+        json.loads(line.removeprefix("BOOTSTRAP_STATUS: "))
+        for line in output.splitlines()
+        if line.startswith("BOOTSTRAP_STATUS: ")
+    ]
+    assert returncode == 2
+    assert status_lines[-1]["status"] == "error"
+    assert status_lines[-1]["details"]["step"] == "interactive_confirm"
+    assert "unexpected" not in status_lines[-1]["message"]
+
+
+def test_run_interactive_confirm_apply_error_returns_interactive_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_minimal_config(tmp_path)
+    args = bootstrap.build_arg_parser().parse_args(
+        [
+            "--project-dir",
+            str(tmp_path),
+            "--mode",
+            "local",
+            "--skip-install",
+            "--skip-start",
+            "--interactive-confirm",
+        ]
+    )
+    answers = bootstrap.HumanInstallAnswers(provider="deepseek")
+
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_repo_checkout",
+        lambda project_dir, _repo_url, _branch: project_dir,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "ensure_config_toml",
+        lambda _project_dir: tmp_path / "config.toml",
+    )
+    monkeypatch.setattr(bootstrap, "collect_human_install_wizard", lambda **_kwargs: answers)
+    monkeypatch.setattr(
+        bootstrap,
+        "apply_human_install_answers_to_args",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("unknown provider")),
+    )
+
+    returncode = bootstrap.run(args)
+
+    output = capsys.readouterr().out
+    status_lines = [
+        json.loads(line.removeprefix("BOOTSTRAP_STATUS: "))
+        for line in output.splitlines()
+        if line.startswith("BOOTSTRAP_STATUS: ")
+    ]
+    assert returncode == 2
+    assert status_lines[-1]["status"] == "error"
+    assert status_lines[-1]["details"]["step"] == "interactive_confirm"
+    assert "unexpected" not in status_lines[-1]["message"]
 
 
 def test_interactive_answers_apply_source_flags() -> None:

@@ -208,14 +208,15 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │                  用户交互层 (浏览器插件)                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐    │
 │  │ 跨站行为采集   │  │ 推荐展示 UI   │  │ 对话/反馈/探针   │    │
-│  │ B站+xhs+dy+yt│  │ (LUI 界面)   │  │ (durable turn) │    │
-│  │ +停留满意度   │  │ +真实可换数   │  │                │    │
+│  │ B站+xhs+dy   │  │ (LUI 界面)   │  │ (durable turn) │    │
+│  │ +yt+x(推文)  │  │ +真实可换数   │  │                │    │
+│  │ +停留满意度   │  │ +文字卡渲染   │  │                │    │
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ xhs/dy/yt 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ B 站 / 抖音 Cookie 同步（runtime-stream 请求 + 扩展回传）   │   │
+│  │ B 站 / 抖音 / X Cookie 同步（runtime-stream 请求 + 扩展回传）│   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ delight / interest.probe / avoidance.probe 主动推送（含probe_mode）│ │
@@ -246,6 +247,9 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 画像编辑：编辑面板 -> /api/profile/edit -> 覆盖层（插件/移动/桌面三端） │ │
 │  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ 引导初始化：插件/桌面 Web/安装向导前置清单 -> /api/init + 进度流 │ │
+│  └──────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
 │                      Agent 核心层                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -259,16 +263,17 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  └──────────────┘ └──────────────┘ └────────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │     PoolCurator + 双轴 fatigue + per-group 窗口 + 新兴趣放大保护 │ │
-│  │     ContinuousRefreshController + B/XHS/DY/YT=8/1/1/1 │   │
+│  │     ContinuousRefreshController + B/XHS/DY/YT/X=8/1/1/1/1 │ │
 │  │     DiscoveryCandidatePipeline: raw candidates -> mixed batch eval -> pool │ │
 │  │     LLM gate: scheduler + extension presence          │   │
 │  │     Autostart: user login item + Ollama preflight/self-heal │ │
-│  │     XHS/Douyin/YouTube producers: 按平台缺口独立补池       │   │
+│  │     XHS/Douyin/YouTube/X producers: 按平台缺口独立补池     │   │
 │  │     Hot reload one-shots: interest/avoidance force_tick │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │
 │  │     Interest probes: near 5 + challenge 3 独立 active 额度 │   │
 │  │     Probe memory: domain / axis / distance + exploration buffer │ │
 │  │     AccountSync: B 站账号增量 -> Memory/Soul bootstrap     │   │
+│  │     Guided init: run_guided_init 共享流水线 + InitCoordinator 状态机 + /api/init* + init 期写者门控 │ │
 │  │     Pool readiness: servable/raw/pending 统一库存口径       │   │
 │  │     Source bootstrap seen-key guard -> Memory/Profile      │   │
 │  │     Profile overrides overlay: 用户编辑 -> profile_overrides.json │ │
@@ -290,6 +295,11 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ XAdapter + XDiscoveryProducer: 服务端 cookie 重放(twitter-cli) │ │
+│  │   search / feed(For-You) / creator(账号订阅) + 源健康状态机   │   │
+│  │   行为采集: 扩展 MAIN-world GraphQL tap(被动偷听互动)         │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Cookie/登录态、runtime-stream presence、任务持久化/claim、seen-key 去重 │ │

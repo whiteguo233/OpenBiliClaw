@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenBiliClaw · 首次设置</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #181b22; --panel-2: #20242e; --line: #2c313c;
+      --text: #eef1f6; --muted: #99a2b2; --accent: #fb7299; --accent-2: #2bb3a3;
+      --ok: #36c46f; --warn: #f4b942; --err: #ff6b6b; --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, #1b2030 0%, var(--bg) 60%);
+      color: var(--text); font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      display: flex; align-items: center; justify-content: center; padding: 32px 16px;
+    }
+    .card {
+      width: 100%; max-width: 560px; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 20px; box-shadow: 0 24px 60px rgba(0,0,0,.45); overflow: hidden;
+    }
+    .head { padding: 26px 28px 18px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
+    .brand .mark {
+      width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--accent), #ff9bb6); color: #fff; font-weight: 800;
+    }
+    .steps { display: flex; gap: 8px; margin-top: 18px; }
+    .steps .dot { flex: 1; height: 4px; border-radius: 99px; background: var(--line); transition: .3s; }
+    .steps .dot.active { background: var(--accent); }
+    .steps .dot.done { background: var(--accent-2); }
+    .body { padding: 26px 28px; }
+    .panel { display: none; animation: fade .25s ease; }
+    .panel.active { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    h2 { margin: 0 0 6px; font-size: 20px; }
+    .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+    label { display: block; font-weight: 600; margin: 16px 0 6px; font-size: 13px; }
+    select, input {
+      width: 100%; padding: 11px 13px; background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--line); border-radius: 10px; font-size: 14px; outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+    .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+    .hint a { color: var(--accent); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+    .row-actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 26px; }
+    button {
+      appearance: none; border: 0; border-radius: 11px; padding: 12px 20px; font-size: 14px; font-weight: 700;
+      cursor: pointer; transition: .15s; font-family: inherit;
+    }
+    .primary { background: var(--accent); color: #fff; }
+    .primary:hover { filter: brightness(1.08); }
+    .primary:disabled { opacity: .5; cursor: not-allowed; }
+    .ghost { background: transparent; color: var(--muted); }
+    .ghost:hover { color: var(--text); }
+    .msg { margin-top: 14px; padding: 11px 13px; border-radius: 10px; font-size: 13px; display: none; }
+    .msg.show { display: block; }
+    .msg.ok { background: rgba(54,196,111,.12); color: var(--ok); border: 1px solid rgba(54,196,111,.3); }
+    .msg.err { background: rgba(255,107,107,.12); color: var(--err); border: 1px solid rgba(255,107,107,.3); }
+    .check-list { list-style: none; padding: 0; margin: 18px 0; }
+    .check-list li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel-2);
+      border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
+    .check-list .tick { width: 24px; height: 24px; border-radius: 50%; background: rgba(54,196,111,.15);
+      color: var(--ok); display: grid; place-items: center; font-weight: 800; flex: none; }
+    .check-list .pending .tick { background: rgba(153,162,178,.15); color: var(--muted); }
+    .init-checks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 9px; }
+    .init-checks li { padding: 11px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+    .init-row { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 13px; }
+    .init-mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; background: rgba(153,162,178,.15); color: var(--muted); font-weight: 900; }
+    .init-ok .init-mark { background: rgba(54,196,111,.14); color: var(--ok); }
+    .init-missing.init-hard .init-mark { background: rgba(255,107,107,.14); color: var(--err); }
+    .init-missing.init-soft .init-mark { background: rgba(244,185,66,.14); color: var(--warn); }
+    .init-hint { margin: 7px 0 0 32px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+    .init-sources { display: grid; gap: 8px; margin: 16px 0; }
+    .init-sources-title { margin: 0 0 2px; font-size: 13px; font-weight: 800; color: var(--text); }
+    .init-source-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); font-size: 13px; }
+    .init-source-row input { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+    .init-source-row input:disabled { opacity: .75; }
+    .progress { margin-top: 18px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+    .progress-track { height: 8px; border-radius: 999px; background: #10131a; overflow: hidden; }
+    .progress-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .3s ease; }
+    .progress-label { margin: 9px 0 0; color: var(--muted); font-size: 13px; }
+    .adv { margin-top: 14px; }
+    .adv summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+    .ext-steps { counter-reset: s; padding-left: 0; list-style: none; margin: 16px 0; }
+    .ext-steps li { counter-increment: s; position: relative; padding: 8px 0 8px 34px; font-size: 14px; }
+    .ext-steps li::before { content: counter(s); position: absolute; left: 0; top: 7px; width: 22px; height: 22px;
+      background: var(--accent); color: #fff; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; }
+    .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff; border-radius: 50%; animation: rot .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+    @keyframes rot { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <div class="brand"><span class="mark">B</span><span>OpenBiliClaw</span></div>
+      <div class="steps">
+        <div class="dot active" data-dot="0"></div>
+        <div class="dot" data-dot="1"></div>
+        <div class="dot" data-dot="2"></div>
+        <div class="dot" data-dot="3"></div>
+      </div>
+    </div>
+    <div class="body">
+
+      <!-- Step 0: 连接 AI -->
+      <section class="panel active" data-panel="0">
+        <h2>连接 AI 大脑</h2>
+        <p class="sub">OpenBiliClaw 用大模型理解你、生成推荐解释。选一个服务商,填入它的 API Key 即可。</p>
+        <label for="provider">AI 服务商</label>
+        <select id="provider">
+          <option value="deepseek">DeepSeek（推荐 · 便宜好用）</option>
+          <option value="openai">OpenAI</option>
+          <option value="claude">Claude（Anthropic）</option>
+          <option value="gemini">Gemini（Google）</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="openai_compatible">OpenAI 兼容接口（自建 / 第三方）</option>
+          <option value="ollama">本地 Ollama（免 key，需自备聊天模型）</option>
+        </select>
+
+        <div id="keyWrap">
+          <label for="apiKey">API Key</label>
+          <input id="apiKey" type="password" placeholder="粘贴你的 API Key" autocomplete="off">
+          <div class="hint" id="keyHint"></div>
+        </div>
+
+        <div id="baseWrap" style="display:none">
+          <label for="baseUrl">接口地址 Base URL</label>
+          <input id="baseUrl" type="text" placeholder="https://your-endpoint/v1">
+        </div>
+
+        <div id="ollamaNote" class="hint" style="display:none; margin-top:14px">
+          本地 Ollama 已随安装包附带,无需填 key。聊天默认用 <code>qwen2.5</code> 等模型,
+          首次使用前请确保已 <code>ollama pull</code> 对应模型(embedding 的 bge-m3 已自动就绪)。
+        </div>
+
+        <details class="adv">
+          <summary>高级（可选：自定义模型名）</summary>
+          <label for="model">模型名</label>
+          <input id="model" type="text" placeholder="留空 = 用该服务商默认模型">
+        </details>
+
+        <div class="msg" id="msg0"></div>
+        <div class="row-actions">
+          <span></span>
+          <button class="primary" id="saveLlm">保存并继续 →</button>
+        </div>
+      </section>
+
+      <!-- Step 1: 连接 B站 -->
+      <section class="panel" data-panel="1">
+        <h2>连接你的 B站 账号</h2>
+        <p class="sub">让 OpenBiliClaw 读到你的观看历史,推荐才懂你。最省事的方式是装浏览器扩展,它会自动同步你的 B站 登录,无需复制 cookie。</p>
+        <ol class="ext-steps">
+          <li>安装 OpenBiliClaw 浏览器扩展（Chrome / Edge）</li>
+          <li>在浏览器里登录 <b>bilibili.com</b></li>
+          <li>扩展会自动把登录同步到本地后端</li>
+        </ol>
+        <div id="biliStatus" class="msg show" style="background:var(--panel-2);color:var(--muted);border:1px solid var(--line)">
+          <span class="spin"></span>正在等待 B站 登录同步…（装好扩展并登录后会自动变绿）
+        </div>
+        <div class="hint" style="margin-top:14px">没装扩展也行——可以先跳过,之后在主界面随时连接。</div>
+        <div class="row-actions">
+          <button class="ghost" id="back1">← 上一步</button>
+          <button class="primary" id="next1">先跳过 / 已连接 →</button>
+        </div>
+      </section>
+
+      <!-- Step 2: 初始化 -->
+      <section class="panel" data-panel="2">
+        <h2>初始化画像和推荐池</h2>
+        <p class="sub">和浏览器插件里的「开始初始化」走同一套流程：先检查 B站 登录和 AI 服务，再拉取数据、生成画像、补齐首轮内容池。</p>
+        <div id="initSources" class="init-sources"></div>
+        <ul id="initChecklist" class="init-checks">
+          <li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>
+        </ul>
+        <div id="initProgress" class="progress" hidden>
+          <div class="progress-track"><div class="progress-fill" id="initProgressBar"></div></div>
+          <p class="progress-label" id="initProgressLabel">等待开始</p>
+        </div>
+        <div class="msg" id="initReason"></div>
+        <div class="row-actions">
+          <button class="ghost" id="backInit">← 上一步</button>
+          <button class="primary" id="startInit">开始初始化</button>
+        </div>
+      </section>
+
+      <!-- Step 3: 完成 -->
+      <section class="panel" data-panel="3">
+        <h2>就绪 🎉</h2>
+        <p class="sub">基础配置和首轮初始化已完成,本地引擎可以开始为你工作了。</p>
+        <ul class="check-list">
+          <li><span class="tick">✓</span><div><b>AI 大脑</b><br><span class="hint" id="doneLlm">已连接</span></div></li>
+          <li><span class="tick">✓</span><div><b>本地语义引擎</b><br><span class="hint">Ollama bge-m3 已随包就绪,推荐去重 / 多样性已开启</span></div></li>
+          <li id="biliDone" class="pending"><span class="tick">…</span><div><b>B站 账号</b><br><span class="hint" id="doneBili">可稍后在主界面连接</span></div></li>
+          <li><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint">画像和推荐池已就绪</span></div></li>
+        </ul>
+        <div class="row-actions">
+          <button class="ghost" id="back2">← 上一步</button>
+          <button class="primary" id="finish">开始使用 OpenBiliClaw →</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const KEY_LINKS = {
+      deepseek: ["https://platform.deepseek.com/api_keys", "DeepSeek 开放平台"],
+      openai: ["https://platform.openai.com/api-keys", "OpenAI Platform"],
+      claude: ["https://console.anthropic.com/settings/keys", "Anthropic Console"],
+      gemini: ["https://aistudio.google.com/app/apikey", "Google AI Studio"],
+      openrouter: ["https://openrouter.ai/keys", "OpenRouter"],
+      openai_compatible: ["", ""],
+      ollama: ["", ""],
+    };
+    const INIT_SOURCE_OPTIONS = [
+      { key: "bilibili", label: "B 站", required: true },
+      { key: "xiaohongshu", label: "小红书", required: false },
+      { key: "douyin", label: "抖音", required: false },
+      { key: "youtube", label: "YouTube", required: false },
+      { key: "twitter", label: "X", required: false },
+    ];
+    const INIT_REASON_TEXT = {
+      unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
+      already_running: "初始化正在进行中。",
+      bilibili_not_logged_in: "还没检测到 B站 登录。",
+      llm_not_ready: "AI 服务还没配好或当前不可用。",
+      already_initialized: "已经初始化过了。",
+      local_only: "只能在本机发起初始化。",
+      internal_error: "初始化过程中出错了，请稍后重试。",
+      none: "",
+    };
+    const INIT_SOURCE_LOGIN_HINT =
+      "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
+    const INIT_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
+    const INIT_STREAM_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
+    let step = 0, biliConnected = false, biliPoll = null, initPoll = null, initSocket = null;
+    let initPollInFlight = false, initPollPending = false;
+
+    function setStep(n) {
+      step = n;
+      document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", +p.dataset.panel === n));
+      document.querySelectorAll(".dot").forEach((d) => {
+        const i = +d.dataset.dot;
+        d.classList.toggle("active", i === n);
+        d.classList.toggle("done", i < n);
+      });
+      if (n === 1) startBiliPoll();
+      if (n === 2) renderInitIdle();
+    }
+
+    function renderProvider() {
+      const p = $("#provider").value;
+      const isOllama = p === "ollama";
+      const isCompat = p === "openai_compatible";
+      $("#keyWrap").style.display = isOllama ? "none" : "block";
+      $("#baseWrap").style.display = isCompat ? "block" : "none";
+      $("#ollamaNote").style.display = isOllama ? "block" : "none";
+      const [url, name] = KEY_LINKS[p] || ["", ""];
+      $("#keyHint").innerHTML = url ? `还没有 key？去 <a href="${url}" target="_blank" rel="noopener">${name}</a> 免费申请,粘贴回来即可。` : "";
+    }
+
+    function showMsg(id, text, kind) {
+      const el = $(id);
+      el.className = "msg show " + kind;
+      el.innerHTML = text;
+    }
+
+    async function saveLlm() {
+      const provider = $("#provider").value;
+      const apiKey = $("#apiKey").value.trim();
+      const baseUrl = $("#baseUrl").value.trim();
+      const model = $("#model").value.trim();
+      if (provider !== "ollama" && !apiKey) { showMsg("#msg0", "请先填入 API Key（本地 Ollama 才可免 key）。", "err"); return; }
+      if (provider === "openai_compatible" && !baseUrl) { showMsg("#msg0", "OpenAI 兼容接口需要填 Base URL。", "err"); return; }
+
+      const pcfg = {};
+      if (apiKey) pcfg.api_key = apiKey;
+      if (baseUrl) pcfg.base_url = baseUrl;
+      if (model) pcfg.model = model;
+      // Local Ollama chat needs an explicit model (the packaged default blanks
+      // it so it stays embedding-only). Default to the recommended one; the
+      // user still has to `ollama pull` it.
+      if (provider === "ollama" && !model) pcfg.model = "qwen2.5:7b";
+      const payload = { llm: { default_provider: provider, [provider]: pcfg } };
+
+      const btn = $("#saveLlm");
+      btn.disabled = true; btn.innerHTML = '<span class="spin"></span>保存中…';
+      try {
+        const r = await fetch("/api/config", {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+        const label = provider === "ollama" ? "本地 Ollama" : provider;
+        $("#doneLlm").textContent = "已连接 · " + label;
+        setStep(1);
+      } catch (e) {
+        showMsg("#msg0", "保存失败：" + e.message, "err");
+      } finally {
+        btn.disabled = false; btn.innerHTML = "保存并继续 →";
+      }
+    }
+
+    async function checkBili() {
+      try {
+        const r = await fetch("/api/config");
+        if (!r.ok) return false;
+        const data = await r.json();
+        const cfg = data.config || data;
+        const cookie = cfg?.bilibili?.cookie || "";
+        return Boolean(cookie && String(cookie).trim());
+      } catch { return false; }
+    }
+
+    function describeInitReason(reason) {
+      if (!reason || reason === "none") return "";
+      return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function enabledPlatforms(status) {
+      const platforms = status?.prerequisites?.enabled_platforms;
+      return Array.isArray(platforms) ? platforms.map(String) : [];
+    }
+
+    function initSourceLabels(keys) {
+      const byKey = new Map(INIT_SOURCE_OPTIONS.map((opt) => [opt.key, opt.label]));
+      return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
+    }
+
+    function buildInitChecklist(status) {
+      const prereq = status?.prerequisites || {};
+      const enabled = enabledPlatforms(status);
+      return [
+        {
+          key: "bilibili",
+          label: "B站 已登录",
+          ok: Boolean(prereq.bilibili_logged_in),
+          hard: true,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。",
+        },
+        {
+          key: "llm",
+          label: "AI 服务可用",
+          ok: Boolean(prereq.llm_ready),
+          hard: true,
+          hint: "回到第一步填好 LLM provider 的 API Key，或确认本地 / 远端模型服务可达。",
+        },
+        {
+          key: "embedding",
+          label: "向量模型可用（推荐，非必须）",
+          ok: Boolean(prereq.embedding_ready),
+          hard: false,
+          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但推荐去重和语义检索会弱一些。",
+        },
+        {
+          key: "platforms",
+          label: enabled.length ? `已启用来源：${initSourceLabels(enabled).join("、")}` : "数据来源：仅 B站",
+          ok: true,
+          hard: false,
+          hint: "",
+        },
+      ];
+    }
+
+    function renderInitSources() {
+      const root = $("#initSources");
+      root.innerHTML = '<p class="init-sources-title">选择初始化数据来源</p>';
+      for (const opt of INIT_SOURCE_OPTIONS) {
+        const label = document.createElement("label");
+        label.className = "init-source-row";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = opt.key;
+        input.dataset.initSource = opt.key;
+        input.checked = Boolean(opt.required);
+        input.disabled = Boolean(opt.required);
+        const text = document.createElement("span");
+        text.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+        label.append(input, text);
+        root.append(label);
+      }
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = INIT_SOURCE_LOGIN_HINT;
+      root.append(hint);
+    }
+
+    function readSelectedInitSources() {
+      const selected = [...document.querySelectorAll("input[data-init-source]")]
+        .filter((input) => input.checked)
+        .map((input) => input.value);
+      if (!selected.includes("bilibili")) selected.push("bilibili");
+      return selected;
+    }
+
+    function renderInitChecklist(status) {
+      const root = $("#initChecklist");
+      root.innerHTML = "";
+      for (const row of buildInitChecklist(status)) {
+        const li = document.createElement("li");
+        li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
+        const head = document.createElement("div");
+        head.className = "init-row";
+        const mark = document.createElement("span");
+        mark.className = "init-mark";
+        mark.textContent = row.ok ? "✓" : row.hard ? "✗" : "•";
+        const label = document.createElement("span");
+        label.textContent = row.label;
+        head.append(mark, label);
+        li.append(head);
+        if (!row.ok && row.hint) {
+          const hint = document.createElement("p");
+          hint.className = "init-hint";
+          hint.textContent = row.hint;
+          li.append(hint);
+        }
+        root.append(li);
+      }
+    }
+
+    function setInitReason(text, kind = "err") {
+      const el = $("#initReason");
+      el.className = text ? `msg show ${kind}` : "msg";
+      el.textContent = text || "";
+    }
+
+    function selectedSourcesNeedingEnable(selected, status) {
+      const checked = new Set(selected);
+      const enabled = new Set(enabledPlatforms(status));
+      return INIT_SOURCE_OPTIONS
+        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .map((opt) => opt.key);
+    }
+
+    async function fetchInitStatus() {
+      const r = await fetch("/api/init-status");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }
+
+    function progressView(status) {
+      const total = status?.total_stages || 4;
+      const stages = Array.isArray(status?.stages) ? status.stages : [];
+      const done = stages.filter((s) => s.status === "ok").length;
+      const failed = stages.find((s) => s.status === "failed" || s.status === "cancelled");
+      const running = Boolean(status?.running);
+      const current = status?.current_stage || 0;
+      const currentStage = stages.find((s) => s.n === current);
+      const pct = Math.max(0, Math.min(100, Math.round(((done + (running ? 0.5 : 0)) / total) * 100)));
+      return {
+        pct: running ? Math.max(pct, 1) : pct,
+        failed,
+        label: failed
+          ? `初始化未完成：${describeInitReason(status?.reason) || failed.reason || "请稍后重试"}`
+          : running
+            ? `${currentStage ? `${currentStage.n}/${total} ${currentStage.label}` : "正在初始化"}（${Math.max(pct, 1)}%）`
+            : "初始化完成",
+      };
+    }
+
+    function renderInitProgress(status) {
+      $("#initSources").style.display = "none";
+      $("#initProgress").hidden = false;
+      const view = progressView(status);
+      $("#initProgressBar").style.width = `${view.pct}%`;
+      $("#initProgressLabel").textContent = view.label;
+      $("#startInit").disabled = Boolean(status?.running);
+      $("#startInit").textContent = status?.running ? "初始化进行中…" : view.failed ? "重试初始化" : "开始初始化";
+    }
+
+    function renderInitIdle() {
+      clearInitPoll();
+      renderInitSources();
+      $("#initSources").style.display = "";
+      $("#initChecklist").innerHTML = '<li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+      $("#initProgress").hidden = true;
+      $("#initProgressBar").style.width = "0";
+      $("#startInit").disabled = false;
+      $("#startInit").textContent = "开始初始化";
+      setInitReason("");
+    }
+
+    function clearInitPoll() {
+      if (initPoll) {
+        clearTimeout(initPoll);
+        initPoll = null;
+      }
+    }
+
+    function scheduleInitPoll(delayMs = INIT_POLL_MS) {
+      clearInitPoll();
+      initPoll = setTimeout(() => {
+        initPoll = null;
+        void pollInitStatus();
+      }, delayMs);
+    }
+
+    function initStreamReady() {
+      return initSocket && initSocket.readyState === 1;
+    }
+
+    async function pollInitStatus() {
+      if (initPollInFlight) {
+        initPollPending = true;
+        return;
+      }
+      initPollInFlight = true;
+      clearInitPoll();
+      try {
+        const status = await fetchInitStatus();
+        renderInitProgress(status);
+        if (status.initialized) {
+          clearInitPoll();
+          setStep(3);
+          return;
+        }
+        if (status.running) {
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+          return;
+        }
+        clearInitPoll();
+        if (status.reason && status.reason !== "none") setInitReason(describeInitReason(status.reason) || status.detail || "初始化未完成。");
+      } catch {
+        scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+      } finally {
+        initPollInFlight = false;
+        if (initPollPending && step === 2) {
+          initPollPending = false;
+          void pollInitStatus();
+        } else {
+          initPollPending = false;
+        }
+      }
+    }
+
+    function connectInitStream() {
+      if (initSocket) return;
+      try {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        initSocket = new WebSocket(`${proto}//${location.host}/api/runtime-stream`);
+        initSocket.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (["init_progress", "init_completed", "init_failed"].includes(payload.type)) {
+              void pollInitStatus();
+            }
+          } catch {}
+        };
+        initSocket.onclose = () => {
+          initSocket = null;
+          if (step === 2) scheduleInitPoll(INIT_POLL_MS);
+        };
+      } catch {
+        initSocket = null;
+      }
+    }
+
+    async function startGuidedInit() {
+      const selected = readSelectedInitSources();
+      $("#startInit").disabled = true;
+      $("#startInit").innerHTML = '<span class="spin"></span>检查中…';
+      $("#initChecklist").innerHTML = '<li class="init-checking">正在检查 B站 登录 / AI 服务 / 向量模型（实时请求测试，可能要十几秒）…</li>';
+      setInitReason("");
+      let status;
+      try {
+        status = await fetchInitStatus();
+      } catch (e) {
+        renderInitIdle();
+        setInitReason("前置检查没拉到，后端可能还在启动，请稍后再试。");
+        return;
+      }
+
+      if (status.initialized) {
+        setStep(3);
+        return;
+      }
+      if (status.running) {
+        renderInitProgress(status);
+        connectInitStream();
+        scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_START_POLL_MS);
+        return;
+      }
+      const needEnable = selectedSourcesNeedingEnable(selected, status);
+      if (needEnable.length) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason(`你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到 /web 设置页开启对应平台，或取消勾选后再点一次。`);
+        return;
+      }
+      if (!status.can_start) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason(describeInitReason(status.reason) || status.detail || "以下条件未满足，无法开始初始化。");
+        return;
+      }
+
+      try {
+        const r = await fetch("/api/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: selected }),
+        });
+        if (!r.ok) {
+          let details = {};
+          try { details = await r.json(); } catch {}
+          throw new Error(describeInitReason(details.error || details.reason) || details.detail || `HTTP ${r.status}`);
+        }
+      } catch (e) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason("初始化没能启动：" + (e.message || "请稍后重试。"));
+        return;
+      }
+      connectInitStream();
+      renderInitProgress({ running: true, current_stage: 1, total_stages: 4, stages: [] });
+      scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_START_POLL_MS);
+    }
+
+    function startBiliPoll() {
+      if (biliPoll) return;
+      const tick = async () => {
+        if (await checkBili()) {
+          biliConnected = true;
+          clearInterval(biliPoll); biliPoll = null;
+          $("#biliStatus").className = "msg show ok";
+          $("#biliStatus").innerHTML = "✓ 已检测到 B站 登录,账号已连接！";
+          $("#next1").textContent = "继续 →";
+          const done = $("#biliDone"); done.classList.remove("pending");
+          done.querySelector(".tick").textContent = "✓";
+          $("#doneBili").textContent = "已连接";
+        }
+      };
+      tick();
+      biliPoll = setInterval(tick, 3000);
+    }
+
+    function finish() {
+      location.href = "/web";
+    }
+
+    // If already configured (e.g. opened by mistake on a set-up install), offer the app.
+    (async function guard() {
+      try {
+        const r = await fetch("/api/config");
+        if (r.ok) {
+          const data = await r.json();
+          const llm = (data.config || data)?.llm || {};
+          const prov = llm.default_provider || "";
+          const hasKey = prov && (prov === "ollama" || (llm[prov] && llm[prov].api_key));
+          if (hasKey) {
+            $("#provider").value = prov;
+          }
+        }
+      } catch {}
+      renderProvider();
+    })();
+
+    $("#provider").addEventListener("change", renderProvider);
+    $("#saveLlm").addEventListener("click", saveLlm);
+    $("#back1").addEventListener("click", () => setStep(0));
+    $("#next1").addEventListener("click", () => setStep(2));
+    $("#backInit").addEventListener("click", () => setStep(1));
+    $("#startInit").addEventListener("click", startGuidedInit);
+    $("#back2").addEventListener("click", () => setStep(2));
+    $("#finish").addEventListener("click", finish);
+  </script>
+</body>
+</html>

@@ -5,24 +5,77 @@ import {
   appendRecommendations,
   cacheConfigSnapshot,
   applyBackendUpdate,
+  checkBackendStatus,
   checkBackendUpdate,
   fetchPendingDelight,
   fetchActivityFeed,
   fetchChatTurn,
   fetchChatTurns,
   fetchConfig,
+  fetchHealth,
   fetchProfileSummary,
   fetchSourceShareSuggestion,
   fetchUpdateStatus,
   fetchWatchLater,
+  probeConfigService,
   readCachedConfigSnapshot,
   requestJson,
   reshuffleRecommendations,
   respondToAvoidanceProbe,
   startChatTurn,
   updateConfig,
+  __resetPopupHealthCacheForTests,
 } from "../popup/popup-api.js";
 import { __resetBackendEndpointForTests } from "../popup/popup-backend-config.js";
+
+test("health helpers coalesce concurrent popup probes", async () => {
+  __resetPopupHealthCacheForTests();
+  const calls: Array<{ url: string; options: RequestInit }> = [];
+  globalThis.fetch = (async (url: string, options: RequestInit = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { status: "ok", service: "openbiliclaw-api", embedding_ready: true };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  const [health, online, healthAgain] = await Promise.all([
+    fetchHealth(),
+    checkBackendStatus(),
+    fetchHealth(),
+  ]);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/health");
+  assert.deepEqual(health, { status: "ok", service: "openbiliclaw-api", embedding_ready: true });
+  assert.equal(online, true);
+  assert.deepEqual(healthAgain, health);
+});
+
+test("health helpers reuse a fresh popup health result", async () => {
+  __resetPopupHealthCacheForTests();
+  const calls: Array<{ url: string; options: RequestInit }> = [];
+  globalThis.fetch = (async (url: string, options: RequestInit = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { status: "ok", service: "openbiliclaw-api", embedding_ready: false };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  const health = await fetchHealth();
+  const online = await checkBackendStatus();
+  const secondHealth = await fetchHealth();
+
+  assert.equal(calls.length, 1);
+  assert.equal(health?.embedding_ready, false);
+  assert.equal(online, true);
+  assert.deepEqual(secondHealth, health);
+});
 
 test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
   const calls = [];
@@ -68,6 +121,8 @@ test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
         content_id: "BV1NEW",
         content_url: "",
         source_platform: "bilibili",
+        content_type: "video",
+        body_text: "",
       },
     ],
   });
@@ -119,6 +174,8 @@ test("appendRecommendations posts excluded bvids to append endpoint", async () =
         content_id: "BV1APPEND",
         content_url: "",
         source_platform: "bilibili",
+        content_type: "video",
+        body_text: "",
       },
     ],
   });
@@ -185,6 +242,8 @@ test("fetchRecommendations normalizes cover urls from the recommend endpoint", a
       content_id: "BV1FETCH",
       content_url: "",
       source_platform: "bilibili",
+      content_type: "video",
+      body_text: "",
     },
   ]);
 });
@@ -597,6 +656,41 @@ test("fetchSourceShareSuggestion posts current settings overrides when provided"
     },
   });
   assert.equal(result.suggested_shares.youtube, 4);
+});
+
+test("probeConfigService posts no-write config probe payload", async () => {
+  const calls: Array<{ url: string; options: any }> = [];
+  globalThis.fetch = async (url: any, options: any) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return {
+          ok: true,
+          kind: "llm",
+          provider: "openai",
+          message: "LLM provider is available.",
+        };
+      },
+    };
+  };
+
+  const result = await probeConfigService("llm", {
+    llm: { default_provider: "openai", openai: { api_key: "sk-test" } },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/config/probe-service");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    kind: "llm",
+    config: {
+      llm: { default_provider: "openai", openai: { api_key: "sk-test" } },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, "openai");
 });
 
 test("updateConfig sends PUT with embedding config", async () => {

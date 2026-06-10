@@ -385,33 +385,47 @@ class OpenClawAdapter:
         probe_modes_key: str | None = "probed_distance_bands",
     ) -> None:
         """Persist OpenClaw probe selection so repeated calls avoid repeats."""
+        update_runtime_state = getattr(
+            self.services.memory_manager,
+            "update_discovery_runtime_state",
+            None,
+        )
         save_runtime_state = getattr(
             self.services.memory_manager,
             "save_discovery_runtime_state",
             None,
         )
-        if not callable(save_runtime_state):
+        if not callable(update_runtime_state) and not callable(save_runtime_state):
             return
-        raw_domains = runtime_state.get(domains_key)
-        raw_axes = runtime_state.get(axes_key)
-        raw_probe_modes = runtime_state.get(probe_modes_key) if probe_modes_key else None
-        probed_domains = dict(raw_domains) if isinstance(raw_domains, dict) else {}
-        probed_axes = dict(raw_axes) if isinstance(raw_axes, dict) else {}
-        probed_probe_modes = dict(raw_probe_modes) if isinstance(raw_probe_modes, dict) else {}
         now = datetime.now().isoformat()
-        probed_domains[domain.lower()] = now
         axis = build_probe_axis(
             experience_mode=getattr(probe, "experience_mode", ""),
             entry_load=getattr(probe, "entry_load", ""),
         )
-        if axis:
-            probed_axes[axis] = now
-        if probe_modes_key:
-            probe_mode = _normalize_probe_mode(getattr(probe, "probe_mode", ""))
-            probed_probe_modes[probe_mode] = now
-            runtime_state[probe_modes_key] = probed_probe_modes
-        runtime_state[domains_key] = probed_domains
-        runtime_state[axes_key] = probed_axes
+        probe_mode = _normalize_probe_mode(getattr(probe, "probe_mode", ""))
+
+        def _mutate(state: dict[str, object]) -> None:
+            raw_domains = state.get(domains_key)
+            raw_axes = state.get(axes_key)
+            raw_probe_modes = state.get(probe_modes_key) if probe_modes_key else None
+            probed_domains = dict(raw_domains) if isinstance(raw_domains, dict) else {}
+            probed_axes = dict(raw_axes) if isinstance(raw_axes, dict) else {}
+            probed_probe_modes = dict(raw_probe_modes) if isinstance(raw_probe_modes, dict) else {}
+            probed_domains[domain.lower()] = now
+            if axis:
+                probed_axes[axis] = now
+            if probe_modes_key:
+                probed_probe_modes[probe_mode] = now
+                state[probe_modes_key] = probed_probe_modes
+            state[domains_key] = probed_domains
+            state[axes_key] = probed_axes
+
+        if callable(update_runtime_state):
+            update_runtime_state(_mutate)
+            return
+        if not callable(save_runtime_state):
+            return
+        _mutate(runtime_state)
         save_runtime_state(runtime_state)
 
     @staticmethod

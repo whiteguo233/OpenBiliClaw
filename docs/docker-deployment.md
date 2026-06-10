@@ -50,71 +50,57 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 
 ## 快速开始
 
+人类在命令行执行一行脚本时，Docker 也走和本地安装一致的完整选择流程：先选 LLM provider，再选 embedding、B 站 Cookie 获取方式和是否启用小红书 / 抖音 / YouTube 初始化信号。Contract marker: human Docker one-line installer asks the same LLM provider first.
+
 ```bash
-# 1. 克隆项目
-git clone https://github.com/whiteguo233/OpenBiliClaw.git
-cd OpenBiliClaw
+# macOS / Linux / WSL2
+MODE=docker curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
+```
 
-# 2. Docker 主路径：启动 compose、确认配置、等待 Cookie、自动运行 init
-python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie
+```powershell
+# Windows PowerShell + Docker Desktop
+$env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.ps1 -UseBasicParsing | iex
+```
 
-# 3. 健康状态：HEALTHCHECK 会让 docker compose ps 在容器真正可服务后才显示 healthy
+安装脚本会克隆 / 更新仓库，然后调用 `agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie`。bootstrap 的 Docker 顺序是：
+
+1. 在宿主机终端收集安装选择。
+2. 写入宿主机 `config.toml`。
+3. `docker compose up -d --build` 启动后端和 Ollama embedding sidecar。
+4. 把确认后的 `config.toml` / Cookie 文件同步到容器 `/app/runtime`。
+5. 等浏览器扩展把 B 站 Cookie 推到 `http://127.0.0.1:8420/api/bilibili/cookie`。
+6. 在容器运行时里检查默认 LLM provider 和 embedding 服务。
+7. 检查通过后自动运行 `openbiliclaw init`。
+
+默认 embedding 仍是 `ollama` + `bge-m3`，但 Docker 里会写成 compose 网络地址 `http://ollama:11434/v1`，指向随 compose 启动的 sidecar，而不是宿主机的 `localhost:11434`。如果你手动填了其他 embedding endpoint，bootstrap 不会覆盖。
+
+B 站登录态推荐用浏览器扩展：扩展安装在**宿主机浏览器**里，不在容器里。你登录 bilibili.com 后，扩展会把 Cookie 自动 POST 到本机 `127.0.0.1:8420` 暴露出来的后端接口；bootstrap 会等待 Cookie 到达后继续 init。手动粘 Cookie 仍可用，但不是默认路径。
+
+小红书、抖音、YouTube 是否加入初始化画像，也在一行安装脚本的人类向导里提前询问。默认都跳过，只有你明确选择 yes 才会把对应来源加入初始化；启用时仍需在宿主机浏览器里安装扩展并登录对应站点。
+
+缺 LLM Key、缺 Cookie、缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。凭据和选择齐全后，bootstrap 会先做真实服务检查。如果返回 `service_check_failed`，说明 init 尚未运行，先修 API key / base_url / model / Ollama 后再重跑同一条安装或 bootstrap 命令。
+
+健康状态可在安装完成后查看：
+
+```bash
+cd "$HOME/OpenBiliClaw"
 docker compose ps
 ```
 
-`agent_bootstrap.py --mode docker` 是 Docker 部署的主入口：它会启动 compose，把宿主机确认后的 `config.toml` 同步到容器 `/app/runtime`，在 B 站 Cookie 通过扩展同步后继续自动运行 init。缺 LLM Key、缺 Cookie 或缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。凭据和选择齐全后，bootstrap 会先在容器运行时里真实验证 LLM provider 和 embedding 服务；如果返回 `service_check_failed`，说明 init 尚未运行，先修 API key / base_url / model / Ollama 后再重跑同一条 bootstrap 命令。
-
-**手动 fallback**：高级排查或重复初始化时，仍可直接运行：
+**手动 fallback**：高级排查、CI 或重复初始化时，可以绕过安装脚本直接运行 bootstrap；如果只是想重跑 init，也可以进容器执行 init。
 
 ```bash
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
+cd OpenBiliClaw
+python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie
+
 docker exec -it openbiliclaw-backend openbiliclaw init
 ```
-
-`init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
-
-1. **Phase 1 — 选 LLM 服务（7 项菜单）**：**第一推荐 DeepSeek**(`deepseek-v4-flash` / ¥0.001/千 token,几乎免费,国内可直连);**第二推荐 #2 "中转站 / OpenAI 协议兼容服务"**——买了中转站 / OneAPI Key 的人走这个,也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM,进子菜单后默认就是中转站 preset。其它选项: #3 OpenAI 官方(`gpt-5-nano`) / #4 Gemini(`gemini-2.5-flash`) / #5 Claude(`claude-sonnet-4-6`) / #6 OpenRouter(`openai/gpt-5-nano`) / #7 本地 Ollama(`qwen2.5:7b`)。Phase 2 会再次显示模型可选项让你确认。
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；选 #2(协议兼容)进子菜单后,Base URL + 默认模型自动填好,只用填 API Key 和确认模型。
-3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
-   - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）
-   - **2) 云端 Gemini embedding**（质量略高 / 跨语言更稳 / 免费档每天 1500 次够用）
-   - **3) 不启用 embedding**（可稍后在设置页或 `setup-embedding` 单独配置）
-   - 高级：自定义 OpenAI 兼容服务 / 指定其他 provider（默认折叠）
-4. **Phase 4 — Per-module 覆盖（高级，默认跳过）**：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
-
-> 💡 **Embedding 选择**：交互式 `init` 会单独问；AI agent 一句话安装则必须在调用 `agent_bootstrap.py` 时显式传 `--embedding-provider ... --embedding-model ...`（默认推荐 `ollama` + `bge-m3`）。Embedding 不再“跟随主 LLM”，传 `--embedding-provider ""` 表示不启用 embedding。运行时 embedding fallback 默认关闭；需要自动切 provider 或借用 chat-side 凭据时，在设置页打开 embedding fallback。
-
-接着 B 站登录态有 **2 种方式**（v0.3.12+）：
-
-- **A.** 装浏览器扩展（推荐，零配置）—— [下载](https://github.com/whiteguo233/OpenBiliClaw/releases) 装好登录 B 站后，扩展会几秒内把 Cookie 自动推到 `http://127.0.0.1:8420/api/bilibili/cookie`。bootstrap 会等待 Cookie 到达并继续自动运行 init
-- **B.** 手动贴 Cookie —— 向导内附 F12 → Network 取 cookie 的 5 步教程
-
-最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。进入 init 前，`agent_bootstrap.py` 会对默认 LLM provider 和 embedding provider 各做一次轻量真实调用；任一失败都会阻止 init，避免生成空画像或半残推荐池。init 会先确认 B 站初始化信号上限：历史固定最多 300 条，收藏默认最多 300 条，关注默认最多 100 人，直接回车接受默认，也可输入数字调整；脚本化可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，`0` 表示跳过对应信号。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
 
 AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外输出
 `BOOTSTRAP_STATUS status=progress message=init_progress` 事件。Agent 应把
 这些 `1/4`、`2/4`、`3/4`、`4/4` 和发现补货进度及时转述给用户，而不是等
 最终 `init_complete` 后才汇报。
-
-> 🌸 **小红书数据是否加入(v0.3.27+)**:init 在 Docker 里跑时也会弹一个交互式问题——把小红书的收藏 / 点赞混进画像吗?
-> - 想加就回 Y,会有准备清单提示你装扩展 + 登录小红书。注意 Docker 模式下扩展是装在你**宿主机**的浏览器里的,后端在容器内通过 8420 端口拉数据
-> - 直接回车或回 N 会跳过,只用 B 站数据建画像
-> - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-xhs` 跳过 / `--yes-xhs` 强制启用
-> - AI agent 的 `agent_bootstrap.py` auto-init 不会默认启用小红书；必须传 `--yes-xhs` 或 `--no-xhs`。没传会返回 `needs_decisions`，让 agent 先问用户
-> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_XHS=1` 环境变量
-
-> 🎵 **抖音数据是否加入(v0.3.67+)**:init 也会单独问是否把抖音发布 / 收藏 / 点赞 / 关注混进画像。
-> - 想加就回 Y，会提示你装扩展 + 登录抖音。注意扩展仍在宿主机浏览器里执行，Docker 容器只通过 8420 端口收结果
-> - 不想加就回 N；非交互式终端默认跳过抖音
-> - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-douyin` 跳过 / `--yes-douyin` 强制启用
-> - AI agent 的 `agent_bootstrap.py` auto-init 同样要求 `--yes-douyin` 或 `--no-douyin` 二选一
-> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_DOUYIN=1` 环境变量
-
-> 🌐 **YouTube 数据是否加入**:init 也会单独问是否把 YouTube 观看历史 / 订阅 / 点赞混进画像。
-> - 想加就回 Y，会提示你装扩展 + 登录 YouTube。注意扩展仍在宿主机浏览器里执行，Docker 容器只通过 8420 端口收结果
-> - 不想加就回 N；非交互式终端默认跳过 YouTube
-> - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-youtube` 跳过 / `--yes-youtube` 强制启用
-> - AI agent 的 `agent_bootstrap.py` auto-init 同样要求 `--yes-youtube` 或 `--no-youtube` 二选一
-> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_YOUTUBE=1` 环境变量
 
 > 💡 **AI agent 一句话部署**：把下面这句粘到 Claude Code / Codex CLI / Cursor / OpenClaw：
 > ```
@@ -124,13 +110,13 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 
 ## 配置
 
-容器首次启动时会基于 `config.example.toml` 自动生成配置模板到 Docker volume 中。你可以通过以下方式编辑：
+一行安装脚本会先在宿主机生成 `config.toml`，再同步到 Docker volume 的 `/app/runtime/config.toml`。配置要改时，优先重跑同一条安装 / bootstrap 命令；高级排查时可以直接编辑容器内文件。
 
 ```bash
-# 方式一：通过 init 命令交互式配置（推荐）
-docker exec -it openbiliclaw-backend openbiliclaw init
+# 重新进入 Docker bootstrap 选择流程
+python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie
 
-# 方式二：直接编辑容器内的配置文件
+# 高级排查：直接编辑容器内配置
 docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 ```
 
@@ -146,7 +132,7 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 
 ### LLM 配置
 
-`init` 向导会按你选的 provider 自动写好 `[llm.<provider>]` 段。如果你想手动改，下面是 v0.3.5+ 的对照表（按推荐顺序排列）：
+安装脚本 / bootstrap 会按你选的 provider 自动写好 `[llm.<provider>]` 段。如果你想手动改，下面是对照表（按推荐顺序排列）：
 
 | Provider | 是否要 Key | 适合谁 | 备注 |
 |---|---|---|---|
@@ -156,9 +142,9 @@ docker exec -it openbiliclaw-backend vi /app/runtime/config.toml
 | `claude` | ✅ | Anthropic 账户 | 高质量推理；无 embedding 接口，需独立配置 `[llm.embedding]` |
 | `openrouter` | ✅ | 想一个 Key 跑多家模型 | 按调用计费；embedding 不可靠，建议独立配置 Ollama / Gemini / OpenAI embedding |
 | `ollama` | ❌ | 完全离线 / 不要 Key / 16GB+ 内存 | CPU 推理首次响应慢（10-60s）。Docker 里 `[llm.ollama] base_url` 必须设成 `http://host.docker.internal:11434/v1` 才能从容器访问宿主机的 Ollama |
-| OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 写到 `[llm.openai]` 同段，关键是显式 `base_url` 字段。**普通用户不要选这个** |
+| OpenAI 协议兼容自建网关（高级） | ✅ 通常需要 | 自己有 vLLM / LMStudio / Azure / OneAPI / 团队 LLM 网关 | 写到 `[llm.openai_compatible]` 段，关键是显式 `base_url` 字段。**普通用户不要选这个** |
 
-> 「OpenAI 官方」 ≠ 「OpenAI 协议兼容自建网关」：v0.3.6+ 向导把这两个拆成独立菜单项，v0.3.20+ 把"自建网关"挪到菜单末尾的"高级"位置（避免普通用户误选）。后端写到同一个 `[llm.openai]` 段，区分点是 `base_url` 字段。
+> 「OpenAI 官方」 ≠ 「OpenAI 协议兼容自建网关」：向导把这两个拆成独立菜单项，OpenAI 官方写 `[llm.openai]`，协议兼容网关写 `[llm.openai_compatible]`。
 >
 > v0.3.20+：当 `--provider openai` 显式给出但 `--llm-base-url` 未给（或选了官方），bootstrap 会自动清空 `[llm.openai] base_url`，让 SDK 回到 `https://api.openai.com/v1`——之前从自建网关切回 OpenAI 官方时 base_url 残留导致继续打老网关的 bug 已修。
 

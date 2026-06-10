@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -192,6 +193,7 @@ def test_openai_compatible_can_serve_as_embedding_provider(tmp_path) -> None:
                 model="bge-large-en-v1.5",
                 api_key="vllm-token",
                 base_url="http://localhost:8000/v1",
+                output_dimensionality=1024,
             ),
         ),
         data_dir=str(tmp_path),
@@ -202,6 +204,7 @@ def test_openai_compatible_can_serve_as_embedding_provider(tmp_path) -> None:
     assert service is not None
     assert service._provider.name == "openai_compatible"
     assert service._model == "bge-large-en-v1.5"
+    assert service._cache_model == "bge-large-en-v1.5"
     # Built against the embedding-section base_url, not [llm.openai].
     assert str(service._provider._client.base_url).rstrip("/") == ("http://localhost:8000/v1")
     assert service._provider._client.api_key == "vllm-token"
@@ -731,6 +734,226 @@ def test_embedding_does_not_auto_fallback_without_explicit_fallback_provider(tmp
     service = build_embedding_service(config, build_llm_registry(config))
 
     assert service is None
+
+
+def test_gemini_embedding_uses_independent_dimension_config(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm import registry as registry_mod
+
+    class StubGeminiProvider:
+        supports_embedding = True
+        name = "gemini"
+
+        def __init__(
+            self,
+            api_key: str,
+            model: str = "gemini-2.5-flash",
+            timeout: float = 300.0,
+            base_url: str = "",
+            embedding_output_dimensionality: int | None = None,
+        ) -> None:
+            self.api_key = api_key
+            self.model = model
+            self.timeout = timeout
+            self.base_url = base_url
+            self.embedding_output_dimensionality = embedding_output_dimensionality
+
+        async def embed(self, text: str, *, model: str | None = None) -> list[float]:
+            return [0.1] * int(self.embedding_output_dimensionality or 3072)
+
+    monkeypatch.setattr(registry_mod, "gemini_sdk_available", lambda: True)
+    monkeypatch.setattr(registry_mod, "GeminiProvider", StubGeminiProvider)
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="gemini",
+            gemini=LLMProviderConfig(
+                api_key="chat-side-gemini-key",
+                model="gemini-2.5-flash",
+            ),
+            embedding=EmbeddingConfig(
+                provider="gemini",
+                model="gemini-embedding-001",
+                api_key="dedicated-gemini-embedding-key",
+                base_url="https://embed-gemini.example.test",
+                output_dimensionality=1024,
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.api_key == "dedicated-gemini-embedding-key"
+    assert service._provider.base_url == "https://embed-gemini.example.test"
+    assert service._provider.embedding_output_dimensionality == 1024
+    assert service._model == "gemini-embedding-001"
+    assert service._cache_model == "gemini-embedding-001#dim=1024"
+
+
+def test_openai_embedding_uses_independent_dimension_config(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.llm import registry as registry_mod
+
+    class StubOpenAIProvider:
+        supports_embedding = True
+
+        def __init__(
+            self,
+            api_key: str,
+            model: str = "gpt-4o",
+            base_url: str = "",
+            provider_name: str = "openai",
+            embedding_output_dimensionality: int = 0,
+            **_: object,
+        ) -> None:
+            self.api_key = api_key
+            self.model = model
+            self.base_url = base_url
+            self._provider_name = provider_name
+            self.embedding_output_dimensionality = embedding_output_dimensionality
+
+        @property
+        def name(self) -> str:
+            return self._provider_name
+
+        async def embed(self, text: str, *, model: str | None = None) -> list[float]:
+            return [0.1] * int(self.embedding_output_dimensionality or 1536)
+
+    monkeypatch.setattr(registry_mod, "OpenAIProvider", StubOpenAIProvider)
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(
+                api_key="chat-side-openai-key",
+                model="gpt-4o-mini",
+            ),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="text-embedding-3-small",
+                api_key="dedicated-openai-embedding-key",
+                base_url="https://embed-openai.example.test/v1",
+                output_dimensionality=1024,
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, LLMRegistry())
+
+    assert service is not None
+    assert service._provider.api_key == "dedicated-openai-embedding-key"
+    assert service._provider.embedding_output_dimensionality == 1024
+    assert service._model == "text-embedding-3-small"
+    assert service._cache_model == "text-embedding-3-small#dim=1024"
+
+
+def test_openai_embedding_dimensions_are_limited_to_embedding_3_models() -> None:
+    from openbiliclaw.llm.openai_provider import OpenAIProvider
+
+    openai_provider = OpenAIProvider(
+        api_key="sk-test",
+        model="gpt-4o-mini",
+        embedding_output_dimensionality=1024,
+    )
+    compatible_provider = OpenAIProvider(
+        api_key="sk-test",
+        model="gpt-4o-mini",
+        base_url="https://api.openai.com/v1",
+        provider_name="openai_compatible",
+        embedding_output_dimensionality=1024,
+    )
+
+    assert openai_provider._supports_embedding_dimensions("text-embedding-3-small") is True
+    assert openai_provider._supports_embedding_dimensions("text-embedding-ada-002") is False
+    assert compatible_provider._supports_embedding_dimensions("text-embedding-3-small") is False
+
+
+def test_ollama_embedding_cache_model_ignores_unhonored_dimension(tmp_path) -> None:
+    config = Config(
+        llm=LLMConfig(
+            default_provider="ollama",
+            ollama=LLMProviderConfig(
+                model="llama3",
+                base_url="http://localhost:11434/v1",
+            ),
+            embedding=EmbeddingConfig(
+                provider="ollama",
+                model="bge-m3",
+                base_url="http://localhost:11434/v1",
+                output_dimensionality=768,
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+
+    service = build_embedding_service(config, build_llm_registry(config))
+
+    assert service is not None
+    assert service._provider.name == "ollama"
+    assert service._cache_model == "bge-m3"
+
+
+def test_embedding_cache_separates_same_text_by_dimension(tmp_path) -> None:
+    from openbiliclaw.llm.embedding import EmbeddingCache, EmbeddingService
+
+    class StaticEmbedder:
+        name = "static"
+
+        async def embed(self, text: str, *, model: str = "") -> list[float]:
+            if "dim=1024" in model:
+                return [1.0] * 1024
+            return [1.0] * 768
+
+    cache = EmbeddingCache(tmp_path / "embedding-cache.db")
+    cache.initialize()
+
+    service_768 = EmbeddingService(
+        StaticEmbedder(),
+        model="fake-embedding#dim=768",
+        cache_model="fake-embedding#dim=768",
+        persistent_cache=cache,
+    )
+    service_1024 = EmbeddingService(
+        StaticEmbedder(),
+        model="fake-embedding#dim=1024",
+        cache_model="fake-embedding#dim=1024",
+        persistent_cache=cache,
+    )
+
+    vector_768 = asyncio.run(service_768.embed("same text"))
+    vector_1024 = asyncio.run(service_1024.embed("same text"))
+
+    assert len(vector_768) == 768
+    assert len(vector_1024) == 1024
+
+    class FailingEmbedder:
+        name = "failing"
+
+        async def embed(self, text: str, *, model: str = "") -> list[float]:
+            raise AssertionError("lookup_cached should read L2 without calling provider")
+
+    cached_768 = EmbeddingService(
+        FailingEmbedder(),
+        model="fake-embedding#dim=768",
+        cache_model="fake-embedding#dim=768",
+        persistent_cache=cache,
+    )
+    cached_1024 = EmbeddingService(
+        FailingEmbedder(),
+        model="fake-embedding#dim=1024",
+        cache_model="fake-embedding#dim=1024",
+        persistent_cache=cache,
+    )
+
+    assert len(cached_768.lookup_cached("same text")) == 768
+    assert len(cached_1024.lookup_cached("same text")) == 1024
 
 
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")

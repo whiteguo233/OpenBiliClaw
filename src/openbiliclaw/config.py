@@ -40,10 +40,11 @@ _MAX_LLM_CONCURRENCY = 16
 _DEFAULT_LLM_TIMEOUT = 300
 _MIN_LLM_TIMEOUT = 10
 _DEFAULT_POOL_SOURCE_SHARES = {
-    "bilibili": 8,
+    "bilibili": 5,
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "twitter": 1,
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -128,6 +129,7 @@ class EmbeddingConfig:
     model: str = "gemini-embedding-001"
     api_key: str = ""
     base_url: str = ""
+    output_dimensionality: int = 1024
     similarity_threshold: float = 0.82
     fallback_enabled: bool = False
     fallback_provider: str = ""
@@ -145,7 +147,7 @@ class ModuleLLMConfig:
 class LLMConfig:
     """LLM configuration with global defaults and per-module overrides."""
 
-    default_provider: str = "openai"
+    default_provider: str = "deepseek"
     concurrency: int = DEFAULT_LLM_CONCURRENCY
     timeout: int = _DEFAULT_LLM_TIMEOUT
     fallback_enabled: bool = False
@@ -295,6 +297,28 @@ class YoutubeSourceConfig:
 
 
 @dataclass
+class TwitterSourceConfig:
+    """X (Twitter) direct-cookie discovery configuration.
+
+    Steady-state discovery is server-side cookie replay (search / For-You /
+    creator), mirroring the Douyin-direct path. The X producer reads the
+    budget / interval knobs below to throttle the three strategies and to
+    keep the high-visibility For-You feed to a low daily cadence. ``0`` daily
+    budgets mean "no per-day cap" (each due run is bounded by the runtime
+    deficit), matching the Douyin / YouTube producer convention.
+    """
+
+    enabled: bool = False
+    mode: str = "cookie"
+    cookie_env: str = "OPENBILICLAW_X_COOKIE"
+    daily_search_budget: int = 0
+    daily_feed_budget: int = 0
+    daily_creator_budget: int = 0
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
+@dataclass
 class BilibiliSourceConfig:
     """Bilibili discovery source switch."""
 
@@ -322,6 +346,7 @@ class SourcesConfig:
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
+    twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
 
 
 @dataclass
@@ -562,7 +587,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
 
     embedding_raw = llm_raw.get("embedding", {})
     llm = LLMConfig(
-        default_provider=llm_raw.get("default_provider", "openai"),
+        default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
         timeout=_normalize_llm_timeout(llm_raw.get("timeout")),
         fallback_enabled=bool(llm_raw.get("fallback_enabled", False)),
@@ -584,6 +609,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     "model",
                     "api_key",
                     "base_url",
+                    "output_dimensionality",
                     "similarity_threshold",
                     "fallback_enabled",
                     "fallback_provider",
@@ -621,6 +647,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
+    twitter_raw = sources_raw.get("twitter", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -649,6 +676,16 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 60))),
+        ),
+        twitter=TwitterSourceConfig(
+            enabled=bool(twitter_raw.get("enabled", False)),
+            mode=str(twitter_raw.get("mode", "cookie")),
+            cookie_env=str(twitter_raw.get("cookie_env", "OPENBILICLAW_X_COOKIE")),
+            daily_search_budget=int(twitter_raw.get("daily_search_budget", 0)),
+            daily_feed_budget=int(twitter_raw.get("daily_feed_budget", 0)),
+            daily_creator_budget=int(twitter_raw.get("daily_creator_budget", 0)),
+            request_interval_seconds=int(twitter_raw.get("request_interval_seconds", 3)),
+            min_interval_minutes=max(0, int(twitter_raw.get("min_interval_minutes", 60))),
         ),
     )
 
@@ -1578,6 +1615,7 @@ def _render_config_toml(
             f"model = {_toml_string(config.llm.embedding.model)}",
             f"api_key = {_toml_string(config.llm.embedding.api_key)}",
             f"base_url = {_toml_string(config.llm.embedding.base_url)}",
+            f"output_dimensionality = {max(0, int(config.llm.embedding.output_dimensionality))}",
             f"similarity_threshold = {config.llm.embedding.similarity_threshold}",
             f"fallback_enabled = {_toml_bool(config.llm.embedding.fallback_enabled)}",
             f"fallback_provider = {_toml_string(config.llm.embedding.fallback_provider)}",
@@ -1641,6 +1679,16 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.youtube.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             "",
+            "[sources.twitter]",
+            f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
+            f"mode = {_toml_string(config.sources.twitter.mode)}",
+            f"cookie_env = {_toml_string(config.sources.twitter.cookie_env)}",
+            f"daily_search_budget = {config.sources.twitter.daily_search_budget}",
+            f"daily_feed_budget = {config.sources.twitter.daily_feed_budget}",
+            f"daily_creator_budget = {config.sources.twitter.daily_creator_budget}",
+            f"request_interval_seconds = {config.sources.twitter.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.twitter.min_interval_minutes}",
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             "pause_on_extension_disconnect = "
@@ -1690,6 +1738,7 @@ def _render_config_toml(
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
+            f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             "",
             *_autostart_lines(
                 config,

@@ -848,20 +848,32 @@ class ProfileUpdatePipeline:
         from openbiliclaw.soul.interest_writeback import merge_confirmed_interest
 
         profile = self._load_profile()
-        feedback_history: object = []
         load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
-        if callable(load_runtime_state):
+
+        def _load_feedback_history() -> object:
+            if not callable(load_runtime_state):
+                return []
             try:
                 runtime_state = load_runtime_state()
                 if isinstance(runtime_state, dict):
-                    feedback_history = runtime_state.get("probe_feedback_history", [])
+                    return runtime_state.get("probe_feedback_history", [])
             except Exception:
                 logger.debug("Failed to load probe feedback history", exc_info=True)
+            return []
+
+        feedback_history = _load_feedback_history()
         tick = self._speculator.tick  # type: ignore[union-attr]
         try:
-            tick_result = await tick(profile, feedback_history=feedback_history)
+            tick_result = await tick(
+                profile,
+                feedback_history=feedback_history,
+                feedback_history_loader=_load_feedback_history,
+            )
         except TypeError:
-            tick_result = await tick(profile)
+            try:
+                tick_result = await tick(profile, feedback_history=feedback_history)
+            except TypeError:
+                tick_result = await tick(profile)
 
         # Promote confirmed speculations into the interest layer
         if tick_result.promoted:
@@ -900,21 +912,32 @@ class ProfileUpdatePipeline:
     async def _run_avoidance_speculator_tick(self, result: FlushResult) -> None:
         """Run avoidance speculator lifecycle and write confirmed topics."""
         profile = self._load_profile()
-        feedback_history: object = []
         load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
-        if callable(load_runtime_state):
+
+        def _load_feedback_history() -> object:
+            if not callable(load_runtime_state):
+                return []
             try:
                 runtime_state = load_runtime_state()
                 if isinstance(runtime_state, dict):
-                    feedback_history = runtime_state.get("avoidance_probe_feedback_history", [])
+                    return runtime_state.get("avoidance_probe_feedback_history", [])
             except Exception:
                 logger.debug("Failed to load avoidance probe feedback history", exc_info=True)
+            return []
 
+        feedback_history = _load_feedback_history()
         tick = self._avoidance_speculator.tick  # type: ignore[union-attr]
         try:
-            tick_result = await tick(profile, feedback_history=feedback_history)
+            tick_result = await tick(
+                profile,
+                feedback_history=feedback_history,
+                feedback_history_loader=_load_feedback_history,
+            )
         except TypeError:
-            tick_result = await tick(profile)
+            try:
+                tick_result = await tick(profile, feedback_history=feedback_history)
+            except TypeError:
+                tick_result = await tick(profile)
 
         if not tick_result.promoted:
             return

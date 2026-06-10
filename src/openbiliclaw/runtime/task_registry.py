@@ -56,14 +56,16 @@ class BackgroundTaskRegistry:
         task.add_done_callback(lambda t: self._tasks.pop(t, None))
         return task
 
-    async def cancel_all(self, *, grace_seconds: float = 1.5) -> int:
-        """Cancel every tracked task and wait up to ``grace_seconds`` for cleanup.
+    async def cancel_all(
+        self, *, grace_seconds: float = 1.5, exclude: frozenset[str] = frozenset()
+    ) -> int:
+        """Cancel tracked tasks and wait up to ``grace_seconds`` for cleanup.
 
-        Returns the number of tasks that were tracked at the moment of
-        the call (regardless of whether they finished cleanly or were
-        force-abandoned at the grace timeout).
+        ``exclude`` is a set of task names to leave running (and still tracked)
+        — used so a config-driven rebuild doesn't kill the guided-init task
+        (gui-init spec §5c). Returns the number of tasks actually cancelled.
         """
-        tasks = list(self._tasks.keys())
+        tasks = [t for t, name in self._tasks.items() if name not in exclude]
         for task in tasks:
             task.cancel()
         if tasks:
@@ -79,9 +81,31 @@ class BackgroundTaskRegistry:
                     grace_seconds,
                 )
         # Self-untrack callbacks may not have fired for cancelled tasks
-        # (especially when the grace timeout hit). Clear explicitly so
-        # the registry is usable again immediately after rebuild.
-        self._tasks.clear()
+        # (especially when the grace timeout hit). Drop the cancelled ones
+        # explicitly; excluded tasks stay tracked so they remain cancellable.
+        for task in tasks:
+            self._tasks.pop(task, None)
+        return len(tasks)
+
+    async def cancel(self, name: str, *, grace_seconds: float = 1.5) -> int:
+        """Cancel every tracked task with the given ``name``. Returns the count.
+
+        Used to stop a single named background task (e.g. ``guided_init``)
+        without touching the rest (gui-init spec §5f).
+        """
+        tasks = [t for t, n in self._tasks.items() if n == name]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=grace_seconds,
+                )
+            except TimeoutError:
+                logger.warning("task %r did not exit within %.1fs of cancel", name, grace_seconds)
+        for task in tasks:
+            self._tasks.pop(task, None)
         return len(tasks)
 
     def stats(self) -> dict[str, int]:

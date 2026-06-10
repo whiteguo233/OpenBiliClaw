@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  buildStaleProbeResponseState,
   buildContentUrl,
   buildImageProxyPath,
   buildRecommendationClickPayload,
@@ -20,16 +21,21 @@ import {
   getHintBannerState,
   getManualRefreshResultHint,
   getReadyRecommendationHint,
+  getRecommendationCardKind,
   getNextExpandedCognitionIndex,
   getRuntimeRefreshSubmissionState,
   getSubmissionProgressMessage,
   mergeDelightCandidate,
   normalizeCognitionUpdateCard,
   normalizeDelightCandidate,
+  normalizeProbeType,
   getRealtimePoolStatusSummary,
   getPoolStatusSummary,
   getPopupState,
+  probeMessageKey,
+  shouldDisplayProbeFromWebSocket,
   shouldSubmitChatOnEnter,
+  shouldHydrateProbe,
   getTabButtonState,
   mergeRuntimeStatusEvent,
   normalizeActivityFeed,
@@ -71,6 +77,80 @@ test("buildContentUrl and click payload keep YouTube items source-aware", () => 
   });
 });
 
+test("probeMessageKey normalizes type and domain", () => {
+  assert.equal(normalizeProbeType("avoidance.probe"), "avoidance.probe");
+  assert.equal(normalizeProbeType("unknown"), "interest.probe");
+  assert.equal(
+    probeMessageKey("avoidance.probe", "  MixedCase Domain  "),
+    "avoidance.probe:mixedcase domain",
+  );
+  assert.equal(probeMessageKey("interest.probe", "   "), "");
+});
+
+test("probe hydration skips locally handled and inactive probes", () => {
+  const handled = new Set([probeMessageKey("interest.probe", "建筑美学")]);
+
+  assert.equal(
+    shouldHydrateProbe({ domain: "建筑美学", status: "active" }, "interest.probe", handled),
+    false,
+  );
+  assert.equal(
+    shouldHydrateProbe({ domain: "建筑美学", status: "active" }, "avoidance.probe", handled),
+    true,
+  );
+  assert.equal(
+    shouldHydrateProbe({ domain: "城市基础设施", status: "confirmed" }, "interest.probe"),
+    false,
+  );
+  assert.equal(
+    shouldHydrateProbe({ domain: "城市基础设施" }, "interest.probe"),
+    true,
+  );
+});
+
+test("probe websocket display skips locally handled probes", () => {
+  const handled = new Set([probeMessageKey("avoidance.probe", "浅层热点复读")]);
+
+  assert.equal(
+    shouldDisplayProbeFromWebSocket(
+      { type: "avoidance.probe", domain: "浅层热点复读" },
+      "avoidance.probe",
+      handled,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldDisplayProbeFromWebSocket(
+      { type: "interest.probe", domain: "浅层热点复读" },
+      "interest.probe",
+      handled,
+    ),
+    true,
+  );
+});
+
+test("buildStaleProbeResponseState removes only matching probe state", () => {
+  const result = buildStaleProbeResponseState({
+    domain: "建筑美学",
+    type: "interest.probe",
+    pendingProbe: { domain: "建筑美学" },
+    pendingAvoidanceProbe: { domain: "建筑美学" },
+    messages: [
+      { type: "interest.probe", domain: "建筑美学" },
+      { type: "avoidance.probe", domain: "建筑美学" },
+      { type: "interest.probe", domain: "城市基础设施" },
+    ],
+  });
+
+  assert.equal(result.handledKey, probeMessageKey("interest.probe", "建筑美学"));
+  assert.equal(result.pendingProbe, null);
+  assert.deepEqual(result.pendingAvoidanceProbe, { domain: "建筑美学" });
+  assert.deepEqual(result.messages, [
+    { type: "avoidance.probe", domain: "建筑美学" },
+    { type: "interest.probe", domain: "城市基础设施" },
+  ]);
+});
+
 test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy empty", () => {
   const item = normalizeRecommendation({
     id: 7,
@@ -89,6 +169,70 @@ test("normalizeRecommendation keeps title and up-name fallbacks but leaves copy 
   assert.equal(item.expression, "");
   assert.equal(item.topic_label, "");
   assert.equal(item.presented, false);
+});
+
+test("normalizeRecommendation carries content_type and body_text for X items", () => {
+  const item = normalizeRecommendation({
+    id: 9,
+    bvid: "1790000000000000001",
+    title: "1/ thread on systems",
+    source_platform: "twitter",
+    content_type: "thread",
+    body_text: "1/ long-form note_tweet body about systems design",
+    cover_url: "",
+  });
+
+  assert.equal(item.content_type, "thread");
+  assert.equal(item.body_text, "1/ long-form note_tweet body about systems design");
+  assert.equal(item.cover_url, "");
+  assert.equal(item.source_platform, "twitter");
+});
+
+test("getRecommendationCardKind renders a text card for tweet/thread items", () => {
+  const tweet = getRecommendationCardKind({
+    content_type: "tweet",
+    cover_url: "",
+    body_text: "a pure-text tweet body",
+    title: "tweet title",
+  });
+  assert.equal(tweet.kind, "text");
+  assert.equal(tweet.coverUrl, "");
+  // Shows body_text (no thumbnail / <img> node is produced by callers).
+  assert.equal(tweet.text, "a pure-text tweet body");
+
+  const thread = getRecommendationCardKind({
+    content_type: "thread",
+    cover_url: "",
+    body_text: "",
+    title: "thread fallback title",
+  });
+  assert.equal(thread.kind, "text");
+  // Falls back to title when body_text is empty.
+  assert.equal(thread.text, "thread fallback title");
+});
+
+test("getRecommendationCardKind renders a text card when cover_url is empty", () => {
+  const result = getRecommendationCardKind({
+    content_type: "video",
+    cover_url: "",
+    body_text: "",
+    title: "no-cover video",
+  });
+  assert.equal(result.kind, "text");
+  assert.equal(result.coverUrl, "");
+  assert.equal(result.text, "no-cover video");
+});
+
+test("getRecommendationCardKind keeps a cover card for video items with a cover", () => {
+  const result = getRecommendationCardKind({
+    content_type: "video",
+    cover_url: "https://i0.hdslb.com/bfs/archive/cover.jpg",
+    body_text: "",
+    title: "a bilibili video",
+  });
+  assert.equal(result.kind, "cover");
+  assert.equal(result.coverUrl, "https://i0.hdslb.com/bfs/archive/cover.jpg");
+  assert.equal(result.text, "");
 });
 
 test("normalizeProfileSummary keeps speculative avoidances", () => {
@@ -392,7 +536,7 @@ test("getPopupState does not show init prompt while refresh or pool signals are 
       online: true,
       items: [],
       runtimeStatus: {
-        initialized: false,
+        initialized: true,
         manual_refresh_state: "running",
         manual_refresh_message: "正在初始化后的首轮补货。",
       },
@@ -420,6 +564,46 @@ test("getPopupState does not show init prompt while refresh or pool signals are 
       message: "这会儿还没新东西，先运行 init、discover 或 recommend",
       items: [],
     },
+  );
+});
+
+test("getPopupState shows the init CTA when uninitialized despite pending pre-init signals", () => {
+  // Regression (gui-init): a fresh backend that is collecting behavior signals
+  // but has no profile/pool yet must surface the guided-init CTA, not mask it as
+  // "补货". pending_signal_events alone must NOT win over the uninitialized check.
+  assert.deepEqual(
+    getPopupState({
+      online: true,
+      items: [],
+      runtimeStatus: {
+        initialized: false,
+        pending_signal_events: 657,
+        manual_refresh_state: "idle",
+        pool_available_count: 0,
+        recommendation_count: 0,
+      },
+    }),
+    {
+      kind: "uninitialized",
+      message: "还没完成初始化，先运行 openbiliclaw init",
+      items: [],
+    },
+  );
+
+  // Even a "running" refresh must not mask the uninitialized state — a refresh
+  // does nothing without a profile, and this was the live-test stuck-on-补货 bug.
+  assert.equal(
+    getPopupState({
+      online: true,
+      items: [],
+      runtimeStatus: {
+        initialized: false,
+        manual_refresh_state: "running",
+        pool_available_count: 0,
+        recommendation_count: 0,
+      },
+    }).kind,
+    "uninitialized",
   );
 });
 

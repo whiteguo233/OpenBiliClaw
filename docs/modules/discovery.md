@@ -44,6 +44,14 @@
 - **YouTube discovery strategies / producer** — `yt_search` 由 LLM 从画像生成关键词后用 `scrapetube` 搜索，`yt_trending` 优先通过 YouTube InnerTube browse API 拉 trending feed，当前 `FEtrending` 失效时降级抓取公开 topic 页的 `ytInitialData` 视频，`yt_channel` 从 DB 中 YouTube follow 事件读取订阅频道并用 `scrapetube` / `yt-dlp` 拉最新视频；三者由后端 `YoutubeDiscoveryProducer` 在 YouTube 低于 quota 时独立调度，输出 `source_platform="youtube"` 的 `DiscoveredContent` 并入 `discovery_candidates`，再由统一候选 pipeline 评估 / 入池。
 - **DouyinDiscoveryService / DouyinDirectStrategy / DouyinDirectClient** — 抖音 discovery 走 opt-in 路径，服务层统一封装 search / hot / feed 三个公开来源；runtime 路径只拉原始候选并入 `discovery_candidates`，调试时仍可在 `openbiliclaw discover-douyin --no-cache` 下直接跑策略预览。
 - **DouyinPluginSearchClient** — search 子来源优先复用 `dy_tasks(type="search")` 插件签名链路，结果以 `dy-plugin-search` 进入 discovery；hot 子来源优先复用 `dy_tasks(type="hot")`，由扩展后台打开 `/hot/{sentence_id}` 后签名 related API，结果以 `dy-plugin-hot-related` 进入 discovery；feed 子来源复用 `dy_tasks(type="feed")`，由扩展在后台首页签名 `/aweme/v1/web/tab/feed/`，结果以 `dy-plugin-feed` 进入 discovery。search / hot / feed discovery 任务都会用非激活 tab 执行，只有 `bootstrap_profile` 这类显式账号信号导入允许前台。每次入队前会把过期的 search / hot / feed pending discovery 任务标记为 failed，避免旧任务挡住当前 producer；`ContentDiscoveryEngine.register_strategy()` 会按 strategy name 替换旧实例，避免 `DouyinDiscoveryService(cache=True)` 多轮运行后累积多个 `douyin_direct` 并重复入队 search。`openbiliclaw search-douyin` 仍保留为独立 search smoke / 诊断命令，结果不转成 memory event。
+- **XAdapter（`sources/twitter_adapter.py`）+ 三策略** — X (Twitter) 是第六个内容源，`source_type="twitter"`、显示标签 `"X"`。发现走**服务端 cookie 重放**（对标抖音 direct，但用 `twitter-cli` 取代 XBogus 签名），`XAdapter.fetch(recipe, profile, limit)` 是真实实现（不是 XHS 那种 stub），按 `recipe.strategy` 分发到三个 `discovery/strategies/x.py` 策略：
+
+  - **XSearchStrategy**（`strategy="search"`）— 复用 `xhs_keyword_gen` 思路，从 Soul 画像生成关键词，调 `XClient.search()`。
+  - **XForYouStrategy**（`strategy="feed"`）— 拉推荐流 For-You（`XClient.for_you()`），由 X 算法决定相关性；最高曝光，producer 压到很低的每日频次并在连续失败后自动暂停。
+  - **XCreatorStrategy**（`strategy="creator"`）— 用户精选的账号订阅，对 `x_creator_subscriptions` 里到期的 handle 调 `XClient.user_tweets()`。
+
+  三个策略产出都经 `discovery.x_normalize.normalize_tweet()` 转成 `source_platform="twitter"` 的 `DiscoveredContent`（`content_type ∈ {tweet, thread}`、`body_text` 带推文 / `note_tweet` 长文全文），入 `discovery_candidates` 待评估池，再由统一候选 pipeline 评估 / 入池。后台调度见 [runtime 模块的 `XDiscoveryProducer`](./runtime.md#xdiscoveryproducer)；行为采集（用户在 x.com 上自己的点赞 / 收藏 / 回复）走浏览器扩展 MAIN-world tap，与 discovery 通路独立。
+- **XClient（`sources/x_client.py`）+ x_normalize** — `XClient` 封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`（Apache-2.0，自带 `curl_cffi` TLS 指纹），全程只读，`enabled=true` 且真正 fetch 时才 lazy import（`enabled=false` 路径绝不 import）。同步方法用 `asyncio.to_thread` 包成 async；`search` / `for_you` / `user_tweets` 服务于发现,`likes` / `bookmarks`(读当前登录用户自己的点赞 / 收藏 timeline,`likes` 先 `fetch_me()` 解析 user_id)服务于 `init` 偏好回填——X 无扩展 bootstrap 任务,故 likes/bookmarks 与 B站 收藏一样在 `run_guided_init` 里服务端直拉、本轮直接入 `events`(`like` / `favorite`)。底层 `TwitterAPIError` / `AuthenticationError` 映射为 `XMissingCookieError` / `XAuthError`(401) / `XBlockedError`(403) / `XRateLimitError`(429)，供源健康状态机分流退避。re-login 类状态（`missing_cookie` / `expired_cookie` / `blocked`）无定时恢复（`is_ready()` 会一直 park 住 producer，永远等不到能翻回 `ok` 的那次成功），唯一解封路径是扩展同步到新有效 cookie 时 `/api/sources/x/cookie` 调 `XSourceHealthStore.clear_relogin_block()`；`rate_limited` 的时间冷却不受 cookie 影响、不被清除。`x_normalize.normalize_tweet()` 直接从 `twitter_cli.serialization.tweet_to_dict` 的结构映射字段（库已做 GraphQL 拆包），tombstone / 不可用推文返回 `None`；多条连推或带 `1/` 线程标记的头条 → `content_type="thread"`，否则 `"tweet"`。
 
 `BrowserManager` 有两个可替换后端，由 `[sources.browser].cdp_url` 决定：
 
@@ -596,6 +604,8 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.69 抖音插件首页 feed discovery | ✅ | `feed` 子来源入队 `dy_tasks(type="feed")`，扩展在后台登录首页签名 `/aweme/v1/web/tab/feed/` 并回传 `dy_feed` 候选，正式以 `dy-plugin-feed` 进入 discovery；CLI 公开来源收敛为 `search` / `hot` / `feed` |
 | v0.3.69 抖音 runtime search 防重复 | ✅ | discovery engine 注册同名 strategy 时替换旧实例，避免 `douyin_direct` 在长期后台运行中累积成多个同名策略并重复创建 search 任务；扩展 search 任务单关键词 timeout 放宽到 120s，覆盖页面跳转与 acrawler 签名耗时 |
 | v0.3.x discovery 画像上下文补齐 | ✅ | `build_profile_summary()` 会把 `disliked_topics`、认知风格、价值观、内在驱动力、当前阶段、life stage、MBTI、来源平台分布、近期觉察、当前洞察、质量敏感度和兴趣来源时间一起带入 discovery profile summary，让 search / trending / explore / YouTube query 生成和 batch 内容评估都能看到更完整的画像上下文 |
+| X (Twitter) 服务端 discovery | ✅ | 第六个内容源 `source_platform="twitter"`（标签 `"X"`）。`XAdapter` 服务端 cookie 重放（`XClient` 封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`，lazy import + 只读），分发 `search`（画像关键词）/ `feed`（For-You）/ `creator`（账号订阅）三策略，经 `x_normalize.normalize_tweet()` 转 `DiscoveredContent`（`content_type ∈ {tweet, thread}` + `body_text` 全文）入统一候选池；后台由 `XDiscoveryProducer` 按预算 + 源健康调度 |
+| X 文字候选 body_text / content_type | ✅ | `DiscoveredContent` 增设 `body_text`（推文 / `note_tweet` 长文全文）+ `content_type`（`video`/`note`/`tweet`/`thread`，复用候选池既有 shape 字段，不新造 `media_type`）；两处 `content_type` 硬编码（`candidate_pool` write + 引擎候选 dict）改为优先取 `item.content_type`，全链路（enqueue → claim → admission → cache → API）透传，保证文字 / thread 候选正确流过 pending 评估 |
 | SearchStrategy LLM 评估 | ✅ | `SearchStrategy` 现在默认走 `evaluate_content()` LLM 打分（`llm_evaluation=True`），不再只用本地启发式（上限 0.62），可通过 `llm_evaluation=False` 关闭 |
 | 策略中间产物捕获 | ✅ | 4 个策略均支持 `last_intermediates` 属性，运行后可查看生成的搜索词、选择的分区、种子列表、探索域等中间产物 |
 | Discovery 评估框架 | ✅ | `DiscoveryEvaluator` 支持 7 维质量评估（relevance / diversity / specificity / query_quality / explanation_quality / novelty / no_echo_chamber），含自动和人工两种模式 |
@@ -984,6 +994,8 @@ item = DiscoveredContent(
 - `candidate_tier`
 - `discovered_at`
 - `last_scored_at`
+- `body_text` — 纯文字内容主体（推文 / thread 全文或 `note_tweet` 长文）；视频源留空。X 是首个以文字为主的来源，模型为此增设该字段
+- `content_type` — 内容形态，复用候选池既有 shape 字段：`"video"`（默认）/ `"note"`（小红书）/ `"tweet"` / `"thread"`（X）。`to_cache_kwargs()` 透传 `body_text` + `content_type`，并经 `storage/database.py` 的 `_ensure_content_cache_multisource_columns()` / `_ensure_discovery_candidate_columns()` 迁移列；`candidate_pool.discovered_content_to_candidate_write()` 和 discovery 引擎候选 dict 两处都优先取 `item.content_type`（`item.content_type or ("note" if 小红书 else "video")`），保证 X 文字 / thread 候选不被强标成 `video`
 
 ## 示例：一轮 discover 之后会发生什么
 

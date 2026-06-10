@@ -52,15 +52,29 @@ class GeminiProvider(LLMProvider):
     _BASE_RETRY_DELAY = 0.25
 
     def __init__(
-        self, api_key: str, model: str = "gemini-2.5-flash", timeout: float = 300.0
+        self,
+        api_key: str,
+        model: str = "gemini-2.5-flash",
+        timeout: float = 300.0,
+        base_url: str = "",
+        embedding_output_dimensionality: int | None = None,
     ) -> None:
         if not gemini_sdk_available():
             _raise_missing_sdk()
         assert genai is not None
         self._model = model
+        self._embedding_output_dimensionality = (
+            embedding_output_dimensionality
+            if embedding_output_dimensionality is not None and embedding_output_dimensionality > 0
+            else None
+        )
+        http_options: dict[str, int | str] = {"timeout": int(timeout * 1000)}
+        normalized_base_url = (base_url or "").strip()
+        if normalized_base_url:
+            http_options["base_url"] = normalized_base_url.rstrip("/") + "/"
         self._client = genai.Client(
             api_key=api_key,
-            http_options={"timeout": int(timeout)},
+            http_options=http_options,
         )
 
     @staticmethod
@@ -204,10 +218,13 @@ class GeminiProvider(LLMProvider):
         """
         if types is None:
             _raise_missing_sdk()
+        config_kwargs: dict[str, Any] = {"task_type": "SEMANTIC_SIMILARITY"}
+        if self._embedding_output_dimensionality is not None:
+            config_kwargs["output_dimensionality"] = self._embedding_output_dimensionality
         response = await self._client.aio.models.embed_content(
             model=model,
             contents=text,
-            config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY"),
+            config=types.EmbedContentConfig(**config_kwargs),
         )
         return list(response.embeddings[0].values)
 

@@ -1,0 +1,28 @@
+{
+  "id": "1790000000000000003",
+  "text": "1/ A thread on why your tests are slow and what to do about it. 🧵\nMost slowness is not the test runner — it's setup you didn't notice.",
+  "author": {
+    "id": "777",
+    "name": "Test Whisperer",
+    "screenName": "test_whisperer",
+    "profileImageUrl": "https://pbs.twimg.com/profile_images/testwhisperer.jpg",
+    "verified": false
+  },
+  "metrics": {
+    "likes": 8800,
+    "retweets": 1500,
+    "replies": 240,
+    "quotes": 88,
+    "views": 1200000,
+    "bookmarks": 22000
+  },
+  "createdAt": "Fri Jun 06 15:20:00 +0000 2026",
+  "createdAtLocal": "2026-06-06 23:20:00",
+  "createdAtISO": "2026-06-06T15:20:00Z",
+  "media": [],
+  "urls": [],
+  "isRetweet": false,
+  "retweetedBy": null,
+  "lang": "en",
+  "score": 0.0
+}

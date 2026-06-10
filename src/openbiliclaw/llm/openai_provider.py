@@ -64,12 +64,14 @@ class OpenAIProvider(LLMProvider):
         provider_name: str = "openai",
         token_provider: Callable[[bool], Awaitable[str]] | None = None,
         timeout: float = 300.0,
+        embedding_output_dimensionality: int = 0,
     ) -> None:
         self._model = model
         self._provider_name = provider_name
         self.base_url = base_url or ""
         self._token_provider = token_provider
         self._timeout = timeout
+        self._embedding_output_dimensionality = max(0, int(embedding_output_dimensionality or 0))
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url or None,
@@ -345,10 +347,13 @@ class OpenAIProvider(LLMProvider):
         providers already follow.
         """
         try:
-            response = await self._client.embeddings.create(
-                model=model,
-                input=text,
-            )
+            kwargs: dict[str, Any] = {"model": model, "input": text}
+            if (
+                self._supports_embedding_dimensions(model)
+                and self._embedding_output_dimensionality > 0
+            ):
+                kwargs["dimensions"] = self._embedding_output_dimensionality
+            response = await self._client.embeddings.create(**kwargs)
             return list(response.data[0].embedding)
         except Exception:
             logger.warning(
@@ -358,6 +363,11 @@ class OpenAIProvider(LLMProvider):
                 exc_info=True,
             )
             return []
+
+    def _supports_embedding_dimensions(self, model: str) -> bool:
+        if not model.startswith("text-embedding-3-"):
+            return False
+        return self._provider_name == "openai"
 
     def _extra_headers(self) -> dict[str, str]:
         """Return optional provider-specific request headers."""

@@ -734,3 +734,66 @@ def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:
     msg_a = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_a)
     msg_b = build_batch_content_evaluation_prompt(**base_kwargs, negative_examples=examples_b)
     assert msg_a[1]["content"] == msg_b[1]["content"]
+
+
+# ----------------------------------------------------------------------
+# Task 11 (X / twitter): text-first items carry their full text in
+# ``body_text``. Pure-text tweets have low-information titles, so the LLM
+# needs ``body_text`` in the USER message of every recommendation /
+# evaluation builder. It MUST stay out of the (cached) system prompt.
+
+
+def _twitter_content_item() -> dict[str, object]:
+    return {
+        "bvid": "1790000000000000001",
+        "content_id": "1790000000000000001",
+        "title": "1/ on building resilient systems",
+        "up_name": "@handle",
+        "content_type": "thread",
+        "body_text": "1/ TWEET_BODY_MARKER long-form note_tweet body about systems ...",
+    }
+
+
+def test_batch_eval_prompt_carries_body_text_in_user_message_only() -> None:
+    item = _twitter_content_item()
+    messages = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["systems"]},
+        content_items=[item],
+        source_context="search",
+        source_platform="twitter",
+    )
+    system, user = messages[0]["content"], messages[1]["content"]
+
+    assert "TWEET_BODY_MARKER" in user
+    assert "body_text" in user
+    assert "TWEET_BODY_MARKER" not in system
+    # System stays the cached constant byte-for-byte.
+    assert system == _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+
+def test_recommendation_expression_prompt_carries_body_text_in_user_only() -> None:
+    item = _twitter_content_item()
+    messages = build_recommendation_expression_prompt(
+        profile_summary={"a": 1},
+        content_summary=item,
+        tone_profile=None,
+        source_platform="twitter",
+    )
+    system, user = messages[0]["content"], messages[1]["content"]
+
+    assert "TWEET_BODY_MARKER" in user
+    assert "TWEET_BODY_MARKER" not in system
+
+
+def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:
+    item = _twitter_content_item()
+    messages = build_batch_expression_prompt(
+        profile_summary={"a": 1},
+        content_items=[item],
+        tone_profile=None,
+        source_platform="twitter",
+    )
+    system, user = messages[0]["content"], messages[1]["content"]
+
+    assert "TWEET_BODY_MARKER" in user
+    assert "TWEET_BODY_MARKER" not in system

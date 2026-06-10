@@ -248,7 +248,29 @@ export function normalizeRecommendation(item) {
     content_id: normalizeText(item?.content_id) || normalizeText(item?.bvid),
     content_url: normalizeText(item?.content_url) || "",
     source_platform: normalizeSourcePlatform(item),
+    content_type: normalizeText(item?.content_type) || "video",
+    body_text: normalizeText(item?.body_text),
   };
+}
+
+const TEXT_CARD_CONTENT_TYPES = new Set(["tweet", "thread"]);
+
+// Decide the media slot for a recommendation card. Text-first sources
+// (X tweet/thread) ship no cover image — render a no-cover text card from
+// body_text/title instead of an <img>, so the web UI never paints a
+// broken-image node.
+export function getRecommendationCardKind(item) {
+  const contentType = normalizeText(item?.content_type).toLowerCase();
+  const coverUrl = normalizeCoverUrl(item?.cover_url);
+  const isText = TEXT_CARD_CONTENT_TYPES.has(contentType) || !coverUrl;
+  if (isText) {
+    return {
+      kind: "text",
+      coverUrl: "",
+      text: normalizeText(item?.body_text) || normalizeText(item?.title),
+    };
+  }
+  return { kind: "cover", coverUrl, text: "" };
 }
 
 // ── Feedback ─────────────────────────────────────────────────

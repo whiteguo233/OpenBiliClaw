@@ -137,3 +137,45 @@ async def test_stats_groups_by_name_prefix() -> None:
         assert stats == {"refresh": 2, "delight": 1, "plain": 1}
     finally:
         await registry.cancel_all()
+
+
+async def test_cancel_all_exclude_keeps_named_task() -> None:
+    registry = BackgroundTaskRegistry()
+
+    async def _hold() -> None:
+        await asyncio.sleep(10)
+
+    keep = registry.track("guided_init", _hold())
+    registry.track("a", _hold())
+    registry.track("b", _hold())
+
+    try:
+        cancelled = await registry.cancel_all(exclude=frozenset({"guided_init"}))
+        assert cancelled == 2  # a + b, not guided_init
+        assert not keep.done()  # excluded task left running
+        assert registry._tasks.get(keep) == "guided_init"  # still tracked
+    finally:
+        await registry.cancel_all()
+        with pytest.raises(asyncio.CancelledError):
+            await keep
+
+
+async def test_cancel_by_name_stops_only_that_task() -> None:
+    registry = BackgroundTaskRegistry()
+
+    async def _hold() -> None:
+        await asyncio.sleep(10)
+
+    registry.track("x", _hold())
+    registry.track("x", _hold())
+    other = registry.track("y", _hold())
+
+    try:
+        cancelled = await registry.cancel("x")
+        assert cancelled == 2
+        assert not other.done()
+        assert list(registry._tasks.values()) == ["y"]
+    finally:
+        await registry.cancel_all()
+        with pytest.raises(asyncio.CancelledError):
+            await other

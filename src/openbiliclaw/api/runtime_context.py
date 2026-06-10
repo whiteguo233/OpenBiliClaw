@@ -243,6 +243,12 @@ class RuntimeContext:
     # are constructed so old detached work doesn't compete with the freshly
     # built runtime for SQLite writes / LLM tokens.
     task_registry: BackgroundTaskRegistry = field(default_factory=BackgroundTaskRegistry)
+    # Lazily-built guided-init coordinator (gui-init spec §5). Not a constructor
+    # arg; created on first access bound to THIS ctx so it always reads the
+    # current database / runtime_controller even after a hot-reload swaps them
+    # (review R2 A-1). All three construct paths inherit it via the property.
+    _init_coordinator: Any = field(default=None, init=False, repr=False, compare=False)
+    _init_prereqs: Any = field(default=None, init=False, repr=False, compare=False)
 
     # ── Swappable (rebuilt on hot-reload) ───────────────────────────
     config: Any = None
@@ -260,8 +266,39 @@ class RuntimeContext:
     account_sync_service: Any = None
     auto_update_service: Any = None
 
+    @property
+    def init_coordinator(self) -> Any:
+        """Guided-init coordinator bound to this ctx (lazy singleton, spec §5)."""
+        if self._init_coordinator is None:
+            from openbiliclaw.runtime.init_coordinator import InitCoordinator
+
+            self._init_coordinator = InitCoordinator(self)
+        return self._init_coordinator
+
+    @property
+    def init_prereqs(self) -> Any:
+        """Cached guided-init prerequisite probes bound to this ctx (spec §3)."""
+        if self._init_prereqs is None:
+            from openbiliclaw.runtime.init_prereqs import InitPrereqs
+
+            self._init_prereqs = InitPrereqs(self)
+        return self._init_prereqs
+
     def background_llm_work_allowed(self) -> bool:
-        """Return whether daemon-owned background LLM / embedding work may run."""
+        """Return whether daemon-owned background LLM / embedding work may run.
+
+        While a guided init is active, ALL daemon-owned background loops
+        (account_sync, continuous refresh, soul pipeline ticks) pause so they
+        can't race init's explicit analyze/build/backfill or double-process
+        signals (gui-init D1). Init's own work bypasses this gate — it calls
+        ``soul_engine`` / ``run_init_backfill`` directly, neither of which
+        consults ``llm_work_allowed``.
+        """
+        try:
+            if self.database is not None and self.init_coordinator.init_active():
+                return False
+        except Exception:
+            pass
         scheduler = getattr(getattr(self, "config", None), "scheduler", None)
         return _gate(scheduler, self.presence)
 
@@ -283,7 +320,10 @@ class RuntimeContext:
         so no endpoint handler can interleave during the attribute-
         assignment sweep.
         """
-        cancelled = await self.task_registry.cancel_all()
+        # Keep a running guided-init task alive across rebuild — config writes
+        # are gated during init, but this is the belt-and-suspenders exemption
+        # so an init in flight is never silently cancelled (gui-init spec §5c).
+        cancelled = await self.task_registry.cancel_all(exclude=frozenset({"guided_init"}))
         if cancelled:
             logger.info(
                 "Hot-reload: cancelled %d background task(s) before rebuild",
@@ -499,6 +539,35 @@ class RuntimeContext:
         xiaohongshu_adapter = XiaohongshuAdapter()
         new_discovery_engine.register_adapter(xiaohongshu_adapter)
 
+        # Register X (Twitter) adapter — server-side cookie replay, like
+        # Bilibili / Douyin-direct (a real fetch(), NOT an extension stub).
+        # Gated on [sources.twitter].enabled. The branch is the ONLY place
+        # twitter_cli / x_client are imported, so non-X installs (where the
+        # optional ``openbiliclaw[x]`` extra is absent) never touch them.
+        twitter_cfg = getattr(getattr(new_config, "sources", None), "twitter", None)
+        if twitter_cfg is not None and bool(getattr(twitter_cfg, "enabled", False)):
+            from openbiliclaw.discovery.strategies.x import (
+                XCreatorStrategy,
+                XForYouStrategy,
+                XSearchStrategy,
+            )
+            from openbiliclaw.sources.twitter_adapter import XAdapter
+            from openbiliclaw.sources.x_auth import resolve_x_cookie
+            from openbiliclaw.sources.x_client import XClient
+
+            x_cookie = resolve_x_cookie(
+                data_dir=new_config.data_path,
+                cookie_env=str(getattr(twitter_cfg, "cookie_env", "OPENBILICLAW_X_COOKIE")),
+            )
+            x_client = XClient(cookie=x_cookie)
+            twitter_adapter = XAdapter(
+                client=x_client,
+                search=XSearchStrategy(client=x_client, llm_service=new_llm_service),
+                feed=XForYouStrategy(client=x_client),
+                creator=XCreatorStrategy(client=x_client),
+            )
+            new_discovery_engine.register_adapter(twitter_adapter)
+
         # 8. Continuous refresh controller
         from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 
@@ -513,6 +582,7 @@ class RuntimeContext:
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
+        new_x_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
@@ -548,6 +618,17 @@ class RuntimeContext:
                 memory=cast("Any", self.memory_manager),
                 concurrency=concurrency,
             )
+            # X (Twitter) producer — fetch-only; enqueues into discovery_candidates
+            # and never evaluates / writes content_cache (unified-pool spec). Gated
+            # on [sources.twitter].enabled; the disabled path imports no twitter_cli.
+            from openbiliclaw.runtime.x_producer import build_x_discovery_producer
+
+            new_x_producer = build_x_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                llm_service=new_llm_service,
+            )
 
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
@@ -572,8 +653,13 @@ class RuntimeContext:
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
+            x_producer=new_x_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
+            # gui-init D1: pause the controller's background loops while a guided
+            # init is active (account_sync already gates on the same predicate).
+            # init's own run_init_backfill bypasses _llm_work_allowed.
+            init_active_check=lambda: self.init_coordinator.init_active(),
             task_registry=self.task_registry,
         )
 
@@ -627,6 +713,13 @@ class RuntimeContext:
         self.runtime_controller = new_runtime_controller
         self.account_sync_service = new_account_sync
         self.auto_update_service = new_auto_update
+        # Drop the cached init prerequisite probes (chat/bilibili) — config or
+        # cookie just changed, so the next /api/init pre-flight must re-probe
+        # against the new provider/cookie instead of a stale TTL value (gui-init
+        # review). The InitCoordinator is intentionally NOT reset: it holds the
+        # current run handle and reads ctx components lazily, so it survives a
+        # rebuild (rebuild also excludes the guided_init task from cancellation).
+        self._init_prereqs = None
 
         logger.info(
             "Hot-reload complete — rebuilt %d swappable components",
@@ -693,6 +786,8 @@ class RuntimeContext:
                             speculator,
                             profile,
                             feedback_history,
+                            "probe_feedback_history",
+                            self.memory_manager,
                         ),
                     )
                     logger.debug("post-reload speculator scheduled as background task")
@@ -708,6 +803,8 @@ class RuntimeContext:
                             avoidance_speculator,
                             profile,
                             avoidance_feedback,
+                            "avoidance_probe_feedback_history",
+                            self.memory_manager,
                         ),
                     )
                     logger.debug("post-reload avoidance speculator scheduled as background task")
@@ -733,16 +830,35 @@ class RuntimeContext:
         speculator: Any,
         profile: Any,
         feedback_history: object,
+        feedback_history_key: str,
+        memory_manager: Any,
     ) -> None:
         """Run post-reload speculation without blocking config PUT."""
+        load_runtime_state = getattr(memory_manager, "load_discovery_runtime_state", None)
+
+        def _load_feedback_history() -> object:
+            if not callable(load_runtime_state):
+                return []
+            runtime_state = load_runtime_state()
+            if not isinstance(runtime_state, dict):
+                return []
+            return runtime_state.get(feedback_history_key, [])
+
         try:
             try:
                 await speculator.force_tick(
                     profile,
                     feedback_history=feedback_history,
+                    feedback_history_loader=_load_feedback_history,
                 )
             except TypeError:
-                await speculator.force_tick(profile)
+                try:
+                    await speculator.force_tick(
+                        profile,
+                        feedback_history=feedback_history,
+                    )
+                except TypeError:
+                    await speculator.force_tick(profile)
         except Exception:
             pass
 

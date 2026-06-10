@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.101"
+version = "0.3.115"
 description = "Your AI friend on Bilibili — understands who you are and finds content you'll love."
 readme = "README.md"
 license = { text = "MIT" }
@@ -51,11 +51,29 @@ dev = [
 local-llm = [
     "ollama>=0.4",
 ]
+x = [
+    # X (Twitter) discovery via server-side cookie replay. Lazily imported on the
+    # [sources.twitter].enabled path only (openbiliclaw.sources.x_client); plain
+    # `pip install openbiliclaw` stays X-free. Apache-2.0, ships its own curl_cffi.
+    "twitter-cli>=0.8.5",
+]
 eval = [
     "claude-agent-sdk>=0.1",
 ]
 browser = [
     "playwright>=1.40",
+]
+packaging = [
+    # Desktop installer builds (packaging/build.py). Bundles the backend into a
+    # macOS .app/.dmg or Windows onedir for the Inno Setup installer.
+    "pyinstaller>=6.11",
+    # System-tray desktop mode (packaging/entry.py): tray icon + menu so the app
+    # runs without a console window — Windows system tray and macOS menu bar.
+    "pystray>=0.19",
+    "Pillow>=10.0",
+    # pystray's macOS backend needs pyobjc (Foundation / AppKit / Quartz).
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
@@ -104,6 +122,8 @@ module = [
     "claude_agent_sdk",
     "claude_agent_sdk.*",
     "playwright.*",
+    "twitter_cli",
+    "twitter_cli.*",
 ]
 ignore_missing_imports = true
 

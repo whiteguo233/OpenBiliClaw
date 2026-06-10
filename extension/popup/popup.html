@@ -223,6 +223,74 @@
       max-width: 300px;
     }
 
+    /* Row under the header: hero copy on the left, the compact Star button
+       right-aligned so it sits directly below the action-icon column. */
+    .hero-sub {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    /* "Star" button in the familiar GitHub-Buttons two-part style (the look big
+       repos use): an action chip (Octocat + "Star") joined to a live star-count
+       box. Clicking opens the repo (direct-starring needs GitHub auth, so even
+       GitHub's own widget links out). The count is fetched + cached by popup.js. */
+    .gh-star {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: stretch;
+      height: 26px;
+      padding: 0;
+      border: 1px solid rgba(208, 215, 222, 0.95);
+      border-radius: 7px;
+      overflow: hidden;
+      background: none;
+      cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 700;
+      box-shadow: 0 1px 2px rgba(27, 31, 36, 0.06);
+      transition: border-color 0.15s, transform 0.15s;
+    }
+
+    .gh-star:hover {
+      border-color: rgba(247, 181, 0, 0.8);
+      transform: translateY(-1px);
+    }
+
+    .gh-star-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 9px;
+      color: #24292f;
+      background: linear-gradient(180deg, #ffffff, #eef1f4);
+    }
+
+    .gh-star:hover .gh-star-left {
+      background: linear-gradient(180deg, #ffffff, #e6ebef);
+    }
+
+    .gh-star-mark {
+      width: 14px;
+      height: 14px;
+      color: #24292f;
+    }
+
+    .gh-star-count {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 9px;
+      color: #24292f;
+      background: #ffffff;
+      border-left: 1px solid rgba(208, 215, 222, 0.95);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .gh-star-count[hidden] {
+      display: none;
+    }
+
     .status-badge {
       display: flex;
       align-items: center;
@@ -1182,6 +1250,28 @@
       display: block;
     }
 
+    /* No-cover text card for text-first sources (X tweet/thread). */
+    .recommendation-cover.is-text-card {
+      align-items: flex-start;
+      justify-content: flex-start;
+      text-align: left;
+      padding: 12px 14px;
+    }
+
+    .recommendation-cover-text {
+      margin: 0;
+      font-size: 12.5px;
+      font-weight: 600;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      display: -webkit-box;
+      -webkit-line-clamp: 5;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     .recommendation-content {
       min-width: 0;
       display: flex;
@@ -1441,35 +1531,60 @@
     }
 
     @media (max-width: 460px) {
+      /* Keep the header on ONE row even when narrow: the brand (logo + title +
+         status badge) shrinks on the left while the action buttons stay on the
+         right, vertically centered. The decorative eyebrow is hidden to
+         declutter, and the status badge wraps just under the title only when
+         space is genuinely tight — so the buttons never break onto an awkward
+         right-floating second row (the old `grid-template-columns: 1fr` stack). */
       .hero-top {
-        grid-template-columns: 1fr;
-        align-items: stretch;
-        gap: 10px;
+        align-items: center;
+        gap: 8px;
       }
 
       .brand {
-        align-items: flex-start;
-        width: 100%;
+        gap: 8px;
       }
 
       .brand-copy {
-        flex: 1;
+        flex: 1 1 auto;
         min-width: 0;
+      }
+
+      /* "OpenBiliClaw" is one word (can't wrap); keep it readable at 16px and
+         clip with an ellipsis only if a sub-360px drag makes it truly not fit. */
+      .hero h1 {
+        font-size: 16px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .eyebrow {
+        display: none;
       }
 
       .brand-title-row {
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 2px 8px;
       }
 
       .status-badge {
-        justify-self: start;
         padding: 5px 8px;
       }
 
       .hero-actions {
-        width: 100%;
-        justify-content: flex-end;
+        gap: 4px;
+      }
+
+      /* Compact the 5 action icons so brand + icons fit one row. Uses
+         `.hero-actions button` (specificity 0,1,1) so it beats the base
+         `.webui-button { width: 32px }` rule that appears LATER in source —
+         a plain class list would lose that source-order tiebreak. */
+      .hero-actions button {
+        width: 28px;
+        height: 28px;
       }
     }
 
@@ -2699,6 +2814,12 @@
       padding: 28px 20px;
       text-align: center;
       overflow: hidden;
+      /* Never let the flex:1 column .view compress this card in a short or
+         narrow viewport. When it shrank, overflow:hidden clipped the init
+         "开始初始化" button AND the view then fit exactly, so .content had
+         nothing to scroll. Pinning natural height makes a tall card overflow
+         into the .content scroller instead, restoring scroll-to-button. */
+      flex-shrink: 0;
     }
 
     .empty-state::before {
@@ -2726,6 +2847,171 @@
       font-size: 12px;
       line-height: 1.7;
       color: var(--text-secondary);
+    }
+
+    .init-panel {
+      margin-top: 16px;
+      text-align: left;
+    }
+
+    .init-checklist {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .init-checklist li {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-main);
+    }
+
+    .init-checklist li.init-checking {
+      color: var(--text-secondary);
+      animation: init-checking-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes init-checking-pulse {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+
+    .init-checklist li .init-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    .init-checklist li .init-mark {
+      flex: none;
+      width: 16px;
+      text-align: center;
+    }
+
+    .init-checklist li.init-ok .init-mark {
+      color: #1a9b6c;
+    }
+
+    .init-checklist li.init-missing.init-hard .init-mark {
+      color: #e0245e;
+    }
+
+    .init-checklist li.init-missing.init-soft .init-mark {
+      color: #c98a00;
+    }
+
+    .init-checklist li .init-hint {
+      margin: 2px 0 0 24px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .init-start-btn {
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      background: linear-gradient(135deg, #fb7299, #5aa9ff);
+      cursor: pointer;
+    }
+
+    .init-start-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .init-checklist li.init-hint-row {
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .init-start-reason {
+      margin-top: 8px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
+    .init-sources {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+
+    .init-sources .init-sources-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .init-sources .init-source-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .init-sources .init-source-row input {
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      accent-color: #fb7299;
+    }
+
+    .init-sources .init-source-row.init-source-required {
+      color: var(--text-secondary);
+      cursor: default;
+    }
+
+    .init-sources .init-sources-hint {
+      margin: 2px 0 0;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .init-progress {
+      margin-bottom: 12px;
+    }
+
+    .init-progress-track {
+      height: 8px;
+      border-radius: 6px;
+      background: rgba(90, 169, 255, 0.16);
+      overflow: hidden;
+    }
+
+    .init-progress-bar {
+      height: 100%;
+      width: 0;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #fb7299, #5aa9ff);
+      transition: width 0.4s ease;
+    }
+
+    .init-progress-label {
+      margin-top: 6px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      text-align: center;
     }
 
     .chat-shell {
@@ -3779,6 +4065,32 @@
 
     .settings-secondary-btn:hover { border-color: var(--sky); }
 
+    .settings-probe-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 2px;
+    }
+
+    .settings-probe-status {
+      min-width: 0;
+      flex: 1 1 180px;
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .settings-probe-status[data-tone="success"] {
+      color: #1a7a4a;
+    }
+
+    .settings-probe-status[data-tone="error"] {
+      color: #c0404e;
+    }
+
     .settings-link {
       color: var(--brand-strong);
       font-weight: 700;
@@ -4041,7 +4353,16 @@
           </button>
         </div>
       </div>
-      <p class="hero-copy">首页先放一边，这里是你最近更可能点开的。</p>
+      <div class="hero-sub">
+        <p class="hero-copy">首页先放一边，这里是你最近更可能点开的。</p>
+        <button id="starButton" class="gh-star" type="button" title="在 GitHub 给 OpenBiliClaw 点个 Star" aria-label="在 GitHub 给项目点 Star">
+          <span class="gh-star-left">
+            <svg class="gh-star-mark" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span>Star</span>
+          </span>
+          <span id="starCount" class="gh-star-count" hidden></span>
+        </button>
+      </div>
     </header>
 
     <div class="tabs-shell">
@@ -4103,6 +4424,18 @@
         <div id="emptyState" class="empty-state" hidden>
           <h3 id="emptyTitle">还没刷出新东西</h3>
           <p id="emptyText">稍等一下，新的推荐马上来。</p>
+          <div id="initPanel" class="init-panel" hidden>
+            <div id="initSources" class="init-sources" hidden></div>
+            <ul id="initChecklist" class="init-checklist"></ul>
+            <div id="initProgress" class="init-progress" hidden>
+              <div class="init-progress-track">
+                <div id="initProgressBar" class="init-progress-bar"></div>
+              </div>
+              <p id="initProgressLabel" class="init-progress-label"></p>
+            </div>
+            <button id="initStartBtn" type="button" class="init-start-btn">开始初始化</button>
+            <p id="initStartReason" class="init-start-reason" hidden></p>
+          </div>
         </div>
         <div id="recommendationList" class="recommendation-list"></div>
       </section>
@@ -4145,7 +4478,7 @@
         </div>
         <div id="profileEmpty" class="empty-state" hidden>
           <h3 id="profileEmptyTitle">画像还没攒起来</h3>
-          <p id="profileEmptyText">先跑一遍 openbiliclaw init，再回来看看。</p>
+          <p id="profileEmptyText">还没初始化。去「推荐」页点「开始初始化」，攒好画像再回来看。</p>
         </div>
         <div id="profileCard" class="profile-card" hidden>
           <!-- ── 综合叙事 ── -->
@@ -4370,6 +4703,10 @@
           </select>
         </div>
         <p class="settings-hint">默认空；只有显式选择备选 Provider 时才会 fallback，不再自动尝试其它 Provider。</p>
+        <div class="settings-probe-row">
+          <button id="cfgProbeLlm" class="settings-secondary-btn" type="button">测试 LLM</button>
+          <span id="cfgProbeLlmStatus" class="settings-probe-status" aria-live="polite"></span>
+        </div>
         <!-- OpenAI -->
         <div class="settings-provider-fields" data-provider="openai">
           <div class="settings-field">
@@ -4518,6 +4855,10 @@
           </select>
         </div>
         <p class="settings-hint">默认空；只有显式选择备选 Provider 时才会 fallback，并借用对应 chat provider 凭据。</p>
+        <div class="settings-probe-row">
+          <button id="cfgProbeEmbedding" class="settings-secondary-btn" type="button">测试 Embedding</button>
+          <span id="cfgProbeEmbeddingStatus" class="settings-probe-status" aria-live="polite"></span>
+        </div>
         <div class="settings-field" data-embedding-field="api_key">
           <label for="cfgEmbeddingApiKey">Embedding API Key</label>
           <input id="cfgEmbeddingApiKey" type="password" autocomplete="off" placeholder="sk-...">
@@ -4621,6 +4962,7 @@
           <input id="cfgBilibiliEnabled" type="checkbox">
           <label for="cfgBilibiliEnabled">启用 Bilibili discovery</label>
         </div>
+        <p class="settings-hint source-status-row" id="cfgBilibiliStatus" data-source-status="bilibili"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
         <div class="settings-field">
           <label for="cfgBiliAuth">认证方式</label>
           <select id="cfgBiliAuth">
@@ -4649,13 +4991,14 @@
           <input id="cfgXhsEnabled" type="checkbox">
           <label for="cfgXhsEnabled">启用小红书 discovery</label>
         </div>
+        <p class="settings-hint source-status-row" id="cfgXhsStatus" data-source-status="xiaohongshu"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
         <div class="settings-field">
           <label for="cfgXhsDailySearchBudget">小红书每日搜索任务</label>
-          <input id="cfgXhsDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+          <input id="cfgXhsDailySearchBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgXhsDailyCreatorBudget">小红书每日创作者任务</label>
-          <input id="cfgXhsDailyCreatorBudget" type="number" min="0" step="1" placeholder="10">
+          <input id="cfgXhsDailyCreatorBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgXhsTaskInterval">小红书任务间隔秒数</label>
@@ -4669,21 +5012,26 @@
           <input id="cfgDouyinEnabled" type="checkbox">
           <label for="cfgDouyinEnabled">启用抖音 discovery</label>
         </div>
+        <p class="settings-hint source-status-row" id="cfgDouyinStatus" data-source-status="douyin"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
+        <div class="settings-field">
+          <label for="cfgDouyinCookie">Cookie</label>
+          <textarea id="cfgDouyinCookie" placeholder="从浏览器复制 Cookie 字符串（登录抖音后插件会自动同步）"></textarea>
+        </div>
         <div class="settings-field">
           <label for="cfgDouyinCookieEnv">抖音 Cookie 环境变量</label>
           <input id="cfgDouyinCookieEnv" type="text" placeholder="OPENBILICLAW_DOUYIN_COOKIE">
         </div>
         <div class="settings-field">
           <label for="cfgDouyinDailySearchBudget">抖音每日搜索任务</label>
-          <input id="cfgDouyinDailySearchBudget" type="number" min="0" step="1" placeholder="30">
+          <input id="cfgDouyinDailySearchBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgDouyinDailyHotBudget">抖音每日热点任务</label>
-          <input id="cfgDouyinDailyHotBudget" type="number" min="0" step="1" placeholder="5">
+          <input id="cfgDouyinDailyHotBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgDouyinDailyFeedBudget">抖音每日推荐流任务</label>
-          <input id="cfgDouyinDailyFeedBudget" type="number" min="0" step="1" placeholder="30">
+          <input id="cfgDouyinDailyFeedBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgDouyinRequestInterval">抖音 direct 请求间隔秒数</label>
@@ -4697,17 +5045,18 @@
           <input id="cfgYoutubeEnabled" type="checkbox">
           <label for="cfgYoutubeEnabled">启用 YouTube discovery</label>
         </div>
+        <p class="settings-hint source-status-row" id="cfgYoutubeStatus" data-source-status="youtube"><span class="src-dot">●</span> <span class="src-detail">登录状态加载中…</span></p>
         <div class="settings-field">
           <label for="cfgYoutubeDailySearchBudget">YouTube 搜索 query 预算</label>
-          <input id="cfgYoutubeDailySearchBudget" type="number" min="0" step="1" placeholder="6">
+          <input id="cfgYoutubeDailySearchBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgYoutubeDailyTrendingBudget">YouTube 热门候选预算</label>
-          <input id="cfgYoutubeDailyTrendingBudget" type="number" min="0" step="1" placeholder="50">
+          <input id="cfgYoutubeDailyTrendingBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgYoutubeDailyChannelBudget">YouTube 订阅频道预算</label>
-          <input id="cfgYoutubeDailyChannelBudget" type="number" min="0" step="1" placeholder="10">
+          <input id="cfgYoutubeDailyChannelBudget" type="number" min="0" step="1" placeholder="0 = 不限">
         </div>
         <div class="settings-field">
           <label for="cfgYoutubeRequestInterval">YouTube 请求间隔秒数</label>
@@ -4718,6 +5067,44 @@
           <input id="cfgYoutubeMinInterval" type="number" min="0" step="1" placeholder="60">
         </div>
         <p class="settings-hint">YouTube 通过后端 producer 独立调度；预算按天限制 yt_search / yt_trending / yt_channel 的执行规模。</p>
+      </div>
+
+      <div class="settings-section settings-source-card" data-source-card="twitter">
+        <h3><span class="section-icon">&#x1D54F;</span> X (Twitter)</h3>
+        <div class="settings-field-row">
+          <input id="cfgTwitterEnabled" type="checkbox">
+          <label for="cfgTwitterEnabled">启用 X discovery</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgTwitterStatus" data-source-status="twitter"><span class="src-dot">●</span> <span class="src-detail">X 来源状态加载中…</span></p>
+        <div class="settings-field">
+          <label for="cfgTwitterCookie">Cookie</label>
+          <textarea id="cfgTwitterCookie" placeholder="从浏览器复制 Cookie 字符串（登录 x.com 后插件会自动同步，需含 auth_token 和 ct0）"></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterCookieEnv">X Cookie 环境变量</label>
+          <input id="cfgTwitterCookieEnv" type="text" placeholder="OPENBILICLAW_X_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailySearchBudget">X 每日搜索任务</label>
+          <input id="cfgTwitterDailySearchBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailyFeedBudget">X 每日 For-You 任务</label>
+          <input id="cfgTwitterDailyFeedBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailyCreatorBudget">X 每日订阅作者任务</label>
+          <input id="cfgTwitterDailyCreatorBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterRequestInterval">X 请求间隔秒数</label>
+          <input id="cfgTwitterRequestInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterMinInterval">X 最小调度间隔分钟数</label>
+          <input id="cfgTwitterMinInterval" type="number" min="0" step="1" placeholder="60">
+        </div>
+        <p class="settings-hint">X 通过后端 cookie 回放独立调度；登录 x.com 后扩展会自动同步 auth_token / ct0。</p>
       </div>
 
       <div class="settings-section settings-source-card" data-source-card="browser">
@@ -4749,6 +5136,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
           <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareTwitter">候选池 X 占比</label>
+          <input id="cfgPoolShareTwitter" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

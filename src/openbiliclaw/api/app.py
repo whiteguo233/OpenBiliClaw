@@ -41,6 +41,8 @@ from openbiliclaw.api.models import (
     CognitionUpdateSummary,
     ConfigIssueOut,
     ConfigResponse,
+    ConfigServiceProbeIn,
+    ConfigServiceProbeResponse,
     ConfigUpdateIn,
     ConfigUpdateResponse,
     DelightAckIn,
@@ -57,6 +59,9 @@ from openbiliclaw.api.models import (
     FeedbackIn,
     FeedbackResponse,
     HealthResponse,
+    InitPrerequisitesOut,
+    InitStageOut,
+    InitStatusOut,
     LLMConfigOut,
     LLMProviderConfigOut,
     LoggingConfigOut,
@@ -84,7 +89,10 @@ from openbiliclaw.api.models import (
     SourcesConfigOut,
     SourceShareSuggestionIn,
     SourceShareSuggestionResponse,
+    SourcesStatusResponse,
+    SourceStatusItem,
     StorageConfigOut,
+    TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
     UpdateStatusResponse,
@@ -92,7 +100,10 @@ from openbiliclaw.api.models import (
     WatchLaterItem,
     WatchLaterListResponse,
     WatchLaterStateResponse,
+    XCookieIn,
+    XCookieResponse,
     XiaohongshuSourceConfigOut,
+    XStatusResponse,
     YoutubeSourceConfigOut,
 )
 from openbiliclaw.runtime.image_cache import (
@@ -132,7 +143,24 @@ _fire_and_forget_tasks: set[asyncio.Task[None]] = set()
 # would flash on every popup-open-after-idle. A genuinely-missing model 404s
 # *fast*, so it still resolves to not-ready well within the cap.
 _EMBEDDING_READY_TTL_SECONDS = 30.0
-_EMBEDDING_PROBE_TIMEOUT_SECONDS = 6.0
+# Strict readiness (gui-init): a failure/timeout caches briefly so a service
+# that finished a cold model load greens within seconds; the probe timeout is
+# generous enough for a cold Ollama load but still fails (does not optimistically
+# pass) if the embedding service never answers.
+_EMBEDDING_FAIL_TTL_SECONDS = 8.0
+_EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+_LAN_IP_TTL_SECONDS = 30.0
+_AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
+
+# Canonical home is openbiliclaw.sources.x_auth (mirrors douyin_auth);
+# re-exported here because callers historically imported from api.app.
+from openbiliclaw.sources.x_auth import (  # noqa: E402
+    X_REQUIRED_COOKIE_NAMES as _X_REQUIRED_COOKIE_NAMES,
+)
+from openbiliclaw.sources.x_auth import (  # noqa: E402, F401
+    XCookieManager,
+    resolve_x_cookie,
+)
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -178,14 +206,25 @@ def _interface_ipv4_candidates() -> list[str]:
     seen: set[str] = set()
     for command in commands:
         try:
-            proc = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=2,
-                check=False,
-            )
+            if os.name == "nt":
+                proc = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=2,
+                    check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            else:
+                proc = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    errors="replace",
+                    timeout=2,
+                    check=False,
+                )
         except (OSError, subprocess.TimeoutExpired):
             continue
         if proc.returncode != 0:
@@ -331,6 +370,21 @@ def _count_events_by_source_platform(database: Any) -> dict[str, int]:
         source_key = _normalize_source_platform(source)
         counter[source_key] = counter.get(source_key, 0) + 1
     return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
+
+
+def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[str]:
+    """Effective optional platform sources for a guided-init run.
+
+    ``enabled`` is the config-enabled set; ``selected`` is the extension's
+    per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
+    clients — meaning "use everything enabled"). A selection can only NARROW the
+    set: you can't init a source that isn't configured, so the result is the
+    intersection. Bilibili is the always-on base (pulled via the client, not an
+    ``include_*`` flag), so it doesn't need to appear here.
+    """
+    if selected is None:
+        return set(enabled)
+    return set(enabled) & selected
 
 
 def _normalize_source_platform(source: object) -> str:
@@ -646,6 +700,8 @@ def create_app(
                 "; ".join(str(getattr(issue, "message", issue)) for issue in ctx.degraded_issues),
             )
     app.state.runtime_context = ctx
+    auto_replenishment_task: asyncio.Task[None] | None = None
+    auto_replenishment_started_at = 0.0
     app.state.degraded = bool(getattr(ctx, "degraded", False))
     app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
     app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
@@ -843,6 +899,7 @@ def create_app(
             or path == "/api/runtime-status"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
+            or path in ("/api/init-status", "/api/init", "/api/init/cancel")
             or (path == "/api/config" and method in {"GET", "PUT"})
             or path.startswith("/api/auth")
             or path.startswith("/m")
@@ -850,6 +907,97 @@ def create_app(
         if allowed:
             return await call_next(request)
         return JSONResponse(status_code=503, content=_degraded_body())
+
+    def _init_active_now() -> bool:
+        """Defensive ``init_active`` check usable from any handler/middleware.
+
+        Returns False (never raises) when the coordinator/DB is a test stub or
+        unavailable, so gating logic degrades to "not active" instead of 500.
+        """
+        coord = getattr(ctx, "init_coordinator", None)
+        if coord is None:
+            return False
+        try:
+            return bool(coord.init_active())
+        except Exception:
+            return False
+
+    def _init_owns_task(task_id: str) -> bool:
+        """Whether ``task_id`` is a bootstrap task enqueued by the active init
+        run (so its task-result is init's own data, not a stale/steady-state
+        completion). Defensive — never raises."""
+        coord = getattr(ctx, "init_coordinator", None)
+        if coord is None or not task_id:
+            return False
+        try:
+            return bool(coord.is_owned_bootstrap_task(str(task_id)))
+        except Exception:
+            return False
+
+    def _init_owned_ids_filter() -> set[str] | None:
+        """``next-task`` filter: during an active init, restrict the dispatcher
+        to init-owned bootstrap task ids (so a stale pending task can't be
+        claimed and starve the run's collectors); None = no restriction."""
+        if not _init_active_now():
+            return None
+        coord = getattr(ctx, "init_coordinator", None)
+        if coord is None:
+            return None
+        try:
+            return set(coord.owned_task_ids())
+        except Exception:
+            return None
+
+    # gui-init D1 — DENY-BY-DEFAULT writer gating. While a guided init is active,
+    # every mutating request (POST/PUT/PATCH/DELETE) is rejected with 409 unless
+    # it is on the small allowlist of init-essential writers below. An allowlist
+    # of *blocked* paths is fragile (every new soul/pool writer must remember to
+    # opt in); denying by default means no writer can silently race init.
+    #
+    # Allowed during init:
+    #  - /api/init, /api/init/cancel        — init control itself
+    #  - /api/bilibili/cookie               — handler no-ops during init
+    #  - /api/auth/*                        — auth-gate management (login/admin)
+    #  - /api/sources/*/kick                — init's own dispatcher kick
+    #  - /api/sources/*/task-result         — init bootstrap results (the handler
+    #                                         self-guards: skips pool writes and
+    #                                         only propagates init-owned results)
+    # (GET reads — /api/sources/*/next-task, /api/init-status, … — are never
+    #  gated since only mutating methods are checked.)
+    _init_write_allowlist = frozenset(
+        {
+            "/api/init",
+            "/api/init/cancel",
+            "/api/bilibili/cookie",
+        }
+    )
+
+    def _init_write_allowed(path: str) -> bool:
+        if path in _init_write_allowlist or path.startswith("/api/auth"):
+            return True
+        # Exact-segment match for the bootstrap protocol: only
+        # /api/sources/<source>/{kick,task-result}. Split WITHOUT stripping so a
+        # trailing slash ("/api/sources/xhs/kick/") yields 6 parts and is NOT
+        # allowed, and recipe CRUD like /api/sources/kick (recipe_id="kick")
+        # yields 4 parts and is NOT allowed.
+        segments = path.split("/")  # "/api/sources/xhs/kick" → ['', api, sources, xhs, kick]
+        return (
+            len(segments) == 5
+            and segments[1] == "api"
+            and segments[2] == "sources"
+            and segments[4] in ("kick", "task-result")
+        )
+
+    @app.middleware("http")
+    async def _init_active_write_guard(request: Request, call_next: Any) -> Any:
+        if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            path = request.url.path
+            if not _init_write_allowed(path) and _init_active_now():
+                return JSONResponse(
+                    {"error": "init_running", "detail": "初始化进行中，请稍后再试"},
+                    status_code=409,
+                )
+        return await call_next(request)
 
     # Register AFTER the degraded guard so the auth gate is the outermost http
     # middleware (runs first): unauthenticated requests are rejected before any
@@ -1110,6 +1258,17 @@ def create_app(
             logger.debug("Health profile readiness check failed", exc_info=True)
             return None
 
+    _lan_ip_value: str | None = None
+    _lan_ip_checked_at = float("-inf")
+
+    def _health_lan_ip() -> str | None:
+        nonlocal _lan_ip_value, _lan_ip_checked_at
+        if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
+            return _lan_ip_value
+        _lan_ip_value = _detect_lan_ip()
+        _lan_ip_checked_at = time.monotonic()
+        return _lan_ip_value
+
     # Embedding readiness is probed live (see _health_embedding_ready) and the
     # result cached here so frequent /api/health polls share one provider call.
     _embedding_ready_value = False
@@ -1144,29 +1303,33 @@ def create_app(
             # Legacy service without a live probe — "built" is the best signal.
             return True
 
-        if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+        _embedding_ttl = (
+            _EMBEDDING_READY_TTL_SECONDS if _embedding_ready_value else _EMBEDDING_FAIL_TTL_SECONDS
+        )
+        if time.monotonic() - _embedding_ready_checked_at < _embedding_ttl:
             return _embedding_ready_value
 
         async with _embedding_ready_lock:
             # Another request may have refreshed the cache while we waited.
-            if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+            _embedding_ttl = (
+                _EMBEDDING_READY_TTL_SECONDS
+                if _embedding_ready_value
+                else _EMBEDDING_FAIL_TTL_SECONDS
+            )
+            if time.monotonic() - _embedding_ready_checked_at < _embedding_ttl:
                 return _embedding_ready_value
             try:
                 ready = bool(
                     await asyncio.wait_for(probe(), timeout=_EMBEDDING_PROBE_TIMEOUT_SECONDS)
                 )
             except TimeoutError:
-                # Probe exceeded the cap — almost always Ollama cold-loading the
-                # model, not a real failure (a missing model 404s fast and lands
-                # in the `except Exception` branch below as a hard `False`).
-                # Report optimistically ready and cache it like any result, so
-                # concurrent / repeat polls during the multi-second load share
-                # one answer instead of each re-probing and stacking 6s waits.
-                # (A brief stale-OK is far better than flashing the banner.)
-                logger.debug(
-                    "Embedding readiness probe timed out (model loading?); optimistic ready"
-                )
-                ready = True
+                # Strict (gui-init): a prereq is "ok" only on a confirmed real
+                # embedding round-trip. A timeout (even a cold model load) within
+                # the generous window means we could NOT confirm it works → report
+                # not-ready, and the short fail-TTL re-probes soon so it greens
+                # quickly once the load finishes.
+                logger.debug("Embedding readiness probe timed out; reporting not ready")
+                ready = False
             except Exception:
                 logger.debug("Embedding readiness probe errored", exc_info=True)
                 ready = False
@@ -1177,7 +1340,7 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
-        lan_ip = _detect_lan_ip()
+        lan_ip = _health_lan_ip()
         embedding_ready = await _health_embedding_ready()
         if bool(getattr(ctx, "degraded", False)):
             body: dict[str, object] = {
@@ -1200,39 +1363,279 @@ def create_app(
             embedding_ready=embedding_ready,
         )
 
+    @app.get("/api/init-status", response_model=InitStatusOut)
+    async def init_status(request: Request) -> InitStatusOut:
+        """Authoritative guided-init status + pre-init checklist (gui-init §3).
+
+        Remote-readable (mirrors autostart-status): a non-local caller still
+        sees the state but ``can_manage`` is False. Degraded-mode readable.
+        """
+        from openbiliclaw.docker_runtime import is_running_in_container
+
+        coord = ctx.init_coordinator
+        prereqs = ctx.init_prereqs
+        run = coord.get_status()
+        # Probe the three services concurrently — each is a real (now strict)
+        # request with a generous cold-load timeout, so running them sequentially
+        # could stack to ~40s. gather() bounds the wait to the slowest single
+        # probe (TTL-cached, so steady-state polls are instant).
+        bili, chat, embedding = await asyncio.gather(
+            prereqs.bilibili_check(),
+            prereqs.chat_ready(),
+            _health_embedding_ready(),
+        )
+        platforms = prereqs.enabled_platforms()
+        initialized = bool(_health_profile_ready())
+        trusted = _get_auth_gate().is_trusted_local(request)
+        supported = not is_running_in_container()
+        running = bool(run["running"])
+        hard_ok = (bili == "ok") and chat
+        # Mirror POST /api/init's guards: an already-initialized profile blocks
+        # a (non-force) start, so can_start must reflect that too — otherwise E1
+        # and E2 disagree and a client could offer "start" that E2 rejects.
+        can_start = trusted and supported and hard_ok and not running and not initialized
+
+        if not supported:
+            reason, detail = "unsupported_runtime", "Docker 运行时不支持图形化初始化"
+        elif running:
+            reason, detail = "already_running", "初始化进行中"
+        elif initialized:
+            reason, detail = "already_initialized", "已经初始化过了；如需重建请用 force"
+        elif bili != "ok":
+            reason, detail = "bilibili_not_logged_in", "还没检测到 B站 登录"
+        elif not chat:
+            reason, detail = "llm_not_ready", "AI 服务还没配好或当前不可用"
+        elif run.get("status") in ("failed", "cancelled"):
+            # Prereqs are fine and nothing is running, but the last run ended
+            # badly — surface why so the UI can show it (can_start stays true so
+            # the user can retry) (gui-init review).
+            reason = run.get("reason") or str(run.get("status"))
+            detail = "上次初始化未完成，可重试"
+        else:
+            reason, detail = "none", ""
+
+        return InitStatusOut(
+            initialized=initialized,
+            running=running,
+            run_id=run["run_id"],
+            sequence=run["sequence"],
+            current_stage=run["current_stage"],
+            total_stages=run["total_stages"],
+            stages=[InitStageOut(**s) for s in run["stages"]],
+            partial_success=bool(run["partial_success"]),
+            can_start=can_start,
+            can_manage=trusted,
+            prerequisites=InitPrerequisitesOut(
+                bilibili_logged_in=(bili == "ok"),
+                bilibili_check=bili,
+                llm_ready=chat,
+                embedding_ready=embedding,
+                enabled_platforms=platforms,
+            ),
+            reason=reason,
+            detail=detail,
+        )
+
+    def _init_runtime_supported() -> tuple[bool, str]:
+        """Cheap guard: GUI init needs a writable host runtime (gui-init §5b,
+        review R2 A-7). Docker uses the headless auto-init path instead."""
+        from openbiliclaw.docker_runtime import is_running_in_container
+
+        if is_running_in_container():
+            return False, "Docker 运行时不支持图形化初始化"
+        cfg = ctx.config
+        if cfg is not None:
+            try:
+                if not os.access(str(cfg.data_path), os.W_OK):
+                    return False, "数据目录不可写"
+            except Exception:
+                pass
+        return True, ""
+
+    async def _run_guided_init_wrapper(
+        run_id: str, selected_sources: set[str] | None = None
+    ) -> None:
+        """Sole status/event writer for an API-launched guided init (gui-init
+        §5f). Drives the shared ``run_guided_init`` through the coordinator and
+        persists the terminal state here — completed / failed / cancelled —
+        never via a side path. Imported lazily to avoid an import cycle with
+        the CLI module that owns the shared pipeline.
+
+        ``selected_sources`` is the extension's per-run platform choice; it can
+        only narrow the config-enabled set (see :func:`_select_init_platforms`).
+        ``None`` keeps the legacy behaviour of using everything enabled.
+        """
+        from openbiliclaw.cli import (
+            _INIT_BILIBILI_FAVORITE_LIMIT,
+            _INIT_BILIBILI_FOLLOW_LIMIT,
+            _INIT_POOL_TARGET_COUNT,
+            GuidedInitError,
+            run_guided_init,
+        )
+
+        coord = ctx.init_coordinator
+
+        async def _api_discover_backfill(
+            profile: Any, *, target_pool_count: int, label_suffix: str = ""
+        ) -> int:
+            # API path backfills through the live controller so it holds the
+            # refresh lock (B1); ``label_suffix`` is CLI-only console flavour.
+            return int(
+                await ctx.runtime_controller.run_init_backfill(
+                    profile, target_pool_count, fully_parallel=True
+                )
+            )
+
+        try:
+            await coord.mark_running(run_id)
+            enabled = set(ctx.init_prereqs.enabled_platforms())
+            effective = _select_init_platforms(enabled, selected_sources)
+            result = await run_guided_init(
+                client=ctx.bilibili_client,
+                memory=ctx.memory_manager,
+                soul_engine=ctx.soul_engine,
+                favorite_limit=_INIT_BILIBILI_FAVORITE_LIMIT,
+                follow_limit=_INIT_BILIBILI_FOLLOW_LIMIT,
+                include_xhs="xiaohongshu" in effective,
+                include_dy="douyin" in effective,
+                include_yt="youtube" in effective,
+                include_x="twitter" in effective,
+                target_pool_count=_INIT_POOL_TARGET_COUNT,
+                discover_backfill=_api_discover_backfill,
+                coordinator=coord,
+                run_id=run_id,
+            )
+            await coord.complete(run_id, partial_success=result.discovery_error)
+        except asyncio.CancelledError:
+            # Cancel was requested via /api/init/cancel — shield the terminal
+            # write so the cancelled status still lands before we propagate.
+            with suppress(Exception):
+                await asyncio.shield(coord.cancel(run_id))
+            raise
+        except GuidedInitError as exc:
+            logger.warning("guided init %s failed: %s", run_id, exc.reason)
+            with suppress(Exception):
+                await coord.fail(run_id, exc.reason)
+        except Exception:
+            logger.exception("guided init %s crashed", run_id)
+            with suppress(Exception):
+                await coord.fail(run_id, "internal_error")
+
+    @app.post("/api/init")
+    async def start_guided_init(request: Request) -> JSONResponse:
+        """Launch guided init in the background (local-only; gui-init §2/§5b).
+
+        Cheap rejections run BEFORE reserving the run so a rejected request
+        never leaves a stuck ``starting`` row (review R2 A-2). The single-flight
+        guard is the DB reservation inside ``try_start``.
+        """
+        if not _get_auth_gate().is_trusted_local(request):
+            return JSONResponse({"error": "local_only"}, status_code=403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        force = bool(body.get("force", False)) if isinstance(body, dict) else False
+        # Optional per-run platform selection from the extension checkboxes. A
+        # list (even empty) is an explicit choice; absent → None = use all
+        # enabled (CLI / legacy clients). Narrowed against config-enabled later.
+        raw_sources = body.get("sources") if isinstance(body, dict) else None
+        selected_sources = {str(s) for s in raw_sources} if isinstance(raw_sources, list) else None
+
+        coord = ctx.init_coordinator
+
+        supported, detail = _init_runtime_supported()
+        if not supported:
+            return JSONResponse({"error": "unsupported_runtime", "detail": detail}, status_code=409)
+        if not force and _health_profile_ready() is True:
+            return JSONResponse(
+                {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
+                status_code=409,
+            )
+
+        run_id = uuid.uuid4().hex
+        if not coord.try_start(run_id):
+            return JSONResponse({"error": "already_running"}, status_code=409)
+
+        # Critical-section revalidation: prereqs may have lapsed between the
+        # status poll and now. On a miss, roll the reservation back to idle so
+        # no stuck row remains (review R2 A-2).
+        bili = await ctx.init_prereqs.bilibili_check()
+        if bili != "ok":
+            coord.reset_to_idle(run_id, reason="bilibili_not_logged_in")
+            return JSONResponse({"error": "bilibili_not_logged_in"}, status_code=409)
+        chat = await ctx.init_prereqs.chat_ready()
+        if not chat:
+            coord.reset_to_idle(run_id, reason="llm_not_ready")
+            return JSONResponse({"error": "llm_not_ready"}, status_code=409)
+
+        registry = getattr(ctx, "task_registry", None)
+        if registry is not None:
+            task = registry.track("guided_init", _run_guided_init_wrapper(run_id, selected_sources))
+        else:
+            task = asyncio.create_task(_run_guided_init_wrapper(run_id, selected_sources))
+        coord.attach_task(run_id, task)
+        return JSONResponse({"run_id": run_id, **coord.get_status()}, status_code=202)
+
+    @app.post("/api/init/cancel")
+    async def cancel_guided_init(request: Request) -> JSONResponse:
+        """Cooperatively cancel the in-flight guided init (local-only)."""
+        if not _get_auth_gate().is_trusted_local(request):
+            return JSONResponse({"error": "local_only"}, status_code=403)
+        coord = ctx.init_coordinator
+        run = ctx.database.get_latest_init_run() if ctx.database is not None else None
+        if run is None or not coord.init_active():
+            return JSONResponse({"error": "not_running"}, status_code=409)
+        cancelled = await coord.cancel_current_run(run["run_id"])
+        if not cancelled:
+            return JSONResponse({"error": "not_running"}, status_code=409)
+        return JSONResponse({"cancelling": True, "run_id": run["run_id"]}, status_code=202)
+
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(
         url: str = Query(..., description="URL-encoded image URL to proxy"),
     ) -> Response | FileResponse:
         """Proxy whitelisted remote cover images through the local backend.
 
-        Fetch + whitelist / redirect / size validation live in
-        ``openbiliclaw.runtime.image_cache.fetch_cover_bytes`` (shared with the
-        discovery-time prefetch sweep). Successfully fetched images are cached to
-        ``data/image-cache/``; when the upstream fails (e.g. an expired XHS CDN
-        token) the cached copy is served instead.
+        Cache-first: a cached copy IS the image for that URL (the URL identifies
+        it), so serve it immediately instead of paying a ~2s upstream round-trip
+        on every load. The old code re-fetched on the success path and only read
+        the cache when the upstream failed, so covers stayed slow even when
+        cached. On a miss, fetch via ``image_cache.fetch_cover_bytes`` (whitelist
+        / redirect / size validation), cache it, and serve. ``X-Image-Cache``
+        reports hit/miss; slow misses are logged for diagnosis.
         """
+        if cached := _image_cache_response(url):
+            return cached
+
+        started = time.monotonic()
         try:
             data, content_type = await fetch_cover_bytes(url)
         except CoverFetchError as exc:
             # Validation failures (400/403/413) surface as-is; upstream / network
-            # failures (>=500) fall back to a cached copy when one exists.
+            # failures (>=500) fall back to a cached copy when one appeared.
             if exc.status_code >= 500 and (cached := _image_cache_response(url)):
                 return cached
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
         save_image_bytes(url, data, content_type)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if elapsed_ms > 800:
+            logger.debug("image-proxy MISS %dms %s", elapsed_ms, url[:100])
         return Response(
             content=data,
             media_type=content_type,
             headers={
                 "Cache-Control": "public, max-age=86400",
                 "X-Content-Type-Options": "nosniff",
+                "X-Image-Cache": "miss",
             },
         )
 
     @app.post("/api/bilibili/cookie", response_model=BilibiliCookieResponse)
-    async def sync_bilibili_cookie(payload: BilibiliCookieIn) -> BilibiliCookieResponse:
+    async def sync_bilibili_cookie(
+        payload: BilibiliCookieIn,
+    ) -> BilibiliCookieResponse | JSONResponse:
         """Receive a Bilibili cookie from the browser extension and persist
         it server-side so the backend can call B 站 API as the user.
 
@@ -1269,6 +1672,35 @@ def create_app(
                 authenticated=False,
                 message="cookie payload is empty",
                 error_code="empty_cookie",
+            )
+
+        # gui-init D1.2: while guided init runs, the extension keeps auto-syncing
+        # the cookie. Don't validate (~30s round-trip) or rebuild the runtime
+        # (which would swap the BilibiliAPIClient mid-init). Same effective
+        # cookie → silent 200 no-op so the extension's auto-sync doesn't error;
+        # a genuinely different cookie → 409 so the user learns the switch
+        # didn't take (it applies after init), rather than being dropped.
+        if _init_active_now():
+            effective_cookie = ""
+            try:
+                _cfg, _ = load_config_with_diagnostics()
+                effective_cookie = (_cfg.bilibili.cookie or "").strip()
+                if not effective_cookie:
+                    effective_cookie = AuthManager(data_dir=_cfg.data_path).load_cookie().strip()
+            except Exception:
+                effective_cookie = ""
+            if cookie_value == effective_cookie and effective_cookie:
+                return BilibiliCookieResponse(
+                    ok=True,
+                    authenticated=True,
+                    message="Cookie 未变，初始化进行中无需重新同步。",
+                )
+            return JSONResponse(
+                {
+                    "error": "init_running",
+                    "detail": "初始化进行中，暂不能切换 Cookie，请稍后再试。",
+                },
+                status_code=409,
             )
 
         config, diagnostics = load_config_with_diagnostics()
@@ -1413,6 +1845,65 @@ def create_app(
             message="Douyin Cookie synced.",
         )
 
+    @app.post("/api/sources/x/cookie", response_model=XCookieResponse)
+    async def sync_x_cookie(payload: XCookieIn) -> XCookieResponse:
+        """Receive an X (Twitter) cookie from the browser extension.
+
+        The browser extension already gates on ``auth_token`` + ``ct0`` before
+        posting, but we persist whatever header arrives and recompute
+        ``has_cookie`` server-side so the env-override path and the file stay
+        consistent. ``has_cookie`` is true only when BOTH required cookies are
+        present — twitter-cli 401s without either.
+        """
+        from openbiliclaw.sources.douyin_direct import parse_cookie_header
+
+        cookie_value = payload.cookie.strip()
+        if not cookie_value:
+            return XCookieResponse(
+                ok=False,
+                has_cookie=False,
+                message="cookie payload is empty",
+                error_code="empty_cookie",
+            )
+
+        runtime_config = getattr(ctx, "config", None) or config
+        XCookieManager(runtime_config.data_path).set_cookie(cookie_value, source=payload.source)
+        cookie_pairs = parse_cookie_header(cookie_value)
+        cookie_names = sorted(cookie_pairs.keys())
+        has_cookie = all(name in cookie_pairs for name in _X_REQUIRED_COOKIE_NAMES)
+
+        # A freshly synced valid cookie is the external re-login signal that
+        # clears a missing_cookie / expired_cookie / blocked health block.
+        # Without this the producer's is_ready() gate stays False forever, so
+        # discovery never retries even though auth is now fixed (the cookie
+        # handler is the only place a re-login state can be lifted).
+        if has_cookie:
+            with suppress(Exception):
+                from openbiliclaw.storage.x_health import XSourceHealthStore
+
+                XSourceHealthStore(ctx.database).clear_relogin_block()
+
+        with suppress(Exception):
+            await ctx.event_hub.publish(
+                {
+                    "type": "x_cookie_synced",
+                    "source": payload.source,
+                    "has_cookie": has_cookie,
+                    "cookie_names": cookie_names,
+                }
+            )
+
+        return XCookieResponse(
+            ok=True,
+            has_cookie=has_cookie,
+            cookie_names=cookie_names,
+            message=(
+                "X Cookie synced."
+                if has_cookie
+                else "X Cookie stored but missing auth_token / ct0."
+            ),
+        )
+
     @app.post("/api/init-completed")
     async def init_completed() -> dict[str, object]:
         """Notify the running server that ``openbiliclaw init`` has finished.
@@ -1459,6 +1950,8 @@ def create_app(
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
+                content_type=str(getattr(item.content, "content_type", "") or "video"),
+                body_text=str(getattr(item.content, "body_text", "") or ""),
             )
             for item in items
         ]
@@ -1631,6 +2124,16 @@ def create_app(
                 )
         except Exception:
             logger.debug("Image cache cleanup failed", exc_info=True)
+
+        # Guided-init crash recovery: fail any run left starting/running by a
+        # prior crash so /api/init-status never reports a stuck running=true.
+        # Must run even in degraded mode (before the early return below).
+        try:
+            reconciled = ctx.init_coordinator.reconcile_on_boot()
+            if reconciled:
+                logger.info("Reconciled %d stale guided-init run(s) on boot", reconciled)
+        except Exception:
+            logger.debug("Guided-init boot reconciliation failed", exc_info=True)
 
         if bool(getattr(ctx, "degraded", False)):
             return
@@ -2088,7 +2591,17 @@ def create_app(
         # silent: any error returns the original empty list, leaving
         # the popup's "正在补货" state intact and giving the regular
         # refresh tick another chance.
-        if not rows and ctx.recommendation_engine is not None and ctx.soul_engine is not None:
+        # gui-init D1: this empty-history bootstrap calls serve(), which WRITES
+        # (recommendation rows + pool "shown" markers). It's a side-effecting
+        # GET, so the deny-by-default middleware (POST/PUT/PATCH/DELETE) doesn't
+        # cover it — skip it during an active init so a read can't serve from /
+        # mark a half-built pool. The post-init refresh tick serves normally.
+        if (
+            not rows
+            and not _init_active_now()
+            and ctx.recommendation_engine is not None
+            and ctx.soul_engine is not None
+        ):
             with suppress(Exception):
                 pool_count_fn = getattr(ctx.database, "count_pool_candidates", None)
                 pool_count = int(pool_count_fn()) if callable(pool_count_fn) else 0
@@ -2119,6 +2632,8 @@ def create_app(
                     content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                     content_url=str(row.get("content_url", "") or ""),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    content_type=str(row.get("content_type", "") or "video"),
+                    body_text=str(row.get("body_text", "") or ""),
                 )
                 for row in rows
             ]
@@ -2309,21 +2824,68 @@ def create_app(
         except Exception:
             logger.exception("Background discovery candidate drain failed")
 
-    async def _trigger_replenishment_if_needed() -> None:
+    def _pool_available_count() -> int | None:
+        """Return the best available servable-pool count for hot-path guards."""
+        get_runtime_status = getattr(ctx.runtime_controller, "get_runtime_status", None)
+        if callable(get_runtime_status):
+            with suppress(Exception):
+                status = get_runtime_status()
+                if isinstance(status, dict) and "pool_available_count" in status:
+                    return max(0, int(status.get("pool_available_count") or 0))
+
+        readiness = getattr(ctx.database, "count_pool_readiness", None)
+        if callable(readiness):
+            with suppress(Exception):
+                counts = readiness()
+                if isinstance(counts, dict) and "available" in counts:
+                    return max(0, int(counts.get("available") or 0))
+
+        count_pool = getattr(ctx.database, "count_pool_candidates", None)
+        if callable(count_pool):
+            with suppress(Exception):
+                return max(0, int(count_pool()))
+        return None
+
+    async def _run_auto_replenishment(trigger: Callable[[], Any]) -> None:
+        try:
+            await trigger()
+        except Exception:
+            logger.exception("Automatic pool replenishment failed")
+
+    async def _trigger_replenishment_if_needed(*, force: bool = False) -> None:
         """Fire a background Discovery refresh when the pool runs low."""
-        curator = getattr(ctx.recommendation_engine, "_curator", None)
-        if curator is None or not hasattr(curator, "needs_replenishment"):
-            return
-        if not curator.needs_replenishment():
-            return
         trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
-        if callable(trigger):
-            logger.info("Pool low — triggering automatic replenishment")
-            asyncio.create_task(trigger())
+        if not callable(trigger):
+            return
+        if not force:
+            curator = getattr(ctx.recommendation_engine, "_curator", None)
+            if curator is None or not hasattr(curator, "needs_replenishment"):
+                return
+            if not curator.needs_replenishment():
+                return
+
+        nonlocal auto_replenishment_started_at, auto_replenishment_task
+        now = time.monotonic()
+        if auto_replenishment_task is not None and not auto_replenishment_task.done():
+            logger.debug("Pool low - automatic replenishment already running; skipping")
+            return
+        if now - auto_replenishment_started_at < _AUTO_REPLENISH_DEBOUNCE_SECONDS:
+            logger.debug("Pool low - automatic replenishment recently requested; skipping")
+            return
+
+        auto_replenishment_started_at = now
+        logger.info("Pool low - triggering automatic replenishment")
+        task = asyncio.create_task(_run_auto_replenishment(trigger))
+        auto_replenishment_task = task
+        _fire_and_forget_tasks.add(task)
+        task.add_done_callback(_fire_and_forget_tasks.discard)
 
     @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
     async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count() == 0:
+            await _trigger_replenishment_if_needed(force=True)
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -2338,6 +2900,9 @@ def create_app(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count() == 0:
+            await _trigger_replenishment_if_needed(force=True)
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -2402,6 +2967,7 @@ def create_app(
             return BackendUpdateStatusOut(
                 state=str(runtime_status.get("backend_update_state", "unknown")),
                 auto_update_enabled=bool(runtime_status.get("auto_update_enabled", False)),
+                install_mode=str(runtime_status.get("install_mode", "")),
                 current_version=str(runtime_status.get("current_version", "")),
                 latest_version=str(runtime_status.get("latest_remote_version", "")),
                 latest_tag=str(runtime_status.get("latest_remote_version", "")),
@@ -2573,9 +3139,13 @@ def create_app(
         # trigger.
         memory_manager = getattr(ctx.runtime_controller, "memory_manager", None)
         if memory_manager is not None:
-            state = memory_manager.load_discovery_runtime_state()
-            state.pop("last_delight_notification_at", None)
-            memory_manager.save_discovery_runtime_state(state)
+            update_state = getattr(memory_manager, "update_discovery_runtime_state", None)
+            if callable(update_state):
+                update_state(lambda state: state.pop("last_delight_notification_at", None))
+            else:
+                state = memory_manager.load_discovery_runtime_state()
+                state.pop("last_delight_notification_at", None)
+                memory_manager.save_discovery_runtime_state(state)
         return {"ok": True, "pushed_count": len(pushed), "bvids": pushed}
 
     @app.get("/api/delight/pending", response_model=PendingDelightResponse)
@@ -2960,10 +3530,10 @@ def create_app(
             memory_manager = getattr(ctx.runtime_controller, "memory_manager", None)
         load_state = getattr(memory_manager, "load_discovery_runtime_state", None)
         save_state = getattr(memory_manager, "save_discovery_runtime_state", None)
-        if not callable(load_state) or not callable(save_state):
+        update_state = getattr(memory_manager, "update_discovery_runtime_state", None)
+        if not callable(update_state) and (not callable(load_state) or not callable(save_state)):
             return
         try:
-            state = load_state()
             if metadata is not None:
                 entry = dict(metadata)
             elif metadata_fn is not None:
@@ -2980,11 +3550,21 @@ def create_app(
                 entry["classifier"] = classifier
             if resulting_action:
                 entry["resulting_action"] = resulting_action
-            state[state_key] = append_probe_feedback_history(
-                state.get(state_key, []),
-                entry,
-            )
-            save_state(state)
+
+            def _mutate(state: dict[str, object]) -> None:
+                state[state_key] = append_probe_feedback_history(
+                    state.get(state_key, []),
+                    entry,
+                )
+
+            if callable(update_state):
+                update_state(_mutate)
+            else:
+                load_state_fn = cast("Callable[[], dict[str, object]]", load_state)
+                save_state_fn = cast("Callable[[dict[str, object]], None]", save_state)
+                state = load_state_fn()
+                _mutate(state)
+                save_state_fn(state)
         except Exception:
             logger.exception("Failed to record probe feedback history")
 
@@ -3189,24 +3769,41 @@ def create_app(
         memory_manager = getattr(ctx, "memory_manager", None)
         load_state = getattr(memory_manager, "load_discovery_runtime_state", None)
         save_state = getattr(memory_manager, "save_discovery_runtime_state", None)
-        if not callable(load_state) or not callable(save_state):
+        update_state = getattr(memory_manager, "update_discovery_runtime_state", None)
+        if not callable(update_state) and (not callable(load_state) or not callable(save_state)):
             return
         try:
-            state = load_state()
-            if not isinstance(state, dict):
-                state = {}
             now = datetime.now(UTC)
-            buffer_state = record_buffer_event(
-                state.get("short_term_exploration_buffer", {}),
-                domain=clean_domain,
-                source_event=source_event,
-                specifics=specifics or [],
-                evidence_id=evidence_id,
-                now=now,
-            )
-            promoted, buffer_state = pop_promotable_buffer_entries(buffer_state, now=now)
-            state["short_term_exploration_buffer"] = buffer_state
-            save_state(state)
+
+            promoted: list[dict[str, object]] = []
+
+            def _mutate(state: dict[str, object]) -> None:
+                nonlocal promoted
+                raw_buffer_state = state.get("short_term_exploration_buffer", {})
+                existing_buffer_state = (
+                    raw_buffer_state if isinstance(raw_buffer_state, dict) else {}
+                )
+                buffer_state = record_buffer_event(
+                    existing_buffer_state,
+                    domain=clean_domain,
+                    source_event=source_event,
+                    specifics=specifics or [],
+                    evidence_id=evidence_id,
+                    now=now,
+                )
+                promoted, buffer_state = pop_promotable_buffer_entries(buffer_state, now=now)
+                state["short_term_exploration_buffer"] = buffer_state
+
+            if callable(update_state):
+                update_state(_mutate)
+            else:
+                load_state_fn = cast("Callable[[], dict[str, object]]", load_state)
+                save_state_fn = cast("Callable[[dict[str, object]], None]", save_state)
+                state = load_state_fn()
+                if not isinstance(state, dict):
+                    state = {}
+                _mutate(state)
+                save_state_fn(state)
             _promote_exploration_buffer_entries(promoted)
         except Exception:
             logger.exception("Failed to record exploration buffer event")
@@ -3557,19 +4154,42 @@ def create_app(
                                         "probe_feedback_history",
                                         [],
                                     )
+
+                            def _load_feedback_history() -> object:
+                                if not callable(load_runtime_state):
+                                    return []
+                                runtime_state = load_runtime_state()
+                                if not isinstance(runtime_state, dict):
+                                    return []
+                                return runtime_state.get("probe_feedback_history", [])
+
                             if asyncio.iscoroutinefunction(tick_fn):
                                 try:
                                     await tick_fn(
                                         profile,
                                         feedback_history=feedback_history,
+                                        feedback_history_loader=_load_feedback_history,
                                     )
                                 except TypeError:
-                                    await tick_fn(profile)
+                                    try:
+                                        await tick_fn(
+                                            profile,
+                                            feedback_history=feedback_history,
+                                        )
+                                    except TypeError:
+                                        await tick_fn(profile)
                             else:
                                 try:
-                                    tick_fn(profile, feedback_history=feedback_history)
+                                    tick_fn(
+                                        profile,
+                                        feedback_history=feedback_history,
+                                        feedback_history_loader=_load_feedback_history,
+                                    )
                                 except TypeError:
-                                    tick_fn(profile)
+                                    try:
+                                        tick_fn(profile, feedback_history=feedback_history)
+                                    except TypeError:
+                                        tick_fn(profile)
                         except Exception:
                             logger.exception("Background force_tick after confirm failed")
 
@@ -4409,8 +5029,14 @@ def create_app(
             # Idempotent: only write when content changes (avoid sqlite churn).
             if isinstance(existing, dict) and existing == self_info:
                 return
-            state["xhs_self_info"] = self_info
-            memory_manager.save_discovery_runtime_state(state)
+            update_state = getattr(memory_manager, "update_discovery_runtime_state", None)
+            if callable(update_state):
+                update_state(
+                    lambda runtime_state: runtime_state.update({"xhs_self_info": self_info})
+                )
+            else:
+                state["xhs_self_info"] = self_info
+                memory_manager.save_discovery_runtime_state(state)
             logger.info(
                 "xhs self_info persisted: user_id=%s nickname=%r",
                 self_info.get("user_id", ""),
@@ -4716,7 +5342,7 @@ def create_app(
         # check on every poll. Use a body-less Response instead.
         if _xhs_task_queue is None:
             return Response(status_code=204)
-        task = _xhs_task_queue.next_pending()
+        task = _xhs_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
@@ -4775,16 +5401,27 @@ def create_app(
             if self_info_from_request:
                 _persist_xhs_self_info(self_info_from_request)
             self_info_now = self_info_from_request or _load_xhs_self_info()
+            # gui-init D1: the result is always persisted above (merge_result)
+            # so init's own collector can read it. During an active init:
+            #  - skip ALL live discovery-pool writes (stage 4 owns the pool);
+            #  - skip profile propagation for tasks NOT owned by this run (stale
+            #    / steady-state completions), but DO propagate init-OWNED
+            #    bootstrap results through the normal deduped path so the source
+            #    signals land in memory exactly once (handles force re-init).
+            # Computed BEFORE the URL/token backfill (_backfill_xhs_tokens writes
+            # content_cache + discovery_candidates).
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
             # Store discovered URLs + metadata
             valid_urls = [u for u in urls if isinstance(u, str) and u.startswith(xhs_url_prefix)]
-            if valid_urls:
+            if valid_urls and not _init_busy:
                 ctx.database.save_xhs_observed_urls(valid_urls, "task")
                 _backfill_xhs_tokens(ctx.database, valid_urls)
-            if added_notes:
+            if added_notes and not _init_busy:
                 enqueued = _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
                 if enqueued:
                     asyncio.create_task(_drain_discovery_candidates_once())
-            if task_type == "bootstrap_profile" and added_notes:
+            if task_type == "bootstrap_profile" and added_notes and not _skip_profile:
                 fresh_notes, note_keys_by_index = _filter_new_source_bootstrap_items(
                     "xhs",
                     added_notes,
@@ -4808,7 +5445,14 @@ def create_app(
                         if key:
                             propagated_keys.append(key)
                         propagated += 1
-                await _ingest_profile_update_events(profile_events)
+                # During init, skip the incremental profile-update pipeline even
+                # for owned results — run_guided_init's explicit analyze/build
+                # owns the profile this run, and a force re-init has an existing
+                # profile that _ingest would otherwise mutate concurrently
+                # (gui-init review). Memory propagation above still records the
+                # signals; the pipeline resumes for steady-state after init.
+                if not _init_busy:
+                    await _ingest_profile_update_events(profile_events)
                 _mark_source_bootstrap_keys("xhs", propagated_keys)
                 if skipped_self > 0:
                     logger.info(
@@ -4860,6 +5504,237 @@ def create_app(
             raise HTTPException(status_code=404, detail="Subscription not found")
         return {"ok": True}
 
+    # ── X (Twitter) account subscriptions ──────────────────────────
+    # No extension round-trip: the X producer fetches each subscription
+    # server-side via XCreatorStrategy. This block only owns the
+    # x_creator_subscriptions table + CRUD (mirrors the XHS creators above).
+
+    from openbiliclaw.sources.x_tasks import XCreatorStore, normalize_handle
+
+    _x_creator_store: XCreatorStore | None = None
+    if hasattr(ctx.database, "conn"):
+        _x_creator_store = XCreatorStore(ctx.database)
+
+    @app.get("/api/sources/x/creators")
+    def x_list_creators() -> dict[str, Any]:
+        """List all X account subscriptions."""
+        if _x_creator_store is None:
+            return {"items": []}
+        return {"items": _x_creator_store.list_all()}
+
+    @app.post("/api/sources/x/creators", status_code=201)
+    def x_add_creator(payload: dict[str, Any]) -> dict[str, Any]:
+        """Add an X account subscription (idempotent; leading @ stripped)."""
+        from fastapi import HTTPException
+
+        handle = normalize_handle(str(payload.get("handle", "")))
+        if not handle:
+            raise HTTPException(status_code=422, detail="handle is required")
+
+        if _x_creator_store is None:
+            raise HTTPException(status_code=503, detail="x not configured")
+        _x_creator_store.add(handle)
+        return {"ok": True}
+
+    @app.delete("/api/sources/x/creators/{sub_id}")
+    def x_delete_creator(sub_id: int) -> dict[str, Any]:
+        """Delete an X account subscription."""
+        from fastapi import HTTPException
+
+        if _x_creator_store is None:
+            raise HTTPException(status_code=503, detail="x not configured")
+        deleted = _x_creator_store.delete(sub_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        return {"ok": True}
+
+    # ── X (Twitter) source health (spec §7) ────────────────────────
+    # Surfaces the persisted health state machine so the settings UI can
+    # show login / rate-limit / block status (rendered in Task 12).
+
+    @app.get("/api/sources/x/status", response_model=XStatusResponse)
+    def x_source_status() -> XStatusResponse:
+        """Return the current X source health (ok / cookie / rate-limit / block)."""
+        if not hasattr(ctx.database, "conn"):
+            return XStatusResponse()
+        from openbiliclaw.storage.x_health import XSourceHealthStore
+
+        health = XSourceHealthStore(ctx.database).get()
+        return XStatusResponse(
+            state=str(health.get("state", "ok")),
+            consecutive_failures=int(health.get("consecutive_failures", 0)),
+            feed_paused=bool(health.get("feed_paused", False)),
+            cooldown_until=str(health.get("cooldown_until", "")),
+            detail=str(health.get("detail", "")),
+            updated_at=str(health.get("updated_at", "")),
+        )
+
+    # Human-readable detail for each X (twitter) health state, reused by the
+    # unified /api/sources/status chip below.
+    _x_state_detail = {
+        "ok": "X 来源正常，cookie 有效。",
+        "missing_cookie": "未检测到登录 —— 在浏览器登录 x.com，插件会自动同步 cookie。",
+        "expired_cookie": "cookie 已过期 —— 请重新登录 x.com。",
+        "rate_limited": "被限流，正在退避冷却中，稍后会自动重试。",
+        "blocked": "请求被拒绝 (403) —— 账号可能受限或需要重新验证。",
+    }
+
+    @app.get("/api/sources/status", response_model=SourcesStatusResponse)
+    def sources_status() -> SourcesStatusResponse:
+        """Unified per-source login / cookie readiness for the settings pages.
+
+        Local-only: each source's state is derived from config cookie fields,
+        the Douyin cookie file/env, the count of token-bearing 小红书 cache
+        rows, and the X health store — no outbound platform requests. See
+        :class:`SourcesStatusResponse`. ``ready`` means a credential is present
+        and structurally valid (not live-validated); only X reports a真正
+        live-validated ``ok``.
+        """
+        from openbiliclaw.config import load_config
+
+        cfg = load_config()
+        srcs = cfg.sources
+
+        # ── Bilibili: cookie present with the core login fields ──
+        # config.toml is the mirror, data/bilibili_cookie.json is the runtime
+        # store (CLI QR login writes only the file) — check both, like the
+        # douyin/x branches resolve env + file.
+        bili_cookie = str(getattr(cfg.bilibili, "cookie", "") or "")
+        if not bili_cookie.strip():
+            with suppress(Exception):
+                from openbiliclaw.bilibili.auth import AuthManager
+
+                bili_cookie = AuthManager(data_dir=cfg.data_path).load_cookie()
+        bili_enabled = bool(getattr(srcs.bilibili, "enabled", True))
+        has_fields = sum(
+            1 for f in ("SESSDATA", "bili_jct", "DedeUserID") if f"{f}=" in bili_cookie
+        )
+        if getattr(cfg.bilibili, "auth_method", "cookie") == "none":
+            bilibili = SourceStatusItem(
+                enabled=bili_enabled,
+                state="no_auth",
+                detail="未启用 B 站登录（auth_method=none）。",
+                logged_in=True,
+            )
+        elif has_fields >= 3:
+            bilibili = SourceStatusItem(
+                enabled=bili_enabled,
+                state="ready",
+                detail="Cookie 就绪（含 SESSDATA / bili_jct / DedeUserID）。",
+                logged_in=True,
+            )
+        elif bili_cookie.strip():
+            bilibili = SourceStatusItem(
+                enabled=bili_enabled,
+                state="ready",
+                detail="Cookie 已配置，但缺少部分登录字段，可能未完整登录。",
+                logged_in=True,
+            )
+        else:
+            bilibili = SourceStatusItem(
+                enabled=bili_enabled,
+                state="missing",
+                detail="未配置 Cookie —— 在浏览器登录 bilibili.com，插件会自动同步。",
+            )
+
+        # ── 小红书: token-bearing cache rows = extension is syncing tokens ──
+        xhs_enabled = bool(getattr(srcs.xiaohongshu, "enabled", False))
+        xhs_tokens = 0
+        if hasattr(ctx.database, "conn"):
+            try:
+                row = ctx.database.conn.execute(
+                    "SELECT COUNT(*) FROM content_cache "
+                    "WHERE source_platform = 'xiaohongshu' "
+                    "AND content_url LIKE '%xsec_token=%'"
+                ).fetchone()
+                xhs_tokens = int(row[0]) if row else 0
+            except Exception:  # pragma: no cover - defensive
+                xhs_tokens = 0
+        if xhs_tokens > 0:
+            xiaohongshu = SourceStatusItem(
+                enabled=xhs_enabled,
+                state="ready",
+                detail=f"访问令牌已同步（{xhs_tokens} 条带 xsec_token 的缓存内容）。",
+                logged_in=True,
+            )
+        else:
+            xiaohongshu = SourceStatusItem(
+                enabled=xhs_enabled,
+                state="missing",
+                detail="未检测到访问令牌 —— 在浏览器登录小红书后插件会自动同步。",
+            )
+
+        # ── 抖音: cookie resolvable from env / data/douyin_cookie.json ──
+        dy_enabled = bool(getattr(srcs.douyin, "enabled", False))
+        dy_cookie = ""
+        try:
+            from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+
+            dy_cookie = resolve_douyin_cookie(
+                data_dir=cfg.data_path,
+                cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+            )
+        except Exception:  # pragma: no cover - defensive
+            dy_cookie = ""
+        if dy_cookie.strip():
+            douyin = SourceStatusItem(
+                enabled=dy_enabled, state="ready", detail="Cookie 就绪。", logged_in=True
+            )
+        else:
+            douyin = SourceStatusItem(
+                enabled=dy_enabled,
+                state="missing",
+                detail="未配置 Cookie —— 设置环境变量，或登录抖音后由插件同步。",
+            )
+
+        # ── YouTube: public, no login required ──
+        youtube = SourceStatusItem(
+            enabled=bool(getattr(srcs.youtube, "enabled", False)),
+            state="no_auth",
+            detail="公开源 · 无需登录。",
+            logged_in=True,
+        )
+
+        # ── X (Twitter): reuse the live health store ──
+        tw_enabled = bool(getattr(srcs.twitter, "enabled", False))
+        tw_state, tw_feed_paused = "missing_cookie", False
+        if hasattr(ctx.database, "conn"):
+            from openbiliclaw.storage.x_health import XSourceHealthStore
+
+            h = XSourceHealthStore(ctx.database).get()
+            tw_state = str(h.get("state", "ok"))
+            tw_feed_paused = bool(h.get("feed_paused", False))
+        # The health row defaults to ``ok`` before any fetch has run, so an
+        # ``ok`` without an actual cookie would falsely report a logged-in
+        # source — gate it on the resolved credential, like the douyin branch.
+        if tw_state == "ok":
+            tw_cookie = ""
+            with suppress(Exception):
+                tw_cookie = resolve_x_cookie(
+                    data_dir=cfg.data_path,
+                    cookie_env=getattr(srcs.twitter, "cookie_env", "OPENBILICLAW_X_COOKIE"),
+                )
+            if not tw_cookie.strip():
+                tw_state = "missing_cookie"
+        tw_detail = _x_state_detail.get(tw_state, f"X 来源状态：{tw_state}。")
+        if tw_feed_paused:
+            tw_detail += " For-You 因连续失败已自动暂停。"
+        twitter = SourceStatusItem(
+            enabled=tw_enabled,
+            state=tw_state,
+            detail=tw_detail,
+            logged_in=tw_state == "ok",
+            feed_paused=tw_feed_paused,
+        )
+
+        return SourcesStatusResponse(
+            bilibili=bilibili,
+            xiaohongshu=xiaohongshu,
+            douyin=douyin,
+            youtube=youtube,
+            twitter=twitter,
+        )
+
     # ── Douyin task queue endpoints (extension dispatcher) ──────────
     # Independent from the XHS block above by design — see
     # docs/plans/2026-05-06-douyin-bootstrap-import-design.md
@@ -4883,7 +5758,7 @@ def create_app(
 
         if _dy_task_queue is None:
             return Response(status_code=204)
-        task = _dy_task_queue.next_pending()
+        task = _dy_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
@@ -4945,7 +5820,12 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
-            if task_type == "bootstrap_profile" and added_videos:
+            # gui-init D1: persist the result (above) for init's own collector;
+            # during init skip profile propagation for non-owned results, but
+            # propagate init-OWNED bootstrap results through the deduped path.
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if task_type == "bootstrap_profile" and added_videos and not _skip_profile:
                 fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
                     "dy",
                     added_videos,
@@ -4960,7 +5840,9 @@ def create_app(
                         key = video_keys_by_index.get(index, "")
                         if key:
                             propagated_keys.append(key)
-                await _ingest_profile_update_events(profile_events)
+                # Skip the incremental pipeline during init (see xhs handler).
+                if not _init_busy:
+                    await _ingest_profile_update_events(profile_events)
                 _mark_source_bootstrap_keys("dy", propagated_keys)
         else:
             _dy_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
@@ -5030,7 +5912,7 @@ def create_app(
 
         if _yt_task_queue is None:
             return Response(status_code=204)
-        task = _yt_task_queue.next_pending()
+        task = _yt_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
@@ -5076,7 +5958,12 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
-            if task_type == "bootstrap_profile" and added_items:
+            # gui-init D1: persist the result (above) for init's own collector;
+            # during init skip profile propagation for non-owned results, but
+            # propagate init-OWNED bootstrap results through the deduped path.
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if task_type == "bootstrap_profile" and added_items and not _skip_profile:
                 fresh_items, item_keys_by_index = _filter_new_source_bootstrap_items(
                     "yt",
                     added_items,
@@ -5091,7 +5978,9 @@ def create_app(
                         key = item_keys_by_index.get(index, "")
                         if key:
                             propagated_keys.append(key)
-                await _ingest_profile_update_events(profile_events)
+                # Skip the incremental pipeline during init (see xhs handler).
+                if not _init_busy:
+                    await _ingest_profile_update_events(profile_events)
                 _mark_source_bootstrap_keys("yt", propagated_keys)
         else:
             _yt_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
@@ -5367,6 +6256,24 @@ def create_app(
                 return "*" * len(key)
             return key[:4] + "*" * (len(key) - 8) + key[-4:]
 
+        # Douyin / X store their cookie in data/*.json (env override wins),
+        # not in config.toml — resolve here so the settings pages can show
+        # the live credential exactly like the Bilibili card does.
+        from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+
+        dy_cookie = ""
+        with suppress(Exception):
+            dy_cookie = resolve_douyin_cookie(
+                data_dir=cfg.data_path,
+                cookie_env=cfg.sources.douyin.cookie_env,
+            )
+        tw_cookie = ""
+        with suppress(Exception):
+            tw_cookie = resolve_x_cookie(
+                data_dir=cfg.data_path,
+                cookie_env=cfg.sources.twitter.cookie_env,
+            )
+
         def _provider_out(p: Any) -> LLMProviderConfigOut:
             return LLMProviderConfigOut(
                 api_key=_mask(p.api_key),
@@ -5410,6 +6317,7 @@ def create_app(
                     model=cfg.llm.embedding.model,
                     api_key=_mask(cfg.llm.embedding.api_key),
                     base_url=cfg.llm.embedding.base_url,
+                    output_dimensionality=cfg.llm.embedding.output_dimensionality,
                     similarity_threshold=cfg.llm.embedding.similarity_threshold,
                     fallback_enabled=cfg.llm.embedding.fallback_enabled,
                     fallback_provider=cfg.llm.embedding.fallback_provider,
@@ -5454,6 +6362,7 @@ def create_app(
                 douyin=DouyinSourceConfigOut(
                     enabled=cfg.sources.douyin.enabled,
                     mode=cfg.sources.douyin.mode,
+                    cookie=_mask(dy_cookie),
                     cookie_env=cfg.sources.douyin.cookie_env,
                     daily_search_budget=cfg.sources.douyin.daily_search_budget,
                     daily_hot_budget=cfg.sources.douyin.daily_hot_budget,
@@ -5468,6 +6377,17 @@ def create_app(
                     request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                 ),
+                twitter=TwitterSourceConfigOut(
+                    enabled=cfg.sources.twitter.enabled,
+                    mode=cfg.sources.twitter.mode,
+                    cookie=_mask(tw_cookie),
+                    cookie_env=cfg.sources.twitter.cookie_env,
+                    daily_search_budget=cfg.sources.twitter.daily_search_budget,
+                    daily_feed_budget=cfg.sources.twitter.daily_feed_budget,
+                    daily_creator_budget=cfg.sources.twitter.daily_creator_budget,
+                    request_interval_seconds=cfg.sources.twitter.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.twitter.min_interval_minutes,
+                ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
@@ -5479,6 +6399,7 @@ def create_app(
                 account_sync_interval_hours=cfg.scheduler.account_sync_interval_hours,
                 refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
                 signal_event_threshold=cfg.scheduler.signal_event_threshold,
+                feedback_batch_threshold=cfg.scheduler.feedback_batch_threshold,
                 trending_refresh_hours=cfg.scheduler.trending_refresh_hours,
                 explore_refresh_hours=cfg.scheduler.explore_refresh_hours,
                 discovery_limit=cfg.scheduler.discovery_limit,
@@ -5551,6 +6472,246 @@ def create_app(
             degraded_reason=str(getattr(ctx, "degraded_reason", "")),
         )
 
+    def _as_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    def _string_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    def _apply_llm_update(cfg: Any, llm_data: object) -> None:
+        """Apply the LLM subset of a config update to an in-memory config."""
+        if not isinstance(llm_data, dict):
+            return
+        from openbiliclaw.config import _normalize_llm_concurrency, _normalize_llm_timeout
+
+        if "default_provider" in llm_data:
+            cfg.llm.default_provider = str(llm_data["default_provider"])
+        if "concurrency" in llm_data:
+            cfg.llm.concurrency = _normalize_llm_concurrency(llm_data["concurrency"])
+        if "timeout" in llm_data:
+            cfg.llm.timeout = _normalize_llm_timeout(llm_data["timeout"])
+        if "fallback_enabled" in llm_data:
+            cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
+        if "fallback_provider" in llm_data:
+            cfg.llm.fallback_provider = str(llm_data["fallback_provider"]).strip()
+        for provider_name in (
+            "openai",
+            "claude",
+            "gemini",
+            "deepseek",
+            "ollama",
+            "openrouter",
+            "openai_compatible",
+        ):
+            if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
+                provider_cfg = getattr(cfg.llm, provider_name)
+                pdata = llm_data[provider_name]
+                skipped_fields: list[str] = []
+                for field_name in (
+                    "api_key",
+                    "model",
+                    "base_url",
+                    "auth_mode",
+                    "http_referer",
+                    "x_title",
+                    "reasoning_effort",
+                ):
+                    if field_name in pdata:
+                        new_value = str(pdata[field_name])
+                        if field_name == "api_key" and "*" in new_value:
+                            skipped_fields.append(f"{field_name}=masked")
+                            continue
+                        existing = getattr(provider_cfg, field_name, "")
+                        if (
+                            field_name != "auth_mode"
+                            and not new_value.strip()
+                            and isinstance(existing, str)
+                            and existing.strip()
+                        ):
+                            skipped_fields.append(f"{field_name}=empty_skip")
+                            continue
+                        setattr(provider_cfg, field_name, new_value)
+                if skipped_fields:
+                    logger.debug(
+                        "Config LLM update: provider %s skipped fields: %s",
+                        provider_name,
+                        ", ".join(skipped_fields),
+                    )
+        if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
+            emb = llm_data["embedding"]
+            if "provider" in emb:
+                cfg.llm.embedding.provider = str(emb["provider"])
+            if "model" in emb:
+                new_model = str(emb["model"])
+                if new_model.strip() or not cfg.llm.embedding.model.strip():
+                    cfg.llm.embedding.model = new_model
+            if "api_key" in emb:
+                new_key = str(emb["api_key"])
+                if "*" not in new_key and (
+                    new_key.strip() or not cfg.llm.embedding.api_key.strip()
+                ):
+                    cfg.llm.embedding.api_key = new_key
+            if "base_url" in emb:
+                new_base_url = str(emb["base_url"])
+                if new_base_url.strip() or not cfg.llm.embedding.base_url.strip():
+                    cfg.llm.embedding.base_url = new_base_url
+            if "output_dimensionality" in emb:
+                try:
+                    cfg.llm.embedding.output_dimensionality = max(
+                        0,
+                        int(emb["output_dimensionality"] or 0),
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="llm.embedding.output_dimensionality must be an integer",
+                    ) from exc
+            if "similarity_threshold" in emb:
+                cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
+            if "fallback_enabled" in emb:
+                cfg.llm.embedding.fallback_enabled = _as_bool(emb["fallback_enabled"])
+            if "fallback_provider" in emb:
+                cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
+        for module_name in ("soul", "discovery", "recommendation", "evaluation"):
+            if module_name in llm_data and isinstance(llm_data[module_name], dict):
+                mod_cfg = getattr(cfg.llm, module_name)
+                mdata = llm_data[module_name]
+                if "provider" in mdata:
+                    mod_cfg.provider = str(mdata["provider"])
+                if "model" in mdata:
+                    mod_cfg.model = str(mdata["model"])
+
+    async def _probe_llm_config(cfg: Any) -> ConfigServiceProbeResponse:
+        from openbiliclaw.llm.registry import build_llm_registry
+
+        started = time.perf_counter()
+        provider = str(getattr(cfg.llm, "default_provider", "") or "").strip().lower()
+        model = ""
+        try:
+            registry = build_llm_registry(cfg)
+            provider = provider or str(getattr(registry, "default_provider", "") or "")
+            provider_cfg = getattr(cfg.llm, provider, None)
+            model = str(getattr(provider_cfg, "model", "") or "").strip()
+            if not registry.is_chat_capable(provider):
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="llm",
+                    provider=provider,
+                    model=model,
+                    error=f"LLM provider {provider!r} is not registered or not chat-capable.",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+            timeout_s = min(max(float(getattr(cfg.llm, "timeout", 300) or 300), 10.0), 30.0)
+            response = await asyncio.wait_for(
+                registry.complete_provider(
+                    provider,
+                    [
+                        {"role": "system", "content": "Reply with only OK."},
+                        {"role": "user", "content": "OpenBiliClaw connectivity probe."},
+                    ],
+                    temperature=0,
+                    max_tokens=8,
+                    reasoning_effort="",
+                    model=model or None,
+                ),
+                timeout=timeout_s,
+            )
+            ok = bool(str(getattr(response, "content", "") or "").strip())
+            response_model = str(getattr(response, "model", "") or model)
+            return ConfigServiceProbeResponse(
+                ok=ok,
+                kind="llm",
+                provider=provider,
+                model=response_model,
+                message="LLM provider is available." if ok else "",
+                error="" if ok else "LLM provider returned an empty response.",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        except Exception as exc:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="llm",
+                provider=provider,
+                model=model,
+                error=str(exc),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+
+    async def _probe_embedding_config(cfg: Any) -> ConfigServiceProbeResponse:
+        from openbiliclaw.llm.base import LLMRegistry
+        from openbiliclaw.llm.registry import build_embedding_service
+
+        started = time.perf_counter()
+        emb_cfg = getattr(getattr(cfg, "llm", None), "embedding", None)
+        provider = str(getattr(emb_cfg, "provider", "") or "").strip().lower()
+        model = str(getattr(emb_cfg, "model", "") or "").strip()
+        if not provider:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="embedding",
+                provider="",
+                model=model,
+                error="Embedding provider is not configured.",
+            )
+        try:
+            service = build_embedding_service(cfg, LLMRegistry())
+            if service is None:
+                return ConfigServiceProbeResponse(
+                    ok=False,
+                    kind="embedding",
+                    provider=provider,
+                    model=model,
+                    error="Embedding service could not be built from the submitted config.",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+            probe = getattr(service, "probe", None)
+            if not callable(probe):
+                # Legacy/stub embedding service without a live probe —
+                # building it successfully is the best signal we have.
+                ok = True
+            else:
+                ok = bool(await asyncio.wait_for(probe(), timeout=15.0))
+            return ConfigServiceProbeResponse(
+                ok=ok,
+                kind="embedding",
+                provider=provider,
+                model=model,
+                message="Embedding provider is available." if ok else "",
+                error="" if ok else "Embedding provider returned no vector.",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        except Exception as exc:
+            return ConfigServiceProbeResponse(
+                ok=False,
+                kind="embedding",
+                provider=provider,
+                model=model,
+                error=str(exc),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+
+    @app.post("/api/config/probe-service", response_model=ConfigServiceProbeResponse)
+    async def probe_config_service(payload: ConfigServiceProbeIn) -> ConfigServiceProbeResponse:
+        """Probe submitted LLM / embedding settings without saving config.toml."""
+        from copy import deepcopy
+
+        from openbiliclaw.config import load_config
+
+        cfg = deepcopy(load_config())
+        update = payload.config if isinstance(payload.config, dict) else {}
+        llm_data = update.get("llm")
+        if isinstance(llm_data, dict):
+            _apply_llm_update(cfg, llm_data)
+        if payload.kind == "llm":
+            return await _probe_llm_config(cfg)
+        return await _probe_embedding_config(cfg)
+
     @app.put("/api/config", response_model=ConfigUpdateResponse)
     async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse | JSONResponse:
         """Update configuration, persist to config.toml, and hot-reload runtime.
@@ -5571,7 +6732,6 @@ def create_app(
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
-            _normalize_llm_concurrency,
             _normalize_pool_source_shares,
             _normalize_scheduler_int,
             load_config,
@@ -5593,18 +6753,6 @@ def create_app(
                 },
             )
 
-        def _as_bool(value: object) -> bool:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-            return bool(value)
-
-        def _string_list(value: object) -> list[str]:
-            if not isinstance(value, list):
-                return []
-            return [str(item).strip() for item in value if str(item).strip()]
-
         # Apply top-level scalars
         if "language" in update:
             cfg.language = str(update["language"])
@@ -5613,99 +6761,13 @@ def create_app(
 
         # Apply LLM updates
         if "llm" in update:
-            llm_data = update["llm"]
-            if "default_provider" in llm_data:
-                cfg.llm.default_provider = str(llm_data["default_provider"])
-            if "concurrency" in llm_data:
-                cfg.llm.concurrency = _normalize_llm_concurrency(llm_data["concurrency"])
-            if "timeout" in llm_data:
-                from openbiliclaw.config import _normalize_llm_timeout
+            _apply_llm_update(cfg, update["llm"])
 
-                cfg.llm.timeout = _normalize_llm_timeout(llm_data["timeout"])
-            if "fallback_enabled" in llm_data:
-                cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
-            if "fallback_provider" in llm_data:
-                cfg.llm.fallback_provider = str(llm_data["fallback_provider"]).strip()
-            for provider_name in (
-                "openai",
-                "claude",
-                "gemini",
-                "deepseek",
-                "ollama",
-                "openrouter",
-                "openai_compatible",
-            ):
-                if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
-                    provider_cfg = getattr(cfg.llm, provider_name)
-                    pdata = llm_data[provider_name]
-                    skipped_fields: list[str] = []
-                    for field_name in (
-                        "api_key",
-                        "model",
-                        "base_url",
-                        "auth_mode",
-                        "http_referer",
-                        "x_title",
-                        "reasoning_effort",
-                    ):
-                        if field_name in pdata:
-                            new_value = str(pdata[field_name])
-                            if field_name == "api_key" and "*" in new_value:
-                                skipped_fields.append(f"{field_name}=masked")
-                                continue
-                            existing = getattr(provider_cfg, field_name, "")
-                            if (
-                                field_name != "auth_mode"
-                                and not new_value.strip()
-                                and isinstance(existing, str)
-                                and existing.strip()
-                            ):
-                                skipped_fields.append(f"{field_name}=empty_skip")
-                                continue
-                            setattr(provider_cfg, field_name, new_value)
-                    if skipped_fields:
-                        logger.debug(
-                            "PUT /api/config: provider %s skipped fields: %s",
-                            provider_name,
-                            ", ".join(skipped_fields),
-                        )
-            if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
-                emb = llm_data["embedding"]
-                if "provider" in emb:
-                    cfg.llm.embedding.provider = str(emb["provider"])
-                if "model" in emb:
-                    new_model = str(emb["model"])
-                    if new_model.strip() or not cfg.llm.embedding.model.strip():
-                        cfg.llm.embedding.model = new_model
-                # v0.3.32+ — embedding owns api_key/base_url. Skip the
-                # api_key write when the payload echoes back the masked
-                # value (e.g. ``sk-d****a826``) so we don't overwrite the
-                # real key with asterisks. A genuine API key never
-                # contains ``*``.
-                if "api_key" in emb:
-                    new_key = str(emb["api_key"])
-                    if "*" not in new_key and (
-                        new_key.strip() or not cfg.llm.embedding.api_key.strip()
-                    ):
-                        cfg.llm.embedding.api_key = new_key
-                if "base_url" in emb:
-                    new_base_url = str(emb["base_url"])
-                    if new_base_url.strip() or not cfg.llm.embedding.base_url.strip():
-                        cfg.llm.embedding.base_url = new_base_url
-                if "similarity_threshold" in emb:
-                    cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
-                if "fallback_enabled" in emb:
-                    cfg.llm.embedding.fallback_enabled = _as_bool(emb["fallback_enabled"])
-                if "fallback_provider" in emb:
-                    cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
-            for module_name in ("soul", "discovery", "recommendation", "evaluation"):
-                if module_name in llm_data and isinstance(llm_data[module_name], dict):
-                    mod_cfg = getattr(cfg.llm, module_name)
-                    mdata = llm_data[module_name]
-                    if "provider" in mdata:
-                        mod_cfg.provider = str(mdata["provider"])
-                    if "model" in mdata:
-                        mod_cfg.model = str(mdata["model"])
+        # A masked GET echo looks like ``SESS****abcd`` — a long asterisk run
+        # never appears in a genuine Cookie header, so use it (not a single
+        # ``*``, which cookie values may legally contain) to detect echoes.
+        def _is_masked_echo(value: str) -> bool:
+            return "****" in value
 
         # Apply bilibili updates
         if "bilibili" in update:
@@ -5713,7 +6775,15 @@ def create_app(
             if "auth_method" in bdata:
                 cfg.bilibili.auth_method = str(bdata["auth_method"])
             if "cookie" in bdata:
-                cfg.bilibili.cookie = str(bdata["cookie"])
+                # Mirror the api_key guards: never persist a masked echo, and
+                # an empty field never wipes an existing cookie (the browser
+                # extension's auto-sync owns refresh; a blank textarea on save
+                # must not log the backend out).
+                new_cookie = str(bdata["cookie"])
+                if not _is_masked_echo(new_cookie) and (
+                    new_cookie.strip() or not cfg.bilibili.cookie.strip()
+                ):
+                    cfg.bilibili.cookie = new_cookie
             if "browser_executable" in bdata:
                 cfg.bilibili.browser_executable = str(bdata["browser_executable"])
             if "browser_headed" in bdata:
@@ -5753,7 +6823,34 @@ def create_app(
                     if "mode" in dy_data:
                         cfg.sources.douyin.mode = str(dy_data["mode"])
                     if "cookie_env" in dy_data:
-                        cfg.sources.douyin.cookie_env = str(dy_data["cookie_env"])
+                        # The env var name has a sensible default; an emptied
+                        # field keeps the current name rather than wiping it.
+                        new_env = str(dy_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.douyin.cookie_env = new_env
+                    if "cookie" in dy_data:
+                        # Manual paste from the settings pages. Routed to
+                        # data/douyin_cookie.json (same store the extension
+                        # auto-sync writes) — secrets never land in config.toml.
+                        from openbiliclaw.sources.douyin_auth import (
+                            DouyinCookieManager,
+                            resolve_douyin_cookie,
+                        )
+
+                        new_cookie = str(dy_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_douyin_cookie(
+                                    data_dir=cfg.data_path,
+                                    cookie_env=cfg.sources.douyin.cookie_env,
+                                )
+                            # Unchanged form echo → no write (env override
+                            # must not be copied into the file needlessly).
+                            if new_cookie != current:
+                                DouyinCookieManager(cfg.data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
                     for key in (
                         "daily_search_budget",
                         "daily_hot_budget",
@@ -5776,6 +6873,59 @@ def create_app(
                     ):
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
+
+                tw_data = sources_data.get("twitter")
+                if isinstance(tw_data, dict):
+                    if "enabled" in tw_data:
+                        cfg.sources.twitter.enabled = _as_bool(tw_data["enabled"])
+                    if "mode" in tw_data:
+                        cfg.sources.twitter.mode = str(tw_data["mode"])
+                    if "cookie_env" in tw_data:
+                        new_env = str(tw_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.twitter.cookie_env = new_env
+                    if "cookie" in tw_data:
+                        # Manual paste — routed to data/x_cookie.json like the
+                        # extension auto-sync; never lands in config.toml.
+                        new_cookie = str(tw_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_x_cookie(
+                                    data_dir=cfg.data_path,
+                                    cookie_env=cfg.sources.twitter.cookie_env,
+                                )
+                            if new_cookie != current:
+                                XCookieManager(cfg.data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
+                                # A pasted valid cookie is a re-login signal,
+                                # same as the extension sync endpoint: lift any
+                                # missing/expired/blocked health block so
+                                # discovery retries instead of staying parked.
+                                from openbiliclaw.sources.douyin_direct import (
+                                    parse_cookie_header,
+                                )
+
+                                pairs = parse_cookie_header(new_cookie)
+                                if all(
+                                    name in pairs for name in _X_REQUIRED_COOKIE_NAMES
+                                ) and hasattr(ctx.database, "conn"):
+                                    with suppress(Exception):
+                                        from openbiliclaw.storage.x_health import (
+                                            XSourceHealthStore,
+                                        )
+
+                                        XSourceHealthStore(ctx.database).clear_relogin_block()
+                    for key in (
+                        "daily_search_budget",
+                        "daily_feed_budget",
+                        "daily_creator_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tw_data:
+                            setattr(cfg.sources.twitter, key, int(tw_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:
@@ -5928,6 +7078,15 @@ def create_app(
             )
 
         async with _CONFIG_SAVE_LOCK:
+            # gui-init D1 / spec §5b: re-check inside the lock. The middleware
+            # gated this path on init_active before the handler ran, but a run
+            # could have been reserved in between; saving + rebuilding config
+            # mid-init would swap components the run is using.
+            if _init_active_now():
+                return JSONResponse(
+                    {"error": "init_running", "detail": "初始化进行中，请稍后再保存配置"},
+                    status_code=409,
+                )
             config_path = _default_config_path()
             try:
                 backup_path = _snapshot_config_file(config_path)
@@ -6126,10 +7285,61 @@ def create_app(
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
+        _desktop_index_path = _desktop_dir / "index.html"
+
+        def _desktop_asset_version() -> str:
+            import hashlib
+
+            digest = hashlib.sha256()
+            for relative in ("assets/css/app.css", "assets/js/app.js"):
+                path = _desktop_dir / relative
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                digest.update(relative.encode("utf-8"))
+                digest.update(str(stat.st_mtime_ns).encode("ascii"))
+                digest.update(str(stat.st_size).encode("ascii"))
+            return digest.hexdigest()[:12]
+
+        def _desktop_index_response() -> Response:
+            if not _desktop_index_path.is_file():
+                raise HTTPException(status_code=404, detail="desktop web index not found")
+            version = _desktop_asset_version()
+            html = _desktop_index_path.read_text(encoding="utf-8")
+            html = html.replace(
+                'href="/web/assets/css/app.css"',
+                f'href="/web/assets/css/app.css?v={version}"',
+            )
+            html = html.replace(
+                'src="/web/assets/js/app.js"',
+                f'src="/web/assets/js/app.js?v={version}"',
+            )
+            return Response(
+                html,
+                media_type="text/html; charset=utf-8",
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/web", include_in_schema=False)
+        def _desktop_index_no_slash() -> Response:
+            return _desktop_index_response()
+
+        @app.get("/web/", include_in_schema=False)
+        def _desktop_index_slash() -> Response:
+            return _desktop_index_response()
+
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 
         @app.get("/", include_in_schema=False)
         def _root_redirect() -> RedirectResponse:
             return RedirectResponse(url="/web", status_code=302)
+
+    # ── First-run Setup Wizard ──────────────────────────────────
+    # Self-contained onboarding page opened on first launch by the packaged
+    # app (packaging/entry.py). Guides provider/key + B站 + done, then sends
+    # the user to /web. Kept isolated from the main desktop SPA on purpose.
+    _setup_dir = _Path(__file__).resolve().parent.parent / "web" / "setup"
+    if _setup_dir.is_dir():
+        app.mount("/setup", _StaticFiles(directory=_setup_dir, html=True), name="setup-wizard")
 
     return app
