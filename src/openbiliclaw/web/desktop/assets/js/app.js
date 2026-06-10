@@ -81,14 +81,17 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    // v0.3.118+: bilibili is selectable like every other source — default
+    // checked (recommended) but no longer forced. At least one source must
+    // stay checked to start.
     const INIT_SOURCE_OPTIONS = [
-      { key: "bilibili", label: "B 站", required: true },
-      { key: "xiaohongshu", label: "小红书", required: false },
-      { key: "douyin", label: "抖音", required: false },
-      { key: "youtube", label: "YouTube", required: false },
-      { key: "twitter", label: "X", required: false }
+      { key: "bilibili", label: "B 站", defaultChecked: true },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "youtube", label: "YouTube" },
+      { key: "twitter", label: "X" }
     ];
-    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
       already_running: "初始化正在进行中。",
@@ -96,6 +99,7 @@
       llm_not_ready: "AI 服务还没配好或当前不可用。",
       already_initialized: "已经初始化过了；如需重建，请到设置页。",
       local_only: "只能在本机发起初始化。",
+      no_sources_selected: "至少勾选一个数据来源。",
       internal_error: "初始化过程中出错了，请稍后重试。",
       none: ""
     };
@@ -680,16 +684,18 @@
       return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
     }
 
-    function buildInitChecklist(status) {
+    function buildInitChecklist(status, selected = null) {
       const prereq = status?.prerequisites || {};
       const enabled = initEnabledPlatforms(status);
+      // B 站登录只在勾选了 B 站时才是硬前置。
+      const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
       return [
         {
           key: "bilibili",
-          label: "B 站已登录",
+          label: biliSelected ? "B 站已登录" : "B 站已登录（未勾选 B 站，可跳过）",
           ok: Boolean(prereq.bilibili_logged_in),
-          hard: true,
-          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。"
+          hard: biliSelected,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端；不想接 B 站也可以直接取消勾选。"
         },
         {
           key: "llm",
@@ -721,7 +727,7 @@
       const checked = new Set(Array.isArray(selected) ? selected : []);
       const enabled = new Set(initEnabledPlatforms(status));
       return INIT_SOURCE_OPTIONS
-        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .filter((opt) => checked.has(opt.key) && !enabled.has(opt.key))
         .map((opt) => opt.key);
     }
 
@@ -745,18 +751,16 @@
     }
 
     function selectedInitSourcesFromDom() {
-      const checked = Array.from(document.querySelectorAll("input[data-init-source]"))
+      return Array.from(document.querySelectorAll("input[data-init-source]"))
         .filter((input) => input.checked)
         .map((input) => input.value);
-      if (!checked.includes("bilibili")) checked.push("bilibili");
-      return checked;
     }
 
-    function initChecklistMarkup(status) {
+    function initChecklistMarkup(status, selected = null) {
       if (!status) {
-        return '<li class="init-hint-row">点「开始初始化」会先检查 B 站登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+        return '<li class="init-hint-row">点「开始初始化」会先检查 AI 服务 / 向量模型，以及所选平台的登录状态，通过才开始。</li>';
       }
-      return buildInitChecklist(status)
+      return buildInitChecklist(status, selected)
         .map((row) => {
           const mark = row.ok ? "✓" : row.hard ? "✗" : "•";
           const hint = !row.ok && row.hint ? `<p class="init-hint">${escapeHtml(row.hint)}</p>` : "";
@@ -766,14 +770,15 @@
     }
 
     function initSourcesMarkup() {
-      const selected = new Set(state.initSelectedSources || ["bilibili"]);
+      const selected = state.initSelectedSources
+        ? new Set(state.initSelectedSources)
+        : new Set(INIT_SOURCE_OPTIONS.filter((opt) => opt.defaultChecked).map((opt) => opt.key));
       const rows = INIT_SOURCE_OPTIONS.map((opt) => {
-        const checked = opt.required || selected.has(opt.key) ? " checked" : "";
-        const disabled = opt.required ? " disabled" : "";
-        const label = opt.required ? `${opt.label}（必选）` : opt.label;
-        return `<label class="init-source-row"><input type="checkbox" value="${escapeHtml(opt.key)}" data-init-source="${escapeHtml(opt.key)}"${checked}${disabled}><span>${escapeHtml(label)}</span></label>`;
+        const checked = selected.has(opt.key) ? " checked" : "";
+        const label = opt.defaultChecked ? `${opt.label}（推荐）` : opt.label;
+        return `<label class="init-source-row"><input type="checkbox" value="${escapeHtml(opt.key)}" data-init-source="${escapeHtml(opt.key)}"${checked}><span>${escapeHtml(label)}</span></label>`;
       }).join("");
-      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源</p>${rows}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
+      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源（至少一个）</p>${rows}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
     }
 
     function initOnboardingPhase(status, progress) {
@@ -786,7 +791,7 @@
 
     function updateInitOnboardingStatus(section, status, progress, reason, buttonLabel, buttonDisabled) {
       const checklist = section.querySelector(".init-checklist");
-      if (checklist) checklist.innerHTML = initChecklistMarkup(status);
+      if (checklist) checklist.innerHTML = initChecklistMarkup(status, state.initSelectedSources);
       const progressBox = section.querySelector(".init-progress");
       const progressFill = section.querySelector(".init-progress-fill");
       const progressText = progressBox?.querySelector("p");
@@ -841,10 +846,10 @@
           <div class="init-onboarding-copy">
             <p class="eyebrow">Guided init</p>
             <h3>还没完成初始化</h3>
-            <p class="video-meta">先检查 B 站登录和 AI 服务，通过后在这里一步步拉取数据、生成画像、补齐首轮内容池。</p>
+            <p class="video-meta">先检查 AI 服务和所选平台登录，通过后在这里一步步拉取数据、生成画像、补齐首轮内容池。B 站默认勾选但可取消，至少保留一个来源。</p>
           </div>
           ${isRunning ? "" : initSourcesMarkup()}
-          <ul class="init-checklist">${initChecklistMarkup(status)}</ul>
+          <ul class="init-checklist">${initChecklistMarkup(status, state.initSelectedSources)}</ul>
           <div class="init-progress"${showProgress ? "" : " hidden"}>
             <div class="init-progress-track"><div class="init-progress-fill" style="width:${progress.pct}%"></div></div>
             <p>${escapeHtml(progress.failed ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。") : progress.active ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）` : "等待开始")}</p>
@@ -866,6 +871,12 @@
       grid.querySelectorAll("input[data-init-source]").forEach((input) => {
         input.addEventListener("change", () => {
           state.initSelectedSources = selectedInitSourcesFromDom();
+          // Refresh just the checklist so the B 站 row flips between hard
+          // prerequisite and skippable hint as the checkbox changes.
+          const checklist = grid.querySelector(".init-onboarding .init-checklist");
+          if (checklist) {
+            checklist.innerHTML = initChecklistMarkup(state.initStatus, state.initSelectedSources);
+          }
         });
       });
     }
@@ -948,9 +959,21 @@
         scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
         return;
       }
+      if (!selected.length) {
+        state.initReason = INIT_REASON_TEXT.no_sources_selected;
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
       const needEnable = initSelectedSourcesNeedingEnable(selected, status);
       if (needEnable.length > 0) {
         state.initReason = `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；先打开设置开启对应平台，或取消勾选后再点一次。`;
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (selected.includes("bilibili") && !status?.prerequisites?.bilibili_logged_in) {
+        state.initReason = "还没检测到 B 站登录。先登录 bilibili.com，或取消勾选 B 站再开始。";
         state.initBusy = false;
         renderAll();
         return;

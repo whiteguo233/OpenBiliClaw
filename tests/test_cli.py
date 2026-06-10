@@ -5549,3 +5549,147 @@ def test_fetch_x_no_events_exits_cleanly(runner, monkeypatch) -> None:
     result = runner.invoke(app, ["fetch-x"])
 
     assert result.exit_code == 0, result.output
+
+
+# ── run_guided_init: bilibili-optional pipeline (v0.3.118+) ──────────────
+
+
+def _guided_init_pipeline_doubles(monkeypatch) -> dict[str, Any]:
+    """Stub the heavy collaborators of run_guided_init for pipeline tests."""
+    state: dict[str, Any] = {"propagated": [], "analyzed": None, "profile_history": None}
+
+    monkeypatch.setattr(cli_module, "_enqueue_xhs_bootstrap_task", lambda **kwargs: "xhs-task-1")
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_xhs_bootstrap_events",
+        lambda task_id, **kwargs: (
+            (list(state.get("xhs_events", [])), {"saved": 1, "liked": 0, "xhs_history": 0}, "ok")
+            if task_id
+            else ([], {}, "skipped")
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module, "_collect_dy_bootstrap_events", lambda task_id, **kwargs: ([], {}, "skipped")
+    )
+    monkeypatch.setattr(
+        cli_module, "_collect_yt_bootstrap_events", lambda task_id, **kwargs: ([], {}, "skipped")
+    )
+    monkeypatch.setattr(cli_module, "_maybe_update_init_source_shares", lambda counts: None)
+    monkeypatch.setattr(cli_module, "_build_draft_profile_for_discover", lambda memory: object())
+
+    class _Memory:
+        async def propagate_event(self, event: dict[str, Any]) -> None:
+            state["propagated"].append(event)
+
+    class _Soul:
+        async def analyze_events(self, events: list[dict[str, Any]], **kwargs: Any) -> None:
+            state["analyzed"] = list(events)
+
+        async def build_initial_profile(self, history: list[dict[str, Any]]) -> dict[str, Any]:
+            state["profile_history"] = list(history)
+            return {"ok": True}
+
+    async def _backfill(profile: Any, *, target_pool_count: int, label_suffix: str = "") -> int:
+        return 7
+
+    state["memory"] = _Memory()
+    state["soul"] = _Soul()
+    state["backfill"] = _backfill
+    return state
+
+
+def test_run_guided_init_without_bilibili_builds_profile_from_xhs(monkeypatch) -> None:
+    """include_bili=False skips the B站 fetch entirely; XHS signals alone feed
+    analyze + profile build (client may be None)."""
+    import asyncio
+
+    state = _guided_init_pipeline_doubles(monkeypatch)
+    state["xhs_events"] = [
+        {
+            "event_type": "favorite",
+            "title": "咖啡手冲入门",
+            "url": "https://www.xiaohongshu.com/explore/abc",
+            "context": "在小红书收藏了《咖啡手冲入门》",
+            "metadata": {"source_platform": "xiaohongshu", "author": "某博主"},
+        }
+    ]
+
+    result = asyncio.run(
+        cli_module.run_guided_init(
+            client=None,
+            memory=state["memory"],
+            soul_engine=state["soul"],
+            favorite_limit=0,
+            follow_limit=0,
+            include_bili=False,
+            include_xhs=True,
+            include_dy=False,
+            include_yt=False,
+            target_pool_count=10,
+            discover_backfill=state["backfill"],
+        )
+    )
+
+    assert result.history == []
+    assert result.bilibili_event_count == 0
+    assert result.xhs_status == "ok"
+    assert result.discovered_count == 7
+    assert result.profile_data == {"ok": True}
+    assert state["analyzed"] == state["xhs_events"]
+    # XHS events feed the profile builder even with no B站 history at all.
+    assert state["profile_history"]
+    assert state["profile_history"][0]["source_platform"] == "xiaohongshu"
+    # Cross-platform events are persisted by the task-result handler, not here.
+    assert state["propagated"] == []
+
+
+def test_run_guided_init_all_sources_empty_raises_empty_signals(monkeypatch) -> None:
+    import asyncio
+
+    state = _guided_init_pipeline_doubles(monkeypatch)
+
+    with pytest.raises(cli_module.GuidedInitError) as excinfo:
+        asyncio.run(
+            cli_module.run_guided_init(
+                client=None,
+                memory=state["memory"],
+                soul_engine=state["soul"],
+                favorite_limit=0,
+                follow_limit=0,
+                include_bili=False,
+                include_xhs=False,
+                include_dy=False,
+                include_yt=False,
+                target_pool_count=10,
+                discover_backfill=state["backfill"],
+            )
+        )
+
+    assert excinfo.value.reason == "empty_signals"
+
+
+def test_init_command_rejects_no_sources_at_all(monkeypatch) -> None:
+    """--no-bilibili plus every other source disabled must exit with guidance."""
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module, "_prepare_init_runtime", lambda: None)
+    monkeypatch.setattr(
+        cli_module, "_get_runtime_database", lambda: SimpleNamespace(max_llm_usage_id=lambda: None)
+    )
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: object())
+    monkeypatch.setattr(
+        cli_module,
+        "_build_bilibili_client",
+        lambda: (_ for _ in ()).throw(AssertionError("client must not be built")),
+    )
+    monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
+    monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
+    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
+
+    result = runner.invoke(
+        app,
+        ["init", "--no-bilibili", "--no-xhs", "--no-douyin", "--no-youtube", "--no-x"],
+    )
+
+    assert result.exit_code == 1
+    assert "至少需要一个数据来源" in result.output

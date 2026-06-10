@@ -172,7 +172,7 @@
       <!-- Step 2: 初始化 -->
       <section class="panel" data-panel="2">
         <h2>初始化画像和推荐池</h2>
-        <p class="sub">和浏览器插件里的「开始初始化」走同一套流程：先检查 B站 登录和 AI 服务，再拉取数据、生成画像、补齐首轮内容池。</p>
+        <p class="sub">和浏览器插件里的「开始初始化」走同一套流程：先检查 AI 服务和所选平台登录，再拉取数据、生成画像、补齐首轮内容池。B 站默认勾选但可取消，至少保留一个来源。</p>
         <div id="initSources" class="init-sources"></div>
         <ul id="initChecklist" class="init-checks">
           <li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>
@@ -218,12 +218,15 @@
       openai_compatible: ["", ""],
       ollama: ["", ""],
     };
+    // v0.3.118+: bilibili is selectable like every other source — default
+    // checked (recommended) but no longer forced. At least one source must
+    // stay checked to start.
     const INIT_SOURCE_OPTIONS = [
-      { key: "bilibili", label: "B 站", required: true },
-      { key: "xiaohongshu", label: "小红书", required: false },
-      { key: "douyin", label: "抖音", required: false },
-      { key: "youtube", label: "YouTube", required: false },
-      { key: "twitter", label: "X", required: false },
+      { key: "bilibili", label: "B 站", defaultChecked: true },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "youtube", label: "YouTube" },
+      { key: "twitter", label: "X" },
     ];
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
@@ -232,6 +235,7 @@
       llm_not_ready: "AI 服务还没配好或当前不可用。",
       already_initialized: "已经初始化过了。",
       local_only: "只能在本机发起初始化。",
+      no_sources_selected: "至少勾选一个数据来源。",
       internal_error: "初始化过程中出错了，请稍后重试。",
       none: "",
     };
@@ -333,16 +337,18 @@
       return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
     }
 
-    function buildInitChecklist(status) {
+    function buildInitChecklist(status, selected = null) {
       const prereq = status?.prerequisites || {};
       const enabled = enabledPlatforms(status);
+      // B站 login only blocks when bilibili is among the checked sources.
+      const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
       return [
         {
           key: "bilibili",
-          label: "B站 已登录",
+          label: biliSelected ? "B站 已登录" : "B站 已登录（未勾选 B 站，可跳过）",
           ok: Boolean(prereq.bilibili_logged_in),
-          hard: true,
-          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。",
+          hard: biliSelected,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端；不想接 B 站也可以直接取消勾选。",
         },
         {
           key: "llm",
@@ -370,7 +376,7 @@
 
     function renderInitSources() {
       const root = $("#initSources");
-      root.innerHTML = '<p class="init-sources-title">选择初始化数据来源</p>';
+      root.innerHTML = '<p class="init-sources-title">选择初始化数据来源（至少一个）</p>';
       for (const opt of INIT_SOURCE_OPTIONS) {
         const label = document.createElement("label");
         label.className = "init-source-row";
@@ -378,10 +384,9 @@
         input.type = "checkbox";
         input.value = opt.key;
         input.dataset.initSource = opt.key;
-        input.checked = Boolean(opt.required);
-        input.disabled = Boolean(opt.required);
+        input.checked = Boolean(opt.defaultChecked);
         const text = document.createElement("span");
-        text.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+        text.textContent = opt.defaultChecked ? `${opt.label}（推荐）` : opt.label;
         label.append(input, text);
         root.append(label);
       }
@@ -392,17 +397,15 @@
     }
 
     function readSelectedInitSources() {
-      const selected = [...document.querySelectorAll("input[data-init-source]")]
+      return [...document.querySelectorAll("input[data-init-source]")]
         .filter((input) => input.checked)
         .map((input) => input.value);
-      if (!selected.includes("bilibili")) selected.push("bilibili");
-      return selected;
     }
 
-    function renderInitChecklist(status) {
+    function renderInitChecklist(status, selected = null) {
       const root = $("#initChecklist");
       root.innerHTML = "";
-      for (const row of buildInitChecklist(status)) {
+      for (const row of buildInitChecklist(status, selected)) {
         const li = document.createElement("li");
         li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
         const head = document.createElement("div");
@@ -434,7 +437,7 @@
       const checked = new Set(selected);
       const enabled = new Set(enabledPlatforms(status));
       return INIT_SOURCE_OPTIONS
-        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .filter((opt) => checked.has(opt.key) && !enabled.has(opt.key))
         .map((opt) => opt.key);
     }
 
@@ -478,7 +481,7 @@
       clearInitPoll();
       renderInitSources();
       $("#initSources").style.display = "";
-      $("#initChecklist").innerHTML = '<li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+      $("#initChecklist").innerHTML = '<li class="init-hint-row">点「开始初始化」会先检查 AI 服务 / 向量模型，以及所选平台的登录状态，通过才开始。</li>';
       $("#initProgress").hidden = true;
       $("#initProgressBar").style.width = "0";
       $("#startInit").disabled = false;
@@ -565,7 +568,7 @@
       const selected = readSelectedInitSources();
       $("#startInit").disabled = true;
       $("#startInit").innerHTML = '<span class="spin"></span>检查中…';
-      $("#initChecklist").innerHTML = '<li class="init-checking">正在检查 B站 登录 / AI 服务 / 向量模型（实时请求测试，可能要十几秒）…</li>';
+      $("#initChecklist").innerHTML = '<li class="init-checking">正在检查 AI 服务 / 向量模型与所选平台登录（实时请求测试，可能要十几秒）…</li>';
       setInitReason("");
       let status;
       try {
@@ -586,16 +589,30 @@
         scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_START_POLL_MS);
         return;
       }
+      if (!selected.length) {
+        renderInitChecklist(status, selected);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason(INIT_REASON_TEXT.no_sources_selected);
+        return;
+      }
       const needEnable = selectedSourcesNeedingEnable(selected, status);
       if (needEnable.length) {
-        renderInitChecklist(status);
+        renderInitChecklist(status, selected);
         $("#startInit").disabled = false;
         $("#startInit").textContent = "开始初始化";
         setInitReason(`你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到 /web 设置页开启对应平台，或取消勾选后再点一次。`);
         return;
       }
+      if (selected.includes("bilibili") && !status?.prerequisites?.bilibili_logged_in) {
+        renderInitChecklist(status, selected);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason("还没检测到 B站 登录。先登录 bilibili.com，或取消勾选 B 站再开始。");
+        return;
+      }
       if (!status.can_start) {
-        renderInitChecklist(status);
+        renderInitChecklist(status, selected);
         $("#startInit").disabled = false;
         $("#startInit").textContent = "开始初始化";
         setInitReason(describeInitReason(status.reason) || status.detail || "以下条件未满足，无法开始初始化。");
@@ -614,7 +631,7 @@
           throw new Error(describeInitReason(details.error || details.reason) || details.detail || `HTTP ${r.status}`);
         }
       } catch (e) {
-        renderInitChecklist(status);
+        renderInitChecklist(status, selected);
         $("#startInit").disabled = false;
         $("#startInit").textContent = "开始初始化";
         setInitReason("初始化没能启动：" + (e.message || "请稍后重试。"));

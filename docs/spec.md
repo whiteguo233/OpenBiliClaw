@@ -248,7 +248,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ 画像编辑：编辑面板 -> /api/profile/edit -> 覆盖层（插件/移动/桌面三端） │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ 引导初始化：插件/桌面 Web/安装向导前置清单 -> /api/init + 进度流 │ │
+│  │ 引导初始化：来源选择 + 前置清单 -> /api/init + 进度流（B 站可取消）│ │
 │  └──────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
 │                      Agent 核心层                             │
@@ -273,7 +273,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │     Interest probes: near 5 + challenge 3 独立 active 额度 │   │
 │  │     Probe memory: domain / axis / distance + exploration buffer │ │
 │  │     AccountSync: B 站账号增量 -> Memory/Soul bootstrap     │   │
-│  │     Guided init: run_guided_init 共享流水线 + InitCoordinator 状态机 + /api/init* + init 期写者门控 │ │
+│  │     Guided init: selected sources -> run_guided_init + InitCoordinator + /api/init* + init 期写者门控 │ │
 │  │     Pool readiness: servable/raw/pending 统一库存口径       │   │
 │  │     Source bootstrap seen-key guard -> Memory/Profile      │   │
 │  │     Profile overrides overlay: 用户编辑 -> profile_overrides.json │ │

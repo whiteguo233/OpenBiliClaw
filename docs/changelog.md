@@ -4,6 +4,15 @@
 
 ---
 
+## v0.3.118 / extension v0.3.77: 初始化来源可选化（2026-06-11）
+
+B 站不再是初始化的强制基座：CLI、插件面板、桌面 Web 和安装包 `/setup/` 都可以在初始化前取消勾选 B 站，只要至少保留一个数据来源即可。同时修复插件连接徽章与保存列表的响应性问题。
+
+- 后端包版本提升到 `v0.3.118`，浏览器插件版本提升到 `0.3.77`，准备发布 `backend-v0.3.118` 与 `extension-v0.3.77`。
+- 初始化不再强制 B 站：B 站在所有初始化入口（CLI / 插件面板 / 桌面 Web / `/setup/` 向导）变为与小红书 / 抖音 / YouTube / X 同级的可选来源——默认勾选（推荐）但可取消，**至少保留一个来源**。CLI 新增 `--no-bilibili` / `OPENBILICLAW_NO_BILIBILI=1`（同时持久化 `[sources.bilibili].enabled=false`），全来源关闭直接报错退出；共享流水线 `run_guided_init` 新增 `include_bili`（False 时跳过 B 站拉取，`client` 可为 None），所有所选来源 0 信号时以新失败码 `empty_signals` 终止；X 点赞 / 收藏补进画像构建输入（保证 X-only 初始化也有画像素材）。API 侧：`GET /api/init-status` 的 `can_start` 不再硬性要求 B 站登录（`bilibili_logged_in` 仍下发，三端前端在勾选 B 站时自行拦截并提示「登录或取消勾选」），`POST /api/init` 仅当所选来源含 bilibili 时做登录 409 复验，显式空选择返回 409 `no_sources_selected`；旧客户端（不传 `sources`）行为不变。
+- 修复插件面板打开后连接徽章误显「未连接」数秒：徽章活性与就绪探测解耦——后端新增纯活性端点 `GET /api/ping`（无 DB / provider 探测，降级模式亦放行），popup 连接徽章（`checkBackendStatus`，3s 超时）与 service worker 的 WS 前置探活（2s 超时）改打 `/api/ping`，404（旧后端）时回退 `/api/health`。原先两者都等 `/api/health`，而 health 同步等一次 embedding 实探（冷缓存实测 6.7s、探测上限 15s）：面板一开撞上冷探测时徽章长时间停在「未连接」，service worker 的 2s 预算还会把健康但冷启动的后端误标掉线（工具栏 `!` 角标误报）。
+- 修复稍后再看 / 收藏列表「点移除没反应、要刷新或多点几次才消失」：列表页移除改为乐观更新（共享绑定 `bindSavedCardRemove`）——点击即从列表消失，DELETE 失败时卡片原位恢复、按钮变「重试」并打 `console.error`；稍后再看 / 收藏的增删请求统一加 10s 超时。原实现等响应返回才动 DOM 且 catch 静默吞错：面板打开瞬间同源并发约 80 个请求（每张推荐卡 2 个保存状态 GET + 约 20 个封面 `image-proxy`，缓存未命中单张约 2s）抢 Chrome 单 origin 6 条连接上限，DELETE 被排队数秒，表现即「点了没反应」。真实 Chrome 实测：移除即时消失、后端落库、ping 404 回退路径正常。
+
 ## v0.3.117 / extension v0.3.76: SenseNova LLM 探活修复（2026-06-10）
 
 修复 SenseNova 等 reasoning-first OpenAI-compatible 模型在设置页测试与初始化检测里被小输出预算误判为空响应的问题，并发布同步安装包 / 插件包。
@@ -25,7 +34,6 @@
 - 惊喜推荐「浏览过即已读」：`POST /api/delight/respond` 的 `view`（看看/点开浏览）现在会把候选标记为已读（`delight_notified=1`），语义对齐推荐池的 `pool_status='shown'`——当场卡片仍显示「已打开」，但下次队列重灌（popup 重开 / `delight.refreshed`）不再出现，浏览过的惊喜不再永久占据队列。已读标记不重置 4 小时主动推送冷却，看完一条不会推迟下一条新惊喜；`like / chat` 仍保留候选在队列中。
 - 惊喜推荐与普通推荐去重：此前同一条内容可以同时出现在惊喜队列和普通推荐流（两边查的是同一个 `content_cache` 池，互不知晓）。现在被惊喜通道认领的行——已作为惊喜送达过（`delight_notified=1`），或当前满足惊喜队列条件（delight 分数 ≥ 阈值且 reason/hook 非空）——会被 `get_pool_candidates` / `count_pool_candidates` 的 servable 闸门统一排除：普通推荐 serve、换一批和「还有 N 条」计数都不会再碰惊喜通道的内容。存储层镜像常量 `_DELIGHT_CLAIM_MIN_SCORE` 由测试与 `DEFAULT_DELIGHT_THRESHOLD` 锁定一致，防止两边阈值漂移产生「夹缝内容」。
 - 惊喜推荐浏览器端到端验证 + 三端 view 上报补齐：用隔离后端（临时库 + 种子惊喜候选）驱动真实 Chrome 验证桌面 Web 完整生命周期——喜欢后重载保留并恢复「好，这类多来点。」文案、看看后重灌消失、未操作的一直保留、忽略立即移出，全部通过。E2E 过程中发现桌面 Web 和插件横幅的「去看看」从未调用 `/api/delight/respond` 上报 `view`（移动 Web 端正常），「浏览过即已读」在这两端不生效——已补 fire-and-forget 上报；桌面 Web 的 `normalizeDelight` 同时接住 pending-batch 下发的 `state="liked"`，重灌后恢复已喜欢文案。
-
 ## v0.3.115: 自动更新解卡（2026-06-10）
 
 修复「配置页开了自动更新却永远不更新」的静默失效：发布 tag 携带过期 `uv.lock`（版本 bump 时漏跑 `uv lock`），安装侧首次 `uv sync` 即把 worktree 弄脏，所有 git 克隆安装（一键脚本 / AI 安装）的自动更新从装机起被 `dirty_worktree` 守卫永久拦截，且无任何日志或 UI 反馈。

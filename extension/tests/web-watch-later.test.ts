@@ -75,5 +75,7 @@ test("extension popup exposes a watch-later tab and list like web surfaces", () 
   assert.match(popupJs, /fetchWatchLater/);
   assert.match(popupJs, /function loadWatchLater/);
   assert.match(popupJs, /function buildWatchLaterCard/);
-  assert.match(popupJs, /removeFromWatchLater\(item\.bvid\)/);
+  // Removal goes through the shared optimistic binder (remove first,
+  // restore + 重试 on failure) instead of an inline await-then-remove.
+  assert.match(popupJs, /requestRemove:\s*removeFromWatchLater/);
 });

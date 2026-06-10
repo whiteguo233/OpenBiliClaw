@@ -384,14 +384,18 @@ $ openbiliclaw profile
 首次运行编排命令。会顺序执行：
 
 1. 检查运行时 LLM 配置
-2. 检查 B 站认证
-3. 拉取 B 站历史 / 收藏 / 关注
+2. 检查 B 站认证（仅当包含 B 站来源时）
+3. 拉取 B 站历史 / 收藏 / 关注（仅当包含 B 站来源时）
 4. best-effort 等待插件导入小红书初始化信号
 5. best-effort 等待插件导入抖音初始化信号
 6. best-effort 等待插件导入 YouTube 初始化信号
 7. 写入事件层并分析偏好
 8. 生成初始画像
 9. 按阶段自动补首轮内容池
+
+> v0.3.118+：B 站不再是必选基座——`--no-bilibili`（或 `OPENBILICLAW_NO_BILIBILI=1`）可跳过 B 站，
+> 但 init **至少需要一个数据来源**：全部来源都关闭时命令直接报错退出（exit 1）。
+> 所有所选来源都没拉到任何信号时，流水线以 `empty_signals` 失败。
 
 > v0.3.102+：第 3–9 步的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动（交互提示 / 摘要仍在命令里），后端图形化初始化 `POST /api/init` 复用同一协程。CLI 行为 / 输出 / 退出码不变。**也可以不进终端**：插件「推荐」tab 未初始化时直接点「开始初始化」，详见 [init 模块文档](init.md) 与 [extension 模块文档](extension.md)。
 
@@ -440,12 +444,13 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 
 源开关：
 
+- `--no-bilibili`：跳过 B 站数据接入（v0.3.118+，默认包含；至少需保留一个数据来源）。同时把 `[sources.bilibili].enabled` 持久化为 `false`，后台发现也不再跑 B 站。
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`：覆盖 B 站收藏 / 关注初始化信号上限，默认各 `300`；`0` 表示跳过对应信号。
-- `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1`：永久跳过对应源。
+- `OPENBILICLAW_NO_BILIBILI=1` / `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1`：永久跳过对应源。
 - `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 - `OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS` / `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS`：抖音 / YouTube `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 

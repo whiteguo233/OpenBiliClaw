@@ -705,6 +705,19 @@ class TestBackendAPI:
         assert body["status"] == "ok"
         assert body["service"] == "openbiliclaw-api"
 
+    def test_ping_endpoint_is_pure_liveness(self) -> None:
+        """/api/ping answers instantly with no probes — the extension badge
+        depends on it never inheriting /api/health's embedding-probe latency."""
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/api/ping")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "service": "openbiliclaw-api"}
+
     def test_sources_status_returns_every_source(self) -> None:
         """Unified /api/sources/status reports a status item per source."""
         from fastapi.testclient import TestClient
@@ -7357,7 +7370,7 @@ class TestGuidedInitEndpoints:
     def test_init_missing_bilibili_resets_to_idle(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
-        prereqs = _FakeInitPrereqs(bili="failed", chat=True)
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili"])
         app, db = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={})
@@ -7372,7 +7385,7 @@ class TestGuidedInitEndpoints:
     def test_init_missing_llm_resets_to_idle(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
-        prereqs = _FakeInitPrereqs(bili="ok", chat=False)
+        prereqs = _FakeInitPrereqs(bili="ok", chat=False, platforms=["bilibili"])
         app, db = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={})
@@ -7380,6 +7393,34 @@ class TestGuidedInitEndpoints:
         assert resp.json()["error"] == "llm_not_ready"
         assert db.get_latest_init_run()["status"] == "idle"
         assert app.state.runtime_context.init_coordinator.init_active() is False
+
+    def test_init_skips_bilibili_login_check_when_deselected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v0.3.118+: B站 login only gates a run that actually includes bilibili."""
+        from fastapi.testclient import TestClient
+
+        captured = self._capture_run_guided_init(monkeypatch)
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili", "xiaohongshu"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["xiaohongshu"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured)
+        assert captured["include_bili"] is False
+        assert captured["include_xhs"] is True
+
+    def test_init_rejects_empty_source_selection(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["bilibili", "xiaohongshu"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": []})
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "no_sources_selected"
+        # Rejected before reserving — no run row created at all.
+        assert db.get_latest_init_run() is None
 
     def _capture_run_guided_init(self, monkeypatch):
         """Replace the shared pipeline with an async capture of its kwargs.
@@ -7422,8 +7463,9 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu"]})
             assert resp.status_code == 202
             self._drive_until(client, captured)
-        # Only the selected optional source is included, even though all 4 are
+        # Only the selected sources are included, even though all 4 are
         # enabled in config.
+        assert captured["include_bili"] is True
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is False
         assert captured["include_yt"] is False
@@ -7443,6 +7485,7 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init", json={})
             assert resp.status_code == 202
             self._drive_until(client, captured)
+        assert captured["include_bili"] is True
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is True
         assert captured["include_yt"] is False  # youtube not enabled in config
@@ -7690,6 +7733,32 @@ class TestGuidedInitEndpoints:
         assert body["initialized"] is True
         assert body["can_start"] is False
         assert body["reason"] == "already_initialized"
+
+    def test_init_status_bilibili_login_is_informational_not_blocking(self, tmp_path: Path) -> None:
+        """v0.3.118+: B站 login no longer hard-gates can_start — whether it
+        blocks depends on the client's source selection, which only POST sees.
+        The status still reports the login state + reason for client gating."""
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is True
+        assert body["reason"] == "bilibili_not_logged_in"
+        assert body["prerequisites"]["bilibili_logged_in"] is False
+
+    def test_init_status_llm_still_hard_gates_can_start(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=False, platforms=["bilibili"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is False
+        assert body["reason"] == "llm_not_ready"
 
     def test_task_result_not_gated_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

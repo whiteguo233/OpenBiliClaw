@@ -373,14 +373,15 @@ def _count_events_by_source_platform(database: Any) -> dict[str, int]:
 
 
 def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[str]:
-    """Effective optional platform sources for a guided-init run.
+    """Effective platform sources for a guided-init run.
 
     ``enabled`` is the config-enabled set; ``selected`` is the extension's
     per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
     clients — meaning "use everything enabled"). A selection can only NARROW the
     set: you can't init a source that isn't configured, so the result is the
-    intersection. Bilibili is the always-on base (pulled via the client, not an
-    ``include_*`` flag), so it doesn't need to appear here.
+    intersection. Bilibili flows through here like every other source
+    (v0.3.118+): it is config-enabled by default, so legacy clients keep their
+    bilibili-included behaviour, but deselecting it skips the B站 fetch.
     """
     if selected is None:
         return set(enabled)
@@ -895,6 +896,7 @@ def create_app(
         method = request.method.upper()
         allowed = (
             method == "OPTIONS"
+            or path == "/api/ping"
             or path == "/api/health"
             or path == "/api/runtime-status"
             or path == "/api/autostart-status"
@@ -1337,6 +1339,18 @@ def create_app(
             _embedding_ready_checked_at = time.monotonic()
             return ready
 
+    @app.get("/api/ping")
+    async def ping() -> JSONResponse:
+        """Pure liveness probe: no DB, no provider round-trips.
+
+        ``/api/health`` is a READINESS endpoint — its embedding probe can
+        take seconds when the cache is cold (Ollama model reload), which
+        made the extension's connection badge sit on "未连接" after opening
+        the panel. UI liveness indicators should hit this instead and keep
+        ``/api/health`` for profile/embedding state.
+        """
+        return JSONResponse({"status": "ok", "service": "openbiliclaw-api"})
+
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
@@ -1389,7 +1403,12 @@ def create_app(
         trusted = _get_auth_gate().is_trusted_local(request)
         supported = not is_running_in_container()
         running = bool(run["running"])
-        hard_ok = (bili == "ok") and chat
+        # v0.3.118+: bilibili login is no longer a server-side hard gate —
+        # whether it blocks depends on the client's per-run source selection,
+        # which only POST /api/init sees. ``bilibili_logged_in`` stays in the
+        # prerequisites payload so clients gate the start button themselves
+        # when B站 is among the checked sources; POST revalidates regardless.
+        hard_ok = chat
         # Mirror POST /api/init's guards: an already-initialized profile blocks
         # a (non-force) start, so can_start must reflect that too — otherwise E1
         # and E2 disagree and a client could offer "start" that E2 rejects.
@@ -1401,10 +1420,12 @@ def create_app(
             reason, detail = "already_running", "初始化进行中"
         elif initialized:
             reason, detail = "already_initialized", "已经初始化过了；如需重建请用 force"
-        elif bili != "ok":
-            reason, detail = "bilibili_not_logged_in", "还没检测到 B站 登录"
         elif not chat:
             reason, detail = "llm_not_ready", "AI 服务还没配好或当前不可用"
+        elif bili != "ok":
+            # Informational (does not flip can_start): blocks only if the
+            # client keeps bilibili selected, which the UI enforces.
+            reason, detail = "bilibili_not_logged_in", "还没检测到 B站 登录"
         elif run.get("status") in ("failed", "cancelled"):
             # Prereqs are fine and nothing is running, but the last run ended
             # badly — surface why so the UI can show it (can_start stays true so
@@ -1496,6 +1517,7 @@ def create_app(
                 soul_engine=ctx.soul_engine,
                 favorite_limit=_INIT_BILIBILI_FAVORITE_LIMIT,
                 follow_limit=_INIT_BILIBILI_FOLLOW_LIMIT,
+                include_bili="bilibili" in effective,
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
@@ -1552,6 +1574,18 @@ def create_app(
                 {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
                 status_code=409,
             )
+        # At least one config-enabled source must survive an EXPLICIT per-run
+        # selection (v0.3.118+: bilibili is selectable like the rest, so an
+        # empty intersection is now reachable). Cheap rejection, before
+        # reserving. Legacy clients (no "sources" key) stay permissive.
+        effective_sources = _select_init_platforms(
+            set(ctx.init_prereqs.enabled_platforms()), selected_sources
+        )
+        if selected_sources is not None and not effective_sources:
+            return JSONResponse(
+                {"error": "no_sources_selected", "detail": "至少选择一个已启用的数据来源"},
+                status_code=409,
+            )
 
         run_id = uuid.uuid4().hex
         if not coord.try_start(run_id):
@@ -1559,11 +1593,13 @@ def create_app(
 
         # Critical-section revalidation: prereqs may have lapsed between the
         # status poll and now. On a miss, roll the reservation back to idle so
-        # no stuck row remains (review R2 A-2).
-        bili = await ctx.init_prereqs.bilibili_check()
-        if bili != "ok":
-            coord.reset_to_idle(run_id, reason="bilibili_not_logged_in")
-            return JSONResponse({"error": "bilibili_not_logged_in"}, status_code=409)
+        # no stuck row remains (review R2 A-2). B站 login is only a prerequisite
+        # when bilibili is among the selected sources.
+        if "bilibili" in effective_sources:
+            bili = await ctx.init_prereqs.bilibili_check()
+            if bili != "ok":
+                coord.reset_to_idle(run_id, reason="bilibili_not_logged_in")
+                return JSONResponse({"error": "bilibili_not_logged_in"}, status_code=409)
         chat = await ctx.init_prereqs.chat_ready()
         if not chat:
             coord.reset_to_idle(run_id, reason="llm_not_ready")
