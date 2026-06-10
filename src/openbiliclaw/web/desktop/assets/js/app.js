@@ -22,6 +22,7 @@
       avoidanceProbeRespond: "/avoidance-probes/respond",
       sourceShareSuggestion: "/config/source-share-suggestion",
       configProbe: "/config/probe-service",
+      updateStatus: "/update-status",
       config: "/config?reveal_keys=true",
       watchLater: "/watch-later",
       favorites: "/favorites",
@@ -1042,6 +1043,7 @@
       void renderSourcesStatus();
       void lanAuthControl?.reload();
       void bootAutostartControl?.reload();
+      void refreshUpdateStatus();
     }
 
     // ── Saved pages: 稍后再看 (watch-later) & 收藏 (favorites) ──────
@@ -3955,6 +3957,96 @@
       };
     }
 
+    const UPDATE_REASON_TEXT = {
+      dirty_worktree: "代码目录有未提交改动，更新被阻止",
+      unsupported_install_mode: "当前安装方式不支持自动更新",
+      untrusted_remote: "git 远端不在允许列表，更新被阻止",
+      branch_not_fast_forwardable: "本地代码与发布版本分叉，无法快进更新",
+      merge_or_rebase_in_progress: "代码目录正在合并 / 变基，更新暂缓",
+      github_unreachable: "无法访问 GitHub 检查更新",
+      missing_target_tag: "远端未找到目标版本标签",
+      dependency_sync_failed: "更新后依赖安装失败",
+      restart_failed: "更新后重启失败",
+      no_backend_tag_yet: "远端暂无后端发布标签",
+      prerelease_ignored: "仅有预发布版本，已忽略",
+      already_applying: "正在更新中"
+    };
+
+    function formatUpdateCheckTime(iso) {
+      if (!iso) return "";
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function describeUpdateStatus(backend) {
+      const reasonKey = backend.reason && backend.reason !== "none" ? String(backend.reason) : "";
+      const reasonText = UPDATE_REASON_TEXT[reasonKey] || reasonKey;
+      const current = backend.current_version ? `v${backend.current_version}` : "";
+      const latest = backend.latest_version ? `v${backend.latest_version}` : "";
+      const checkedAt = formatUpdateCheckTime(backend.last_check_at);
+      const suffix = checkedAt ? `（${checkedAt} 检查）` : "";
+      switch (backend.state) {
+        case "disabled":
+          return { text: `自动更新未开启${current ? `，当前版本 ${current}` : ""}。`, tone: "" };
+        case "checking":
+          return { text: "正在检查更新…", tone: "" };
+        case "up_to_date":
+          return { text: `已是最新版本${current ? ` ${current}` : ""}${reasonText ? `（${reasonText}）` : ""}${suffix}`, tone: "success" };
+        case "update_available":
+          return { text: `发现新版本 ${latest}（当前 ${current}），${backend.auto_update_enabled ? "将在下个检查周期自动更新" : "开启自动更新后将自动升级"}${suffix}`, tone: "" };
+        case "applying":
+          return { text: `正在更新到 ${latest || "新版本"}…`, tone: "" };
+        case "restart_pending":
+          return { text: "更新完成，等待后端重启生效。", tone: "success" };
+        case "blocked":
+          return { text: `更新被阻止：${reasonText || "未知原因"}${suffix}`, tone: "error" };
+        case "unsupported":
+          return { text: reasonText || "当前安装方式不支持自动更新。", tone: "error" };
+        case "error":
+          return { text: `更新检查出错：${reasonText || backend.last_error || "未知错误"}${suffix}`, tone: "error" };
+        default:
+          return { text: `尚未检查更新${current ? `，当前版本 ${current}` : ""}。`, tone: "" };
+      }
+    }
+
+    function renderUpdateStatus(backend) {
+      const line = $("#updateStatusLine");
+      if (!line) return;
+      if (!backend || typeof backend !== "object") {
+        line.hidden = true;
+        return;
+      }
+      const mode = String(backend.install_mode || "");
+      // Older backends predate install_mode — keep the toggle usable there.
+      const unsupportedInstall = Boolean(mode) && mode !== "git";
+      const toggle = $("#autoUpdate");
+      const interval = $("#autoUpdateInterval");
+      if (toggle) toggle.disabled = unsupportedInstall;
+      if (interval) interval.disabled = unsupportedInstall;
+      if (unsupportedInstall) {
+        line.dataset.tone = "error";
+        line.textContent = mode === "frozen"
+          ? "桌面安装包不支持后端自动更新，请下载并安装新版安装包获取更新。"
+          : "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
+      } else {
+        const { text, tone } = describeUpdateStatus(backend);
+        line.dataset.tone = tone;
+        line.textContent = text;
+      }
+      line.hidden = false;
+    }
+
+    async function refreshUpdateStatus() {
+      const line = $("#updateStatusLine");
+      try {
+        const payload = await requestJson(ENDPOINTS.updateStatus);
+        renderUpdateStatus(payload?.backend || null);
+      } catch {
+        if (line) line.hidden = true;
+      }
+    }
+
     function formatProbeResult(result) {
       const ok = Boolean(result?.ok);
       const provider = result?.provider ? ` ${result.provider}` : "";
@@ -4201,6 +4293,7 @@
         if ($("#configStatus")) $("#configStatus").value = `${message}${suffix}`;
         showToast(result?.restart_required ? "配置已保存，需要重启后端" : "配置已保存");
         void hydrateFromBackend();
+        void refreshUpdateStatus();
       } catch (error) {
         const message = configErrorMessage(error.details) || error.message || "未知错误";
         if ($("#configStatus")) $("#configStatus").value = `保存失败：\n${message}`;
