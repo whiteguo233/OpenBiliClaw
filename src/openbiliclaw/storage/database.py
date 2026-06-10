@@ -44,6 +44,26 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
     "video_id",
     "yt_video_id",
 )
+# Mirrors recommendation.delight.DEFAULT_DELIGHT_THRESHOLD. Storage stays a
+# leaf module (no openbiliclaw imports), so the value is duplicated here and
+# pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_in_sync.
+_DELIGHT_CLAIM_MIN_SCORE = 0.70
+
+# Rows claimed by the surprise (delight) channel: already delivered as a
+# delight, or currently delight-eligible (the pending-queue predicate). The
+# regular feed's servable gate excludes them so the same content never shows
+# up in both the recommendation list and the surprise tray.
+_DELIGHT_CLAIM_GUARD_SQL = f"""
+                  AND NOT (
+                    COALESCE(delight_notified, 0) = 1
+                    OR (
+                      COALESCE(delight_score, 0.0) >= {_DELIGHT_CLAIM_MIN_SCORE}
+                      AND COALESCE(delight_reason, '') != ''
+                      AND COALESCE(delight_hook, '') != ''
+                    )
+                  )
+"""
+
 _XHS_SOURCE_FAMILY = "xiaohongshu"
 _XHS_SOURCE_PREFIXES = ("xhs-", "xhs_", "xiaohongshu")
 _DOUYIN_SOURCE_FAMILY = "douyin"
@@ -1663,6 +1683,12 @@ class Database:
         ``max_per_topic_group=0`` to restore the legacy unrestricted
         ordering for callers that need it (e.g. health checks).
 
+        Rows claimed by the surprise (delight) channel are excluded via
+        ``_DELIGHT_CLAIM_GUARD_SQL`` — a delight that was delivered or is
+        currently queue-eligible must never be duplicated by the regular
+        feed. ``count_pool_candidates`` applies the same guard so the
+        "还有 N 条" display stays in sync with what serve() can load.
+
         Notes:
             xhs rows without ``xsec_token`` in their ``content_url`` are
             excluded. Bare xhs URLs get rejected by xhs with error 300031
@@ -1677,6 +1703,7 @@ class Database:
         fetch_limit = max(limit * 8, 80)
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
+        delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
         if max_per_topic_group <= 0:
             sql = f"""
                 SELECT *
@@ -1692,6 +1719,7 @@ class Database:
                     OR content_url LIKE '%xsec_token=%'
                   )
                   {guard_sql}
+                  {delight_guard_sql}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM recommendations AS r
@@ -1732,6 +1760,7 @@ class Database:
                         OR content_url LIKE '%xsec_token=%'
                       )
                       {guard_sql}
+                      {delight_guard_sql}
                       AND NOT EXISTS (
                         SELECT 1
                         FROM recommendations AS r
@@ -1786,10 +1815,16 @@ class Database:
     def _load_available_pool_candidate_rows(
         self, *, max_per_topic_group: int = 3, xhs_self_nickname: str = ""
     ) -> list[dict[str, Any]]:
-        """Load rows counted by the frontend-visible pool availability gate."""
+        """Load rows counted by the frontend-visible pool availability gate.
+
+        Applies ``_DELIGHT_CLAIM_GUARD_SQL`` like ``get_pool_candidates`` so
+        the availability count never includes surprise-channel rows serve()
+        would refuse to load.
+        """
         self._ensure_fresh_read()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
+        delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
         if max_per_topic_group > 0:
             cursor = self.conn.execute(
                 f"""
@@ -1815,6 +1850,7 @@ class Database:
                         OR content_url LIKE '%xsec_token=%'
                       )
                       {guard_sql}
+                      {delight_guard_sql}
                       AND NOT EXISTS (
                         SELECT 1
                         FROM recommendations AS r
@@ -1843,6 +1879,7 @@ class Database:
                     OR content_url LIKE '%xsec_token=%'
                   )
                   {guard_sql}
+                  {delight_guard_sql}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM recommendations AS r

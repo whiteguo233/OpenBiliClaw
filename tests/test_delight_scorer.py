@@ -406,6 +406,20 @@ def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> No
     assert database.count_delight_candidates(min_delight_score=0.85) == 1
 
 
+def test_delight_claim_threshold_in_sync() -> None:
+    """storage mirrors DEFAULT_DELIGHT_THRESHOLD without importing recommendation.
+
+    The regular feed's delight-claim guard (storage layer) must use the
+    same threshold as the surprise queue, or content could fall in the
+    gap (excluded from the feed yet never surfaced as a surprise) or
+    duplicate across both surfaces.
+    """
+    from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+    from openbiliclaw.storage.database import _DELIGHT_CLAIM_MIN_SCORE
+
+    assert _DELIGHT_CLAIM_MIN_SCORE == DEFAULT_DELIGHT_THRESHOLD
+
+
 def test_database_delight_candidates_include_liked_keeps_liked_rows(tmp_path: Path) -> None:
     """Queue re-hydration must keep liked delights visible (v0.3.63 contract).
 

@@ -287,6 +287,8 @@ Content-Type: application/json
 
 正向保留跨重灌生效：`GET /api/delight/pending-batch` 以 `include_liked=True` 调用 `get_delight_candidates`，已点喜欢（`feedback_type='like'`）的候选在 popup 重开 / `delight.refreshed` 重灌后仍保留队列位置，并以 `state="liked"` 下发供三端恢复「已喜欢」展示；`view` / `dismiss` / `dislike`（置 `delight_notified=1`）会让候选退出重灌队列。WS 主动推送（`get_pending_delight`）、候选计数与 CLI 仍排除已喜欢项，避免把喜欢过的内容当新惊喜重复推送。
 
+惊喜与普通推荐互斥：被惊喜通道认领的内容（已作为惊喜送达过，或当前满足惊喜队列条件——delight 分数达阈值且 reason/hook 非空）会被 `get_pool_candidates` / `count_pool_candidates` 的 servable 闸门排除，普通推荐 serve 与「还有 N 条」计数都不会再出同一条内容。
+
 ### PoolCurator
 
 ```python
