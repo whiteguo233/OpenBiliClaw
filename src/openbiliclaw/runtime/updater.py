@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _GITHUB_TAGS = "https://api.github.com/repos/whiteguo233/OpenBiliClaw/tags"
 _BACKEND_TAG_PREFIX = "backend-v"
+_DESKTOP_TAG_PREFIX = "desktop-v"
 _MAX_TAG_PAGES = 5
 _TAGS_PER_PAGE = 100
 _VERSION_RE = re.compile(
@@ -148,6 +149,36 @@ def _parse_backend_version(tag: str) -> tuple[int, ...] | None:
     return candidate.version if candidate is not None else None
 
 
+def _parse_desktop_candidate(
+    tag: str,
+    *,
+    include_prerelease: bool = False,
+) -> _BackendTagCandidate | None:
+    """Parse desktop installer release tags — ``desktop-vX.Y.Z`` only.
+
+    Frozen bundles update by downloading a newer installer, and installers are
+    published under ``desktop-v*`` tags (which do not always ship in lockstep
+    with ``backend-v*`` source tags). Legacy ``v*`` / bare semver tags were
+    backend source releases, so they never count as installer candidates.
+    """
+    raw = tag.strip()
+    if not raw.startswith(_DESKTOP_TAG_PREFIX):
+        return None
+    match = _VERSION_RE.match(raw.removeprefix(_DESKTOP_TAG_PREFIX))
+    if match is None:
+        return None
+    prerelease = bool(match.group("prerelease"))
+    if prerelease and not include_prerelease:
+        return None
+    return _BackendTagCandidate(
+        version=tuple(int(part) for part in match.group("version").split(".")),
+        version_text=match.group("version"),
+        tag=raw,
+        canonical=True,
+        prerelease=prerelease,
+    )
+
+
 def _string_from_mapping_field(
     payload: Mapping[str, object],
     field: str,
@@ -214,17 +245,26 @@ class AutoUpdateService:
 
     async def check_and_update_if_due(self) -> dict[str, object]:
         """Run the update check only when the configured interval has elapsed."""
+        if detect_install_mode() == "frozen":
+            # Desktop bundles can't self-apply (the binary IS the code; there is
+            # no git checkout of their own to fast-forward), but they still poll
+            # for new installer releases — regardless of the auto-update toggle,
+            # which only governs auto-apply — so the settings page and runtime
+            # stream can nudge the user to download the next desktop package.
+            # ``request_apply`` refuses non-git installs separately, so this
+            # can never mutate a co-located git checkout.
+            if not self._is_due():
+                return {"checked": False, "reason": "not_due"}
+            backend = await self.check_now()
+            return {
+                "checked": True,
+                "updated": False,
+                "reason": "unsupported_install_mode",
+                "current_version": backend["current_version"],
+                "remote_version": backend["latest_tag"],
+            }
         if not self.enabled:
             return {"checked": False, "reason": "disabled"}
-        # Frozen desktop bundles (and bare pip installs) have no git checkout to
-        # fast-forward. Skip the scheduled check entirely so a packaged build
-        # that inherited ``auto_update_enabled=true`` from a shared config never
-        # fast-forwards a co-located git checkout and restart-loops (the
-        # packaged binary would keep running its bundled old code). Manual
-        # ``check_now`` still refreshes status; ``request_apply`` is guarded
-        # separately so a direct apply call is refused too.
-        if detect_install_mode() != "git":
-            return {"checked": False, "reason": "unsupported_install_mode"}
         if not self._is_due():
             return {"checked": False, "reason": "not_due"}
         return await self.check_and_update_now()
@@ -242,6 +282,18 @@ class AutoUpdateService:
                 "checked": True,
                 "updated": False,
                 "reason": reason,
+                "current_version": backend["current_version"],
+                "remote_version": backend["latest_tag"],
+            }
+        if detect_install_mode() != "git":
+            # Non-git installs surface the update but never attempt to apply —
+            # request_apply would refuse anyway; returning here keeps the
+            # freshly-set update_available state from being clobbered by an
+            # apply attempt's unsupported/blocked state.
+            return {
+                "checked": True,
+                "updated": False,
+                "reason": "unsupported_install_mode",
                 "current_version": backend["current_version"],
                 "remote_version": backend["latest_tag"],
             }
@@ -269,7 +321,11 @@ class AutoUpdateService:
         self._last_check_at = datetime.now(tz=UTC)
         current = openbiliclaw.__version__
         current_parsed = _parse_version(current)
-        selection = await self._fetch_latest_candidate()
+        # Frozen bundles update by downloading a newer installer, so they track
+        # ``desktop-v*`` installer tags; git checkouts track ``backend-v*``
+        # source tags. The two are not always released in lockstep.
+        channel = "desktop" if detect_install_mode() == "frozen" else "backend"
+        selection = await self._fetch_latest_candidate(channel=channel)
 
         if selection.error_reason:
             self._state = "error"
@@ -415,9 +471,18 @@ class AutoUpdateService:
         self._reason = other._reason
         self._update_error = other._update_error
 
+    def _background_loop_enabled(self) -> bool:
+        """The loop runs when auto-update is on — or always on frozen bundles.
+
+        Frozen desktop installs run a check-only loop (the toggle governs
+        auto-apply, which frozen can never do) so users get a "new installer
+        available, go download it" reminder without opting in to anything.
+        """
+        return self.enabled or detect_install_mode() == "frozen"
+
     async def run_forever(self) -> None:
-        """Background loop: periodically check and apply updates."""
-        if not self.enabled:
+        """Background loop: periodically check (and on git installs apply) updates."""
+        if not self._background_loop_enabled():
             return
         # Small initial delay to let the main app finish startup
         await asyncio.sleep(10)
@@ -436,8 +501,18 @@ class AutoUpdateService:
         elapsed = datetime.now(tz=UTC) - self._last_check_at
         return elapsed >= timedelta(hours=self.check_interval_hours)
 
-    async def _fetch_latest_candidate(self) -> _BackendTagSelection:
-        """Query GitHub tags and select the newest allowed backend tag."""
+    async def _fetch_latest_candidate(
+        self,
+        *,
+        channel: str = "backend",
+    ) -> _BackendTagSelection:
+        """Query GitHub tags and select the newest allowed tag for *channel*.
+
+        ``backend`` (default) tracks ``backend-v*`` source tags with legacy
+        ``v*`` / bare-semver fallback; ``desktop`` tracks ``desktop-v*``
+        installer tags only.
+        """
+        parse = _parse_desktop_candidate if channel == "desktop" else _parse_backend_candidate
         async with httpx.AsyncClient(timeout=30) as client:
             canonical: list[_BackendTagCandidate] = []
             legacy: list[_BackendTagCandidate] = []
@@ -465,7 +540,7 @@ class AutoUpdateService:
                     if not isinstance(tag_payload, Mapping):
                         continue
                     tag = _string_from_mapping_field(tag_payload, "name")
-                    candidate = _parse_backend_candidate(tag, include_prerelease=True)
+                    candidate = parse(tag, include_prerelease=True)
                     if candidate is None:
                         continue
                     if candidate.prerelease and not self.allow_prerelease:

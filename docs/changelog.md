@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.120: 桌面安装包更新提醒（2026-06-11）
+
+桌面安装包用户从「完全不知道有新版本」变成「自动收到下载提醒」：冻结包后台改跑 check-only 循环，跟踪 `desktop-v*` 安装包 tag，发现新包时设置页提示并附直达下载链接。后端源码更新走 `backend-v0.3.120`，桌面安装包走 `desktop-v0.3.120`；浏览器插件未改动，仍为 `0.3.77`。
+
+- **冻结包定期检查新安装包并提醒下载**：`check_and_update_if_due` 对 frozen 走 check-only 分支——**无论自动更新开关状态**都按检查间隔轮询（`_background_loop_enabled()` 对 frozen 恒真，开关只管自动应用而 frozen 永远不能应用），发现新包置 `update_available` 并推 `backend_update_available` 事件；`check_and_update_now` 同样在非 git 形态下只报告不应用，避免 apply 尝试把刚发现的 `update_available` 状态覆写成 unsupported。v0.3.119 的 apply 拒绝守卫不变，双重兜底。
+- **冻结包更新通道切换到 `desktop-v*` 安装包 tag**：新增 `_parse_desktop_candidate` / `_fetch_latest_candidate(channel=...)`，frozen 形态的 `check_now` 只比对 `desktop-v*` tag（无 legacy 兜底）——`backend-v*` 源码 tag 与安装包不总是同步发布（如 v0.3.118 只发了源码 tag），桌面用户只该在真有新安装包时被提醒。
+- **设置页冻结态提醒 UI**：新增 `describeFrozenUpdateStatus` 分支文案（「发现新版安装包 vX.Y.Z…请下载新版安装包完成升级」/「当前安装包已是最新」等），`update_available` 时显示「前往下载新安装包」按钮直达对应 `desktop-v*` Release 页；「立即检查」在冻结态可用，「立即应用」保持隐藏；`backend_update_available` 事件到达时按 tag 前缀区分文案弹 toast 提醒（安装包 → 引导下载，源码 → 普通提示）。开关与间隔输入在冻结态仍禁用（它们只管自动应用）。
+
 ## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）
 
 接 v0.3.115 的自动更新解卡，堵死桌面安装包的「无限重启循环」高危隐患，并补齐自动更新的状态展示与手动操作缺口。后端源码更新走 `backend-v0.3.119`，桌面安装包走 `desktop-v0.3.119`；浏览器插件未改动，仍为 `0.3.77`。

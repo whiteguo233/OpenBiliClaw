@@ -188,11 +188,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.119: Auto-update frozen-bundle guard & status UX (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.120: Desktop installer update reminders (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Desktop installer auto-update can't restart-loop anymore** — a frozen bundle no longer fast-forwards a co-located git checkout even when it shares the data dir; update by downloading a new installer instead.
+- **Desktop installers now remind you to upgrade** — the backend periodically checks for new `desktop-v*` installer releases and the settings page shows a notice with a direct download link plus a toast, no more watching Releases yourself.
 - **Settings page adds "Check now / Apply now"** — auto-update status can be triggered manually, and progress refreshes live from backend events.
-- **Updates still work in degraded mode** — when a broken LLM config drops the backend into degraded mode, you can still check for and apply a fix-carrying release.
+- **Auto-update is safer** — a frozen bundle never rewrites a co-located git checkout, and degraded mode (broken LLM config) can still check for and pull a fix-carrying release.
 
 ## Community
 
@@ -652,7 +652,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.119: Auto-update frozen-bundle guard & status UX (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.120: Desktop installer update reminders (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
 
 ## 🗺️ Roadmap
 

@@ -3751,6 +3751,14 @@
         event.type === "backend_restart_pending" ||
         event.type === "backend_update_failed"
       ) void refreshUpdateStatus();
+      if (event.type === "backend_update_available") {
+        const newVersion = event.latest_version ? `v${event.latest_version}` : "新版本";
+        // desktop-v* tags = installer releases for frozen bundles; guide the
+        // user to download instead of implying an in-place update will happen.
+        showToast(String(event.latest_tag || "").startsWith("desktop-v")
+          ? `发现新版安装包 ${newVersion}，请前往 GitHub Releases 下载升级`
+          : `发现后端新版本 ${newVersion}`);
+      }
       if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
@@ -4063,11 +4071,36 @@
       }
     }
 
+    // Frozen desktop bundles can't self-apply — the backend runs a check-only
+    // loop against desktop-v* installer tags and the UI guides the user to
+    // download the new installer instead.
+    function describeFrozenUpdateStatus(backend) {
+      const reasonKey = backend.reason && backend.reason !== "none" ? String(backend.reason) : "";
+      const reasonText = UPDATE_REASON_TEXT[reasonKey] || reasonKey;
+      const current = backend.current_version ? `v${backend.current_version}` : "";
+      const latest = backend.latest_version ? `v${backend.latest_version}` : "";
+      const checkedAt = formatUpdateCheckTime(backend.last_check_at);
+      const suffix = checkedAt ? `（${checkedAt} 检查）` : "";
+      switch (backend.state) {
+        case "checking":
+          return { text: "正在检查新版安装包…", tone: "" };
+        case "up_to_date":
+          return { text: `当前安装包已是最新${current ? ` ${current}` : ""}${suffix}`, tone: "success" };
+        case "update_available":
+          return { text: `发现新版安装包 ${latest}（当前 ${current}），桌面安装包不支持自动更新，请下载新版安装包完成升级${suffix}`, tone: "" };
+        case "error":
+          return { text: `检查新版安装包出错：${reasonText || backend.last_error || "未知错误"}${suffix}`, tone: "error" };
+        default:
+          return { text: `桌面安装包不支持自动应用更新；后台会定期检查新版安装包并在这里提醒下载${current ? `（当前 ${current}）` : ""}。`, tone: "" };
+      }
+    }
+
     function renderUpdateStatus(backend) {
       const line = $("#updateStatusLine");
       const actions = $("#updateActions");
       const checkBtn = $("#updateCheckBtn");
       const applyBtn = $("#updateApplyBtn");
+      const downloadLink = $("#updateDownloadLink");
       if (!line) return;
       if (!backend || typeof backend !== "object") {
         line.hidden = true;
@@ -4077,31 +4110,46 @@
       const mode = String(backend.install_mode || "");
       // Older backends predate install_mode — keep the toggle usable there.
       const unsupportedInstall = Boolean(mode) && mode !== "git";
+      const isFrozen = mode === "frozen";
       const toggle = $("#autoUpdate");
       const interval = $("#autoUpdateInterval");
+      // The toggle governs auto-apply, which non-git installs can never do —
+      // frozen check-reminders run unconditionally on the backend side.
       if (toggle) toggle.disabled = unsupportedInstall;
       if (interval) interval.disabled = unsupportedInstall;
-      if (unsupportedInstall) {
+      if (isFrozen) {
+        const { text, tone } = describeFrozenUpdateStatus(backend);
+        line.dataset.tone = tone;
+        line.textContent = text;
+      } else if (unsupportedInstall) {
         line.dataset.tone = "error";
-        line.textContent = mode === "frozen"
-          ? "桌面安装包不支持后端自动更新，请下载并安装新版安装包获取更新。"
-          : "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
+        line.textContent = "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
       } else {
         const { text, tone } = describeUpdateStatus(backend);
         line.dataset.tone = tone;
         line.textContent = text;
       }
       line.hidden = false;
-      // 立即检查 is always available on a git checkout; 立即应用 only when a
-      // newer tag is ready to fast-forward. Hide the whole row on frozen /
-      // unsupported installs — there is nothing to check or apply there.
-      if (actions) actions.hidden = unsupportedInstall;
-      if (checkBtn) checkBtn.disabled = unsupportedInstall || backend.state === "checking" || backend.state === "applying";
+      // 立即检查 works on git checkouts AND frozen bundles (check-only there);
+      // 立即应用 only when a newer tag is ready to fast-forward on git; the
+      // download link replaces 立即应用 on frozen when a new installer exists.
+      const lockActions = unsupportedInstall && !isFrozen;
+      if (actions) actions.hidden = lockActions;
+      if (checkBtn) checkBtn.disabled = lockActions || backend.state === "checking" || backend.state === "applying";
       if (applyBtn) {
         const canApply = !unsupportedInstall && backend.state === "update_available" && Boolean(backend.latest_tag);
         applyBtn.hidden = !canApply;
         applyBtn.disabled = !canApply || backend.state === "applying";
         if (canApply) applyBtn.dataset.tag = String(backend.latest_tag);
+      }
+      if (downloadLink) {
+        const showDownload = isFrozen && backend.state === "update_available";
+        downloadLink.hidden = !showDownload;
+        if (showDownload) {
+          downloadLink.href = backend.latest_tag
+            ? `https://github.com/whiteguo233/OpenBiliClaw/releases/tag/${encodeURIComponent(String(backend.latest_tag))}`
+            : "https://github.com/whiteguo233/OpenBiliClaw/releases";
+        }
       }
     }
 
