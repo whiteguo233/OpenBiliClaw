@@ -188,11 +188,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.118 / extension v0.3.77: Optional init sources (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.119: Auto-update frozen-bundle guard & status UX (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Bilibili is no longer mandatory for init** — it remains checked by default, but CLI, extension, desktop Web, and `/setup/` can start with any enabled source as long as at least one is selected.
-- **Connection badges recover faster** — the extension now uses lightweight `/api/ping` liveness checks instead of waiting on cold `/api/health` readiness probes.
-- **Watch-later / favorite removal is instant** — list cards disappear optimistically and restore in place with retry text if the request fails.
+- **Desktop installer auto-update can't restart-loop anymore** — a frozen bundle no longer fast-forwards a co-located git checkout even when it shares the data dir; update by downloading a new installer instead.
+- **Settings page adds "Check now / Apply now"** — auto-update status can be triggered manually, and progress refreshes live from backend events.
+- **Updates still work in degraded mode** — when a broken LLM config drops the backend into degraded mode, you can still check for and apply a fix-carrying release.
 
 ## Community
 
@@ -652,7 +652,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.118 / extension v0.3.77: Optional init sources (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.119: Auto-update frozen-bundle guard & status UX (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
 
 ## 🗺️ Roadmap
 

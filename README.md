@@ -192,11 +192,11 @@
 
 ## 最近更新
 
-最新版本：**v0.3.118 / extension v0.3.77: 初始化来源可选化（2026-06-11）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **初始化不再强制 B 站** —— B 站默认勾选但可取消；CLI、插件、桌面 Web 和 `/setup/` 至少保留一个来源即可开始初始化。
-- **连接徽章更快恢复在线** —— 新增轻量 `/api/ping` 活性探针，插件不再因为 `/api/health` 冷启动探测慢而误显未连接。
-- **稍后 / 收藏移除即时生效** —— 列表页点击移除会先乐观消失，请求失败时原位恢复并提示重试。
+- **桌面安装包自动更新不再死循环** —— 冻结安装包即便和 git 安装共用目录，也不会再去快进改写源码、陷入无限重启；想升级请下载新安装包。
+- **设置页新增「立即检查 / 立即应用」** —— 自动更新状态可手动触发，更新进度随后端事件实时刷新。
+- **降级模式也能拉取更新** —— LLM 配置出错进入降级时，仍可检查并应用修复版本恢复后端。
 
 ## 用户交流群
 
@@ -664,7 +664,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.118 / extension v0.3.77: 初始化来源可选化（2026-06-11）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包和桌面安装包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag。
+最新版本：**v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包和桌面安装包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag。
 
 ## 🗺️ 后续规划
 

@@ -216,6 +216,15 @@ class AutoUpdateService:
         """Run the update check only when the configured interval has elapsed."""
         if not self.enabled:
             return {"checked": False, "reason": "disabled"}
+        # Frozen desktop bundles (and bare pip installs) have no git checkout to
+        # fast-forward. Skip the scheduled check entirely so a packaged build
+        # that inherited ``auto_update_enabled=true`` from a shared config never
+        # fast-forwards a co-located git checkout and restart-loops (the
+        # packaged binary would keep running its bundled old code). Manual
+        # ``check_now`` still refreshes status; ``request_apply`` is guarded
+        # separately so a direct apply call is refused too.
+        if detect_install_mode() != "git":
+            return {"checked": False, "reason": "unsupported_install_mode"}
         if not self._is_due():
             return {"checked": False, "reason": "not_due"}
         return await self.check_and_update_now()
@@ -386,6 +395,26 @@ class AutoUpdateService:
             "backend_update_reason": self._reason or "none",
         }
 
+    def adopt_status_from(self, other: AutoUpdateService) -> None:
+        """Carry the last check result across a hot-reload rebuild.
+
+        A config save rebuilds every swappable component, including this
+        service. Without this, a freshly-fetched ``update_available`` /
+        ``up_to_date`` status would drop back to "尚未检查更新" on the settings
+        page until the next scheduled check (up to ``check_interval_hours``).
+        Only settled status is adopted — a transient ``checking`` / ``applying``
+        state is left to re-derive so an in-flight apply on the previous
+        instance is not misrepresented by the fresh one.
+        """
+        self._last_check_at = other._last_check_at
+        self._latest_remote_version = other._latest_remote_version
+        self._latest_tag = other._latest_tag
+        if other._state in {"", "checking", "applying"}:
+            return
+        self._state = other._state
+        self._reason = other._reason
+        self._update_error = other._update_error
+
     async def run_forever(self) -> None:
         """Background loop: periodically check and apply updates."""
         if not self.enabled:
@@ -470,6 +499,15 @@ class AutoUpdateService:
 
     async def _check_apply_guards(self, tag: str) -> str:
         """Return a stable reason when local state makes apply unsafe."""
+        # A PyInstaller desktop bundle reports ``frozen`` even when it shares a
+        # data root with a co-located git checkout (entry.py points
+        # OPENBILICLAW_PROJECT_ROOT at ~/OpenBiliClaw, the same dir an AI /
+        # one-line install uses). Fast-forwarding that checkout would mutate
+        # someone else's source + venv while the packaged binary keeps running
+        # its bundled old code on restart — an endless update loop. Refuse
+        # structurally, regardless of the on-disk ``.git``.
+        if detect_install_mode() != "git":
+            return "unsupported_install_mode"
         root = _project_root()
         if not (root / ".git").exists():
             inside = await self._run_git(["rev-parse", "--is-inside-work-tree"], root)

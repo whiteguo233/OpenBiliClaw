@@ -23,6 +23,8 @@
       sourceShareSuggestion: "/config/source-share-suggestion",
       configProbe: "/config/probe-service",
       updateStatus: "/update-status",
+      updateCheck: "/update/check",
+      updateApply: "/update/apply",
       config: "/config?reveal_keys=true",
       watchLater: "/watch-later",
       favorites: "/favorites",
@@ -3744,6 +3746,11 @@
           }
         }
       }
+      if (
+        event.type === "backend_update_available" ||
+        event.type === "backend_restart_pending" ||
+        event.type === "backend_update_failed"
+      ) void refreshUpdateStatus();
       if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
       if (event.type === "interest.probe" && event.domain) mergeMessages([{ type: "interest.probe", domain: event.domain, reason: event.reason || event.message || "后端希望确认这个兴趣方向。", specifics: event.specifics || event.examples || [], probe_mode: event.probe_mode || "", challenge: Boolean(event.challenge) }]);
@@ -4058,9 +4065,13 @@
 
     function renderUpdateStatus(backend) {
       const line = $("#updateStatusLine");
+      const actions = $("#updateActions");
+      const checkBtn = $("#updateCheckBtn");
+      const applyBtn = $("#updateApplyBtn");
       if (!line) return;
       if (!backend || typeof backend !== "object") {
         line.hidden = true;
+        if (actions) actions.hidden = true;
         return;
       }
       const mode = String(backend.install_mode || "");
@@ -4081,15 +4092,88 @@
         line.textContent = text;
       }
       line.hidden = false;
+      // 立即检查 is always available on a git checkout; 立即应用 only when a
+      // newer tag is ready to fast-forward. Hide the whole row on frozen /
+      // unsupported installs — there is nothing to check or apply there.
+      if (actions) actions.hidden = unsupportedInstall;
+      if (checkBtn) checkBtn.disabled = unsupportedInstall || backend.state === "checking" || backend.state === "applying";
+      if (applyBtn) {
+        const canApply = !unsupportedInstall && backend.state === "update_available" && Boolean(backend.latest_tag);
+        applyBtn.hidden = !canApply;
+        applyBtn.disabled = !canApply || backend.state === "applying";
+        if (canApply) applyBtn.dataset.tag = String(backend.latest_tag);
+      }
     }
 
     async function refreshUpdateStatus() {
       const line = $("#updateStatusLine");
+      wireUpdateActions();
       try {
         const payload = await requestJson(ENDPOINTS.updateStatus);
         renderUpdateStatus(payload?.backend || null);
       } catch {
         if (line) line.hidden = true;
+      }
+    }
+
+    // Wire the 立即检查 / 立即应用 buttons once. Manual check runs /api/update/check
+    // (ignores the auto-update toggle); apply posts the latest tag and the backend
+    // fast-forwards + restarts — the runtime-stream events refresh the line live.
+    function wireUpdateActions() {
+      const checkBtn = $("#updateCheckBtn");
+      const applyBtn = $("#updateApplyBtn");
+      if (checkBtn && !checkBtn.dataset.wired) {
+        checkBtn.dataset.wired = "1";
+        checkBtn.addEventListener("click", async () => {
+          const prev = checkBtn.textContent;
+          checkBtn.disabled = true;
+          checkBtn.textContent = "检查中…";
+          try {
+            const payload = await requestJsonStrict(ENDPOINTS.updateCheck, {
+              method: "POST",
+              timeoutMs: 60000,
+              headers: { "Content-Type": "application/json" },
+              body: "{}"
+            });
+            renderUpdateStatus(payload?.backend || null);
+          } catch (error) {
+            showToast("检查更新失败：" + (error?.message || "未知错误"));
+          } finally {
+            checkBtn.textContent = prev;
+            checkBtn.disabled = false;
+          }
+        });
+      }
+      if (applyBtn && !applyBtn.dataset.wired) {
+        applyBtn.dataset.wired = "1";
+        applyBtn.addEventListener("click", async () => {
+          const tag = applyBtn.dataset.tag || "";
+          if (!tag) return;
+          const prev = applyBtn.textContent;
+          applyBtn.disabled = true;
+          applyBtn.textContent = "应用中…";
+          try {
+            const body = await requestJsonStrict(ENDPOINTS.updateApply, {
+              method: "POST",
+              timeoutMs: 60000,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: "backend", tag })
+            });
+            if (body?.accepted) {
+              showToast("已开始更新，后端将在完成后自动重启…");
+            } else {
+              const reason = body?.reason;
+              showToast("更新未开始：" + (UPDATE_REASON_TEXT[reason] || reason || "未知原因"));
+            }
+          } catch (error) {
+            const reason = error?.details?.reason;
+            showToast("更新未开始：" + (UPDATE_REASON_TEXT[reason] || reason || error?.message || "未知原因"));
+          } finally {
+            applyBtn.textContent = prev;
+            applyBtn.disabled = false;
+            void refreshUpdateStatus();
+          }
+        });
       }
     }
 

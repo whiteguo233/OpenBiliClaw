@@ -902,6 +902,10 @@ def create_app(
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
+            # Update status + manual check/apply: a backend that can't build its
+            # LLM registry is exactly when pulling a fix-carrying release matters,
+            # so the recovery surface must stay reachable while degraded.
+            or path in ("/api/update-status", "/api/update/check", "/api/update/apply")
             or (path == "/api/config" and method in {"GET", "PUT"})
             or path.startswith("/api/auth")
             or path.startswith("/m")

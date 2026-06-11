@@ -4,6 +4,15 @@
 
 ---
 
+## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）
+
+接 v0.3.115 的自动更新解卡，堵死桌面安装包的「无限重启循环」高危隐患，并补齐自动更新的状态展示与手动操作缺口。后端源码更新走 `backend-v0.3.119`，桌面安装包走 `desktop-v0.3.119`；浏览器插件未改动，仍为 `0.3.77`。
+
+- **桌面安装包不再会被自动更新拖入无限重启循环**：`AutoUpdateService` 的 apply 路径与后台调度循环（`_check_apply_guards` / `check_and_update_if_due`）新增显式 `install_mode != "git"` 守卫——桌面冻结包即便与 AI / 一键安装共用 `~/OpenBiliClaw` 目录（`entry.py` 把 `OPENBILICLAW_PROJECT_ROOT` 指向它）、继承了 `auto_update_enabled=true`，也不再 fast-forward 那个 git 检出。此前 `detect_install_mode()` 的 `frozen` 仅用于前端显示，服务端 apply 路径漏判：冻结包会真的 `git merge` 改写他人源码 + venv，而捆绑二进制重启后仍跑旧码，每个检查周期重复 = 无限重启循环（且冻结态前端开关被禁用，用户关不掉）。真实 PyInstaller 安装包端到端实测：apply（真实可信 remote + 真实可快进 0.3.118 目标）被 `unsupported_install_mode` 拦截、co-located git 检出零改动、后台循环同样不应用。
+- **设置页补上「立即检查 / 立即应用」按钮**：桌面 Web 设置页加上规格要求的两个按钮（`POST /api/update/check`、`/api/update/apply`），并在收到 `backend_update_available` / `backend_restart_pending` / `backend_update_failed` 运行时事件时实时刷新状态行，更新全程不再无感知。
+- **配置保存不再丢更新状态**：保存配置触发热重载重建服务时，通过 `AutoUpdateService.adopt_status_from` 携带上次检查结果，状态行不再从「发现新版本」回退到「尚未检查更新」（瞬态 `checking` / `applying` 状态不携带，避免误表上一实例的在途 apply）。
+- **降级模式也能检查 / 拉取更新**：降级模式（LLM 注册表不可用）放行 `/api/update-status`、`/api/update/check`、`/api/update/apply`，且降级上下文现在构建真正的 `AutoUpdateService`——LLM 配坏正是需要拉取修复版本之时。真实环境实测：git 模式 0.3.118 → 0.3.119 完整升级（ff-merge + uv sync + execv 重启）、三守卫、保存状态保留、降级 `update-status` 返回 200 全部通过。
+
 ## v0.3.118 / extension v0.3.77: 初始化来源可选化（2026-06-11）
 
 B 站不再是初始化的强制基座：CLI、插件面板、桌面 Web 和安装包 `/setup/` 都可以在初始化前取消勾选 B 站，只要至少保留一个数据来源即可。同时修复插件连接徽章与保存列表的响应性问题。
