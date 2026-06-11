@@ -35,22 +35,18 @@ test("health helpers coalesce concurrent popup probes", async () => {
     calls.push({ url, options });
     return {
       ok: true,
+      status: 200,
       async json() {
         return { status: "ok", service: "openbiliclaw-api", embedding_ready: true };
       },
     };
   }) as unknown as typeof fetch;
 
-  const [health, online, healthAgain] = await Promise.all([
-    fetchHealth(),
-    checkBackendStatus(),
-    fetchHealth(),
-  ]);
+  const [health, healthAgain] = await Promise.all([fetchHealth(), fetchHealth()]);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "http://127.0.0.1:8420/api/health");
   assert.deepEqual(health, { status: "ok", service: "openbiliclaw-api", embedding_ready: true });
-  assert.equal(online, true);
   assert.deepEqual(healthAgain, health);
 });
 
@@ -61,6 +57,7 @@ test("health helpers reuse a fresh popup health result", async () => {
     calls.push({ url, options });
     return {
       ok: true,
+      status: 200,
       async json() {
         return { status: "ok", service: "openbiliclaw-api", embedding_ready: false };
       },
@@ -68,13 +65,67 @@ test("health helpers reuse a fresh popup health result", async () => {
   }) as unknown as typeof fetch;
 
   const health = await fetchHealth();
-  const online = await checkBackendStatus();
   const secondHealth = await fetchHealth();
 
   assert.equal(calls.length, 1);
   assert.equal(health?.embedding_ready, false);
-  assert.equal(online, true);
   assert.deepEqual(secondHealth, health);
+});
+
+test("checkBackendStatus probes the lightweight /ping endpoint, not /health", async () => {
+  __resetPopupHealthCacheForTests();
+  const calls: Array<{ url: string; options: RequestInit }> = [];
+  globalThis.fetch = (async (url: string, options: RequestInit = {}) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { status: "ok", service: "openbiliclaw-api" };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  const online = await checkBackendStatus();
+
+  assert.equal(online, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/ping");
+});
+
+test("checkBackendStatus falls back to /health when /ping is missing (older backend)", async () => {
+  __resetPopupHealthCacheForTests();
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    calls.push(url);
+    if (url.endsWith("/ping")) {
+      return { ok: false, status: 404, async json() { return { error: "not_found" }; } };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { status: "ok", service: "openbiliclaw-api" };
+      },
+    };
+  }) as unknown as typeof fetch;
+
+  const online = await checkBackendStatus();
+
+  assert.equal(online, true);
+  assert.deepEqual(calls, [
+    "http://127.0.0.1:8420/api/ping",
+    "http://127.0.0.1:8420/api/health",
+  ]);
+});
+
+test("checkBackendStatus reports offline when the ping request rejects", async () => {
+  __resetPopupHealthCacheForTests();
+  globalThis.fetch = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as unknown as typeof fetch;
+
+  assert.equal(await checkBackendStatus(), false);
 });
 
 test("reshuffleRecommendations posts to reshuffle endpoint", async () => {

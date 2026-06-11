@@ -136,7 +136,30 @@ export async function readCachedConfigSnapshot() {
   return snapshot;
 }
 
+// Liveness probe budget. /api/ping answers in milliseconds when the backend
+// is up; anything slower than this means "treat as offline and let the next
+// poll/WS event flip the badge back".
+const PING_TIMEOUT_MS = 3_000;
+
 export async function checkBackendStatus() {
+  const backendUrl = await getBackendBaseUrl();
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${backendUrl}/ping`, { method: "GET", signal: ctrl.signal });
+      // Any response from /ping settles liveness — except a 404, which means
+      // an older backend without the route; fall through to /health below.
+      if (response.status !== 404) return response.ok;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return false;
+  }
+  // Older backend without /api/ping: fall back to the full health payload.
+  // (/health can stall seconds on a cold embedding probe — that latency is
+  // exactly why the badge prefers /ping.)
   return (await fetchHealth()) !== null;
 }
 
@@ -546,17 +569,26 @@ export async function updateRuntimeToggle(name, value) {
 
 // ── Watch-later ──────────────────────────────────────────────────
 
+// Saved-item mutations are tiny local-DB writes server-side, but the popup
+// fires dozens of cover/status requests at the same origin on open — Chrome's
+// 6-connections-per-origin limit can queue a DELETE behind slow image-proxy
+// fetches. A bounded timeout turns "hangs forever, button stuck disabled"
+// into a visible, retryable failure.
+const SAVED_MUTATION_TIMEOUT_MS = 10_000;
+
 export async function addToWatchLater(bvid) {
   return requestJson("/watch-later", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bvid }),
+    timeoutMs: SAVED_MUTATION_TIMEOUT_MS,
   });
 }
 
 export async function removeFromWatchLater(bvid) {
   return requestJson(`/watch-later/${encodeURIComponent(bvid)}`, {
     method: "DELETE",
+    timeoutMs: SAVED_MUTATION_TIMEOUT_MS,
   });
 }
 
@@ -579,12 +611,14 @@ export async function addToFavorite(bvid) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bvid }),
+    timeoutMs: SAVED_MUTATION_TIMEOUT_MS,
   });
 }
 
 export async function removeFromFavorite(bvid) {
   return requestJson(`/favorites/${encodeURIComponent(bvid)}`, {
     method: "DELETE",
+    timeoutMs: SAVED_MUTATION_TIMEOUT_MS,
   });
 }
 

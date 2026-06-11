@@ -119,10 +119,9 @@ class LLMProvider(ABC):
             True if the provider is available.
         """
         try:
-            resp = await self.complete(
-                [{"role": "user", "content": "hi"}],
-                max_tokens=5,
-            )
+            # Reasoning-first OpenAI-compatible backends may spend the
+            # initial output budget on reasoning before emitting content.
+            resp = await self.complete([{"role": "user", "content": "hi"}])
             return bool(resp.content)
         except Exception:
             logger.exception("Health check failed for %s", self.name)

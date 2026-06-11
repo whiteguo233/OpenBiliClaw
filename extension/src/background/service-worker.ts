@@ -66,6 +66,10 @@ const FLUSH_ALARM_NAME = "openbiliclaw-flush-events";
 // rejected promise; the WS path went through Chrome's network logger
 // at error severity and got counted toward the error badge.
 const HEALTH_PROBE_TIMEOUT_MS = 2_000;
+// Fallback /health probe budget for pre-/api/ping backends: /health blocks on
+// a live embedding probe that can take seconds when cold, so the 2s ping
+// budget would misread a healthy-but-cold backend as down.
+const HEALTH_FALLBACK_TIMEOUT_MS = 12_000;
 // v0.3.17+: exponential backoff capped at 60s. When the daemon is
 // down for minutes, the previous fixed-5s reconnect flooded console
 // with 12 ERR_CONNECTION_REFUSED per minute. Backoff doubles on each
@@ -235,10 +239,30 @@ async function isBackendAlive(): Promise<boolean> {
   // Gate the WS attempt on a cheap HTTP probe. A caught fetch rejection
   // doesn't get logged at error severity, so chrome://extensions stays
   // clean when the user installs the extension before starting the
-  // daemon. Once health passes, we open the WS as before.
+  // daemon. Once the probe passes, we open the WS as before.
+  //
+  // Probe /api/ping, not /api/health: health awaits a live embedding probe
+  // that can take seconds when cold, which used to blow the 2s budget here
+  // and badge the backend as offline while it was up. A 404 means an older
+  // backend without /api/ping — fall back to /health with a longer leash.
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), HEALTH_PROBE_TIMEOUT_MS);
+    try {
+      const resp = await fetch(await apiUrl("/ping"), {
+        method: "GET",
+        signal: ctrl.signal,
+      });
+      if (resp.status !== 404) return resp.ok;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return false;
+  }
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), HEALTH_FALLBACK_TIMEOUT_MS);
     try {
       const resp = await fetch(await apiUrl("/health"), {
         method: "GET",

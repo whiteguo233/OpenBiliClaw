@@ -986,6 +986,27 @@ async def test_health_check_returns_true_on_success(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_health_check_does_not_cap_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(api_key="test-key")
+    captured: dict[str, object] = {}
+
+    async def fake_complete(
+        messages: list[dict[str, str]],
+        **kwargs: object,
+    ) -> SimpleNamespace:
+        assert messages == [{"role": "user", "content": "hi"}]
+        captured.update(kwargs)
+        return SimpleNamespace(content="ok")
+
+    monkeypatch.setattr(provider, "complete", fake_complete)
+
+    assert await provider.health_check() is True
+    assert "max_tokens" not in captured
+
+
+@pytest.mark.asyncio
 async def test_health_check_returns_false_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = OpenAIProvider(api_key="test-key")
 

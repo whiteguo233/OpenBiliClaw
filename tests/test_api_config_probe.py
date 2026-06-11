@@ -66,7 +66,7 @@ def test_probe_llm_applies_unsaved_provider_payload_without_writing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    calls: list[tuple[str, str | None]] = []
+    calls: list[tuple[str, str | None, dict[str, Any]]] = []
 
     class FakeRegistry:
         available_providers = ["openai", "deepseek"]
@@ -81,7 +81,7 @@ def test_probe_llm_applies_unsaved_provider_payload_without_writing(
             messages: list[dict[str, str]],  # noqa: ARG002
             **kwargs: Any,
         ) -> LLMResponse:
-            calls.append((provider_name, kwargs.get("model")))
+            calls.append((provider_name, kwargs.get("model"), kwargs))
             return LLMResponse(
                 content="OK",
                 provider=provider_name,
@@ -113,7 +113,10 @@ def test_probe_llm_applies_unsaved_provider_payload_without_writing(
     assert body["ok"] is True
     assert body["provider"] == "deepseek"
     assert body["model"] == "deepseek-chat"
-    assert calls == [("deepseek", "deepseek-chat")]
+    assert [(provider, model) for provider, model, _kwargs in calls] == [
+        ("deepseek", "deepseek-chat")
+    ]
+    assert "max_tokens" not in calls[0][2]
     assert config_path.read_bytes() == before
     assert not (tmp_path / "config.toml.bak").exists()
 

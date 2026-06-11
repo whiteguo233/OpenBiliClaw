@@ -95,9 +95,55 @@ test("start button disabled with reason when prereqs missing", () => {
 });
 
 test("start button enabled exactly when can_start is true and idle", () => {
-  const btn = initStartButtonState(statusWith({ can_start: true, reason: "none" }));
+  const btn = initStartButtonState(
+    statusWith({
+      can_start: true,
+      reason: "none",
+      prerequisites: { bilibili_logged_in: true, llm_ready: true, embedding_ready: false },
+    }),
+  );
   assert.equal(btn.enabled, true);
   assert.equal(btn.label, "开始初始化");
+});
+
+test("start button gates on selection: empty selection and bilibili-without-login block", () => {
+  const noBiliLogin = statusWith({
+    can_start: true,
+    reason: "none",
+    prerequisites: { bilibili_logged_in: false, llm_ready: true, embedding_ready: true },
+  });
+  // Nothing checked → blocked regardless of can_start.
+  const empty = initStartButtonState(noBiliLogin, []);
+  assert.equal(empty.enabled, false);
+  assert.ok(empty.reason.includes("至少"));
+  // Bilibili checked but not logged in → blocked with the B 站 reason.
+  const withBili = initStartButtonState(noBiliLogin, ["bilibili", "xiaohongshu"]);
+  assert.equal(withBili.enabled, false);
+  assert.ok(withBili.reason.includes("B 站"));
+  // Bilibili deselected → B 站 login no longer blocks.
+  const withoutBili = initStartButtonState(noBiliLogin, ["xiaohongshu"]);
+  assert.equal(withoutBili.enabled, true);
+  // Legacy callers (no selection passed) keep treating bilibili as required.
+  assert.equal(initStartButtonState(noBiliLogin).enabled, false);
+});
+
+test("checklist B 站 row is hard only while bilibili is selected", () => {
+  const status = statusWith();
+  const withBili = buildInitChecklist(status, ["bilibili", "xiaohongshu"]).find(
+    (r) => r.key === "bilibili",
+  );
+  assert.equal(withBili?.hard, true);
+  const withoutBili = buildInitChecklist(status, ["xiaohongshu"]).find(
+    (r) => r.key === "bilibili",
+  );
+  assert.equal(withoutBili?.hard, false);
+  assert.ok(withoutBili?.label.includes("可跳过"));
+  // hardPrereqsSatisfied honours the same selection.
+  const llmReady = statusWith({
+    prerequisites: { bilibili_logged_in: false, llm_ready: true, embedding_ready: false },
+  });
+  assert.equal(hardPrereqsSatisfied(llmReady, ["xiaohongshu"]), true);
+  assert.equal(hardPrereqsSatisfied(llmReady, ["bilibili", "xiaohongshu"]), false);
 });
 
 test("start button reflects running and already-initialized states", () => {
@@ -171,10 +217,11 @@ test("reason + start-error text mapping", () => {
 
 // ── Per-run platform source selection ──────────────────────────────────────
 
-test("init source options: bilibili is the required base, others opt-in", () => {
+test("init source options: bilibili is default-checked but deselectable, others opt-in", () => {
   const bili = INIT_SOURCE_OPTIONS.find((o) => o.key === "bilibili");
-  assert.ok(bili && bili.required === true);
-  const optional = INIT_SOURCE_OPTIONS.filter((o) => !o.required).map((o) => o.key);
+  assert.ok(bili && bili.defaultChecked === true);
+  assert.ok(!("required" in bili), "bilibili must no longer be marked required");
+  const optional = INIT_SOURCE_OPTIONS.filter((o) => !o.defaultChecked).map((o) => o.key);
   assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube", "twitter"]);
   // The login reminder copy mentions logging in on this browser.
   assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
@@ -183,7 +230,7 @@ test("init source options: bilibili is the required base, others opt-in", () => 
 test("init source options: X (twitter) is present, opt-in, labelled X", () => {
   const x = INIT_SOURCE_OPTIONS.find((o) => o.key === "twitter");
   assert.ok(x, "twitter option must exist");
-  assert.equal(x?.required, false);
+  assert.ok(!x?.defaultChecked);
   assert.equal(x?.label, "X");
 });
 
@@ -216,9 +263,10 @@ test("needs-enable: flags checked optional sources missing from config", () => {
     initSelectedSourcesNeedingEnable(["bilibili", "xiaohongshu"], status),
     [],
   );
-  // Bilibili is never flagged even if absent from enabled_platforms (it's base).
-  const biliOnly = statusWith({
+  // v0.3.118+: bilibili is config-driven like the rest — flagged when the
+  // user checked it but [sources.bilibili] is disabled in config.
+  const biliDisabled = statusWith({
     prerequisites: { enabled_platforms: [] },
   });
-  assert.deepEqual(initSelectedSourcesNeedingEnable(["bilibili"], biliOnly), []);
+  assert.deepEqual(initSelectedSourcesNeedingEnable(["bilibili"], biliDisabled), ["bilibili"]);
 });

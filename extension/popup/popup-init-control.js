@@ -14,6 +14,7 @@ const REASON_TEXT = {
   llm_not_ready: "AI 服务还没配好或当前不可用。",
   already_initialized: "已经初始化过了；如需重建，请到设置页。",
   local_only: "只能在本机发起初始化。",
+  no_sources_selected: "至少勾选一个数据来源。",
   internal_error: "初始化过程中出错了，请稍后重试。",
   none: "",
 };
@@ -28,18 +29,22 @@ export function describeInitReason(reason) {
 
 // Pre-init checklist rows. ``hard`` rows must be satisfied before init can
 // start; soft rows (embedding) only warn. Each row carries a fix-it hint.
-export function buildInitChecklist(status) {
+// ``selected`` is the current source-checkbox selection: B 站登录 is a hard
+// prerequisite only while bilibili is among the checked sources (v0.3.118+);
+// null (legacy callers) keeps it hard.
+export function buildInitChecklist(status, selected = null) {
   const prereq = (status && status.prerequisites) || {};
   const enabled = getEnabledPlatforms(status);
+  const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
   return [
     {
       key: "bilibili",
-      label: "B 站已登录",
+      label: biliSelected ? "B 站已登录" : "B 站已登录（未勾选 B 站，可跳过）",
       ok: Boolean(prereq.bilibili_logged_in),
-      hard: true,
+      hard: biliSelected,
       hint: prereq.bilibili_logged_in
         ? ""
-        : "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。",
+        : "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端；不想接 B 站也可以直接取消勾选。",
     },
     {
       key: "llm",
@@ -79,15 +84,15 @@ export function getEnabledPlatforms(status) {
   return Array.isArray(prereq.enabled_platforms) ? prereq.enabled_platforms.slice() : [];
 }
 
-// Platform sources the user can include in a guided-init run. Bilibili is the
-// always-on base (the whole pipeline starts from B站 history + cookie), so it's
-// required — rendered checked + disabled; the rest are opt-in per run.
+// Platform sources the user can include in a guided-init run. Bilibili is
+// selectable like every other source (v0.3.118+): default checked
+// (recommended) but no longer forced — at least one source must stay checked.
 export const INIT_SOURCE_OPTIONS = [
-  { key: "bilibili", label: "B 站", required: true },
-  { key: "xiaohongshu", label: "小红书", required: false },
-  { key: "douyin", label: "抖音", required: false },
-  { key: "youtube", label: "YouTube", required: false },
-  { key: "twitter", label: "X", required: false },
+  { key: "bilibili", label: "B 站", defaultChecked: true },
+  { key: "xiaohongshu", label: "小红书" },
+  { key: "douyin", label: "抖音" },
+  { key: "youtube", label: "YouTube" },
+  { key: "twitter", label: "X" },
 ];
 
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH
@@ -101,28 +106,31 @@ export function initSourceLabels(keys) {
   return (Array.isArray(keys) ? keys : []).map((k) => byKey.get(k) || k);
 }
 
-// Optional sources the user checked that aren't enabled in backend config, so
-// the UI can tell them to enable those in settings instead of silently skipping
-// (the backend would intersect them away). ``selected`` is the checked keys.
+// Sources the user checked that aren't enabled in backend config, so the UI
+// can tell them to enable those in settings instead of silently skipping (the
+// backend would intersect them away). ``selected`` is the checked keys.
 export function initSelectedSourcesNeedingEnable(selected, status) {
   const checked = new Set(Array.isArray(selected) ? selected : []);
   const enabled = new Set(getEnabledPlatforms(status));
   return INIT_SOURCE_OPTIONS.filter(
-    (opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key),
+    (opt) => checked.has(opt.key) && !enabled.has(opt.key),
   ).map((opt) => opt.key);
 }
 
-// True only when every HARD prerequisite is satisfied.
-export function hardPrereqsSatisfied(status) {
-  return buildInitChecklist(status)
+// True only when every HARD prerequisite is satisfied (B 站登录 counts only
+// while bilibili is selected — see buildInitChecklist).
+export function hardPrereqsSatisfied(status, selected = null) {
+  return buildInitChecklist(status, selected)
     .filter((row) => row.hard)
     .every((row) => row.ok);
 }
 
 // Display state for the "开始初始化" button. Mirrors the backend's can_start
 // (trusted-local + supported + hard prereqs + not running) but degrades
-// gracefully when the status hasn't loaded yet.
-export function initStartButtonState(status) {
+// gracefully when the status hasn't loaded yet. ``selected`` adds the
+// client-side gates the server can't know at status time: at least one
+// source checked, and B 站登录 when bilibili is among them.
+export function initStartButtonState(status, selected = null) {
   if (!status) {
     return { enabled: false, label: "开始初始化", reason: "正在检查前置条件…" };
   }
@@ -132,12 +140,18 @@ export function initStartButtonState(status) {
   if (status.initialized) {
     return { enabled: false, label: "已初始化", reason: "如需重建画像，请到设置页。" };
   }
+  if (Array.isArray(selected) && selected.length === 0) {
+    return { enabled: false, label: "开始初始化", reason: REASON_TEXT.no_sources_selected };
+  }
   if (status.can_start) {
+    if (!hardPrereqsSatisfied(status, selected)) {
+      return { enabled: false, label: "开始初始化", reason: REASON_TEXT.bilibili_not_logged_in };
+    }
     return { enabled: true, label: "开始初始化", reason: "" };
   }
   const reason =
     describeInitReason(status.reason) ||
-    (hardPrereqsSatisfied(status) ? "暂时无法开始,请稍后重试。" : "请先满足上面的必需条件。");
+    (hardPrereqsSatisfied(status, selected) ? "暂时无法开始,请稍后重试。" : "请先满足上面的必需条件。");
   return { enabled: false, label: "开始初始化", reason };
 }
 

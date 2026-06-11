@@ -705,6 +705,19 @@ class TestBackendAPI:
         assert body["status"] == "ok"
         assert body["service"] == "openbiliclaw-api"
 
+    def test_ping_endpoint_is_pure_liveness(self) -> None:
+        """/api/ping answers instantly with no probes — the extension badge
+        depends on it never inheriting /api/health's embedding-probe latency."""
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/api/ping")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "service": "openbiliclaw-api"}
+
     def test_sources_status_returns_every_source(self) -> None:
         """Unified /api/sources/status reports a status item per source."""
         from fastapi.testclient import TestClient
@@ -726,6 +739,102 @@ class TestBackendAPI:
         # YouTube needs no login -> always no_auth.
         assert body["youtube"]["state"] == "no_auth"
         assert body["youtube"]["logged_in"] is True
+
+    def test_sources_status_xhs_old_tokens_report_stale_not_ready(self, tmp_path: Path) -> None:
+        """小红书 token rows outside the freshness window degrade to ``stale``.
+
+        A bare COUNT(*) used to keep the status green forever once a single
+        token row ever existed, even weeks after the extension stopped syncing
+        and the tokens died (xhs 300031).
+        """
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.storage.database import Database
+
+        db = Database(tmp_path / "status.db")
+        db.initialize()
+        db.conn.execute(
+            "INSERT INTO content_cache (bvid, source_platform, content_url, discovered_at) "
+            "VALUES ('xhsold', 'xiaohongshu', "
+            "'https://www.xiaohongshu.com/explore/xhsold?xsec_token=dead', "
+            "datetime('now', '-3 days'))"
+        )
+        db.conn.commit()
+
+        app = create_app(memory_manager=object(), database=db, soul_engine=object())
+        client = TestClient(app)
+
+        item = client.get("/api/sources/status").json()["xiaohongshu"]
+        assert item["state"] == "stale"
+        assert item["logged_in"] is False
+
+        # A freshly discovered token row flips the status back to ready.
+        db.conn.execute(
+            "INSERT INTO content_cache (bvid, source_platform, content_url) "
+            "VALUES ('xhsnew', 'xiaohongshu', "
+            "'https://www.xiaohongshu.com/explore/xhsnew?xsec_token=live')"
+        )
+        db.conn.commit()
+
+        item = client.get("/api/sources/status").json()["xiaohongshu"]
+        assert item["state"] == "ready"
+        assert item["logged_in"] is True
+
+    def test_sources_status_xhs_token_backfill_counts_as_fresh(self, tmp_path: Path) -> None:
+        """Token backfill only touches discovery_candidates.last_seen_at.
+
+        ``_backfill_xhs_tokens`` upgrades a candidate's content_url in place
+        without rewriting content_cache.discovered_at, so a recently
+        backfilled candidate must keep the status ``ready`` even when every
+        cache row is old.
+        """
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.storage.database import Database
+
+        db = Database(tmp_path / "status.db")
+        db.initialize()
+        db.conn.execute(
+            "INSERT INTO content_cache (bvid, source_platform, content_url, discovered_at) "
+            "VALUES ('xhsold', 'xiaohongshu', "
+            "'https://www.xiaohongshu.com/explore/xhsold?xsec_token=dead', "
+            "datetime('now', '-3 days'))"
+        )
+        db.conn.execute(
+            "INSERT INTO discovery_candidates (candidate_key, source_platform, content_url) "
+            "VALUES ('xhs:backfilled', 'xiaohongshu', "
+            "'https://www.xiaohongshu.com/explore/backfilled?xsec_token=live')"
+        )
+        db.conn.commit()
+
+        app = create_app(memory_manager=object(), database=db, soul_engine=object())
+        client = TestClient(app)
+
+        item = client.get("/api/sources/status").json()["xiaohongshu"]
+        assert item["state"] == "ready"
+
+    def test_sources_status_bilibili_incomplete_cookie_reports_partial(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A cookie missing core login fields renders yellow, not green."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        project_root = tmp_path / "partial-cookie"
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=abc"
+        save_config(cfg, project_root / "config.toml")
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        item = client.get("/api/sources/status").json()["bilibili"]
+        assert item["state"] == "partial"
+        assert item["logged_in"] is False
 
     def test_favicon_endpoint_serves_mobile_web_icon(self) -> None:
         from fastapi.testclient import TestClient
@@ -5333,6 +5442,91 @@ class TestBackendAPI:
         assert database.notified == ["BV1DL"]
         assert any("feedback_type='dislike'" in query for query, _params in database.writes)
 
+    def test_delight_view_marks_candidate_read_without_feedback(self) -> None:
+        """Browsing a delight marks it read (no re-hydration) like the rec pool's shown flag."""
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "view"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "viewed"
+        assert database.notified == ["BV1DL"]
+        # view is read-marking only — no feedback_type write, no learning purge.
+        assert database.writes == []
+
+    def test_delight_pending_batch_keeps_liked_candidates_with_state(self) -> None:
+        """Liked delights survive queue re-hydration and come back as state=liked."""
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def get_delight_candidates(
+                self,
+                *,
+                min_delight_score: float,
+                limit: int,
+                include_liked: bool = False,
+            ) -> list[dict[str, object]]:
+                self.calls.append(
+                    {
+                        "min_delight_score": min_delight_score,
+                        "limit": limit,
+                        "include_liked": include_liked,
+                    }
+                )
+                return [
+                    {
+                        "bvid": "BV1LIKED",
+                        "title": "已喜欢的惊喜",
+                        "delight_reason": "liked reason",
+                        "delight_score": 0.95,
+                        "delight_hook": "liked hook",
+                        "feedback_type": "like",
+                    },
+                    {
+                        "bvid": "BV1FRESH",
+                        "title": "新惊喜",
+                        "delight_reason": "fresh reason",
+                        "delight_score": 0.94,
+                        "delight_hook": "fresh hook",
+                        "feedback_type": "",
+                    },
+                ]
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/api/delight/pending-batch")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [(item["bvid"], item["state"]) for item in items] == [
+            ("BV1LIKED", "liked"),
+            ("BV1FRESH", "pending"),
+        ]
+        assert database.calls and database.calls[0]["include_liked"] is True
+
     def test_delight_dismiss_marks_candidate_consumed(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -7176,7 +7370,7 @@ class TestGuidedInitEndpoints:
     def test_init_missing_bilibili_resets_to_idle(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
-        prereqs = _FakeInitPrereqs(bili="failed", chat=True)
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili"])
         app, db = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={})
@@ -7191,7 +7385,7 @@ class TestGuidedInitEndpoints:
     def test_init_missing_llm_resets_to_idle(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
-        prereqs = _FakeInitPrereqs(bili="ok", chat=False)
+        prereqs = _FakeInitPrereqs(bili="ok", chat=False, platforms=["bilibili"])
         app, db = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={})
@@ -7199,6 +7393,34 @@ class TestGuidedInitEndpoints:
         assert resp.json()["error"] == "llm_not_ready"
         assert db.get_latest_init_run()["status"] == "idle"
         assert app.state.runtime_context.init_coordinator.init_active() is False
+
+    def test_init_skips_bilibili_login_check_when_deselected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v0.3.118+: B站 login only gates a run that actually includes bilibili."""
+        from fastapi.testclient import TestClient
+
+        captured = self._capture_run_guided_init(monkeypatch)
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili", "xiaohongshu"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["xiaohongshu"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured)
+        assert captured["include_bili"] is False
+        assert captured["include_xhs"] is True
+
+    def test_init_rejects_empty_source_selection(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["bilibili", "xiaohongshu"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": []})
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "no_sources_selected"
+        # Rejected before reserving — no run row created at all.
+        assert db.get_latest_init_run() is None
 
     def _capture_run_guided_init(self, monkeypatch):
         """Replace the shared pipeline with an async capture of its kwargs.
@@ -7241,8 +7463,9 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu"]})
             assert resp.status_code == 202
             self._drive_until(client, captured)
-        # Only the selected optional source is included, even though all 4 are
+        # Only the selected sources are included, even though all 4 are
         # enabled in config.
+        assert captured["include_bili"] is True
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is False
         assert captured["include_yt"] is False
@@ -7262,6 +7485,7 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init", json={})
             assert resp.status_code == 202
             self._drive_until(client, captured)
+        assert captured["include_bili"] is True
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is True
         assert captured["include_yt"] is False  # youtube not enabled in config
@@ -7302,9 +7526,7 @@ class TestGuidedInitEndpoints:
         assert resp.status_code == 403
         assert resp.json()["error"] == "local_only"
 
-    def test_legacy_init_completed_does_not_mark_guided_init_done(
-        self, tmp_path: Path
-    ) -> None:
+    def test_legacy_init_completed_does_not_mark_guided_init_done(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
         app, _ = self._make_app(tmp_path)
@@ -7316,9 +7538,7 @@ class TestGuidedInitEndpoints:
         assert before["initialized"] is False
         assert after["initialized"] is False
 
-    def test_runtime_stream_emits_real_init_coordinator_events(
-        self, tmp_path: Path
-    ) -> None:
+    def test_runtime_stream_emits_real_init_coordinator_events(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
         app, _ = self._make_app(tmp_path)
@@ -7513,6 +7733,32 @@ class TestGuidedInitEndpoints:
         assert body["initialized"] is True
         assert body["can_start"] is False
         assert body["reason"] == "already_initialized"
+
+    def test_init_status_bilibili_login_is_informational_not_blocking(self, tmp_path: Path) -> None:
+        """v0.3.118+: B站 login no longer hard-gates can_start — whether it
+        blocks depends on the client's source selection, which only POST sees.
+        The status still reports the login state + reason for client gating."""
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="failed", chat=True, platforms=["bilibili"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is True
+        assert body["reason"] == "bilibili_not_logged_in"
+        assert body["prerequisites"]["bilibili_logged_in"] is False
+
+    def test_init_status_llm_still_hard_gates_can_start(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=False, platforms=["bilibili"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is False
+        assert body["reason"] == "llm_not_ready"
 
     def test_task_result_not_gated_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
