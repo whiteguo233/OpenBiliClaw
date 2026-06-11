@@ -317,9 +317,14 @@ export async function fetchPendingDelight() {
   return payload?.item ?? null;
 }
 
-export async function fetchPendingDelightBatch(limit = 20) {
+export async function fetchPendingDelightBatch(limit = null) {
+  const params = new URLSearchParams();
+  if (typeof limit === "number" && Number.isFinite(limit)) {
+    params.set("limit", String(Math.max(1, Math.min(100, Math.floor(limit)))));
+  }
+  const qs = params.toString();
   const payload = await requestJson(
-    `/delight/pending-batch?limit=${limit}`,
+    `/delight/pending-batch${qs ? `?${qs}` : ""}`,
     { method: "GET" },
   );
   return Array.isArray(payload?.items) ? payload.items : [];

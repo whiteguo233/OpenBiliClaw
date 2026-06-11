@@ -25,4 +25,13 @@ def test_mobile_badge_load_does_not_fetch_delights_eagerly() -> None:
     chat_js = Path("src/openbiliclaw/web/js/views/chat.js").read_text()
 
     assert "includeDelights = false" in chat_js
-    assert "includeDelights ? fetchDelightBatch(10).catch(() => [])" in chat_js
+    assert "includeDelights ? fetchDelightBatch().catch(() => [])" in chat_js
+
+
+def test_mobile_delight_batch_default_uses_backend_configured_limit() -> None:
+    api_js = Path("src/openbiliclaw/web/js/api.js").read_text()
+    recommend_js = Path("src/openbiliclaw/web/js/views/recommend.js").read_text()
+
+    assert "export async function fetchDelightBatch(limit = null)" in api_js
+    assert 'requestJson(`/delight/pending-batch${qs ? `?${qs}` : ""}`' in api_js
+    assert "fetchDelightBatch()" in recommend_js

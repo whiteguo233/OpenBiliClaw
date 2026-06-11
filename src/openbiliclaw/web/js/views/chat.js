@@ -517,7 +517,7 @@ export async function loadNotifications({ includeDelights = false } = {}) {
       fetchPendingNotifications().catch(() => ({})),
       fetchPendingProbes().catch(() => []),
       fetchPendingAvoidanceProbes().catch(() => []),
-      includeDelights ? fetchDelightBatch(10).catch(() => []) : Promise.resolve(delightMsgs),
+      includeDelights ? fetchDelightBatch().catch(() => []) : Promise.resolve(delightMsgs),
     ]);
     // Start with persisted probes from backend
     const probes = [

@@ -153,8 +153,13 @@ export async function fetchRuntimeStatus() {
 }
 
 // ── Delight ─────────────────────────────────────────────────
-export async function fetchDelightBatch(limit = 20) {
-  const data = await requestJson(`/delight/pending-batch?limit=${limit}`, { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
+export async function fetchDelightBatch(limit = null) {
+  const params = new URLSearchParams();
+  if (typeof limit === "number" && Number.isFinite(limit)) {
+    params.set("limit", String(Math.max(1, Math.min(100, Math.floor(limit)))));
+  }
+  const qs = params.toString();
+  const data = await requestJson(`/delight/pending-batch${qs ? `?${qs}` : ""}`, { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
   return Array.isArray(data?.items) ? data.items : [];
 }
 

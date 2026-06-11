@@ -46,3 +46,11 @@ def test_desktop_web_settings_wires_manual_update_actions() -> None:
     # Live refresh of the status line on backend update stream events.
     assert "backend_update_available" in js
     assert "backend_restart_pending" in js
+
+
+def test_desktop_web_settings_persists_delight_queue_limit_to_backend_config() -> None:
+    """The shared delight queue size must be saved through /api/config."""
+    js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert "delight_queue_limit: getDelightQueueLimit()" in js
+    assert "config.scheduler?.delight_queue_limit" in js

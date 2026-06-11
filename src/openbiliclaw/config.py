@@ -31,6 +31,7 @@ _DEFAULT_SIGNAL_EVENT_THRESHOLD = 6
 _DEFAULT_TRENDING_REFRESH_HOURS = 3
 _DEFAULT_EXPLORE_REFRESH_HOURS = 12
 _DEFAULT_DISCOVERY_LIMIT = 30
+_DEFAULT_DELIGHT_QUEUE_LIMIT = 20
 _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS = 120
 _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
@@ -204,6 +205,7 @@ class SchedulerConfig:
     trending_refresh_hours: int = _DEFAULT_TRENDING_REFRESH_HOURS
     explore_refresh_hours: int = _DEFAULT_EXPLORE_REFRESH_HOURS
     discovery_limit: int = _DEFAULT_DISCOVERY_LIMIT
+    delight_queue_limit: int = _DEFAULT_DELIGHT_QUEUE_LIMIT
     proactive_push_interval_seconds: int = _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS
     speculator_idle_interval_minutes: int = _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES
     speculation_interval_minutes: int = 10
@@ -748,6 +750,12 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     default=_DEFAULT_DISCOVERY_LIMIT,
                     min_value=1,
                     max_value=60,
+                ),
+                "delight_queue_limit": _normalize_scheduler_int(
+                    sched_raw.get("delight_queue_limit"),
+                    default=_DEFAULT_DELIGHT_QUEUE_LIMIT,
+                    min_value=1,
+                    max_value=100,
                 ),
                 "proactive_push_interval_seconds": _normalize_scheduler_int(
                     sched_raw.get("proactive_push_interval_seconds"),
@@ -1703,6 +1711,7 @@ def _render_config_toml(
             f"trending_refresh_hours = {config.scheduler.trending_refresh_hours}",
             f"explore_refresh_hours = {config.scheduler.explore_refresh_hours}",
             f"discovery_limit = {config.scheduler.discovery_limit}",
+            f"delight_queue_limit = {config.scheduler.delight_queue_limit}",
             f"proactive_push_interval_seconds = {config.scheduler.proactive_push_interval_seconds}",
             "speculator_idle_interval_minutes = "
             f"{config.scheduler.speculator_idle_interval_minutes}",

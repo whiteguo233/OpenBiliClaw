@@ -381,9 +381,10 @@
       return Math.max(1, Math.min(100, limit));
     }
 
-    function restoreFrontendSettings() {
-      const limit = storageGet(DELIGHT_QUEUE_LIMIT_KEY);
-      setInput("delightQueueLimit", limit || "20");
+    function restoreFrontendSettings(config = state.config || {}) {
+      const configuredLimit = config.scheduler?.delight_queue_limit;
+      const limit = configuredLimit || storageGet(DELIGHT_QUEUE_LIMIT_KEY) || "20";
+      setInput("delightQueueLimit", String(limit));
       renderReshuffleToggle();
     }
 
@@ -3706,7 +3707,7 @@
     }
 
     async function fetchDelightQueue() {
-      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`);
+      const payload = await requestJson(ENDPOINTS.delightBatch);
       applyDelights(payload);
     }
 
@@ -3795,7 +3796,7 @@
         requestJson(ENDPOINTS.runtimeStatus),
         requestJson(`${ENDPOINTS.activityFeed}?limit=5`),
         requestJson(ENDPOINTS.profile),
-        requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`),
+        requestJson(ENDPOINTS.delightBatch),
         requestJson(ENDPOINTS.notificationPending),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
@@ -3975,6 +3976,7 @@
           trending_refresh_hours: getIntInput("trendingRefreshHours", 3),
           explore_refresh_hours: getIntInput("exploreRefreshHours", 12),
           discovery_limit: getIntInput("discoveryLimit", 30),
+          delight_queue_limit: getDelightQueueLimit(),
           proactive_push_interval_seconds: getIntInput("proactivePushInterval", 120),
           speculator_idle_interval_minutes: getIntInput("speculatorIdleInterval", 30),
           pool_source_shares: {
