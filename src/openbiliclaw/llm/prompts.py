@@ -1880,3 +1880,58 @@ def build_profile_consolidation_prompt(
         {"role": "system", "content": _PROFILE_CONSOLIDATION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
+
+
+_CATEGORY_MAPPING_SYSTEM_PROMPT = (
+    "<task>\n"
+    "你是用户画像分类体系的迁移器。user 消息提供：vocab（固定一级分类词表）和\n"
+    "categories（现存分类及各自的标签数 tag_count）。\n"
+    "你要为【每一个】现存分类选择词表中【恰好一个】目标分类。\n"
+    "</task>\n"
+    "\n"
+    "<rules>\n"
+    "1. mapping 必须覆盖 categories 里的每一个分类，一个都不能漏，也不能多出输入里没有的分类。\n"
+    "2. 映射目标必须逐字来自 vocab，不得发明新分类、不得返回 vocab 之外的写法。\n"
+    "3. 优先语义归属（如 泛娱乐/文娱→娱乐；宠物/动物→萌宠；技术/数码/人工智能→科技；\n"
+    "   二次元→动漫；商业→财经）。\n"
+    "4. 现存分类本身已在 vocab 中的，映射到它自己。\n"
+    "5. 实在无法归属的才映射到「其他」，不要偷懒批量扔「其他」。\n"
+    "6. 输出严格 JSON，不要附带解释文本。\n"
+    "</rules>\n"
+    "\n"
+    "<output_schema>\n"
+    "{\n"
+    '  "mapping": {"泛娱乐": "娱乐", "宠物": "萌宠", "内容消费方式": "其他"}\n'
+    "}\n"
+    "</output_schema>"
+)
+
+
+def build_category_mapping_prompt(
+    *,
+    categories: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Build a cache-friendly prompt for mapping categories to the fixed vocab."""
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    payload = {
+        "categories": sorted(
+            categories,
+            key=lambda c: (
+                -int(c.get("tag_count", 0) or 0),
+                str(c.get("category", "")),
+            ),
+        ),
+        "vocab": list(CATEGORY_VOCAB),
+    }
+    user_prompt = "\n\n".join(
+        [
+            "<category_mapping_context>",
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            "</category_mapping_context>",
+        ]
+    )
+    return [
+        {"role": "system", "content": _CATEGORY_MAPPING_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]

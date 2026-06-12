@@ -606,6 +606,16 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
                 dislikes_clusters=[{"cluster_id": "D1", "members": ["雷点A", "雷点B"]}],
             ),
         ),
+        (
+            "build_category_mapping_prompt",
+            dict(categories=[{"category": "泛娱乐", "tag_count": 12}]),
+            dict(
+                categories=[
+                    {"category": "内容消费方式", "tag_count": 3},
+                    {"category": "宠物", "tag_count": 7},
+                ]
+            ),
+        ),
         # NOTE: build_socratic_dialogue_prompt is intentionally NOT in
         # this list — its system prompt embeds per-user core memory /
         # tone / friend label, which is fine for OpenBiliClaw's single-
@@ -644,6 +654,23 @@ def test_prompt_builder_system_messages_are_call_invariant() -> None:
         "input — extends provider cache miss across all calls): "
         f"{failures}. Refactor to put per-call variables in user_prompt."
     )
+
+
+def test_category_mapping_prompt_user_message_carries_vocab_and_histogram() -> None:
+    from openbiliclaw.llm.prompts import build_category_mapping_prompt
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    messages = build_category_mapping_prompt(
+        categories=[{"category": "泛娱乐", "tag_count": 12}]
+    )
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert all(term in user for term in CATEGORY_VOCAB)
+    assert "泛娱乐" in user
+    assert '"tag_count": 12' in user
+    assert '"tag_count": 12' not in system
+    assert '"mapping"' in system
 
 
 # ----------------------------------------------------------------------
