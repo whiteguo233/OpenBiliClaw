@@ -602,7 +602,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.69 抖音插件首页 feed discovery | ✅ | `feed` 子来源入队 `dy_tasks(type="feed")`，扩展在后台登录首页签名 `/aweme/v1/web/tab/feed/` 并回传 `dy_feed` 候选，正式以 `dy-plugin-feed` 进入 discovery；CLI 公开来源收敛为 `search` / `hot` / `feed` |
 | v0.3.69 抖音 runtime search 防重复 | ✅ | discovery engine 注册同名 strategy 时替换旧实例，避免 `douyin_direct` 在长期后台运行中累积成多个同名策略并重复创建 search 任务；扩展 search 任务单关键词 timeout 放宽到 120s，覆盖页面跳转与 acrawler 签名耗时 |
 | v0.3.x discovery 画像上下文补齐 | ✅ | `build_profile_summary()` 会把 `disliked_topics`、认知风格、价值观、内在驱动力、当前阶段、life stage、MBTI、来源平台分布、近期觉察、当前洞察、质量敏感度和兴趣来源时间一起带入 discovery profile summary，让 search / trending / explore / YouTube query 生成和 batch 内容评估都能看到更完整的画像上下文 |
-| v0.3.x 画像 / 评估输入上限放宽 | ✅ | 画像摘要扁平兴趣 tag 上限 10 → 30 → 64，且兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 先于 specifics 填充，保证每个高权重域至少有 tag 级曝光）；`disliked_topics` 8 → 16 → 64 → 128（与存储上限对齐，避雷项不再截断）；batch 评估 payload 的 `description` 截断 200 → 400 字符；负例锚定上限 8 → 16（见 soul 模块）。64 上限与计划中的 12h LLM 画像整理任务配套（整理卡 64 边界做去重合并） |
+| v0.3.x 画像 / 评估输入上限放宽 | ✅ | 画像摘要扁平兴趣 tag 上限 10 → 30 → 64 → 256（一级域 8 → 128），且兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 先于 specifics 填充，保证每个高权重域至少有 tag 级曝光）；`disliked_topics` 8 → 16 → 64 → 128（与存储上限对齐，避雷项不再截断）；batch 评估 payload 的 `description` 截断 200 → 400 字符；负例锚定上限 8 → 16（见 soul 模块）。64 上限与计划中的 12h LLM 画像整理任务配套（整理卡 64 边界做去重合并） |
 | v0.3.x 画像输出移除 UP 主维度 | ✅ | `build_profile_summary()` 不再输出 `favorite_up_users`，`build_search_queries_prompt` 同步删除配套的「favorite_up_users 仅供背景参考」规则——避免模型从创作者名反推内容兴趣。`RelatedChainStrategy` 仍直接读 `preferences.favorite_up_users[:1]` 作种子，`/api/profile-summary` 用户视图不受影响 |
 | X (Twitter) 服务端 discovery | ✅ | 第六个内容源 `source_platform="twitter"`（标签 `"X"`）。`XAdapter` 服务端 cookie 重放（`XClient` 封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`，lazy import + 只读），分发 `search`（画像关键词）/ `feed`（For-You）/ `creator`（账号订阅）三策略，经 `x_normalize.normalize_tweet()` 转 `DiscoveredContent`（`content_type ∈ {tweet, thread}` + `body_text` 全文）入统一候选池；后台由 `XDiscoveryProducer` 按预算 + 源健康调度 |
 | X 文字候选 body_text / content_type | ✅ | `DiscoveredContent` 增设 `body_text`（推文 / `note_tweet` 长文全文）+ `content_type`（`video`/`note`/`tweet`/`thread`，复用候选池既有 shape 字段，不新造 `media_type`）；两处 `content_type` 硬编码（`candidate_pool` write + 引擎候选 dict）改为优先取 `item.content_type`，全链路（enqueue → claim → admission → cache → API）透传，保证文字 / thread 候选正确流过 pending 评估 |
@@ -627,7 +627,7 @@ profile_summary = build_profile_summary(profile)
 行为说明：
 
 - 这是 discovery 各策略共享的画像摘要入口，用来把 `SoulProfile` / `OnionProfile` 压成可序列化、可注入 prompt 的 dict。
-- 摘要会保留一级兴趣 `interest_domains`（前 8 个域，每域最多 5 个 specifics）和扁平兴趣 `interests`（最多 64 条），并带上 `first_seen` / `last_seen` / `source`，让搜索词生成和内容评估能区分长期稳定兴趣、近期新增兴趣和推断来源。两个列表都按 weight 降序排序后再截断，强兴趣不会被列表顺序挤掉；扁平 tag 先填所有域 tag、再按域权重填 specifics，保证每个高权重域至少有 tag 级曝光。
+- 摘要会保留一级兴趣 `interest_domains`（前 128 个域，每域最多 5 个 specifics）和扁平兴趣 `interests`（最多 256 条），并带上 `first_seen` / `last_seen` / `source`，让搜索词生成和内容评估能区分长期稳定兴趣、近期新增兴趣和推断来源。两个列表都按 weight 降序排序后再截断，强兴趣不会被列表顺序挤掉；扁平 tag 先填所有域 tag、再按域权重填 specifics，保证每个高权重域至少有 tag 级曝光。
 - 摘要会带入 `disliked_topics[:128]`（与 `_DISLIKED_TOPICS_STORE_CAP` 对齐，存储的避雷项全部可见）；这些是长期避雷项，和 batch evaluator 的短期 `negative_examples` 互补。
 - 摘要会带入人格与决策上下文：`core_traits`、`cognitive_style`、`values`、`motivational_drivers`、`deep_needs`、`current_phase`、`life_stage`、`mbti`、`recent_awareness`、`active_insights`（觉察 / 洞察窗口按时间旧→新存储，摘要取**最新** 5 条——v0.3.121 及之前误取最旧 5 条）。
 - 摘要会带入消费上下文：`style`（含 `quality_sensitivity`）、`context`、`exploration_openness`、`source_platform_mix` 和 `_active_speculations`。

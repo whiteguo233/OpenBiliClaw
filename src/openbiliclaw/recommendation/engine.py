@@ -74,7 +74,7 @@ def _recommendation_profile_summary(
 ) -> dict[str, object]:
     summary: dict[str, object] = {
         "personality_portrait": profile.personality_portrait,
-        "core_traits": profile.core_traits[:5],
+        "core_traits": profile.core_traits[:30],
         "deep_needs": profile.deep_needs[:5],
         "interests": interests
         if interests is not None
@@ -84,7 +84,7 @@ def _recommendation_profile_summary(
                 "category": item.category,
                 "weight": item.weight,
             }
-            for item in _interests_by_weight(profile)[:64]
+            for item in _interests_by_weight(profile)[:256]
         ],
         "style": _profile_style_summary(profile),
         "context": _profile_context_summary(profile),
@@ -580,13 +580,13 @@ class RecommendationEngine:
         Falls back to top-K by weight when embedding service is unavailable.
         """
         # Candidate pool aligned with the profile summary's interest cap
-        # (64): a niche interest outside the head ranks should still be
+        # (256): a niche interest outside the head ranks should still be
         # selectable when it's the best semantic match for this content.
         # top_k (5) still bounds how many actually reach the prompt, so the
         # wider pool improves coverage without growing prompt size.
         all_interests = [
             {"name": item.name, "category": item.category, "weight": item.weight}
-            for item in _interests_by_weight(profile)[:64]
+            for item in _interests_by_weight(profile)[:256]
         ]
         if not all_interests:
             return []

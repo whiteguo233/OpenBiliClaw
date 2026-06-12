@@ -17,9 +17,9 @@ _T = TypeVar("_T")
 # Profile-summary truncation caps. Lists are weight-sorted before
 # truncation so the strongest interests survive the cut, not whichever
 # happened to be listed first.
-_INTEREST_DOMAIN_CAP = 8
+_INTEREST_DOMAIN_CAP = 128
 _SPECIFICS_PER_DOMAIN = 5
-_INTEREST_TAG_CAP = 64
+_INTEREST_TAG_CAP = 256
 # Matches _DISLIKED_TOPICS_STORE_CAP so avoid-topics are NEVER cut from
 # prompts: the store predates the recency-ordered union (v0.3.121), so
 # legacy entries sit in alphabetical order and any cut below the store
@@ -409,7 +409,7 @@ def build_profile_summary(profile: SoulProfile) -> dict[str, object]:
     interest_domains = _extract_interest_domains(profile)
     summary: dict[str, object] = {
         "personality_portrait": profile.personality_portrait,
-        "core_traits": profile.core_traits[:5],
+        "core_traits": profile.core_traits[:30],
         "cognitive_style": profile.cognitive_style[:5],
         "values": profile.values[:5],
         "motivational_drivers": profile.motivational_drivers[:5],
