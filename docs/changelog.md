@@ -20,6 +20,7 @@
   - `build_preference_analysis_prompt` 每轮兴趣 tag 上限 5~15 → 5~25（证据充分可多提，不足时仍少提低权重，不凑数），让冷启动 / 富历史用户首轮就能填满放宽后的 30 槽画像输出。
   - 推荐重评估 / 批量文案 / delight 评分 / delight 理由四处候选 `description` 截断统一对齐 400 字符（原 200 / 300 / 280），与 discovery 评估一致；MMR 去重 embedding 文本保持不变（缓存 key）。
 - **12 小时画像整理任务（ProfileConsolidator）**：新增 `soul/consolidator.py` + CLI `profile-consolidate`（默认 dry-run / `--apply` / `--revert <run_id>`）+ `[scheduler].profile_consolidation_enabled/interval_hours`（默认开、12h）。流水线：规则层同名合并（实测真实画像零成本干掉 64 组同名标签）→ embedding 聚类 → no-merge 记忆 → 单次 LLM 输出 merge/keep 操作 → 代码严格校验后执行；避雷主题严禁向上泛化；rename 穿透用户覆盖层；应用即备份可回滚，回滚后不复发；应用后向插件推「画像整理」认知卡片。稳态（输入 digest 未变 / 簇已判过）每轮零 LLM 调用。
+- **画像一级分类词表化（PR1）**：新增 19 项固定分类词表 `CATEGORY_VOCAB` 与 `profile-consolidate --migrate-categories` 一次性迁移（LLM 映射 + 完整覆盖校验，失败零写入；dry-run 默认、快照可回滚、changelog 审计）。
 - **画像有效上限提升到 64**：`interests` / `disliked_topics` 的 LLM 画像输入上限统一 30 / 16 → 64（discovery 摘要 + 推荐摘要 + `_select_relevant_interests` embedding 候选池三处对齐）；`disliked_topics` 存储上限 40 → 128（展示上限的 2 倍，给近因重排和后续 LLM 整理留边界余量）。与计划中的 12 小时画像整理任务配套：整理卡 64 边界做同义合并，保证截断进 prompt 的是 64 个彼此不同的概念。
 
 ## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）

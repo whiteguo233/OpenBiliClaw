@@ -38,6 +38,7 @@
 | SoulEngine.get_profile() | ✅ | 从 soul 层读取画像并叠加用户覆盖层返回**有效画像**，未初始化时抛明确异常 |
 | SoulEngine.get_raw_profile() / get_overrides() | ✅ | 返回不叠加覆盖的纯 AI 画像 / 当前 `ProfileOverrides`，供编辑态与 AI 漂移比对 |
 | 用户画像覆盖层 (`soul/overrides.py`) | ✅ | `ProfileOverrides` + 纯函数 `apply_overrides`（文本/标量固定、列表增删、兴趣树增删/权重）+ 带校验的 `apply_edit` 归约器 + `build_edit_state`；用户手动编辑存独立 `profile_overrides.json`，读时叠加到 AI 画像之上，画像重建不覆盖；列表 remove 持续抑制 AI 再次推断出的同项 |
+| 分类词表 + 一次性迁移 | ✅ | `soul/taxonomy.py` 定义 19 项固定一级分类词表 `CATEGORY_VOCAB`（含「其他」，代码常量非 config），`resolve_category()` 按精确命中 → embedding 最近邻（≥0.55）→「其他」解析；`CategoryMigrator` 用一次 LLM 映射把存量自由分类迁移到词表，代码校验完整覆盖且目标必须在词表内，失败零写入；应用前写 `consolidation_runs/<run_id>.json`（`kind=category_migration`）并追加 `soul_changelog.md`，复用 `profile-consolidate --revert` 回滚 |
 | ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名合并（零成本）→ embedding 聚类（≥0.85，无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → 单次 batch LLM 输出 merge/keep 操作 → 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、避雷严禁向上泛化）。卡 64 边界整理（likes 取权重 top-128），改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
 | SoulEngine.get_effective_disliked_topics() | ✅ | base（raw soul.interest.dislikes ∪ raw preference.disliked_topics）再套覆盖层 remove/add（remove 最后生效），供 delight 硬过滤，用户移除项不被 raw 反向打穿 |
 | SoulEngine.apply_user_edit() | ✅ | 折叠一次确定性编辑：存覆盖层 → 同步正向/避雷两套 speculator → 记 `source=manual` cognition → 重渲染有效画像镜像并通知两端 → 新增 dislike 按编辑前后差集把 `purge_pool_for_new_dislikes` 清池**调度为 `asyncio` 后台 detached 任务**（embedding 召回 + LLM 分类耗时数十秒，绝不能阻塞编辑响应，否则前端看着像「加了没保存」；`_schedule_dislike_purge` 派发，`wait_for_pending_edits()` 供测试 / 优雅关闭等待） |
@@ -807,6 +808,29 @@ updated_pref = await analyzer.analyze_events(
 #   "disliked_topics": ["低质标题党"],
 # }
 ```
+
+### 分类词表与一次性迁移
+
+```python
+from openbiliclaw.soul.category_migration import CategoryMigrator
+from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB, resolve_category
+
+# 一级分类闭集：19 项，含「其他」；不是 config，变更词表等同代码变更。
+assert "其他" in CATEGORY_VOCAB
+
+# 源头或运维工具可把任意分类收敛到词表：
+category = await resolve_category("技术", embedding_service)
+# category == "科技"；无 embedding 或相似度不足时返回 "其他"
+
+migrator = CategoryMigrator(memory=memory_manager, llm_service=llm_service)
+preview = await migrator.run(dry_run=True)
+# preview.mapping: {"泛娱乐": "娱乐", "宠物": "萌宠", ...}
+
+applied = await migrator.run(dry_run=False)
+# applied.run_id 可通过 ProfileConsolidator.revert(applied.run_id) 回滚。
+```
+
+迁移校验是强约束：现存非空分类必须被映射恰好一次，目标必须逐字来自 `CATEGORY_VOCAB`；任一失败时不写 `preference.json`，也不产生 run 记录。已有词表内分类由代码强制恒等映射，避免 LLM 把干净分类改脏。
 
 ### OnionProfile（五层洋葱模型）
 

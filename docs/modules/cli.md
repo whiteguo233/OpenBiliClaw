@@ -43,7 +43,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike\|comment\|dismiss>` | 对推荐提交反馈 | ✅ |
 | `profile` | 查看用户画像 | ✅ |
-| `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
+| `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题；也支持一级分类词表迁移（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
 | `discover` | 手动触发发现 | ✅ |
 | `discover-douyin` | 单独调试抖音 search / hot / feed 内容发现 | ✅ |
 | `search-douyin` | 通过浏览器插件调试抖音搜索召回 | ✅ |
@@ -387,12 +387,15 @@ $ openbiliclaw profile
 ```bash
 $ openbiliclaw profile-consolidate            # dry-run：只打印建议
 $ openbiliclaw profile-consolidate --apply    # 写入；自动备份 + soul_changelog.md 审计
+$ openbiliclaw profile-consolidate --migrate-categories          # dry-run：预览分类 → 词表映射
+$ openbiliclaw profile-consolidate --migrate-categories --apply  # 写入分类迁移；自动备份
 $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回滚
 ```
 
 要点：
 
 - LLM 只能输出 merge / keep 操作，代码侧校验（members 逐字存在、簇内全覆盖、canonical 禁裸大词）后才执行；任何校验不过整簇放弃
+- `--migrate-categories` 是一次性运维入口：LLM 只产出现存分类到 `CATEGORY_VOCAB` 的映射，代码侧强制完整覆盖、目标在词表内、词表内分类恒等；默认 dry-run，`--apply` 后可用同一个 `--revert <run_id>` 回滚
 - 避雷主题只合真同义、严禁向上泛化（canonical 不得比成员更宽泛）
 - 用户在画像编辑里手动 remove/add 的条目会随改名同步（rename map 穿透 overrides），不会被合并「借尸还魂」
 - 回滚会把被回滚的合并对记入 no-merge 记忆，下一轮定时整理不会重做同一合并
