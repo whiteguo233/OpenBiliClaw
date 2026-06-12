@@ -4,14 +4,10 @@
 
 ---
 
-## v0.3.120 / extension v0.3.78: 桌面安装包更新提醒（2026-06-11）
+## v0.3.121: 12 小时画像自动整理（2026-06-12）
 
-桌面安装包用户从「完全不知道有新版本」变成「自动收到下载提醒」：冻结包后台改跑 check-only 循环，跟踪 `desktop-v*` 安装包 tag，发现新包时设置页提示并附直达下载链接。同时合入惊喜推荐加载数量三端统一。后端源码更新走 `backend-v0.3.120`，桌面安装包走 `desktop-v0.3.120`；浏览器插件版本提升到 `0.3.78`，发布 `extension-v0.3.78`。
+画像从「只进不出地积累」变成「定期自我整理」：新增 ProfileConsolidator，每 12 小时按「规则合并 → embedding 聚类 → LLM 裁决 → 校验执行」流水线清理兴趣 / 避雷主题的措辞变体，应用前自动备份、可一键回滚；配套把画像有效上限提升到 64、画像输出去掉 UP 主维度并修复偏好合并 bug。后端源码更新走 `backend-v0.3.121`；浏览器插件与桌面安装包未改动（插件仍为 `0.3.78`）。
 
-- **冻结包定期检查新安装包并提醒下载**：`check_and_update_if_due` 对 frozen 走 check-only 分支——**无论自动更新开关状态**都按检查间隔轮询（`_background_loop_enabled()` 对 frozen 恒真，开关只管自动应用而 frozen 永远不能应用），发现新包置 `update_available` 并推 `backend_update_available` 事件；`check_and_update_now` 同样在非 git 形态下只报告不应用，避免 apply 尝试把刚发现的 `update_available` 状态覆写成 unsupported。v0.3.119 的 apply 拒绝守卫不变，双重兜底。
-- **冻结包更新通道切换到 `desktop-v*` 安装包 tag**：新增 `_parse_desktop_candidate` / `_fetch_latest_candidate(channel=...)`，frozen 形态的 `check_now` 只比对 `desktop-v*` tag（无 legacy 兜底）——`backend-v*` 源码 tag 与安装包不总是同步发布（如 v0.3.118 只发了源码 tag），桌面用户只该在真有新安装包时被提醒。
-- **设置页冻结态提醒 UI**：新增 `describeFrozenUpdateStatus` 分支文案（「发现新版安装包 vX.Y.Z…请下载新版安装包完成升级」/「当前安装包已是最新」等），`update_available` 时显示「前往下载新安装包」按钮直达对应 `desktop-v*` Release 页；「立即检查」在冻结态可用，「立即应用」保持隐藏；`backend_update_available` 事件到达时按 tag 前缀区分文案弹 toast 提醒（安装包 → 引导下载，源码 → 普通提示）。开关与间隔输入在冻结态仍禁用（它们只管自动应用）。
-- **惊喜推荐加载数量三端统一生效**：新增 `[scheduler].delight_queue_limit`（默认 `20`，范围 `1..100`），`/api/delight/pending-batch` 在未显式传 `limit` 时读取该配置。桌面 Web 设置页保存该字段，插件 side panel 和移动 Web 默认不再写死 `20`，因此同一配置会随下一次队列拉取在三端同步生效。
 - **discovery / 评估画像输入上限放宽**：画像摘要扁平兴趣 tag 上限 10 → 30，兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 优先填充，画像越丰富的用户不再被列表顺序随机砍掉强兴趣）；`disliked_topics` 上限 discovery 侧 8 → 16、推荐侧 5 → 16；负例锚定 `negative_exemplars.MAX_LIMIT` 8 → 16；batch 评估 payload 的 `description` 截断 200 → 400 字符；`_select_relevant_interests()` embedding 候选池改为按 weight 排序取前 15。
 - **画像输出去掉 UP 主维度 + 偏好合并 bug 修复 + 避雷项近因排序**（接上一条的后续）：
   - `build_profile_summary()` 不再输出 `favorite_up_users`，`build_search_queries_prompt` 同步删掉配套规则——避免模型从「常看某 UP」反推内容兴趣。用户的 UP 主清单仍在 `/api/profile-summary` 用户视图可见可编辑，并继续给 `RelatedChainStrategy` 当种子，只是不进 LLM 画像输出。
@@ -20,8 +16,17 @@
   - `build_preference_analysis_prompt` 每轮兴趣 tag 上限 5~15 → 5~25（证据充分可多提，不足时仍少提低权重，不凑数），让冷启动 / 富历史用户首轮就能填满放宽后的 30 槽画像输出。
   - 推荐重评估 / 批量文案 / delight 评分 / delight 理由四处候选 `description` 截断统一对齐 400 字符（原 200 / 300 / 280），与 discovery 评估一致；MMR 去重 embedding 文本保持不变（缓存 key）。
 - **12 小时画像整理任务（ProfileConsolidator）**：新增 `soul/consolidator.py` + CLI `profile-consolidate`（默认 dry-run / `--apply` / `--revert <run_id>`）+ `[scheduler].profile_consolidation_enabled/interval_hours`（默认开、12h）。流水线：规则层同名合并（实测真实画像零成本干掉 64 组同名标签）→ embedding 聚类 → no-merge 记忆 → 单次 LLM 输出 merge/keep 操作 → 代码严格校验后执行；避雷主题严禁向上泛化；rename 穿透用户覆盖层；应用即备份可回滚，回滚后不复发；应用后向插件推「画像整理」认知卡片。稳态（输入 digest 未变 / 簇已判过）每轮零 LLM 调用。
-- **画像有效上限提升到 64**：`interests` / `disliked_topics` 的 LLM 画像输入上限统一 30 / 16 → 64（discovery 摘要 + 推荐摘要 + `_select_relevant_interests` embedding 候选池三处对齐）；`disliked_topics` 存储上限 40 → 128（展示上限的 2 倍，给近因重排和后续 LLM 整理留边界余量）。与计划中的 12 小时画像整理任务配套：整理卡 64 边界做同义合并，保证截断进 prompt 的是 64 个彼此不同的概念。
+- **画像有效上限提升到 64**：`interests` / `disliked_topics` 的 LLM 画像输入上限统一 30 / 16 → 64（discovery 摘要 + 推荐摘要 + `_select_relevant_interests` embedding 候选池三处对齐）；`disliked_topics` 存储上限 40 → 128（展示上限的 2 倍，给近因重排和后续 LLM 整理留边界余量）。与 12 小时画像整理任务配套：整理卡 64 边界做同义合并，保证截断进 prompt 的是 64 个彼此不同的概念。
 - **CLI 命令的 LLM 调用补记成本台账**：`cli.py` 新增共享 `_build_usage_recorder()`，CLI 自建的 `LLMService` / `SoulEngine` 五处（推荐引擎、发现引擎、`profile-consolidate`、xhs 关键词生产、soul 引擎）与 openclaw bootstrap 两处统一接上 `UsageRecorder`。此前只有 daemon 路径（`runtime_context`）挂了 recorder，CLI 手跑的命令（如 `profile-consolidate` 的 `soul.consolidation` 裁决调用）不进 `llm_usage` 表，`openbiliclaw cost --by caller` 完全看不到。
+
+## v0.3.120 / extension v0.3.78: 桌面安装包更新提醒（2026-06-11）
+
+桌面安装包用户从「完全不知道有新版本」变成「自动收到下载提醒」：冻结包后台改跑 check-only 循环，跟踪 `desktop-v*` 安装包 tag，发现新包时设置页提示并附直达下载链接。同时合入惊喜推荐加载数量三端统一。后端源码更新走 `backend-v0.3.120`，桌面安装包走 `desktop-v0.3.120`；浏览器插件版本提升到 `0.3.78`，发布 `extension-v0.3.78`。
+
+- **冻结包定期检查新安装包并提醒下载**：`check_and_update_if_due` 对 frozen 走 check-only 分支——**无论自动更新开关状态**都按检查间隔轮询（`_background_loop_enabled()` 对 frozen 恒真，开关只管自动应用而 frozen 永远不能应用），发现新包置 `update_available` 并推 `backend_update_available` 事件；`check_and_update_now` 同样在非 git 形态下只报告不应用，避免 apply 尝试把刚发现的 `update_available` 状态覆写成 unsupported。v0.3.119 的 apply 拒绝守卫不变，双重兜底。
+- **冻结包更新通道切换到 `desktop-v*` 安装包 tag**：新增 `_parse_desktop_candidate` / `_fetch_latest_candidate(channel=...)`，frozen 形态的 `check_now` 只比对 `desktop-v*` tag（无 legacy 兜底）——`backend-v*` 源码 tag 与安装包不总是同步发布（如 v0.3.118 只发了源码 tag），桌面用户只该在真有新安装包时被提醒。
+- **设置页冻结态提醒 UI**：新增 `describeFrozenUpdateStatus` 分支文案（「发现新版安装包 vX.Y.Z…请下载新版安装包完成升级」/「当前安装包已是最新」等），`update_available` 时显示「前往下载新安装包」按钮直达对应 `desktop-v*` Release 页；「立即检查」在冻结态可用，「立即应用」保持隐藏；`backend_update_available` 事件到达时按 tag 前缀区分文案弹 toast 提醒（安装包 → 引导下载，源码 → 普通提示）。开关与间隔输入在冻结态仍禁用（它们只管自动应用）。
+- **惊喜推荐加载数量三端统一生效**：新增 `[scheduler].delight_queue_limit`（默认 `20`，范围 `1..100`），`/api/delight/pending-batch` 在未显式传 `limit` 时读取该配置。桌面 Web 设置页保存该字段，插件 side panel 和移动 Web 默认不再写死 `20`，因此同一配置会随下一次队列拉取在三端同步生效。
 
 ## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）
 
