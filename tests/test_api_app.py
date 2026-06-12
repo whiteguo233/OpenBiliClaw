@@ -5527,6 +5527,79 @@ class TestBackendAPI:
         ]
         assert database.calls and database.calls[0]["include_liked"] is True
 
+    def test_delight_pending_batch_uses_configured_default_limit(self) -> None:
+        """Clients that omit ``limit`` should inherit the shared queue setting."""
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def get_delight_candidates(
+                self,
+                *,
+                min_delight_score: float,
+                limit: int,
+                include_liked: bool = False,
+            ) -> list[dict[str, object]]:
+                self.calls.append(
+                    {
+                        "min_delight_score": min_delight_score,
+                        "limit": limit,
+                        "include_liked": include_liked,
+                    }
+                )
+                return []
+
+        database = FakeDatabase()
+        app = create_app(
+            memory_manager=object(),
+            database=database,
+            soul_engine=object(),
+        )
+        app.state.runtime_context.config = SimpleNamespace(
+            scheduler=SimpleNamespace(delight_queue_limit=7)
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/delight/pending-batch")
+
+        assert response.status_code == 200
+        assert database.calls[0]["limit"] == 7
+
+    def test_delight_pending_batch_query_limit_overrides_config_default(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.calls: list[int] = []
+
+            def get_delight_candidates(
+                self,
+                *,
+                min_delight_score: float,
+                limit: int,
+                include_liked: bool = False,
+            ) -> list[dict[str, object]]:
+                self.calls.append(limit)
+                return []
+
+        database = FakeDatabase()
+        app = create_app(
+            memory_manager=object(),
+            database=database,
+            soul_engine=object(),
+        )
+        app.state.runtime_context.config = SimpleNamespace(
+            scheduler=SimpleNamespace(delight_queue_limit=7)
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/delight/pending-batch?limit=11")
+
+        assert response.status_code == 200
+        assert database.calls == [11]
+
     def test_delight_dismiss_marks_candidate_consumed(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -6393,6 +6466,7 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.scheduler.trending_refresh_hours = 5
         cfg.scheduler.explore_refresh_hours = 18
         cfg.scheduler.discovery_limit = 17
+        cfg.scheduler.delight_queue_limit = 37
         cfg.scheduler.proactive_push_interval_seconds = 155
         cfg.scheduler.speculator_idle_interval_minutes = 11
         cfg.scheduler.speculation_interval_minutes = 21
@@ -6455,6 +6529,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["scheduler"]["trending_refresh_hours"] == 5
         assert data["scheduler"]["explore_refresh_hours"] == 18
         assert data["scheduler"]["discovery_limit"] == 17
+        assert data["scheduler"]["delight_queue_limit"] == 37
         assert data["scheduler"]["proactive_push_interval_seconds"] == 155
         assert data["scheduler"]["speculator_idle_interval_minutes"] == 11
         assert data["scheduler"]["speculation_interval_minutes"] == 21
@@ -6624,6 +6699,7 @@ class TestEmbeddingAndCompatProviderE2E:
                     "trending_refresh_hours": 5,
                     "explore_refresh_hours": 18,
                     "discovery_limit": 17,
+                    "delight_queue_limit": 37,
                     "proactive_push_interval_seconds": 155,
                     "speculator_idle_interval_minutes": 11,
                     "speculation_interval_minutes": 21,
@@ -6694,6 +6770,8 @@ class TestEmbeddingAndCompatProviderE2E:
         assert cfg.scheduler.trending_refresh_hours == 5
         assert cfg.scheduler.explore_refresh_hours == 18
         assert cfg.scheduler.discovery_limit == 17
+        assert cfg.scheduler.delight_queue_limit == 37
+        assert response.json()["config"]["scheduler"]["delight_queue_limit"] == 37
         assert cfg.scheduler.proactive_push_interval_seconds == 155
         assert cfg.scheduler.speculator_idle_interval_minutes == 11
         assert cfg.scheduler.speculation_interval_minutes == 21
@@ -6730,6 +6808,7 @@ class TestEmbeddingAndCompatProviderE2E:
                     "trending_refresh_hours": 0,
                     "explore_refresh_hours": 0,
                     "discovery_limit": 61,
+                    "delight_queue_limit": 101,
                     "proactive_push_interval_seconds": 29,
                     "speculator_idle_interval_minutes": 4,
                 },
@@ -6743,6 +6822,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert scheduler["trending_refresh_hours"] == 3
         assert scheduler["explore_refresh_hours"] == 12
         assert scheduler["discovery_limit"] == 30
+        assert scheduler["delight_queue_limit"] == 20
         assert scheduler["proactive_push_interval_seconds"] == 120
         assert scheduler["speculator_idle_interval_minutes"] == 30
 

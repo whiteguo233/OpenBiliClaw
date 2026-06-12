@@ -904,6 +904,7 @@ class SchedulerConfigOut(BaseModel):
     trending_refresh_hours: int = 3
     explore_refresh_hours: int = 12
     discovery_limit: int = 30
+    delight_queue_limit: int = 20
     proactive_push_interval_seconds: int = 120
     speculator_idle_interval_minutes: int = 30
     speculation_interval_minutes: int = 10

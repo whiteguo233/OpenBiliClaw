@@ -16,13 +16,13 @@
 | YouTube 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立运行 `yt_search` / `yt_trending` / `yt_channel`，只在 YouTube 平台族低于 quota 时由 `_loop_youtube_producer()` tick，按每日 ledger 和 `min_interval_minutes` 控制执行。 |
 | X 后台 discovery producer | ✅ | `XDiscoveryProducer.produce_if_due()` 在 X 平台族低于 quota 且源健康就绪时，由独立 loop tick 触发 `search` / `feed`（For-You）/ `creator`（账号订阅）三个策略；按 `daily_*_budget` / `min_interval_minutes` / `request_interval_seconds` 节流，For-You 压到很低的每日频次并在连续失败后自动暂停。只 enqueue raw candidates 进 `discovery_candidates`，不写 `content_cache`、不调评估器。`enabled=false` 时是 no-op，不 import `twitter_cli`。 |
 | X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
-| 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
+| 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、惊喜队列加载数量、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 浏览器 presence gate | ✅ | `background_llm_work_allowed()` 结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作。 |
 | Runtime event stream | ✅ | `/api/runtime-stream` 向扩展推送状态、Cookie sync 请求、配置重载和 presence 事件；`RuntimeEventHub.publish()` 会返回是否至少有一个订阅者接收，供一次性事件判断是否真正投递。 |
 | 兴趣探针投递保护 | ✅ | `interest.probe` 只有成功投递到 runtime stream 后才写入 `probed_domains` / `probed_axes` / `probed_distance_bands` 冷却状态；事件 payload 会带 `probe_mode` 与 `challenge`，前端离线时不会消耗 active probe。普通 `near` 探针与挑战探针使用独立 active 额度，运行时选择时仍统一仲裁。 |
 | 避雷探针投递与仲裁 | ✅ | `avoidance.probe` 与 `interest.probe` 共用 proactive push 循环；每轮最多投递一个 probe，并用 `last_probe_kind` 在正向/负向都有候选时轮流选择，避免探针频率翻倍。 |
 | 图片代理 API | ✅ | `/api/image-proxy` 为移动 Web 和浏览器插件代理白名单 CDN 封面图，逐跳校验 redirect，并在返回前完成类型和 10MB 大小校验；成功封面写入 `data/image-cache/`（小红书 token 归一化），并按「已消费且未保存」定期清理、保护无法重抓的封面。 |
-| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。dirty worktree guard 豁免仅 `uv.lock` 的改动（发布 tag 带过期 lock 时 `uv sync` 必然改写它），apply 前会重置 `uv.lock` 再快进。`detect_install_mode()` 上报 `frozen / git / unsupported` 安装形态，桌面冻结包据此在前端禁用自动更新开关。 |
+| 自动更新 | ✅ | `AutoUpdateService` 检查 backend git tag，支持 `/api/update-status`、`/api/runtime-status` 更新摘要、手动 check/apply、apply 锁、可信 remote / dirty worktree / fast-forward guard，并通过 runtime stream 推送后端更新事件。dirty worktree guard 豁免仅 `uv.lock` 的改动（发布 tag 带过期 lock 时 `uv sync` 必然改写它），apply 前会重置 `uv.lock` 再快进。`detect_install_mode()` 上报 `frozen / git / unsupported` 安装形态，桌面冻结包据此在前端禁用自动更新开关。**冻结守卫**：apply 路径显式判 `install_mode == "git"`，冻结包即便与 git 检出共用目录也以 `unsupported_install_mode` 拒绝，杜绝无限重启循环；冻结包后台改跑 check-only 提醒循环（无论开关状态），跟踪 `desktop-v*` 安装包 tag，发现新包时设置页提示并附「前往下载新安装包」直达链接 + toast 提醒。桌面 Web 设置页提供「立即检查 / 立即应用」按钮并随 runtime stream 更新事件实时刷新状态行；配置保存重建服务时经 `adopt_status_from` 保留上次检查结果。降级模式（LLM 注册表不可用）放行 update-status / check / apply 并构建真实 `AutoUpdateService`，便于拉取修复版本恢复。 |
 | 开机自启动管理 | ✅ | `runtime.autostart` 提供 macOS LaunchAgent、Windows HKCU Run + `.pyw`、Linux XDG autostart 三套当前用户作用域 manager；`/api/autostart-status`、`/api/autostart/apply`、`openbiliclaw autostart` 和插件设置页共用 env / shadow guard 与方向化 enable/disable 事务。 |
 | Ollama 启动预检与生命周期 | ✅ | `runtime.ollama_supervisor` 统一提供 `ollama_required()`、endpoint 归一化、loopback 判定和 `_ollama_is_running()` / `_ollama_start_serve_background()`；`start` 仅在默认 `localhost:11434` 需要本机 Ollama 时尝试后台拉起，远端 / 自定义端口不强行 `serve`。托管启动会给子进程默认传入 `OLLAMA_KEEP_ALIVE=24h`（若用户已设置则保留用户值），减少 `bge-m3` / `llama-server` 在 UI 请求间隔中卸载再冷启动。`_ollama_start_serve_background()` 现在记录**亲手拉起**的 `Popen` 句柄（复用外部已运行实例时句柄留空），`stop_managed_ollama()` 据此在退出时停掉整棵进程树（Windows `taskkill /T`、类 Unix 进程组 `SIGTERM`），对外部托管的 Ollama 一律不动 —— 桌面托盘「退出」经此调用，clean quit 不再遗留孤儿 `ollama serve` / `llama-server` runner。 |
 | 账号同步 | ✅ | `AccountSyncService` 同步 B 站账号历史、收藏和关注等信号；历史按 `view_at + 同秒 bvid 集合` 增量导入，收藏 / 关注只把新增 ID 转成画像事件，避免重放旧信号。 |
@@ -46,9 +46,11 @@ status_code, apply_payload = await service.request_apply(tag="backend-v0.3.92")
 核心调用：
 
 - `check_now()`：立即检查 GitHub tags，只刷新后端更新状态，不自动应用。
-- `request_apply(tag="backend-vX.Y.Z")`：先检查 git repo、可信 `origin`、worktree clean（仅 `uv.lock` 改动豁免——发布 tag 携带过期 lock 时安装侧 `uv sync` 必然改写它，不能因此永久阻塞更新）、未 merge/rebase、目标 tag 存在且当前 HEAD 可 fast-forward，再返回 `202/applying` 并在后台执行 `git checkout -- uv.lock`、`git merge --ff-only <tag>`、依赖同步和 `os.execv` 重启。
-- `check_and_update_if_due()` / `check_and_update_now()`：供后台调度使用；只有 `scheduler.auto_update_enabled=true` 时才会定时自动应用。
-- `detect_install_mode()`（模块级函数）：上报安装形态——`frozen`（PyInstaller 桌面包，结构上无法 git 自更新）、`git`（installer / agent / dev 克隆）、`unsupported`（其他）。
+- `request_apply(tag="backend-vX.Y.Z")`：先检查安装形态为 `git`（`detect_install_mode() != "git"` 直接以 `unsupported_install_mode` 拒绝——见下）、git repo、可信 `origin`、worktree clean（仅 `uv.lock` 改动豁免——发布 tag 携带过期 lock 时安装侧 `uv sync` 必然改写它，不能因此永久阻塞更新）、未 merge/rebase、目标 tag 存在且当前 HEAD 可 fast-forward，再返回 `202/applying` 并在后台执行 `git checkout -- uv.lock`、`git merge --ff-only <tag>`、依赖同步和 `os.execv` 重启。
+- `check_and_update_if_due()` / `check_and_update_now()`：供后台调度使用；只有 `scheduler.auto_update_enabled=true` 时才会定时自动应用。冻结桌面包走 check-only 分支：**无论开关状态**都按间隔检查 `desktop-v*` 安装包 tag（`_background_loop_enabled()` 对 frozen 恒真），发现新包置 `update_available` 并推 `backend_update_available` 事件提醒用户下载新安装包，但永不进入 apply——`request_apply` 的非 git 守卫独立兜底，后台循环不可能 fast-forward 共享目录里的 git 检出。
+- `adopt_status_from(other)`：配置保存触发热重载、本服务被重建时，由 `rebuild_from_config` 调用以携带上一实例的检查结果（版本 / tag / 上次检查时间总是携带；`update_available` / `up_to_date` / `blocked` 等已结算状态也携带，瞬态 `checking` / `applying` 不携带）。否则设置页状态行会从「发现新版本」回退到「尚未检查更新」直到下个检查周期。
+- `detect_install_mode()`（模块级函数）：上报安装形态——`frozen`（PyInstaller 桌面包，结构上无法 git 自更新）、`git`（installer / agent / dev 克隆）、`unsupported`（其他）。**安全守卫**：冻结桌面包可能与 AI / 一键安装共用 `~/OpenBiliClaw` 目录（`entry.py` 把 `OPENBILICLAW_PROJECT_ROOT` 指向它，目录里是真实 git 检出），此时磁盘上有 `.git` 但仍必须拒绝自更新——否则会改写他人源码 + venv 而冻结包重启后仍跑捆绑旧码，形成无限重启循环。故 apply 路径显式判 `install_mode == "git"`，不只依赖 `.git` 是否存在。
+- **更新通道**：git 安装跟踪 `backend-v*` 源码 tag（legacy `v*` / 裸 semver 兜底）；冻结桌面包跟踪 `desktop-v*` 安装包 tag（`_parse_desktop_candidate`，无 legacy 兜底——两类 tag 不总是同步发布，桌面用户只关心有没有新安装包）。`_fetch_latest_candidate(channel=...)` 按 `check_now` 里的安装形态选通道。
 - `get_update_status()`：返回 `/api/update-status` 使用的 backend 状态对象，含 `install_mode`。
 - `get_runtime_status()`：返回 `/api/runtime-status` 合并用的自动更新摘要，包含当前版本、最新远端版本、上次检查、错误、状态原因和 `install_mode`。
 
@@ -250,6 +252,7 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 | `scheduler.trending_refresh_hours` | `3` | `trending` 策略最小刷新间隔。 |
 | `scheduler.explore_refresh_hours` | `12` | `explore` 策略最小刷新间隔。 |
 | `scheduler.discovery_limit` | `30` | 单轮 discovery wave 候选上限，最大 `60`。 |
+| `scheduler.delight_queue_limit` | `20` | 惊喜推荐队列默认加载数量；桌面 Web、移动 Web 和浏览器插件默认共享，范围 `1..100`。 |
 | `scheduler.proactive_push_interval_seconds` | `120` | 主动推荐 / probe 推送循环间隔。 |
 | `scheduler.speculator_idle_interval_minutes` | `30` | 画像 pipeline 空闲时检查猜测兴趣生命周期的间隔。 |
 | `scheduler.avoidance_speculation_interval_minutes` | `10` | 不喜欢领域探针生成间隔。 |

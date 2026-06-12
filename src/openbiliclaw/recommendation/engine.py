@@ -26,10 +26,15 @@ if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
-    from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.soul.profile import InterestTag, SoulProfile
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+def _interests_by_weight(profile: SoulProfile) -> list[InterestTag]:
+    """Interest tags sorted by weight (desc) so truncation keeps the strongest."""
+    return sorted(profile.preferences.interests, key=lambda tag: tag.weight, reverse=True)
 
 
 def _profile_style_summary(profile: SoulProfile) -> dict[str, object]:
@@ -79,12 +84,12 @@ def _recommendation_profile_summary(
                 "category": item.category,
                 "weight": item.weight,
             }
-            for item in profile.preferences.interests[:10]
+            for item in _interests_by_weight(profile)[:64]
         ],
         "style": _profile_style_summary(profile),
         "context": _profile_context_summary(profile),
         "exploration_openness": profile.preferences.exploration_openness,
-        "disliked_topics": profile.preferences.disliked_topics[:5],
+        "disliked_topics": profile.preferences.disliked_topics[:64],
     }
     if include_active_insights:
         summary["active_insights"] = [
@@ -572,9 +577,14 @@ class RecommendationEngine:
 
         Falls back to top-K by weight when embedding service is unavailable.
         """
+        # Candidate pool aligned with the profile summary's interest cap
+        # (64): a niche interest outside the head ranks should still be
+        # selectable when it's the best semantic match for this content.
+        # top_k (5) still bounds how many actually reach the prompt, so the
+        # wider pool improves coverage without growing prompt size.
         all_interests = [
             {"name": item.name, "category": item.category, "weight": item.weight}
-            for item in profile.preferences.interests[:15]
+            for item in _interests_by_weight(profile)[:64]
         ]
         if not all_interests:
             return []
@@ -1049,7 +1059,7 @@ class RecommendationEngine:
                 "content_id": c.content_id or c.bvid,
                 "title": c.title,
                 "up_name": c.up_name or c.author_name,
-                "description": (c.description or "")[:200],
+                "description": (c.description or "")[:400],
                 "duration": c.duration,
                 "view_count": c.view_count,
                 "source_strategy": c.source_strategy,
@@ -1269,7 +1279,7 @@ class RecommendationEngine:
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
-                "description": (content.description or "")[:300],
+                "description": (content.description or "")[:400],
                 "source_strategy": content.source_strategy,
                 "style_key": content.style_key,
                 "topic_group": content.topic_group,
@@ -1327,7 +1337,7 @@ class RecommendationEngine:
                 "content_id": item.content_id or item.bvid,
                 "title": item.title,
                 "up_name": item.up_name,
-                "description": (item.description or "")[:200],
+                "description": (item.description or "")[:400],
                 "source_strategy": item.source_strategy,
                 "style_key": item.style_key,
                 "topic_group": item.topic_group,

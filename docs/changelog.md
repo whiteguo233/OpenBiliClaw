@@ -4,6 +4,33 @@
 
 ---
 
+## v0.3.120 / extension v0.3.78: 桌面安装包更新提醒（2026-06-11）
+
+桌面安装包用户从「完全不知道有新版本」变成「自动收到下载提醒」：冻结包后台改跑 check-only 循环，跟踪 `desktop-v*` 安装包 tag，发现新包时设置页提示并附直达下载链接。同时合入惊喜推荐加载数量三端统一。后端源码更新走 `backend-v0.3.120`，桌面安装包走 `desktop-v0.3.120`；浏览器插件版本提升到 `0.3.78`，发布 `extension-v0.3.78`。
+
+- **冻结包定期检查新安装包并提醒下载**：`check_and_update_if_due` 对 frozen 走 check-only 分支——**无论自动更新开关状态**都按检查间隔轮询（`_background_loop_enabled()` 对 frozen 恒真，开关只管自动应用而 frozen 永远不能应用），发现新包置 `update_available` 并推 `backend_update_available` 事件；`check_and_update_now` 同样在非 git 形态下只报告不应用，避免 apply 尝试把刚发现的 `update_available` 状态覆写成 unsupported。v0.3.119 的 apply 拒绝守卫不变，双重兜底。
+- **冻结包更新通道切换到 `desktop-v*` 安装包 tag**：新增 `_parse_desktop_candidate` / `_fetch_latest_candidate(channel=...)`，frozen 形态的 `check_now` 只比对 `desktop-v*` tag（无 legacy 兜底）——`backend-v*` 源码 tag 与安装包不总是同步发布（如 v0.3.118 只发了源码 tag），桌面用户只该在真有新安装包时被提醒。
+- **设置页冻结态提醒 UI**：新增 `describeFrozenUpdateStatus` 分支文案（「发现新版安装包 vX.Y.Z…请下载新版安装包完成升级」/「当前安装包已是最新」等），`update_available` 时显示「前往下载新安装包」按钮直达对应 `desktop-v*` Release 页；「立即检查」在冻结态可用，「立即应用」保持隐藏；`backend_update_available` 事件到达时按 tag 前缀区分文案弹 toast 提醒（安装包 → 引导下载，源码 → 普通提示）。开关与间隔输入在冻结态仍禁用（它们只管自动应用）。
+- **惊喜推荐加载数量三端统一生效**：新增 `[scheduler].delight_queue_limit`（默认 `20`，范围 `1..100`），`/api/delight/pending-batch` 在未显式传 `limit` 时读取该配置。桌面 Web 设置页保存该字段，插件 side panel 和移动 Web 默认不再写死 `20`，因此同一配置会随下一次队列拉取在三端同步生效。
+- **discovery / 评估画像输入上限放宽**：画像摘要扁平兴趣 tag 上限 10 → 30，兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 优先填充，画像越丰富的用户不再被列表顺序随机砍掉强兴趣）；`disliked_topics` 上限 discovery 侧 8 → 16、推荐侧 5 → 16；负例锚定 `negative_exemplars.MAX_LIMIT` 8 → 16；batch 评估 payload 的 `description` 截断 200 → 400 字符；`_select_relevant_interests()` embedding 候选池改为按 weight 排序取前 15。
+- **画像输出去掉 UP 主维度 + 偏好合并 bug 修复 + 避雷项近因排序**（接上一条的后续）：
+  - `build_profile_summary()` 不再输出 `favorite_up_users`，`build_search_queries_prompt` 同步删掉配套规则——避免模型从「常看某 UP」反推内容兴趣。用户的 UP 主清单仍在 `/api/profile-summary` 用户视图可见可编辑，并继续给 `RelatedChainStrategy` 当种子，只是不进 LLM 画像输出。
+  - 修复 `merge_preferences` 的 `favorite_up_users` 合并 bug：此前「本批一旦提到任意创作者就用本批列表整体替换历史」会丢掉之前确认过的 UP 主，改为旧 ∪ 新真正累积（与注释里声明的语义一致，`RelatedChainStrategy` 种子因此不再被偶发批次冲掉）。
+  - `disliked_topics` 合并从字典序集合并集改为**近因有序并集 + 上限 40**：本轮避雷项排在前，下游 `[:16]` 截断保留最新 / 最相关的雷点而非字典序靠前的那批；长期不再出现的雷点滑出尾部衰减。
+  - `build_preference_analysis_prompt` 每轮兴趣 tag 上限 5~15 → 5~25（证据充分可多提，不足时仍少提低权重，不凑数），让冷启动 / 富历史用户首轮就能填满放宽后的 30 槽画像输出。
+  - 推荐重评估 / 批量文案 / delight 评分 / delight 理由四处候选 `description` 截断统一对齐 400 字符（原 200 / 300 / 280），与 discovery 评估一致；MMR 去重 embedding 文本保持不变（缓存 key）。
+- **12 小时画像整理任务（ProfileConsolidator）**：新增 `soul/consolidator.py` + CLI `profile-consolidate`（默认 dry-run / `--apply` / `--revert <run_id>`）+ `[scheduler].profile_consolidation_enabled/interval_hours`（默认开、12h）。流水线：规则层同名合并（实测真实画像零成本干掉 64 组同名标签）→ embedding 聚类 → no-merge 记忆 → 单次 LLM 输出 merge/keep 操作 → 代码严格校验后执行；避雷主题严禁向上泛化；rename 穿透用户覆盖层；应用即备份可回滚，回滚后不复发；应用后向插件推「画像整理」认知卡片。稳态（输入 digest 未变 / 簇已判过）每轮零 LLM 调用。
+- **画像有效上限提升到 64**：`interests` / `disliked_topics` 的 LLM 画像输入上限统一 30 / 16 → 64（discovery 摘要 + 推荐摘要 + `_select_relevant_interests` embedding 候选池三处对齐）；`disliked_topics` 存储上限 40 → 128（展示上限的 2 倍，给近因重排和后续 LLM 整理留边界余量）。与计划中的 12 小时画像整理任务配套：整理卡 64 边界做同义合并，保证截断进 prompt 的是 64 个彼此不同的概念。
+
+## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）
+
+接 v0.3.115 的自动更新解卡，堵死桌面安装包的「无限重启循环」高危隐患，并补齐自动更新的状态展示与手动操作缺口。后端源码更新走 `backend-v0.3.119`，桌面安装包走 `desktop-v0.3.119`；浏览器插件未改动，仍为 `0.3.77`。
+
+- **桌面安装包不再会被自动更新拖入无限重启循环**：`AutoUpdateService` 的 apply 路径与后台调度循环（`_check_apply_guards` / `check_and_update_if_due`）新增显式 `install_mode != "git"` 守卫——桌面冻结包即便与 AI / 一键安装共用 `~/OpenBiliClaw` 目录（`entry.py` 把 `OPENBILICLAW_PROJECT_ROOT` 指向它）、继承了 `auto_update_enabled=true`，也不再 fast-forward 那个 git 检出。此前 `detect_install_mode()` 的 `frozen` 仅用于前端显示，服务端 apply 路径漏判：冻结包会真的 `git merge` 改写他人源码 + venv，而捆绑二进制重启后仍跑旧码，每个检查周期重复 = 无限重启循环（且冻结态前端开关被禁用，用户关不掉）。真实 PyInstaller 安装包端到端实测：apply（真实可信 remote + 真实可快进 0.3.118 目标）被 `unsupported_install_mode` 拦截、co-located git 检出零改动、后台循环同样不应用。
+- **设置页补上「立即检查 / 立即应用」按钮**：桌面 Web 设置页加上规格要求的两个按钮（`POST /api/update/check`、`/api/update/apply`），并在收到 `backend_update_available` / `backend_restart_pending` / `backend_update_failed` 运行时事件时实时刷新状态行，更新全程不再无感知。
+- **配置保存不再丢更新状态**：保存配置触发热重载重建服务时，通过 `AutoUpdateService.adopt_status_from` 携带上次检查结果，状态行不再从「发现新版本」回退到「尚未检查更新」（瞬态 `checking` / `applying` 状态不携带，避免误表上一实例的在途 apply）。
+- **降级模式也能检查 / 拉取更新**：降级模式（LLM 注册表不可用）放行 `/api/update-status`、`/api/update/check`、`/api/update/apply`，且降级上下文现在构建真正的 `AutoUpdateService`——LLM 配坏正是需要拉取修复版本之时。真实环境实测：git 模式 0.3.118 → 0.3.119 完整升级（ff-merge + uv sync + execv 重启）、三守卫、保存状态保留、降级 `update-status` 返回 200 全部通过。
+
 ## v0.3.118 / extension v0.3.77: 初始化来源可选化（2026-06-11）
 
 B 站不再是初始化的强制基座：CLI、插件面板、桌面 Web 和安装包 `/setup/` 都可以在初始化前取消勾选 B 站，只要至少保留一个数据来源即可。同时修复插件连接徽章与保存列表的响应性问题。

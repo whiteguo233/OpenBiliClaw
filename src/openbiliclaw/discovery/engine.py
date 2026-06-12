@@ -1283,8 +1283,8 @@ class ContentDiscoveryEngine:
                     "title": c.title,
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,
-                    "description": (c.description or "")[:200],
-                    "published_at": c.published_at,
+                    "description": (c.description or "")[:400],
+                    "published_at": c.published_at
                     "duration": c.duration,
                     "view_count": c.view_count,
                 }

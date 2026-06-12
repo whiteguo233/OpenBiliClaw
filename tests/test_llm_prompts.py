@@ -593,6 +593,19 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
                 count=5,
             ),
         ),
+        (
+            "build_profile_consolidation_prompt",
+            dict(
+                likes_clusters=[
+                    {"cluster_id": "L1", "members": [{"name": "智能体开发", "weight": 0.97}]}
+                ],
+                dislikes_clusters=[],
+            ),
+            dict(
+                likes_clusters=[],
+                dislikes_clusters=[{"cluster_id": "D1", "members": ["雷点A", "雷点B"]}],
+            ),
+        ),
         # NOTE: build_socratic_dialogue_prompt is intentionally NOT in
         # this list — its system prompt embeds per-user core memory /
         # tone / friend label, which is fine for OpenBiliClaw's single-

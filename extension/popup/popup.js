@@ -1394,7 +1394,7 @@ function connectRuntimeStream() {
       if (event.type === "delight.refreshed") {
         void (async () => {
           try {
-            const items = await fetchPendingDelightBatch(20);
+            const items = await fetchPendingDelightBatch();
             if (!Array.isArray(items)) return;
             clearDelightQueue();
             for (const item of items) {
@@ -5324,7 +5324,7 @@ async function initializeRecommendations() {
     await Promise.allSettled([
       fetchRuntimeStatus(),
       fetchRecommendations(),
-      fetchPendingDelightBatch(20),
+      fetchPendingDelightBatch(),
       fetchConfig(),
     ]);
 

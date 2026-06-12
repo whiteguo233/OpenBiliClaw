@@ -1078,6 +1078,7 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     config.scheduler.speculation_max_active = 6
     config.scheduler.speculation_max_primary_interests = 17
     config.scheduler.speculation_max_secondary_interests = 66
+    config.scheduler.delight_queue_limit = 37
     config.scheduler.auto_update_enabled = True
     config.scheduler.auto_update_check_interval_hours = 12
     config.scheduler.auto_update_allow_prerelease = True
@@ -1099,6 +1100,7 @@ def test_save_config_round_trips_advanced_scheduler_and_logging_fields(
     assert loaded.scheduler.speculation_max_active == 6
     assert loaded.scheduler.speculation_max_primary_interests == 17
     assert loaded.scheduler.speculation_max_secondary_interests == 66
+    assert loaded.scheduler.delight_queue_limit == 37
     assert loaded.scheduler.auto_update_enabled is True
     assert loaded.scheduler.auto_update_check_interval_hours == 12
     assert loaded.scheduler.auto_update_allow_prerelease is True

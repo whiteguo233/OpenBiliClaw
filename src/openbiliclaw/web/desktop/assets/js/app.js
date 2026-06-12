@@ -23,6 +23,8 @@
       sourceShareSuggestion: "/config/source-share-suggestion",
       configProbe: "/config/probe-service",
       updateStatus: "/update-status",
+      updateCheck: "/update/check",
+      updateApply: "/update/apply",
       config: "/config?reveal_keys=true",
       watchLater: "/watch-later",
       favorites: "/favorites",
@@ -379,9 +381,10 @@
       return Math.max(1, Math.min(100, limit));
     }
 
-    function restoreFrontendSettings() {
-      const limit = storageGet(DELIGHT_QUEUE_LIMIT_KEY);
-      setInput("delightQueueLimit", limit || "20");
+    function restoreFrontendSettings(config = state.config || {}) {
+      const configuredLimit = config.scheduler?.delight_queue_limit;
+      const limit = configuredLimit || storageGet(DELIGHT_QUEUE_LIMIT_KEY) || "20";
+      setInput("delightQueueLimit", String(limit));
       renderReshuffleToggle();
     }
 
@@ -3704,7 +3707,7 @@
     }
 
     async function fetchDelightQueue() {
-      const payload = await requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`);
+      const payload = await requestJson(ENDPOINTS.delightBatch);
       applyDelights(payload);
     }
 
@@ -3743,6 +3746,19 @@
             setActiveDelight(state.delights.length - 1);
           }
         }
+      }
+      if (
+        event.type === "backend_update_available" ||
+        event.type === "backend_restart_pending" ||
+        event.type === "backend_update_failed"
+      ) void refreshUpdateStatus();
+      if (event.type === "backend_update_available") {
+        const newVersion = event.latest_version ? `v${event.latest_version}` : "新版本";
+        // desktop-v* tags = installer releases for frozen bundles; guide the
+        // user to download instead of implying an in-place update will happen.
+        showToast(String(event.latest_tag || "").startsWith("desktop-v")
+          ? `发现新版安装包 ${newVersion}，请前往 GitHub Releases 下载升级`
+          : `发现后端新版本 ${newVersion}`);
       }
       if (event.type === "delight.refreshed") scheduleDelightQueueRefresh();
       if (event.type === "notification.pending" && event.bvid) mergeMessages([{ ...event, type: "notification" }]);
@@ -3788,7 +3804,7 @@
         requestJson(ENDPOINTS.runtimeStatus),
         requestJson(`${ENDPOINTS.activityFeed}?limit=5`),
         requestJson(ENDPOINTS.profile),
-        requestJson(`${ENDPOINTS.delightBatch}?limit=${getDelightQueueLimit()}`),
+        requestJson(ENDPOINTS.delightBatch),
         requestJson(ENDPOINTS.notificationPending),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
@@ -3968,6 +3984,7 @@
           trending_refresh_hours: getIntInput("trendingRefreshHours", 3),
           explore_refresh_hours: getIntInput("exploreRefreshHours", 12),
           discovery_limit: getIntInput("discoveryLimit", 30),
+          delight_queue_limit: getDelightQueueLimit(),
           proactive_push_interval_seconds: getIntInput("proactivePushInterval", 120),
           speculator_idle_interval_minutes: getIntInput("speculatorIdleInterval", 30),
           pool_source_shares: {
@@ -4056,40 +4073,157 @@
       }
     }
 
+    // Frozen desktop bundles can't self-apply — the backend runs a check-only
+    // loop against desktop-v* installer tags and the UI guides the user to
+    // download the new installer instead.
+    function describeFrozenUpdateStatus(backend) {
+      const reasonKey = backend.reason && backend.reason !== "none" ? String(backend.reason) : "";
+      const reasonText = UPDATE_REASON_TEXT[reasonKey] || reasonKey;
+      const current = backend.current_version ? `v${backend.current_version}` : "";
+      const latest = backend.latest_version ? `v${backend.latest_version}` : "";
+      const checkedAt = formatUpdateCheckTime(backend.last_check_at);
+      const suffix = checkedAt ? `（${checkedAt} 检查）` : "";
+      switch (backend.state) {
+        case "checking":
+          return { text: "正在检查新版安装包…", tone: "" };
+        case "up_to_date":
+          return { text: `当前安装包已是最新${current ? ` ${current}` : ""}${suffix}`, tone: "success" };
+        case "update_available":
+          return { text: `发现新版安装包 ${latest}（当前 ${current}），桌面安装包不支持自动更新，请下载新版安装包完成升级${suffix}`, tone: "" };
+        case "error":
+          return { text: `检查新版安装包出错：${reasonText || backend.last_error || "未知错误"}${suffix}`, tone: "error" };
+        default:
+          return { text: `桌面安装包不支持自动应用更新；后台会定期检查新版安装包并在这里提醒下载${current ? `（当前 ${current}）` : ""}。`, tone: "" };
+      }
+    }
+
     function renderUpdateStatus(backend) {
       const line = $("#updateStatusLine");
+      const actions = $("#updateActions");
+      const checkBtn = $("#updateCheckBtn");
+      const applyBtn = $("#updateApplyBtn");
+      const downloadLink = $("#updateDownloadLink");
       if (!line) return;
       if (!backend || typeof backend !== "object") {
         line.hidden = true;
+        if (actions) actions.hidden = true;
         return;
       }
       const mode = String(backend.install_mode || "");
       // Older backends predate install_mode — keep the toggle usable there.
       const unsupportedInstall = Boolean(mode) && mode !== "git";
+      const isFrozen = mode === "frozen";
       const toggle = $("#autoUpdate");
       const interval = $("#autoUpdateInterval");
+      // The toggle governs auto-apply, which non-git installs can never do —
+      // frozen check-reminders run unconditionally on the backend side.
       if (toggle) toggle.disabled = unsupportedInstall;
       if (interval) interval.disabled = unsupportedInstall;
-      if (unsupportedInstall) {
+      if (isFrozen) {
+        const { text, tone } = describeFrozenUpdateStatus(backend);
+        line.dataset.tone = tone;
+        line.textContent = text;
+      } else if (unsupportedInstall) {
         line.dataset.tone = "error";
-        line.textContent = mode === "frozen"
-          ? "桌面安装包不支持后端自动更新，请下载并安装新版安装包获取更新。"
-          : "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
+        line.textContent = "当前安装方式不支持自动更新（需要 git 克隆的安装目录）。";
       } else {
         const { text, tone } = describeUpdateStatus(backend);
         line.dataset.tone = tone;
         line.textContent = text;
       }
       line.hidden = false;
+      // 立即检查 works on git checkouts AND frozen bundles (check-only there);
+      // 立即应用 only when a newer tag is ready to fast-forward on git; the
+      // download link replaces 立即应用 on frozen when a new installer exists.
+      const lockActions = unsupportedInstall && !isFrozen;
+      if (actions) actions.hidden = lockActions;
+      if (checkBtn) checkBtn.disabled = lockActions || backend.state === "checking" || backend.state === "applying";
+      if (applyBtn) {
+        const canApply = !unsupportedInstall && backend.state === "update_available" && Boolean(backend.latest_tag);
+        applyBtn.hidden = !canApply;
+        applyBtn.disabled = !canApply || backend.state === "applying";
+        if (canApply) applyBtn.dataset.tag = String(backend.latest_tag);
+      }
+      if (downloadLink) {
+        const showDownload = isFrozen && backend.state === "update_available";
+        downloadLink.hidden = !showDownload;
+        if (showDownload) {
+          downloadLink.href = backend.latest_tag
+            ? `https://github.com/whiteguo233/OpenBiliClaw/releases/tag/${encodeURIComponent(String(backend.latest_tag))}`
+            : "https://github.com/whiteguo233/OpenBiliClaw/releases";
+        }
+      }
     }
 
     async function refreshUpdateStatus() {
       const line = $("#updateStatusLine");
+      wireUpdateActions();
       try {
         const payload = await requestJson(ENDPOINTS.updateStatus);
         renderUpdateStatus(payload?.backend || null);
       } catch {
         if (line) line.hidden = true;
+      }
+    }
+
+    // Wire the 立即检查 / 立即应用 buttons once. Manual check runs /api/update/check
+    // (ignores the auto-update toggle); apply posts the latest tag and the backend
+    // fast-forwards + restarts — the runtime-stream events refresh the line live.
+    function wireUpdateActions() {
+      const checkBtn = $("#updateCheckBtn");
+      const applyBtn = $("#updateApplyBtn");
+      if (checkBtn && !checkBtn.dataset.wired) {
+        checkBtn.dataset.wired = "1";
+        checkBtn.addEventListener("click", async () => {
+          const prev = checkBtn.textContent;
+          checkBtn.disabled = true;
+          checkBtn.textContent = "检查中…";
+          try {
+            const payload = await requestJsonStrict(ENDPOINTS.updateCheck, {
+              method: "POST",
+              timeoutMs: 60000,
+              headers: { "Content-Type": "application/json" },
+              body: "{}"
+            });
+            renderUpdateStatus(payload?.backend || null);
+          } catch (error) {
+            showToast("检查更新失败：" + (error?.message || "未知错误"));
+          } finally {
+            checkBtn.textContent = prev;
+            checkBtn.disabled = false;
+          }
+        });
+      }
+      if (applyBtn && !applyBtn.dataset.wired) {
+        applyBtn.dataset.wired = "1";
+        applyBtn.addEventListener("click", async () => {
+          const tag = applyBtn.dataset.tag || "";
+          if (!tag) return;
+          const prev = applyBtn.textContent;
+          applyBtn.disabled = true;
+          applyBtn.textContent = "应用中…";
+          try {
+            const body = await requestJsonStrict(ENDPOINTS.updateApply, {
+              method: "POST",
+              timeoutMs: 60000,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: "backend", tag })
+            });
+            if (body?.accepted) {
+              showToast("已开始更新，后端将在完成后自动重启…");
+            } else {
+              const reason = body?.reason;
+              showToast("更新未开始：" + (UPDATE_REASON_TEXT[reason] || reason || "未知原因"));
+            }
+          } catch (error) {
+            const reason = error?.details?.reason;
+            showToast("更新未开始：" + (UPDATE_REASON_TEXT[reason] || reason || error?.message || "未知原因"));
+          } finally {
+            applyBtn.textContent = prev;
+            applyBtn.disabled = false;
+            void refreshUpdateStatus();
+          }
+        });
       }
     }
 

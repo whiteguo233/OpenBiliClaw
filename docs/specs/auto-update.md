@@ -237,6 +237,7 @@ Settings page “版本与更新” controls:
 - Toggle: `自动更新`, persisted as `scheduler.auto_update_enabled`, default off.
 - Numeric input: `检查间隔（小时）`, persisted as `scheduler.auto_update_check_interval_hours`, default `6`.
 - Backend status row: current version, latest version, state, last check time, last error, `立即检查`, and `立即应用` when safe.
+- Frozen desktop installs (`install_mode="frozen"`): the toggle and interval stay disabled (they govern auto-apply, which frozen can never do), but the backend runs an unconditional check-only loop against `desktop-v*` installer tags. The status row shows "发现新版安装包 vX.Y.Z…请下载新版安装包" with a download link to the discovered `desktop-v*` release tag, `立即检查` stays available, `立即应用` stays hidden, and `backend_update_available` events additionally raise a toast reminder.
 - Optional plugin version row: current extension version read locally from the extension manifest/runtime and a fixed link to the GitHub Releases page. This row must be informational only; it does not detect install channel, does not call backend update APIs, does not ask the backend to echo the extension version through config/status APIs, and does not claim to manage plugin updates. Store-installed users receive browser-native updates; the GitHub link is only a fallback / release-history entry.
 
 Opening the toggle should make the consequence explicit: scheduled backend updates may run `git fetch`, fast-forward to a trusted `backend-v*` tag, sync dependencies, and restart the backend process. The copy must not imply that enabling this switch updates the browser extension.
@@ -264,7 +265,7 @@ Backend update UX is a passive settings/status row in v1, not a recommendation-p
 - Managing CRX private keys or Firefox signing credentials.
 - Enterprise policy installation.
 - Docker image self-update. Docker users continue to run `git pull && docker compose up -d --build` or a future image release flow.
-- Backend desktop package auto-update. Current policy says backend desktop packages are not published.
+- Backend desktop package self-APPLY. Desktop installers are published under `desktop-v*` tags, but a frozen bundle can never self-apply (the binary is the code; `request_apply` refuses non-git installs with `unsupported_install_mode`). Frozen installs run a check-only reminder loop against `desktop-v*` installer tags and guide the user to download the new installer — see Settings UX.
 - Extension self-modification, writing into browser profile extension directories, or silent sideload replacement.
 - Rollback after code execution. The updater may refuse unsafe states, but does not promise transactional rollback of arbitrary Python package installs.
 

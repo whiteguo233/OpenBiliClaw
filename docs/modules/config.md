@@ -421,8 +421,11 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `trending_refresh_hours` | int | `3` | `trending` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
 | `explore_refresh_hours` | int | `12` | `explore` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
 | `discovery_limit` | int | `30` | 单轮 discovery wave 的候选上限；允许范围 `1..60` |
+| `delight_queue_limit` | int | `20` | 惊喜推荐队列默认加载数量；允许范围 `1..100`。桌面 Web、移动 Web 和浏览器插件默认调用 `/api/delight/pending-batch` 时共享该值，显式 query `limit` 可临时覆盖 |
 | `proactive_push_interval_seconds` | int | `120` | 主动推荐 / probe 推送循环间隔；小于 `30` 时回退默认值 |
 | `speculator_idle_interval_minutes` | int | `30` | `ProfileUpdatePipeline` 空闲时检查猜测兴趣生命周期的间隔；小于 `5` 时回退默认值 |
+| `profile_consolidation_enabled` | bool | `true` | 是否启用 12 小时画像整理（LLM 合并重复的喜欢 / 讨厌主题，见 soul 模块 `ProfileConsolidator`） |
+| `profile_consolidation_interval_hours` | int | `12` | 画像整理的最小间隔（小时）；输入未变化（digest 相同）或簇都已判过（no-merge 记忆）时该轮零 LLM 调用 |
 | `speculation_interval_minutes` | int | `10` | 猜测兴趣推测的运行间隔（分钟） |
 | `speculation_ttl_days` | int | `3` | 猜测兴趣的默认存活天数 |
 | `speculation_cooldown_days` | int | `7` | 猜测兴趣被否定后的冷却天数 |

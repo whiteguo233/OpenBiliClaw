@@ -902,6 +902,10 @@ def create_app(
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
+            # Update status + manual check/apply: a backend that can't build its
+            # LLM registry is exactly when pulling a fix-carrying release matters,
+            # so the recovery surface must stay reachable while degraded.
+            or path in ("/api/update-status", "/api/update/check", "/api/update/apply")
             or (path == "/api/config" and method in {"GET", "PUT"})
             or path.startswith("/api/auth")
             or path.startswith("/m")
@@ -3193,9 +3197,11 @@ def create_app(
         return PendingDelightResponse(item=PendingDelightOut(**item))
 
     @app.get("/api/delight/pending-batch")
-    async def pending_delight_batch(limit: int = 20) -> dict[str, Any]:
-        """Return up to ``limit`` un-notified delight candidates.
+    async def pending_delight_batch(limit: int | None = None) -> dict[str, Any]:
+        """Return un-notified delight candidates.
 
+        When ``limit`` is omitted the shared
+        ``scheduler.delight_queue_limit`` setting decides the queue size.
         Unlike ``/api/delight/pending`` this ignores the 4-hour
         notification cooldown — it's intended for the popup to
         re-hydrate the full queue on init, not for active push gating.
@@ -3210,9 +3216,15 @@ def create_app(
         """
         from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 
+        configured_limit = getattr(
+            getattr(getattr(ctx, "config", None), "scheduler", None),
+            "delight_queue_limit",
+            20,
+        )
+        requested_limit = configured_limit if limit is None else limit
         rows = ctx.database.get_delight_candidates(
             min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
-            limit=max(1, min(50, int(limit))),
+            limit=max(1, min(100, int(requested_limit))),
             include_liked=True,
         )
         # Reuse the same disliked-topic filter as get_pending_delight by
@@ -6507,6 +6519,7 @@ def create_app(
                 trending_refresh_hours=cfg.scheduler.trending_refresh_hours,
                 explore_refresh_hours=cfg.scheduler.explore_refresh_hours,
                 discovery_limit=cfg.scheduler.discovery_limit,
+                delight_queue_limit=cfg.scheduler.delight_queue_limit,
                 proactive_push_interval_seconds=cfg.scheduler.proactive_push_interval_seconds,
                 speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
                 speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
@@ -6824,6 +6837,7 @@ def create_app(
         runtime components so the new settings take effect immediately.
         """
         from openbiliclaw.config import (
+            _DEFAULT_DELIGHT_QUEUE_LIMIT,
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
             _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
@@ -7043,6 +7057,7 @@ def create_app(
                 "trending_refresh_hours": (_DEFAULT_TRENDING_REFRESH_HOURS, 1, None),
                 "explore_refresh_hours": (_DEFAULT_EXPLORE_REFRESH_HOURS, 1, None),
                 "discovery_limit": (_DEFAULT_DISCOVERY_LIMIT, 1, 60),
+                "delight_queue_limit": (_DEFAULT_DELIGHT_QUEUE_LIMIT, 1, 100),
                 "proactive_push_interval_seconds": (
                     _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
                     30,
@@ -7076,6 +7091,7 @@ def create_app(
                 "trending_refresh_hours",
                 "explore_refresh_hours",
                 "discovery_limit",
+                "delight_queue_limit",
                 "proactive_push_interval_seconds",
                 "speculator_idle_interval_minutes",
                 "speculation_interval_minutes",
