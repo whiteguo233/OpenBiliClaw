@@ -636,6 +636,23 @@ class RuntimeContext:
                 llm_service=new_llm_service,
             )
 
+        # P1.6: unified keyword planner — deficit-pulled merged keyword
+        # generation. Built as its OWN object (the controller has no
+        # llm_service field) holding llm_service + database + config, then
+        # passed to the controller, which launches its loop in run_forever and
+        # injects its own deficit / catalyst口径. Flag-off (default) → the loop
+        # no-ops → zero behavior change.
+        from openbiliclaw.runtime.keyword_planner import KeywordPlanner
+
+        new_keyword_planner = KeywordPlanner(
+            llm_service=new_llm_service,
+            database=self.database,
+            config=new_config,
+            soul_engine=new_soul_engine,
+            pool_target_count=new_config.scheduler.pool_target_count,
+            signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
+        )
+
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
             database=self.database,
@@ -643,6 +660,7 @@ class RuntimeContext:
             discovery_engine=new_discovery_engine,
             recommendation_engine=new_recommendation_engine,
             discovery_candidate_pipeline=new_candidate_pipeline,
+            keyword_planner=new_keyword_planner,
             pool_target_count=new_config.scheduler.pool_target_count,
             pool_source_shares=_pool_source_shares_from_config(new_config),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),

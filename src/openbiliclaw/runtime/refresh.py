@@ -282,6 +282,14 @@ class ContinuousRefreshController:
     # when this is ``None`` so existing tests that build the controller
     # directly without injecting a registry keep working.
     task_registry: BackgroundTaskRegistry | None = None
+    # P1.6: unified keyword planner (deficit-pulled merged keyword generation).
+    # Constructed as its own object in ``api/runtime_context.py`` because the
+    # controller holds no ``llm_service``. Its loop is launched by
+    # ``run_forever``; with the feature flag off (default) the loop is a pure
+    # no-op, so wiring it in is zero behavior change. ``None`` (the default,
+    # used by tests that build the controller directly) means the planner loop
+    # returns immediately.
+    keyword_planner: Any | None = None
     _manual_refresh_task: asyncio.Task[None] | None = None
     _discovery_drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
@@ -900,6 +908,7 @@ class ContinuousRefreshController:
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
             ├─ _loop_x_producer()        60s   X (Twitter) discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
+            ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_image_cache_cleanup() 6h  prune consumed+unsaved covers
             └─ _loop_cover_prefetch()    60s   cache fresh-token covers (XHS)
         """
@@ -907,6 +916,16 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self.prepare_delight_candidates()
         self._warn_on_stranded_source_shares()
+        # P1.6: give the keyword planner the controller's deficit / catalyst
+        # 口径 so it shares the exact in-flight + raw-headroom accounting that
+        # drives pool replenishment (it never recounts visible pool rows).
+        if self.keyword_planner is not None:
+            with suppress(Exception):
+                self.keyword_planner.bind_deficit_source(self)
+            bind_soul = getattr(self.keyword_planner, "bind_soul_engine", None)
+            if callable(bind_soul):
+                with suppress(Exception):
+                    bind_soul(self.soul_engine)
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
@@ -916,6 +935,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_x_producer()),
             asyncio.create_task(self._loop_proactive_push()),
+            asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
             asyncio.create_task(self._loop_cover_prefetch()),
         ]
@@ -1143,6 +1163,34 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self._tick_x_producer()
             await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_keyword_planner(self) -> None:
+        """P1.6: deficit-pulled merged keyword generation (flag-gated).
+
+        Owns its own poll cadence (``planner_poll_seconds``) so a slow merged
+        LLM call never blocks the 60s producer / refresh loops. The controller
+        drives the planner per tick (rather than awaiting ``planner.run()``) so
+        it can apply the same ``_llm_work_allowed`` gate every other LLM loop
+        honours — pausing planning while a guided init runs or the extension is
+        away. When ``keyword_planner`` is ``None`` (tests building the
+        controller directly) or the feature flag is off, this is a no-op.
+        """
+        planner = self.keyword_planner
+        if planner is None:
+            return
+        poll_seconds = max(1, int(getattr(planner, "poll_seconds", 120)))
+        while True:
+            if not bool(getattr(planner, "enabled", False)):
+                await asyncio.sleep(poll_seconds)
+                continue
+            if not self._llm_work_allowed():
+                await asyncio.sleep(poll_seconds)
+                continue
+            with suppress(Exception):
+                planner.reclaim_leases()
+            with suppress(Exception):
+                await planner.run_once()
+            await asyncio.sleep(poll_seconds)
 
     async def _loop_proactive_push(self) -> None:
         """Delight + interest probe push — lightweight, never blocks.
@@ -2087,6 +2135,52 @@ class ContinuousRefreshController:
 
     def _source_deficit(self, source_family: str) -> int:
         return self._source_requested_count(source_family)
+
+    # ── keyword planner deficit / catalyst口径 (P1.6) ─────────────────────
+    # The unified keyword planner reuses these so its "real deficit" shares the
+    # exact in-flight + raw-headroom accounting that drives pool replenishment,
+    # instead of naively counting visible pool rows.
+
+    def keyword_planner_real_deficit(self, platform: str) -> int:
+        """Real search deficit for one platform (in-flight + raw headroom).
+
+        Wraps ``_source_requested_count`` — the same口径 used by
+        ``_build_source_replenishment_plan`` (available_deficit ∧ raw_headroom
+        ∧ global_available_deficit). ``> 0`` means the platform genuinely needs
+        more search supply.
+        """
+        try:
+            return int(self._source_requested_count(str(platform).strip()))
+        except Exception:
+            logger.exception("keyword_planner_real_deficit failed for %s", platform)
+            return 0
+
+    def keyword_planner_bilibili_catalyst(self) -> bool:
+        """B站's extra catalyst: pool-below-target OR ≥ signal-event threshold.
+
+        Mirrors ``_build_refresh_plan`` — B站 search regenerates keywords when
+        the pool is below target (its four strategies fire together) or when
+        ≥ ``signal_event_threshold`` signal events have queued (profile may have
+        just drifted), even if its keyword cache is not below the low watermark.
+        """
+        try:
+            pool_available = self.database.count_pool_candidates(
+                xhs_self_nickname=self._xhs_self_nickname()
+            )
+        except TypeError:
+            pool_available = self.database.count_pool_candidates()
+        except Exception:
+            logger.exception("keyword_planner_bilibili_catalyst pool count failed")
+            return False
+        if int(pool_available) < self.pool_target_count:
+            return True
+        try:
+            state = self.memory_manager.load_discovery_runtime_state()
+            pending_events = self._pending_signal_events_count(state)
+        except Exception:
+            logger.exception("keyword_planner_bilibili_catalyst signal count failed")
+            return False
+        return pending_events >= self.signal_event_threshold
 
     def _source_requested_count(
         self,
