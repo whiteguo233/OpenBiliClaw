@@ -133,7 +133,10 @@ CREATE TABLE IF NOT EXISTS content_cache (
     feedback_at TIMESTAMP,
     source      TEXT,                -- Which discovery strategy found it
     body_text   TEXT DEFAULT '',     -- Full text body for text-first sources (X tweet/thread)
-    content_type TEXT DEFAULT 'video'  -- Content shape: "video"|"note"|"tweet"|"thread"
+    content_type TEXT DEFAULT 'video',  -- Content shape: "video"|"note"|"tweet"|"thread"
+    -- P1.8 yield provenance: discovery_keywords.id that produced this row;
+    -- NULL for legacy / non-search / flag-off content.
+    source_keyword_id INTEGER
 );
 
 -- Unified raw discovery candidate queue.
@@ -164,6 +167,7 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     candidate_tier        TEXT NOT NULL DEFAULT 'primary',
     score_threshold       REAL NOT NULL DEFAULT 0.0,
     raw_payload           TEXT NOT NULL DEFAULT '{}',
+    source_keyword_id     INTEGER,
     topic_key             TEXT NOT NULL DEFAULT '',
     topic_group           TEXT NOT NULL DEFAULT '',
     style_key             TEXT NOT NULL DEFAULT '',
@@ -990,11 +994,12 @@ class Database:
                 source_platform,
                 author_name,
                 body_text,
-                content_type
+                content_type,
+                source_keyword_id
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?
+                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -1082,6 +1087,13 @@ class Database:
                     NULLIF(excluded.content_type, ''),
                     content_cache.content_type,
                     'video'
+                ),
+                -- P1.8: keep the producing-keyword provenance once set; a later
+                -- re-ingest from a source that doesn't carry the id (NULL) must
+                -- not wipe it.
+                source_keyword_id = COALESCE(
+                    excluded.source_keyword_id,
+                    content_cache.source_keyword_id
                 )
             """,
             (
@@ -1111,8 +1123,24 @@ class Database:
                 kwargs.get("author_name", ""),
                 kwargs.get("body_text", ""),
                 kwargs.get("content_type", "video") or "video",
+                self._coerce_source_keyword_id(kwargs.get("source_keyword_id")),
             ),
         )
+
+    @staticmethod
+    def _coerce_source_keyword_id(value: Any) -> int | None:
+        """Normalize a ``source_keyword_id`` kwarg to ``int`` or ``None``.
+
+        Tolerates the field being absent / blank / non-numeric so any caller
+        that has not been threaded through the P1.8 provenance path stays a
+        plain NULL write (no behavior change vs. the pre-P1.8 schema).
+        """
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _candidate_value(candidate: object, key: str, default: Any = "") -> Any:
@@ -1187,10 +1215,12 @@ class Database:
                     tags,
                     candidate_tier,
                     score_threshold,
-                    raw_payload
+                    raw_payload,
+                    source_keyword_id
                 )
                 VALUES (
-                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1216,6 +1246,9 @@ class Database:
                     str(self._candidate_value(candidate, "candidate_tier", "primary") or "primary"),
                     score_threshold,
                     raw_payload,
+                    self._coerce_source_keyword_id(
+                        self._candidate_value(candidate, "source_keyword_id", None)
+                    ),
                 ),
             )
             if source_platform:
@@ -3693,6 +3726,9 @@ class Database:
             "author_name": "TEXT DEFAULT ''",
             "body_text": "TEXT DEFAULT ''",
             "content_type": "TEXT DEFAULT 'video'",
+            # P1.8 yield provenance: the discovery_keywords.id that produced this
+            # row (NULL for legacy / non-search / flag-off). Nullable, additive.
+            "source_keyword_id": "INTEGER",
         }
         added = False
         for column_name, column_type in required_columns.items():
@@ -3715,6 +3751,8 @@ class Database:
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "body_text": "TEXT NOT NULL DEFAULT ''",
+            # P1.8 yield provenance: nullable, additive (existing rows stay NULL).
+            "source_keyword_id": "INTEGER",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
@@ -3849,6 +3887,19 @@ class Database:
                 owner        TEXT NOT NULL DEFAULT '',
                 locked_until TIMESTAMP NOT NULL,
                 updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- P1.8 yield ledger. One row per (keyword, admitted content) the
+            -- keyword produced. The composite primary key makes the yield
+            -- backfill idempotent: a retried / out-of-order / duplicate admit
+            -- of the SAME (keyword, content) is an INSERT-OR-IGNORE no-op, so
+            -- ``discovery_keywords.yield_count`` is only ever bumped once per
+            -- distinct produced content. Decoupled from ``used`` (P1.7).
+            CREATE TABLE IF NOT EXISTS discovery_keyword_yield (
+                keyword_id  INTEGER NOT NULL,
+                content_id  TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (keyword_id, content_id)
             );
         """)
 
@@ -4226,6 +4277,93 @@ class Database:
               {platform_clause}
             """,
             params,
+        )
+        return int(cursor.rowcount or 0)
+
+    # ── Discovery keyword yield (P1.8 admit-time backfill) ───────
+
+    def increment_keyword_yield(self, keyword_id: int, content_id: str) -> bool:
+        """Idempotently credit one admitted content to the keyword that produced it.
+
+        Called at admission (the single ``_cache_results`` convergence) for every
+        pool item whose ``source_keyword_id`` is set. Idempotency is keyed on
+        ``(keyword_id, content_id)`` via the ``discovery_keyword_yield`` ledger:
+        the ledger ``INSERT OR IGNORE`` only fires once per distinct produced
+        content, so a retried / partial / out-of-order admit of the same item
+        does **not** double-count. ``yield_count`` is bumped only on a genuinely
+        new ledger row. Decoupled from ``used`` (P1.7) — a word can be ``used``
+        and still accrue yield later.
+
+        Returns True if this call recorded a new yield (counter bumped), False
+        if it was a duplicate / invalid no-op.
+        """
+        kid = int(keyword_id)
+        cid = str(content_id or "").strip()
+        if kid <= 0 or not cid:
+            return False
+        before = self.conn.total_changes
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO discovery_keyword_yield (keyword_id, content_id)
+            VALUES (?, ?)
+            """,
+            (kid, cid),
+        )
+        if self.conn.total_changes == before:
+            # Ledger row already existed → this (keyword, content) was already
+            # credited. Do not touch the counter.
+            return False
+        self._execute_write(
+            "UPDATE discovery_keywords SET yield_count = yield_count + 1 WHERE id = ?",
+            (kid,),
+        )
+        return True
+
+    def keyword_yield_count(self, keyword_id: int) -> int:
+        """Return the stored ``yield_count`` for a keyword (0 if unknown)."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            "SELECT yield_count FROM discovery_keywords WHERE id = ?",
+            (int(keyword_id),),
+        ).fetchone()
+        return int(row["yield_count"]) if row is not None else 0
+
+    def retire_zero_yield_keywords(
+        self,
+        platform: str,
+        *,
+        min_age_minutes: float = 60.0,
+    ) -> int:
+        """Retire ``used`` words that have produced nothing, conservatively.
+
+        A word that has been ``used`` for at least ``min_age_minutes`` and still
+        has ``yield_count == 0`` is moved to ``expired`` so the recycler does not
+        keep re-pending a search term that demonstrably never lands content.
+
+        The age floor is the safety valve against retiring a *freshly* used word
+        whose admit is still pending: inline-admit credits yield synchronously,
+        but fetch-only (X / YouTube) and async (XHS) words are marked ``used`` at
+        handoff and only accrue yield once the shared pipeline admits — minutes
+        later. ``min_age_minutes`` must comfortably exceed that admit latency.
+        Only ``used`` rows are touched; in-flight / pending / already-expired
+        rows are left alone. Returns the number of rows retired.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(minutes=max(0.0, min_age_minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'expired'
+            WHERE platform = ?
+              AND status = 'used'
+              AND yield_count = 0
+              AND used_at IS NOT NULL
+              AND used_at <= ?
+            """,
+            (platform.strip(), cutoff),
         )
         return int(cursor.rowcount or 0)
 

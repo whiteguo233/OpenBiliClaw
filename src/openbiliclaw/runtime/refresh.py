@@ -102,6 +102,22 @@ def _call_accepts_keywords(fn: Any) -> bool:
     )
 
 
+def _call_accepts_keyword_ids(fn: Any) -> bool:
+    """Return whether a discovery callable accepts a ``keyword_ids=`` keyword.
+
+    P1.8 parallel of :func:`_call_accepts_keywords` for the direct-engine B站
+    search fallback so the keyword→id provenance map is only forwarded to
+    engines that declare it; stubs without it stay byte-compatible.
+    """
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "keyword_ids" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
 def _string_state_map(value: object) -> dict[str, str]:
     """Normalize a JSON object field into a string-to-string map."""
     if not isinstance(value, dict):
@@ -1642,6 +1658,12 @@ class ContinuousRefreshController:
             injected_keywords = (
                 [item.keyword for item in claimed_search] if claimed_search else None
             )
+            # P1.8 yield provenance: ``query → keyword id`` for the claimed words
+            # so each produced candidate carries ``source_keyword_id`` for
+            # admit-time yield backfill. Empty / None on the flag-off path.
+            injected_keyword_ids = (
+                {item.keyword: int(item.id) for item in claimed_search} if claimed_search else None
+            )
 
             pipeline = self.discovery_candidate_pipeline
             discovered: list[Any] = []
@@ -1660,6 +1682,8 @@ class ContinuousRefreshController:
                     }
                     if injected_keywords is not None:
                         produce_kwargs["keywords"] = injected_keywords
+                    if injected_keyword_ids:
+                        produce_kwargs["keyword_ids"] = injected_keyword_ids
                     produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
                     drain_result = await pipeline.drain_pending(
                         profile=profile,
@@ -1682,6 +1706,8 @@ class ContinuousRefreshController:
                         discover_kwargs["pool_snapshot"] = pool_snapshot
                     if injected_keywords is not None and _call_accepts_keywords(discover_fn):
                         discover_kwargs["keywords"] = injected_keywords
+                    if injected_keyword_ids and _call_accepts_keyword_ids(discover_fn):
+                        discover_kwargs["keyword_ids"] = injected_keyword_ids
                     discovered = await discover_fn(profile, **discover_kwargs)
                     topic_items = discovered
                     discovered_count = len(discovered)

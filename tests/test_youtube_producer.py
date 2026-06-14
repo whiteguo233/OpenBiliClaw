@@ -429,9 +429,10 @@ from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator  # noqa: 
 
 @dataclass
 class _QueriesDiscover:
-    """Records the injected ``queries`` per strategy run."""
+    """Records the injected ``queries`` (+ P1.8 ``keyword_ids``) per strategy run."""
 
     calls: list[tuple[str, list[str] | None]] = field(default_factory=list)
+    keyword_id_calls: list[dict[str, int] | None] = field(default_factory=list)
     items: int = 2
 
     async def __call__(
@@ -442,8 +443,10 @@ class _QueriesDiscover:
         unit_budget: int,
         result_limit: int,
         queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> YoutubeStrategyRunResult:
         self.calls.append((strategy, list(queries) if queries is not None else None))
+        self.keyword_id_calls.append(dict(keyword_ids) if keyword_ids is not None else None)
         n = min(self.items, result_limit)
         return YoutubeStrategyRunResult(
             items=[object()] * n, units_used=unit_budget, source_counts={strategy: n}
@@ -505,6 +508,12 @@ async def test_youtube_flag_on_injects_queries_and_marks_used(db: Database) -> N
     assert result["reason"] == "ok"
     # Claimed words injected as queries into yt_search.
     assert discover.calls == [("yt_search", ["py async", "rust gpu"])]
+    # P1.8: each injected query also carries its producing keyword id so the
+    # admit-time yield backfill can credit the right word.
+    threaded_ids = discover.keyword_id_calls[0]
+    assert threaded_ids is not None
+    assert set(threaded_ids) == {"py async", "rust gpu"}
+    assert all(isinstance(v, int) and v > 0 for v in threaded_ids.values())
     # Fetch-only handoff to the pipeline → both words USED.
     assert _yt_statuses(db) == {"py async": "used", "rust gpu": "used"}
 

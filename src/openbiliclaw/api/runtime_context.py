@@ -171,6 +171,7 @@ def build_youtube_discovery_producer(
         unit_budget: int,
         result_limit: int,
         queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> YoutubeStrategyRunResult:
         strategies = build_youtube_discovery_strategies(
             config=config,
@@ -194,6 +195,10 @@ def build_youtube_discovery_producer(
         inject: dict[str, Any] = {}
         if queries is not None:
             inject["keywords"] = list(queries)
+        # P1.8 yield provenance: forward the keyword→id map so the engine stamps
+        # each produced item's ``source_keyword_id`` for admit-time backfill.
+        if keyword_ids:
+            inject["keyword_ids"] = dict(keyword_ids)
         produce_fn = getattr(discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
             raw_items = await produce_fn(

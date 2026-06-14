@@ -115,6 +115,9 @@ class YoutubeDiscoveryProducer:
             extra: dict[str, Any] = {}
             if strategy == _YT_SEARCH and claimed_search:
                 extra["queries"] = [item.keyword for item in claimed_search]
+                # P1.8: thread the producing word's id onto each candidate for
+                # admit-time yield backfill.
+                extra["keyword_ids"] = {item.keyword: int(item.id) for item in claimed_search}
             try:
                 result = await self.discover(
                     profile,

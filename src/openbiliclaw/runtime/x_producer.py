@@ -130,7 +130,12 @@ class XDiscoveryProducer:
             ):
                 claimed_search = coordinator.claim(_PLATFORM_TWITTER)
                 if claimed_search:
-                    search_config = {"queries": [item.keyword for item in claimed_search]}
+                    # P1.8: thread the producing keyword's id onto each candidate
+                    # so admit-time yield backfill credits the right word.
+                    search_config = {
+                        "queries": [item.keyword for item in claimed_search],
+                        "keyword_ids": {item.keyword: int(item.id) for item in claimed_search},
+                    }
                     items += await self._run_strategy(
                         SEARCH, profile, config=search_config, limit=requested_limit
                     )

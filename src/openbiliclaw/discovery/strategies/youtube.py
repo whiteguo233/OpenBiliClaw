@@ -95,6 +95,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
         limit: int = 20,
         *,
         queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         if queries is None:
             resolved_queries = await self._generate_queries(profile)
@@ -112,14 +113,18 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
 
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
-        for batch in raw_batches:
+        # ``raw_batches[i]`` corresponds to ``queries[i]`` (gather preserves
+        # order) → the producing query (and its P1.8 keyword id) is recoverable.
+        for query, batch in zip(queries, raw_batches, strict=True):
             if isinstance(batch, BaseException):
                 logger.warning("yt_search batch failed: %s", batch)
                 continue
+            keyword_id = keyword_ids.get(query) if keyword_ids else None
             for raw in batch:
                 content = normalize_yt_video(raw, source_strategy=self.name)
                 if content is None or content.content_id in seen:
                     continue
+                content.source_keyword_id = keyword_id
                 seen.add(content.content_id)
                 candidates.append(content)
 

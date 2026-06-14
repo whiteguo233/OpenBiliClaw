@@ -112,6 +112,10 @@ class DouyinDirectStrategy(DiscoveryStrategy):
     database: Database | None = None
     sources: tuple[str, ...] = ("search", "hot", "feed")
     seed_keywords: tuple[str, ...] = ()
+    # P1.8 yield provenance: ``keyword text → discovery_keywords.id`` for the
+    # injected search words. Empty for legacy runs. Search candidates produced
+    # by a mapped keyword carry its id so admission can backfill yield.
+    seed_keyword_ids: dict[str, int] = field(default_factory=dict)
     creator_sec_uids: tuple[str, ...] = ()
     keywords_per_run: int = 5
     per_source_limit: int = 20
@@ -124,7 +128,10 @@ class DouyinDirectStrategy(DiscoveryStrategy):
         return "douyin_direct"
 
     async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
-        raw_items: list[tuple[str, dict[str, object]]] = []
+        # Each raw item carries (source_strategy, raw_dict, source_keyword_id).
+        # Only search items get a non-None keyword id (P1.8 yield provenance);
+        # hot / feed / creator items are attribution-free (None).
+        raw_items: list[tuple[str, dict[str, object], int | None]] = []
         # Only synthesize / LLM-generate search keywords when the search source
         # is active. hot/feed/creator-only modes must NOT burn an LLM call (or
         # fall back to interest names) for keywords they will never search.
@@ -141,11 +148,12 @@ class DouyinDirectStrategy(DiscoveryStrategy):
                 or "dy-direct-search"
             )
             for keyword in keywords:
+                keyword_id = self.seed_keyword_ids.get(keyword) if self.seed_keyword_ids else None
                 for item in await self.client.search_aweme(
                     keyword,
                     limit=min(self.per_source_limit, max(1, limit)),
                 ):
-                    raw_items.append((search_source_strategy, item))
+                    raw_items.append((search_source_strategy, item, keyword_id))
 
         if "hot" in self.sources:
             hot_limit = min(self.per_source_limit, max(1, limit))
@@ -153,7 +161,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
                 getattr(self.client, "hot_source_strategy", "dy-direct-hot") or "dy-direct-hot"
             )
             for item in await self.client.get_hot_board(limit=hot_limit):
-                raw_items.append((hot_source_strategy, item))
+                raw_items.append((hot_source_strategy, item, None))
 
         if "feed" in self.sources:
             feed_limit = min(self.per_source_limit, max(1, limit))
@@ -161,7 +169,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
                 getattr(self.client, "feed_source_strategy", "dy-direct-feed") or "dy-direct-feed"
             )
             for item in await self.client.get_recommend_feed(limit=feed_limit):
-                raw_items.append((feed_source_strategy, item))
+                raw_items.append((feed_source_strategy, item, None))
 
         if "creator" in self.sources:
             for sec_uid in self.creator_sec_uids:
@@ -169,7 +177,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
                     sec_uid,
                     limit=min(self.per_source_limit, max(1, limit)),
                 ):
-                    raw_items.append(("dy-direct-creator", item))
+                    raw_items.append(("dy-direct-creator", item, None))
 
         candidates = self._normalize_and_dedupe(raw_items)
         if not candidates:
@@ -248,17 +256,21 @@ class DouyinDirectStrategy(DiscoveryStrategy):
 
     @staticmethod
     def _normalize_and_dedupe(
-        raw_items: list[tuple[str, dict[str, object]]],
+        raw_items: list[tuple[str, dict[str, object], int | None]],
     ) -> list[DiscoveredContent]:
         seen: set[str] = set()
         normalized: list[DiscoveredContent] = []
-        for source_strategy, item in raw_items:
+        for source_strategy, item, source_keyword_id in raw_items:
             content = normalize_aweme_item(item, source_strategy=source_strategy)
             if content is None:
                 continue
             key = content.content_id or content.bvid
             if key in seen:
                 continue
+            # P1.8 yield provenance — search items carry the producing keyword's
+            # id; hot/feed/creator pass None (attribution-free).
+            if source_keyword_id is not None:
+                content.source_keyword_id = source_keyword_id
             seen.add(key)
             normalized.append(content)
         return normalized

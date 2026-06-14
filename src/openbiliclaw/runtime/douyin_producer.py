@@ -119,6 +119,9 @@ class DouyinDiscoveryProducer:
             per_source_limit=per_source_limit,
             keywords_per_run=1,
             keywords=tuple(item.keyword for item in claimed) if claimed else (),
+            # P1.8: thread the producing word's id onto each search candidate for
+            # admit-time yield backfill.
+            keyword_ids={item.keyword: int(item.id) for item in claimed} if claimed else {},
             raise_on_budget=bool(claimed),
         )
         try:

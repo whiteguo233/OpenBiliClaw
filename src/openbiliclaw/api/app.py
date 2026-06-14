@@ -118,7 +118,10 @@ from openbiliclaw.runtime.image_cache import (
 from openbiliclaw.runtime.image_cache import (
     image_cache_key as _image_cache_key,
 )
-from openbiliclaw.runtime.keyword_fetch import mark_keyword_terminal_from_xhs_task
+from openbiliclaw.runtime.keyword_fetch import (
+    mark_keyword_terminal_from_xhs_task,
+    source_keyword_id_from_xhs_task,
+)
 from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
@@ -5205,6 +5208,8 @@ def create_app(
         notes: list[dict[str, Any]],
         page_type: str,
         self_info: dict[str, str] | None = None,
+        *,
+        source_keyword_id: int | None = None,
     ) -> int:
         """Enqueue xhs note metadata from the extension into discovery_candidates.
 
@@ -5213,6 +5218,12 @@ def create_app(
         through ``discovery_runtime_state`` and works against test
         stubs that haven't implemented the runtime-state API.  When
         ``None``, falls back to the persisted state.
+
+        ``source_keyword_id`` (P1.8) is the ``discovery_keywords.id`` carried on
+        the originating xhs *search* task payload. XHS is truly async, so the id
+        cannot be stamped at search time — it rides the task and is threaded onto
+        each ingested candidate here so admission can backfill the keyword's
+        yield. ``None`` for passive / observed / non-planner ingests.
         """
         from urllib.parse import urlparse
 
@@ -5262,6 +5273,7 @@ def create_app(
                 content_url=best_url,
                 source_platform="xiaohongshu",
                 author_name=author,
+                source_keyword_id=source_keyword_id,
             )
             writes.append(
                 discovered_content_to_candidate_write(
@@ -5500,7 +5512,22 @@ def create_app(
                 ctx.database.save_xhs_observed_urls(valid_urls, "task")
                 _backfill_xhs_tokens(ctx.database, valid_urls)
             if added_notes and not _init_busy:
-                enqueued = _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
+                # P1.8: a planner-driven xhs *search* task carries its
+                # ``source_keyword_id`` on the payload → thread it onto the
+                # ingested candidates so admission backfills the keyword's yield.
+                # Passive / non-search tasks have no id → plain None.
+                task_source_keyword_id = (
+                    source_keyword_id_from_xhs_task(task.get("payload_json"))
+                    if task is not None
+                    else None
+                )
+                enqueued = _cache_xhs_notes(
+                    ctx.database,
+                    added_notes,
+                    "task",
+                    self_info_now,
+                    source_keyword_id=task_source_keyword_id,
+                )
                 if enqueued:
                     asyncio.create_task(_drain_discovery_candidates_once())
             if task_type == "bootstrap_profile" and added_notes and not _skip_profile:

@@ -276,6 +276,11 @@ class DiscoveredContent:
     score_threshold: float = 0.0  # Strategy-specific admission floor for raw candidates
     body_text: str = ""  # tweet/thread full text; empty for video sources
     content_type: str = "video"  # shape: "video" | "note" | "tweet" | "thread"
+    # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
+    # that produced this item (unified keyword planner). ``None`` for every
+    # non-search / legacy / flag-off path — the admit-time yield backfill is a
+    # no-op then, so attribution stays opt-in and byte-compatible.
+    source_keyword_id: int | None = None
 
     def __post_init__(self) -> None:
         if not self.content_id and self.bvid:
@@ -318,6 +323,7 @@ class DiscoveredContent:
             "author_name": self.author_name or self.up_name,
             "body_text": self.body_text,
             "content_type": self.content_type,
+            "source_keyword_id": self.source_keyword_id,
         }
 
 
@@ -445,6 +451,18 @@ def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
     return _strategy_accepts_kwarg(fn, "pool_snapshot")
 
 
+def _strategy_accepts_keyword_ids(fn: Any) -> bool:
+    """Return whether a strategy discover callable declares ``keyword_ids=``.
+
+    P1.8 yield provenance: search sub-strategies that opt in declare an explicit
+    ``keyword_ids`` parameter (a ``keyword text → discovery_keywords.id`` map)
+    and stamp each produced item's ``source_keyword_id`` inside their per-keyword
+    loop. We forward the map ONLY to callables that declare it explicitly — never
+    via ``**kwargs`` — so non-search strategies + fakes stay byte-identical.
+    """
+    return _strategy_declares_param(fn, "keyword_ids")
+
+
 async def _call_strategy_discover(
     strategy: DiscoveryStrategy,
     profile: SoulProfile,
@@ -452,6 +470,7 @@ async def _call_strategy_discover(
     limit: int,
     pool_snapshot: Any | None,
     keywords: list[str] | None = None,
+    keyword_ids: dict[str, int] | None = None,
 ) -> list[DiscoveredContent]:
     discover_fn: Any = strategy.discover
     kwargs: dict[str, Any] = {"limit": limit}
@@ -465,6 +484,11 @@ async def _call_strategy_discover(
         inject_kwarg = _injected_keyword_kwarg(discover_fn)
         if inject_kwarg is not None:
             kwargs[inject_kwarg] = keywords
+    # P1.8: forward the parallel keyword→id map for yield attribution, but only
+    # to a strategy that explicitly opted in (declares ``keyword_ids``). Flag-off
+    # / non-injected callers pass ``None`` → never forwarded → no stamping.
+    if keyword_ids and _strategy_accepts_keyword_ids(discover_fn):
+        kwargs["keyword_ids"] = keyword_ids
     return cast("list[DiscoveredContent]", await discover_fn(profile, **kwargs))
 
 
@@ -543,6 +567,7 @@ class ContentDiscoveryEngine:
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
         keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Run discovery with selected (or all) strategies.
 
@@ -568,6 +593,11 @@ class ContentDiscoveryEngine:
                 unified keyword planner injection point). Non-search strategies
                 never declare the kwarg, so they are unaffected. When ``None``,
                 strategies generate their own keywords as before.
+            keyword_ids: Optional ``keyword text → discovery_keywords.id`` map
+                (P1.8 yield provenance) forwarded alongside ``keywords`` to
+                search sub-strategies that declare a ``keyword_ids`` kwarg, so
+                each produced item is stamped with the id of the word that
+                produced it. ``None`` keeps the path attribution-free.
 
         Returns:
             Combined, deduplicated, and scored list of discovered content.
@@ -588,6 +618,7 @@ class ContentDiscoveryEngine:
             strategy_limits=strategy_limits,
             pool_snapshot=pool_snapshot,
             keywords=keywords,
+            keyword_ids=keyword_ids,
         )
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
@@ -630,6 +661,7 @@ class ContentDiscoveryEngine:
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
         keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Fetch raw candidates without LLM evaluation or content_cache writes."""
 
@@ -650,6 +682,7 @@ class ContentDiscoveryEngine:
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
                 keywords=keywords,
+                keyword_ids=keyword_ids,
             )
         finally:
             _RAW_CANDIDATE_MODE.reset(token)
@@ -1594,6 +1627,7 @@ class ContentDiscoveryEngine:
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
         keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
         run_entries = [
@@ -1628,6 +1662,7 @@ class ContentDiscoveryEngine:
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
                         keywords=keywords,
+                        keyword_ids=keyword_ids,
                     )
                 finally:
                     logger.info(
@@ -1668,6 +1703,7 @@ class ContentDiscoveryEngine:
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
                         keywords=keywords,
+                        keyword_ids=keyword_ids,
                     )
                     for s, run_limit in search_entries
                 ]
@@ -2387,6 +2423,14 @@ class ContentDiscoveryEngine:
                     round_franchise_counts[franchise_key] = (
                         round_franchise_counts.get(franchise_key, 0) + 1
                     )
+                # P1.8 yield backfill — the ONE admission convergence. Every
+                # admitted pool item (inline-admit B站/抖音 here, and the shared
+                # candidate-pipeline X/YT/XHS/抖音 path which also funnels through
+                # ``cache_evaluated_results`` → ``_cache_results``) credits the
+                # keyword that produced it, idempotent on (keyword, content).
+                # Skipped (viewed / franchise-quota) items never reach here, so
+                # they correctly accrue no yield.
+                self._backfill_keyword_yield(item)
             except Exception:
                 logger.exception("Failed to cache discovered content: %s", item.bvid)
 
@@ -2418,6 +2462,28 @@ class ContentDiscoveryEngine:
                 # fall through silently rather than raise.
                 return
             loop.create_task(self._warm_mmr_embeddings(persisted))
+
+    def _backfill_keyword_yield(self, item: DiscoveredContent) -> None:
+        """Credit one admitted item to its producing keyword (P1.8), if any.
+
+        No-op when the item carries no ``source_keyword_id`` (every non-search /
+        legacy / flag-off item) or when the database does not expose the yield
+        DAO (old stubs). Best-effort: a yield-ledger failure must never abort an
+        otherwise-successful pool admission.
+        """
+        keyword_id = item.source_keyword_id
+        if keyword_id is None:
+            return
+        increment = getattr(self._database, "increment_keyword_yield", None)
+        if not callable(increment):
+            return
+        content_id = str(item.content_id or item.bvid or "").strip()
+        if not content_id:
+            return
+        try:
+            increment(int(keyword_id), content_id)
+        except Exception:
+            logger.debug("keyword yield backfill failed for id=%s", keyword_id, exc_info=True)
 
     async def _warm_mmr_embeddings(
         self,

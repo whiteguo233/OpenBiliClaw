@@ -200,6 +200,16 @@ def mark_keyword_terminal_from_xhs_task(
         logger.exception("keyword fetch: %s failed for id=%s", method, keyword_id)
 
 
+def source_keyword_id_from_xhs_task(payload_json: str | None) -> int | None:
+    """Public: read ``source_keyword_id`` off an xhs-task payload, or ``None``.
+
+    Used by the xhs task-result handler (P1.8) to thread the producing keyword's
+    id onto the candidates ingested from that task, so admission can backfill the
+    keyword's yield. Tolerates a missing / malformed / legacy payload.
+    """
+    return _extract_source_keyword_id(payload_json)
+
+
 def _extract_source_keyword_id(payload_json: str | None) -> int | None:
     """Parse ``source_keyword_id`` out of an xhs-task payload JSON blob."""
     if not payload_json:

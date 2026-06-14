@@ -194,6 +194,38 @@ class KeywordPlanner:
         if reclaimed:
             logger.info("keyword planner reclaimed %d leased keyword(s) to pending", reclaimed)
 
+    def _retire_min_age_minutes(self) -> float:
+        """Age floor before a 0-yield ``used`` word may be retired.
+
+        Must comfortably exceed the worst-case admit latency so a freshly-used
+        word whose yield is still pending (fetch-only X/YT, async XHS — marked
+        ``used`` at handoff, credited only once the shared pipeline admits) is
+        not retired prematurely. Reuse the (much wider) ``executing`` timeout so
+        even an in-flight XHS task's eventual admit lands before retirement.
+        """
+        claim_lease_minutes = float(self._discovery.claim_lease_minutes)
+        return max(60.0, claim_lease_minutes * _EXECUTING_TIMEOUT_MULTIPLIER)
+
+    def retire_zero_yield(self) -> int:
+        """Retire barren ``used`` words across all planner platforms (P1.8).
+
+        Best-effort; a retire failure on one platform never aborts the pass.
+        Returns the total number of rows retired (for observability / tests).
+        """
+        retire = getattr(self._db, "retire_zero_yield_keywords", None)
+        if not callable(retire):
+            return 0
+        min_age = self._retire_min_age_minutes()
+        total = 0
+        for platform in _PLANNER_PLATFORMS:
+            try:
+                total += int(retire(platform, min_age_minutes=min_age))
+            except Exception:
+                logger.exception("retire_zero_yield_keywords failed for %s", platform)
+        if total:
+            logger.info("keyword planner retired %d zero-yield keyword(s)", total)
+        return total
+
     # ── one planning pass ───────────────────────────────────────────────
 
     async def run_once(self) -> dict[str, int]:
@@ -204,6 +236,13 @@ class KeywordPlanner:
         """
         if not self.enabled:
             return {}
+
+        # P1.8: retire demonstrably-barren search words (``used`` with yield 0
+        # past a conservative age floor) every pass. Cheap single UPDATE, runs
+        # before the due short-circuit so it fires even when nothing is due, and
+        # decoupled from generation/fetch. The age floor protects freshly-used
+        # words still pending their async (X / YT / XHS) admit.
+        self.retire_zero_yield()
 
         # In-process single-flight: a second overlapping pass on this instance
         # bails immediately (the DB lock is re-entrant for our own owner).

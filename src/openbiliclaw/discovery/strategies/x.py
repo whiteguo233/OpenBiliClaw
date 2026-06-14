@@ -174,6 +174,7 @@ class XSearchStrategy:
         limit: int = 20,
         query: str = "",
         queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
         **_: object,
     ) -> list[DiscoveredContent]:
         explicit = (query or "").strip()
@@ -192,10 +193,14 @@ class XSearchStrategy:
         seen: set[str] = set()
         results: list[DiscoveredContent] = []
         for keyword in keywords:
+            # P1.8 yield provenance: the id of the word currently being searched
+            # (unified planner injection). ``None`` when unmapped / not injected.
+            keyword_id = keyword_ids.get(keyword) if keyword_ids else None
             raw = await self.client.search(keyword, limit=limit, product=self.product)
             for content in _normalize_raw(raw, source_strategy=SEARCH_STRATEGY_TAG):
                 if content.content_id in seen:
                     continue
+                content.source_keyword_id = keyword_id
                 seen.add(content.content_id)
                 results.append(content)
                 if len(results) >= limit:

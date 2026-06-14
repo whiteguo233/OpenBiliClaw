@@ -60,6 +60,27 @@ def _coerce_keyword_list(value: Any) -> list[str] | None:
     return out
 
 
+def _coerce_keyword_id_map(value: Any) -> dict[str, int]:
+    """Coerce a recipe-config ``keyword_ids`` value into a ``{str: int}`` map.
+
+    Tolerant of missing / malformed input (returns ``{}``) so a recipe without
+    P1.8 provenance is a clean no-op. Only well-formed ``keyword → int`` pairs
+    survive.
+    """
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, int] = {}
+    for raw_key, raw_id in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        try:
+            out[key] = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 class _SupportsDiscover(Protocol):
     """Structural type for the three injected strategy callables.
 
@@ -118,13 +139,18 @@ class XAdapter:
             # the real strategy ignores; both stay supported for back-compat.
             queries = _coerce_keyword_list(config.get("queries"))
             keywords = _coerce_keyword_list(config.get("keywords"))
+            # P1.8 yield provenance: optional ``keyword → id`` map forwarded
+            # alongside ``queries``. Only passed when present so the legacy call
+            # shape stays byte-identical for non-planner recipes.
+            keyword_ids = _coerce_keyword_id_map(config.get("keyword_ids"))
+            extra_ids: dict[str, Any] = {"keyword_ids": keyword_ids} if keyword_ids else {}
             if queries is not None:
                 items = await self._search.discover(
-                    profile, limit=limit, query=query, queries=queries
+                    profile, limit=limit, query=query, queries=queries, **extra_ids
                 )
             elif keywords is not None:
                 items = await self._search.discover(
-                    profile, limit=limit, query=query, keywords=keywords
+                    profile, limit=limit, query=query, keywords=keywords, **extra_ids
                 )
             else:
                 items = await self._search.discover(profile, limit=limit, query=query)
