@@ -56,6 +56,7 @@ class DiscoveryCandidateWrite:
     view_count: int = 0
     like_count: int = 0
     tags: list[str] = field(default_factory=list)
+    published_at: str = ""
     source_context: str = ""
     candidate_tier: str = "primary"
     score_threshold: float = 0.0
@@ -166,6 +167,7 @@ def discovered_content_to_candidate_write(
         view_count=item.view_count,
         like_count=item.like_count,
         tags=list(item.tags),
+        published_at=item.published_at,
         source_context=source_context,
         candidate_tier=item.candidate_tier,
         score_threshold=score_threshold,
@@ -214,6 +216,7 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         pool_expression=str(row.get("pool_expression") or ""),
         pool_topic_label=str(row.get("pool_topic_label") or ""),
         candidate_tier=str(row.get("candidate_tier") or "primary"),
+        published_at=str(row.get("published_at") or ""),
         content_id=content_id or bvid,
         content_url=str(row.get("content_url") or ""),
         source_platform=_canonical_platform(row.get("source_platform") or "bilibili"),

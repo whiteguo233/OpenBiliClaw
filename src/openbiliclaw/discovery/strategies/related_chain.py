@@ -23,6 +23,7 @@ from openbiliclaw.discovery.strategies._utils import (
     SupportsSeedStrategy,
     _gather_bounded,
     clean_text,
+    normalize_published_at,
     parse_duration,
     search_cooldown_remaining,
     to_int,
@@ -430,6 +431,12 @@ class RelatedChainStrategy(DiscoveryStrategy):
             topic_key=item_topic_key,
             topic_group=self._topic_group_from_title(title_text),
             description=clean_text(str(item.get("desc", item.get("description", "")))),
+            published_at=normalize_published_at(
+                item.get("published_at"),
+                item.get("pubdate"),
+                item.get("ctime"),
+                item.get("created_at"),
+            ),
             style_key=ContentDiscoveryEngine.infer_style_key(
                 title=title_text,
                 description=clean_text(str(item.get("desc", item.get("description", "")))),

@@ -177,6 +177,32 @@ class TestDatabase:
 
             db.close()
 
+    def test_cache_content_persists_and_preserves_published_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1PUB",
+                title="Published",
+                up_name="UP",
+                source="search",
+                published_at="2026-06-01T10:00:00+00:00",
+            )
+            db.cache_content(
+                "BV1PUB",
+                title="Published again",
+                up_name="UP",
+                source="search",
+                published_at="",
+            )
+
+            row = db.get_cached_content(limit=1)[0]
+
+            assert row["published_at"] == "2026-06-01T10:00:00+00:00"
+
+            db.close()
+
     def test_cache_content_persists_topic_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

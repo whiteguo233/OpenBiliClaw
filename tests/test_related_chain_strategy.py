@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -216,6 +217,30 @@ async def test_related_chain_uses_event_seeds_first() -> None:
     assert memory.calls[0]["event_types"] == ["view", "favorite", "like"]
 
 
+def test_related_chain_maps_bilibili_publish_time() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    pubdate = 1_710_000_000
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+    )
+
+    item = strategy._map_related_item(
+        {
+            "bvid": "BV1REL",
+            "title": "相关新内容",
+            "pubdate": pubdate,
+            "owner": {"name": "UP", "mid": 1},
+        },
+        seed_topic_key="seed",
+    )
+
+    assert item is not None
+    assert item.published_at == datetime.fromtimestamp(pubdate, UTC).isoformat()
+
+
 @pytest.mark.asyncio
 async def test_related_chain_falls_back_to_seed_strategies() -> None:
     from openbiliclaw.discovery.engine import DiscoveredContent
@@ -291,10 +316,12 @@ async def test_related_chain_fetches_and_dedupes_related_videos() -> None:
 async def test_related_chain_filters_by_score_and_tolerates_failures() -> None:
     from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
 
-    memory = FakeMemoryManager(events=[
-        _event("BV1FAIL", title="失败视频"),
-        _event("BV1SEED", title="正常视频"),
-    ])
+    memory = FakeMemoryManager(
+        events=[
+            _event("BV1FAIL", title="失败视频"),
+            _event("BV1SEED", title="正常视频"),
+        ]
+    )
     client = FakeRelatedClient(
         related_by_bvid={
             "BV1SEED": [

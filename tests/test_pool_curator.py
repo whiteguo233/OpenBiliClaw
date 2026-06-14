@@ -56,6 +56,62 @@ def test_freshness_score_empty_timestamp_returns_default() -> None:
     assert score == 0.5
 
 
+def test_publication_recency_score_prefers_recent_publication() -> None:
+    now = _now()
+    recent = (now - timedelta(days=1)).isoformat()
+    old = (now - timedelta(days=30)).isoformat()
+
+    assert PoolCurator._publication_recency_score(recent, now) > 0.9
+    assert PoolCurator._publication_recency_score(old, now) < 0.1
+    assert PoolCurator._publication_recency_score("", now) == 0.5
+
+
+def test_publication_recency_score_handles_very_old_publication() -> None:
+    now = datetime(2026, 6, 9, tzinfo=UTC)
+    very_old = datetime(1970, 1, 1, tzinfo=UTC).isoformat()
+
+    assert PoolCurator._publication_recency_score(very_old, now) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Time context scoring
+# ---------------------------------------------------------------------------
+
+
+def test_time_context_score_boosts_matching_evening_deep_content() -> None:
+    now = datetime(2026, 6, 8, 20, 0, tzinfo=UTC)
+    item = DiscoveredContent(
+        bvid="BV_DEEP",
+        style_key="analysis",
+        duration=25 * 60,
+    )
+
+    score = PoolCurator._time_context_score(
+        item,
+        "晚上更愿意看深度解析和长视频",
+        now,
+    )
+
+    assert score == 1.0
+
+
+def test_time_context_score_ignores_non_matching_bucket() -> None:
+    now = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+    item = DiscoveredContent(
+        bvid="BV_DEEP",
+        style_key="analysis",
+        duration=25 * 60,
+    )
+
+    score = PoolCurator._time_context_score(
+        item,
+        "晚上更愿意看深度解析和长视频",
+        now,
+    )
+
+    assert score == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Topic fatigue
 # ---------------------------------------------------------------------------
@@ -292,6 +348,62 @@ def test_score_candidates_penalises_fatigued_topic() -> None:
     )
     scores = curator.score_candidates([fresh_topic, stale_topic], context)
     assert scores["BV1"] > scores["BV2"]
+
+
+def test_score_candidates_uses_time_context_bonus() -> None:
+    db, _ = _make_db()
+    curator = PoolCurator(db)
+    now = datetime(2026, 6, 8, 21, 0, tzinfo=UTC)
+    ts = now.isoformat()
+    matching = DiscoveredContent(
+        bvid="BV_DEEP",
+        relevance_score=0.8,
+        source_strategy="search",
+        style_key="analysis",
+        duration=30 * 60,
+        discovered_at=ts,
+    )
+    neutral = DiscoveredContent(
+        bvid="BV_NEUTRAL",
+        relevance_score=0.8,
+        source_strategy="search",
+        style_key="news",
+        duration=3 * 60,
+        discovered_at=ts,
+    )
+    context = ScoringContext(
+        time_of_day_patterns="晚上更愿意看深度解析和长视频",
+        now=now,
+    )
+
+    scores = curator.score_candidates([matching, neutral], context)
+
+    assert scores["BV_DEEP"] > scores["BV_NEUTRAL"]
+
+
+def test_score_candidates_uses_content_publish_time_weight() -> None:
+    db, _ = _make_db()
+    curator = PoolCurator(db)
+    now = datetime(2026, 6, 8, 12, 0, tzinfo=UTC)
+    discovered = now.isoformat()
+    recent = DiscoveredContent(
+        bvid="BV_RECENT_PUB",
+        relevance_score=0.8,
+        source_strategy="search",
+        discovered_at=discovered,
+        published_at=(now - timedelta(days=1)).isoformat(),
+    )
+    old = DiscoveredContent(
+        bvid="BV_OLD_PUB",
+        relevance_score=0.8,
+        source_strategy="search",
+        discovered_at=discovered,
+        published_at=(now - timedelta(days=30)).isoformat(),
+    )
+
+    scores = curator.score_candidates([recent, old], ScoringContext(now=now))
+
+    assert scores["BV_RECENT_PUB"] > scores["BV_OLD_PUB"]
 
 
 # ---------------------------------------------------------------------------

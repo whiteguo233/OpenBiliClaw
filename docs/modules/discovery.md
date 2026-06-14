@@ -22,6 +22,7 @@
 - **DiscoveryCandidatePipeline** — 统一候选待评估池的生产 / 入队 / 混源 batch 评估 / 入推荐池 admission 编排器
 - **DiscoveryCandidateWrite / discovery_candidates** — 原始候选的持久化队列结构，所有来源先落到 `pending_eval`，再由统一 evaluator claim
 - **DiscoveredContent** — 统一的候选内容数据结构
+- **发布时间归一化** — B 站 search / trending / related_chain 会把 `pubdate`、`senddate`、`ctime`、`created_at` 归一化为 UTC ISO 的 `published_at`；该字段随 `DiscoveredContent` 入 `discovery_candidates`，admission 后写入 `content_cache`
 - **SearchStrategy** — 基于画像生成搜索词并调用 B 站搜索的策略
 - **TrendingStrategy** — 从全站榜和相关分区榜中筛选高匹配热点内容
 - **RelatedChainStrategy** — 从近期高价值视频种子出发，沿相关推荐链扩展候选内容
@@ -96,7 +97,7 @@
    这一层的核心思想是：先尽量把供给面铺开，再在后面统一收口。
 
 3. **统一入待评估池**
-   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel 的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。
+   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel 的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。B 站候选会在这里携带来源发布时间 `published_at`，用于后续推荐层区分“刚入池”和“内容本身刚发布”。
 
    入队阶段只做字段归一和身份去重，不做最终“用户会不会喜欢”的判断。`candidate_key` 会优先使用 `source_platform:content_id`，没有 ID 时退到规范化 URL，再退到标题 + 作者 hash。重复发现不会插入第二行，只刷新 `last_seen_at`。
 
@@ -972,6 +973,7 @@ item = DiscoveredContent(
     title="纪录片讲透系列",
     up_name="知识区UP",
     source_strategy="search",
+    published_at="2026-06-01T10:00:00+00:00",
 )
 ```
 
@@ -986,6 +988,7 @@ item = DiscoveredContent(
 - `view_count`
 - `description`
 - `source_strategy`
+- `published_at`
 - `relevance_score`
 - `relevance_reason`
 - `topic_key`
@@ -1050,12 +1053,14 @@ DiscoveredContent
 ├── source_strategy                     # 来源策略（search/trending/related_chain/explore）
 ├── topic_key, style_key               # 多样性控制信号
 ├── candidate_tier                      # primary / backfill
-└── discovered_at, last_scored_at      # 时间戳
+├── published_at                        # 来源内容发布时间
+└── discovered_at, last_scored_at      # 入池 / 评分时间戳
 ```
 
 **协议约定**：
 - 推荐层可以信赖 `relevance_score` 和 `relevance_reason` 已经被填充
 - 推荐层可以用 `topic_key` + `style_key` + `source_strategy` 做多样性控制
+- 推荐层可以用 `published_at` 计算内容发布时间权重，但不能把它等同于 `discovered_at`
 - Discovery 不做最终的推荐排序和文案生成，那是 `recommendation/` 的职责
 
 ### 外部依赖：B 站 API 和 LLM
