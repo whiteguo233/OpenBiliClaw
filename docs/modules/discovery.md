@@ -587,6 +587,8 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 **P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints()` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10（冷启动）时回退到全局热门 topic 避让。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。仍默认关、flag-off 逐字回退。
 
+**P3.3 数据驱动供给优势**：P2.1 的 `<supply_advantage>` 是**静态先验**（B站擅长学习区、小红书擅长美妆…）；P3.3 在它之上叠一层**这个用户的真实 admit 历史**。新增 `Database.get_admitted_topic_counts_by_platform()`——口径与 P3.1 的「当前可服务池」**不同**：它统计每个平台**历来入过缓存**（非 dislike、可链接、不限是否已服务/已看）的 `topic_group`，反映「这个平台为该用户实际产出过哪些主题」。`KeywordPlanner._supply_hints()` 取各平台 top-8（阈值 `max(3, 本平台入池量//10)`、入池量不足 floor 10 则空），并**减去该平台当前的 `avoid_topics`**——所以「擅长但当前饱和」的主题只留在避让里，绝不同时出现在「主推」和「避让」。结果作为每平台 `supply_hint` 写进合并 prompt 分块（静态 system 描述该字段语义、`<supply_advantage>` 表保持不变，prompt-cache 不破）；冷启动无历史时该字段为空、模型只依据静态表。意义：用户若在某平台稳定看某偏门主题（如抖音上的硬核科普），planner 会学到并优先把相关兴趣往该方向映射，而非死守平台刻板印象。
+
 **如何开启**：把 `config.toml` 里 `[discovery].unified_keyword_planner_enabled` 设为 `true`（其余 `kw_cache_high/low`、`gen_batch`、`fetch_batch`、`history_window_*`、`claim_lease_minutes`、`planner_poll_seconds`、`plan_ttl_hours` 用 §6 默认即可，详见 `docs/modules/config.md`）。生产启用是一次显式 opt-in 配置切换；端到端正确性由 `tests/test_keyword_backpressure_e2e.py` 在 flag-on 下覆盖。
 
 ## 已实现功能

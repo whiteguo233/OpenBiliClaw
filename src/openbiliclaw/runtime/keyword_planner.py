@@ -88,6 +88,17 @@ _DYNAMIC_MIN_SAMPLES = 10
 _PER_PLATFORM_AVOID_FLOOR = 10
 _PER_PLATFORM_AVOID_MIN_THRESHOLD = 5
 _PER_PLATFORM_AVOID_DIVISOR = 5
+# P3.3 data-driven supply advantage: the top topic_groups a platform has
+# actually admitted (non-disliked, all-time) ride along as a per-call hint that
+# complements the static <supply_advantage> table. A platform needs at least
+# _FLOOR admitted rows before the signal is trusted (else cold start → static
+# table alone); a topic needs max(_MIN, total // _DIV) admits to count as a
+# strength, and at most _TOP are surfaced. The platform's current avoid set is
+# subtracted so a topic is never both "lean in" and "avoid".
+_PER_PLATFORM_SUPPLY_FLOOR = 10
+_PER_PLATFORM_SUPPLY_MIN_THRESHOLD = 3
+_PER_PLATFORM_SUPPLY_DIVISOR = 10
+_PER_PLATFORM_SUPPLY_TOP = 8
 
 
 def _as_str_list(value: object) -> list[str]:
@@ -325,6 +336,7 @@ class KeywordPlanner:
         from openbiliclaw.discovery.strategies._utils import build_profile_summary
 
         hints_by_platform = self._avoid_hints()
+        supply_by_platform = self._supply_hints(hints_by_platform)
         blocks: list[dict[str, object]] = []
         needs: dict[str, int] = {}
         for platform in due:
@@ -344,6 +356,7 @@ class KeywordPlanner:
                     "avoid_topics": list(avoid.get("avoid_topics", [])),
                     "avoid_styles": list(avoid.get("avoid_styles", [])),
                     "avoid_franchises": list(avoid.get("avoid_franchises", [])),
+                    "supply_hint": list(supply_by_platform.get(platform, [])),
                 }
             )
 
@@ -601,9 +614,7 @@ class KeywordPlanner:
                 )
                 avoid_topics = [
                     topic
-                    for topic, count in sorted(
-                        topic_counts.items(), key=lambda kv: (-kv[1], kv[0])
-                    )
+                    for topic, count in sorted(topic_counts.items(), key=lambda kv: (-kv[1], kv[0]))
                     if int(count) >= threshold
                 ][:12]
             result[platform] = {
@@ -611,6 +622,46 @@ class KeywordPlanner:
                 "avoid_styles": list(shared_styles),
                 "avoid_franchises": list(shared_franchises),
             }
+        return result
+
+    def _supply_hints(
+        self, avoid_by_platform: dict[str, dict[str, list[str]]]
+    ) -> dict[str, list[str]]:
+        """Per-platform data-driven supply-advantage topics (P3.3).
+
+        The static ``<supply_advantage>`` table in the system prompt gives
+        platform priors; this augments it with THIS user's actual admit
+        history — the ``topic_group``s each platform has most delivered into the
+        cache. The platform's current avoid set is subtracted so a topic is
+        never both "lean in" and "avoid" (a saturated-now strength stays only in
+        avoid this cycle). Empty until a platform has admitted
+        ``_PER_PLATFORM_SUPPLY_FLOOR`` rows (cold start → static table only).
+        """
+        admitted: dict[str, dict[str, int]] = {}
+        getter = getattr(self._db, "get_admitted_topic_counts_by_platform", None)
+        if callable(getter):
+            try:
+                admitted = getter()
+            except Exception:
+                logger.exception(
+                    "keyword planner failed to read per-platform admitted topic counts"
+                )
+        result: dict[str, list[str]] = {}
+        for platform in _PLANNER_PLATFORMS:
+            topic_counts = admitted.get(platform, {})
+            total = sum(int(count) for count in topic_counts.values())
+            if total < _PER_PLATFORM_SUPPLY_FLOOR:
+                result[platform] = []
+                continue
+            avoid = set(avoid_by_platform.get(platform, {}).get("avoid_topics", []))
+            threshold = max(
+                _PER_PLATFORM_SUPPLY_MIN_THRESHOLD, total // _PER_PLATFORM_SUPPLY_DIVISOR
+            )
+            result[platform] = [
+                topic
+                for topic, count in sorted(topic_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+                if int(count) >= threshold and topic not in avoid
+            ][:_PER_PLATFORM_SUPPLY_TOP]
         return result
 
     def _target_high(self, platform: str) -> int:

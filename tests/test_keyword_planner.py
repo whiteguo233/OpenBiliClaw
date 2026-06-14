@@ -823,3 +823,55 @@ def test_avoid_hints_below_floor_falls_back_to_global() -> None:
     )._avoid_hints()
     assert hints[_DOUYIN]["avoid_topics"] == ["全局热点"]
     assert hints[_YOUTUBE]["avoid_topics"] == ["全局热点"]  # no own data → global too
+
+
+# ── P3.3 data-driven supply advantage ─────────────────────────────────────
+
+
+class _SupplyDB:
+    """Fake db exposing only the admitted-topic aggregate ``_supply_hints`` reads."""
+
+    def __init__(self, admitted: dict[str, dict[str, int]]) -> None:
+        self._admitted = admitted
+
+    def get_admitted_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        return self._admitted
+
+
+def _supply_planner(admitted: dict[str, dict[str, int]]) -> KeywordPlanner:
+    planner = KeywordPlanner(
+        llm_service=object(),
+        database=_SupplyDB(admitted),  # type: ignore[arg-type]
+        config=_FakeConfig(_discovery_cfg()),
+        signal_event_threshold=6,
+    )
+    planner.bind_deficit_source(_FakeDeficitSource())
+    return planner
+
+
+def test_supply_hints_surface_per_platform_top_admitted_topics() -> None:
+    hints = _supply_planner(
+        {
+            _BILI: {"学习区": 40, "梗文化": 20, "数码": 1},  # total 61 → thr max(3,6)=6
+            _XHS: {"美妆": 30, "穿搭": 12},  # total 42 → thr max(3,4)=4
+        }
+    )._supply_hints({})
+    assert hints[_BILI] == ["学习区", "梗文化"]  # 数码 (1) below threshold
+    assert hints[_XHS] == ["美妆", "穿搭"]
+    assert hints[_DOUYIN] == []  # no admit history → static table only
+
+
+def test_supply_hints_subtract_avoid_set() -> None:
+    # 学习区 is this platform's top strength AND currently saturated (in avoid).
+    # It must stay only in avoid, never echoed back as a "lean in" hint.
+    hints = _supply_planner(
+        {_BILI: {"学习区": 40, "梗文化": 20}},
+    )._supply_hints({_BILI: {"avoid_topics": ["学习区"]}})
+    assert hints[_BILI] == ["梗文化"]
+    assert "学习区" not in hints[_BILI]
+
+
+def test_supply_hints_cold_start_below_floor_is_empty() -> None:
+    # Fewer than _PER_PLATFORM_SUPPLY_FLOOR (10) admitted rows → untrusted → [].
+    hints = _supply_planner({_BILI: {"学习区": 5}})._supply_hints({})
+    assert hints[_BILI] == []

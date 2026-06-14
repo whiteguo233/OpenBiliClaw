@@ -2241,6 +2241,43 @@ class Database:
             counts.setdefault(platform, defaultdict(int))[topic] += 1
         return {platform: dict(topics) for platform, topics in counts.items()}
 
+    def get_admitted_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        """Per-platform ``topic_group`` counts of ALL admitted content (P3.3).
+
+        Where :meth:`get_pool_topic_counts_by_platform` counts the *current
+        servable pool* (a saturation signal — too much right now), this counts
+        every non-disliked, linkable row that ever made it into the cache from
+        each platform, served or not — a *supply-advantage* signal: which topics
+        each platform has actually delivered for this user. The keyword planner
+        feeds the top topics back as a data-driven complement to the static
+        ``<supply_advantage>`` table (after subtracting the platform's current
+        avoid set). Returns ``{}`` on error.
+        """
+        try:
+            cursor = self.conn.execute(
+                """
+                SELECT topic_group, source, source_platform, content_url
+                FROM content_cache
+                WHERE COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(topic_group, '') != ''
+                """
+            )
+        except Exception:
+            logger.debug("get_admitted_topic_counts_by_platform query failed", exc_info=True)
+            return {}
+        counts: dict[str, dict[str, int]] = {}
+        for row in cursor.fetchall():
+            if not _is_linkable_pool_source(
+                row["source"], row["source_platform"], row["content_url"]
+            ):
+                continue
+            platform = str(row["source_platform"] or "").strip()
+            topic = str(row["topic_group"] or "").strip()
+            if not platform or not topic:
+                continue
+            counts.setdefault(platform, defaultdict(int))[topic] += 1
+        return {platform: dict(topics) for platform, topics in counts.items()}
+
     def canonicalize_topic_groups(self, canonical_map: dict[str, str]) -> int:
         """Rewrite ``content_cache.topic_group`` to canonical form per map.
 
