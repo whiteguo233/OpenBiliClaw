@@ -37,6 +37,13 @@ import {
   handleYtScopeResult,
   pollYtTaskNow,
 } from "./yt-task-dispatcher.js";
+import {
+  startBiliTaskPolling,
+  handleBiliTaskAlarm,
+  handleBiliTaskResult,
+  pollBiliTaskNow,
+  type BiliTaskResult,
+} from "./bili-task-dispatcher.js";
 import type { YtScopeResult } from "../content/yt/task-executor.js";
 import {
   openExtensionUi,
@@ -200,6 +207,10 @@ function handleRuntimeEvent(event: Record<string, unknown>): void {
   }
   if (eventType === "yt_task_available") {
     pollYtTaskNow();
+    return;
+  }
+  if (eventType === "bili_task_available") {
+    pollBiliTaskNow();
     return;
   }
 
@@ -398,6 +409,7 @@ chrome.runtime.onInstalled.addListener(() => {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
+  startBiliTaskPolling();
   startCookieSync();
 });
 
@@ -407,6 +419,7 @@ chrome.runtime.onStartup.addListener(() => {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
+  startBiliTaskPolling();
   startCookieSync();
 });
 
@@ -525,6 +538,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "BILI_TASK_RESULT") {
+    void handleBiliTaskResult(message.data as BiliTaskResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
   if (message.action !== "BEHAVIOR_EVENT") return;
 
   eventBuffer = enqueueBufferedEvent(eventBuffer, message.data as BehaviorEvent, BUFFER_MAX_SIZE);
@@ -538,6 +561,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   handleXhsTaskAlarm(alarm.name);
   handleDyTaskAlarm(alarm.name);
   handleYtTaskAlarm(alarm.name);
+  handleBiliTaskAlarm(alarm.name);
   if (handleCookieSyncAlarm(alarm.name)) {
     return;
   }

@@ -619,18 +619,50 @@ class RuntimeContext:
             discovery_config=getattr(new_config, "discovery", None) or DiscoveryConfig(),
         )
 
+        new_bilibili_producer: Any = None
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
         new_x_producer: Any = None
         if hasattr(self.database, "conn"):
+            from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
+            from openbiliclaw.sources.bili_tasks import BiliTaskQueue
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 
+            bili_cfg = getattr(new_config.sources, "bilibili", None)
             xhs_cfg = getattr(new_config.sources, "xiaohongshu", None)
             sched_cfg = getattr(new_config, "scheduler", None)
+            bili_enabled = bool(getattr(bili_cfg, "enabled", True)) and bool(
+                getattr(sched_cfg, "enabled", True)
+            )
             xhs_enabled = bool(getattr(xhs_cfg, "enabled", False)) and bool(
                 getattr(sched_cfg, "enabled", True)
+            )
+
+            async def _kick_bili_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "bili_task_available", "source": "task_kick"})
+
+            new_bilibili_producer = BilibiliExtensionSearchProducer(
+                task_queue=BiliTaskQueue(self.database),
+                soul_engine=new_soul_engine,
+                llm_service=new_llm_service,
+                bilibili_client=new_bilibili_client,
+                presence=self.presence,
+                enabled=bili_enabled,
+                daily_budget=int(getattr(bili_cfg, "daily_search_budget", 0)),
+                min_interval_minutes=int(getattr(bili_cfg, "min_interval_minutes", 30)),
+                keywords_per_cycle=int(getattr(bili_cfg, "keywords_per_cycle", 3)),
+                page_size=int(getattr(bili_cfg, "page_size", 20)),
+                presence_grace_seconds=int(
+                    getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
+                ),
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_bili_extension,
             )
             new_xhs_producer = XhsTaskProducer(
                 task_queue=XhsTaskQueue(self.database),
@@ -713,6 +745,7 @@ class RuntimeContext:
             ),
             discovery_limit=int(getattr(new_config.scheduler, "discovery_limit", 30)),
             event_hub=self.event_hub,
+            bilibili_producer=new_bilibili_producer,
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,

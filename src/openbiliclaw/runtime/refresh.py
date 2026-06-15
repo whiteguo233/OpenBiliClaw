@@ -266,6 +266,7 @@ class ContinuousRefreshController:
     recommendation_engine: SupportsRecommendationEngine
     event_hub: Any | None = None
     discovery_candidate_pipeline: Any | None = None
+    bilibili_producer: Any | None = None
     xhs_producer: Any | None = None
     douyin_producer: Any | None = None
     youtube_producer: Any | None = None
@@ -941,6 +942,7 @@ class ContinuousRefreshController:
             ┌─ _loop_refresh()           60s   LLM-heavy, may take minutes
             ├─ _loop_pool_precompute()   60s   v0.3.60+ — drain pool_expression
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
+            ├─ _loop_bilibili_producer() 60s   Bili extension search fallback under cooldown
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
@@ -968,6 +970,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
             asyncio.create_task(self._loop_soul_pipeline()),
+            asyncio.create_task(self._loop_bilibili_producer()),
             asyncio.create_task(self._loop_xhs_producer()),
             asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_youtube_producer()),
@@ -1172,6 +1175,16 @@ class ContinuousRefreshController:
                 await self._tick_xhs_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_bilibili_producer(self) -> None:
+        """Bilibili extension fallback — only enqueues while API search cools down."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_bilibili_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
     async def _loop_douyin_producer(self) -> None:
         """Douyin production — plugin/direct discovery when Douyin is below quota."""
         while True:
@@ -1356,6 +1369,25 @@ class ContinuousRefreshController:
         produce_fn = getattr(producer, "produce_if_due", None)
         if not callable(produce_fn):
             return
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
+    async def _tick_bilibili_producer(self) -> None:
+        """Invoke the Bili extension fallback producer if Bilibili is under quota."""
+        producer = self.bilibili_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("bilibili")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
         if _call_accepts_limit(produce_fn):
             await produce_fn(limit=limit)
         else:

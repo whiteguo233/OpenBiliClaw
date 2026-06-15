@@ -367,6 +367,15 @@ class _FakeXhsProducer:
         return {"enqueued": 1, "attempted": 1, "reason": "ok"}
 
 
+class _FakeBiliProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 1, "attempted": 1, "reason": "ok"}
+
+
 class _FakeDouyinProducer:
     def __init__(self) -> None:
         self.calls: list[int | None] = []
@@ -436,6 +445,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_refresh", ("_on_profile_ready_if_first_time", "refresh_if_needed")),
     ("_loop_pool_precompute", ("_drain_pool_precompute_backlog",)),
     ("_loop_soul_pipeline", ("_tick_soul_pipeline",)),
+    ("_loop_bilibili_producer", ("_tick_bilibili_producer",)),
     ("_loop_xhs_producer", ("_tick_xhs_producer",)),
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
@@ -2529,6 +2539,51 @@ async def test_xhs_producer_receives_source_deficit_limit() -> None:
     await controller._tick_xhs_producer()
 
     assert producer.calls == [2]
+
+
+async def test_bilibili_producer_runs_when_bilibili_under_quota() -> None:
+    producer = _FakeBiliProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=595,
+            source_counts={"bilibili": 475, "xiaohongshu": 60, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        discovery_limit=30,
+        bilibili_producer=producer,
+    )
+
+    await controller._tick_bilibili_producer()
+
+    assert producer.calls == [5]
+
+
+async def test_bilibili_producer_skips_when_bilibili_at_quota() -> None:
+    producer = _FakeBiliProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "xiaohongshu": 60, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        bilibili_producer=producer,
+    )
+
+    await controller._tick_bilibili_producer()
+
+    assert producer.calls == []
 
 
 async def test_douyin_producer_runs_when_douyin_under_quota() -> None:

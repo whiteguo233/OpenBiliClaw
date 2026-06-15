@@ -29,6 +29,7 @@
 | 来源 Cookie 明文配置对齐 | ✅ | 插件 side panel 与桌面 Web 的抖音 / X 来源卡片对齐 B 站卡片形态：新增明文 Cookie 文本框（`GET /api/config` 的 `sources.douyin.cookie` / `sources.twitter.cookie`，默认脱敏、`reveal_keys=true` 明文），可手动粘贴覆盖；`PUT /api/config` 把非空值路由到 `data/douyin_cookie.json` / `data/x_cookie.json`（secrets 不进 `config.toml`），X 粘贴含 `auth_token`+`ct0` 的有效 Cookie 同时解除 re-login 封锁。空字段与脱敏回显（连续 `****`）不覆盖现有 Cookie（`bilibili.cookie` 同样补上该防护）；小红书（token 嗅探）/ YouTube（无需登录）维持差异化说明 |
 | 开机自启动设置 | ✅ | 通用 tab 新增「开机自启动」开关：打开设置时读 `GET /api/autostart-status`，切换时调用 `POST /api/autostart/apply` 即时生效；`can_manage=false` 时按 `env_managed` / `shadowed` / `unsupported_*` 等 reason 禁用并展示行内提示。提示明确该开关只影响下次系统登录拉起后端，不启停当前进程；本机 Ollama 可能随 `start` 预检一起拉起。 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
+| B 站扩展搜索兜底任务 | ✅ | service worker 轮询 `/api/sources/bili/next-task` 并响应 `bili_task_available` 即时 kick；后台 tab 打开 `search.bilibili.com/all?keyword=...`，B 站 content script 抓渲染后的搜索结果卡片，回传 `BILI_TASK_RESULT` 到 `/api/sources/bili/task-result`。该链路只在后端 API search 冷却且扩展在线时由 producer 入队，不取代 API 主路径 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | Cookie 同步重试按平台隔离 | ✅ | B站 / 抖音 / X 的 cookie 同步重试 alarm 拆分为 `openbiliclaw-cookie-sync-bili` / `-dy` / `-x` 三个独立 alarm：一个平台同步成功不再把另一平台刚排的 1/5 分钟快速重试重置回 60 分钟兜底；`cookies.onChanged` 的 debounce 也按平台独立，登录某平台只触发该平台的同步。旧共享 alarm 名（`openbiliclaw-cookie-sync`，chrome alarm 跨扩展升级持久化）兼容触发一轮全量同步后由下次 worker 启动清除 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |
@@ -80,10 +81,13 @@ extension/
 │   ├── background/
 │   │   ├── buffer.ts
 │   │   ├── cookie-sync.ts     # B 站 / 抖音 / X Cookie 自动同步到已配置后端（重试 alarm 按平台隔离）
+│   │   ├── bili-task-dispatcher.ts # B 站搜索兜底任务轮询 / 后台 tab / 结果回传
 │   │   └── service-worker.ts
 │   ├── content/
 │   │   ├── kernel.ts          # 平台无关的 DOM 观察 + 事件派发
 │   │   ├── bilibili.ts        # B 站 entry point，挂载 bilibiliAdapter
+│   │   ├── bili/
+│   │   │   └── task-executor.ts # B 站搜索页 DOM 结果解析与 BILI_TASK_RESULT 回传
 │   │   ├── douyin.ts          # 抖音 entry point，挂载 fetch tap 与 task executor
 │   │   ├── dy/
 │   │   │   ├── bootstrap.ts   # 抖音 bootstrap scope 结果聚合与 partial payload
@@ -151,6 +155,29 @@ extension/
 - 在推荐通知之外，认知变化通知会打开带 `?tab=profile` 的插件页面，直接落到画像视图
 - 惊喜推荐通知现在会打开带 `?tab=recommend&delight=<bvid>` 的插件页面，落到对应的首屏惊喜卡，而不是只把人丢回通用推荐页
 - `interest.probe` 和 `avoidance.probe` 都留在 side panel inbox 内处理，不走系统级 OS toast，避免探针在浏览器外打扰用户
+
+### B 站搜索兜底任务桥
+
+`src/background/bili-task-dispatcher.ts` 会轮询后端 `/api/sources/bili/next-task`。这条链路不是 B 站 discovery 的常驻主路径：后端 `BilibiliExtensionSearchProducer` 只有在 API search 已进入冷却、扩展 presence 在线、候选池低于配额且近期没有同类任务时才会入队。service worker 同时监听 runtime stream 的 `bili_task_available`，收到后立即 `pollBiliTaskNow()`，alarm 轮询作为兜底。
+
+扩展领取到 search task 后，会打开后台 tab：
+
+```json
+{
+  "task_id": "...",
+  "type": "search",
+  "query": "机械键盘 声音",
+  "limit": 20,
+  "page_size": 20
+}
+```
+
+dispatcher 导航到 `https://search.bilibili.com/all?keyword=...`，等 tab ready 后发送 `BILI_TASK_EXECUTE`。`src/content/bili/task-executor.ts` 不在 isolated world 里直连 B 站 API，也不伪造 WBI 签名；它只等待真实搜索页渲染出 `.bili-video-card` / `.video-list-item`，从 DOM 卡片里提取 `bvid`、标题、UP 主、播放数、封面、时长和简介，再用 `BILI_TASK_RESULT` 回给 service worker。service worker POST 到 `/api/sources/bili/task-result` 后，后端把结果写入 `discovery_candidates`，继续走共享 evaluator / admission，而不是由插件直接写推荐池。
+
+真实联调可用两档验证：
+
+- 手工任务：后端重启到包含该分支的代码，加载 `extension/dist/`，让 `/api/sources/bili/next-task` 返回 search task；扩展应打开后台 B 站搜索页，最终 task 状态变为 `completed`，对应候选带 `source_strategy="bili-extension-search"`。
+- 自动触发 E2E：`BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -q -s`。该测试启动临时 FastAPI app + 临时 SQLite，使用 Playwright 持久上下文加载 unpacked extension，等待真实 runtime-stream presence，把进程内 `BilibiliAPIClient` 置入 search cooldown，再调用真实 `BilibiliExtensionSearchProducer` 入队；扩展必须领取任务、打开真实 B 站搜索页并回传 DOM 结果。测试不使用生产数据库，也不需要生产 debug endpoint。
 
 ### 小红书任务桥
 
@@ -364,6 +391,8 @@ npm run build
 
 - 页面识别 / BV 提取 / 动作识别
 - 缓冲去重与强信号 flush
+- B 站搜索兜底 dispatcher / DOM executor helper（URL、任务校验、BV 提取、播放量归一化、结果卡去重）
+- B 站搜索兜底 opt-in 浏览器 E2E harness（默认 skip，`BILI_EXTENSION_E2E=1` 才启动真实 Chromium）
 - B 站 / 抖音 Cookie 自动同步的重试闹钟和幂等监听器
 - manifest 图标资源存在性
 - Firefox manifest 的 version 注入、`sidebar_action` 降级路径、AMO 数据收集类别声明和 Firefox zip 打包清理

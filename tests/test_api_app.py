@@ -631,10 +631,16 @@ class TestBackendAPI:
         import openbiliclaw.memory.manager as memory_module
         import openbiliclaw.recommendation.engine as recommendation_module
         import openbiliclaw.runtime.account_sync as account_sync_module
+        import openbiliclaw.runtime.bilibili_producer as bilibili_producer_module
         import openbiliclaw.runtime.events as runtime_events_module
         import openbiliclaw.runtime.refresh as refresh_module
         import openbiliclaw.soul.dialogue as dialogue_module
         import openbiliclaw.soul.engine as soul_engine_module
+        import openbiliclaw.sources.bili_tasks as bili_tasks_module
+        import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.x_tasks as x_tasks_module
+        import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
+        import openbiliclaw.sources.yt_tasks as yt_tasks_module
         import openbiliclaw.storage.database as database_module
 
         captured: dict[str, object] = {}
@@ -674,6 +680,7 @@ class TestBackendAPI:
         class FakeDatabase:
             def __init__(self, path) -> None:
                 self.path = path
+                self.conn = object()
 
             def initialize(self) -> None:
                 return None
@@ -747,6 +754,34 @@ class TestBackendAPI:
         class FakeRuntimeEventHub:
             pass
 
+        class FakeBiliTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXhsTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXhsCreatorStore:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeDyTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeYtTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXCreatorStore:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeBiliProducer:
+            def __init__(self, **kwargs: object) -> None:
+                captured["bilibili_producer_kwargs"] = kwargs
+
         class FakeDialogue:
             def __init__(
                 self,
@@ -770,11 +805,16 @@ class TestBackendAPI:
             sources=SimpleNamespace(
                 browser_cdp_url="",
                 browser_headed=False,
+                bilibili=SimpleNamespace(enabled=True),
                 xiaohongshu=SimpleNamespace(
+                    enabled=False,
                     daily_search_budget=20,
                     daily_creator_budget=10,
                     task_interval_seconds=45,
                 ),
+                douyin=SimpleNamespace(enabled=False),
+                youtube=SimpleNamespace(enabled=False),
+                twitter=SimpleNamespace(enabled=False),
             ),
             scheduler=SimpleNamespace(
                 enabled=True,
@@ -823,6 +863,17 @@ class TestBackendAPI:
         monkeypatch.setattr(recommendation_module, "RecommendationEngine", FakeRecommendationEngine)
         monkeypatch.setattr(refresh_module, "ContinuousRefreshController", FakeRuntimeController)
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
+        monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
+        monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
+        monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
+        monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
+        monkeypatch.setattr(yt_tasks_module, "YtTaskQueue", FakeYtTaskQueue)
+        monkeypatch.setattr(
+            bilibili_producer_module,
+            "BilibiliExtensionSearchProducer",
+            FakeBiliProducer,
+        )
         monkeypatch.setattr(runtime_events_module, "RuntimeEventHub", FakeRuntimeEventHub)
         monkeypatch.setattr(dialogue_module, "SocraticDialogue", FakeDialogue)
 
@@ -836,6 +887,12 @@ class TestBackendAPI:
         assert (
             captured["runtime_controller_kwargs"]["presence"] is app.state.runtime_context.presence
         )
+        assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
+        assert (
+            captured["bilibili_producer_kwargs"]["presence"]
+            is app.state.runtime_context.presence
+        )
+        assert captured["bilibili_producer_kwargs"]["bilibili_client"].cookie == ""
         assert captured["runtime_controller_kwargs"]["check_interval_seconds"] == 77
         assert captured["runtime_controller_kwargs"]["signal_event_threshold"] == 9
         assert captured["runtime_controller_kwargs"]["trending_refresh_hours"] == 5
