@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.discovery.strategies._utils import (
     build_profile_summary,
@@ -189,12 +189,17 @@ class BilibiliExtensionSearchProducer:
         return payload
 
     async def _kick_if_needed(self, result: dict[str, object]) -> None:
-        if int(result.get("enqueued", 0) or 0) <= 0 or self.kick is None:
+        enqueued_raw = result.get("enqueued", 0)
+        try:
+            enqueued = int(enqueued_raw) if isinstance(enqueued_raw, int | float | str) else 0
+        except (TypeError, ValueError):
+            enqueued = 0
+        if enqueued <= 0 or self.kick is None:
             return
         try:
             maybe_awaitable = self.kick()
             if inspect.isawaitable(maybe_awaitable):
-                await cast("Awaitable[None]", maybe_awaitable)
+                await maybe_awaitable
         except Exception:
             logger.debug("bili extension producer kick failed", exc_info=True)
 
