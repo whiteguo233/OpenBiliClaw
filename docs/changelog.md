@@ -4,6 +4,16 @@
 
 ---
 
+## v0.3.125 / extension v0.3.79: 画像分类词表 + B 站扩展搜索兜底发版（2026-06-16）
+
+把 `backend-v0.3.124` 之后已合入 main 的跨模块改动打成正式发布：后端源码走 `backend-v0.3.125`，桌面安装包走 `desktop-v0.3.125`，浏览器插件版本提升到 `0.3.79` 并发布 `extension-v0.3.79`。
+
+- **画像一级分类固定词表与迁移**：新增 `soul/taxonomy.py` 的 19 项 `CATEGORY_VOCAB`，`PreferenceAnalyzer` 写入前统一按精确命中 / embedding 最近邻 /「其他」解析；新增 `CategoryMigrator` 与 `profile-consolidate --migrate-categories`，可 dry-run / apply / revert 存量自由分类迁移，LLM 映射必须完整覆盖且目标在词表内。
+- **同名异义安全画像整理**：`ProfileConsolidator` 的规则合并改为同名同类限定，同名异类构造强制嫌疑簇送 LLM；judge payload 带 `category`，支持 `{name, category}` 精确引用，no-merge 记忆也按 `name::category` 限定。整理默认覆盖 likes top-512、裁决每批 32 簇，`--full` 可扩到全量标签库。
+- **B 站扩展搜索兜底闭环**：当服务端 B 站 search 进入冷却且扩展在线时，后端可入队 bili search task；扩展后台打开真实 B 站搜索页，抓已渲染 DOM 结果回传为 `bili-extension-search` raw candidates，继续走统一 evaluator / admission，并提供真实浏览器 E2E harness。
+- **冷启动补货与观测修复**：配置热重载后会重新踢起 classify→文案→delight drain；classify 完成即排文案，不再等下一个 refresh tick；MMR embedding 预热日志区分空池冷启动和真实 embedding 后端故障。
+- **发布与文档同步**：README / README_EN、模块文档、架构图入口与 `docs/diagrams/soul-update-flow.html` 对齐当前 main；版本提升到后端 `0.3.125`、插件 `0.3.79`。
+
 ## v0.3.124: 统一关键词规划器默认开启（2026-06-15）
 
 把 v0.3.123 引入、一直 flag-gated 默认关的统一关键词规划器 / 背压子系统切到**默认开启**。经确定性端到端 + 真实模型（deepseek 驱动完整 planner）验收后，五个平台的搜索词生成默认走「一次合并 LLM 调用、画像发一份、按平台分块、缺口拉动、逐平台自适应避让 / 水位 / 供给」；旧逐平台生成路径作为可回退兜底逐字保留。后端源码改动，浏览器插件与桌面安装包未改动。

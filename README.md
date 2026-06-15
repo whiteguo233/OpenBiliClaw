@@ -192,12 +192,12 @@
 
 ## 最近更新
 
-最新版本：**v0.3.124: 统一关键词规划器默认开启（2026-06-15）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.125: 画像分类词表 + B 站扩展搜索兜底（2026-06-16）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **统一关键词背压默认开启** —— 五平台搜索词从各自调 LLM 收敛为一次合并生成，按缺口拉动、逐平台自适应避让 / 水位 / 供给；设 `false` 可逐字回退旧路径。
-- **画像输入全平台统一** —— 发现 / 推荐 / 探测各处的画像输入收敛成同一份结构化画像，字段补齐、上限统一抬到 30。
-- **人格素描不再进 prompt** —— 那段总结性叙事不再喂任何 LLM 输入（仍在画像页正常展示），搜索词与文案不再被比喻带偏。
-- **五平台搜索词生成对齐 + 抖音补 LLM 生成** —— X / 小红书 / 抖音 / YouTube / B站 关键词生成全部吃同一份完整画像。
+- **画像分类固定词表** —— 一级兴趣分类收敛到 `CATEGORY_VOCAB`，存量自由分类可用 `profile-consolidate --migrate-categories` dry-run / apply / revert 迁移。
+- **同名异义整理防误合并** —— 画像整理按 `(name, category)` 识别“苹果(科技)”和“苹果(美食)”这类同名异义，默认整理 likes top-512，`--full` 可全量清理。
+- **B 站扩展搜索兜底** —— 服务端 B 站 search 被风控冷却时，扩展可用真实登录浏览器后台搜索页抓渲染结果补 raw candidates。
+- **补货链路更稳** —— 热重载后自动恢复 classify→文案→delight drain，classify 完成即排文案，embedding 预热日志能区分空池和真故障。
 
 ## 用户交流群
 
@@ -666,7 +666,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.124: 统一关键词规划器默认开启（2026-06-15）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包和桌面安装包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag。
+最新版本：**v0.3.125: 画像分类词表 + B 站扩展搜索兜底（2026-06-16）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包和桌面安装包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag。
 
 ## 🗺️ 后续规划
 
