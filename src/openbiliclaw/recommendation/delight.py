@@ -364,7 +364,8 @@ def _build_delight_profile_summary(profile: Any) -> dict[str, object]:
     summary["deep_needs"] = deep_needs
 
     insights_out: list[dict[str, object]] = []
-    for ins in (getattr(profile, "active_insights", []) or [])[:5]:
+    # Chronological window: newest insights are at the tail.
+    for ins in (getattr(profile, "active_insights", []) or [])[-5:]:
         hyp = str(getattr(ins, "hypothesis", "")).strip()
         if not hyp:
             continue
@@ -552,7 +553,8 @@ class DelightScorer:
             return 0.0
 
         max_sim = 0.0
-        for insight in active_insights[:5]:
+        # Chronological window: newest insights are at the tail.
+        for insight in active_insights[-5:]:
             hypothesis = str(getattr(insight, "hypothesis", "")).strip()
             if not hypothesis:
                 continue

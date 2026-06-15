@@ -55,17 +55,22 @@ class InsightAnalyzer:
         awareness_notes: list[AwarenessNote],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        existing_insights: list[InsightHypothesis] | None = None,
+        max_tokens: int = DEFAULT_STRUCTURED_MAX_TOKENS,
     ) -> list[InsightHypothesis]:
         messages = build_insight_prompt(
             awareness_notes=[self._note_to_dict(note) for note in awareness_notes],
             preference_summary=preference,
             soul_profile=soul_profile,
+            existing_hypotheses=[
+                self._hypothesis_to_context_dict(item) for item in (existing_insights or [])
+            ],
         )
         try:
             response = await self.registry.complete_structured_task(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
-                max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
+                max_tokens=max_tokens,
                 caller="soul.insight",
             )
         except (LLMProviderError, LLMServiceError) as exc:
@@ -147,6 +152,19 @@ class InsightAnalyzer:
             "observation": note.observation,
             "trend": note.trend,
             "emotion_guess": note.emotion_guess,
+        }
+
+    @staticmethod
+    def _hypothesis_to_context_dict(item: InsightHypothesis) -> dict[str, object]:
+        """Compact view of an existing hypothesis for the prompt's context block.
+
+        Only the fields the LLM needs to avoid restating / to refine an
+        existing hypothesis — keeps the incremental prompt cheap.
+        """
+        return {
+            "hypothesis": item.hypothesis,
+            "confidence": round(float(item.confidence), 4),
+            "validated": bool(item.validated),
         }
 
     @staticmethod

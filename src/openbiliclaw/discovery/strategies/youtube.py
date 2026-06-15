@@ -89,8 +89,19 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     def name(self) -> str:
         return "yt_search"
 
-    async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
-        queries = await self._generate_queries(profile)
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+        *,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> list[DiscoveredContent]:
+        if queries is None:
+            resolved_queries = await self._generate_queries(profile)
+        else:
+            resolved_queries = self._dedupe_queries(queries)
+        queries = resolved_queries
         self.last_intermediates = {"queries": list(queries)}
         if not queries:
             return []
@@ -102,14 +113,18 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
 
         seen: set[str] = set()
         candidates: list[DiscoveredContent] = []
-        for batch in raw_batches:
+        # ``raw_batches[i]`` corresponds to ``queries[i]`` (gather preserves
+        # order) → the producing query (and its P1.8 keyword id) is recoverable.
+        for query, batch in zip(queries, raw_batches, strict=True):
             if isinstance(batch, BaseException):
                 logger.warning("yt_search batch failed: %s", batch)
                 continue
+            keyword_id = keyword_ids.get(query) if keyword_ids else None
             for raw in batch:
                 content = normalize_yt_video(raw, source_strategy=self.name)
                 if content is None or content.content_id in seen:
                     continue
+                content.source_keyword_id = keyword_id
                 seen.add(content.content_id)
                 candidates.append(content)
 
@@ -121,6 +136,19 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
             return candidates[:limit]
 
         return await self._evaluate(candidates, profile, limit)
+
+    @staticmethod
+    def _dedupe_queries(queries: list[str]) -> list[str]:
+        """Strip + dedupe caller-injected queries (unified planner injection)."""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in queries:
+            query = str(item).strip()
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped
 
     async def _generate_queries(self, profile: SoulProfile) -> list[str]:
         profile_summary = build_profile_summary(profile)

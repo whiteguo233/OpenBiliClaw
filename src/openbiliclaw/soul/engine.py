@@ -626,14 +626,25 @@ class SoulEngine:
             return f"你恢复了{label}的 AI 建议。"
         return f"你编辑了{label}。"
 
-    async def update_from_feedback(self, feedback: dict[str, Any]) -> None:
-        """Update soul understanding based on explicit user feedback.
+    async def update_from_feedback(self, feedback: dict[str, Any]) -> dict[str, Any]:
+        """Update soul understanding based on explicit user feedback on a hypothesis.
 
-        This can trigger updates across all memory layers, depending
-        on the significance of the feedback.
+        Confirm/reject feedback on a specific insight hypothesis calibrates that
+        hypothesis: a confirm pins ``validated=True`` and raises confidence to at
+        least 0.75; a reject sets ``validated=False`` and caps confidence at 0.35
+        (the "soft invalidation" — the hypothesis is down-weighted in delight
+        scoring rather than deleted). The feedback is also logged as an event.
+
+        Wired to ``POST /api/insights/feedback`` so the UI's insight cards can
+        drive this loop.
 
         Args:
-            feedback: User feedback data.
+            feedback: ``{"hypothesis": str, "signal": str}``. ``signal`` is one
+                of confirm/like/support (positive) or reject/dislike/deny.
+
+        Returns:
+            A result dict describing whether a hypothesis matched and its
+            post-update state — consumed by the API endpoint.
         """
         logger.info("Updating soul from feedback...")
         await self._memory.propagate_event(
@@ -646,7 +657,13 @@ class SoulEngine:
         hypotheses = self._load_insights()
         target = self._normalize_text(str(feedback.get("hypothesis", "")))
         signal = str(feedback.get("signal", "")).strip().lower()
-        updated = False
+        result: dict[str, Any] = {
+            "matched": False,
+            "hypothesis": str(feedback.get("hypothesis", "")),
+            "signal": signal,
+            "validated": False,
+            "confidence": 0.0,
+        }
         for item in hypotheses:
             if self._normalize_text(item.hypothesis) != target:
                 continue
@@ -656,10 +673,62 @@ class SoulEngine:
             elif signal in {"reject", "dislike", "deny"}:
                 item.validated = False
                 item.confidence = max(0.0, round(min(item.confidence, 0.35), 4))
-            updated = True
+            result["matched"] = True
+            result["hypothesis"] = item.hypothesis
+            result["validated"] = item.validated
+            result["confidence"] = item.confidence
             break
-        if updated:
+        if result["matched"]:
             self._save_insights(hypotheses)
+            # The insight layer is the source of truth, but get_profile()
+            # (UI profile-summary + delight scoring) reads the windowed
+            # ``active_insights`` snapshot cached on the soul layer. Without
+            # mirroring the calibration there, a confirm/reject wouldn't take
+            # visible or recommendation effect until the next 12h cognition
+            # sync. Patch the snapshot in place so the change is immediate.
+            self._sync_insight_to_soul_snapshot(
+                target_normalized=target,
+                validated=bool(result["validated"]),
+                confidence=float(result["confidence"]),
+            )
+        return result
+
+    def _sync_insight_to_soul_snapshot(
+        self,
+        *,
+        target_normalized: str,
+        validated: bool,
+        confidence: float,
+    ) -> None:
+        """Mirror an insight calibration onto the soul layer's active_insights.
+
+        No-op when the soul profile has no matching active insight (e.g. the
+        hypothesis exists only in the insight layer, not in the surfaced
+        window). Re-syncs the human-readable profile files on change.
+        """
+        soul_layer = self._memory.get_layer("soul")
+        if not soul_layer.data:
+            return
+        try:
+            profile = OnionProfile.from_dict(soul_layer.data)
+        except Exception:
+            logger.debug("Failed to load OnionProfile for insight snapshot sync", exc_info=True)
+            return
+        changed = False
+        for insight in profile.active_insights:
+            if self._normalize_text(insight.hypothesis) == target_normalized:
+                insight.validated = validated
+                insight.confidence = confidence
+                changed = True
+        if not changed:
+            return
+        soul_layer.data.clear()
+        soul_layer.data.update(profile.to_dict())
+        soul_layer.save()
+        try:
+            self._memory.sync_profile_files(profile)
+        except Exception:
+            logger.debug("sync_profile_files after insight feedback failed", exc_info=True)
 
     async def learn_from_dialogue(
         self,

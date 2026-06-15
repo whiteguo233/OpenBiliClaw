@@ -6,9 +6,11 @@
  */
 
 import { startCollector } from "./kernel.js";
+import { installBiliMessageListener } from "./bili/task-executor.js";
 import { bilibiliAdapter } from "../shared/platforms/bilibili.js";
 
 startCollector(bilibiliAdapter);
+installBiliMessageListener();
 
 console.log(
   "[OpenBiliClaw] Bilibili behavior collector initialized on",

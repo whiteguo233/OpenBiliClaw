@@ -1154,11 +1154,13 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             *,
             registry: object,
             memory: object,
+            usage_recorder: object | None = None,
             module_overrides: object | None = None,
             concurrency: int = 1,
         ) -> None:
             self.registry = registry
             self.memory = memory
+            self.usage_recorder = usage_recorder
             self.module_overrides = module_overrides
             self.concurrency = concurrency
 
@@ -1225,6 +1227,10 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
     assert created_memories[0].database is created_databases[0]
     assert recommendation_engine.database is created_databases[0]
     assert discovery_engine.database is created_databases[0]
+    recorder = recommendation_engine.llm.usage_recorder
+    assert recorder is not None
+    assert recorder is discovery_engine.llm_service.usage_recorder
+    assert recorder._sink is created_databases[0]
 
 
 def test_start_accepts_explicit_host_and_port(

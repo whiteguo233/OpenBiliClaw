@@ -196,3 +196,62 @@ async def test_fetch_backfills_source_platform() -> None:
     )
 
     assert items[0].source_platform == "twitter"
+
+
+# ── P1.5 keyword injection via recipe.config["keywords"] ─────────────
+
+
+@pytest.mark.asyncio
+async def test_search_recipe_keywords_config_forwards_list() -> None:
+    search = _FakeStrategy([_item("1790000000000000040", "x-search")])
+    adapter = XAdapter(
+        client=_FakeXClient(),
+        search=search,
+        feed=_FakeStrategy([]),
+        creator=_FakeStrategy([]),
+    )
+
+    await adapter.fetch(
+        SourceRecipe(
+            id="6",
+            source_type="twitter",
+            name="X-search",
+            strategy="search",
+            config={"keywords": ["rust async", "  ml papers  ", "rust async", ""]},
+        ),
+        _profile(),
+        limit=5,
+    )
+
+    assert len(search.calls) == 1
+    # Deduped + stripped; blank dropped. Single query stays "" (no explicit one).
+    assert search.calls[0]["keywords"] == ["rust async", "ml papers"]
+    assert search.calls[0]["query"] == ""
+
+
+@pytest.mark.asyncio
+async def test_search_recipe_without_keywords_omits_kwarg() -> None:
+    # No "keywords" in config → adapter keeps the legacy single-query call
+    # path byte-for-byte (no keywords kwarg forwarded).
+    search = _FakeStrategy([_item("1790000000000000041", "x-search")])
+    adapter = XAdapter(
+        client=_FakeXClient(),
+        search=search,
+        feed=_FakeStrategy([]),
+        creator=_FakeStrategy([]),
+    )
+
+    await adapter.fetch(
+        SourceRecipe(
+            id="7",
+            source_type="twitter",
+            name="X-search",
+            strategy="search",
+            config={"query": "rust"},
+        ),
+        _profile(),
+        limit=5,
+    )
+
+    assert "keywords" not in search.calls[0]
+    assert search.calls[0]["query"] == "rust"

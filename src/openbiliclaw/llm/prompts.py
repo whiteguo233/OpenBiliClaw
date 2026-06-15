@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+
 if TYPE_CHECKING:
     from openbiliclaw.soul.tone import ToneProfile
 
@@ -616,8 +618,16 @@ def build_insight_prompt(
     awareness_notes: list[dict[str, object]],
     preference_summary: dict[str, object],
     soul_profile: dict[str, object],
+    existing_hypotheses: list[dict[str, object]] | None = None,
 ) -> list[dict[str, str]]:
-    """Build a structured prompt for insight-hypothesis generation."""
+    """Build a structured prompt for insight-hypothesis generation.
+
+    ``existing_hypotheses`` (optional) is the set of currently-active
+    hypotheses passed as read-only context so an incremental run — which
+    only sees *new* awareness notes — can refine or avoid restating them
+    instead of regenerating from the full awareness history every time.
+    See rules 5 / 6 below.
+    """
     system_prompt = """
 <task>
 你要基于近期觉察、偏好摘要和用户画像，生成谨慎的解释性假设。
@@ -628,6 +638,8 @@ def build_insight_prompt(
 2. hypothesis 是假设，不是结论，措辞必须保守。
 3. 每条必须附 1~3 条 evidence。
 4. confidence 保持在 0~1，且不要过高。
+5. existing_hypotheses（如有）是当前已有的活跃假设，仅作上下文参考。本次新的觉察笔记若印证某条已有假设，可重述同一 hypothesis 文本以累积其证据/置信；若指向新方向，再生成新假设。不要为凑数而重复已有假设。
+6. 只依据本次觉察笔记里的新信号下结论；existing_hypotheses 本身不是新证据。
 </rules>
 
 <output_schema>
@@ -645,6 +657,9 @@ def build_insight_prompt(
             "<awareness_notes>",
             json.dumps(awareness_notes, ensure_ascii=False, indent=2),
             "</awareness_notes>",
+            "<existing_hypotheses>",
+            json.dumps(existing_hypotheses or [], ensure_ascii=False, indent=2),
+            "</existing_hypotheses>",
             "<preference_summary>",
             json.dumps(preference_summary, ensure_ascii=False, indent=2),
             "</preference_summary>",
@@ -1484,12 +1499,10 @@ def build_explore_domains_prompt(
      - 幽默·吐槽·消遣    ：搞笑、鬼畜、整活、轻松吐槽
    例：5 个 domain 不许全在"拆解·系统·结构"轴里换皮（钟表/榫卯/开发板/电路/模型
    都属于同一个轴——拆解结构——这种安排是错的）；必须把 5 个槽位分散到至少 4 个不同的轴。
-12. 重要：personality_portrait 里出现的具体名词（如"机械结构""手工技艺""琢磨某物"
-   "钻研某活"等）只是写作时的文风装饰，**不是真实的兴趣信号**。
-   你判断用户兴趣方向时**只能依赖 `interests` 字段中的明确标签**，
-   绝对不要把 portrait 里的比喻或例子当成探索目标。
-   如果 portrait 提到"机械结构"，你不应该把"机械"或"精密拆解"当成 domain；
-   而应该看 interests 实际有什么、并在心理诉求轴清单里挑一个**还没被占用**的轴去拓展。
+12. 重要：判断用户兴趣方向时**只能依赖 `interests` / `interest_domains` 字段中的明确标签**，
+   不要从 core_traits、deep_needs 等人格/心理描述里的比喻或例子反推出兴趣目标
+   （例如看到"钻研""精密"这类字眼就臆造出"机械结构""精密拆解"之类 domain）。
+   应该看 interests 实际有什么、并在心理诉求轴清单里挑一个**还没被占用**的轴去拓展。
 13. **盲区优先 (v0.3.31+)**: 如果 user 消息里给了 `<covered_topic_groups>` 块，
    表示这些 topic_group 在用户推荐池里已经堆积，本轮探索**尽量绕开**这些方向，
    优先去探索没被覆盖的领域。如果实在某条 domain 跟 covered 列表里的方向有重合，
@@ -1580,7 +1593,7 @@ def build_speculation_generation_prompt(
         "<signal_weights>\n"
         "综合用户信号时按以下权重决策：\n"
         "  ≈50%  用户的 likes 分布（直接反映 ta 实际在看什么、占比多少）\n"
-        "  ≈30%  portrait + deep_needs + motivational_drivers（内在动力）\n"
+        "  ≈30%  deep_needs + motivational_drivers（内在动力）\n"
         "  ≈15%  core_traits + cognitive_style（处理信息的风格）\n"
         "   ≤5%  MBTI（**仅作弱参考**）\n"
         "\n"
@@ -1831,7 +1844,8 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "\n"
     "<rules>\n"
     "1. 只能输出操作（op），不能输出整理后的列表。每个操作是 merge 或 keep。\n"
-    "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】，一个字都不能改。\n"
+    "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n"
+    "   同名异类成员必须用 {\"name\": 原名, \"category\": 原分类} 精确引用。\n"
     "3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n"
     "4. merge 至少 2 个 members。canonical 是合并后的规范名：优先从 members 里选\n"
     "   最准确的一个；只有当所有 members 都不够准确时才起新名，新名必须与\n"
@@ -1844,8 +1858,8 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "7. likes 组可以稍宽松，但同样不允许把具体兴趣合并成大类。\n"
     "8. likes 成员带 category（一级分类）。同名/近名但 category 不同且语义不同的条目\n"
     "   是【同名异义】（如 苹果(科技) vs 苹果(美食)），必须分别 keep，严禁合并。\n"
-    "   只有确认它们是同一概念被误标了不同分类时才 merge；此时 members 必须把每个\n"
-    "   同名条目逐条重复列出（与簇内成员一一对应），keep 也要逐条各出一条。\n"
+    "   只有确认它们是同一概念被误标了不同分类时才 merge；此时 merge.members 和\n"
+    "   keep.member 都必须使用 {name, category}，使每个同名条目可被逐一追踪。\n"
     "9. 输出严格 JSON，不要附带解释文本。\n"
     "10. 各变量见 user 消息：likes_clusters / dislikes_clusters（各簇带 cluster_id、\n"
     "   members 及其权重 / category 元数据）。\n"
@@ -1857,7 +1871,10 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     '    {"cluster_id": "L1", "op": "merge", "members": ["智能体开发", "智能体开发与实现"],\n'
     '     "canonical": "智能体开发", "reason": "同一概念的措辞变体"},\n'
     '    {"cluster_id": "L2", "op": "keep", "name": "篮球", "reason": "NBA 是其子集而非同义"},\n'
-    '    {"cluster_id": "L2", "op": "merge", "members": ["NBA篮球", "NBA球星动态"], "canonical": "NBA"}\n'
+    '    {"cluster_id": "H1", "op": "merge",\n'
+    '     "members": [{"name": "苹果", "category": "科技"}, {"name": "苹果", "category": "资讯"}],\n'
+    '     "canonical": "苹果公司"},\n'
+    '    {"cluster_id": "H1", "op": "keep", "member": {"name": "苹果", "category": "美食"}}\n'
     "  ],\n"
     '  "dislikes": [\n'
     '    {"cluster_id": "D1", "op": "merge", "members": ["偶像团体练习室内容", "偶像练习室物料"],\n'
@@ -1876,7 +1893,7 @@ def build_profile_consolidation_prompt(
     """Build the prompt for LLM-judged consolidation of like/dislike topics.
 
     Each cluster dict carries ``cluster_id`` and ``members`` (list of dicts
-    with name + weight metadata for likes, plain strings for dislikes).
+    with name + weight + category metadata for likes, plain strings for dislikes).
     System prompt is fully static (cache-friendly per CLAUDE.md convention);
     all per-call data lives in the user message with deterministic
     serialization.
@@ -1917,6 +1934,72 @@ _CATEGORY_MAPPING_SYSTEM_PROMPT = (
     "<output_schema>\n"
     "{\n"
     '  "mapping": {"泛娱乐": "娱乐", "宠物": "萌宠", "内容消费方式": "其他"}\n'
+    "}\n"
+    "</output_schema>"
+)
+
+
+# Module-level constant: 100% static system prompt for the MERGED, multi-
+# platform search-keyword generator (Discover backpressure refactor P1.4).
+# This single call subsumes the five per-platform keyword builders (B站
+# search / 小红书 / 抖音 / YouTube / X) so the profile is sent ONCE and the
+# provider-side prompt cache fires on the byte-identical prefix. Per
+# CLAUDE.md "LLM Prompt-Cache Convention": NOTHING per-call lives here —
+# the profile, the due-platform set, each platform's need count, recent
+# keywords, and avoid_* hints ALL live in the user message (<profile_summary>
+# + <platforms>). The <supply_advantage> block below (P2) is STATIC per
+# platform (it describes where each platform structurally has good content,
+# never anything about *this* user), so it belongs in the system constant and
+# the call-invariance test still holds.
+_MERGED_KEYWORDS_SYSTEM_PROMPT = (
+    "<task>\n"
+    "你要为多个平台的内容发现一次性生成搜索关键词。\n"
+    "见 user 消息里的 <profile_summary>(用户画像,只发一次)和 <platforms>"
+    "(本轮需要补词的平台数组)。<platforms> 里每个平台块给出 platform、need"
+    "(要生成多少个该平台关键词)、recent_keywords(最近已经搜过、不要再出的词)、"
+    "avoid_topics / avoid_styles / avoid_franchises(当前推荐池已饱和、要避开的方向)、"
+    "supply_hint(数据观察:该平台近来实际产出较多、用户没有反感的方向,是下面 "
+    "<supply_advantage> 静态表的数据化补充,可能为空)。\n"
+    "</task>\n\n"
+    "<supply_advantage>\n"
+    "每个平台结构性擅长的内容方向不同(下面是平台的固有供给优势,与具体用户无关)。"
+    "请把用户画像里的兴趣,映射到该平台真正有好内容的形态上:\n"
+    "  - bilibili:学习区 / 知识科普 / 深度长视频 / 梗文化 / 技术。把兴趣做成"
+    "主题 + 风格词(盘点 / 入门 / 测评 / 教程 / 整活)。\n"
+    "  - xiaohongshu:生活方式 / 好物种草 / 教程攻略 / 美妆 / 体验分享。具象、带场景的"
+    "长尾(教程 / 攻略 / vlog / 踩坑 / 真实体验),避免裸类目词。\n"
+    "  - douyin:短视频 / 娱乐 / 热点 / 搞笑 / 才艺。短平快、口语、跟得上当下热度。\n"
+    "  - youtube:英文长内容 / 纪录片 / 讲座 / 国际视角。2-4 词,中英文按话题选最常见的"
+    "搜索语言。\n"
+    "  - twitter:实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,"
+    "华语圈话题可用中文。\n"
+    "</supply_advantage>\n\n"
+    "<rules>\n"
+    "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
+    "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
+    "(bilibili / xiaohongshu / douyin / youtube / twitter),每个 key 的值是一个"
+    "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。\n"
+    "3. 每个平台生成恰好该平台 need 个搜索关键词;凑不满时宁缺毋滥,数组可短于 need,"
+    "但不要为了凑数编造与画像无关的词。\n"
+    "4. 每个关键词都要是适合在该平台搜索框直接输入的短词 / 短组合,不要写成长句。\n"
+    "5. **不要重复**该平台 recent_keywords 里已有的词(换皮、加无意义尾词也算重复)。\n"
+    "6. 避开该平台的 avoid_topics / avoid_styles / avoid_franchises;这些是软避让信号,"
+    "不要为了避让而生成与用户画像无关的词。\n"
+    "7. 把同一个兴趣映射到该平台 <supply_advantage> 里描述的强项形态上,保持该平台的"
+    "原生搜索风格。若该平台块带非空 supply_hint,优先往这些已被实际验证有产出的方向上"
+    "映射(它和 avoid_* 不会重叠);supply_hint 为空时只依据 <supply_advantage> 静态表。\n"
+    "8. **弃权(可少出 / 不出)**:如果用户的兴趣和某个平台的 <supply_advantage> 基本不"
+    "匹配(在该平台搜不到对用户有价值的内容),就为该平台返回更少、甚至空数组 []——"
+    "不要硬凑、不要为了填满 need 而编造不契合该平台的词。该平台留空是允许且正确的。\n"
+    "9. 同一平台内各关键词的核心主题词要两两不同,不要同一概念换皮出现多次。\n"
+    "</rules>\n\n"
+    "<output_schema>\n"
+    "{\n"
+    '  "bilibili": ["历史 冷知识 盘点", "摄影 入门 推荐"],\n'
+    '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
+    '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
+    '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
+    '  "twitter": ["rust async runtime", "llm agents discussion"]\n'
     "}\n"
     "</output_schema>"
 )
@@ -1966,3 +2049,133 @@ def build_category_mapping_prompt(
         {"role": "system", "content": _CATEGORY_MAPPING_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
+
+
+def build_merged_keywords_prompt(
+    *,
+    profile_summary: dict[str, object],
+    platform_blocks: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Build the merged, multi-platform search-keyword generation prompt.
+
+    Subsumes the five legacy per-platform keyword builders into ONE LLM call
+    (Discover backpressure refactor, design spec §7.1 / §7.2): the profile is
+    serialized once and every due platform rides along in a single ``<platforms>``
+    block, so the provider prompt cache fires on the stable prefix.
+
+    Args:
+        profile_summary: The canonical ``build_profile_summary`` dict, sent once.
+        platform_blocks: One dict per due platform, each carrying
+            ``platform`` plus ``need`` / ``recent_keywords`` /
+            ``avoid_topics`` / ``avoid_styles`` / ``avoid_franchises``. Only the
+            platforms passed in appear in the prompt (and may appear in the
+            output). The ``avoid_*`` fields come from
+            ``PoolDistributionSnapshot.to_prompt_hints()`` (global, ``prefer_axes``
+            intentionally disabled).
+
+    Cache-friendly per CLAUDE.md: ``system_prompt`` is the module-level constant
+    ``_MERGED_KEYWORDS_SYSTEM_PROMPT`` (100% static). All per-call data lives in
+    ``user_prompt``, ordered most-stable (profile) → most-variable (this batch's
+    due platforms), each serialized with ``ensure_ascii=False, indent=2,
+    sort_keys=True``.
+    """
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            "</profile_summary>",
+            "<platforms>",
+            json.dumps(platform_blocks, ensure_ascii=False, indent=2, sort_keys=True),
+            "</platforms>",
+        ]
+    )
+    return [
+        {"role": "system", "content": _MERGED_KEYWORDS_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def parse_merged_keywords(
+    content: str,
+    platforms: list[str],
+    *,
+    per_platform_cap: int,
+) -> dict[str, list[str]]:
+    """Parse the merged keyword-generation response into per-platform lists.
+
+    Tolerant counterpart to :func:`build_merged_keywords_prompt`. Reuses
+    ``parse_llm_json_tolerant`` so truncated / fenced JSON still salvages.
+    Never raises — a missing, non-list, or garbage value for any requested
+    platform yields an empty list for that platform.
+
+    Args:
+        content: The raw LLM response text.
+        platforms: The platforms to extract (typically the same set passed to
+            the builder). The returned dict has exactly these keys.
+        per_platform_cap: Maximum keywords kept per platform after dedup.
+
+    Returns:
+        ``{platform: [keyword, ...]}`` for every platform in ``platforms``,
+        each list deduped (order-preserving) and capped at ``per_platform_cap``.
+    """
+    keywords, _present = parse_merged_keywords_with_presence(
+        content, platforms, per_platform_cap=per_platform_cap
+    )
+    return keywords
+
+
+def parse_merged_keywords_with_presence(
+    content: str,
+    platforms: list[str],
+    *,
+    per_platform_cap: int,
+) -> tuple[dict[str, list[str]], set[str]]:
+    """Like :func:`parse_merged_keywords` but also report decline vs omission.
+
+    The planner (P2.2) must tell an **intentional decline** — the model
+    addressed the platform and returned an explicit empty list ``[]`` (the
+    user's interests don't fit that platform's supply advantage, see system
+    prompt rule 8) — apart from an **omission** (the platform key is absent /
+    non-list garbage, the model never answered for it). The first must NOT
+    trigger the interest-name fallback (skip the platform this cycle); the
+    second still falls back.
+
+    A platform counts as "present" when the parsed payload is a dict and that
+    platform's value is a JSON list (``[]`` included). A non-list value
+    (``"x"`` / ``42`` / missing) is NOT present → omission → fallback. With
+    ``per_platform_cap <= 0`` nothing is parsed and no platform is present.
+
+    Returns:
+        ``(keywords_by_platform, present_platforms)`` where ``keywords`` has a
+        key for every requested platform (deduped, capped) and
+        ``present_platforms`` is the subset whose value was an explicit list.
+    """
+    result: dict[str, list[str]] = {platform: [] for platform in platforms}
+    present: set[str] = set()
+    if per_platform_cap <= 0:
+        return result, present
+
+    payload = parse_llm_json_tolerant(content)
+    if not isinstance(payload, dict):
+        return result, present
+
+    for platform in platforms:
+        raw = payload.get(platform)
+        if not isinstance(raw, list):
+            continue
+        # An explicit list (even empty) means the model addressed this platform.
+        present.add(platform)
+        seen: set[str] = set()
+        keywords: list[str] = []
+        for item in raw:
+            if not isinstance(item, (str, int, float)):
+                continue
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            keywords.append(text)
+            if len(keywords) >= per_platform_cap:
+                break
+        result[platform] = keywords
+    return result, present

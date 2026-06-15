@@ -267,6 +267,205 @@ class TestBackendAPI:
         assert captured_tasks[0].exception() is None
 
     @pytest.mark.asyncio
+    async def test_restart_tasks_rekicks_pool_precompute_drain(self) -> None:
+        """Lever 2a: hot-reload re-kicks the classify→copy→delight drain.
+
+        ``rebuild_from_config``'s ``cancel_all`` kills any in-flight pool
+        precompute; ``restart_background_tasks`` must re-kick it on the
+        freshly-built engine so a user saving config mid-cold-start doesn't
+        strand pool-fill until the next refresh tick.
+        """
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self.calls: list[object] = []
+                self.started = asyncio.Event()
+
+            async def precompute_pool_copy(self, *, profile: object) -> int:
+                self.calls.append(profile)
+                self.started.set()
+                return 0
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        engine = FakeRecommendationEngine()
+        cfg = Config()
+        ctx = RuntimeContext(
+            config=cfg,
+            memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=engine,
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        try:
+            await asyncio.wait_for(ctx.restart_background_tasks(app), timeout=0.5)
+            assert ctx.task_registry.stats().get("post_reload_precompute_pool_copy") == 1
+            await asyncio.wait_for(engine.started.wait(), timeout=0.5)
+            assert engine.calls == [{"profile": "ok"}]
+        finally:
+            await ctx.task_registry.cancel_all()
+
+    @pytest.mark.asyncio
+    async def test_e2e_hot_reload_resumes_real_pool_fill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """E2E (lever 2a): a config reload makes the *real* engine fill copy for
+        a pending pool candidate against a *real* DB — pool-fill actually
+        resumes (the seeded row becomes serveable), not just 'a task was
+        scheduled'. Only the LLM (copy text) is faked.
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+        from openbiliclaw.llm.base import LLMResponse
+        from openbiliclaw.recommendation.engine import RecommendationEngine
+        from openbiliclaw.soul.profile import PreferenceLayer, SoulProfile
+        from openbiliclaw.storage.database import Database
+
+        async def no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+        class _CopyLLM:
+            def __init__(self) -> None:
+                self.callers: list[str] = []
+
+            async def complete_structured_task(
+                self, *, caller: str = "", **_kw: object
+            ) -> LLMResponse:
+                self.callers.append(caller)
+                content = json.dumps(
+                    [
+                        {
+                            "bvid": "BVe2e",
+                            "expression": "这条接住你最近的状态。",
+                            "topic_label": "你最近在意的方向",
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+                return LLMResponse(content=content, provider="test", model="dummy", usage={})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "e2e.db")
+            db.initialize()
+            # Classified but un-copied → "needs copy", not yet serveable.
+            db.cache_content(
+                "BVe2e",
+                title="测试视频",
+                up_name="UP",
+                source="search",
+                style_key="tutorial",
+                topic_group="测试分组",
+                topic_key="测试分组",
+                relevance_score=0.9,
+                pool_expression="",
+                pool_topic_label="",
+            )
+            assert db.count_pool_candidates() == 0  # gated: copy missing
+
+            profile = SoulProfile(
+                personality_portrait="p",
+                core_traits=["好奇"],
+                preferences=PreferenceLayer(),
+            )
+            llm = _CopyLLM()
+            engine = RecommendationEngine(llm=llm, database=db)
+
+            class FakeSoulEngine:
+                async def get_profile(self) -> object:
+                    return profile
+
+            ctx = RuntimeContext(
+                config=Config(),
+                memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+                runtime_controller=object(),
+                account_sync_service=object(),
+                auto_update_service=object(),
+                soul_engine=FakeSoulEngine(),
+                recommendation_engine=engine,
+            )
+            engine.task_registry = ctx.task_registry  # mirror production wiring
+
+            # Capture the post-reload precompute task so we can await it.
+            captured: dict[str, asyncio.Task[object]] = {}
+            original_track = ctx.task_registry.track
+
+            def _track(name: str, coro: object) -> object:
+                task = original_track(name, coro)
+                captured[name] = task
+                return task
+
+            ctx.task_registry.track = _track  # type: ignore[method-assign]
+
+            app = SimpleNamespace(state=SimpleNamespace())
+            try:
+                await asyncio.wait_for(ctx.restart_background_tasks(app), timeout=2.0)
+                assert "post_reload_precompute_pool_copy" in captured
+                await asyncio.wait_for(captured["post_reload_precompute_pool_copy"], timeout=2.0)
+
+                # The reload drove the REAL engine to write copy for the pending
+                # candidate against the REAL DB — it is now serveable.
+                assert "recommendation.write_expression" in llm.callers
+                assert db.count_pool_candidates() == 1
+            finally:
+                await ctx.task_registry.cancel_all()
+
+    @pytest.mark.asyncio
+    async def test_startup_prewarm_wrapper_skips_retries_on_nothing_to_warm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lever 4: the startup prewarm wrapper skips its retry loop when prewarm
+        returns -1 ("nothing to warm" — empty pool / embeddings off), so a fresh
+        deploy no longer emits 5 alarming "warmed=0 — retry" lines that read like
+        a real Ollama outage. A 0 return (candidates present, backend down) still
+        retries.
+        """
+        from openbiliclaw.api.runtime_context import RuntimeContext
+
+        async def no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+        # -1 → benign cold start: called exactly once, no retry loop.
+        benign_calls = 0
+
+        async def _benign() -> int:
+            nonlocal benign_calls
+            benign_calls += 1
+            return -1
+
+        await RuntimeContext._safe_prewarm_pool_mmr_embeddings(_benign)
+        assert benign_calls == 1
+
+        # 0 → backend unreachable: retried up to 5 times before giving up.
+        down_calls = 0
+
+        async def _down() -> int:
+            nonlocal down_calls
+            down_calls += 1
+            return 0
+
+        await RuntimeContext._safe_prewarm_pool_mmr_embeddings(_down)
+        assert down_calls == 5
+
+    @pytest.mark.asyncio
     async def test_put_config_does_not_block_on_speculator(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -432,10 +631,16 @@ class TestBackendAPI:
         import openbiliclaw.memory.manager as memory_module
         import openbiliclaw.recommendation.engine as recommendation_module
         import openbiliclaw.runtime.account_sync as account_sync_module
+        import openbiliclaw.runtime.bilibili_producer as bilibili_producer_module
         import openbiliclaw.runtime.events as runtime_events_module
         import openbiliclaw.runtime.refresh as refresh_module
         import openbiliclaw.soul.dialogue as dialogue_module
         import openbiliclaw.soul.engine as soul_engine_module
+        import openbiliclaw.sources.bili_tasks as bili_tasks_module
+        import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.x_tasks as x_tasks_module
+        import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
+        import openbiliclaw.sources.yt_tasks as yt_tasks_module
         import openbiliclaw.storage.database as database_module
 
         captured: dict[str, object] = {}
@@ -475,6 +680,7 @@ class TestBackendAPI:
         class FakeDatabase:
             def __init__(self, path) -> None:
                 self.path = path
+                self.conn = object()
 
             def initialize(self) -> None:
                 return None
@@ -548,6 +754,34 @@ class TestBackendAPI:
         class FakeRuntimeEventHub:
             pass
 
+        class FakeBiliTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXhsTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXhsCreatorStore:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeDyTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeYtTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeXCreatorStore:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
+        class FakeBiliProducer:
+            def __init__(self, **kwargs: object) -> None:
+                captured["bilibili_producer_kwargs"] = kwargs
+
         class FakeDialogue:
             def __init__(
                 self,
@@ -571,11 +805,16 @@ class TestBackendAPI:
             sources=SimpleNamespace(
                 browser_cdp_url="",
                 browser_headed=False,
+                bilibili=SimpleNamespace(enabled=True),
                 xiaohongshu=SimpleNamespace(
+                    enabled=False,
                     daily_search_budget=20,
                     daily_creator_budget=10,
                     task_interval_seconds=45,
                 ),
+                douyin=SimpleNamespace(enabled=False),
+                youtube=SimpleNamespace(enabled=False),
+                twitter=SimpleNamespace(enabled=False),
             ),
             scheduler=SimpleNamespace(
                 enabled=True,
@@ -624,6 +863,17 @@ class TestBackendAPI:
         monkeypatch.setattr(recommendation_module, "RecommendationEngine", FakeRecommendationEngine)
         monkeypatch.setattr(refresh_module, "ContinuousRefreshController", FakeRuntimeController)
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
+        monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
+        monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
+        monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
+        monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
+        monkeypatch.setattr(yt_tasks_module, "YtTaskQueue", FakeYtTaskQueue)
+        monkeypatch.setattr(
+            bilibili_producer_module,
+            "BilibiliExtensionSearchProducer",
+            FakeBiliProducer,
+        )
         monkeypatch.setattr(runtime_events_module, "RuntimeEventHub", FakeRuntimeEventHub)
         monkeypatch.setattr(dialogue_module, "SocraticDialogue", FakeDialogue)
 
@@ -637,6 +887,12 @@ class TestBackendAPI:
         assert (
             captured["runtime_controller_kwargs"]["presence"] is app.state.runtime_context.presence
         )
+        assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
+        assert (
+            captured["bilibili_producer_kwargs"]["presence"]
+            is app.state.runtime_context.presence
+        )
+        assert captured["bilibili_producer_kwargs"]["bilibili_client"].cookie == ""
         assert captured["runtime_controller_kwargs"]["check_interval_seconds"] == 77
         assert captured["runtime_controller_kwargs"]["signal_event_threshold"] == 9
         assert captured["runtime_controller_kwargs"]["trending_refresh_hours"] == 5

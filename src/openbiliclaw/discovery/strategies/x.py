@@ -33,6 +33,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.discovery.x_normalize import normalize_tweet
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 
@@ -120,6 +121,19 @@ def _parse_keywords(content: str, *, count: int) -> list[str]:
     return keywords
 
 
+def _dedupe_keywords(keywords: list[str]) -> list[str]:
+    """Strip + dedupe caller-injected keywords (unified planner injection)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in keywords:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
 def _normalize_raw(
     raw_tweets: list[dict[str, Any]],
     *,
@@ -159,10 +173,19 @@ class XSearchStrategy:
         *,
         limit: int = 20,
         query: str = "",
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
         **_: object,
     ) -> list[DiscoveredContent]:
         explicit = (query or "").strip()
-        keywords = [explicit] if explicit else await self._generate_keywords(profile)
+        if explicit:
+            keywords = [explicit]
+        elif queries is not None:
+            # Unified keyword planner injection: search each supplied keyword,
+            # skipping internal LLM keyword generation.
+            keywords = _dedupe_keywords(queries)
+        else:
+            keywords = await self._generate_keywords(profile)
         self.last_intermediates = {"keywords": list(keywords)}
         if not keywords:
             return []
@@ -170,10 +193,14 @@ class XSearchStrategy:
         seen: set[str] = set()
         results: list[DiscoveredContent] = []
         for keyword in keywords:
+            # P1.8 yield provenance: the id of the word currently being searched
+            # (unified planner injection). ``None`` when unmapped / not injected.
+            keyword_id = keyword_ids.get(keyword) if keyword_ids else None
             raw = await self.client.search(keyword, limit=limit, product=self.product)
             for content in _normalize_raw(raw, source_strategy=SEARCH_STRATEGY_TAG):
                 if content.content_id in seen:
                     continue
+                content.source_keyword_id = keyword_id
                 seen.add(content.content_id)
                 results.append(content)
                 if len(results) >= limit:
@@ -181,25 +208,26 @@ class XSearchStrategy:
         return results
 
     async def _generate_keywords(self, profile: SoulProfile) -> list[str]:
+        if not profile.preferences.interests:
+            return []
+        keywords = await self._llm_keywords(profile)
+        # Deterministic fallback when LLM is unavailable / fails / returns
+        # nothing — so the unified planner (and the legacy path) never loses X
+        # to a transient failure (mirrors B站/YouTube/抖音).
+        return keywords or _x_interest_fallback(profile, self.keywords_per_run)
+
+    async def _llm_keywords(self, profile: SoulProfile) -> list[str]:
         if self.llm_service is None:
             return []
-        interests = list(profile.preferences.interests)
-        if not interests:
-            return []
-        interests.sort(key=lambda t: t.weight, reverse=True)
-        interest_tuples = [(t.name, t.category, t.weight) for t in interests if t.name]
-        if not interest_tuples:
-            return []
-
         try:
             response = await self.llm_service.complete_structured_task(
                 system_instruction=_KEYWORDS_SYSTEM_PROMPT,
-                user_input=_build_keyword_user_prompt(interest_tuples, self.keywords_per_run),
+                user_input=_build_keyword_user_prompt(profile, self.keywords_per_run),
                 temperature=0.8,
                 max_tokens=512,
                 caller="discovery.x.keyword_gen",
             )
-        except Exception as exc:  # noqa: BLE001 - degrade to "nothing this cycle"
+        except Exception as exc:  # noqa: BLE001 - degrade to fallback
             logger.warning("x keyword LLM call failed: %s", exc)
             return []
 
@@ -208,16 +236,36 @@ class XSearchStrategy:
         return _parse_keywords(text, count=self.keywords_per_run)
 
 
-def _build_keyword_user_prompt(
-    interest_tags: list[tuple[str, str, float]],
-    count: int,
-) -> str:
-    lines = ["用户兴趣画像（name | category | weight）："]
-    for name, category, weight in interest_tags[:15]:
-        cat = category or "-"
-        lines.append(f"- {name} | {cat} | {weight:.2f}")
-    lines.append(f"\n请输出 {count} 个适合 X 搜索的关键词。")
-    return "\n".join(lines)
+def _build_keyword_user_prompt(profile: SoulProfile, count: int) -> str:
+    # Same canonical structured profile every other discovery prompt sees
+    # (B站 / YouTube query-gen, all-platform evaluation) — no divergent
+    # representation. Deterministic dump keeps the prompt-cache prefix stable.
+    summary = build_profile_summary(profile)
+    return (
+        "<profile_summary>\n"
+        + json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n</profile_summary>\n\n"
+        + "请基于上面画像里的兴趣（interests / interest_domains），结合 disliked_topics 避雷，"
+        + f"输出 {count} 个适合 X 搜索的关键词。"
+    )
+
+
+def _x_interest_fallback(profile: SoulProfile, count: int) -> list[str]:
+    """Deterministic interest-name keywords (mirrors B站/YouTube/抖音 fallback)."""
+    ranked = sorted(
+        profile.preferences.interests, key=lambda tag: float(tag.weight or 0.0), reverse=True
+    )
+    seen: set[str] = set()
+    out: list[str] = []
+    for tag in ranked:
+        name = str(tag.name).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= count:
+            break
+    return out
 
 
 # ── XForYouStrategy ──────────────────────────────────────────────────

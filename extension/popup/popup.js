@@ -100,6 +100,7 @@ import {
   submitProfileEdit,
   startChatTurn,
   submitFeedback,
+  submitInsightFeedback,
   updateConfig,
   addToWatchLater,
   removeFromWatchLater,
@@ -2835,7 +2836,53 @@ function renderActiveInsights(container, items) {
       row.append(timestampWrapper);
     }
 
+    const actions = document.createElement("div");
+    actions.className = "insight-actions";
+    const status = document.createElement("span");
+    status.className = "insight-action-status";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "insight-action-btn is-confirm";
+    confirmBtn.textContent = "准"; // 准
+    confirmBtn.title = "这个猜测准";
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "insight-action-btn is-reject";
+    rejectBtn.textContent = "不准"; // 不准
+    rejectBtn.title = "这个猜测不准";
+    confirmBtn.addEventListener("click", () =>
+      handleInsightFeedback(item.hypothesis, "confirm", row, [confirmBtn, rejectBtn], status),
+    );
+    rejectBtn.addEventListener("click", () =>
+      handleInsightFeedback(item.hypothesis, "reject", row, [confirmBtn, rejectBtn], status),
+    );
+    actions.append(confirmBtn, rejectBtn, status);
+    row.append(actions);
+
     container.append(row);
+  }
+}
+
+async function handleInsightFeedback(hypothesis, signal, row, buttons, statusEl) {
+  for (const b of buttons) b.disabled = true;
+  try {
+    const res = await submitInsightFeedback(hypothesis, signal);
+    if (res && res.matched) {
+      if (typeof res.confidence === "number") {
+        const pct = Math.round(res.confidence * 100);
+        const fill = row.querySelector(".insight-confidence-fill");
+        const label = row.querySelector(".insight-confidence-label");
+        if (fill instanceof HTMLElement) fill.style.width = `${pct}%`;
+        if (label) label.textContent = `${pct}%`;
+      }
+      row.classList.toggle("is-validated", Boolean(res.validated));
+    }
+    if (statusEl) {
+      statusEl.textContent = signal === "confirm" ? "已确认 ✓" : "已记下，会少推这类";
+    }
+  } catch {
+    for (const b of buttons) b.disabled = false;
+    if (statusEl) statusEl.textContent = "没存上，稍后再试";
   }
 }
 

@@ -9,6 +9,7 @@ import {
   respondToAvoidanceProbe,
   fetchEditState,
   submitProfileEdit,
+  submitInsightFeedback,
 } from "../api.js";
 import {
   normalizeProfileSummary,
@@ -230,14 +231,14 @@ function render() {
 
   // Active insights
   if (p.active_insights.length) {
-    const insHtml = p.active_insights.map((i) => {
+    const insHtml = p.active_insights.map((i, idx) => {
       let extra = "";
       if (i.evidence.length) {
         extra += `<div class="insight-evidence">${i.evidence.map((e) => `<div>\u2022 ${esc(e)}</div>`).join("")}</div>`;
       }
       const confPct = Math.round(i.confidence * 100);
       return `
-        <div class="insight-item">
+        <div class="insight-item" data-insight-idx="${idx}">
           <div class="insight-label">\u{1F4A1} Insight
             <span class="insight-confidence">${confPct}%</span>
             ${i.validated ? `<span class="insight-validated">\u2713 \u5DF2\u9A8C\u8BC1</span>` : ""}
@@ -245,6 +246,10 @@ function render() {
           <div>${esc(i.hypothesis)}</div>
           ${extra}
           ${i.created_at ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(formatRelativeTimestamp(i.created_at))}</div>` : ""}
+          <div class="insight-actions" style="display:flex;gap:8px;margin-top:8px">
+            <button class="spec-btn confirm" data-action="confirm" title="\u8FD9\u4E2A\u731C\u6D4B\u51C6">\u51C6</button>
+            <button class="spec-btn reject" data-action="reject" title="\u8FD9\u4E2A\u731C\u6D4B\u4E0D\u51C6">\u4E0D\u51C6</button>
+          </div>
         </div>`;
     }).join("");
     html += section("\u6D3B\u8DC3\u6D1E\u5BDF", insHtml);
@@ -269,6 +274,7 @@ function render() {
   $root.querySelector("#load-more-cognition")?.addEventListener("click", loadMoreCognition);
   bindSpecInterestActions();
   bindSpecAvoidanceActions();
+  bindInsightActions();
   bindCognitionExpand();
 }
 
@@ -366,6 +372,39 @@ function bindSpecInterestActions() {
       } catch {
         forgetHandledProbe(domain, "interest.probe");
         btn.disabled = false;
+      }
+    });
+  }
+}
+
+function bindInsightActions() {
+  for (const btn of $root.querySelectorAll(".insight-item .spec-btn")) {
+    btn.addEventListener("click", async (e) => {
+      const row = e.target.closest(".insight-item");
+      const idx = Number(row?.dataset.insightIdx);
+      const action = e.target.dataset.action;
+      const insight = state.profile?.active_insights?.[idx];
+      if (!insight || !action) return;
+      for (const b of row.querySelectorAll(".spec-btn")) b.disabled = true;
+      try {
+        const res = await submitInsightFeedback(insight.hypothesis, action);
+        const p = state.profile;
+        if (p?.active_insights && res?.matched) {
+          const updated = p.active_insights.map((it, i) =>
+            i === idx
+              ? {
+                  ...it,
+                  validated: Boolean(res.validated),
+                  confidence:
+                    typeof res.confidence === "number" ? res.confidence : it.confidence,
+                }
+              : it,
+          );
+          patchState({ profile: { ...p, active_insights: updated } });
+        }
+        render();
+      } catch {
+        for (const b of row.querySelectorAll(".spec-btn")) b.disabled = false;
       }
     });
   }

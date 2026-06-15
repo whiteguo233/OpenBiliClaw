@@ -42,7 +42,7 @@
 后端继续以 `backend-v*` tag 为权威版本来源，但补齐安全边界：
 
 - 只在 git 源码安装且 worktree 干净时自动应用。
-- 自动应用前执行 `git fetch --tags origin`，解析目标 tag commit，并用 `git merge --ff-only <tag>` 快进当前分支到目标 tag。
+- 自动应用前执行 `git fetch --force --tags origin`，解析目标 tag commit，并用 `git merge --ff-only <tag>` 快进当前分支到目标 tag。
 - 当前分支无法快进、远端不可信、worktree dirty、运行在 Docker/只读包/非 git 环境时，不自动修改文件，只上报明确状态。
 - 依赖同步沿用当前检测逻辑：存在 `uv.lock` 时执行 `uv sync`，否则执行 `python -m pip install -e .`。
 - 成功后重启当前进程；如果是 systemd、Docker 或外部 supervisor 管理，首版只支持当前 `os.execv` 重启，不主动操作外部 supervisor。

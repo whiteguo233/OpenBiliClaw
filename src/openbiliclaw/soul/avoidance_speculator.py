@@ -1164,7 +1164,9 @@ class AvoidanceSpeculator:
             return state
 
         to_context = getattr(profile, "to_llm_context", None)
-        profile_summary: dict[str, object] = to_context() if callable(to_context) else {}
+        profile_summary: dict[str, object] = (
+            to_context(include_portrait=False) if callable(to_context) else {}
+        )
 
         interest = getattr(profile, "interest", None)
         confirmed_dislikes = [

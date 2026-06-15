@@ -1252,7 +1252,7 @@ class InterestSpeculator:
             return state
 
         messages = build_speculation_generation_prompt(
-            profile_summary=profile.to_llm_context(),
+            profile_summary=profile.to_llm_context(include_portrait=False),
             existing_speculations=[s.domain for s in state.active],
             cooldown_domains=cooldown_domains,
             confirmed_domains=confirmed_domains,

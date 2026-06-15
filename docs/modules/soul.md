@@ -39,15 +39,16 @@
 | SoulEngine.get_raw_profile() / get_overrides() | ✅ | 返回不叠加覆盖的纯 AI 画像 / 当前 `ProfileOverrides`，供编辑态与 AI 漂移比对 |
 | 用户画像覆盖层 (`soul/overrides.py`) | ✅ | `ProfileOverrides` + 纯函数 `apply_overrides`（文本/标量固定、列表增删、兴趣树增删/权重）+ 带校验的 `apply_edit` 归约器 + `build_edit_state`；用户手动编辑存独立 `profile_overrides.json`，读时叠加到 AI 画像之上，画像重建不覆盖；列表 remove 持续抑制 AI 再次推断出的同项 |
 | 分类词表 + 一次性迁移 | ✅ | `soul/taxonomy.py` 定义 19 项固定一级分类词表 `CATEGORY_VOCAB`（含「其他」，代码常量非 config），`resolve_category()` 按精确命中 → embedding 最近邻（≥0.55）→「其他」解析；`CategoryMigrator` 用一次 LLM 映射把存量自由分类迁移到词表，代码校验完整覆盖且目标必须在词表内，失败零写入；应用前写 `consolidation_runs/<run_id>.json`（`kind=category_migration`）并追加 `soul_changelog.md`，复用 `profile-consolidate --revert` 回滚 |
-| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类不再规则合并，而是构造强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 记忆用 `name::category` 限定键）→ embedding 聚类（≥0.85，无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → ≤30 簇/批 LLM 输出 merge/keep 操作（单批失败隔离，成功批次汇入同一个 run）→ 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、避雷严禁向上泛化）。默认卡 64 边界整理（likes 取权重 top-128），`profile-consolidate --full` 可把 likes 边界开到全量标签库；likes judge payload 带 `category`，system prompt 含同名异义 keep 规则。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
+| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类不再规则合并，而是构造强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 记忆用 `name::category` 限定键）→ embedding 聚类（≥0.85，无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → 分批 LLM 裁决输出 merge/keep 操作（每批 32 簇，单批失败只丢本批、其余照常应用）→ 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、避雷严禁向上泛化）。覆盖范围为 likes 权重 top-512 + 全量避雷主题；`profile-consolidate --full` 可把 likes 边界开到全量标签库；likes judge payload 带 `category`，system prompt 含同名异义 keep 规则，并支持用 `{name, category}` 精确引用同名异类成员。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
 | SoulEngine.get_effective_disliked_topics() | ✅ | base（raw soul.interest.dislikes ∪ raw preference.disliked_topics）再套覆盖层 remove/add（remove 最后生效），供 delight 硬过滤，用户移除项不被 raw 反向打穿 |
 | SoulEngine.apply_user_edit() | ✅ | 折叠一次确定性编辑：存覆盖层 → 同步正向/避雷两套 speculator → 记 `source=manual` cognition → 重渲染有效画像镜像并通知两端 → 新增 dislike 按编辑前后差集把 `purge_pool_for_new_dislikes` 清池**调度为 `asyncio` 后台 detached 任务**（embedding 召回 + LLM 分类耗时数十秒，绝不能阻塞编辑响应，否则前端看着像「加了没保存」；`_schedule_dislike_purge` 派发，`wait_for_pending_edits()` 供测试 / 优雅关闭等待） |
 | AwarenessAnalyzer | ✅ | 近期事件 → `AwarenessNote` 列表，支持同日去重；解析 LLM 响应时复用 `llm.json_utils.extract_llm_json_list()`，兼容 `results/items/notes/data/observations/recent_observations/latest/latest_observations` 等 object-wrapped array、reasoning 模型 bare singular-note dict、wrapper-key 下单 note、fenced JSON、JSONL 和 MiMo malformed `{ [ ... ] }`；prompt 按画像 → 偏好 → 近期事件排序以保留缓存前缀，并把近期 `dislike` / `thumbs_down` / negative 事件视为“最近开始避开 X”的保守观察信号 |
 | InsightAnalyzer | ✅ | 觉察 + 偏好 + 画像 → `InsightHypothesis` 列表，支持假设合并；解析 LLM 响应时复用共享 JSON helper，能兼容 object wrapper、schema echo 后最终结果和 MiMo malformed array root |
 | CognitionCycle | ✅ | 半日节流生成 awareness + insight 并同步到 `OnionProfile`；仅在 preference 与 soul 都为空的早期初始化状态跳过，已有任一层时仍会运行，避免已初始化画像因 preference 暂空而长期不产出觉察；awareness 失败时单次重试（间隔 2s），仍失败则记 WARNING 且**不推进** `last_awareness_at`，下一 tick 立即重试而不是空等 12h |
+| CognitionCycle 游标增量取数 | ✅ | 觉察/洞察改**内容游标 + 大批量**取数，取代旧固定窗口（觉察曾 `query_events(limit=50)`、洞察曾全量读觉察）。觉察按 `last_awareness_event_id`（写进 `cognition_cycle_state.json`）只读 `id > 水位` 的事件，无新事件即跳过不调 LLM；单批容量 `_AWARENESS_EVENT_BATCH_SIZE=300`（按 256k+ 长上下文模型设计，~100 token/事件，正常 12h 窗口单次调用即可，**不为几十个事件强行分批**），仅积压超 300 才分批、作为防超大积压的安全网；每批成功后**逐批推进水位**（中途失败不丢已处理批），首批附 10 条已处理事件作趋势上下文；积压超 `_AWARENESS_BACKLOG_CAP=900` 时水位跳到最新窗口并记 WARNING（不静默丢）。洞察按 `last_insight_awareness_index`（觉察 append-only 的位置游标）只读新觉察、单批 `_INSIGHT_NOTE_BATCH_SIZE=150`（cap 450），并把当前活跃假设作 `existing_hypotheses` 上下文透传（`build_insight_prompt` 新增形参，system 仍静态、缓存不破）。批量 LLM 调用用更大的 `_COGNITION_MAX_TOKENS=32768`，两个 analyzer 的 `analyze()` 新增 `max_tokens` 形参 |
 | SoulEngine.generate_awareness_note() | ✅ | 生成并持久化 `awareness.json` |
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
-| SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并更新匹配洞察状态 |
+| SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并校准匹配的洞察假设——确认→`validated=True`+置信度抬到 ≥0.75；推翻→`validated=False`+压到 ≤0.35（软作废：不删除、靠 delight 置信度加权降权）。**已接线**到 `POST /api/insights/feedback`（插件 + web/桌面三端洞察卡片「准/不准」按钮驱动），返回 `{matched, validated, confidence}`；此前实现但无生产调用方。命中后经 `_sync_insight_to_soul_snapshot` **同步把校准写回 soul 层 `active_insights` 快照**（`get_profile` / profile-summary / delight 读的是该快照，不是 insight 层），否则校准要等下一次 12h 认知 sync 才对 UI / 推荐生效 |
 | SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像 |
 | SoulEngine.record_immediate_feedback_cognition() | ✅ | 单条 `dislike/comment` 可即时写入结构化 cognition card，供插件画像页展示；评论类更新会带上对应内容标题，避免脱离上下文 |
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
@@ -430,7 +431,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
   - `last_seen` 更新到现在
   - `weight` 取旧值和新值的较大者
 - `favorite_up_users` 走旧 ∪ 新集合并集累积，不会丢历史值（修正了此前「本批一旦提到任意创作者就整体替换历史列表」的 bug）
-- `disliked_topics` 走**近因有序并集**：本轮避雷项排在前，与历史去重后再截到 `_DISLIKED_TOPICS_STORE_CAP`（128，下游展示上限 64 的 2 倍，给重排和 LLM 整理留边界余量）。每轮被重新标记的雷点会冒到前面，长期不再出现的雷点滑出尾部衰减掉。下游 `[:64]` 截断因此保留最新 / 最相关的避雷项，而非旧实现里按字典序排在前的那批
+- `disliked_topics` 走**近因有序并集**：本轮避雷项排在前，与历史去重后再截到 `_DISLIKED_TOPICS_STORE_CAP`（128）。每轮被重新标记的雷点会冒到前面，长期不再出现的雷点滑出尾部衰减掉。下游 prompt 上限（discovery + 推荐摘要）与存储上限同为 128，存进来的避雷项全部进 LLM 画像输入，不再有任何截断（近因并集修复前的存量条目仍是字典序，任何小于存储上限的截断都会按码点而非相关性丢雷点）
 - `style/context` 先继承默认值，再叠加旧状态，再叠加新状态
 
 这意味着行为事件对画像的第一影响，通常不是直接改 `personality_portrait`，而是先慢慢把偏好层往一个更稳定的方向推。
@@ -843,7 +844,7 @@ openbiliclaw profile-consolidate --full
 openbiliclaw profile-consolidate --full --apply
 ```
 
-先做一级分类迁移，再做 `--full` 二级全量清理。迁移后，同名同类的精确重复会被阶段 0 规则层免费消化，能显著减少后续送 LLM 裁决的簇数；同名异类则保留为强制嫌疑簇，由带 `category` 的 judge payload 判断是同名异义（keep）还是误标（merge）。完成一次全量清理后，稳态交给 12h 定时任务：默认只看 likes top-128，配合输入 digest 与 no-merge 记忆，稳定画像不产生 LLM 调用。
+先做一级分类迁移，再做 `--full` 二级全量清理。迁移后，同名同类的精确重复会被阶段 0 规则层免费消化，能显著减少后续送 LLM 裁决的簇数；同名异类则保留为强制嫌疑簇，由带 `category` 的 judge payload 判断是同名异义（keep）还是误标（merge）。完成一次全量清理后，稳态交给 12h 定时任务：默认只看 likes top-512，配合输入 digest 与 no-merge 记忆，稳定画像不产生 LLM 调用。
 
 ### OnionProfile（五层洋葱模型）
 

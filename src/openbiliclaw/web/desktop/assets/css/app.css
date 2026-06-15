@@ -421,6 +421,9 @@
     .profile-context-row > strong { min-width: 0; text-align: right; overflow-wrap: anywhere; }
     .profile-domain-title, .profile-insight-title { font-weight: 750; color: var(--fg); }
     .profile-domain-weight, .profile-confidence, .profile-memory-meta { color: var(--meta); font-family: var(--font-mono); font-size: var(--text-xs); white-space: nowrap; }
+    .insight-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+    .insight-actions .pill-btn { min-height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+    .insight-actions .pill-btn:disabled { opacity: 0.5; cursor: default; }
     .profile-domain .profile-chip-list { margin-top: var(--space-2); }
     .speculative-list { display: grid; gap: var(--space-2); }
     .speculative-item { display: grid; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: var(--space-3); }

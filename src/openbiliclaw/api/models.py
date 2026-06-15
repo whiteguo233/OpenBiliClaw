@@ -608,6 +608,24 @@ class FeedbackResponse(BaseModel):
     feedback_type: str
 
 
+class InsightFeedbackIn(BaseModel):
+    """User confirm/reject on a specific insight hypothesis (insight cards)."""
+
+    hypothesis: str
+    signal: str  # confirm/like/support (positive) or reject/dislike/deny
+
+
+class InsightFeedbackResponse(BaseModel):
+    """Result of calibrating an insight hypothesis from user feedback."""
+
+    ok: bool
+    matched: bool
+    hypothesis: str = ""
+    signal: str = ""
+    validated: bool = False
+    confidence: float = 0.0
+
+
 class ProfileEditIn(BaseModel):
     """One user edit to the AI-generated profile overlay.
 

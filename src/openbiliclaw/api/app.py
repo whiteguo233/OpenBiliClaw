@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -62,6 +63,8 @@ from openbiliclaw.api.models import (
     InitPrerequisitesOut,
     InitStageOut,
     InitStatusOut,
+    InsightFeedbackIn,
+    InsightFeedbackResponse,
     LLMConfigOut,
     LLMProviderConfigOut,
     LoggingConfigOut,
@@ -117,6 +120,10 @@ from openbiliclaw.runtime.image_cache import (
 )
 from openbiliclaw.runtime.image_cache import (
     image_cache_key as _image_cache_key,
+)
+from openbiliclaw.runtime.keyword_fetch import (
+    mark_keyword_terminal_from_xhs_task,
+    source_keyword_id_from_xhs_task,
 )
 from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
@@ -4854,6 +4861,37 @@ def create_app(
             layers_updated=layers_updated,
         )
 
+    @app.post("/api/insights/feedback", response_model=InsightFeedbackResponse)
+    async def insight_feedback(payload: InsightFeedbackIn) -> InsightFeedbackResponse:
+        """Calibrate an insight hypothesis from a user confirm/reject.
+
+        The popup's insight cards surface ``active_insights`` (hypothesis +
+        confidence). This endpoint routes a confirm/reject back into
+        ``SoulEngine.update_from_feedback`` so the hypothesis is validated and
+        re-weighted (confirm → confidence ≥0.75; reject → ≤0.35), closing the
+        loop that was previously implemented but unwired.
+        """
+        signal = payload.signal.strip().lower()
+        if signal not in {"confirm", "like", "support", "reject", "dislike", "deny"}:
+            raise HTTPException(status_code=422, detail="Unsupported insight feedback signal.")
+        hypothesis = payload.hypothesis.strip()
+        if not hypothesis:
+            raise HTTPException(status_code=422, detail="hypothesis is required.")
+        if ctx.soul_engine is None:
+            raise HTTPException(status_code=503, detail="Soul engine not ready.")
+
+        result = await ctx.soul_engine.update_from_feedback(
+            {"hypothesis": hypothesis, "signal": signal}
+        )
+        return InsightFeedbackResponse(
+            ok=True,
+            matched=bool(result.get("matched", False)),
+            hypothesis=str(result.get("hypothesis", hypothesis)),
+            signal=str(result.get("signal", signal)),
+            validated=bool(result.get("validated", False)),
+            confidence=float(result.get("confidence", 0.0)),
+        )
+
     # ── Source recipe management endpoints ──────────────────────────
 
     @app.get("/api/sources")
@@ -4929,6 +4967,101 @@ def create_app(
         scheduler = getattr(config, "scheduler", None)
         target = int(getattr(scheduler, "pool_target_count", 300) or 300)
         return discovery_candidate_pending_cap(target)
+
+    def _intish(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _cache_bili_search_videos(
+        database: Any,
+        videos: list[dict[str, Any]],
+        *,
+        query: str = "",
+        source_keyword_id: int | None = None,
+    ) -> int:
+        """Enqueue extension-collected Bilibili search videos for evaluation."""
+
+        from openbiliclaw.discovery.candidate_pool import discovered_content_to_candidate_write
+        from openbiliclaw.discovery.engine import DiscoveredContent
+
+        enqueue = getattr(database, "enqueue_discovery_candidates", None)
+        if not callable(enqueue):
+            return 0
+        writes = []
+        for video in videos:
+            bvid = str(video.get("bvid") or video.get("content_id") or "").strip()
+            if not bvid:
+                continue
+            title = str(video.get("title") or "").strip()
+            if not title:
+                continue
+            up_name = str(
+                video.get("up_name") or video.get("author_name") or video.get("author") or ""
+            ).strip()
+            content_url = str(video.get("content_url") or video.get("url") or "").strip()
+            if not content_url:
+                content_url = f"https://www.bilibili.com/video/{bvid}"
+            tags_raw = video.get("tags")
+            tags = (
+                [str(item).strip() for item in tags_raw if str(item).strip()]
+                if isinstance(tags_raw, list)
+                else []
+            )
+            item = DiscoveredContent(
+                bvid=bvid,
+                title=title,
+                up_name=up_name,
+                up_mid=_intish(video.get("up_mid") or video.get("mid")),
+                cover_url=str(video.get("cover_url") or video.get("pic") or "").strip(),
+                duration=_intish(video.get("duration")),
+                view_count=_intish(video.get("view_count") or video.get("play")),
+                like_count=_intish(video.get("like_count") or video.get("likes")),
+                tags=tags,
+                description=str(video.get("description") or video.get("desc") or "").strip(),
+                source_strategy="bili-extension-search",
+                content_id=bvid,
+                content_url=content_url,
+                source_platform="bilibili",
+                author_name=up_name,
+                score_threshold=0.65,
+                source_keyword_id=source_keyword_id,
+            )
+            writes.append(
+                discovered_content_to_candidate_write(
+                    item,
+                    source_context="bili-extension-search",
+                    raw_payload={
+                        "bvid": bvid,
+                        "query": query,
+                        "url": content_url,
+                        "admission_policy": "observed",
+                        "score_threshold": 0.65,
+                    },
+                )
+            )
+        if not writes:
+            return 0
+        try:
+            return int(enqueue(writes, max_pending_per_source=_discovery_candidate_pending_cap()))
+        except TypeError:
+            return int(enqueue(writes))
+
+    def _mark_bili_task_keyword_terminal(payload_json: str | None, *, success: bool) -> None:
+        from openbiliclaw.sources.bili_tasks import source_keyword_id_from_bili_task
+
+        keyword_id = source_keyword_id_from_bili_task(payload_json)
+        if keyword_id is None:
+            return
+        method = "mark_keyword_used" if success else "mark_keyword_failed"
+        mark = getattr(ctx.database, method, None)
+        if not callable(mark):
+            return
+        with suppress(Exception):
+            mark(keyword_id)
 
     def _pick_best_xhs_url(database: Any, note_id: str, incoming: str) -> str:
         """Return the most share-worthy URL for a xhs note.
@@ -5204,6 +5337,8 @@ def create_app(
         notes: list[dict[str, Any]],
         page_type: str,
         self_info: dict[str, str] | None = None,
+        *,
+        source_keyword_id: int | None = None,
     ) -> int:
         """Enqueue xhs note metadata from the extension into discovery_candidates.
 
@@ -5212,6 +5347,12 @@ def create_app(
         through ``discovery_runtime_state`` and works against test
         stubs that haven't implemented the runtime-state API.  When
         ``None``, falls back to the persisted state.
+
+        ``source_keyword_id`` (P1.8) is the ``discovery_keywords.id`` carried on
+        the originating xhs *search* task payload. XHS is truly async, so the id
+        cannot be stamped at search time — it rides the task and is threaded onto
+        each ingested candidate here so admission can backfill the keyword's
+        yield. ``None`` for passive / observed / non-planner ingests.
         """
         from urllib.parse import urlparse
 
@@ -5261,6 +5402,7 @@ def create_app(
                 content_url=best_url,
                 source_platform="xiaohongshu",
                 author_name=author,
+                source_keyword_id=source_keyword_id,
             )
             writes.append(
                 discovered_content_to_candidate_write(
@@ -5385,6 +5527,102 @@ def create_app(
         upgraded = _backfill_xhs_tokens(ctx.database, urls)
         return {"ok": True, "upgraded": upgraded}
 
+    # ── Bilibili extension search fallback endpoints ────────────────
+
+    from openbiliclaw.sources.bili_tasks import (
+        BiliTaskQueue,
+        source_keyword_id_from_bili_task,
+    )
+
+    _bili_task_queue: BiliTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _bili_task_queue = BiliTaskQueue(ctx.database)
+
+    @app.get("/api/sources/bili/next-task")
+    def bili_next_task(response: Any = None) -> Any:
+        """Claim and return the oldest runnable Bilibili extension task."""
+        from starlette.responses import Response
+
+        if _bili_task_queue is None:
+            return Response(status_code=204)
+        task = _bili_task_queue.next_pending()
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/bili/task-result")
+    async def bili_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept Bilibili extension search results and enqueue candidates."""
+
+        task_id = str(payload.get("task_id", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip()
+        videos = [video for video in payload.get("videos", []) if isinstance(video, dict)]
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        if not task_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=422, detail="task_id is required")
+
+        if _bili_task_queue is None:
+            return {"ok": True, "enqueued": 0}
+
+        task = _bili_task_queue.get(task_id)
+        task_payload_json = str(task.get("payload_json") or "") if task else ""
+
+        if status in {"partial", "ok", "empty"}:
+            is_final = status in {"ok", "empty"}
+            added_videos = _bili_task_queue.merge_result(
+                task_id,
+                videos=videos if videos else None,
+                debug=debug,
+                complete=is_final,
+            )
+            if is_final:
+                _mark_bili_task_keyword_terminal(task_payload_json, success=status == "ok")
+            task_payload: dict[str, Any] = {}
+            if task_payload_json:
+                with suppress(Exception):
+                    parsed = json.loads(task_payload_json)
+                    if isinstance(parsed, dict):
+                        task_payload = parsed
+            query = str(task_payload.get("query") or task_payload.get("keyword") or "").strip()
+            source_keyword_id = source_keyword_id_from_bili_task(task_payload_json)
+            enqueued = 0
+            if added_videos:
+                enqueued = _cache_bili_search_videos(
+                    ctx.database,
+                    added_videos,
+                    query=query,
+                    source_keyword_id=source_keyword_id,
+                )
+                if enqueued:
+                    asyncio.create_task(_drain_discovery_candidates_once())
+            return {"ok": True, "enqueued": enqueued}
+
+        _bili_task_queue.fail(task_id, error=str(payload.get("error", "") or ""), debug=debug)
+        _mark_bili_task_keyword_terminal(task_payload_json, success=False)
+        return {"ok": True, "enqueued": 0}
+
+    @app.post("/api/sources/bili/kick")
+    async def bili_task_kick() -> dict[str, Any]:
+        """Broadcast `bili_task_available` over runtime-stream."""
+        publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "bili_task_available", "source": "task_kick"})
+        return {"ok": True}
+
     # ── XHS task queue endpoints (extension dispatcher) ──────────────
 
     from openbiliclaw.sources.xhs_tasks import (
@@ -5463,6 +5701,14 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
+            # Unified keyword planner lifecycle (P1.7): XHS is truly async, so a
+            # claimed search word stays ``executing`` until this terminal
+            # callback. On a final ``ok`` mark its ``source_keyword_id`` word
+            # ``used`` (a ``partial`` is not terminal → leave it ``executing``).
+            if is_final and task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=True
+                )
             # v0.3.48+: piggyback self_info from bootstrap debug payload.
             # v0.3.57+: also accept self_info at the payload top level for
             # search / creator / passive paths via extension v0.3.10.
@@ -5491,7 +5737,22 @@ def create_app(
                 ctx.database.save_xhs_observed_urls(valid_urls, "task")
                 _backfill_xhs_tokens(ctx.database, valid_urls)
             if added_notes and not _init_busy:
-                enqueued = _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
+                # P1.8: a planner-driven xhs *search* task carries its
+                # ``source_keyword_id`` on the payload → thread it onto the
+                # ingested candidates so admission backfills the keyword's yield.
+                # Passive / non-search tasks have no id → plain None.
+                task_source_keyword_id = (
+                    source_keyword_id_from_xhs_task(task.get("payload_json"))
+                    if task is not None
+                    else None
+                )
+                enqueued = _cache_xhs_notes(
+                    ctx.database,
+                    added_notes,
+                    "task",
+                    self_info_now,
+                    source_keyword_id=task_source_keyword_id,
+                )
                 if enqueued:
                     asyncio.create_task(_drain_discovery_candidates_once())
             if task_type == "bootstrap_profile" and added_notes and not _skip_profile:
@@ -5535,6 +5796,12 @@ def create_app(
                     )
         else:
             _xhs_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+            # Unified keyword planner lifecycle (P1.7): the async search failed →
+            # mark its ``source_keyword_id`` word ``failed`` (retry via attempts).
+            if task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=False
+                )
 
         return {"ok": True}
 

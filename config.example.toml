@@ -386,6 +386,32 @@ douyin = 1
 youtube = 1
 twitter = 1
 
+# ── 统一关键词规划器 / Discover 背压 (P1) ──
+# 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词
+# 存储（cache + 历史 + 产出）夹在生成与抓取之间，生成只在缓存见底且池子有真实
+# 缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重）。v0.3.124 起默认
+# 开启；设为 false 可逐字回退到旧逐平台生成路径。
+# 注意：抓取最小间隔(fetch_floor)复用各平台已有的 min_interval，这里没有该字段。
+[discovery]
+# 统一关键词规划器总开关。true（默认，v0.3.124+）= 走 planner + 存储；false = 回退旧逐平台搜索词生成。
+unified_keyword_planner_enabled = true
+# 每平台关键词缓存高/低水位。pending < low 且有真实缺口时生成，补到 high。
+kw_cache_high = 30
+kw_cache_low = 10
+# 单平台单次合并 LLM 调用生成的关键词数。
+gen_batch = 30
+# 单次原子领取(claim)的关键词数。
+fetch_batch = 5
+# 去重窗口：最近最多这么多个关键词、且在这么多小时内的，作为"别再出"喂给 planner。
+history_window_size = 150
+history_window_hours = 48
+# 领取租约（分钟）：claimed/executing 超过这个时长未变会被回收成 pending。
+claim_lease_minutes = 10
+# 关键词规划器轮询间隔（秒）；空闲轮询近似零成本。
+planner_poll_seconds = 120
+# 兜底失效（小时）：即便画像 digest 未变，pending 关键词超过这个时长也会过期。
+plan_ttl_hours = 12
+
 [autostart]
 # 登录系统后是否自动拉起 OpenBiliClaw 后端。默认关闭；请通过设置页或
 # `openbiliclaw autostart enable` 开启，以便同步注册/反注册 OS 自启动项。

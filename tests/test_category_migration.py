@@ -174,6 +174,29 @@ async def test_in_vocab_categories_forced_identity(tmp_path: Path) -> None:
     assert ai["category"] == "科技"
 
 
+async def test_in_vocab_categories_do_not_require_llm(tmp_path: Path) -> None:
+    from openbiliclaw.soul.category_migration import CategoryMigrator
+
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI", "科技"),
+                _interest("篮球", "体育"),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+
+    report = await CategoryMigrator(memory=memory, llm_service=None, data_dir=tmp_path).run(
+        dry_run=True
+    )
+
+    assert report.errors == []
+    assert report.mapping == {"体育": "体育", "科技": "科技"}
+    assert memory.get_layer("preference").save_count == 0
+
+
 async def test_llm_unavailable_degrades_to_preview(tmp_path: Path) -> None:
     from openbiliclaw.soul.category_migration import CategoryMigrator
 

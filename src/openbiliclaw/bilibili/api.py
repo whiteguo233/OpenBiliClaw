@@ -128,10 +128,21 @@ class BilibiliAPIClient:
 
     _BASE_URL = "https://api.bilibili.com"
     _SEARCH_WEB_LOCATION = 1430654
-    _SEARCH_COOLDOWN_BASE_SECONDS: ClassVar[float] = 600.0
+    # A v_voucher exhaustion is usually recoverable WBI-key churn / mild
+    # rate limiting, so it gets a short, escalating back-off. A genuine
+    # HTTP 412 is an explicit IP-level block and gets the longer hard
+    # cooldown instead (see ``_SEARCH_COOLDOWN_412_SECONDS``).
+    _SEARCH_COOLDOWN_BASE_SECONDS: ClassVar[float] = 180.0
+    _SEARCH_COOLDOWN_412_SECONDS: ClassVar[float] = 600.0
     _SEARCH_COOLDOWN_MAX_SECONDS: ClassVar[float] = 1800.0
+    # A single challenged keyword (transient churn) must NOT zero out the
+    # whole search round + the explore strategy that shares this cooldown.
+    # Only trip the process-wide cooldown after this many *consecutive*
+    # keyword-level v_voucher exhaustions; any success resets the streak.
+    _SEARCH_VOUCHER_BLOCK_THRESHOLD: ClassVar[int] = 3
     _search_cooldown_until: ClassVar[float] = 0.0
     _search_cooldown_level: ClassVar[int] = 0
+    _search_voucher_block_streak: ClassVar[int] = 0
     _WBI_MIXIN_KEY_ENC_TAB = [
         46,
         47,
@@ -240,11 +251,17 @@ class BilibiliAPIClient:
         return max(0.0, cls._search_cooldown_until - time.monotonic())
 
     @classmethod
-    def _activate_search_cooldown(cls) -> float:
-        """Back off all search clients after repeated v_voucher/412 blocks."""
+    def _activate_search_cooldown(cls, *, base_seconds: float | None = None) -> float:
+        """Back off all search clients after repeated v_voucher/412 blocks.
+
+        ``base_seconds`` overrides the per-step base (412 blocks pass the
+        longer hard-cooldown base); the escalation multiplier and absolute
+        ceiling are shared across both causes.
+        """
         cls._search_cooldown_level = min(cls._search_cooldown_level + 1, 3)
+        base = cls._SEARCH_COOLDOWN_BASE_SECONDS if base_seconds is None else base_seconds
         duration = min(
-            cls._SEARCH_COOLDOWN_BASE_SECONDS * cls._search_cooldown_level,
+            base * cls._search_cooldown_level,
             cls._SEARCH_COOLDOWN_MAX_SECONDS,
         )
         cls._search_cooldown_until = max(
@@ -254,9 +271,26 @@ class BilibiliAPIClient:
         return duration
 
     @classmethod
+    def _record_voucher_block(cls) -> float:
+        """Record one keyword exhausting its v_voucher retries.
+
+        Returns the cooldown duration if this block crossed the
+        consecutive-failure threshold (the whole search path now backs
+        off), or ``0.0`` if search stays live and only this one keyword is
+        dropped — a lone challenged keyword is usually transient WBI churn,
+        not an IP-level block, and must not strand the search round +
+        explore for the full cooldown.
+        """
+        cls._search_voucher_block_streak += 1
+        if cls._search_voucher_block_streak >= cls._SEARCH_VOUCHER_BLOCK_THRESHOLD:
+            return cls._activate_search_cooldown()
+        return 0.0
+
+    @classmethod
     def _reset_search_cooldown_backoff(cls) -> None:
-        """Reset escalation once search succeeds again."""
+        """Reset escalation + the v_voucher streak once search succeeds again."""
         cls._search_cooldown_level = 0
+        cls._search_voucher_block_streak = 0
 
     async def _get_json(
         self,
@@ -433,7 +467,14 @@ class BilibiliAPIClient:
         # per keyword) lets the WBI key churn settle without immediately
         # surrendering. Steady-state cost is zero — retries don't fire
         # when keys are healthy.
-        max_attempts = 3
+        #
+        # Fast-fail once a storm is suspected: the first keyword to fail in
+        # a fresh round gets the full retry budget so transient churn can
+        # settle, but once one keyword has already fully exhausted
+        # (streak>0) we drop to a single quick probe — confirming a real
+        # storm in a few fast attempts instead of hammering B站 with doomed
+        # ~21s retry chains per keyword (which would only deepen the block).
+        max_attempts = 1 if type(self)._search_voucher_block_streak > 0 else 3
         backoff_schedule = (1.5, 5.0, 15.0)
         for attempt in range(max_attempts):
             try:
@@ -462,7 +503,11 @@ class BilibiliAPIClient:
             except BilibiliAPIError as exc:
                 cause = exc.__cause__
                 if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 412:
-                    duration = self._activate_search_cooldown()
+                    # 412 is an explicit IP-level block — back off hard and
+                    # immediately (no streak threshold), with the longer base.
+                    duration = self._activate_search_cooldown(
+                        base_seconds=self._SEARCH_COOLDOWN_412_SECONDS
+                    )
                     logger.warning(
                         "Bilibili search blocked with 412 for query=%r — "
                         "cooling down search for %.0fs",
@@ -487,16 +532,28 @@ class BilibiliAPIClient:
                     self._cached_wbi_keys = None
                     await asyncio.sleep(delay)
                     continue
-                # Final attempt also got v_voucher — give up cleanly.
-                duration = self._activate_search_cooldown()
-                logger.warning(
-                    "Search exhausted %d v_voucher retries for query=%r — "
-                    "giving up and cooling down search for %.0fs "
-                    "(likely WBI storm or IP rate limit)",
-                    max_attempts,
-                    keyword,
-                    duration,
-                )
+                # Final attempt also got v_voucher. Record the block; only
+                # trip the shared cooldown once consecutive keyword failures
+                # cross the threshold — a lone challenged keyword just gets
+                # dropped so the rest of the round (and explore) stays live.
+                duration = self._record_voucher_block()
+                if duration > 0:
+                    logger.warning(
+                        "Search v_voucher storm confirmed (%d consecutive blocked "
+                        "queries, latest=%r) — cooling down search for %.0fs "
+                        "(likely WBI storm or IP rate limit)",
+                        type(self)._search_voucher_block_streak,
+                        keyword,
+                        duration,
+                    )
+                else:
+                    logger.info(
+                        "Search v_voucher challenge persisted for query=%r "
+                        "(streak %d/%d) — dropping this keyword; search stays live",
+                        keyword,
+                        type(self)._search_voucher_block_streak,
+                        self._SEARCH_VOUCHER_BLOCK_THRESHOLD,
+                    )
                 return []
 
             results = _json_list(data.get("result", []))

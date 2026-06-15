@@ -47,16 +47,6 @@ def _profile_style_summary(profile: SoulProfile) -> dict[str, object]:
     }
 
 
-def _profile_context_summary(profile: SoulProfile) -> dict[str, object]:
-    context = profile.preferences.context
-    return {
-        "weekday_patterns": context.weekday_patterns,
-        "weekend_patterns": context.weekend_patterns,
-        "time_of_day_patterns": context.time_of_day_patterns,
-        "session_type": context.session_type,
-    }
-
-
 def _clone_tone_profile(tone: ToneProfile) -> ToneProfile:
     return {
         "density": tone["density"],
@@ -70,36 +60,18 @@ def _recommendation_profile_summary(
     profile: SoulProfile,
     *,
     interests: list[dict[str, object]] | None = None,
-    include_active_insights: bool = False,
 ) -> dict[str, object]:
-    summary: dict[str, object] = {
-        "personality_portrait": profile.personality_portrait,
-        "core_traits": profile.core_traits[:5],
-        "deep_needs": profile.deep_needs[:5],
-        "interests": interests
-        if interests is not None
-        else [
-            {
-                "name": item.name,
-                "category": item.category,
-                "weight": item.weight,
-            }
-            for item in _interests_by_weight(profile)[:64]
-        ],
-        "style": _profile_style_summary(profile),
-        "context": _profile_context_summary(profile),
-        "exploration_openness": profile.preferences.exploration_openness,
-        "disliked_topics": profile.preferences.disliked_topics[:64],
-    }
-    if include_active_insights:
-        summary["active_insights"] = [
-            {
-                "hypothesis": str(getattr(ins, "hypothesis", "")),
-                "confidence": float(getattr(ins, "confidence", 0.5)),
-            }
-            for ins in getattr(profile, "active_insights", [])[:5]
-        ]
-    return summary
+    """Unified profile input for recommendation prompts.
+
+    Delegates to :func:`build_profile_summary` so recommendation feeds the LLM
+    the exact same structured profile as discovery: no ``personality_portrait``
+    narrative, every other field included. Pass ``interests`` to substitute the
+    embedding-selected, content-relevant tag list for the default weight-ranked
+    one.
+    """
+    from openbiliclaw.discovery.strategies._utils import build_profile_summary
+
+    return build_profile_summary(profile, interests=interests)
 
 
 def _content_result_keys(content: DiscoveredContent) -> set[str]:
@@ -576,13 +548,13 @@ class RecommendationEngine:
         Falls back to top-K by weight when embedding service is unavailable.
         """
         # Candidate pool aligned with the profile summary's interest cap
-        # (64): a niche interest outside the head ranks should still be
+        # (256): a niche interest outside the head ranks should still be
         # selectable when it's the best semantic match for this content.
         # top_k (5) still bounds how many actually reach the prompt, so the
         # wider pool improves coverage without growing prompt size.
         all_interests = [
             {"name": item.name, "category": item.category, "weight": item.weight}
-            for item in _interests_by_weight(profile)[:64]
+            for item in _interests_by_weight(profile)[:256]
         ]
         if not all_interests:
             return []
@@ -741,18 +713,39 @@ class RecommendationEngine:
         completes in a few minutes against a slow local embedding
         provider (Ollama). Idempotent: ``EmbeddingService.embed``
         short-circuits on L2 hit.
+
+        Return contract (lever 4 observability — let callers tell a benign
+        cold start from a broken embedding backend):
+          * ``>0`` — items warmed.
+          * ``0``  — there WERE candidates but none embedded → the embedding
+            backend is unreachable (e.g. Ollama down). Worth retrying.
+          * ``-1`` — nothing to warm (no embedding service, or pool empty);
+            retrying is pointless — the cache lazy-fills as the pool fills.
         """
         if self._embedding_service is None:
-            return 0
+            logger.debug("Pool MMR prewarm skipped: embedding service not configured")
+            return -1
         candidates = self._load_pool_candidates(limit=limit)
         if not candidates:
-            return 0
+            logger.debug(
+                "Pool MMR prewarm skipped: pool has no servable candidates yet — "
+                "nothing to warm (cache lazy-fills as discovery classifies the pool)"
+            )
+            return -1
         warmed = await self.warm_mmr_embeddings(candidates)
-        logger.info(
-            "Pool MMR embedding prewarm: %d/%d items warmed",
-            warmed,
-            len(candidates),
-        )
+        if warmed == 0:
+            logger.warning(
+                "Pool MMR prewarm: 0/%d items embedded — the embedding backend "
+                "looks unreachable (e.g. Ollama down). Recommendation diversity "
+                "(MMR) degrades until it recovers; see embed-failure debug logs.",
+                len(candidates),
+            )
+        else:
+            logger.info(
+                "Pool MMR embedding prewarm: %d/%d items warmed",
+                warmed,
+                len(candidates),
+            )
         return warmed
 
     async def precompute_pool_copy(
@@ -834,10 +827,36 @@ class RecommendationEngine:
             except Exception:
                 logger.exception("precompute_delight_scores detach failed")
 
+        completed = await self._drain_expression_copy(
+            profile=profile, limit=limit, batch_size=batch_size
+        )
+
+        # Fire delight scoring outside the expression lock so the next
+        # expression batch can start immediately while delight catches up.
+        _spawn_delight()
+        return completed
+
+    async def _drain_expression_copy(
+        self,
+        *,
+        profile: SoulProfile,
+        limit: int,
+        batch_size: int = 30,
+    ) -> int:
+        """Generate popup copy for classified-but-uncopied pool candidates.
+
+        Copy-only: unlike :meth:`precompute_pool_copy` it does NOT spawn
+        classify / delight, so the post-classify hook
+        (:meth:`_safe_classify_pool_backlog`, lever 2b) can call it the
+        moment freshly-classified items become copy-eligible — draining
+        their expression copy in the same cycle instead of waiting for the
+        next refresh-loop tick — without re-entering classify. The shared
+        ``_expression_lock`` serialises it against the regular precompute
+        pass so the same items are never double-spent on LLM tokens.
+        """
         async with self._expression_lock:
             candidates = self._load_pool_candidates_needing_copy(limit=max(0, limit))
             if not candidates:
-                _spawn_delight()
                 return 0
 
             batches = [
@@ -853,10 +872,6 @@ class RecommendationEngine:
                     logger.warning("Expression batch failed: %s", r)
                     continue
                 completed += int(r or 0)
-
-        # Fire delight scoring outside the expression lock so the next
-        # expression batch can start immediately while delight catches up.
-        _spawn_delight()
         return completed
 
     # ── Source-agnostic content classification ───────────────────────
@@ -907,12 +922,27 @@ class RecommendationEngine:
         backoff or a flood of fresh XHS notes) stall precompute for
         minutes; now precompute reads whatever's classified-ready right
         now while classify catches up in parallel.
+
+        v0.3.124+ (lever 2b): when classify actually labels new items, drain
+        their expression copy immediately rather than leaving them for the
+        next refresh-loop precompute tick. This closes the "classified but
+        not yet serveable" gap (the items still need ``pool_expression`` /
+        ``pool_topic_label`` before the pool-availability gate counts them).
+        The drain is copy-only so it can't re-enter classify, and the
+        shared ``_expression_lock`` serialises it against the in-flight
+        precompute pass.
         """
         try:
-            return await self.classify_pool_backlog(profile=profile, limit=limit)
+            classified = await self.classify_pool_backlog(profile=profile, limit=limit)
         except Exception:
             logger.exception("classify_pool_backlog (detached) failed")
             return 0
+        if classified > 0:
+            try:
+                await self._drain_expression_copy(profile=profile, limit=max(limit, classified))
+            except Exception:
+                logger.exception("post-classify expression drain failed")
+        return classified
 
     async def _safe_precompute_delight_scores(
         self,
@@ -1270,10 +1300,7 @@ class RecommendationEngine:
 
         tone_profile = self._expression_tone_profile(profile, content)
         messages = build_delight_reason_prompt(
-            profile_summary=_recommendation_profile_summary(
-                profile,
-                include_active_insights=True,
-            ),
+            profile_summary=_recommendation_profile_summary(profile),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,

@@ -20,6 +20,7 @@
       chatTurns: "/chat/turns",
       interestProbeRespond: "/interest-probes/respond",
       avoidanceProbeRespond: "/avoidance-probes/respond",
+      insightFeedback: "/insights/feedback",
       sourceShareSuggestion: "/config/source-share-suggestion",
       configProbe: "/config/probe-service",
       updateStatus: "/update-status",
@@ -2017,10 +2018,14 @@
     function insightsHtml(items) {
       const list = asArray(items);
       if (!list.length) return `<p class="video-meta">当前没有需要特别展示的活跃洞察。</p>`;
-      return `<div class="profile-card-list">${list.map((item) => {
+      return `<div class="profile-card-list">${list.map((item, idx) => {
         if (typeof item !== "object") return `<div class="profile-insight"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(item)}</span></div></div>`;
         const evidence = asArray(item.evidence).join("、");
-        return `<div class="profile-insight"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(item.hypothesis || item.observation || valueList(item))}</span><span class="profile-confidence">${formatPercent(item.confidence)}</span></div>${evidence ? `<p class="video-meta">证据：${escapeHtml(evidence)}</p>` : ""}${item.validated ? `<p class="video-meta">已验证</p>` : ""}</div>`;
+        const hypothesis = item.hypothesis || "";
+        const actions = hypothesis
+          ? `<div class="insight-actions"><button class="pill-btn" type="button" data-insight-action="confirm" data-insight-idx="${idx}">准</button><button class="pill-btn" type="button" data-insight-action="reject" data-insight-idx="${idx}">不准</button></div>`
+          : "";
+        return `<div class="profile-insight" data-insight-idx="${idx}"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(hypothesis || item.observation || valueList(item))}</span><span class="profile-confidence">${formatPercent(item.confidence)}</span></div>${evidence ? `<p class="video-meta">证据：${escapeHtml(evidence)}</p>` : ""}${item.validated ? `<p class="video-meta">已验证</p>` : ""}${actions}</div>`;
       }).join("")}</div>`;
     }
 
@@ -2099,7 +2104,36 @@
       const profileEditBar = `<div class="profile-edit-bar"><button class="pill-btn" type="button" data-profile-edit-toggle="enter">✏️ 编辑画像</button></div>`;
       $("#profileDetails").innerHTML = profileEditBar + html;
       bindSpeculativeActions();
+      bindInsightActions();
       bindProfileEditToggle();
+    }
+
+    function bindInsightActions() {
+      document.querySelectorAll("[data-insight-action]").forEach((button) => {
+        button.addEventListener("click", () => respondInsightFeedback(button));
+      });
+    }
+
+    async function respondInsightFeedback(button) {
+      const signal = button.dataset.insightAction;
+      const idx = Number(button.dataset.insightIdx);
+      const insight = state.profile?.active_insights?.[idx];
+      const hypothesis = insight && insight.hypothesis;
+      if (!signal || !hypothesis) return;
+      const row = button.closest(".profile-insight");
+      row?.querySelectorAll("[data-insight-action]").forEach((btn) => { btn.disabled = true; });
+      try {
+        await requestJson(ENDPOINTS.insightFeedback, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hypothesis, signal }),
+        });
+        showToast(signal === "confirm" ? "已确认这条洞察" : "已记下，会少推这类");
+        setTimeout(() => { void refreshProfile(); }, 1200);
+      } catch (error) {
+        row?.querySelectorAll("[data-insight-action]").forEach((btn) => { btn.disabled = false; });
+        showToast("没存上，稍后再试");
+      }
     }
 
     // ── Editable profile (Phase 3, desktop) ──────────────────────

@@ -24,6 +24,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DouyinBudgetExhausted(Exception):  # noqa: N818 - plan-mandated name (no Error suffix)
+    """Plugin-search task budget exhausted — a *distinguishable* "not searched".
+
+    Raised (only when ``raise_on_budget`` is set on the client — the unified
+    keyword planner fetch path) when the plugin ``search`` task could not be
+    enqueued because the daily task budget is spent, so NO search ran. This is
+    deliberately distinct from a genuinely empty result (``[]``): the unified
+    keyword planner caller rolls the claimed keyword back to ``pending`` instead
+    of burning it as ``used``. Legacy callers leave ``raise_on_budget`` off and
+    keep the historical "budget → fall back to direct-cookie" behavior.
+    """
+
+
 def _normalize_daily_budget(value: int) -> int:
     """Normalize daily task budget; 0 disables the per-day cap."""
 
@@ -90,11 +103,17 @@ class DouyinPluginSearchClient:
         daily_hot_budget: int | None = None,
         daily_feed_budget: int | None = None,
         kick: Callable[[], None] | None = None,
+        raise_on_budget: bool = False,
     ) -> None:
         self._database = database
         self._direct_client = direct_client
         self._wait_seconds = max(0.0, float(wait_seconds))
         self._poll_interval_seconds = max(0.01, float(poll_interval_seconds))
+        # Unified keyword planner fetch path: surface plugin-search budget
+        # exhaustion as ``DouyinBudgetExhausted`` (distinguishable from an empty
+        # result) so a claimed keyword can be rolled back instead of burned.
+        # OFF by default → legacy "budget → fall back to direct-cookie".
+        self._raise_on_budget = bool(raise_on_budget)
         self._daily_search_budget = _normalize_daily_budget(
             daily_search_budget if daily_search_budget is not None else daily_budget
         )
@@ -183,6 +202,10 @@ class DouyinPluginSearchClient:
 
         if not task_id:
             logger.info("douyin plugin search skipped: task budget exhausted")
+            if self._raise_on_budget:
+                # Distinguishable signal for the unified keyword planner fetch
+                # path: budget exhausted → no search ran → roll the word back.
+                raise DouyinBudgetExhausted("douyin plugin search task budget exhausted")
             return []
 
         with suppress(Exception):

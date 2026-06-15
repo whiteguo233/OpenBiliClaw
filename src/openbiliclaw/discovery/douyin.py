@@ -8,7 +8,7 @@ strategy construction in each caller.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.discovery.engine import DiscoveredContent
@@ -28,11 +28,19 @@ class DouyinDiscoveryOptions:
     limit: int = 30
     sources: tuple[str, ...] = ("search", "hot", "feed")
     keywords: tuple[str, ...] = ()
+    # P1.8 yield provenance: ``keyword text → discovery_keywords.id`` for the
+    # claimed search words in ``keywords``. Empty for legacy / non-planner runs;
+    # search candidates produced by a mapped keyword carry its id for backfill.
+    keyword_ids: dict[str, int] = field(default_factory=dict)
     creator_sec_uids: tuple[str, ...] = ()
     cache: bool = True
     evaluate: bool = True
     per_source_limit: int = 20
     keywords_per_run: int = 5
+    # Unified keyword planner fetch path (P1.7): make the plugin-search client
+    # raise ``DouyinBudgetExhausted`` on budget exhaustion so a claimed keyword
+    # rolls back instead of being burned. Off → legacy behavior unchanged.
+    raise_on_budget: bool = False
 
 
 @dataclass(frozen=True)
@@ -109,6 +117,7 @@ class DouyinDiscoveryService:
             database=database,
             sources=opts.sources,
             seed_keywords=opts.keywords,
+            seed_keyword_ids=dict(opts.keyword_ids),
             creator_sec_uids=opts.creator_sec_uids,
             keywords_per_run=max(1, opts.keywords_per_run),
             per_source_limit=max(1, opts.per_source_limit),

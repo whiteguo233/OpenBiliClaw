@@ -112,15 +112,21 @@ class SoulProfile:
     updated_at: str = ""
     version: int = 0
 
-    def to_llm_context(self) -> str:
+    def to_llm_context(self, *, include_portrait: bool = True) -> str:
         """Generate a natural language summary for LLM context.
 
         Returns a rich description that can be injected into LLM prompts
         to give the agent full understanding of the user.
+
+        Set ``include_portrait=False`` to omit the free-form
+        ``personality_portrait`` narrative — production prompts that consume
+        the structured fields keep it out (see the prompt-input unification),
+        while eval/persona rendering keeps the default so the portrait stays
+        part of the persona ground truth.
         """
         parts = []
 
-        if self.personality_portrait:
+        if include_portrait and self.personality_portrait:
             parts.append(f"## 用户画像\n{self.personality_portrait}")
 
         if self.core_traits:
@@ -140,14 +146,15 @@ class SoulProfile:
 
         if self.active_insights:
             insights_text = "\n".join(
-                f"- {i.hypothesis} (置信度: {i.confidence:.0%})"
-                for i in self.active_insights
+                f"- {i.hypothesis} (置信度: {i.confidence:.0%})" for i in self.active_insights
             )
             parts.append(f"## 当前洞察\n{insights_text}")
 
         if self.recent_awareness:
             notes = "\n".join(
-                f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5]
+                # Newest notes live at the tail of the chronological window.
+                f"- [{n.date}] {n.observation}"
+                for n in self.recent_awareness[-5:]
             )
             parts.append(f"## 近期观察\n{notes}")
 
@@ -592,9 +599,7 @@ class OnionProfile:
                 dom.weight = tag.weight
         self.interest = InterestLayer(
             likes=list(domain_map.values()),
-            dislikes=[
-                InterestDomain(domain=topic, weight=0.9) for topic in pref.disliked_topics
-            ],
+            dislikes=[InterestDomain(domain=topic, weight=0.9) for topic in pref.disliked_topics],
             favorite_up_users=list(pref.favorite_up_users),
         )
         self.surface.style = pref.style
@@ -672,8 +677,7 @@ class OnionProfile:
         likes = list(domain_map.values())
 
         dislikes = [
-            InterestDomain(domain=topic, weight=0.9)
-            for topic in soul.preferences.disliked_topics
+            InterestDomain(domain=topic, weight=0.9) for topic in soul.preferences.disliked_topics
         ]
 
         # Extract MBTI if the builder attached raw data
@@ -713,9 +717,9 @@ class OnionProfile:
             version=2,
         )
 
-    def to_llm_context(self) -> str:
+    def to_llm_context(self, *, include_portrait: bool = True) -> str:
         parts: list[str] = []
-        if self.personality_portrait:
+        if include_portrait and self.personality_portrait:
             parts.append(f"## 用户画像\n{self.personality_portrait}")
         if self.core.core_traits:
             parts.append(f"## 核心特质\n{', '.join(self.core.core_traits)}")
@@ -749,19 +753,21 @@ class OnionProfile:
         if speculations:
             spec_lines = [
                 f"- {s.get('domain', '')}（{s.get('reason', '')}）"
-                if isinstance(s, dict) else f"- {s.domain}（{s.reason}）"
+                if isinstance(s, dict)
+                else f"- {s.domain}（{s.reason}）"
                 for s in speculations[:5]
             ]
             parts.append("## 猜测兴趣（待验证）\n" + "\n".join(spec_lines))
         if self.active_insights:
             insights_text = "\n".join(
-                f"- {i.hypothesis} (置信度: {i.confidence:.0%})"
-                for i in self.active_insights
+                f"- {i.hypothesis} (置信度: {i.confidence:.0%})" for i in self.active_insights
             )
             parts.append(f"## 当前洞察\n{insights_text}")
         if self.recent_awareness:
             notes = "\n".join(
-                f"- [{n.date}] {n.observation}" for n in self.recent_awareness[:5]
+                # Newest notes live at the tail of the chronological window.
+                f"- [{n.date}] {n.observation}"
+                for n in self.recent_awareness[-5:]
             )
             parts.append(f"## 近期观察\n{notes}")
         return "\n\n".join(parts) if parts else "（尚未建立用户画像）"

@@ -225,7 +225,6 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ```json
 {
-  "personality_portrait": "最近更像在主动搭建自己的理解框架，喜欢把复杂问题拆开看。",
   "core_traits": ["理性", "好奇", "重结构"],
   "interests": [
     {"name": "国际局势", "category": "知识", "weight": 0.92},
@@ -316,7 +315,6 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 ```json
 {
   "profile_summary": {
-    "personality_portrait": "更偏好高信息密度、能把复杂问题讲透的内容。",
     "core_traits": ["理性", "重结构"],
     "cognitive_style": ["喜欢结构化拆解", "先看证据再下判断"],
     "values": ["真实", "自主"],
@@ -561,6 +559,40 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 如果只有搜索，系统会偏保守；如果只有探索，系统又容易飘。多策略并存的价值，就是在“稳定命中”和“适度意外”之间维持平衡。
 
+## 统一关键词 planner / 背压（v0.3.124 起默认开启）
+
+> Discover 背压重构 P1。挂在 `[discovery].unified_keyword_planner_enabled` 后面，**v0.3.124 起默认 `true`**——五个 search 关键词走统一规划器 + 关键词存储；设为 `false` 可逐字回退到各自旧的逐平台 LLM 生成路径（旧路径保留、回退无副作用）。
+
+此前五个 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，只接管 **search 这一路**——`trending / explore / related / hot / feed / channel / creator` 及其各自的 budget/cadence **原样不动**。
+
+**关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`；旧画像 digest 的 `pending` 作废为 `expired`。在途三元组 `(platform, keyword, profile_kw_digest)` 部分唯一，`used/expired` 历史不挡同词再生成。
+
+**生成（planner loop）**：`runtime/keyword_planner.py::KeywordPlanner` 作为独立后台对象（在 `api/runtime_context.py` 构造、持 `llm_service`+db+config，由 refresh controller 的 `run_forever` 拉起），每 `planner_poll_seconds` 轮一次：
+
+1. 算 `due` = 缓存 `pending` 低于 `kw_cache_low` **且** 真实缺口 > 0（复用 controller 的补池口径，含 raw headroom + 在途）；B 站额外催化（池低于目标 / ≥ `signal_event_threshold` 信号）也进 due。
+2. due 非空 → 现读最新画像 → 取**短事务单飞锁并在调用 LLM 前释放** → `build_merged_keywords_prompt`（一次合并调用、画像只发一份、按平台分块、静态 system 命中 prompt-cache）→ 解析 `{platform: [...]}` → 按当前 `profile_kw_digest` 写 `pending` 补到 `kw_cache_high`。
+3. LLM 失败 / 缺某平台块 → 该平台回退确定性权重排序兴趣名；仍无新词（稀疏画像）→ 回收该平台最旧 `used` 词。
+
+**缺口驱动抓取 + 三种执行形态**（`runtime/keyword_fetch.py::KeywordFetchCoordinator`，每个 search 抓取点显式 flag 分支，flag-off 行为逐字不变）：距上次 ≥ 各平台自身 `min_interval`、缺口 > 0、且 store 有可领词 → 原子 `claim` `fetch_batch` 个 → 经 P1.5 注入口（`queries` / `keyword_ids`）喂进搜索：
+
+- **内联评估并入池**（B 站 search、抖音 plugin）：抓 → 评估 → admit 都在本调用内，返回即 `used`，异常 / 空即 `failed`。
+- **fetch-only → 交共享 pipeline 延后入池**（X、YouTube）：producer 只取 raw 候选交 `discovery_candidates`，交付即 `used`（admit 由 `DiscoveryCandidatePipeline` 后续做）。
+- **真正异步**（仅小红书，扩展 out-of-band）：`claim` → 入队带 `source_keyword_id` 的 xhs 任务 → 词 `executing` → task-result 回调标 `used`/`failed`。`claim` 后被预算拒（XHS enqueue `ok=False` / 抖音 `search_aweme` 抛 `DouyinBudgetExhausted`）→ 词 `claimed → pending` 回滚（连续超 `attempts` → `failed`）。
+
+**yield 端到端**：候选全程透传 `source_keyword_id`，入池（`_cache_results` 这唯一 admission 收口）按 `(source_keyword_id, content_id)` **幂等**回填 `yield_count`（与 `used` 解耦，覆盖三形态）；连续 0 产出且过保护期的 `used` 词退役为 `expired`，不再轮换。
+
+**成本可观测**：合并调用是**一次 response**，token 无法在平台间拆分 → 统一记单一 caller `discovery.keyword_planner`（`openbiliclaw cost --by caller` 可见 search 关键词总成本随合并而塌缩）。per-platform 归因不靠冒充 token 拆分，而靠 planner 每轮 emit 的结构化 ledger（`{platform: {generated, yield}}`，`generated` 取本轮产词数、`yield` 取 `keyword_yield_total(platform)` 的累计 admit 产出），落在 `keyword planner cycle ledger` 日志行、并存于 `KeywordPlanner.last_cycle_ledger`。
+
+**P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里加了**平台供给优势表**（B站 学习区/梗、小红书 生活/美妆、抖音 娱乐/热点、YouTube 英文长内容、X 实时/英文），让模型把用户兴趣映射到各平台真正有货的方向；并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出），非弃权平台生成后仍低于低水位则按缺口 `recycle_oldest_used` 补足，保持多样性而不再额外调 LLM。
+
+**P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints()` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10（冷启动）时回退到全局热门 topic 避让。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。v0.3.124 起默认开启、flag-off 逐字回退。
+
+**P3.3 数据驱动供给优势**：P2.1 的 `<supply_advantage>` 是**静态先验**（B站擅长学习区、小红书擅长美妆…）；P3.3 在它之上叠一层**这个用户的真实 admit 历史**。新增 `Database.get_admitted_topic_counts_by_platform()`——口径与 P3.1 的「当前可服务池」**不同**：它统计每个平台**历来入过缓存**（非 dislike、可链接、不限是否已服务/已看）的 `topic_group`，反映「这个平台为该用户实际产出过哪些主题」。`KeywordPlanner._supply_hints()` 取各平台 top-8（阈值 `max(3, 本平台入池量//10)`、入池量不足 floor 10 则空），并**减去该平台当前的 `avoid_topics`**——所以「擅长但当前饱和」的主题只留在避让里，绝不同时出现在「主推」和「避让」。结果作为每平台 `supply_hint` 写进合并 prompt 分块（静态 system 描述该字段语义、`<supply_advantage>` 表保持不变，prompt-cache 不破）；冷启动无历史时该字段为空、模型只依据静态表。意义：用户若在某平台稳定看某偏门主题（如抖音上的硬核科普），planner 会学到并优先把相关兴趣往该方向映射，而非死守平台刻板印象。
+
+**合并调用的 ask 收口 + 动态 max_tokens**（真实模型端到端验证补强）：合并生成是全系统输出最大的一次调用（每个 due 平台 × 至多 `gen_batch` 个词同在一个 JSON）。两处保证不被截断：① 给模型的每平台 `need` **收口到 `gen_batch`**——P3.2 的动态水位可达 `kw_cache_high×3`，但解析每平台只保留 `gen_batch`，若按 80 去要、只留 30，既浪费模型输出又把排在 JSON 靠后的平台顶向截断；现在「要多少＝留多少」。② 合并调用的 `max_tokens` 不再用固定默认，而是**按本轮实际要词量动态算**：`max(4096, sum(收口后 need) × 48 + 1024)`，随平台数 / `gen_batch` 自适应、留足余量（`max_tokens` 是天花板、按真实输出计费，放大几乎零成本）。否则靠后的平台会被截断、退回兴趣名兜底（实测 deepseek 下 5 平台 ×30 词若限额过小，youtube/twitter 会退化成裸兴趣名；修复后五平台均满额、英文平台正确出英文）。
+
+**默认开启 / 如何回退**：v0.3.124 起 `[discovery].unified_keyword_planner_enabled` 默认 `true`，无需配置即生效（其余 `kw_cache_high/low`、`gen_batch`、`fetch_batch`、`history_window_*`、`claim_lease_minutes`、`planner_poll_seconds`、`plan_ttl_hours` 用 §6 默认即可，详见 `docs/modules/config.md`）。要回退旧逐平台生成，把该项设为 `false` 并重启后端即可，逐字回到旧路径、无副作用。端到端正确性由 `tests/test_keyword_backpressure_e2e.py` 在 flag-on 下覆盖，回退路径由 producer / planner 的 flag-off 测试覆盖。
+
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |
@@ -602,8 +634,10 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.69 抖音插件首页 feed discovery | ✅ | `feed` 子来源入队 `dy_tasks(type="feed")`，扩展在后台登录首页签名 `/aweme/v1/web/tab/feed/` 并回传 `dy_feed` 候选，正式以 `dy-plugin-feed` 进入 discovery；CLI 公开来源收敛为 `search` / `hot` / `feed` |
 | v0.3.69 抖音 runtime search 防重复 | ✅ | discovery engine 注册同名 strategy 时替换旧实例，避免 `douyin_direct` 在长期后台运行中累积成多个同名策略并重复创建 search 任务；扩展 search 任务单关键词 timeout 放宽到 120s，覆盖页面跳转与 acrawler 签名耗时 |
 | v0.3.x discovery 画像上下文补齐 | ✅ | `build_profile_summary()` 会把 `disliked_topics`、认知风格、价值观、内在驱动力、当前阶段、life stage、MBTI、来源平台分布、近期觉察、当前洞察、质量敏感度和兴趣来源时间一起带入 discovery profile summary，让 search / trending / explore / YouTube query 生成和 batch 内容评估都能看到更完整的画像上下文 |
-| v0.3.x 画像 / 评估输入上限放宽 | ✅ | 画像摘要扁平兴趣 tag 上限 10 → 30 → 64，且兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 先于 specifics 填充，保证每个高权重域至少有 tag 级曝光）；`disliked_topics` 8 → 16 → 64；batch 评估 payload 的 `description` 截断 200 → 400 字符；负例锚定上限 8 → 16（见 soul 模块）。64 上限与计划中的 12h LLM 画像整理任务配套（整理卡 64 边界做去重合并） |
+| v0.3.x 画像 / 评估输入上限放宽 | ✅ | 画像摘要扁平兴趣 tag 上限 10 → 30 → 64 → 256（一级域 8 → 128），且兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 先于 specifics 填充，保证每个高权重域至少有 tag 级曝光）；`disliked_topics` 8 → 16 → 64 → 128（与存储上限对齐，避雷项不再截断）；batch 评估 payload 的 `description` 截断 200 → 400 字符；负例锚定上限 8 → 16（见 soul 模块）。64 上限与计划中的 12h LLM 画像整理任务配套（整理卡 64 边界做去重合并） |
 | v0.3.x 画像输出移除 UP 主维度 | ✅ | `build_profile_summary()` 不再输出 `favorite_up_users`，`build_search_queries_prompt` 同步删除配套的「favorite_up_users 仅供背景参考」规则——避免模型从创作者名反推内容兴趣。`RelatedChainStrategy` 仍直接读 `preferences.favorite_up_users[:1]` 作种子，`/api/profile-summary` 用户视图不受影响 |
+| v0.3.123 统一 profile prompt 输入 + 移除人格素描 | ✅ | `build_profile_summary()` 成为各来源唯一的结构化画像输入：发现（search / trending / explore / 内容评估）与推荐（评估 / 文案 / 理由）共用同一份字段；不再输出 `personality_portrait` 那段总结性叙事（结构化字段已承载同样信号，且 prose 里的比喻会带偏 query / 文案生成）。人格素描仍照常生成并在画像页展示，只是不再进任何 LLM prompt。新增可选 `interests=` 形参，供推荐侧传入 embedding 选出的内容相关兴趣 |
+| v0.3.123 X/小红书/抖音关键词生成并入统一画像 + 字段上限 30 | ✅ | X (`strategies/x.py`)、小红书 (`sources/xhs_keyword_gen.py`)、抖音 (`strategies/douyin_direct.py`) 的搜索关键词生成统一改为吃完整 `build_profile_summary`（与 B站 / YouTube 关键词生成一致、带 `disliked_topics` 避雷）。X / 小红书取消原 top-15 兴趣元组截断；抖音从确定性取兴趣名升级为 LLM 生成（即设计里 deferred 的 `dy_explore`），**无 llm_service / 调用失败 / 空返回**时回退确定性兴趣名、`seed_keywords` 仍最优先。各自保留平台风格静态 system prompt。**内容评估**环节五平台本就共用 `build_profile_summary`。同时 `build_profile_summary` 中 `cognitive_style` / `values` / `motivational_drivers` / `deep_needs` 等原 `[:5]` → `[:30]`、`recent_awareness` / `active_insights` 窗口 `[-5:]` → `[-30:]`、每域 specifics（`_SPECIFICS_PER_DOMAIN`）`5` → `30` |
 | X (Twitter) 服务端 discovery | ✅ | 第六个内容源 `source_platform="twitter"`（标签 `"X"`）。`XAdapter` 服务端 cookie 重放（`XClient` 封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`，lazy import + 只读），分发 `search`（画像关键词）/ `feed`（For-You）/ `creator`（账号订阅）三策略，经 `x_normalize.normalize_tweet()` 转 `DiscoveredContent`（`content_type ∈ {tweet, thread}` + `body_text` 全文）入统一候选池；后台由 `XDiscoveryProducer` 按预算 + 源健康调度 |
 | X 文字候选 body_text / content_type | ✅ | `DiscoveredContent` 增设 `body_text`（推文 / `note_tweet` 长文全文）+ `content_type`（`video`/`note`/`tweet`/`thread`，复用候选池既有 shape 字段，不新造 `media_type`）；两处 `content_type` 硬编码（`candidate_pool` write + 引擎候选 dict）改为优先取 `item.content_type`，全链路（enqueue → claim → admission → cache → API）透传，保证文字 / thread 候选正确流过 pending 评估 |
 | SearchStrategy LLM 评估 | ✅ | `SearchStrategy` 现在默认走 `evaluate_content()` LLM 打分（`llm_evaluation=True`），不再只用本地启发式（上限 0.62），可通过 `llm_evaluation=False` 关闭 |
@@ -613,6 +647,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | Discovery 评估类型边界 | ✅ | v0.3.71 起 eval scenario / evaluator 对 LLM JSON、缓存 persona、人工反馈和 ranking pool 做显式类型守卫，`mypy strict` 可覆盖评估链路而不依赖真实 Claude / Playwright / aiohttp 安装 |
 | Discovery 自动优化循环 | ✅ | SGD 风格优化循环：生成 persona → 生成 scenario → 运行发现 → 多维评估 → exploit/explore → accept/rollback |
 | Discovery 人工评估脚本 | ✅ | 交互式人工评估 + 可选触发优化 |
+| P1 统一关键词 planner / 背压（v0.3.124 起默认开） | ✅ | `[discovery].unified_keyword_planner_enabled`（v0.3.124 起默认 `true`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步 XHS）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。只接管五个 search 关键词，`trending/explore/related/hot/feed` 不动；flag-off 逐字回退旧逐平台生成。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}}`）观测。E2E：`tests/test_keyword_backpressure_e2e.py` |
 
 ## 公开 API
 
@@ -627,9 +662,9 @@ profile_summary = build_profile_summary(profile)
 行为说明：
 
 - 这是 discovery 各策略共享的画像摘要入口，用来把 `SoulProfile` / `OnionProfile` 压成可序列化、可注入 prompt 的 dict。
-- 摘要会保留一级兴趣 `interest_domains`（前 8 个域，每域最多 5 个 specifics）和扁平兴趣 `interests`（最多 64 条），并带上 `first_seen` / `last_seen` / `source`，让搜索词生成和内容评估能区分长期稳定兴趣、近期新增兴趣和推断来源。两个列表都按 weight 降序排序后再截断，强兴趣不会被列表顺序挤掉；扁平 tag 先填所有域 tag、再按域权重填 specifics，保证每个高权重域至少有 tag 级曝光。
-- 摘要会带入 `disliked_topics[:64]`；这些是长期避雷项，和 batch evaluator 的短期 `negative_examples` 互补。
-- 摘要会带入人格与决策上下文：`core_traits`、`cognitive_style`、`values`、`motivational_drivers`、`deep_needs`、`current_phase`、`life_stage`、`mbti`、`recent_awareness`、`active_insights`。
+- 摘要会保留一级兴趣 `interest_domains`（前 128 个域，每域最多 5 个 specifics）和扁平兴趣 `interests`（最多 256 条），并带上 `first_seen` / `last_seen` / `source`，让搜索词生成和内容评估能区分长期稳定兴趣、近期新增兴趣和推断来源。两个列表都按 weight 降序排序后再截断，强兴趣不会被列表顺序挤掉；扁平 tag 先填所有域 tag，剩余名额按 specifics **自身权重全局排序**填充（不设每域配额——此前伞形大域 200+ specifics 只露 top-5，0.8 权重的细分兴趣反而不可见），域级多样性由域 tag 和 `interest_domains` 区保证。
+- 摘要会带入 `disliked_topics[:128]`（与 `_DISLIKED_TOPICS_STORE_CAP` 对齐，存储的避雷项全部可见）；这些是长期避雷项，和 batch evaluator 的短期 `negative_examples` 互补。
+- 摘要会带入人格与决策上下文：`core_traits`、`cognitive_style`、`values`、`motivational_drivers`、`deep_needs`、`current_phase`、`life_stage`、`mbti`、`recent_awareness`、`active_insights`（觉察 / 洞察窗口按时间旧→新存储，摘要取**最新** 5 条——v0.3.121 及之前误取最旧 5 条）。
 - 摘要会带入消费上下文：`style`（含 `quality_sensitivity`）、`context`、`exploration_openness`、`source_platform_mix` 和 `_active_speculations`。
 - 摘要**不再带入** `favorite_up_users`：「常看某创作者」≠「对该创作者内容类型感兴趣」，它只会诱导模型从创作者名反推兴趣方向。用户的 UP 主清单仍保留在 `/api/profile-summary`（用户自己的可视 / 可编辑视图）并直接给 `RelatedChainStrategy` 当种子，只是不进 LLM 画像输出。
 - 摘要是 discovery 的只读输入，不会修改 profile；字段数量按 prompt 需要裁剪到前若干项，避免把整份画像无界塞进 LLM。

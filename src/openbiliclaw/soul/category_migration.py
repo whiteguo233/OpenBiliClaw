@@ -68,17 +68,23 @@ class CategoryMigrator:
         histogram = Counter(_raw_category(item) for item in interests)
         report.histogram = dict(histogram)
         nonempty_categories = sorted(category for category in histogram if category)
+        unknown_categories = [
+            category for category in nonempty_categories if category not in CATEGORY_VOCAB
+        ]
 
-        if self._llm_service is None:
-            report.errors.append("llm: service unavailable")
-            return report
-
-        try:
-            mapping = await self._load_mapping_from_llm(nonempty_categories, histogram)
-        except Exception as exc:
-            logger.warning("category migration LLM call failed: %s", exc)
-            report.errors.append(f"llm: {exc}")
-            return report
+        mapping = {
+            category: category for category in nonempty_categories if category in CATEGORY_VOCAB
+        }
+        if unknown_categories:
+            if self._llm_service is None:
+                report.errors.append("llm: service unavailable")
+                return report
+            try:
+                mapping.update(await self._load_mapping_from_llm(nonempty_categories, histogram))
+            except Exception as exc:
+                logger.warning("category migration LLM call failed: %s", exc)
+                report.errors.append(f"llm: {exc}")
+                return report
         for category in nonempty_categories:
             if category in CATEGORY_VOCAB:
                 mapping[category] = category

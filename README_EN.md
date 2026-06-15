@@ -188,12 +188,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.124: unified keyword planner on by default (2026-06-15)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Desktop installers now remind you to upgrade** — the backend periodically checks for new `desktop-v*` installer releases and the settings page shows a notice with a direct download link plus a toast, no more watching Releases yourself.
-- **Settings page adds "Check now / Apply now"** — auto-update status can be triggered manually, and progress refreshes live from backend events.
-- **Auto-update is safer** — a frozen bundle never rewrites a co-located git checkout, and degraded mode (broken LLM config) can still check for and pull a fix-carrying release.
-- **Delight queue size is now shared across clients** — the new `delight_queue_limit` config saved from desktop Web also applies to the extension and mobile Web.
+- **Unified keyword backpressure now on by default** — the five platforms' search-keyword generation collapses into one merged, deficit-pulled call with per-platform adaptive avoid / water-level / supply; set `false` to fall back, byte-for-byte, to the legacy path.
+- **One profile input across every platform** — discovery / recommendation / speculator prompts all collapse onto a single structured profile, with missing fields filled and caps unified at 30.
+- **Personality portrait no longer enters prompts** — that prose summary is dropped from every LLM input (still shown on the profile page), so queries and copy stop getting skewed by its metaphors.
+- **Five-platform keyword generation aligned + Douyin gains LLM gen** — X / Xiaohongshu / Douyin / YouTube / Bilibili keyword generation all eat the same full profile.
 
 ## Community
 
@@ -533,7 +533,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 🔮 **Challenge Interest Probes** — Uses psychological bridging logic to guess unexplored domains you might love, labels distance as near/lateral/bridge/wildcard, keeps 5 regular near slots plus 3 separate challenge slots, buffers weak positives, and guards against short-term over-amplification
 - 🧭 **Avoidance Probe System** — Proactively confirms content forms, low-quality expressions, and style boundaries you may want to avoid; confirmed answers write `disliked_topics`, unconfirmed probes stay out of ranking
 - 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin, YouTube init signals, Douyin search / hot / feed discovery, X (Twitter) server-side cookie-replay discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
-- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
+- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore, with extension-rendered search-page fallback during search cooldown) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
 - 🎯 **Smart Diversity** — PoolCurator five-dimension scoring + cross-source/round topic quota (any topic ≤10% of pool) + share-aware pool trimming that protects smaller sources; goodbye to "all AI all day"
 - ⚡ **Instant "Reshuffle"** — popup reshuffle ~0.6s (down from 2.6s in v0.3.0); rapid clicks stay snappy
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
@@ -551,7 +551,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
 │      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
-│      (Cookies · XHS/DY/YT tasks · optional init bridge · autostart setting) │
+│      (Cookies · Bili/XHS/DY/YT tasks · optional init bridge · autostart setting) │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
                          │ + Mobile/Desktop Web (/m · /web) · optional [api.auth] password gate (local free / LAN needs password)
@@ -570,12 +570,13 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │         recommendations · chat_turns · avoidance_state  │
 │ Profile overrides: edits -> profile_overrides.json overlay │
 │         (merged at read · rebuild-proof · 3 frontends)   │
+│ Profile taxonomy: fixed interest categories · migration · homonym-safe cleanup │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### Content Discovery Engine
 
-Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / plugin-signed search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
+Four Bilibili strategies work in coordination, each with independent API quota; while backend Bilibili search is cooling down, the runtime can enqueue extension search fallback tasks, have the extension open a real rendered Bilibili search page in the logged-in browser, and accept the visible DOM results. The source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / plugin-signed search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
 
 | Strategy | Description | Quota |
 |----------|-------------|-------|
@@ -584,7 +585,7 @@ Four Bilibili strategies work in coordination, each with independent API quota, 
 | **Related Chain** | Expands from seed videos along recommendation chains | Fair share |
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
-**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. For steady-state refill, Douyin signs requests from a background tab in your logged-in browser without stealing focus, and YouTube is refilled backend-side by platform deficit.
+**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); if Bilibili search is blocked and cooling down, the backend task bridge can enqueue a search task, then the extension opens the real logged-in search page in a background tab and returns visible rendered DOM results as fallback candidates. Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. For steady-state refill, Douyin signs requests from a background tab in your logged-in browser without stealing focus, and YouTube is refilled backend-side by platform deficit.
 
 **Unified evaluation** — every source first writes raw candidates to `discovery_candidates`. The backend then claims mixed-source batches and scores them with the Soul profile plus recent negative examples. The "will this user like it?" judgment lives in this shared evaluator, not inside each platform producer.
 
@@ -653,7 +654,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.124: unified keyword planner on by default (2026-06-15)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
 
 ## 🗺️ Roadmap
 

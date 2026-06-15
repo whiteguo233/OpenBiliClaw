@@ -401,3 +401,99 @@ def test_clear_relogin_block_is_noop_when_already_ok(tmp_path: Path) -> None:
     assert health.get()["state"] == "ok"
     assert health.clear_relogin_block() is False
     assert health.get()["state"] == "ok"
+
+
+# ── P1.7 unified keyword planner fetch path (fetch-only lifecycle) ───────
+
+
+from dataclasses import dataclass as _dataclass  # noqa: E402
+
+from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator  # noqa: E402
+
+
+@_dataclass
+class _DiscoveryCfg:
+    unified_keyword_planner_enabled: bool = False
+    fetch_batch: int = 5
+
+
+def _kw_statuses(db: Database) -> dict[str, str]:
+    rows = db.conn.execute(
+        "SELECT keyword, status FROM discovery_keywords WHERE platform = 'twitter' ORDER BY id"
+    ).fetchall()
+    return {str(r["keyword"]): str(r["status"]) for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_flag_off_search_does_not_claim(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.insert_pending_keywords("twitter", ["stored-kw"], "dig")
+    adapter = _FakeXAdapter(by_strategy={"search": [_tweet_item("1", "x-search")]})
+    producer = XDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        adapter=adapter,
+        creator_store=XCreatorStore(db),
+        health_store=XSourceHealthStore(db),
+        enabled=True,
+        request_interval_seconds=0,
+        min_interval_minutes=0,
+        keyword_fetch=KeywordFetchCoordinator(database=db, discovery_config=_DiscoveryCfg(False)),
+    )
+    await producer.produce_if_due(limit=10)
+    # Flag off → legacy self-gen search; the stored word stays pending, and the
+    # search recipe carries no injected ``queries`` (byte-identical to pre-P1.7).
+    search_calls = [c for c in adapter.calls if c[0] == "search"]
+    assert search_calls and "queries" not in search_calls[0][1]
+    assert _kw_statuses(db) == {"stored-kw": "pending"}
+
+
+@pytest.mark.asyncio
+async def test_flag_on_injects_queries_and_marks_used_on_handoff(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.insert_pending_keywords("twitter", ["rust async", "ml papers"], "dig")
+    adapter = _FakeXAdapter(
+        by_strategy={"search": [_tweet_item("1790000000000000099", "x-search")]}
+    )
+    producer = XDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        adapter=adapter,
+        creator_store=XCreatorStore(db),
+        health_store=XSourceHealthStore(db),
+        enabled=True,
+        request_interval_seconds=0,
+        min_interval_minutes=0,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=db, discovery_config=_DiscoveryCfg(True, fetch_batch=5)
+        ),
+    )
+    result = await producer.produce_if_due(limit=10)
+    assert result["reason"] == "ok"
+    # Claimed words injected verbatim into the search recipe config.
+    search_calls = [c for c in adapter.calls if c[0] == "search"]
+    assert search_calls[0][1]["queries"] == ["rust async", "ml papers"]
+    # Fetch-only handoff → both words are USED (admission is downstream).
+    assert _kw_statuses(db) == {"rust async": "used", "ml papers": "used"}
+
+
+@pytest.mark.asyncio
+async def test_flag_on_empty_store_skips_search_but_runs_others(tmp_path: Path) -> None:
+    db = _db(tmp_path)  # store empty
+    adapter = _FakeXAdapter(by_strategy={"search": [_tweet_item("1", "x-search")], "feed": []})
+    producer = XDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        adapter=adapter,
+        creator_store=XCreatorStore(db),
+        health_store=XSourceHealthStore(db),
+        enabled=True,
+        request_interval_seconds=0,
+        min_interval_minutes=0,
+        keyword_fetch=KeywordFetchCoordinator(database=db, discovery_config=_DiscoveryCfg(True)),
+    )
+    result = await producer.produce_if_due(limit=10)
+    assert result["reason"] == "ok"
+    # Store empty → the search strategy is skipped entirely this cycle.
+    assert not [c for c in adapter.calls if c[0] == "search"]
+    assert _kw_statuses(db) == {}

@@ -5,16 +5,20 @@ from pathlib import Path
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
     _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT,
+    _MERGED_KEYWORDS_SYSTEM_PROMPT,
     build_avoidance_generation_prompt,
     build_awareness_prompt,
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
     build_explore_domains_prompt,
+    build_merged_keywords_prompt,
     build_recommendation_expression_prompt,
     build_search_queries_prompt,
     build_socratic_dialogue_prompt,
     build_soul_profile_prompt,
     build_speculation_generation_prompt,
+    parse_merged_keywords,
+    parse_merged_keywords_with_presence,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -621,6 +625,43 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
                 ]
             ),
         ),
+        (
+            "build_merged_keywords_prompt",
+            dict(
+                profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+                platform_blocks=[
+                    {
+                        "platform": "bilibili",
+                        "need": 8,
+                        "recent_keywords": ["AI 编程"],
+                        "avoid_topics": ["原神"],
+                        "avoid_styles": ["deep_dive"],
+                        "avoid_franchises": ["原神"],
+                    }
+                ],
+            ),
+            dict(
+                profile_summary={"interests": [{"name": "咖啡", "weight": 0.6}]},
+                platform_blocks=[
+                    {
+                        "platform": "xiaohongshu",
+                        "need": 5,
+                        "recent_keywords": ["手冲咖啡"],
+                        "avoid_topics": ["美甲"],
+                        "avoid_styles": ["lifestyle"],
+                        "avoid_franchises": [],
+                    },
+                    {
+                        "platform": "twitter",
+                        "need": 4,
+                        "recent_keywords": ["llm"],
+                        "avoid_topics": [],
+                        "avoid_styles": [],
+                        "avoid_franchises": [],
+                    },
+                ],
+            ),
+        ),
         # NOTE: build_socratic_dialogue_prompt is intentionally NOT in
         # this list — its system prompt embeds per-user core memory /
         # tone / friend label, which is fine for OpenBiliClaw's single-
@@ -851,3 +892,301 @@ def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:
 
     assert "TWEET_BODY_MARKER" in user
     assert "TWEET_BODY_MARKER" not in system
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P1.4: merged multi-platform keyword builder + parser.
+
+
+def _merged_platform_blocks() -> list[dict[str, object]]:
+    return [
+        {
+            "platform": "bilibili",
+            "need": 8,
+            "recent_keywords": ["AI 编程 盘点"],
+            "avoid_topics": ["原神"],
+            "avoid_styles": ["deep_dive"],
+            "avoid_franchises": ["原神"],
+        },
+        {
+            "platform": "xiaohongshu",
+            "need": 5,
+            "recent_keywords": ["手冲咖啡 入门"],
+            "avoid_topics": ["美甲教程"],
+            "avoid_styles": ["lifestyle"],
+            "avoid_franchises": [],
+        },
+    ]
+
+
+def test_merged_keywords_prompt_system_message_equals_constant() -> None:
+    """The system message must be the literal module constant — no
+    interpolation — so the provider prompt cache fires across calls."""
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=_merged_platform_blocks(),
+    )
+
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+
+def test_merged_keywords_prompt_user_message_carries_profile_once_and_due_platforms() -> None:
+    """User message holds <profile_summary> exactly once plus only the
+    platforms passed in — absent platforms must not leak into the prompt."""
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=_merged_platform_blocks(),
+    )
+    user = messages[1]["content"]
+
+    assert user.count("<profile_summary>") == 1
+    assert user.count("</profile_summary>") == 1
+    assert "<platforms>" in user
+    # Only the two due platforms appear; the three absent platforms do not.
+    assert "bilibili" in user
+    assert "xiaohongshu" in user
+    for absent in ("douyin", "youtube", "twitter"):
+        assert absent not in user
+    # The avoid_* hints and recent_keywords ride along in the user message.
+    assert "AI 编程 盘点" in user
+    assert "手冲咖啡 入门" in user
+    assert "原神" in user
+
+
+def test_merged_keywords_prompt_serialization_is_deterministic() -> None:
+    """Differently-ordered dict keys with identical semantics must yield a
+    byte-identical user message (sort_keys=True discipline)."""
+    blocks_a = [
+        {
+            "platform": "bilibili",
+            "need": 8,
+            "recent_keywords": ["x"],
+            "avoid_topics": ["原神"],
+            "avoid_styles": [],
+            "avoid_franchises": [],
+        }
+    ]
+    blocks_b = [
+        {
+            "avoid_franchises": [],
+            "avoid_styles": [],
+            "avoid_topics": ["原神"],
+            "recent_keywords": ["x"],
+            "need": 8,
+            "platform": "bilibili",
+        }
+    ]
+    msg_a = build_merged_keywords_prompt(
+        profile_summary={"interests": ["AI"], "disliked_topics": ["标题党"]},
+        platform_blocks=blocks_a,
+    )
+    msg_b = build_merged_keywords_prompt(
+        profile_summary={"disliked_topics": ["标题党"], "interests": ["AI"]},
+        platform_blocks=blocks_b,
+    )
+
+    assert msg_a[1]["content"] == msg_b[1]["content"]
+
+
+def test_parse_merged_keywords_parses_per_platform() -> None:
+    content = '{"bilibili": ["历史 盘点", "摄影 入门"], "xiaohongshu": ["手冲咖啡 教程"]}'
+    parsed = parse_merged_keywords(content, ["bilibili", "xiaohongshu"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["历史 盘点", "摄影 入门"]
+    assert parsed["xiaohongshu"] == ["手冲咖啡 教程"]
+
+
+def test_parse_merged_keywords_returns_key_for_every_requested_platform() -> None:
+    """Every requested platform gets a key, even ones absent from output."""
+    content = '{"bilibili": ["a", "b"]}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert set(parsed) == {"bilibili", "xiaohongshu", "douyin"}
+    assert parsed["bilibili"] == ["a", "b"]
+    # Missing platform → empty list, not absent key.
+    assert parsed["xiaohongshu"] == []
+    assert parsed["douyin"] == []
+
+
+def test_parse_merged_keywords_missing_and_garbage_platform_empty_no_raise() -> None:
+    """A platform whose value is non-list garbage yields [] and never raises."""
+    content = '{"bilibili": ["ok"], "xiaohongshu": "not a list", "douyin": 42}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert parsed["bilibili"] == ["ok"]
+    assert parsed["xiaohongshu"] == []
+    assert parsed["douyin"] == []
+
+
+def test_parse_merged_keywords_total_garbage_does_not_raise() -> None:
+    """Non-JSON / non-object content → all-empty result, no exception."""
+    for junk in ("not json at all", "", "[1, 2, 3]", "null"):
+        parsed = parse_merged_keywords(junk, ["bilibili", "twitter"], per_platform_cap=5)
+        assert parsed == {"bilibili": [], "twitter": []}
+
+
+def test_parse_merged_keywords_partial_truncated_json_salvages() -> None:
+    """Tolerant parse recovers a platform from a truncated payload."""
+    content = '{"bilibili": ["历史 盘点", "摄影 入门"], "xiaohongshu": ["手冲咖'
+    parsed = parse_merged_keywords(content, ["bilibili", "xiaohongshu"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["历史 盘点", "摄影 入门"]
+
+
+def test_parse_merged_keywords_respects_per_platform_cap() -> None:
+    content = '{"bilibili": ["a", "b", "c", "d", "e"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=3)
+
+    assert parsed["bilibili"] == ["a", "b", "c"]
+
+
+def test_parse_merged_keywords_dedups_within_platform() -> None:
+    content = '{"bilibili": ["a", "a", "b", " b ", "b", "c"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=10)
+
+    # "a" deduped; "b" and " b " both strip to "b" so only one kept.
+    assert parsed["bilibili"] == ["a", "b", "c"]
+
+
+def test_parse_merged_keywords_drops_blank_and_non_scalar_items() -> None:
+    content = '{"bilibili": ["", "  ", "good", {"x": 1}, ["y"], "另一个"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["good", "另一个"]
+
+
+def test_parse_merged_keywords_zero_cap_returns_empty_lists() -> None:
+    content = '{"bilibili": ["a", "b"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=0)
+
+    assert parsed == {"bilibili": []}
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P2.1: static per-platform supply-advantage table.
+
+
+def test_merged_keywords_system_prompt_carries_supply_advantage_table() -> None:
+    """The static system prompt embeds the per-platform supply-advantage block
+    (P2.1) — each platform mapped to where it structurally has good content."""
+    sys_prompt = _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+    assert "<supply_advantage>" in sys_prompt
+    assert "</supply_advantage>" in sys_prompt
+    # Each platform's headline supply advantages from the spec are present.
+    assert "学习区" in sys_prompt and "知识科普" in sys_prompt  # bilibili
+    assert "生活方式" in sys_prompt and "美妆" in sys_prompt  # xiaohongshu
+    assert "热点" in sys_prompt and "搞笑" in sys_prompt  # douyin
+    assert "英文长内容" in sys_prompt and "纪录片" in sys_prompt  # youtube
+    assert "实时讨论" in sys_prompt and "英文技术" in sys_prompt  # twitter
+
+
+def test_merged_keywords_system_prompt_permits_decline() -> None:
+    """The static system prompt instructs the model it MAY return fewer / an
+    empty list for a platform whose supply advantage doesn't fit the user
+    (P2.2 decline) rather than padding."""
+    sys_prompt = _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+    assert "弃权" in sys_prompt
+    assert "[]" in sys_prompt
+
+
+def test_merged_keywords_system_prompt_is_fully_static_supply_table() -> None:
+    """The supply-advantage table never depends on per-call data — two builds
+    with different profiles / platforms keep a byte-identical system message
+    (the call-invariance contract holds with the P2 table added)."""
+    msg_a = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 8,
+                "recent_keywords": [],
+                "avoid_topics": [],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+            }
+        ],
+    )
+    msg_b = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "美妆", "weight": 0.4}]},
+        platform_blocks=[
+            {
+                "platform": "twitter",
+                "need": 4,
+                "recent_keywords": ["x"],
+                "avoid_topics": ["y"],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+            }
+        ],
+    )
+
+    assert msg_a[0]["content"] == msg_b[0]["content"] == _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P2.2: parser distinguishes decline (present-empty)
+# from omission (absent / non-list).
+
+
+def test_parse_merged_keywords_with_presence_marks_explicit_empty_as_present() -> None:
+    """A platform whose value is an explicit empty list is PRESENT (an
+    intentional decline); an omitted platform is NOT present (an omission)."""
+    content = '{"bilibili": ["历史 盘点"], "xiaohongshu": []}'
+    keywords, present = parse_merged_keywords_with_presence(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert keywords["bilibili"] == ["历史 盘点"]
+    assert keywords["xiaohongshu"] == []
+    assert keywords["douyin"] == []
+    # bilibili (had words) and xiaohongshu (explicit []) are present; douyin
+    # (absent from the JSON object) is NOT.
+    assert present == {"bilibili", "xiaohongshu"}
+
+
+def test_parse_merged_keywords_with_presence_non_list_is_not_present() -> None:
+    """A non-list garbage value is treated as an omission (not present), so the
+    planner will fall back rather than read it as a decline."""
+    content = '{"bilibili": ["ok"], "xiaohongshu": "not a list", "douyin": 42}'
+    keywords, present = parse_merged_keywords_with_presence(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert keywords["bilibili"] == ["ok"]
+    assert present == {"bilibili"}
+
+
+def test_parse_merged_keywords_with_presence_total_garbage_no_present() -> None:
+    """Non-JSON / non-object content → no platform present (all fall back)."""
+    for junk in ("not json", "", "[1,2]", "null"):
+        keywords, present = parse_merged_keywords_with_presence(
+            junk, ["bilibili", "twitter"], per_platform_cap=5
+        )
+        assert keywords == {"bilibili": [], "twitter": []}
+        assert present == set()
+
+
+def test_parse_merged_keywords_with_presence_zero_cap_no_present() -> None:
+    """With cap 0 nothing is parsed → no platform is present."""
+    keywords, present = parse_merged_keywords_with_presence(
+        '{"bilibili": ["a"]}', ["bilibili"], per_platform_cap=0
+    )
+    assert keywords == {"bilibili": []}
+    assert present == set()
+
+
+def test_parse_merged_keywords_still_collapses_present_and_absent() -> None:
+    """The legacy ``parse_merged_keywords`` keeps its presence-agnostic shape:
+    present-empty and absent both yield ``[]`` (back-compat for old callers)."""
+    content = '{"bilibili": ["a"], "xiaohongshu": []}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+    assert parsed == {"bilibili": ["a"], "xiaohongshu": [], "douyin": []}

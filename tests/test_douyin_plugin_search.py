@@ -310,3 +310,45 @@ async def test_plugin_search_client_returns_feed_task_items(database: Database) 
             "video": {"cover": {"url_list": ["https://cover.example/feed.jpg"]}},
         }
     ]
+
+
+# ── P1.7 distinguishable budget-rejection signal ─────────────────────────
+
+
+async def test_search_aweme_raises_budget_sentinel_when_armed(database: Database) -> None:
+    from openbiliclaw.sources.douyin_plugin_search import DouyinBudgetExhausted
+
+    queue = DyTaskQueue(database)
+    # Exhaust today's search-task budget so enqueue is refused.
+    queue.enqueue_with_id("search", {"keywords": ["x"]}, daily_budget=1)
+    fallback = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=1.0,
+        daily_search_budget=1,
+        kick=lambda: None,
+        raise_on_budget=True,
+    )
+    with pytest.raises(DouyinBudgetExhausted):
+        await client.search_aweme("猫", limit=5)
+    # Budget-rejected path must NOT fall back to direct-cookie search.
+    assert fallback.keywords == []
+
+
+async def test_search_aweme_budget_falls_back_to_direct_when_not_armed(database: Database) -> None:
+    # Legacy default (raise_on_budget=False): budget exhaustion → fall back to
+    # direct-cookie search (byte-identical to pre-P1.7), NOT a sentinel.
+    queue = DyTaskQueue(database)
+    queue.enqueue_with_id("search", {"keywords": ["x"]}, daily_budget=1)
+    fallback = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=1.0,
+        daily_search_budget=1,
+        kick=lambda: None,
+    )
+    result = await client.search_aweme("猫", limit=5)
+    assert fallback.keywords == ["猫"]
+    assert result == [{"aweme_id": "fallback", "desc": "fallback result"}]

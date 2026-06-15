@@ -707,11 +707,13 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             *,
             registry: object,
             memory: object,
+            usage_recorder: object | None = None,
             module_overrides=None,
             concurrency: int = 3,
         ) -> None:
             self.registry = registry
             self.memory = memory
+            self.usage_recorder = usage_recorder
             self.module_overrides = module_overrides
             self.concurrency = concurrency
 

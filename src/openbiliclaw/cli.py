@@ -484,6 +484,7 @@ def _build_soul_engine() -> Any:
     return SoulEngine(
         llm=llm,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
@@ -525,6 +526,7 @@ def _build_recommendation_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -618,6 +620,7 @@ def _build_discovery_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -689,6 +692,24 @@ def _get_runtime_database() -> Any:
     database.initialize()
     _RUNTIME_COMPONENTS["database"] = database
     return database
+
+
+def _build_usage_recorder() -> Any:
+    """Build or return the shared LLM usage recorder (cost ledger sink).
+
+    CLI commands construct their own ``LLMService`` / ``SoulEngine``
+    instead of going through ``runtime_context``, so without this every
+    CLI-run LLM call was invisible in ``openbiliclaw cost``.
+    """
+    cached = _RUNTIME_COMPONENTS.get("usage_recorder")
+    if cached is not None:
+        return cached
+
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    recorder = UsageRecorder(sink=_get_runtime_database())
+    _RUNTIME_COMPONENTS["usage_recorder"] = recorder
+    return recorder
 
 
 def _runtime_database_path() -> Path:
@@ -5480,15 +5501,16 @@ def profile_consolidate(
     full: bool = typer.Option(
         False,
         "--full",
-        help="把 likes 整理边界从 top-128 开到全量标签库（嫌疑簇 ≤30/批送审）。",
+        help="把 likes 整理边界从默认 top-512 开到全量标签库（嫌疑簇 32/批送审）。",
     ),
 ) -> None:
     """用 LLM 整理合并画像里重复的喜欢 / 讨厌主题。
 
     兴趣标签和避雷主题会不断积累措辞变体（「智能体开发」vs
-    「智能体开发与实现」），把进入 prompt 的 top-64 名额挤占掉。
+    「智能体开发与实现」），把进入 prompt 的兴趣名额挤占掉。
     本命令按「规则合并 → embedding 聚类 → LLM 裁决 → 校验执行」
-    的流水线做同义合并，卡 64 边界整理（likes 只看权重 top-128）。
+    的流水线做同义合并（likes 看权重 top-512 + 全量避雷主题，
+    LLM 裁决每批 32 簇分批执行）。
 
     \b
       - 默认 dry-run，先看建议再决定
@@ -5515,6 +5537,7 @@ def profile_consolidate(
         llm_service = LLMService(
             registry=registry,
             memory=memory,
+            usage_recorder=_build_usage_recorder(),
             module_overrides=module_overrides_from_config(cfg),
             concurrency=cfg.llm.concurrency,
         )
@@ -5608,7 +5631,8 @@ def profile_consolidate(
         console.print(f"  [cyan][规则][/cyan] {rule_merge}")
     for merge in report.merges:
         raw_members = merge.get("members", [])
-        members = " / ".join(str(m) for m in raw_members) if isinstance(raw_members, list) else ""
+        member_items = raw_members if isinstance(raw_members, list) else []
+        members = " / ".join(str(m) for m in member_items)
         scope = "兴趣" if merge.get("scope") == "likes" else "避雷"
         console.print(
             f"  [green][{scope}][/green] {members} → [bold]{merge.get('canonical')}[/bold]"
@@ -6275,6 +6299,7 @@ def _run_xhs_discovery(*, force: bool) -> None:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(config),
         concurrency=config.llm.concurrency,
     )

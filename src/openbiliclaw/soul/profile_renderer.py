@@ -112,15 +112,16 @@ def render_profile_markdown(profile: OnionProfile) -> str:
         sections.append(f"---\n\n## 综合叙事\n\n{profile.personality_portrait}")
 
     # Awareness & Insights
+    # Both windows are chronological oldest→newest; render the newest 5.
     if profile.recent_awareness:
         awareness_lines = ["## 近期观察"]
-        for note in profile.recent_awareness[:5]:
+        for note in profile.recent_awareness[-5:]:
             awareness_lines.append(f"- [{note.date}] {note.observation}")
         sections.append("\n".join(awareness_lines))
 
     if profile.active_insights:
         insight_lines = ["## 当前洞察"]
-        for ins in profile.active_insights[:5]:
+        for ins in profile.active_insights[-5:]:
             insight_lines.append(f"- {ins.hypothesis} (置信度: {ins.confidence:.0%})")
         sections.append("\n".join(insight_lines))
 

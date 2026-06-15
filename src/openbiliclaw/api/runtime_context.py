@@ -140,6 +140,7 @@ def build_youtube_discovery_producer(
     memory: Any,
     concurrency: Any,
     candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
 ) -> Any | None:
     """Build the runtime YouTube producer if YouTube discovery is enabled."""
     yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
@@ -169,6 +170,8 @@ def build_youtube_discovery_producer(
         strategy: str,
         unit_budget: int,
         result_limit: int,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> YoutubeStrategyRunResult:
         strategies = build_youtube_discovery_strategies(
             config=config,
@@ -185,18 +188,31 @@ def build_youtube_discovery_producer(
 
         selected_strategy = selected[0]
         discovery_engine.register_strategy(selected_strategy)
+        # Unified keyword planner injection (P1.7): forward claimed words to the
+        # engine as ``keywords``; the engine maps them onto the strategy's
+        # ``queries`` param (only ``yt_search`` declares it). ``None`` keeps the
+        # legacy self-generating behavior byte-identical.
+        inject: dict[str, Any] = {}
+        if queries is not None:
+            inject["keywords"] = list(queries)
+        # P1.8 yield provenance: forward the keyword→id map so the engine stamps
+        # each produced item's ``source_keyword_id`` for admit-time backfill.
+        if keyword_ids:
+            inject["keyword_ids"] = dict(keyword_ids)
         produce_fn = getattr(discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
             raw_items = await produce_fn(
                 profile,
                 strategies=[strategy],
                 limit=max(1, int(result_limit)),
+                **inject,
             )
         else:
             raw_items = await discovery_engine.discover(
                 profile,
                 strategies=[strategy],
                 limit=max(1, int(result_limit)),
+                **inject,
             )
         items = [
             item
@@ -224,6 +240,7 @@ def build_youtube_discovery_producer(
         daily_trending_budget=int(getattr(yt_cfg, "daily_trending_budget", 0)),
         daily_channel_budget=int(getattr(yt_cfg, "daily_channel_budget", 0)),
         candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
     )
 
 
@@ -585,18 +602,67 @@ class RuntimeContext:
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
         )
+        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
+        # word-lifecycle helper shared by the 5 search fetch sites (4 producers
+        # + the B站 search path in the controller). Holds the keyword-store DAO
+        # (the database) + discovery config (the flag + ``fetch_batch``). With
+        # the flag off (default) every site's ``should_claim`` returns False, so
+        # wiring it in is zero behavior change.
+        from openbiliclaw.config import DiscoveryConfig
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+
+        new_keyword_fetch = KeywordFetchCoordinator(
+            database=self.database,
+            # Real ``Config`` always carries ``discovery`` (a dataclass field);
+            # lightweight test stubs (SimpleNamespace) may not — fall back to the
+            # default (flag off) so the coordinator stays inert.
+            discovery_config=getattr(new_config, "discovery", None) or DiscoveryConfig(),
+        )
+
+        new_bilibili_producer: Any = None
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
         new_x_producer: Any = None
         if hasattr(self.database, "conn"):
+            from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
+            from openbiliclaw.sources.bili_tasks import BiliTaskQueue
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 
+            bili_cfg = getattr(new_config.sources, "bilibili", None)
             xhs_cfg = getattr(new_config.sources, "xiaohongshu", None)
             sched_cfg = getattr(new_config, "scheduler", None)
+            bili_enabled = bool(getattr(bili_cfg, "enabled", True)) and bool(
+                getattr(sched_cfg, "enabled", True)
+            )
             xhs_enabled = bool(getattr(xhs_cfg, "enabled", False)) and bool(
                 getattr(sched_cfg, "enabled", True)
+            )
+
+            async def _kick_bili_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "bili_task_available", "source": "task_kick"})
+
+            new_bilibili_producer = BilibiliExtensionSearchProducer(
+                task_queue=BiliTaskQueue(self.database),
+                soul_engine=new_soul_engine,
+                llm_service=new_llm_service,
+                bilibili_client=new_bilibili_client,
+                presence=self.presence,
+                enabled=bili_enabled,
+                daily_budget=int(getattr(bili_cfg, "daily_search_budget", 0)),
+                min_interval_minutes=int(getattr(bili_cfg, "min_interval_minutes", 30)),
+                keywords_per_cycle=int(getattr(bili_cfg, "keywords_per_cycle", 3)),
+                page_size=int(getattr(bili_cfg, "page_size", 20)),
+                presence_grace_seconds=int(
+                    getattr(sched_cfg, "extension_disconnect_grace_seconds", 90)
+                ),
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_bili_extension,
             )
             new_xhs_producer = XhsTaskProducer(
                 task_queue=XhsTaskQueue(self.database),
@@ -604,6 +670,7 @@ class RuntimeContext:
                 llm_service=new_llm_service,
                 enabled=xhs_enabled,
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 0)),
+                keyword_fetch=new_keyword_fetch,
             )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
 
@@ -613,6 +680,7 @@ class RuntimeContext:
                 soul_engine=new_soul_engine,
                 discovery_engine=new_discovery_engine,
                 candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
             )
             new_youtube_producer = build_youtube_discovery_producer(
                 config=new_config,
@@ -623,6 +691,7 @@ class RuntimeContext:
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
                 concurrency=concurrency,
+                keyword_fetch=new_keyword_fetch,
             )
             # X (Twitter) producer — fetch-only; enqueues into discovery_candidates
             # and never evaluates / writes content_cache (unified-pool spec). Gated
@@ -634,7 +703,25 @@ class RuntimeContext:
                 database=self.database,
                 soul_engine=new_soul_engine,
                 llm_service=new_llm_service,
+                keyword_fetch=new_keyword_fetch,
             )
+
+        # P1.6: unified keyword planner — deficit-pulled merged keyword
+        # generation. Built as its OWN object (the controller has no
+        # llm_service field) holding llm_service + database + config, then
+        # passed to the controller, which launches its loop in run_forever and
+        # injects its own deficit / catalyst口径. Flag-off (default) → the loop
+        # no-ops → zero behavior change.
+        from openbiliclaw.runtime.keyword_planner import KeywordPlanner
+
+        new_keyword_planner = KeywordPlanner(
+            llm_service=new_llm_service,
+            database=self.database,
+            config=new_config,
+            soul_engine=new_soul_engine,
+            pool_target_count=new_config.scheduler.pool_target_count,
+            signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
+        )
 
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
@@ -643,6 +730,8 @@ class RuntimeContext:
             discovery_engine=new_discovery_engine,
             recommendation_engine=new_recommendation_engine,
             discovery_candidate_pipeline=new_candidate_pipeline,
+            keyword_planner=new_keyword_planner,
+            keyword_fetch=new_keyword_fetch,
             pool_target_count=new_config.scheduler.pool_target_count,
             pool_source_shares=_pool_source_shares_from_config(new_config),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
@@ -656,6 +745,7 @@ class RuntimeContext:
             ),
             discovery_limit=int(getattr(new_config.scheduler, "discovery_limit", 30)),
             event_hub=self.event_hub,
+            bilibili_producer=new_bilibili_producer,
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
@@ -822,6 +912,23 @@ class RuntimeContext:
                         ),
                     )
                     logger.debug("post-reload avoidance speculator scheduled as background task")
+
+                # v0.3.124+ (lever 2a): the cancel_all in rebuild_from_config
+                # also killed any in-flight classify_pool_backlog /
+                # precompute_pool_copy / delight scoring. Without a re-kick a
+                # user saving config mid-cold-start strands pool-fill until
+                # the next 60s refresh tick — or indefinitely if they keep
+                # saving. Re-kick the classify→copy→delight drain on the
+                # freshly-built engine so pool-fill resumes immediately.
+                # precompute_pool_copy spawns classify + delight detached
+                # internally, so one call restarts the whole trio.
+                precompute = getattr(self.recommendation_engine, "precompute_pool_copy", None)
+                if callable(precompute):
+                    self.task_registry.track(
+                        "post_reload_precompute_pool_copy",
+                        self._safe_post_reload_precompute(precompute, profile),
+                    )
+                    logger.debug("post-reload classify/copy drain scheduled as background task")
             except Exception:
                 pass  # Profile not initialized yet — skip silently
 
@@ -877,6 +984,23 @@ class RuntimeContext:
             pass
 
     @staticmethod
+    async def _safe_post_reload_precompute(precompute_callable: Any, profile: Any) -> None:
+        """Re-kick the classify→copy→delight drain after a hot-reload.
+
+        ``rebuild_from_config``'s ``cancel_all`` stops any in-flight
+        classify_pool_backlog / precompute_pool_copy / delight scoring (they
+        hold references to the now-swapped-out engine). One
+        ``precompute_pool_copy`` call restarts the whole trio on the fresh
+        engine — its own ``_expression_lock`` keeps it from racing the
+        refresh loop's periodic drain, which remains the backstop. Failures
+        are logged, not fatal to the config PUT.
+        """
+        try:
+            await precompute_callable(profile=profile)
+        except Exception:
+            logger.exception("post-reload precompute_pool_copy failed")
+
+    @staticmethod
     async def _safe_prewarm_pool_mmr_embeddings(prewarm_callable: Any) -> None:
         """Run startup MMR prewarm with retry-on-low-coverage.
 
@@ -889,15 +1013,37 @@ class RuntimeContext:
         OR when prewarm returns >0 (i.e. some embeddings landed).
         Failures swallowed silently so pool MMR cache lazy-fills via
         normal traffic if all 5 attempts truly fail.
+
+        v0.3.124+ (lever 4): the retry loop only makes sense when there
+        is something to warm but it failed (backend warming up / down).
+        ``prewarm`` now returns ``-1`` when there is simply nothing to
+        warm yet (empty pool / no embedding service) — a benign cold
+        start, not a failure — so we log it plainly and stop instead of
+        burning 5 alarming "warmed=0 — retry" lines on every fresh deploy
+        (which read identically to a real Ollama outage). ``0`` with
+        candidates present is the genuine "backend unreachable" case and
+        keeps the retry-then-warn behaviour.
         """
         delay = 2.0
         for attempt in range(1, 6):
             try:
                 warmed = await prewarm_callable()
-                if isinstance(warmed, int) and warmed > 0:
-                    return
+                if isinstance(warmed, int):
+                    if warmed > 0:
+                        return
+                    if warmed < 0:
+                        # Nothing to warm yet — benign cold start; retrying
+                        # won't help (the cache lazy-fills as the pool fills).
+                        logger.info(
+                            "Startup prewarm_pool_mmr_embeddings: nothing to warm yet "
+                            "(empty pool or embedding service off) — skipping retries; "
+                            "cache will lazy-fill from serve()/discovery traffic"
+                        )
+                        return
                 logger.info(
-                    "Startup prewarm_pool_mmr_embeddings attempt %d warmed=0 — retry in %.1fs",
+                    "Startup prewarm_pool_mmr_embeddings attempt %d embedded 0 items "
+                    "(candidates present — embedding backend may be warming up/down) "
+                    "— retry in %.1fs",
                     attempt,
                     delay,
                 )
@@ -912,9 +1058,10 @@ class RuntimeContext:
                 break
             await asyncio.sleep(delay)
             delay *= 2
-        logger.info(
-            "Startup prewarm_pool_mmr_embeddings gave up after retries — "
-            "cache will lazy-fill from regular serve()/discovery traffic"
+        logger.warning(
+            "Startup prewarm_pool_mmr_embeddings gave up after retries — the embedding "
+            "backend stayed unreachable (candidates were present but none embedded; "
+            "e.g. Ollama down). MMR diversity degrades; cache will lazy-fill if it recovers"
         )
 
 

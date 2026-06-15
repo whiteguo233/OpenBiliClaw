@@ -463,6 +463,31 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 
 `openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube / X 写回对应 `enabled`；Bilibili 默认启用，也可在插件设置页或 `config.toml` 里手动关闭。交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关五个平台、编辑五个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
 
+### `[discovery]`
+
+**统一关键词规划器 / Discover 背压**（`DiscoveryConfig`，P1）。把"每平台各自定时调 LLM 生成搜索词"换成**缺口拉动的双缓冲背压模型**：一个关键词存储（cache + 历史 + 产出）夹在「生成」与「抓取」之间，生成只在缓存见底且池子有真实缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重 + 池子分布避让）。本段**与 `[llm.discovery]` 是两个独立的表**——后者是 discovery 模块的 per-module LLM provider 覆盖，本段是规划器 / 背压调参。完整设计见 [`docs/plans/2026-06-14-discover-backpressure-refactor-design.md`](../plans/2026-06-14-discover-backpressure-refactor-design.md) §6 参数表。
+
+> ✅ `unified_keyword_planner_enabled` **v0.3.124 起默认 `true`**：搜索词走统一规划器 + 关键词存储，本段其余字段随之生效。设为 `false` 可逐字回退到旧的逐平台搜索词生成路径（旧路径保留、回退无副作用）。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `unified_keyword_planner_enabled` | bool | `true` | 统一关键词规划器总开关（v0.3.124 起默认 `true`）。`true` = 走 planner + 关键词存储；`false` = 回退旧逐平台搜索词生成。其余字段仅在 `true` 时生效 |
+| `kw_cache_high` | int | `30` | 每平台关键词缓存高水位；生成补到这个数。小于 `1` 或无法解析时回退默认值 |
+| `kw_cache_low` | int | `10` | 每平台关键词缓存低水位；`pending < low` 且有真实缺口时触发生成。小于 `1` 时回退默认值 |
+| `gen_batch` | int | `30` | 单平台单次合并 LLM 调用生成的关键词数。小于 `1` 时回退默认值 |
+| `fetch_batch` | int | `5` | 单次原子领取（claim）的关键词数。小于 `1` 时回退默认值 |
+| `history_window_size` | int | `150` | 去重窗口大小：最近最多这么多个关键词作为"别再出"喂给 planner。小于 `1` 时回退默认值 |
+| `history_window_hours` | int | `48` | 去重窗口时长（小时），与 `history_window_size` 配合滚动过期。小于 `1` 时回退默认值 |
+| `claim_lease_minutes` | int | `10` | 领取租约（分钟）：`claimed`/`executing` 超过这个时长未变会被回收成 `pending`，防 loop / 任务崩溃泄漏在途行。小于 `1` 时回退默认值 |
+| `planner_poll_seconds` | int | `120` | 关键词规划器轮询间隔（秒）；空闲轮询近似零成本。小于 `1` 时回退默认值 |
+| `plan_ttl_hours` | int | `12` | 兜底失效（小时）：即便画像 `profile_kw_digest` 未变，`pending` 关键词超过这个时长也会过期。小于 `1` 时回退默认值 |
+
+> **没有 `fetch_floor` 字段**：抓取最小间隔复用各平台已有的 `min_interval`（小红书 1h / 抖音 30m / YouTube·X 60m / B 站按风控），不在本段重复定义。
+>
+> **环境变量覆盖**：本段字段名都是多词键（如 `kw_cache_high`），与 `[scheduler]` 多词字段一样，**不被** 通用 `OPENBILICLAW_SECTION_KEY` 覆盖机制支持——`OPENBILICLAW_DISCOVERY_GEN_BATCH` 会被按 `_` 拆成 `discovery.gen.batch` 而落不到字段上（静默保持默认，不报错）。需要覆盖请直接改 `config.toml`。
+>
+> 非法 / 缺失 / 超范围的数值字段都会回退到上表默认值（与 `[scheduler]` 数值字段同一套 `_normalize_scheduler_int` 规范化）；`discovery` 写成非表（标量）时整段回退默认。
+
 ### `[storage]`
 
 | 键 | 类型 | 默认值 | 说明 |

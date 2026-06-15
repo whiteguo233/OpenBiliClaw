@@ -213,7 +213,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ +停留满意度   │  │ +文字卡渲染   │  │                │    │
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ xhs/dy/yt 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ bili/xhs/dy/yt 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ B 站 / 抖音 / X Cookie 同步（runtime-stream 请求 + 扩展回传）│   │
@@ -259,15 +259,16 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  ┌──────────────┐ ┌──────────────┐ ┌────────────────┐      │
 │  │ User Soul    │ │ Content      │ │ Recommendation │      │
 │  │ Engine       │ │ Discovery    │ │ Engine         │      │
-│  │ (画像+探针)   │ │ (发现+待评估池)│ │ (排序+表达)     │      │
+│  │ (词表画像+探针)│ │ (发现+待评估池)│ │ (排序+表达)     │      │
 │  └──────────────┘ └──────────────┘ └────────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │     PoolCurator + 双轴 fatigue + per-group 窗口 + 新兴趣放大保护 │ │
 │  │     ContinuousRefreshController + B/XHS/DY/YT/X=8/1/1/1/1 │ │
 │  │     DiscoveryCandidatePipeline: raw candidates -> mixed batch eval -> pool │ │
 │  │     LLM gate: scheduler + extension presence          │   │
+│  │     Soul taxonomy: CATEGORY_VOCAB + category migration + homonym-aware consolidation │ │
 │  │     Autostart: user login item + Ollama preflight/self-heal │ │
-│  │     XHS/Douyin/YouTube/X producers: 按平台缺口独立补池     │   │
+│  │     Bili DOM fallback + XHS/Douyin/YouTube/X producers: 按平台缺口独立补池 │ │
 │  │     Hot reload one-shots: interest/avoidance force_tick │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │
 │  │     Interest probes: near 5 + challenge 3 独立 active 额度 │   │
@@ -286,8 +287,8 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 ├──────────────────────────────────────────────────────────────┤
 │           多源适配层 (SourceAdapter Protocol, v0.3.0+)         │
 │  ┌──────────────┐  ┌──────────────────┐  ┌─────────────┐    │
-│  │ B 站 Adapter  │  │ 小红书/抖音/YouTube任务桥│ │ Web Adapter │    │
-│  │ (WBI API)    │  │ (扩展代理 + DOM/API)│  │ (Playwright │    │
+│  │ B 站 Adapter  │  │ Bili/小红书/抖音/YouTube任务桥│ │ Web Adapter │  │
+│  │ (WBI API+DOM兜底)│ │ (扩展代理 + DOM/API)│  │ (Playwright │    │
 │  │              │  │ + profile/search/feed/yt)│ │ + LLM 抽取)│    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │

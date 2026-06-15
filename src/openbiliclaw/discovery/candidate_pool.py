@@ -60,6 +60,10 @@ class DiscoveryCandidateWrite:
     candidate_tier: str = "primary"
     score_threshold: float = 0.0
     raw_payload: dict[str, Any] = field(default_factory=dict)
+    # P1.8 yield provenance: the discovery_keywords.id that produced this
+    # candidate (NULL for non-search / legacy / flag-off). Survives the
+    # discovery_candidates round-trip so admit can backfill yield.
+    source_keyword_id: int | None = None
 
 
 def _canonical_platform(raw_platform: object) -> str:
@@ -170,7 +174,22 @@ def discovered_content_to_candidate_write(
         candidate_tier=item.candidate_tier,
         score_threshold=score_threshold,
         raw_payload=payload,
+        source_keyword_id=getattr(item, "source_keyword_id", None),
     )
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    """Coerce a DB cell to ``int`` or ``None`` (P1.8 source_keyword_id)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (str, float)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _json_list(value: object) -> list[str]:
@@ -221,4 +240,5 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         score_threshold=float(row.get("score_threshold") or 0.0),
         body_text=str(row.get("body_text") or ""),
         content_type=str(row.get("content_type") or "video"),
+        source_keyword_id=_coerce_optional_int(row.get("source_keyword_id")),
     )

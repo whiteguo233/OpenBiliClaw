@@ -23,6 +23,7 @@ from openbiliclaw.bilibili.api import (
 def _reset_bilibili_search_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0)
     monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_voucher_block_streak", 0)
 
 
 class FakeResponse:
@@ -302,29 +303,37 @@ async def test_search_returns_empty_on_412() -> None:
     assert results == []
 
 
+_NAV_PAYLOAD = {
+    "code": 0,
+    "data": {
+        "wbi_img": {
+            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+        }
+    },
+}
+
+
 @pytest.mark.asyncio
-async def test_search_enters_global_cooldown_after_v_voucher_storm(
+async def test_single_v_voucher_keyword_does_not_trip_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A lone challenged keyword must not strand the whole search round.
+
+    Before the threshold fix one keyword exhausting its retries cooled the
+    process-wide search path (and explore) for 10+ minutes. Now it only
+    bumps the streak; search stays live for the next keyword.
+    """
+
     async def no_sleep(_delay: float) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0, raising=False)
-    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0, raising=False)
-    nav_payload = {
-        "code": 0,
-        "data": {
-            "wbi_img": {
-                "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
-                "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
-            }
-        },
-    }
+
     first_client = BilibiliAPIClient(cookie="SESSDATA=abc")
     first_client._client = RouteAsyncClient(
         {
-            "/x/web-interface/nav": [nav_payload, nav_payload, nav_payload],
+            "/x/web-interface/nav": [_NAV_PAYLOAD, _NAV_PAYLOAD, _NAV_PAYLOAD],
             "/x/web-interface/wbi/search/type": [
                 {"code": 0, "data": {"v_voucher": "a", "result": None}},
                 {"code": 0, "data": {"v_voucher": "b", "result": None}},
@@ -334,11 +343,66 @@ async def test_search_enters_global_cooldown_after_v_voucher_storm(
     )
 
     assert await first_client.search("纪录片") == []
+    # One exhaustion: streak ticks up but NO cooldown yet.
+    assert BilibiliAPIClient.search_cooldown_remaining() == 0.0
+    assert BilibiliAPIClient._search_voucher_block_streak == 1
 
+    # The next keyword still reaches the network (not short-circuited),
+    # and a success resets the streak.
     second_client = BilibiliAPIClient(cookie="SESSDATA=abc")
     second_http = RouteAsyncClient(
         {
-            "/x/web-interface/nav": [nav_payload],
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"result": [{"bvid": "BV1"}]}}
+            ],
+        }
+    )
+    second_client._client = second_http
+
+    assert await second_client.search("摄影") == [{"bvid": "BV1"}]
+    assert second_http.calls  # actually hit the network
+    assert BilibiliAPIClient._search_voucher_block_streak == 0
+
+
+@pytest.mark.asyncio
+async def test_search_enters_global_cooldown_after_v_voucher_storm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Consecutive exhaustions across the threshold DO trip the cooldown."""
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    # Pre-load the streak to one below the threshold so a single further
+    # exhaustion trips the shared cooldown. With streak>0 the client
+    # fast-fails to a single probe, so one v_voucher response suffices.
+    monkeypatch.setattr(
+        BilibiliAPIClient,
+        "_search_voucher_block_streak",
+        BilibiliAPIClient._SEARCH_VOUCHER_BLOCK_THRESHOLD - 1,
+    )
+
+    first_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    first_client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"v_voucher": "a", "result": None}}
+            ],
+        }
+    )
+
+    assert await first_client.search("纪录片") == []
+    assert BilibiliAPIClient.search_cooldown_remaining() > 0
+
+    # Now the cooldown is shared: a different client/keyword short-circuits
+    # without touching the network.
+    second_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    second_http = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
             "/x/web-interface/wbi/search/type": [{"code": 0, "data": {"result": []}}],
         }
     )
@@ -346,6 +410,45 @@ async def test_search_enters_global_cooldown_after_v_voucher_storm(
 
     assert await second_client.search("摄影") == []
     assert second_http.calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_success_resets_voucher_streak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy search clears an in-progress streak so it can't drift up."""
+    monkeypatch.setattr(
+        BilibiliAPIClient,
+        "_search_voucher_block_streak",
+        BilibiliAPIClient._SEARCH_VOUCHER_BLOCK_THRESHOLD - 1,
+    )
+
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"result": [{"bvid": "BV2"}]}}
+            ],
+        }
+    )
+
+    assert await client.search("纪录片") == [{"bvid": "BV2"}]
+    assert BilibiliAPIClient._search_voucher_block_streak == 0
+    assert BilibiliAPIClient.search_cooldown_remaining() == 0.0
+
+
+@pytest.mark.asyncio
+async def test_search_412_trips_hard_cooldown_immediately() -> None:
+    """A 412 is an explicit IP block — cool down hard, no streak threshold."""
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = NavThenErrorAsyncClient(status_code=412)
+
+    assert await client.search("纪录片") == []
+    # Hard cooldown fires on the first 412 (unlike v_voucher), and uses the
+    # longer 412 base rather than the short v_voucher base.
+    remaining = BilibiliAPIClient.search_cooldown_remaining()
+    assert remaining > BilibiliAPIClient._SEARCH_COOLDOWN_BASE_SECONDS
 
 
 @pytest.mark.asyncio
