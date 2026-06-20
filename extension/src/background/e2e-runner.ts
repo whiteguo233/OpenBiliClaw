@@ -24,7 +24,7 @@ export async function handleE2ERuntimeEvent(event: unknown): Promise<boolean> {
   }
 
   if (activeRunId !== null) {
-    await postE2EResult(event, buildConcurrentFailureResults(event, activeRunId));
+    await safePostE2EResult(event, buildConcurrentFailureResults(event, activeRunId));
     return true;
   }
 
@@ -34,7 +34,7 @@ export async function handleE2ERuntimeEvent(event: unknown): Promise<boolean> {
     for (const platform of event.platforms) {
       platformResults.push(await executePlatformE2ERun(event, platform));
     }
-    await postE2EResult(event, platformResults);
+    await safePostE2EResult(event, platformResults);
   } finally {
     activeRunId = null;
   }
@@ -64,7 +64,8 @@ async function executePlatformE2ERun(
       throw new Error(`Missing tab id for ${platform}`);
     }
 
-    await waitForTabComplete(tab.id, timeoutMsForEvent(event));
+    const timeoutMs = timeoutMsForEvent(event);
+    const completedTab = await waitForTabComplete(tab.id, timeoutMs);
     const actions = actionsForE2EPlatform(event, platform);
     const message: E2EContentExecuteMessage = {
       action: "OBC_E2E_EXECUTE",
@@ -73,12 +74,14 @@ async function executePlatformE2ERun(
       actions,
       allowStateChanging: event.allow_state_changing === true,
     };
-    const response = normalizeContentResponse(await chrome.tabs.sendMessage(tab.id, message));
+    const response = normalizeContentResponse(
+      await sendMessageWithTimeout(tab.id, message, timeoutMs),
+    );
 
     return {
       platform,
       status: response.status,
-      url: tab.url,
+      url: completedTab.url ?? tab.url,
       actions: response.actions,
       ...(response.error ? { error: response.error } : {}),
     };
@@ -112,23 +115,72 @@ async function openOrReusePlatformTab(platform: E2EPlatform): Promise<chrome.tab
   return chrome.tabs.create({ active: true, url: targetUrl });
 }
 
-async function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
-  const tab = await chrome.tabs.get(tabId);
-  if (tab.status === "complete") return;
-
-  await new Promise<void>((resolve, reject) => {
+async function waitForTabComplete(tabId: number, timeoutMs: number): Promise<chrome.tabs.Tab> {
+  return new Promise<chrome.tabs.Tab>((resolve, reject) => {
+    let settled = false;
     const listener = (updatedTabId: number, changeInfo: { status?: string }): void => {
       if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
-      clearTimeout(timer);
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+      void chrome.tabs
+        .get(tabId)
+        .then((tab) => {
+          finish(() => resolve(tab));
+        })
+        .catch(() => {
+          finish(() => resolve({ id: tabId, status: "complete" } as chrome.tabs.Tab));
+        });
     };
     const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error(`Timed out waiting for tab ${tabId} to finish loading`));
+      finish(() => reject(new Error(`Timed out waiting for tab ${tabId} to finish loading`)));
     }, timeoutMs);
+    const finish = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      complete();
+    };
 
     chrome.tabs.onUpdated.addListener(listener);
+    void chrome.tabs
+      .get(tabId)
+      .then((tab) => {
+        if (tab.status === "complete") {
+          finish(() => resolve(tab));
+        }
+      })
+      .catch((error: unknown) => {
+        finish(() => reject(error));
+      });
+  });
+}
+
+async function sendMessageWithTimeout(
+  tabId: number,
+  message: E2EContentExecuteMessage,
+  timeoutMs: number,
+): Promise<unknown> {
+  return new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      finish(() =>
+        reject(new Error(`Timed out waiting for OBC_E2E_EXECUTE response from tab ${tabId}`)),
+      );
+    }, timeoutMs);
+    const finish = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      complete();
+    };
+
+    void chrome.tabs
+      .sendMessage(tabId, message)
+      .then((response) => {
+        finish(() => resolve(response));
+      })
+      .catch((error: unknown) => {
+        finish(() => reject(error));
+      });
   });
 }
 
@@ -161,14 +213,14 @@ function normalizeContentResponse(value: unknown): E2EContentExecuteResponse {
 }
 
 function timeoutMsForEvent(event: ExtensionE2ERuntimeEvent): number {
-  return Math.max(1, event.timeout_seconds ?? 45) * 1000;
+  return Math.max(0.001, event.timeout_seconds ?? 45) * 1000;
 }
 
 async function postE2EResult(
   event: ExtensionE2ERuntimeEvent,
   platforms: E2EPlatformExecutionResult[],
 ): Promise<void> {
-  await fetch(await apiUrl("/extension/e2e/result"), {
+  const response = await fetch(await apiUrl("/extension/e2e/result"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -177,4 +229,21 @@ async function postE2EResult(
       platforms,
     }),
   });
+  if (!response.ok) {
+    throw new Error(`result POST failed: ${response.status}`);
+  }
+}
+
+async function safePostE2EResult(
+  event: ExtensionE2ERuntimeEvent,
+  platforms: E2EPlatformExecutionResult[],
+): Promise<void> {
+  try {
+    await postE2EResult(event, platforms);
+  } catch (error) {
+    console.warn(
+      "[OpenBiliClaw] Extension E2E result POST failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }

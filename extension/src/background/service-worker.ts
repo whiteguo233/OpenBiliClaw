@@ -345,7 +345,12 @@ async function connectRuntimeStream(): Promise<void> {
     runtimeSocket.onmessage = (msg) => {
       try {
         const payload = JSON.parse(String(msg.data)) as Record<string, unknown>;
-        void handleRuntimeEvent(payload);
+        void handleRuntimeEvent(payload).catch((err) => {
+          console.warn(
+            "[OpenBiliClaw] Runtime stream event failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
       } catch {
         // Ignore malformed payloads.
       }

@@ -15,7 +15,10 @@ export interface ChromeMockState {
   fetchCalls: Array<{ body?: unknown; method?: string; url: string }>;
   queryResult: ChromeMockTab[];
   tabById: Map<number, ChromeMockTab>;
+  nextCreatedTabStatus: string;
+  getImpl: (tabId: number) => Promise<ChromeMockTab>;
   sendMessageImpl: (tabId: number, message: unknown) => Promise<unknown>;
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   emitTabUpdated: (tabId: number, changeInfo: { status?: string }) => void;
   restore: () => void;
 }
@@ -31,7 +34,18 @@ export function installChromeMock(): ChromeMockState {
     fetchCalls: [],
     queryResult: [],
     tabById: new Map(),
+    nextCreatedTabStatus: "complete",
+    getImpl: async (tabId) =>
+      state.tabById.get(tabId) ?? { id: tabId, status: "complete" },
     sendMessageImpl: async () => ({ status: "ok", actions: [] }),
+    fetchImpl: async (input, init) => {
+      state.fetchCalls.push({
+        url: String(input),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
     emitTabUpdated(tabId, changeInfo) {
       for (const listener of [...listeners]) {
         listener(tabId, changeInfo);
@@ -61,7 +75,7 @@ export function installChromeMock(): ChromeMockState {
     tabs: {
       async create(opts: { active?: boolean; url: string }) {
         state.createdTabs.push(opts);
-        const tab = { id: nextTabId++, status: "complete", url: opts.url };
+        const tab = { id: nextTabId++, status: state.nextCreatedTabStatus, url: opts.url };
         state.tabById.set(tab.id, tab);
         return tab;
       },
@@ -69,7 +83,7 @@ export function installChromeMock(): ChromeMockState {
         return state.queryResult;
       },
       async get(tabId: number) {
-        return state.tabById.get(tabId) ?? { id: tabId, status: "complete" };
+        return state.getImpl(tabId);
       },
       async update(tabId: number, opts: { active?: boolean; url?: string }) {
         state.updatedTabs.push({ tabId, ...opts });
@@ -101,14 +115,8 @@ export function installChromeMock(): ChromeMockState {
   };
 
   (globalThis as { chrome?: unknown }).chrome = chromeMock;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    state.fetchCalls.push({
-      url: String(input),
-      method: init?.method,
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
-    });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  }) as typeof fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+    state.fetchImpl(input, init)) as typeof fetch;
 
   return state;
 }
