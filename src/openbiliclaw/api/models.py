@@ -943,6 +943,24 @@ class SchedulerConfigOut(BaseModel):
     auto_update_allowed_remotes: list[str] = Field(default_factory=list)
 
 
+class DiscoveryConfigOut(BaseModel):
+    unified_keyword_planner_enabled: bool = True
+    kw_cache_high: int = 30
+    kw_cache_low: int = 10
+    gen_batch: int = 30
+    fetch_batch: int = 5
+    history_window_size: int = 150
+    history_window_hours: int = 48
+    claim_lease_minutes: int = 10
+    planner_poll_seconds: int = 120
+    plan_ttl_hours: int = 12
+    multimodal_evaluation_enabled: bool = False
+    multimodal_batch_size: int = 8
+    multimodal_image_max_px: int = 384
+    multimodal_image_quality: int = 72
+    multimodal_image_timeout_seconds: int = 6
+
+
 class BackendUpdateStatusOut(BaseModel):
     state: str = "unknown"
     auto_update_enabled: bool = False
@@ -1032,6 +1050,7 @@ class ConfigResponse(BaseModel):
     bilibili: BilibiliConfigOut = Field(default_factory=BilibiliConfigOut)
     sources: SourcesConfigOut = Field(default_factory=SourcesConfigOut)
     scheduler: SchedulerConfigOut = Field(default_factory=SchedulerConfigOut)
+    discovery: DiscoveryConfigOut = Field(default_factory=DiscoveryConfigOut)
     autostart: AutostartConfigOut = Field(default_factory=AutostartConfigOut)
     storage: StorageConfigOut = Field(default_factory=StorageConfigOut)
     logging: LoggingConfigOut = Field(default_factory=LoggingConfigOut)
@@ -1048,6 +1067,7 @@ class ConfigUpdateIn(BaseModel):
     bilibili: dict[str, object] | None = None
     sources: dict[str, object] | None = None
     scheduler: dict[str, object] | None = None
+    discovery: dict[str, object] | None = None
     storage: dict[str, object] | None = None
     logging: dict[str, object] | None = None
 

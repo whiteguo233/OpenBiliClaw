@@ -411,6 +411,15 @@ claim_lease_minutes = 10
 planner_poll_seconds = 120
 # 兜底失效（小时）：即便画像 digest 未变，pending 关键词超过这个时长也会过期。
 plan_ttl_hours = 12
+# 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时
+# 把已压缩的候选封面一并送入评估器，模型不支持时自动退回纯文本评估。
+multimodal_evaluation_enabled = false
+# 图文评估每轮 batch 上限。图像输入成本更高，合法范围 1..12。
+multimodal_batch_size = 8
+# 封面图压缩参数：最大边、JPEG 质量、单图抓取/压缩超时秒数。
+multimodal_image_max_px = 384
+multimodal_image_quality = 72
+multimodal_image_timeout_seconds = 6
 
 [autostart]
 # 登录系统后是否自动拉起 OpenBiliClaw 后端。默认关闭；请通过设置页或

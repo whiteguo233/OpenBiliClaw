@@ -423,11 +423,37 @@ def test_batch_content_evaluation_prompt_allows_per_item_platforms() -> None:
         ],
     )
 
-    system = messages[0]["content"]
     user = messages[1]["content"]
 
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
     assert '"source_platform": "bilibili"' in user
+
+
+def test_batch_content_evaluation_prompt_explains_engagement_metrics() -> None:
+    messages = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["systems"]},
+        source_platform="mixed",
+        source_context="mixed",
+        content_items=[
+            {
+                "content_id": "xhs1",
+                "source_platform": "xiaohongshu",
+                "title": "XHS item",
+                "view_count": 100,
+                "like_count": 10,
+                "collect_count": 9,
+                "tags": ["coffee"],
+            }
+        ],
+    )
+
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert "互动指标" in system
+    assert "不能覆盖内容与画像的真实匹配度" in system
+    assert '"collect_count": 9' in user
+    assert '"tags": [' in user
     assert '"source_platform": "xiaohongshu"' in user
     assert "Do not lower or raise preference score merely because" in system
 

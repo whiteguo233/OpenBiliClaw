@@ -202,6 +202,41 @@ class FakeBilibiliClient:
         return self.results_by_query.get(keyword, [])
 
 
+def test_search_strategy_map_search_result_maps_available_metrics() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    strategy = SearchStrategy(
+        llm_service=FakeLLMService("{}"),
+        bilibili_client=FakeBilibiliClient({}),
+        llm_evaluation=False,
+    )
+
+    content = strategy._map_search_result(
+        {
+            "bvid": "BV1metrics",
+            "title": "指标视频",
+            "author": "UP",
+            "play": "1,200",
+            "like": "100",
+            "favorites": "90",
+            "video_review": "80",
+            "review": "70",
+            "description": "desc",
+        },
+        query="纪录片",
+        query_index=0,
+        item_index=0,
+        interest_anchors=[],
+    )
+
+    assert content is not None
+    assert content.view_count == 1200
+    assert content.like_count == 100
+    assert content.favorite_count == 90
+    assert content.danmaku_count == 80
+    assert content.comment_count == 70
+
+
 @dataclass
 class _SlowSearchClient:
     results_by_query: dict[str, list[dict[str, object]]]

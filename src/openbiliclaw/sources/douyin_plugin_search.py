@@ -81,7 +81,23 @@ def plugin_search_item_to_aweme(item: dict[str, Any]) -> dict[str, object] | Non
         aweme["video"] = {"cover": {"url_list": [cover_url]}}
     else:
         aweme["video"] = {}
+    statistics = {
+        "play_count": _to_int(item.get("view_count")),
+        "digg_count": _to_int(item.get("like_count")),
+        "collect_count": _to_int(item.get("collect_count")),
+        "comment_count": _to_int(item.get("comment_count")),
+        "share_count": _to_int(item.get("share_count")),
+    }
+    if any(statistics.values()):
+        aweme["statistics"] = statistics
     return aweme
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(str(value or 0).replace(",", "")))
+    except (TypeError, ValueError):
+        return 0
 
 
 class DouyinPluginSearchClient:

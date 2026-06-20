@@ -42,6 +42,12 @@ def test_plain_tweet_maps_core_fields() -> None:
     assert content.content_type == "tweet"
     assert content.view_count == 98765
     assert content.like_count == 1234
+    assert content.reply_count == 78
+    assert content.comment_count == 78
+    assert content.retweet_count == 56
+    assert content.share_count == 65
+    assert content.bookmark_count == 321
+    assert content.favorite_count == 321
     # media thumbnail becomes cover_url
     assert content.cover_url == "https://pbs.twimg.com/media/plain_cover.jpg"
     # hashtags from the text

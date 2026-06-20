@@ -29,6 +29,7 @@ import type {
   DouyinScope,
   DouyinSearchItem,
 } from "../../main/dy-fetch-tap.ts";
+import { pickMetricCount } from "../metric-count.ts";
 
 // ---------------------------------------------------------------------------
 // href shape guards
@@ -152,6 +153,24 @@ function pickCoverUrl(card: HTMLElement): string {
   );
 }
 
+function pickCardMetrics(card: HTMLElement): Pick<
+  DouyinSearchItem,
+  "view_count" | "like_count" | "collect_count" | "comment_count" | "share_count"
+> {
+  const view_count = pickMetricCount(card, ["播放", "观看", "浏览", "view", "play"]);
+  const like_count = pickMetricCount(card, ["点赞", "获赞", "赞", "like"]);
+  const collect_count = pickMetricCount(card, ["收藏", "collect", "save"]);
+  const comment_count = pickMetricCount(card, ["评论", "comment"]);
+  const share_count = pickMetricCount(card, ["分享", "share"]);
+  return {
+    ...(view_count > 0 ? { view_count } : {}),
+    ...(like_count > 0 ? { like_count } : {}),
+    ...(collect_count > 0 ? { collect_count } : {}),
+    ...(comment_count > 0 ? { comment_count } : {}),
+    ...(share_count > 0 ? { share_count } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public extractor
 // ---------------------------------------------------------------------------
@@ -211,6 +230,7 @@ export function extractDouyinSearchItemsFromDocument(
       author: pickAuthorName(card),
       author_sec_uid: pickAuthorSecUid(card),
       cover_url: pickCoverUrl(card),
+      ...pickCardMetrics(card),
     });
   }
   return items;
@@ -245,6 +265,7 @@ function extractVideoItems(
       author: pickAuthorName(card),
       author_sec_uid: pickAuthorSecUid(card),
       cover_url: pickCoverUrl(card),
+      ...pickCardMetrics(card),
     });
   }
   return items;

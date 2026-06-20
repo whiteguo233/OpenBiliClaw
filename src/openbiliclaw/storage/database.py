@@ -120,6 +120,14 @@ CREATE TABLE IF NOT EXISTS content_cache (
     cover_url   TEXT,
     view_count  INTEGER DEFAULT 0,
     like_count  INTEGER DEFAULT 0,
+    favorite_count INTEGER DEFAULT 0,
+    collect_count INTEGER DEFAULT 0,
+    comment_count INTEGER DEFAULT 0,
+    share_count INTEGER DEFAULT 0,
+    danmaku_count INTEGER DEFAULT 0,
+    reply_count INTEGER DEFAULT 0,
+    retweet_count INTEGER DEFAULT 0,
+    bookmark_count INTEGER DEFAULT 0,
     relevance_score REAL DEFAULT 0.0,
     relevance_reason TEXT DEFAULT '',
     pool_expression TEXT DEFAULT '',
@@ -165,6 +173,14 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     duration              INTEGER NOT NULL DEFAULT 0,
     view_count            INTEGER NOT NULL DEFAULT 0,
     like_count            INTEGER NOT NULL DEFAULT 0,
+    favorite_count        INTEGER NOT NULL DEFAULT 0,
+    collect_count         INTEGER NOT NULL DEFAULT 0,
+    comment_count         INTEGER NOT NULL DEFAULT 0,
+    share_count           INTEGER NOT NULL DEFAULT 0,
+    danmaku_count         INTEGER NOT NULL DEFAULT 0,
+    reply_count           INTEGER NOT NULL DEFAULT 0,
+    retweet_count         INTEGER NOT NULL DEFAULT 0,
+    bookmark_count        INTEGER NOT NULL DEFAULT 0,
     tags                  TEXT NOT NULL DEFAULT '[]',
     candidate_tier        TEXT NOT NULL DEFAULT 'primary',
     score_threshold       REAL NOT NULL DEFAULT 0.0,
@@ -998,6 +1014,14 @@ class Database:
                 cover_url,
                 view_count,
                 like_count,
+                favorite_count,
+                collect_count,
+                comment_count,
+                share_count,
+                danmaku_count,
+                reply_count,
+                retweet_count,
+                bookmark_count,
                 relevance_score,
                 relevance_reason,
                 pool_expression,
@@ -1014,7 +1038,7 @@ class Database:
                 source_keyword_id
             )
             VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
@@ -1052,6 +1076,14 @@ class Database:
                 cover_url = excluded.cover_url,
                 view_count = excluded.view_count,
                 like_count = excluded.like_count,
+                favorite_count = excluded.favorite_count,
+                collect_count = excluded.collect_count,
+                comment_count = excluded.comment_count,
+                share_count = excluded.share_count,
+                danmaku_count = excluded.danmaku_count,
+                reply_count = excluded.reply_count,
+                retweet_count = excluded.retweet_count,
+                bookmark_count = excluded.bookmark_count,
                 relevance_score = CASE
                     WHEN excluded.relevance_score > 0 THEN excluded.relevance_score
                     ELSE COALESCE(content_cache.relevance_score, 0)
@@ -1127,6 +1159,14 @@ class Database:
                 kwargs.get("cover_url", ""),
                 kwargs.get("view_count", 0),
                 kwargs.get("like_count", 0),
+                kwargs.get("favorite_count", 0),
+                kwargs.get("collect_count", 0),
+                kwargs.get("comment_count", 0),
+                kwargs.get("share_count", 0),
+                kwargs.get("danmaku_count", 0),
+                kwargs.get("reply_count", 0),
+                kwargs.get("retweet_count", 0),
+                kwargs.get("bookmark_count", 0),
                 kwargs.get("relevance_score", 0.0),
                 kwargs.get("relevance_reason", ""),
                 kwargs.get("pool_expression", ""),
@@ -1228,6 +1268,14 @@ class Database:
                     duration,
                     view_count,
                     like_count,
+                    favorite_count,
+                    collect_count,
+                    comment_count,
+                    share_count,
+                    danmaku_count,
+                    reply_count,
+                    retweet_count,
+                    bookmark_count,
                     tags,
                     candidate_tier,
                     score_threshold,
@@ -1236,7 +1284,7 @@ class Database:
                 )
                 VALUES (
                     ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1258,6 +1306,14 @@ class Database:
                     int(self._candidate_value(candidate, "duration", 0) or 0),
                     int(self._candidate_value(candidate, "view_count", 0) or 0),
                     int(self._candidate_value(candidate, "like_count", 0) or 0),
+                    int(self._candidate_value(candidate, "favorite_count", 0) or 0),
+                    int(self._candidate_value(candidate, "collect_count", 0) or 0),
+                    int(self._candidate_value(candidate, "comment_count", 0) or 0),
+                    int(self._candidate_value(candidate, "share_count", 0) or 0),
+                    int(self._candidate_value(candidate, "danmaku_count", 0) or 0),
+                    int(self._candidate_value(candidate, "reply_count", 0) or 0),
+                    int(self._candidate_value(candidate, "retweet_count", 0) or 0),
+                    int(self._candidate_value(candidate, "bookmark_count", 0) or 0),
                     tags,
                     str(self._candidate_value(candidate, "candidate_tier", "primary") or "primary"),
                     score_threshold,
@@ -3823,6 +3879,14 @@ class Database:
             "author_name": "TEXT DEFAULT ''",
             "body_text": "TEXT DEFAULT ''",
             "content_type": "TEXT DEFAULT 'video'",
+            "favorite_count": "INTEGER DEFAULT 0",
+            "collect_count": "INTEGER DEFAULT 0",
+            "comment_count": "INTEGER DEFAULT 0",
+            "share_count": "INTEGER DEFAULT 0",
+            "danmaku_count": "INTEGER DEFAULT 0",
+            "reply_count": "INTEGER DEFAULT 0",
+            "retweet_count": "INTEGER DEFAULT 0",
+            "bookmark_count": "INTEGER DEFAULT 0",
             # P1.8 yield provenance: the discovery_keywords.id that produced this
             # row (NULL for legacy / non-search / flag-off). Nullable, additive.
             "source_keyword_id": "INTEGER",
@@ -3848,6 +3912,14 @@ class Database:
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "body_text": "TEXT NOT NULL DEFAULT ''",
+            "favorite_count": "INTEGER NOT NULL DEFAULT 0",
+            "collect_count": "INTEGER NOT NULL DEFAULT 0",
+            "comment_count": "INTEGER NOT NULL DEFAULT 0",
+            "share_count": "INTEGER NOT NULL DEFAULT 0",
+            "danmaku_count": "INTEGER NOT NULL DEFAULT 0",
+            "reply_count": "INTEGER NOT NULL DEFAULT 0",
+            "retweet_count": "INTEGER NOT NULL DEFAULT 0",
+            "bookmark_count": "INTEGER NOT NULL DEFAULT 0",
             # P1.8 yield provenance: nullable, additive (existing rows stay NULL).
             "source_keyword_id": "INTEGER",
         }

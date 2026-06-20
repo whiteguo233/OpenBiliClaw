@@ -465,7 +465,7 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 
 ### `[discovery]`
 
-**统一关键词规划器 / Discover 背压**（`DiscoveryConfig`，P1）。把"每平台各自定时调 LLM 生成搜索词"换成**缺口拉动的双缓冲背压模型**：一个关键词存储（cache + 历史 + 产出）夹在「生成」与「抓取」之间，生成只在缓存见底且池子有真实缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重 + 池子分布避让）。本段**与 `[llm.discovery]` 是两个独立的表**——后者是 discovery 模块的 per-module LLM provider 覆盖，本段是规划器 / 背压调参。完整设计见 [`docs/plans/2026-06-14-discover-backpressure-refactor-design.md`](../plans/2026-06-14-discover-backpressure-refactor-design.md) §6 参数表。
+**统一关键词规划器 / Discover 背压 / 评估输入**（`DiscoveryConfig`）。把"每平台各自定时调 LLM 生成搜索词"换成**缺口拉动的双缓冲背压模型**：一个关键词存储（cache + 历史 + 产出）夹在「生成」与「抓取」之间，生成只在缓存见底且池子有真实缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重 + 池子分布避让）。同一段也承载 discovery evaluator 的可选封面图输入开关。本段**与 `[llm.discovery]` 是两个独立的表**——后者是 discovery 模块的 per-module LLM provider 覆盖，本段是规划器 / 背压 / 评估输入调参。完整设计见 [`docs/plans/2026-06-14-discover-backpressure-refactor-design.md`](../plans/2026-06-14-discover-backpressure-refactor-design.md) §6 参数表。
 
 > ✅ `unified_keyword_planner_enabled` **v0.3.124 起默认 `true`**：搜索词走统一规划器 + 关键词存储，本段其余字段随之生效。设为 `false` 可逐字回退到旧的逐平台搜索词生成路径（旧路径保留、回退无副作用）。
 
@@ -481,8 +481,15 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `claim_lease_minutes` | int | `10` | 领取租约（分钟）：`claimed`/`executing` 超过这个时长未变会被回收成 `pending`，防 loop / 任务崩溃泄漏在途行。小于 `1` 时回退默认值 |
 | `planner_poll_seconds` | int | `120` | 关键词规划器轮询间隔（秒）；空闲轮询近似零成本。小于 `1` 时回退默认值 |
 | `plan_ttl_hours` | int | `12` | 兜底失效（小时）：即便画像 `profile_kw_digest` 未变，`pending` 关键词超过这个时长也会过期。小于 `1` 时回退默认值 |
+| `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；开启后仅当当前 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则自动退回纯文本评估 |
+| `multimodal_batch_size` | int | `8` | 图文评估 batch 上限。合法范围 `1..12`，超范围回退默认值；纯文本评估仍使用调用方原 batch size |
+| `multimodal_image_max_px` | int | `384` | 送入评估器前封面图压缩后的最大边。合法范围 `128..768`，超范围回退默认值 |
+| `multimodal_image_quality` | int | `72` | JPEG 压缩质量。合法范围 `40..90`，超范围回退默认值 |
+| `multimodal_image_timeout_seconds` | int | `6` | 单张封面抓取与压缩超时秒数。合法范围 `1..20`，超范围回退默认值 |
 
 > **没有 `fetch_floor` 字段**：抓取最小间隔复用各平台已有的 `min_interval`（小红书 1h / 抖音 30m / YouTube·X 60m / B 站按风控），不在本段重复定义。
+>
+> **封面图评估能力边界**：当前通过 OpenAI-compatible `image_url` 消息格式发送压缩后的 `data:image/jpeg;base64,...`。`LLMService.supports_image_input()` 只会在当前 evaluation provider / model 明确看起来支持图像时开启；否则开关保持配置值，但运行时按文本 + 标题 / 描述 / 正文 / 标签 / 互动指标评估。
 >
 > **环境变量覆盖**：本段字段名都是多词键（如 `kw_cache_high`），与 `[scheduler]` 多词字段一样，**不被** 通用 `OPENBILICLAW_SECTION_KEY` 覆盖机制支持——`OPENBILICLAW_DISCOVERY_GEN_BATCH` 会被按 `_` 拆成 `discovery.gen.batch` 而落不到字段上（静默保持默认，不报错）。需要覆盖请直接改 `config.toml`。
 >

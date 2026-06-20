@@ -147,7 +147,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 
 - **核心评估**：这个内容是否匹配这个用户的深层兴趣和当前状态？
 - **可选辅助指标**：播放量/点赞/弹幕质量等——由用户画像决定是否参考（有些用户在意质量指标，有些人不在意）
-- **统一待评估池**：不同来源先产出 raw candidates 并进入 `discovery_candidates`，再由统一 evaluator 混合 batch 评估；来源只影响取数方式、配额和 prompt 上下文，不单独决定一套喜好判断流程。
+- **统一待评估池**：不同来源先产出 raw candidates 并进入 `discovery_candidates`，再由统一 evaluator 混合 batch 评估；来源只影响取数方式、配额和 prompt 上下文，不单独决定一套喜好判断流程。评估输入包含正文 / 标签 / 互动指标；开启 `[discovery].multimodal_evaluation_enabled` 且模型支持图像时，还会优先从运行时图片缓存读取封面，未命中才白名单抓取，并把压缩后的封面图送入同一评估器。
 
 ---
 
@@ -313,6 +313,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ OpenRouter + Codex OAuth │  │ Ollama bge-m3 兜底可选  │   │
 │  └──────────────────────────┘  └────────────────────────┘   │
 │  LLMService caller bucket → per-module provider/model override │
+│  discovery evaluator: text + metrics + optional compressed cover image input │
 │  OpenAI auth_mode: api_key / experimental Codex CLI OAuth      │
 │  结构化 JSON helper: wrapper / fenced / JSONL / schema echo / MiMo 容错 │
 ├──────────────────────────────────────────────────────────────┤

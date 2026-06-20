@@ -88,6 +88,14 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
                 duration=42,
                 view_count=100,
                 like_count=9,
+                favorite_count=8,
+                collect_count=7,
+                comment_count=6,
+                share_count=5,
+                danmaku_count=4,
+                reply_count=3,
+                retweet_count=2,
+                bookmark_count=1,
                 tags=["tag-a", "tag-b"],
                 source_context="feed",
                 candidate_tier="backfill",
@@ -106,6 +114,14 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
     assert item.author_name == "Creator"
     assert item.tags == ["tag-a", "tag-b"]
     assert item.candidate_tier == "backfill"
+    assert item.favorite_count == 8
+    assert item.collect_count == 7
+    assert item.comment_count == 6
+    assert item.share_count == 5
+    assert item.danmaku_count == 4
+    assert item.reply_count == 3
+    assert item.retweet_count == 2
+    assert item.bookmark_count == 1
 
 
 def test_discovery_candidate_row_defaults_missing_platform_to_bilibili() -> None:
@@ -312,3 +328,51 @@ def test_text_candidate_round_trips_body_text_and_content_type(tmp_path: Path) -
     back = row_to_discovered_content(rows[0])
     assert back.content_type == "thread"
     assert back.body_text.startswith("1/ long-form")
+
+
+def test_candidate_write_carries_social_metrics(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    item = DiscoveredContent(
+        title="Metrics note",
+        content_id="xhs-metrics",
+        content_url="https://www.xiaohongshu.com/explore/xhs-metrics",
+        source_platform="xiaohongshu",
+        source_strategy="xhs-extension-search",
+        author_name="author",
+        view_count=1200,
+        like_count=120,
+        favorite_count=110,
+        collect_count=100,
+        comment_count=90,
+        share_count=80,
+        danmaku_count=70,
+        reply_count=60,
+        retweet_count=50,
+        bookmark_count=40,
+    )
+
+    db.enqueue_discovery_candidates([discovered_content_to_candidate_write(item)])
+    row = db.claim_discovery_candidates_for_eval(limit=1)[0]
+    back = row_to_discovered_content(row)
+
+    assert row["view_count"] == 1200
+    assert row["like_count"] == 120
+    assert row["favorite_count"] == 110
+    assert row["collect_count"] == 100
+    assert row["comment_count"] == 90
+    assert row["share_count"] == 80
+    assert row["danmaku_count"] == 70
+    assert row["reply_count"] == 60
+    assert row["retweet_count"] == 50
+    assert row["bookmark_count"] == 40
+    assert back.view_count == 1200
+    assert back.like_count == 120
+    assert back.favorite_count == 110
+    assert back.collect_count == 100
+    assert back.comment_count == 90
+    assert back.share_count == 80
+    assert back.danmaku_count == 70
+    assert back.reply_count == 60
+    assert back.retweet_count == 50
+    assert back.bookmark_count == 40

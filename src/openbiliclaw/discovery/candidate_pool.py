@@ -55,6 +55,14 @@ class DiscoveryCandidateWrite:
     duration: int = 0
     view_count: int = 0
     like_count: int = 0
+    favorite_count: int = 0
+    collect_count: int = 0
+    comment_count: int = 0
+    share_count: int = 0
+    danmaku_count: int = 0
+    reply_count: int = 0
+    retweet_count: int = 0
+    bookmark_count: int = 0
     tags: list[str] = field(default_factory=list)
     source_context: str = ""
     candidate_tier: str = "primary"
@@ -171,6 +179,14 @@ def discovered_content_to_candidate_write(
         duration=item.duration,
         view_count=item.view_count,
         like_count=item.like_count,
+        favorite_count=item.favorite_count,
+        collect_count=item.collect_count,
+        comment_count=item.comment_count,
+        share_count=item.share_count,
+        danmaku_count=item.danmaku_count,
+        reply_count=item.reply_count,
+        retweet_count=item.retweet_count,
+        bookmark_count=item.bookmark_count,
         tags=list(item.tags),
         source_context=source_context,
         candidate_tier=item.candidate_tier,
@@ -223,6 +239,14 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         duration=int(row.get("duration") or 0),
         view_count=int(row.get("view_count") or 0),
         like_count=int(row.get("like_count") or 0),
+        favorite_count=int(row.get("favorite_count") or 0),
+        collect_count=int(row.get("collect_count") or 0),
+        comment_count=int(row.get("comment_count") or 0),
+        share_count=int(row.get("share_count") or 0),
+        danmaku_count=int(row.get("danmaku_count") or 0),
+        reply_count=int(row.get("reply_count") or 0),
+        retweet_count=int(row.get("retweet_count") or 0),
+        bookmark_count=int(row.get("bookmark_count") or 0),
         tags=_json_list(row.get("tags")),
         topic_key=str(row.get("topic_key") or ""),
         topic_group=str(row.get("topic_group") or ""),

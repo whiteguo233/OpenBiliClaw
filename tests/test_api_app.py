@@ -674,6 +674,7 @@ class TestBackendAPI:
                 database: object,
                 concurrency=None,
                 embedding_service=None,
+                **_extras: object,
             ) -> None:
                 captured["engine_concurrency"] = concurrency
 
@@ -6803,6 +6804,11 @@ class TestEmbeddingAndCompatProviderE2E:
             "https://github.com/example/OpenBiliClaw.git",
             "git@github.com:example/OpenBiliClaw.git",
         ]
+        cfg.discovery.multimodal_evaluation_enabled = True
+        cfg.discovery.multimodal_batch_size = 4
+        cfg.discovery.multimodal_image_max_px = 512
+        cfg.discovery.multimodal_image_quality = 80
+        cfg.discovery.multimodal_image_timeout_seconds = 10
         cfg.logging.file_level = "WARNING"
         cfg.logging.directory = "runtime-logs"
         cfg.logging.filename = "backend.log"
@@ -6866,6 +6872,11 @@ class TestEmbeddingAndCompatProviderE2E:
             "https://github.com/example/OpenBiliClaw.git",
             "git@github.com:example/OpenBiliClaw.git",
         ]
+        assert data["discovery"]["multimodal_evaluation_enabled"] is True
+        assert data["discovery"]["multimodal_batch_size"] == 4
+        assert data["discovery"]["multimodal_image_max_px"] == 512
+        assert data["discovery"]["multimodal_image_quality"] == 80
+        assert data["discovery"]["multimodal_image_timeout_seconds"] == 10
         assert data["logging"]["file_level"] == "WARNING"
         assert data["logging"]["directory"] == "runtime-logs"
         assert data["logging"]["filename"] == "backend.log"
@@ -6874,6 +6885,69 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["logging"]["aggregate_budget_mb"] == 456
         assert data["logging"]["unmanaged_truncate_mb"] == 78
         assert data["logging"]["unmanaged_max_age_days"] == 9
+
+    def test_put_config_updates_multimodal_discovery_settings(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "discovery": {
+                    "multimodal_evaluation_enabled": "true",
+                    "multimodal_batch_size": 4,
+                    "multimodal_image_max_px": 512,
+                    "multimodal_image_quality": 80,
+                    "multimodal_image_timeout_seconds": 10,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert cfg.discovery.multimodal_evaluation_enabled is True
+        assert cfg.discovery.multimodal_batch_size == 4
+        assert cfg.discovery.multimodal_image_max_px == 512
+        assert cfg.discovery.multimodal_image_quality == 80
+        assert cfg.discovery.multimodal_image_timeout_seconds == 10
+        discovery = response.json()["config"]["discovery"]
+        assert discovery["multimodal_evaluation_enabled"] is True
+        assert discovery["multimodal_batch_size"] == 4
+        assert discovery["multimodal_image_max_px"] == 512
+        assert discovery["multimodal_image_quality"] == 80
+        assert discovery["multimodal_image_timeout_seconds"] == 10
+
+    def test_put_config_normalizes_bad_multimodal_discovery_settings(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
+
+        cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "discovery": {
+                    "multimodal_evaluation_enabled": "on",
+                    "multimodal_batch_size": 99,
+                    "multimodal_image_max_px": 99,
+                    "multimodal_image_quality": 99,
+                    "multimodal_image_timeout_seconds": 99,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        discovery = response.json()["config"]["discovery"]
+        assert discovery["multimodal_evaluation_enabled"] is True
+        assert discovery["multimodal_batch_size"] == 8
+        assert discovery["multimodal_image_max_px"] == 384
+        assert discovery["multimodal_image_quality"] == 72
+        assert discovery["multimodal_image_timeout_seconds"] == 6
 
     def test_get_config_exposes_scheduler_pause_on_extension_disconnect(
         self, monkeypatch, tmp_path

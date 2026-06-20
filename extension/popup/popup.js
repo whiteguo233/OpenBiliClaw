@@ -6188,6 +6188,14 @@ function bindSettings() {
     setVal("cfgTrendingRefreshHours", cfg.scheduler?.trending_refresh_hours);
     setVal("cfgExploreRefreshHours", cfg.scheduler?.explore_refresh_hours);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
+    const multimodalEvaluation = document.getElementById("cfgMultimodalEvaluationEnabled");
+    if (multimodalEvaluation) {
+      multimodalEvaluation.checked = cfg.discovery?.multimodal_evaluation_enabled === true;
+    }
+    setVal("cfgMultimodalBatchSize", cfg.discovery?.multimodal_batch_size);
+    setVal("cfgMultimodalImageMaxPx", cfg.discovery?.multimodal_image_max_px);
+    setVal("cfgMultimodalImageQuality", cfg.discovery?.multimodal_image_quality);
+    setVal("cfgMultimodalImageTimeout", cfg.discovery?.multimodal_image_timeout_seconds);
     setVal("cfgProactivePushInterval", cfg.scheduler?.proactive_push_interval_seconds);
     setVal("cfgSpeculatorIdleInterval", cfg.scheduler?.speculator_idle_interval_minutes);
     const autoUpdate = document.getElementById("cfgAutoUpdate");
@@ -6352,6 +6360,14 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgTwitterRequestInterval", 3),
           min_interval_minutes: getInt("cfgTwitterMinInterval", 60),
         },
+      },
+      discovery: {
+        ...(state.runtimeConfig?.discovery || {}),
+        multimodal_evaluation_enabled: checked("cfgMultimodalEvaluationEnabled"),
+        multimodal_batch_size: getInt("cfgMultimodalBatchSize", 8),
+        multimodal_image_max_px: getInt("cfgMultimodalImageMaxPx", 384),
+        multimodal_image_quality: getInt("cfgMultimodalImageQuality", 72),
+        multimodal_image_timeout_seconds: getInt("cfgMultimodalImageTimeout", 6),
       },
       scheduler: {
         enabled: !checked("cfgSchedulerEnabled"),

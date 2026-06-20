@@ -22,6 +22,7 @@ from openbiliclaw.youtube.client import (
     _extract_innertube_config,
     _extract_yt_initial_data_videos,
     _topic_page_trending,
+    normalize_yt_video,
 )
 
 if TYPE_CHECKING:
@@ -78,6 +79,25 @@ class _FakeYtClient:
     async def get_channel_videos(self, channel_id: str, limit: int = 5) -> list[dict[str, Any]]:
         self.calls.append((channel_id, limit))
         return []
+
+
+def test_normalize_yt_video_maps_optional_engagement_metrics() -> None:
+    content = normalize_yt_video(
+        {
+            "videoId": "yt123",
+            "title": {"simpleText": "A useful video"},
+            "ownerText": {"simpleText": "Channel"},
+            "viewCountText": {"simpleText": "1,234 views"},
+            "like_count": 55,
+            "comment_count": "44",
+        },
+        source_strategy="yt_search",
+    )
+
+    assert content is not None
+    assert content.view_count == 1234
+    assert content.like_count == 55
+    assert content.comment_count == 44
 
 
 @pytest.mark.asyncio

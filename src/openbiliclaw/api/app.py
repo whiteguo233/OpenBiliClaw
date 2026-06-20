@@ -48,6 +48,7 @@ from openbiliclaw.api.models import (
     ConfigUpdateResponse,
     DelightAckIn,
     DelightAckResponse,
+    DiscoveryConfigOut,
     DouyinCookieIn,
     DouyinCookieResponse,
     DouyinSourceConfigOut,
@@ -5027,6 +5028,16 @@ def create_app(
                 duration=_intish(video.get("duration")),
                 view_count=_intish(video.get("view_count") or video.get("play")),
                 like_count=_intish(video.get("like_count") or video.get("likes")),
+                favorite_count=_intish(
+                    video.get("favorite_count") or video.get("favorites") or video.get("favorite")
+                ),
+                danmaku_count=_intish(
+                    video.get("danmaku_count") or video.get("danmaku") or video.get("video_review")
+                ),
+                comment_count=_intish(
+                    video.get("comment_count") or video.get("reply") or video.get("review")
+                ),
+                share_count=_intish(video.get("share_count") or video.get("share")),
                 tags=tags,
                 description=str(video.get("description") or video.get("desc") or "").strip(),
                 source_strategy="bili-extension-search",
@@ -5401,6 +5412,16 @@ def create_app(
                 title=title,
                 up_name=author,
                 cover_url=cover_url,
+                view_count=_intish(note.get("view_count") or note.get("views")),
+                like_count=_intish(note.get("like_count") or note.get("likes")),
+                collect_count=_intish(
+                    note.get("collect_count")
+                    or note.get("favorite_count")
+                    or note.get("favorites")
+                    or note.get("collects")
+                ),
+                comment_count=_intish(note.get("comment_count") or note.get("comments")),
+                share_count=_intish(note.get("share_count") or note.get("shares")),
                 description=str(
                     note.get("description") or note.get("desc") or note.get("text") or ""
                 ),
@@ -6823,6 +6844,25 @@ def create_app(
                 auto_update_allow_prerelease=cfg.scheduler.auto_update_allow_prerelease,
                 auto_update_allowed_remotes=list(cfg.scheduler.auto_update_allowed_remotes),
             ),
+            discovery=DiscoveryConfigOut(
+                unified_keyword_planner_enabled=cfg.discovery.unified_keyword_planner_enabled,
+                kw_cache_high=cfg.discovery.kw_cache_high,
+                kw_cache_low=cfg.discovery.kw_cache_low,
+                gen_batch=cfg.discovery.gen_batch,
+                fetch_batch=cfg.discovery.fetch_batch,
+                history_window_size=cfg.discovery.history_window_size,
+                history_window_hours=cfg.discovery.history_window_hours,
+                claim_lease_minutes=cfg.discovery.claim_lease_minutes,
+                planner_poll_seconds=cfg.discovery.planner_poll_seconds,
+                plan_ttl_hours=cfg.discovery.plan_ttl_hours,
+                multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
+                multimodal_batch_size=cfg.discovery.multimodal_batch_size,
+                multimodal_image_max_px=cfg.discovery.multimodal_image_max_px,
+                multimodal_image_quality=cfg.discovery.multimodal_image_quality,
+                multimodal_image_timeout_seconds=(
+                    cfg.discovery.multimodal_image_timeout_seconds
+                ),
+            ),
             autostart=AutostartConfigOut(
                 enabled=cfg.autostart.enabled,
                 manage_ollama=cfg.autostart.manage_ollama,
@@ -7117,6 +7157,10 @@ def create_app(
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
             _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
+            _DEFAULT_MULTIMODAL_BATCH_SIZE,
+            _DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+            _DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+            _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
             _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
             _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS,
             _DEFAULT_SIGNAL_EVENT_THRESHOLD,
@@ -7422,6 +7466,49 @@ def create_app(
                 cfg.scheduler.pool_source_shares = _normalize_pool_source_shares(
                     sdata["pool_source_shares"]
                 )
+
+        # Apply discovery planner / evaluator updates
+        if "discovery" in update:
+            ddata = update["discovery"]
+            if isinstance(ddata, dict):
+                discovery_int_limits = {
+                    "multimodal_batch_size": (
+                        _DEFAULT_MULTIMODAL_BATCH_SIZE,
+                        1,
+                        12,
+                    ),
+                    "multimodal_image_max_px": (
+                        _DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+                        128,
+                        768,
+                    ),
+                    "multimodal_image_quality": (
+                        _DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+                        40,
+                        90,
+                    ),
+                    "multimodal_image_timeout_seconds": (
+                        _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
+                        1,
+                        20,
+                    ),
+                }
+                if "multimodal_evaluation_enabled" in ddata:
+                    cfg.discovery.multimodal_evaluation_enabled = _as_bool(
+                        ddata["multimodal_evaluation_enabled"]
+                    )
+                for key, (default, min_value, max_value) in discovery_int_limits.items():
+                    if key in ddata:
+                        setattr(
+                            cfg.discovery,
+                            key,
+                            _normalize_scheduler_int(
+                                ddata[key],
+                                default=default,
+                                min_value=min_value,
+                                max_value=max_value,
+                            ),
+                        )
 
         # Apply storage updates
         if "storage" in update:

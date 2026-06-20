@@ -52,6 +52,11 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgTrendingRefreshHours",
     "cfgExploreRefreshHours",
     "cfgDiscoveryLimit",
+    "cfgMultimodalEvaluationEnabled",
+    "cfgMultimodalBatchSize",
+    "cfgMultimodalImageMaxPx",
+    "cfgMultimodalImageQuality",
+    "cfgMultimodalImageTimeout",
     "cfgProactivePushInterval",
     "cfgSpeculatorIdleInterval",
     "cfgAccountSyncInterval",
@@ -224,6 +229,51 @@ test("settings page round-trips YouTube source budgets", () => {
   ]) {
     assert.match(popupHtml, new RegExp(`id="${id}"`));
   }
+});
+
+test("settings page round-trips multimodal discovery evaluation controls", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  for (const id of [
+    "cfgMultimodalEvaluationEnabled",
+    "cfgMultimodalBatchSize",
+    "cfgMultimodalImageMaxPx",
+    "cfgMultimodalImageQuality",
+    "cfgMultimodalImageTimeout",
+  ]) {
+    assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
+    assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
+  }
+
+  assert.match(
+    popupJs,
+    /multimodalEvaluation\.checked = cfg\.discovery\?\.multimodal_evaluation_enabled === true/,
+  );
+  assert.match(
+    popupJs,
+    /setVal\("cfgMultimodalBatchSize", cfg\.discovery\?\.multimodal_batch_size\)/,
+  );
+  assert.match(
+    popupJs,
+    /setVal\("cfgMultimodalImageMaxPx", cfg\.discovery\?\.multimodal_image_max_px\)/,
+  );
+  assert.match(
+    popupJs,
+    /setVal\("cfgMultimodalImageQuality", cfg\.discovery\?\.multimodal_image_quality\)/,
+  );
+  assert.match(
+    popupJs,
+    /setVal\("cfgMultimodalImageTimeout", cfg\.discovery\?\.multimodal_image_timeout_seconds\)/,
+  );
+  assert.match(popupJs, /multimodal_evaluation_enabled: checked\("cfgMultimodalEvaluationEnabled"\)/);
+  assert.match(popupJs, /multimodal_batch_size: getInt\("cfgMultimodalBatchSize", 8\)/);
+  assert.match(popupJs, /multimodal_image_max_px: getInt\("cfgMultimodalImageMaxPx", 384\)/);
+  assert.match(popupJs, /multimodal_image_quality: getInt\("cfgMultimodalImageQuality", 72\)/);
+  assert.match(
+    popupJs,
+    /multimodal_image_timeout_seconds: getInt\("cfgMultimodalImageTimeout", 6\)/,
+  );
 });
 
 test("settings page round-trips douyin and x cookies like the bilibili card", () => {

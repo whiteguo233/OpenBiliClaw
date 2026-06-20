@@ -58,6 +58,11 @@ def test_plugin_search_item_to_aweme_maps_fields() -> None:
             "author": "作者",
             "author_sec_uid": "sec-1",
             "cover_url": "https://cover.example/a.jpg",
+            "view_count": 1000,
+            "like_count": 100,
+            "collect_count": 90,
+            "comment_count": 80,
+            "share_count": 70,
         }
     )
 
@@ -66,6 +71,13 @@ def test_plugin_search_item_to_aweme_maps_fields() -> None:
         "desc": "插件搜索结果",
         "author": {"nickname": "作者", "sec_uid": "sec-1"},
         "video": {"cover": {"url_list": ["https://cover.example/a.jpg"]}},
+        "statistics": {
+            "play_count": 1000,
+            "digg_count": 100,
+            "collect_count": 90,
+            "comment_count": 80,
+            "share_count": 70,
+        },
     }
 
 

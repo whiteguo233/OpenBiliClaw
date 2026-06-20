@@ -5325,6 +5325,27 @@
           <label for="cfgDiscoveryLimit">单轮发现上限</label>
           <input id="cfgDiscoveryLimit" type="number" min="1" max="60" step="1" placeholder="30">
         </div>
+        <div class="settings-field-row">
+          <input id="cfgMultimodalEvaluationEnabled" type="checkbox">
+          <label for="cfgMultimodalEvaluationEnabled">启用封面图评估</label>
+        </div>
+        <p class="settings-hint">开启后，支持图像输入的评估模型会把候选封面随文本一起判断；图片会先压缩，图文 batch 默认更小。</p>
+        <div class="settings-field">
+          <label for="cfgMultimodalBatchSize">图文批量大小</label>
+          <input id="cfgMultimodalBatchSize" type="number" min="1" max="12" step="1" placeholder="8">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageMaxPx">封面最大边 px</label>
+          <input id="cfgMultimodalImageMaxPx" type="number" min="128" max="768" step="1" placeholder="384">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageQuality">JPEG 质量</label>
+          <input id="cfgMultimodalImageQuality" type="number" min="40" max="90" step="1" placeholder="72">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageTimeout">封面超时秒数</label>
+          <input id="cfgMultimodalImageTimeout" type="number" min="1" max="20" step="1" placeholder="6">
+        </div>
         <div class="settings-field">
           <label for="cfgProactivePushInterval">主动推送轮询秒数</label>
           <input id="cfgProactivePushInterval" type="number" min="30" step="1" placeholder="120">

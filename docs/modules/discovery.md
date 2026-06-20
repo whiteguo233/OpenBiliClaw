@@ -22,6 +22,7 @@
 - **DiscoveryCandidatePipeline** — 统一候选待评估池的生产 / 入队 / 混源 batch 评估 / 入推荐池 admission 编排器
 - **DiscoveryCandidateWrite / discovery_candidates** — 原始候选的持久化队列结构，所有来源先落到 `pending_eval`，再由统一 evaluator claim
 - **DiscoveredContent** — 统一的候选内容数据结构
+- **multimodal.py** — 可选封面图评估的图片准备模块：复用后端封面磁盘缓存与图片白名单抓取边界，压缩为 JPEG data URL 后交给支持图像输入的 evaluator
 - **SearchStrategy** — 基于画像生成搜索词并调用 B 站搜索的策略
 - **TrendingStrategy** — 从全站榜和相关分区榜中筛选高匹配热点内容
 - **RelatedChainStrategy** — 从近期高价值视频种子出发，沿相关推荐链扩展候选内容
@@ -106,6 +107,10 @@
    `DiscoveryCandidatePipeline.drain_pending()` 会从 `discovery_candidates` claim 一批 `pending_eval` 行，并按来源 round-robin 混合取样，避免单个平台把整批 evaluator 占满。这里就是 agent 判断“结合画像看用户喜不喜欢”的环节：pipeline 把候选转回 `DiscoveredContent`，调用 `ContentDiscoveryEngine.evaluate_content_batch()`，把画像摘要、候选字段、`source_platform`、`source_strategy`、`source_context`、`content_url`、`author_name` 和近期负样本一起交给 LLM 评分。
 
    进入批量 LLM 评估前，`evaluate_content_batch()` 会读取 `Database.get_recent_viewed_content_keys()`，用 `source_platform:content_id` 判断最近看过的 B 站 / 小红书 / 抖音 / YouTube 候选；命中项直接记为 0 分并从 prompt 中剔除，避免为已看内容消耗 discovery token。老 BVID 也保留 raw key 兼容旧数据。
+
+   evaluator 的候选输入不再只依赖标题：各来源会尽量映射 `view_count`、`like_count`、`favorite_count` / `collect_count`、`comment_count` / `reply_count`、`share_count`、`danmaku_count`、`retweet_count`、`bookmark_count`、`tags`、`body_text` 等字段。prompt 明确把互动指标当辅助信号，不能用高热度替代内容与画像的真实匹配，也不能因为低热度惩罚小众但高度匹配的内容。
+
+   当 `[discovery].multimodal_evaluation_enabled=true` 且当前 evaluation 路由支持图像输入时，带 `cover_url` 的候选会额外准备封面图：`discovery.multimodal.prepare_cover_image_inputs()` 走 `runtime.image_cache.get_or_fetch_cover_bytes()`，先查本地 `data/image-cache/`，命中则直接复用缓存图，未命中才按同一 SSRF / 白名单 / redirect / 大小限制边界抓取并写回缓存。小红书 token 图因此优先使用预取或 UI 代理已经落盘的副本，不依赖评估时原 CDN token 仍有效；随后再按 `multimodal_image_max_px` 与 `multimodal_image_quality` 压成 JPEG data URL。该 batch 会使用更小的 `multimodal_batch_size`；如果模型不支持图像或图片准备失败，自动退回文本 + 互动指标评估。
 
    评估结果会回写到 `discovery_candidates`：通过阈值前先标为 `evaluated`，低分会变成 `rejected_low_score`，全局 franchise 入池配额命中时会变成 `rejected_franchise_quota`。B 站 / YouTube / 抖音等主动 discovery 会把来源策略自己的 `score_threshold` 写入候选行，pipeline 优先使用这个阈值，避免统一池降低原策略质量线。小红书 observed notes 仍进入同一 evaluator 补全主题 / 风格，但 `raw_payload.admission_policy="observed"` 会把 admission 阈值降为 0；低分会被记录，却不会丢掉用户当前浏览行为信号。
 
@@ -293,7 +298,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### 3. 内容相关性评估 prompt
 
-这是 discovery 里最关键的一类 prompt。runtime 的统一待评估池会把 B 站 / 小红书 / 抖音 / YouTube 候选交给 `ContentDiscoveryEngine.evaluate_content_batch()`；直接 discover 兼容路径仍可逐条调用 `evaluate_content()`。
+这是 discovery 里最关键的一类 prompt。runtime 的统一待评估池会把 B 站 / 小红书 / 抖音 / YouTube / X 候选交给 `ContentDiscoveryEngine.evaluate_content_batch()`；直接 discover 兼容路径仍可逐条调用 `evaluate_content()`。
 
 它的 system prompt 重点是：
 
@@ -615,6 +620,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
 | v0.3.74 eval-batch JSON 容错统一 | ✅ | `_evaluate_batch` 改用 `llm.json_utils.extract_llm_json_list()`，在原 fenced / echo / JSONL 基础上统一兼容 `results/items/data/output/scores/evaluations` wrapper、MiMo malformed `{ [ ... ] }` 数组包裹和 schema echo 后最终结果；解析失败仍按原有降级路径处理，不把示例 JSON 当作真实评分 |
 | v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时降级逐条评估 |
+| eval-batch 互动指标与封面图输入 | ✅ | `DiscoveredContent` / `discovery_candidates` / `content_cache` 透传观看、点赞、收藏、评论、分享、弹幕、转推、书签等指标；batch prompt 会带 `tags/body_text` 和互动指标。`[discovery].multimodal_evaluation_enabled=true` 且 evaluation 模型支持图像时，封面图经运行时图片缓存命中或白名单抓取后压缩为 image input 一并评估，并自动使用更小 batch |
 | v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`；本批候选返回 0 分并等待下一轮补货重试，避免一次 Gemini 429 放大成整批 traceback |
 | B 站 search 风控冷却 | ✅ | `BilibiliAPIClient.search()` 连续 `v_voucher` 重试耗尽或 412 后会设置共享 cooldown；Search / Explore / RelatedChain 的搜索路径在冷却期直接跳过，不再继续生成 query/domain 或逐 query 撞风控 |
 | M126 explore 高风险子簇压缩 | ✅ | refresh 结束后会温和压一轮 `explore` 内部的高风险相邻簇，例如制造 / 工艺 / 材料、博弈 / 桌游 / 机制，避免单簇继续堆满 fresh pool |

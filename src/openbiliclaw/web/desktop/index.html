@@ -385,6 +385,19 @@
             <label class="settings-field"><span>反馈分析积累阈值</span><input id="feedbackBatchThreshold" inputmode="numeric" placeholder="3"></label>
             <label class="settings-field"><span>单轮发现上限</span><input id="discoveryLimit" inputmode="numeric" placeholder="30"></label>
           </div>
+          <p class="settings-section-title">评估输入</p>
+          <div class="inline-row">
+            <label class="settings-field"><span>封面图评估</span><select id="multimodalEvaluationEnabled"><option value="off">关闭</option><option value="on">开启</option></select></label>
+            <label class="settings-field"><span>图文批量大小</span><input id="multimodalBatchSize" inputmode="numeric" placeholder="8" min="1" max="12"></label>
+            <label class="settings-field"><span>封面最大边</span><input id="multimodalImageMaxPx" inputmode="numeric" placeholder="384" min="128" max="768"></label>
+            <label class="settings-field"><span>JPEG 质量</span><input id="multimodalImageQuality" inputmode="numeric" placeholder="72" min="40" max="90"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>封面超时秒数</span><input id="multimodalImageTimeout" inputmode="numeric" placeholder="6" min="1" max="20"></label>
+            <p class="settings-probe-status" id="multimodalEvaluationStatus" style="align-self: end; margin: 0" aria-live="polite">关闭</p>
+            <span></span>
+            <span></span>
+          </div>
           <div class="inline-row">
             <label class="settings-field"><span>热门刷新小时</span><input id="trendingRefreshHours" inputmode="numeric" placeholder="3"></label>
             <label class="settings-field"><span>探索刷新小时</span><input id="exploreRefreshHours" inputmode="numeric" placeholder="12"></label>

@@ -1775,6 +1775,11 @@ class TestDiscoveryConfig:
         assert config.discovery.claim_lease_minutes == 10
         assert config.discovery.planner_poll_seconds == 120
         assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.multimodal_evaluation_enabled is False
+        assert config.discovery.multimodal_batch_size == 8
+        assert config.discovery.multimodal_image_max_px == 384
+        assert config.discovery.multimodal_image_quality == 72
+        assert config.discovery.multimodal_image_timeout_seconds == 6
 
     def test_discovery_defaults_from_empty_dict(self) -> None:
         config = _build_config({})
@@ -1782,6 +1787,8 @@ class TestDiscoveryConfig:
         assert config.discovery.unified_keyword_planner_enabled is True
         assert config.discovery.kw_cache_high == 30
         assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.multimodal_evaluation_enabled is False
+        assert config.discovery.multimodal_batch_size == 8
 
     def test_top_level_discovery_is_distinct_from_llm_discovery(self) -> None:
         """`[discovery]` (planner knobs) must not collide with `[llm.discovery]`
@@ -1813,6 +1820,11 @@ history_window_hours = 72
 claim_lease_minutes = 15
 planner_poll_seconds = 90
 plan_ttl_hours = 6
+multimodal_evaluation_enabled = true
+multimodal_batch_size = 4
+multimodal_image_max_px = 512
+multimodal_image_quality = 80
+multimodal_image_timeout_seconds = 10
 """.strip(),
             encoding="utf-8",
         )
@@ -1829,6 +1841,11 @@ plan_ttl_hours = 6
         assert config.discovery.claim_lease_minutes == 15
         assert config.discovery.planner_poll_seconds == 90
         assert config.discovery.plan_ttl_hours == 6
+        assert config.discovery.multimodal_evaluation_enabled is True
+        assert config.discovery.multimodal_batch_size == 4
+        assert config.discovery.multimodal_image_max_px == 512
+        assert config.discovery.multimodal_image_quality == 80
+        assert config.discovery.multimodal_image_timeout_seconds == 10
 
     def test_discovery_flag_accepts_string_boolean(self) -> None:
         """The flag coerces TOML/env string booleans like other bool fields."""
@@ -1858,6 +1875,14 @@ plan_ttl_hours = 6
             ("claim_lease_minutes", "0", 10),
             ("planner_poll_seconds", '"nope"', 120),
             ("plan_ttl_hours", "0", 12),
+            ("multimodal_batch_size", "0", 8),
+            ("multimodal_batch_size", "13", 8),
+            ("multimodal_image_max_px", "127", 384),
+            ("multimodal_image_max_px", "769", 384),
+            ("multimodal_image_quality", "39", 72),
+            ("multimodal_image_quality", "91", 72),
+            ("multimodal_image_timeout_seconds", "0", 6),
+            ("multimodal_image_timeout_seconds", "21", 6),
         ],
     )
     def test_discovery_invalid_values_fall_back_to_defaults(
@@ -1940,6 +1965,11 @@ plan_ttl_hours = 6
         config.discovery.claim_lease_minutes = 12
         config.discovery.planner_poll_seconds = 100
         config.discovery.plan_ttl_hours = 8
+        config.discovery.multimodal_evaluation_enabled = True
+        config.discovery.multimodal_batch_size = 4
+        config.discovery.multimodal_image_max_px = 512
+        config.discovery.multimodal_image_quality = 80
+        config.discovery.multimodal_image_timeout_seconds = 10
 
         save_config(config, config_path)
         loaded = load_config(config_path)
@@ -1954,6 +1984,11 @@ plan_ttl_hours = 6
         assert loaded.discovery.claim_lease_minutes == 12
         assert loaded.discovery.planner_poll_seconds == 100
         assert loaded.discovery.plan_ttl_hours == 8
+        assert loaded.discovery.multimodal_evaluation_enabled is True
+        assert loaded.discovery.multimodal_batch_size == 4
+        assert loaded.discovery.multimodal_image_max_px == 512
+        assert loaded.discovery.multimodal_image_quality == 80
+        assert loaded.discovery.multimodal_image_timeout_seconds == 10
 
     def test_discovery_section_appears_in_rendered_toml(self) -> None:
         from openbiliclaw.config import _render_config_toml
@@ -1964,3 +1999,6 @@ plan_ttl_hours = 6
         assert "unified_keyword_planner_enabled = true" in rendered
         assert "kw_cache_high = 30" in rendered
         assert "plan_ttl_hours = 12" in rendered
+        assert "multimodal_evaluation_enabled = false" in rendered
+        assert "multimodal_batch_size = 8" in rendered
+        assert "multimodal_image_max_px = 384" in rendered

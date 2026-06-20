@@ -503,11 +503,21 @@ class RuntimeContext:
             bilibili_request_concurrency=2,
             llm_evaluation_concurrency=2,
         )
+        discovery_cfg = getattr(new_config, "discovery", None)
         new_discovery_engine = ContentDiscoveryEngine(
             llm_service=new_llm_service,
             database=self.database,
             concurrency=concurrency,
             embedding_service=new_embedding_service,
+            multimodal_evaluation_enabled=bool(
+                getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
+            ),
+            multimodal_batch_size=int(getattr(discovery_cfg, "multimodal_batch_size", 8)),
+            multimodal_image_max_px=int(getattr(discovery_cfg, "multimodal_image_max_px", 384)),
+            multimodal_image_quality=int(getattr(discovery_cfg, "multimodal_image_quality", 72)),
+            multimodal_image_timeout_seconds=(
+                int(getattr(discovery_cfg, "multimodal_image_timeout_seconds", 6))
+            ),
         )
         search_strategy = SearchStrategy(
             llm_service=new_llm_service,

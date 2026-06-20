@@ -14,6 +14,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections import Counter
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
@@ -208,6 +209,29 @@ def _content_result_keys(content: DiscoveredContent) -> set[str]:
     }
 
 
+_PROMPT_VISIBLE_METRIC_FIELDS: tuple[str, ...] = (
+    "view_count",
+    "like_count",
+    "favorite_count",
+    "collect_count",
+    "comment_count",
+    "share_count",
+    "danmaku_count",
+    "reply_count",
+    "retweet_count",
+    "bookmark_count",
+)
+
+
+def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, object]:
+    fields: dict[str, object] = {
+        field_name: int(getattr(content, field_name, 0) or 0)
+        for field_name in _PROMPT_VISIBLE_METRIC_FIELDS
+    }
+    fields["tags"] = list(getattr(content, "tags", []) or [])
+    return fields
+
+
 def _batch_results_by_content_key(
     payload: list[dict[str, Any]],
     batch: list[DiscoveredContent],
@@ -243,6 +267,14 @@ class DiscoveredContent:
     duration: int = 0  # seconds
     view_count: int = 0
     like_count: int = 0
+    favorite_count: int = 0
+    collect_count: int = 0
+    comment_count: int = 0
+    share_count: int = 0
+    danmaku_count: int = 0
+    reply_count: int = 0
+    retweet_count: int = 0
+    bookmark_count: int = 0
     tags: list[str] = field(default_factory=list)
     topic_key: str = ""
     topic_group: str = ""  # Coarse semantic category (e.g. "强化学习") for diversity
@@ -313,6 +345,14 @@ class DiscoveredContent:
             "cover_url": self.cover_url,
             "view_count": self.view_count,
             "like_count": self.like_count,
+            "favorite_count": self.favorite_count,
+            "collect_count": self.collect_count,
+            "comment_count": self.comment_count,
+            "share_count": self.share_count,
+            "danmaku_count": self.danmaku_count,
+            "reply_count": self.reply_count,
+            "retweet_count": self.retweet_count,
+            "bookmark_count": self.bookmark_count,
             "relevance_score": self.relevance_score,
             "relevance_reason": self.relevance_reason,
             "candidate_tier": self.candidate_tier,
@@ -513,6 +553,12 @@ class ContentDiscoveryEngine:
         embedding_service: SupportsEmbeddingService | None = None,
         target_primary_count: int = 20,
         backfill_target_count: int = 40,
+        multimodal_evaluation_enabled: bool = False,
+        multimodal_batch_size: int = 8,
+        multimodal_image_max_px: int = 384,
+        multimodal_image_quality: int = 72,
+        multimodal_image_timeout_seconds: int = 6,
+        multimodal_vision_supported: bool | None = None,
     ) -> None:
         self._strategies: list[DiscoveryStrategy] = []
         self._llm_service = llm_service
@@ -521,6 +567,16 @@ class ContentDiscoveryEngine:
         self._embedding_service = embedding_service
         self._target_primary_count = max(1, target_primary_count)
         self._backfill_target_count = max(self._target_primary_count, backfill_target_count)
+        self.multimodal_evaluation_enabled = bool(multimodal_evaluation_enabled)
+        self.multimodal_batch_size = max(1, min(12, int(multimodal_batch_size)))
+        self.multimodal_image_max_px = max(128, min(768, int(multimodal_image_max_px)))
+        self.multimodal_image_quality = max(40, min(90, int(multimodal_image_quality)))
+        self.multimodal_image_timeout_seconds = max(
+            1,
+            min(20, int(multimodal_image_timeout_seconds)),
+        )
+        self._multimodal_vision_supported_override = multimodal_vision_supported
+        self.multimodal_unavailable_reason = ""
         self._eval_cache: dict[str, tuple[float, str, str, str, str]] = {}
         # v0.3.x negative-anchors cache: (timestamp, latest_event_id,
         # exemplars). Refreshes when either the latest event id changes
@@ -528,6 +584,40 @@ class ContentDiscoveryEngine:
         self._negative_exemplars_cache: tuple[float, int | None, list[dict[str, object]]] | None = (
             None
         )
+
+    def _supports_multimodal_evaluation(self) -> bool:
+        override = getattr(self, "_multimodal_vision_supported_override", None)
+        if override is not None:
+            return bool(override)
+        service = self._llm_service
+        if service is None:
+            return False
+        for attr in ("supports_image_input", "supports_vision"):
+            value = getattr(service, attr, None)
+            if callable(value):
+                with suppress(Exception):
+                    return bool(value())
+            if value is not None:
+                return bool(value)
+        return callable(getattr(service, "complete_multimodal_structured_task", None))
+
+    def _effective_eval_batch_size(
+        self,
+        contents: list[DiscoveredContent],
+        requested_batch_size: int,
+    ) -> int:
+        batch_size = max(1, int(requested_batch_size))
+        self.multimodal_unavailable_reason = ""
+        if not bool(getattr(self, "multimodal_evaluation_enabled", False)):
+            return batch_size
+        if not any((content.cover_url or "").strip() for content in contents):
+            return batch_size
+        if not self._supports_multimodal_evaluation():
+            self.multimodal_unavailable_reason = (
+                "Current evaluation model is not vision-capable; using text-only evaluation."
+            )
+            return batch_size
+        return min(batch_size, int(getattr(self, "multimodal_batch_size", 8)))
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
@@ -959,12 +1049,18 @@ class ContentDiscoveryEngine:
         messages = build_content_evaluation_prompt(
             profile_summary=build_profile_summary(profile),
             content_summary={
+                "content_id": content.content_id or content.bvid,
+                "content_url": content.content_url,
+                "source_platform": content.source_platform or "bilibili",
+                "content_type": content.content_type,
+                "body_text": content.body_text,
                 "title": content.title,
                 "up_name": content.up_name,
+                "author_name": content.author_name or content.up_name,
                 "description": content.description,
                 "duration": content.duration,
-                "view_count": content.view_count,
                 "source_strategy": content.source_strategy,
+                **_prompt_visible_content_fields(content),
             },
             source_context=source_context or content.source_strategy,
             source_platform=content.source_platform or "bilibili",
@@ -1138,6 +1234,13 @@ class ContentDiscoveryEngine:
             if len(scores) < original_len:
                 scores = scores + [0.0] * (original_len - len(scores))
             return scores
+
+        batch_size = self._effective_eval_batch_size(
+            [eval_contents[i] for i in uncached_indices],
+            batch_size,
+        )
+        if self.multimodal_unavailable_reason:
+            logger.info("eval_batch multimodal fallback: %s", self.multimodal_unavailable_reason)
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
         logger.info(
@@ -1368,10 +1471,33 @@ class ContentDiscoveryEngine:
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,
                     "description": (c.description or "")[:400],
+                    "cover_url": c.cover_url,
                     "duration": c.duration,
-                    "view_count": c.view_count,
+                    **_prompt_visible_content_fields(c),
                 }
             )
+        image_inputs: list[dict[str, str]] = []
+        multimodal_enabled = bool(getattr(self, "multimodal_evaluation_enabled", False))
+        if (
+            multimodal_enabled
+            and self._supports_multimodal_evaluation()
+            and any((content.cover_url or "").strip() for content in batch)
+        ):
+            from openbiliclaw.discovery import multimodal
+
+            prepared_images = await multimodal.prepare_cover_image_inputs(
+                batch,
+                max_px=int(getattr(self, "multimodal_image_max_px", 384)),
+                quality=int(getattr(self, "multimodal_image_quality", 72)),
+                timeout_seconds=int(getattr(self, "multimodal_image_timeout_seconds", 6)),
+            )
+            image_ids = {image.content_id for image in prepared_images}
+            if image_ids:
+                for item in content_items:
+                    content_id = str(item.get("content_id") or item.get("bvid") or "")
+                    if content_id in image_ids:
+                        item["cover_image_ref"] = f"cover:{content_id}"
+                image_inputs = [image.to_llm_input() for image in prepared_images]
         source_platforms = {
             str(item.get("source_platform") or "").strip()
             for item in content_items
@@ -1409,19 +1535,34 @@ class ContentDiscoveryEngine:
 
         assert self._llm_service is not None
         try:
-            llm_call = self._llm_service.complete_structured_task(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                # v0.3.51+: explicitly disable provider thinking. This
-                # task is structured scoring (return JSON array), not
-                # reasoning — production logs showed 8-16 min/batch
-                # with reasoning enabled, dropping to ~30s without.
-                # 16384 max_tokens is plenty for the 1500-3000 token
-                # output a 30-item JSON array now needs.
-                max_tokens=16384,
-                reasoning_effort="",
-                caller="discovery.evaluate_batch",
+            multimodal_call = getattr(
+                self._llm_service,
+                "complete_multimodal_structured_task",
+                None,
             )
+            if image_inputs and callable(multimodal_call):
+                llm_call = multimodal_call(
+                    system_instruction=messages[0]["content"],
+                    user_input=messages[1]["content"],
+                    image_inputs=image_inputs,
+                    max_tokens=16384,
+                    reasoning_effort="",
+                    caller="discovery.evaluate_batch",
+                )
+            else:
+                llm_call = self._llm_service.complete_structured_task(
+                    system_instruction=messages[0]["content"],
+                    user_input=messages[1]["content"],
+                    # v0.3.51+: explicitly disable provider thinking. This
+                    # task is structured scoring (return JSON array), not
+                    # reasoning — production logs showed 8-16 min/batch
+                    # with reasoning enabled, dropping to ~30s without.
+                    # 16384 max_tokens is plenty for the 1500-3000 token
+                    # output a 30-item JSON array now needs.
+                    max_tokens=16384,
+                    reasoning_effort="",
+                    caller="discovery.evaluate_batch",
+                )
             if self._concurrency is not None:
                 response = await self._concurrency.run_llm(llm_call)
             else:

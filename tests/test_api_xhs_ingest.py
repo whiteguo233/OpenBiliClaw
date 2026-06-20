@@ -293,6 +293,10 @@ class TestXhsObservedUrls:
                         "title": "手冲咖啡入门",
                         "author": "豆子老师",
                         "cover_url": "https://example.com/cover.jpg",
+                        "view_count": 1000,
+                        "like_count": 100,
+                        "collect_count": 90,
+                        "comment_count": 80,
                     }
                 ],
                 "page_type": "search",
@@ -304,13 +308,18 @@ class TestXhsObservedUrls:
         assert body["enqueued"] == 1
 
         row = db.conn.execute(
-            "SELECT source_strategy, source_platform, content_id, content_url, title, up_name "
+            "SELECT source_strategy, source_platform, content_id, content_url, title, up_name, "
+            "view_count, like_count, collect_count, comment_count "
             "FROM discovery_candidates WHERE content_id=?",
             ("note-xyz-001",),
         ).fetchone()
         assert row is not None, "xhs note was not enqueued"
         assert row["source_strategy"] == "xhs-extension-search"
         assert row["source_platform"] == "xiaohongshu"
+        assert row["view_count"] == 1000
+        assert row["like_count"] == 100
+        assert row["collect_count"] == 90
+        assert row["comment_count"] == 80
 
     def test_notes_ingest_drains_through_pipeline_into_content_cache(
         self,
@@ -1130,6 +1139,9 @@ class TestXhsTaskResults:
                         "xsec_token": "token-task-001",
                         "author": "豆子老师",
                         "cover_url": "https://example.com/cover.jpg",
+                        "like_count": 101,
+                        "collect_count": 91,
+                        "comment_count": 81,
                     }
                 ],
             },
@@ -1157,7 +1169,8 @@ class TestXhsTaskResults:
         assert result["notes"][0]["note_id"] == "note-task-001"
 
         candidate_row = db.conn.execute(
-            "SELECT title, source_strategy, source_platform FROM discovery_candidates "
+            "SELECT title, source_strategy, source_platform, like_count, collect_count, "
+            "comment_count FROM discovery_candidates "
             "WHERE content_id=?",
             ("note-task-001",),
         ).fetchone()
@@ -1165,6 +1178,9 @@ class TestXhsTaskResults:
         assert candidate_row["title"] == "手冲咖啡入门"
         assert candidate_row["source_strategy"] == "xhs-extension-task"
         assert candidate_row["source_platform"] == "xiaohongshu"
+        assert candidate_row["like_count"] == 101
+        assert candidate_row["collect_count"] == 91
+        assert candidate_row["comment_count"] == 81
 
     def test_xhs_bootstrap_skips_notes_already_seen_in_previous_task(
         self,

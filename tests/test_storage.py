@@ -95,6 +95,61 @@ class TestDatabase:
 
             db.close()
 
+    def test_cache_content_persists_social_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1metrics",
+                title="Metric Video",
+                source="search",
+                view_count=1000,
+                like_count=100,
+                favorite_count=90,
+                collect_count=80,
+                comment_count=70,
+                share_count=60,
+                danmaku_count=50,
+                reply_count=40,
+                retweet_count=30,
+                bookmark_count=20,
+            )
+
+            row = db.conn.execute(
+                """
+                SELECT
+                    view_count,
+                    like_count,
+                    favorite_count,
+                    collect_count,
+                    comment_count,
+                    share_count,
+                    danmaku_count,
+                    reply_count,
+                    retweet_count,
+                    bookmark_count
+                FROM content_cache
+                WHERE bvid = ?
+                """,
+                ("BV1metrics",),
+            ).fetchone()
+            assert row is not None
+            assert dict(row) == {
+                "view_count": 1000,
+                "like_count": 100,
+                "favorite_count": 90,
+                "collect_count": 80,
+                "comment_count": 70,
+                "share_count": 60,
+                "danmaku_count": 50,
+                "reply_count": 40,
+                "retweet_count": 30,
+                "bookmark_count": 20,
+            }
+
+            db.close()
+
     def test_iter_cover_lifecycle_reports_status_and_saved_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

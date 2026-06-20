@@ -19,7 +19,13 @@ def test_normalize_aweme_item_maps_core_fields() -> None:
         "desc": "一个测试视频",
         "author": {"nickname": "作者A", "sec_uid": "sec-1"},
         "video": {"cover": {"url_list": ["https://cover.example/a.jpg"]}, "duration": 12345},
-        "statistics": {"digg_count": 88, "play_count": 999},
+        "statistics": {
+            "digg_count": 88,
+            "play_count": 999,
+            "collect_count": 77,
+            "comment_count": 66,
+            "share_count": 55,
+        },
     }
 
     content = normalize_aweme_item(item, source_strategy="dy-direct-search")
@@ -37,6 +43,9 @@ def test_normalize_aweme_item_maps_core_fields() -> None:
     assert content.duration == 12
     assert content.like_count == 88
     assert content.view_count == 999
+    assert content.collect_count == 77
+    assert content.comment_count == 66
+    assert content.share_count == 55
 
 
 def test_normalize_aweme_item_returns_none_without_aweme_id() -> None:
@@ -49,7 +58,7 @@ def test_normalize_aweme_item_uses_fallback_fields() -> None:
         "share_info": {"share_title": "分享标题"},
         "author": {"nickname": "作者B"},
         "video": {"origin_cover": {"url_list": ["https://cover.example/origin.jpg"]}},
-        "stats": {"digg_count": "3", "play_count": "11"},
+        "stats": {"digg_count": "3", "play_count": "11", "collect_count": "5"},
     }
 
     content = normalize_aweme_item(item, source_strategy="dy-direct-hot")
@@ -59,6 +68,7 @@ def test_normalize_aweme_item_uses_fallback_fields() -> None:
     assert content.cover_url == "https://cover.example/origin.jpg"
     assert content.like_count == 3
     assert content.view_count == 11
+    assert content.collect_count == 5
 
 
 def test_parse_cookie_header_trims_pairs() -> None:

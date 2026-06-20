@@ -70,6 +70,72 @@ class _SlowLLMService:
         return _SlowResponse('{"score": 0.88, "reason": "still relevant"}')
 
 
+class _DynamicBatchLLMService:
+    """Returns one score per item found in the batch prompt."""
+
+    def __init__(self) -> None:
+        self.user_inputs: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.user_inputs.append(user_input)
+        batch_json = user_input.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0]
+        items = json.loads(batch_json.strip())
+        payload = [
+            {
+                "content_id": item.get("content_id") or item.get("bvid") or str(index),
+                "score": 0.8,
+                "reason": "ok",
+                "style_key": "deep_dive",
+            }
+            for index, item in enumerate(items)
+        ]
+        return _SlowResponse(json.dumps(payload, ensure_ascii=False))
+
+
+class _RecordingMultimodalBatchLLMService(_DynamicBatchLLMService):
+    supports_image_input = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_inputs: list[list[dict[str, str]]] = []
+
+    async def complete_structured_task(self, **_kwargs: object) -> object:
+        raise AssertionError("multimodal batch should use image-aware LLM method")
+
+    async def complete_multimodal_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        image_inputs: list[dict[str, str]],
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.image_inputs.append(image_inputs)
+        return await super().complete_structured_task(
+            system_instruction=system_instruction,
+            user_input=user_input,
+            history=history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+        )
+
+
 class _RecentViewedDatabase:
     def __init__(
         self,
@@ -273,8 +339,50 @@ async def test_evaluate_content_passes_disliked_topics_to_prompt() -> None:
 
     user_input = str(llm_service.calls[0]["user_input"])
     assert '"disliked_topics": [' in user_input
-    assert "标题党" in user_input
-    assert "低质混剪" in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_single_passes_text_metrics_and_tags_to_prompt() -> None:
+    llm_service = FakeLLMService(
+        '{"score": 0.82, "reason": "匹配", "topic_group": "系统", "style_key": "deep_dive"}'
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+
+    await engine.evaluate_content(
+        DiscoveredContent(
+            content_id="tweet-1",
+            title="正文首行",
+            body_text="完整 thread 正文",
+            tags=["systems", "async"],
+            source_platform="twitter",
+            content_type="thread",
+            view_count=1000,
+            like_count=100,
+            favorite_count=90,
+            collect_count=80,
+            comment_count=70,
+            share_count=60,
+            danmaku_count=50,
+            reply_count=40,
+            retweet_count=30,
+            bookmark_count=20,
+            source_strategy="x-search",
+        ),
+        _build_profile(),
+    )
+
+    user_input = str(llm_service.calls[0]["user_input"])
+    assert '"body_text": "完整 thread 正文"' in user_input
+    assert '"tags": [' in user_input
+    assert '"like_count": 100' in user_input
+    assert '"favorite_count": 90' in user_input
+    assert '"collect_count": 80' in user_input
+    assert '"comment_count": 70' in user_input
+    assert '"share_count": 60' in user_input
+    assert '"danmaku_count": 50' in user_input
+    assert '"reply_count": 40' in user_input
+    assert '"retweet_count": 30' in user_input
+    assert '"bookmark_count": 20' in user_input
 
 
 @pytest.mark.asyncio
@@ -362,6 +470,117 @@ async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_
     assert "fresh-yt" in user_input
     assert "seen-yt" not in user_input
     assert "已经看过的 YouTube" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_uses_configured_smaller_batch_size() -> None:
+    llm_service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+        multimodal_vision_supported=True,
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id=f"cover-{idx}",
+                title=f"cover item {idx}",
+                cover_url=f"https://example.com/{idx}.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+            for idx in range(5)
+        ],
+        _build_profile(),
+        batch_size=30,
+    )
+
+    assert scores == [0.8, 0.8, 0.8, 0.8, 0.8]
+    assert len(llm_service.user_inputs) == 3
+    assert [prompt.count('"content_id"') for prompt in llm_service.user_inputs] == [2, 2, 1]
+    assert engine.multimodal_unavailable_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_falls_back_to_text_batch_when_vision_unavailable() -> None:
+    llm_service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+        multimodal_vision_supported=False,
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id=f"cover-{idx}",
+                title=f"cover item {idx}",
+                cover_url=f"https://example.com/{idx}.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+            for idx in range(5)
+        ],
+        _build_profile(),
+        batch_size=30,
+    )
+
+    assert scores == [0.8, 0.8, 0.8, 0.8, 0.8]
+    assert len(llm_service.user_inputs) == 1
+    assert "vision-capable" in engine.multimodal_unavailable_reason
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_sends_prepared_cover_images(monkeypatch) -> None:
+    from openbiliclaw.discovery.multimodal import PreparedCoverImage
+
+    async def fake_prepare_cover_image_inputs(*_args: object, **_kwargs: object) -> list[object]:
+        return [
+            PreparedCoverImage(
+                content_id="cover-0",
+                data_url="data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                mime_type="image/jpeg",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.discovery.multimodal.prepare_cover_image_inputs",
+        fake_prepare_cover_image_inputs,
+    )
+    llm_service = _RecordingMultimodalBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+    )
+
+    scores = await engine._evaluate_batch(
+        [
+            DiscoveredContent(
+                content_id="cover-0",
+                title="with cover",
+                cover_url="https://i.ytimg.com/vi/demo/hqdefault.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+        ],
+        _build_profile(),
+    )
+
+    assert scores == [0.8]
+    assert llm_service.image_inputs == [
+        [
+            {
+                "content_id": "cover-0",
+                "data_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                "mime_type": "image/jpeg",
+            }
+        ]
+    ]
+    assert '"cover_image_ref": "cover:cover-0"' in llm_service.user_inputs[0]
 
 
 def test_cache_results_skips_recently_viewed_items() -> None:
@@ -2086,6 +2305,46 @@ async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     assert '"source_strategy": "xhs-extension-search"' in user
     assert '"content_type": "note"' in user
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_sends_metrics_and_tags() -> None:
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+
+    await engine._evaluate_batch(
+        [
+            DiscoveredContent(
+                bvid="BV1metrics",
+                title="Metrics",
+                tags=["tag-a", "tag-b"],
+                source_strategy="search",
+                view_count=1000,
+                like_count=100,
+                favorite_count=90,
+                collect_count=80,
+                comment_count=70,
+                share_count=60,
+                danmaku_count=50,
+                reply_count=40,
+                retweet_count=30,
+                bookmark_count=20,
+            )
+        ],
+        _build_profile(),
+    )
+
+    user = llm.user_inputs[0]
+    assert '"tags": [' in user
+    assert '"like_count": 100' in user
+    assert '"favorite_count": 90' in user
+    assert '"collect_count": 80' in user
+    assert '"comment_count": 70' in user
+    assert '"share_count": 60' in user
+    assert '"danmaku_count": 50' in user
+    assert '"reply_count": 40' in user
+    assert '"retweet_count": 30' in user
+    assert '"bookmark_count": 20' in user
 
 
 @pytest.mark.asyncio

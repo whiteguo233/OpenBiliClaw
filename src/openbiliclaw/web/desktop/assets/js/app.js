@@ -3593,6 +3593,17 @@
       setInput("speculationMaxPrimary", scheduler.speculation_max_primary_interests);
       setInput("speculationMaxSecondary", scheduler.speculation_max_secondary_interests);
 
+      const discovery = config.discovery || {};
+      setSelect("multimodalEvaluationEnabled", discovery.multimodal_evaluation_enabled ? "on" : "off");
+      setInput("multimodalBatchSize", discovery.multimodal_batch_size);
+      setInput("multimodalImageMaxPx", discovery.multimodal_image_max_px);
+      setInput("multimodalImageQuality", discovery.multimodal_image_quality);
+      setInput("multimodalImageTimeout", discovery.multimodal_image_timeout_seconds);
+      const multimodalStatus = $("#multimodalEvaluationStatus");
+      if (multimodalStatus) {
+        multimodalStatus.textContent = discovery.multimodal_evaluation_enabled ? "开启" : "关闭";
+      }
+
       setSelect("language", config.language || "zh");
       setInput("dataDir", config.data_dir);
       setInput("storageDbPath", config.storage?.db_path);
@@ -4124,6 +4135,14 @@
           speculation_max_secondary_interests: getIntInput("speculationMaxSecondary", 60),
           auto_update_enabled: $("#autoUpdate").value === "on",
           auto_update_check_interval_hours: getIntInput("autoUpdateInterval", 6)
+        },
+        discovery: {
+          ...(state.config?.discovery || {}),
+          multimodal_evaluation_enabled: $("#multimodalEvaluationEnabled").value === "on",
+          multimodal_batch_size: getIntInput("multimodalBatchSize", 8),
+          multimodal_image_max_px: getIntInput("multimodalImageMaxPx", 384),
+          multimodal_image_quality: getIntInput("multimodalImageQuality", 72),
+          multimodal_image_timeout_seconds: getIntInput("multimodalImageTimeout", 6)
         },
         storage: { db_path: getInput("storageDbPath") },
         logging: {

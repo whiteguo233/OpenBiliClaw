@@ -164,6 +164,10 @@ def test_bili_task_result_enqueues_videos_into_discovery_candidates(
                     "duration": 321,
                     "view_count": 1234,
                     "like_count": 88,
+                    "favorite_count": 77,
+                    "danmaku_count": 66,
+                    "comment_count": 55,
+                    "share_count": 44,
                     "description": "轴体与配列",
                 }
             ],
@@ -188,6 +192,10 @@ def test_bili_task_result_enqueues_videos_into_discovery_candidates(
     assert row["duration"] == 321
     assert row["view_count"] == 1234
     assert row["like_count"] == 88
+    assert row["favorite_count"] == 77
+    assert row["danmaku_count"] == 66
+    assert row["comment_count"] == 55
+    assert row["share_count"] == 44
     assert row["score_threshold"] == 0.65
     assert row["source_keyword_id"] == 7
     raw_payload = json.loads(str(row["raw_payload"]))

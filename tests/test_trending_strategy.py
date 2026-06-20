@@ -98,6 +98,40 @@ class FakeRankingClient:
         return self.results_by_rid.get(rid, [])
 
 
+def test_trending_strategy_map_ranking_item_maps_stat_metrics() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+        llm_evaluation=False,
+    )
+
+    content = strategy._map_ranking_item(
+        {
+            "bvid": "BV1metrics",
+            "title": "指标视频",
+            "owner": {"name": "UP", "mid": 1},
+            "stat": {
+                "view": 1000,
+                "like": 100,
+                "favorite": 90,
+                "danmaku": 80,
+                "reply": 70,
+                "share": 60,
+            },
+        }
+    )
+
+    assert content is not None
+    assert content.view_count == 1000
+    assert content.like_count == 100
+    assert content.favorite_count == 90
+    assert content.danmaku_count == 80
+    assert content.comment_count == 70
+    assert content.share_count == 60
+
+
 class _SlowScoringLLMService(FakeLLMService):
     def __init__(self, contents: list[str], delay: float = 0.02) -> None:
         super().__init__(contents)

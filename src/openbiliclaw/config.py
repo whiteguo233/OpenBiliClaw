@@ -49,6 +49,10 @@ _DEFAULT_HISTORY_WINDOW_HOURS = 48
 _DEFAULT_CLAIM_LEASE_MINUTES = 10
 _DEFAULT_PLANNER_POLL_SECONDS = 120
 _DEFAULT_PLAN_TTL_HOURS = 12
+_DEFAULT_MULTIMODAL_BATCH_SIZE = 8
+_DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
+_DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
+_DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS = 6
 DEFAULT_LLM_CONCURRENCY = 3
 _MIN_LLM_CONCURRENCY = 1
 _MAX_LLM_CONCURRENCY = 16
@@ -292,6 +296,15 @@ class DiscoveryConfig:
     # Plan staleness backstop: pending keywords older than this expire even if
     # the profile digest hasn't changed.
     plan_ttl_hours: int = _DEFAULT_PLAN_TTL_HOURS
+    # Optional cover-image evaluation. Kept off by default because it changes
+    # LLM cost/latency and requires a vision-capable evaluation model.
+    multimodal_evaluation_enabled: bool = False
+    # Smaller batch for image-bearing evaluation calls.
+    multimodal_batch_size: int = _DEFAULT_MULTIMODAL_BATCH_SIZE
+    # Cover-image preprocessing bounds before sending to the evaluator.
+    multimodal_image_max_px: int = _DEFAULT_MULTIMODAL_IMAGE_MAX_PX
+    multimodal_image_quality: int = _DEFAULT_MULTIMODAL_IMAGE_QUALITY
+    multimodal_image_timeout_seconds: int = _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -936,6 +949,34 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
             discovery_raw.get("plan_ttl_hours"),
             default=_DEFAULT_PLAN_TTL_HOURS,
             min_value=1,
+        ),
+        multimodal_evaluation_enabled=_coerce_bool(
+            discovery_raw.get("multimodal_evaluation_enabled"),
+            default=False,
+        ),
+        multimodal_batch_size=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_batch_size"),
+            default=_DEFAULT_MULTIMODAL_BATCH_SIZE,
+            min_value=1,
+            max_value=12,
+        ),
+        multimodal_image_max_px=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_max_px"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+            min_value=128,
+            max_value=768,
+        ),
+        multimodal_image_quality=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_quality"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+            min_value=40,
+            max_value=90,
+        ),
+        multimodal_image_timeout_seconds=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_timeout_seconds"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
+            min_value=1,
+            max_value=20,
         ),
     )
 
@@ -1894,6 +1935,13 @@ def _render_config_toml(
             f"claim_lease_minutes = {config.discovery.claim_lease_minutes}",
             f"planner_poll_seconds = {config.discovery.planner_poll_seconds}",
             f"plan_ttl_hours = {config.discovery.plan_ttl_hours}",
+            "multimodal_evaluation_enabled = "
+            f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
+            f"multimodal_batch_size = {config.discovery.multimodal_batch_size}",
+            f"multimodal_image_max_px = {config.discovery.multimodal_image_max_px}",
+            f"multimodal_image_quality = {config.discovery.multimodal_image_quality}",
+            "multimodal_image_timeout_seconds = "
+            f"{config.discovery.multimodal_image_timeout_seconds}",
             "",
             *_autostart_lines(
                 config,

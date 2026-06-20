@@ -635,12 +635,22 @@ def _build_discovery_engine() -> Any:
     from openbiliclaw.llm.registry import build_embedding_service
 
     embedding_service = build_embedding_service(cfg, registry)
+    discovery_cfg = getattr(cfg, "discovery", None)
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
         concurrency=concurrency,
         embedding_service=embedding_service,
+        multimodal_evaluation_enabled=bool(
+            getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
+        ),
+        multimodal_batch_size=int(getattr(discovery_cfg, "multimodal_batch_size", 8)),
+        multimodal_image_max_px=int(getattr(discovery_cfg, "multimodal_image_max_px", 384)),
+        multimodal_image_quality=int(getattr(discovery_cfg, "multimodal_image_quality", 72)),
+        multimodal_image_timeout_seconds=int(
+            getattr(discovery_cfg, "multimodal_image_timeout_seconds", 6)
+        ),
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,

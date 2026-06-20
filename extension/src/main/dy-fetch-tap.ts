@@ -38,6 +38,11 @@ export interface DouyinBootstrapItem {
   author: string;
   author_sec_uid: string;
   cover_url: string;
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
 }
 
 export interface DouyinSearchItem {
@@ -51,6 +56,11 @@ export interface DouyinSearchItem {
   hot_word?: string;
   sentence_id?: string;
   seed_aweme_id?: string;
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
 }
 
 /**
@@ -79,6 +89,44 @@ export function classifyDouyinResponseUrl(url: string): DouyinScope | null {
 
 function pickString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function pickNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(/,/g, ""));
+    return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
+  }
+  return 0;
+}
+
+function pickAwemeMetrics(rawStatistics: unknown): {
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
+} {
+  if (!rawStatistics || typeof rawStatistics !== "object") return {};
+  const statistics = rawStatistics as {
+    play_count?: unknown;
+    digg_count?: unknown;
+    collect_count?: unknown;
+    comment_count?: unknown;
+    share_count?: unknown;
+  };
+  const view_count = pickNumber(statistics.play_count);
+  const like_count = pickNumber(statistics.digg_count);
+  const collect_count = pickNumber(statistics.collect_count);
+  const comment_count = pickNumber(statistics.comment_count);
+  const share_count = pickNumber(statistics.share_count);
+  return {
+    ...(view_count > 0 ? { view_count } : {}),
+    ...(like_count > 0 ? { like_count } : {}),
+    ...(collect_count > 0 ? { collect_count } : {}),
+    ...(comment_count > 0 ? { comment_count } : {}),
+    ...(share_count > 0 ? { share_count } : {}),
+  };
 }
 
 function pickFirstUrl(coverField: unknown): string {
@@ -127,6 +175,7 @@ export function parseAwemeListResponse(
       preview_title?: unknown;
       author?: unknown;
       video?: { cover?: unknown };
+      statistics?: unknown;
     };
     const awemeId = pickString(aweme.aweme_id);
     const title = pickString(aweme.desc) || pickString(aweme.preview_title);
@@ -142,6 +191,7 @@ export function parseAwemeListResponse(
       author: author.nickname,
       author_sec_uid: author.sec_uid,
       cover_url: coverUrl,
+      ...pickAwemeMetrics(aweme.statistics),
     });
   }
   return items;
@@ -207,6 +257,7 @@ function normalizeSearchAweme(
     share_info?: { share_title?: unknown; share_desc?: unknown };
     author?: unknown;
     video?: { cover?: unknown; origin_cover?: unknown; animated_cover?: unknown };
+    statistics?: unknown;
   };
   const awemeId = pickString(aweme.aweme_id);
   const title =
@@ -227,6 +278,7 @@ function normalizeSearchAweme(
       pickFirstUrl(aweme.video?.cover) ||
       pickFirstUrl(aweme.video?.origin_cover) ||
       pickFirstUrl(aweme.video?.animated_cover),
+    ...pickAwemeMetrics(aweme.statistics),
   };
   if (scope === "dy_hot") {
     item.hot_word = meta.word ?? "";

@@ -4,6 +4,13 @@
 
 ---
 
+## Unreleased: 多源评估指标与封面图评估（2026-06-20）
+
+- **各来源候选补齐互动指标**：`DiscoveredContent`、`discovery_candidates`、`content_cache` 与来源归一化链路新增观看、点赞、收藏、评论、分享、弹幕、转推、书签等字段；B 站 / 小红书 / 抖音 / YouTube / X 能取到的指标会随候选进入统一 evaluator。batch prompt 同时带 `tags/body_text`，并明确互动指标只作辅助，不能用热度覆盖内容与画像的真实匹配。
+- **可选多模态 discovery evaluator**：新增 `[discovery].multimodal_evaluation_enabled` 及 batch/图片压缩参数；设置页可开关。开启且当前 evaluation 路由支持图像输入时，候选封面优先从 `data/image-cache/` 读取，未命中才经白名单抓取、缩放和 JPEG 压缩后作为 image input 进入同一 batch evaluator；小红书已缓存头图不再依赖评估时原 CDN token 仍有效。模型不支持或图片准备失败时自动退回纯文本 + 指标评估。
+- **浏览器扩展 DOM 采集补齐指标**：小红书被动卡片和抖音 DOM / passive fetch 路径会解析可见的浏览、点赞、收藏、评论、分享数字并回传后端，补齐插件来源候选的评估上下文。
+- **插件设置补齐封面图评估开关**：浏览器插件 side panel 的调度 tab 现在也能开关 `[discovery].multimodal_evaluation_enabled`，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存时保留既有 discovery 配置，避免插件与桌面 Web 设置面脱节。
+
 ## v0.3.128 / extension v0.3.83: 抖音 DOM-first discovery（2026-06-18）
 
 后端源码走 `backend-v0.3.128`，浏览器插件走 `extension-v0.3.83`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.128`。
