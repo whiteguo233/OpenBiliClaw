@@ -624,11 +624,29 @@ class BilibiliAPIClient:
 
         while page <= max_pages:
             try:
+                img_key, sub_key = await self._get_wbi_keys()
                 data = await self._get_json(
                     "/x/v3/fav/resource/list",
-                    params={"media_id": media_id, "pn": page, "ps": page_size},
+                    params=self._sign_wbi_params(
+                        {"media_id": media_id, "pn": page, "ps": page_size},
+                        img_key=img_key,
+                        sub_key=sub_key,
+                    ),
+                    headers={
+                        "Referer": "https://space.bilibili.com/favlist",
+                        "Origin": "https://space.bilibili.com",
+                    },
                 )
-            except Exception as exc:
+            except BilibiliAPIError as exc:
+                cause = exc.__cause__
+                if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 412:
+                    logger.warning(
+                        "收藏夹 %d 第 %d 页请求被拒绝 (412) — "
+                        "刷新 WBI keys 并重试",
+                        media_id, page,
+                    )
+                    self._cached_wbi_keys = None
+                    continue
                 logger.warning("收藏夹 %d 第 %d 页请求失败: %s", media_id, page, exc)
                 if page == 1:
                     exit_reason = f"first_page_error_{type(exc).__name__}"

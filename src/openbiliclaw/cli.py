@@ -4804,9 +4804,13 @@ async def run_guided_init(
     console.print(f"  总信号量: [green]{len(events)}[/green] 条事件")
     # Chunk the event list so multiple analysis calls run concurrently
     # instead of serialising one max-thinking call over ~800 events.
+    chunk_size = 200
+    num_chunks = max(1, (len(events) + chunk_size - 1) // chunk_size)
+    llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
+    effective_concurrency = min(num_chunks, llm_concurrency)
     await _run_with_progress(
-        soul_engine.analyze_events(events, event_chunk_size=200),
-        label="分析偏好(4 个并发分片)",
+        soul_engine.analyze_events(events, event_chunk_size=chunk_size),
+        label=f"分析偏好({effective_concurrency} 个并发分片)",
         eta_seconds=180,
     )
     await _stage_done(2)
@@ -6052,10 +6056,17 @@ def import_youtube(
     console.print("  [green]✓ 记忆层写入完成[/green]")
 
     _print_section_title("2/2 更新偏好画像")
-    console.print(f"  分析 {stats.total} 条 YouTube 信号（并发分片 200 条）…")
+    chunk_size = 200
+    num_chunks = max(1, (stats.total + chunk_size - 1) // chunk_size)
+    llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
+    effective_concurrency = min(num_chunks, llm_concurrency)
+    console.print(
+        f"  分析 {stats.total} 条 YouTube 信号（{effective_concurrency} 个并发分片，"
+        f"每片 {chunk_size} 条）…"
+    )
     asyncio.run(
         _run_with_progress(
-            soul_engine.analyze_events(result.events, event_chunk_size=200),
+            soul_engine.analyze_events(result.events, event_chunk_size=chunk_size),
             label="分析偏好（YouTube 信号）",
             eta_seconds=90,
         )
