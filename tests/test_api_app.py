@@ -59,6 +59,55 @@ class TestBackendAPI:
         assert 'href="/web/assets/css/app.css?v=' in response.text
         assert 'src="/web/assets/js/app.js?v=' in response.text
 
+    def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/m/")
+
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("text/html")
+        assert '<link rel="manifest" href="manifest.json">' in response.text
+        assert '<meta name="apple-mobile-web-app-capable" content="yes">' in response.text
+        assert '<meta name="apple-mobile-web-app-title" content="BiliClaw">' in response.text
+        assert '<link rel="apple-touch-icon" sizes="180x180" href="icon-192.png">' in response.text
+
+    def test_mobile_web_manifest_is_installable_and_assets_resolve(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/m/manifest.json")
+
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("application/json")
+        manifest = response.json()
+        assert manifest["id"] == "/m/"
+        assert manifest["scope"] == "/m/"
+        assert manifest["start_url"] == "/m/"
+        assert manifest["display"] == "standalone"
+        assert manifest["name"] == "OpenBiliClaw"
+        assert manifest["short_name"] == "BiliClaw"
+        assert manifest.get("prefer_related_applications") is not True
+
+        icons = manifest["icons"]
+        sizes = {icon["sizes"] for icon in icons}
+        assert {"192x192", "512x512"}.issubset(sizes)
+
+        for icon in icons:
+            assert icon["type"] == "image/png"
+            assert icon.get("purpose") == "any maskable"
+            icon_response = client.get(f"/m/{icon['src']}")
+            assert icon_response.status_code == 200
+            assert icon_response.headers.get("content-type", "").startswith("image/png")
+
+        favicon_response = client.get("/favicon.ico")
+        assert favicon_response.status_code == 200
+        assert favicon_response.headers.get("content-type", "").startswith("image/png")
+
     @pytest.mark.asyncio
     async def test_runtime_context_presence_survives_rebuild(
         self,
