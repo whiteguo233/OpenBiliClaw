@@ -23,13 +23,16 @@ class _FallbackClient:
         self.keywords: list[str] = []
         self.hot_board_calls = 0
         self.feed_calls = 0
+        self.hot_terms: list[dict[str, object]] = [
+            {"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}
+        ]
 
     async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
         self.keywords.append(keyword)
         return [{"aweme_id": "fallback", "desc": "fallback result"}]
 
     async def get_hot_terms(self, *, limit: int = 30) -> list[dict[str, object]]:
-        return [{"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}]
+        return self.hot_terms[:limit]
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
         self.hot_board_calls += 1
@@ -195,6 +198,46 @@ async def test_plugin_search_client_does_not_fallback_to_direct_hot_on_empty_tas
 
     assert fallback.hot_board_calls == 0
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_plugin_hot_preserves_seed_aweme_id_from_hot_terms(database: Database) -> None:
+    fallback = _FallbackClient()
+    fallback.hot_terms = [
+        {
+            "word": "热点词",
+            "sentence_id": "2495363",
+            "group_id": "7652229189183427849",
+            "hot_value": 123,
+        }
+    ]
+    queue = DyTaskQueue(database)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=2,
+        poll_interval_seconds=0.01,
+        kick=lambda: None,
+    )
+
+    async def complete_task() -> None:
+        for _ in range(100):
+            task = queue.next_pending()
+            if task:
+                assert task["type"] == "hot"
+                assert '"sentence_id": "2495363"' in str(task["payload_json"])
+                assert '"seed_aweme_id": "7652229189183427849"' in str(task["payload_json"])
+                queue.merge_result(
+                    str(task["id"]),
+                    videos=[],
+                    scope_counts={"dy_hot": 0},
+                    complete=True,
+                )
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("hot task was not enqueued")
+
+    await asyncio.gather(client.get_hot_board(limit=5), complete_task())
 
 
 @pytest.mark.asyncio

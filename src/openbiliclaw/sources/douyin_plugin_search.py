@@ -372,8 +372,13 @@ def _normalize_hot_task_items(hot_terms: list[dict[str, object]]) -> list[dict[s
             item["word"] = word
         if "hot_value" in term:
             item["hot_value"] = term["hot_value"]
+        seed_aweme_id = str(
+            term.get("seed_aweme_id") or term.get("group_id") or term.get("aweme_id") or ""
+        ).strip()
+        if seed_aweme_id:
+            item["seed_aweme_id"] = seed_aweme_id
         items.append(item)
-    return items
+    return sorted(items, key=lambda item: not bool(item.get("seed_aweme_id")))
 
 
 def _hot_seed_count(limit: int) -> int:
@@ -381,5 +386,5 @@ def _hot_seed_count(limit: int) -> int:
     if limit <= 0:
         return 0
     if limit <= 10:
-        return 1
+        return 5
     return 2

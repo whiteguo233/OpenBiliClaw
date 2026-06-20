@@ -123,6 +123,8 @@ export interface DyHotTaskItem {
   word?: string;
   sentence_id: string;
   hot_value?: number;
+  seed_aweme_id?: string;
+  group_id?: string;
 }
 
 export interface DyTaskResult {
@@ -526,6 +528,7 @@ function sendHotExecuteMessage(): void {
   if (!hotProgress || !taskTabId) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
+  const seedAwemeId = (hotItem.seed_aweme_id ?? hotItem.group_id ?? "").trim();
   void chrome.tabs
     .sendMessage(taskTabId, {
       action: "DY_HOT_EXECUTE",
@@ -533,6 +536,7 @@ function sendHotExecuteMessage(): void {
         task_id: hotProgress.task_id,
         sentence_id: hotItem.sentence_id,
         word: hotItem.word ?? "",
+        ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
         max_items: hotProgress.max_items_per_hot,
         debug_inject_status: _lastInjectStatus,
       },
@@ -656,13 +660,15 @@ function normalizeHotTaskItems(items: DyHotTaskItem[] | undefined): DyHotTaskIte
     const sentenceId = String(item?.sentence_id ?? "").trim();
     if (!sentenceId || seen.has(sentenceId)) continue;
     seen.add(sentenceId);
+    const seedAwemeId = String(item.seed_aweme_id ?? item.group_id ?? "").trim();
     result.push({
       sentence_id: sentenceId,
       word: String(item.word ?? "").trim(),
       hot_value: item.hot_value,
+      ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
     });
   }
-  return result;
+  return result.sort((a, b) => Number(Boolean(b.seed_aweme_id)) - Number(Boolean(a.seed_aweme_id)));
 }
 
 export async function executeTask(task: DyTask): Promise<void> {

@@ -248,14 +248,26 @@ test("buildDyExecuteMessageData includes hot task payload", () => {
   const data = buildDyExecuteMessageData({
     id: "hot-task",
     type: "hot",
-    hot_items: [{ word: "热点词", sentence_id: "2495363" }],
+    hot_items: [
+      {
+        word: "热点词",
+        sentence_id: "2495363",
+        seed_aweme_id: "7652229189183427849",
+      },
+    ],
     max_items_per_hot: 8,
     max_items: 3,
   });
 
   assert.equal(data.task_id, "hot-task");
   assert.equal(data.type, "hot");
-  assert.deepEqual(data.hot_items, [{ word: "热点词", sentence_id: "2495363" }]);
+  assert.deepEqual(data.hot_items, [
+    {
+      word: "热点词",
+      sentence_id: "2495363",
+      seed_aweme_id: "7652229189183427849",
+    },
+  ]);
   assert.equal(data.max_items_per_hot, 8);
   assert.equal(data.max_items, 3);
 });

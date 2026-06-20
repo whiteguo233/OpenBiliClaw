@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import {
   douyinDiscoveryExecutionPolicy,
   filterDiscoveryItemsForScope,
+  isDouyinSearchResultUrl,
   isValidFeedExecuteMessage,
   isValidScopeExecuteMessage,
 } from "../src/content/douyin.ts";
@@ -103,9 +104,24 @@ test("isValidFeedExecuteMessage accepts feed payload and rejects malformed input
 test("douyin discovery execution policy is dom first", () => {
   assert.deepEqual(douyinDiscoveryExecutionPolicy(), {
     search: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
-    hot: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+    hot: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
     feed: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
   });
+});
+
+test("isDouyinSearchResultUrl requires a real search results route", () => {
+  assert.equal(
+    isDouyinSearchResultUrl(
+      "https://www.douyin.com/jingxuan/search/%E7%A7%91%E6%8A%80?enter_from=discover",
+      "科技",
+    ),
+    true,
+  );
+  assert.equal(isDouyinSearchResultUrl("https://www.douyin.com/jingxuan", "科技"), false);
+  assert.equal(
+    isDouyinSearchResultUrl("https://www.douyin.com/jingxuan/search/%E7%BE%8E%E9%A3%9F", "科技"),
+    false,
+  );
 });
 
 test("filterDiscoveryItemsForScope keeps only the requested discovery scope", () => {
@@ -122,4 +138,42 @@ test("filterDiscoveryItemsForScope keeps only the requested discovery scope", ()
   assert.equal(items.length, 1);
   assert.equal(items[0]!.scope, "dy_search");
   assert.equal(items[0]!.aweme_id, "search-1");
+});
+
+test("filterDiscoveryItemsForScope merges duplicate hot metadata", () => {
+  const items = filterDiscoveryItemsForScope(
+    [
+      {
+        scope: "dy_hot",
+        aweme_id: "hot-1",
+        url: "https://www.douyin.com/video/hot-1",
+        title: "热点",
+        author: "作者",
+        author_sec_uid: "",
+        cover_url: "",
+        like_count: 10,
+      },
+      {
+        scope: "dy_hot",
+        aweme_id: "hot-1",
+        url: "https://www.douyin.com/video/hot-1",
+        title: "热点",
+        author: "作者",
+        author_sec_uid: "",
+        cover_url: "",
+        hot_word: "热点词",
+        sentence_id: "2495363",
+        seed_aweme_id: "7652229189183427849",
+        like_count: 20,
+      },
+    ],
+    "dy_hot",
+    1,
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]!.hot_word, "热点词");
+  assert.equal(items[0]!.sentence_id, "2495363");
+  assert.equal(items[0]!.seed_aweme_id, "7652229189183427849");
+  assert.equal(items[0]!.like_count, 10);
 });

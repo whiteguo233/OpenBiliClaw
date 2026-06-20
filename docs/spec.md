@@ -296,7 +296,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │              │  │ + profile/search/feed/yt)│ │ + LLM 抽取)│    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ DouyinDiscoveryService: 首页 DOM 触发 search / 热点 related / feed │   │
+│  │ DouyinDiscoveryService: 首页 DOM 触发 search / 热点 seed-related / feed │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │

@@ -780,7 +780,7 @@ $ openbiliclaw discover --source douyin --limit 20
 
 抖音 discovery 需要 `[sources.douyin].enabled = true`。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。
 
-`search` 子来源走浏览器插件 DOM-first 链路：CLI 入队 `dy_tasks(type="search")`，扩展后台 tab 先打开抖音首页，再在已登录页面里模拟搜索框输入 / 提交，候选以 `dy-plugin-search` 进入 discovery。`hot` 子来源同样走插件：后端取 hot board 的 `sentence_id`，扩展从首页点击热榜 / 热点入口和目标热词，靠页面自身加载与被动响应监听回传 `dy_hot`，候选以 `dy-plugin-hot-related` 进入 discovery；小批量 hot 请求会少量展开 hot seed，并在累计达到 `--limit` 后提前结束，避免串行 DOM 点击和页面加载拖到 `task_timeout`。`feed` 子来源会入队 `dy_tasks(type="feed")`，扩展在首页推荐流滚动触发加载，候选以 `dy-plugin-feed` 进入 discovery。三条链路都不主动跳 `/search/...`、`/hot/...` 快捷 URL，也不主动调用 search / related / feed API bridge；插件任务空 / 超时 / 失败时默认返回 0 条，direct-cookie fallback 只保留给显式诊断路径。
+`search` 子来源走浏览器插件 DOM-first 链路：CLI 入队 `dy_tasks(type="search")`，扩展后台 tab 先打开抖音首页，再在已登录页面里模拟搜索框输入 / 提交，候选以 `dy-plugin-search` 进入 discovery；fetch tap 兼容 `/general/search/single/`、`/search/item/` 和新版 `/general/search/stream/` chunked JSON。`hot` 子来源同样走插件：后端取 hot board 的 `sentence_id`，并把可用的 `group_id` 作为 `seed_aweme_id` 透传给扩展；扩展从首页点击热榜 / 热点入口和目标热词，靠页面自身加载与被动响应监听回传 `dy_hot`，不足时用已登录页面的 related API bridge 按 seed 拉相关视频，候选以 `dy-plugin-hot-related` 进入 discovery；小批量 hot 请求会展开一个小窗口并优先执行带 seed 的 hot item，在累计达到 `--limit` 后提前结束，避免串行 DOM 点击和页面加载拖到 `task_timeout`。`feed` 子来源会入队 `dy_tasks(type="feed")`，扩展在首页推荐流滚动触发加载，候选以 `dy-plugin-feed` 进入 discovery。三条链路都不主动跳 `/search/...`、`/hot/...` 快捷 URL；插件任务空 / 超时 / 失败时默认返回 0 条，direct-cookie fallback 只保留给显式诊断路径。search 若真实响应为 `search_nil_info.search_nil_item="hit_shark"` 且没有 `data/aweme_list`，属于抖音反爬空结果，CLI 会显示 0 条。
 
 需要调试抖音 discovery 子来源时，优先使用独立命令 `openbiliclaw discover-douyin`。它和 `discover --source douyin` 共用同一个 `DouyinDiscoveryService`，但可以显式指定关键词、是否写缓存和是否跳过 LLM 评估：
 
@@ -816,7 +816,7 @@ $ openbiliclaw search-douyin -k 猫 --max-items-per-keyword 10 -w 180
 - 扩展会在已登录抖音浏览器会话的后台 tab 先打开首页，再模拟真实搜索框输入和提交；MAIN-world fetch tap 只被动收集页面自己发出的搜索响应，content script 同时解析已渲染 DOM，再把 `dy_search` 候选回传。
 - 默认等待窗口为 `180s`；如果调试机上搜索页首开很慢，可显式加 `--wait-seconds 240`。
 - 结果只作为搜索 discovery 候选保存在任务结果中；后端不会把它转换成 memory event，也不会重建画像。独立 `search-douyin` smoke 不写 `content_cache`；正式 `discover-douyin --source search` / `discover --source douyin` 会把同一插件搜索候选纳入 discovery 结果，并在 cache 模式下按 `dy-plugin-search` 写入 `content_cache`。
-- 如果返回 0 条，优先检查是否有多个加载扩展的 Chrome 实例抢任务、当前浏览器是否登录抖音、页面搜索入口是否可见，以及 debug 中 `ui_triggered / api_items_harvested / dom_items_harvested`。
+- 如果返回 0 条，优先检查是否有多个加载扩展的 Chrome 实例抢任务、当前浏览器是否登录抖音、页面搜索入口是否可见，以及 debug 中 `ui_triggered / api_items_harvested / dom_items_harvested`。若 direct / 页面响应的 `search_nil_info.search_nil_item` 为 `hit_shark`，说明当前 Cookie / 会话被抖音搜索风控空 200 拦截。
 
 如果画像尚未初始化，会提示先执行：
 

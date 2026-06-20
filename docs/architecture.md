@@ -59,7 +59,7 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 - `SourceAdapter` Protocol：每个内容源实现统一接口
 - `bilibili_adapter` — B 站 API 直连（WBI 签名、v_voucher 自动恢复）；`bili_tasks` + `/api/sources/bili/*` 提供搜索冷却时的扩展 DOM 搜索兜底，回传结果进入 `discovery_candidates`
 - `xiaohongshu_adapter` — 小红书扩展代理（被动收集 + 关键词搜索 + 创作者订阅 + `bootstrap_profile` 初始化画像任务，零后端爬取；task-result 进入 memory 前按已见 note key 跨任务去重）
-- `dy_tasks` — 抖音扩展任务队列（`bootstrap_profile` 初始化画像任务；发布 / 收藏 / 点赞 / 关注信号由扩展以用户浏览器登录态抓取；任务 poll 时标记 `in_progress`，CLI 可复用近期 bootstrap；`search` / `hot` / `feed` discovery 任务统一从 `https://www.douyin.com/` 首页开始，由 content script 模拟真实 DOM 操作触发搜索、热榜或推荐流加载，再被动收集页面自身发出的响应和已渲染 DOM，分别回传 `dy_search` / `dy_hot` / `dy_feed` 候选；三者分别作为 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` discovery 来源）
+- `dy_tasks` — 抖音扩展任务队列（`bootstrap_profile` 初始化画像任务；发布 / 收藏 / 点赞 / 关注信号由扩展以用户浏览器登录态抓取；任务 poll 时标记 `in_progress`，CLI 可复用近期 bootstrap；`search` / `hot` / `feed` discovery 任务统一从 `https://www.douyin.com/` 首页开始，由 content script 模拟真实 DOM 操作触发搜索、热榜或推荐流加载，再被动收集页面自身发出的响应和已渲染 DOM；hot board 的 `group_id` 会作为 `seed_aweme_id` 透传，DOM / 被动监听不足时用已登录页面 related API bridge 拉取热点相关候选；三者分别回传 `dy_search` / `dy_hot` / `dy_feed`，并作为 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` discovery 来源）
 - `yt_tasks` — YouTube 扩展任务队列（`bootstrap_profile` 初始化画像任务；观看历史 / 订阅 / 点赞由扩展以用户浏览器登录态读取 DOM 并分批回传；任务 poll 时标记 `in_progress`，CLI 可复用近期 bootstrap）
 - `youtube.takeout` — Google Takeout 离线导入解析器，将 YouTube 观看历史 / 订阅 / 点赞转换为统一事件
 - `YoutubeDiscoveryProducer` — 后端直连的 YouTube steady-state discovery loop；在 YouTube 平台族低于 quota 时调用 `yt_search` / `yt_trending` / `yt_channel`，并用 SQLite execution ledger 控制每日执行预算
@@ -129,7 +129,7 @@ v0.3.102+：上述四阶段（拉取 + 入库 / 分析偏好 / 生成画像 ‖ 
 
 抖音 steady-state 内容发现走 opt-in 路径：`OPENBILICLAW_DOUYIN_COOKIE` 可显式覆盖，默认则复用浏览器扩展同步到 `data/douyin_cookie.json` 的 douyin.com Cookie。后端 `DouyinDirectClient` 仍保留 direct-cookie 诊断能力，但默认 discovery 子来源已收敛为插件执行的 `search` / `hot` / `feed`：后端只入队 `dy_tasks(type="search"|"hot"|"feed")`，扩展后台 tab 一律先打开 `https://www.douyin.com/`，再由 content script 模拟真实 DOM 操作触发页面加载。
 
-search 会聚焦页面搜索框、输入关键词并触发搜索；hot 会从首页可见入口进入热榜 / 热点卡并点击目标热词；feed 保持在首页推荐流并滚动。三条链路都不再主动跳 `/search/...`、`/hot/...` 等快捷 URL，也不再由 content script 主动调用 search / related / feed API bridge。插件只被动监听页面自己发出的 fetch/XHR 响应，并同时解析已渲染 DOM，回传 `dy_search` / `dy_hot` / `dy_feed` 候选。`DouyinDiscoveryService` 是这条链路的复用边界：runtime 正常路径拉 raw candidates 后写入 `discovery_candidates`，再由共享 evaluator 入正式推荐池；调试时也可以由 `openbiliclaw discover-douyin --no-cache --no-evaluate` 直接跑 strategy 预览召回。这样初始化强账号信号与后台补池请求分离，且 search / hot / feed 都能复用真实登录浏览器但不会抢用户焦点。
+search 会聚焦页面搜索框、输入关键词并触发搜索；hot 会从首页可见入口进入热榜 / 热点卡并点击目标热词，同时使用 hot board 的 `group_id` 作为 related seed；feed 保持在首页推荐流并滚动。三条链路都不再主动跳 `/search/...`、`/hot/...` 等快捷 URL；search / feed 只被动监听页面自己发出的 fetch/XHR 响应并解析已渲染 DOM，hot 则在 DOM / 被动监听不足时用已登录页面的 related API bridge 按 `seed_aweme_id` 拉取 `dy_hot` 候选。`DouyinDiscoveryService` 是这条链路的复用边界：runtime 正常路径拉 raw candidates 后写入 `discovery_candidates`，再由共享 evaluator 入正式推荐池；调试时也可以由 `openbiliclaw discover-douyin --no-cache --no-evaluate` 直接跑 strategy 预览召回。这样初始化强账号信号与后台补池请求分离，且 search / hot / feed 都能复用真实登录浏览器但不会抢用户焦点。
 
 `openbiliclaw search-douyin` 保留为同一插件 DOM-first 搜索链路的独立 smoke：结果只保存在任务结果里用于诊断，不进入 `content_cache`，也不参与画像重建；正式 runtime discovery 会把这些候选映射为 aweme-like JSON，以 `dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 进入 `discovery_candidates` 待评估池。插件任务为空、超时或失败时默认返回空结果；只有显式构造 `DouyinPluginSearchClient(allow_direct_fallback=True)` 的诊断代码才会启用 direct-cookie fallback。
 

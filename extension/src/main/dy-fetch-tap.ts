@@ -429,6 +429,7 @@ function isSearchResponseUrl(url: string): boolean {
   const path = url.split("?", 1)[0] ?? "";
   return (
     path.includes("/aweme/v1/web/general/search/single/") ||
+    path.includes("/aweme/v1/web/general/search/stream/") ||
     path.includes("/aweme/v1/web/search/item/")
   );
 }
@@ -456,6 +457,35 @@ function parsePassiveDiscoveryResponse(url: string, json: unknown): DouyinSearch
     return parseSearchAwemeResponse(json);
   }
   return [];
+}
+
+function parseJsonText(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) throw new SyntaxError("empty JSON body");
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const withoutChunkPrefix = trimmed.replace(/^[0-9a-fA-F]+\r?\n/, "").trim();
+    try {
+      return JSON.parse(withoutChunkPrefix) as unknown;
+    } catch {
+      const start = withoutChunkPrefix.search(/[{\[]/);
+      const objectEnd = withoutChunkPrefix.lastIndexOf("}");
+      const arrayEnd = withoutChunkPrefix.lastIndexOf("]");
+      const end = Math.max(objectEnd, arrayEnd);
+      if (start < 0 || end < start) throw new SyntaxError("invalid JSON body");
+      return JSON.parse(withoutChunkPrefix.slice(start, end + 1)) as unknown;
+    }
+  }
+}
+
+async function readJsonResponse(resp: Response): Promise<unknown> {
+  try {
+    return (await resp.clone().json()) as unknown;
+  } catch {
+    const text = await resp.clone().text();
+    return parseJsonText(text);
+  }
 }
 
 /**
@@ -489,7 +519,7 @@ export function installFetchTap(
     const scope = classifyDouyinResponseUrl(url);
     if (scope) {
       try {
-        const json: unknown = await resp.clone().json();
+        const json: unknown = await readJsonResponse(resp);
         const items =
           scope === "dy_follow"
             ? parseUserFollowListResponse(json)
@@ -504,7 +534,7 @@ export function installFetchTap(
       }
     } else if (isPassiveDiscoveryResponseUrl(url) && postSearchBack) {
       try {
-        const json: unknown = await resp.clone().json();
+        const json: unknown = await readJsonResponse(resp);
         const items = parsePassiveDiscoveryResponse(url, json);
         if (items.length > 0) {
           postSearchBack(items);
@@ -567,7 +597,7 @@ export function installXhrTap(
       try {
         const text = this.responseText;
         if (!text) return;
-        const json: unknown = JSON.parse(text);
+        const json: unknown = parseJsonText(text);
         if (scope) {
           const items =
             scope === "dy_follow"

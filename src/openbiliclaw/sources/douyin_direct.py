@@ -430,6 +430,10 @@ def _extract_hot_terms(data: dict[str, Any]) -> list[dict[str, Any]]:
         for key in ("hot_value", "position", "rank", "event_time"):
             if key in raw:
                 term[key] = raw[key]
+        seed_aweme_id = _first_text(raw.get("group_id"), raw.get("aweme_id"))
+        if seed_aweme_id:
+            term["group_id"] = seed_aweme_id
+            term["seed_aweme_id"] = seed_aweme_id
         aweme = raw.get("aweme_info") or raw.get("aweme")
         if isinstance(aweme, dict):
             term["aweme"] = aweme
