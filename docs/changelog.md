@@ -10,6 +10,7 @@
 - **可选多模态 discovery evaluator**：新增 `[discovery].multimodal_evaluation_enabled` 及 batch/图片压缩参数；设置页可开关。开启且当前 evaluation 路由支持图像输入时，候选封面优先从 `data/image-cache/` 读取，未命中才经白名单抓取、缩放和 JPEG 压缩后作为 image input 进入同一 batch evaluator；小红书已缓存头图不再依赖评估时原 CDN token 仍有效。模型不支持或图片准备失败时自动退回纯文本 + 指标评估。
 - **浏览器扩展 DOM 采集补齐指标**：小红书被动卡片和抖音 DOM / passive fetch 路径会解析可见的浏览、点赞、收藏、评论、分享数字并回传后端，补齐插件来源候选的评估上下文。
 - **插件设置补齐封面图评估开关**：浏览器插件 side panel 的调度 tab 现在也能开关 `[discovery].multimodal_evaluation_enabled`，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存时保留既有 discovery 配置，避免插件与桌面 Web 设置面脱节。
+- **补充机会系统统一规格草案**：新增 `docs/plans/2026-06-18-opportunity-system-spec.md`，沉淀画像准确性、OpenCloud / HMA / WorkValue 客户端边界与后续机会系统路线。
 
 ## v0.3.130: DeepSeek reasoning_effort 配置保存修复（2026-06-20）
 
