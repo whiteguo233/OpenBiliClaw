@@ -114,7 +114,7 @@
 
    当 `[discovery].multimodal_evaluation_enabled=true` 且当前 evaluation 路由支持图像输入时，带 `cover_url` 的候选会额外准备封面图：`discovery.multimodal.prepare_cover_image_inputs()` 走 `runtime.image_cache.get_or_fetch_cover_bytes()`，先查本地 `data/image-cache/`，命中则直接复用缓存图，未命中才按同一 SSRF / 白名单 / redirect / 大小限制边界抓取并写回缓存。小红书 token 图因此优先使用预取或 UI 代理已经落盘的副本，不依赖评估时原 CDN token 仍有效；随后再按 `multimodal_image_max_px` 与 `multimodal_image_quality` 压成 JPEG data URL。准备成功的候选会在 `content_batch` 里带 `cover_image_ref="cover:<content_id>"`，LLM user message 中每张图前也会插入同样的 `cover:<content_id>` 文字锚点，prompt 明确要求模型用这个锚点把图片和候选绑定；没有 `cover_image_ref` 的候选只按文本字段判断。该 batch 会使用更小的 `multimodal_batch_size`；如果模型不支持图像或图片准备失败，自动退回文本 + 互动指标评估。
 
-   评估结果会回写到 `discovery_candidates`：通过阈值前先标为 `evaluated`，低分会变成 `rejected_low_score`，全局 franchise 入池配额命中时会变成 `rejected_franchise_quota`。候选行自己的 `score_threshold` 优先，其次使用 raw payload 中显式携带的 `score_threshold`，最后回落到 `[discovery].admission_min_score`（默认 `0.65`）。`raw_payload.admission_policy="observed"` 只表示来源是用户观察 / 插件采集，不再降低 admission 阈值；B 站扩展搜索、小红书 observed、抖音 / YouTube / X 等任意来源都必须经过同一 evaluator 分数门。低分 observed 内容仍保留在 `discovery_candidates` 里作为学习 / 诊断信号，但不会写入 `content_cache` 的正式可推荐池。
+   评估结果会回写到 `discovery_candidates`：通过阈值前先标为 `evaluated`，低分会变成 `rejected_low_score`，全局 franchise 入池配额命中时会变成 `rejected_franchise_quota`。候选行自己的 `score_threshold` 优先，其次使用 raw payload 中显式携带的 `score_threshold`，最后回落到 `[discovery].admission_min_score`（默认 `0.60`）。`raw_payload.admission_policy="observed"` 只表示来源是用户观察 / 插件采集，不再降低 admission 阈值；B 站扩展搜索、小红书 observed、抖音 / YouTube / X 等任意来源都必须经过同一 evaluator 分数门。探索类 strategy 可以用略低阈值鼓励新方向，但不是平台特权；低分 observed 内容仍保留在 `discovery_candidates` 里作为学习 / 诊断信号，但不会写入 `content_cache` 的正式可推荐池。
 
    provider / LLM batch 级 transient 异常、空 scores、短 scores 或长 scores 都会释放回 `pending_eval` 后续重试，不消耗单条候选的 `eval_attempts`，避免一次短暂 provider outage 把整批内容永久打成 `failed_eval`；同时会递增独立的 `batch_eval_attempts`，高阈值熔断后才进入 `failed_eval`，避免永久坏 provider 无限 churn。batch prompt 明确要求不要因为平台不同而随意抬高或压低分数，只能按内容与用户画像匹配度打分。
 
@@ -757,7 +757,7 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=30)
 - `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，调用 `evaluate_content_batch()`，完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 只释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`。
 - `drain_pending()` 会读取 evaluator 的 `_EVALUATE_BATCH_HARD_CAP` 并 clamp claim size，避免配置把 batch_size 调到 evaluator hard-cap 之上时，尾部候选被当作 0 分低相关永久拒绝。
 - `drain_pending()` 自带共享 async lock；`ContinuousRefreshController.drain_discovery_candidates_once()` 也会串行化外部触发。所有入口都会先检查 `count_pool_candidates() >= pool_target_count`；正式可换推荐池满时不再评估 / 入池。
-- 阈值按 strategy family 选择：search / related 默认 `0.65`，trending / hot / feed 默认 `0.60`，explore 默认 `0.58`，未识别来源默认 `0.60`。
+- 普通入池兜底阈值是 `[discovery].admission_min_score=0.60`；候选行可携带更严格的 strategy 阈值，explore 默认 `0.58`（backfill 最低 `0.55`）作为探索鼓励，普通 backfill 最低不低于 `0.60`。来源 / 平台标签不参与降阈值。
 
 更直白地说，`ContentDiscoveryEngine` 负责最后的“收口”：
 
@@ -904,7 +904,7 @@ strategy = SearchStrategy(
     page_size=10,
     max_pages=1,
     llm_evaluation=True,      # 默认开启 LLM 评估
-    score_threshold=0.65,      # 评分阈值
+    score_threshold=0.60,      # 普通入池阈值
 )
 
 items = await strategy.discover(profile, limit=20)
@@ -943,7 +943,7 @@ from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
 strategy = TrendingStrategy(
     bilibili_client=bilibili_client,
     llm_service=service,
-    score_threshold=0.65,
+    score_threshold=0.60,
     max_related_rids=4,
 )
 
@@ -1002,7 +1002,7 @@ from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
 strategy = ExploreStrategy(
     llm_service=service,
     bilibili_client=bilibili_client,
-    score_threshold=0.65,
+    score_threshold=0.58,
 )
 
 items = await strategy.discover(profile, limit=20)

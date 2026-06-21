@@ -226,6 +226,32 @@ async def test_trending_strategy_filters_by_score_threshold() -> None:
     assert results[0].relevance_score == 0.79
 
 
+def test_trending_backfill_does_not_drop_below_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+        score_threshold=0.65,
+    )
+
+    backfill = strategy.create_backfill_strategy()
+
+    assert backfill is not None
+    assert backfill.score_threshold == 0.60
+
+
+def test_trending_default_score_threshold_is_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+    )
+
+    assert strategy.score_threshold == 0.60
+
+
 @pytest.mark.asyncio
 async def test_trending_strategy_continues_when_one_ranking_fails() -> None:
     from openbiliclaw.discovery.strategies.strategies import TrendingStrategy

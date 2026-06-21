@@ -141,19 +141,19 @@
 
   <rect x="320" y="62" width="115" height="56" rx="6" fill="#0d2818" stroke="#3fb950" stroke-width="1.5"/>
   <text x="377" y="84" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Search</text>
-  <text x="377" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.70</text>
+  <text x="377" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.60</text>
 
   <rect x="445" y="62" width="115" height="56" rx="6" fill="#0d2818" stroke="#3fb950" stroke-width="1.5"/>
   <text x="502" y="84" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Trending</text>
-  <text x="502" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.70</text>
+  <text x="502" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.60</text>
 
   <rect x="570" y="62" width="115" height="56" rx="6" fill="#0d2818" stroke="#3fb950" stroke-width="1.5"/>
   <text x="627" y="84" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">RelatedChain</text>
-  <text x="627" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.70</text>
+  <text x="627" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.60</text>
 
   <rect x="695" y="62" width="115" height="56" rx="6" fill="#0d2818" stroke="#3fb950" stroke-width="1.5"/>
   <text x="752" y="84" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Explore</text>
-  <text x="752" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.65</text>
+  <text x="752" y="102" text-anchor="middle" fill="#8b949e" font-size="9">≥0.58</text>
 
   <!-- ── External: Bilibili API (real) ── -->
   <rect x="880" y="20" width="110" height="70" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
@@ -187,7 +187,7 @@
   <text x="150" y="265" text-anchor="middle" fill="#f0883e" font-size="9.5">evaluate_content_batch</text>
 
   <rect x="35" y="280" width="230" height="26" rx="4" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="150" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.70 (原始分)</text>
+  <text x="150" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.60 (原始分)</text>
 
   <text x="150" y="326" text-anchor="middle" fill="#8b949e" font-size="9" font-style="italic">intermediates: {queries:[...]}</text>
 
@@ -205,7 +205,7 @@
   <text x="430" y="265" text-anchor="middle" fill="#f0883e" font-size="9.5">evaluate_content_batch</text>
 
   <rect x="315" y="280" width="230" height="26" rx="4" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="430" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.70</text>
+  <text x="430" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.60</text>
 
   <text x="430" y="326" text-anchor="middle" fill="#8b949e" font-size="9" font-style="italic">intermediates: {rids:[0, 36, ...]}</text>
 
@@ -223,7 +223,7 @@
   <text x="710" y="265" text-anchor="middle" fill="#f0883e" font-size="9.5">evaluate_content_batch + seed/depth bonus</text>
 
   <rect x="595" y="280" width="230" height="26" rx="4" fill="#161b22" stroke="#484f58" stroke-width="1"/>
-  <text x="710" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.70</text>
+  <text x="710" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9.5">keep if score ≥ 0.60</text>
 
   <text x="710" y="326" text-anchor="middle" fill="#8b949e" font-size="9" font-style="italic">intermediates: {seeds:[(bvid,topic)...]}</text>
 
@@ -243,7 +243,7 @@
   <rect x="875" y="280" width="230" height="26" rx="4" fill="#161b22" stroke="#484f58" stroke-width="1"/>
   <text x="990" y="297" text-anchor="middle" fill="#c9d1d9" font-size="9">score×0.60 + bonus×0.40 (无 penalty)</text>
 
-  <text x="990" y="326" text-anchor="middle" fill="#8b949e" font-size="9" font-style="italic">intermediates: {domains:[...]}; keep≥0.65 (运行时放宽至~0.40)</text>
+  <text x="990" y="326" text-anchor="middle" fill="#8b949e" font-size="9" font-style="italic">intermediates: {domains:[...]}; keep≥0.58 (backfill 最低 0.55)</text>
 
   <!-- shared evaluator band -->
   <rect x="20" y="356" width="1100" height="40" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
@@ -294,7 +294,7 @@
 
   <rect x="695" y="722" width="280" height="52" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
   <text x="835" y="742" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">_run_backfill()</text>
-  <text x="835" y="759" text-anchor="middle" fill="#8b949e" font-size="9">L1: 策略宽松重跑 (阈值 0.63/0.58) → L2: DB 历史缓存</text>
+  <text x="835" y="759" text-anchor="middle" fill="#8b949e" font-size="9">L1: 策略补货重跑 (普通 0.60 / explore 0.55) → L2: DB 历史缓存</text>
 
   <path d="M 835 774 L 835 800 L 450 800 L 450 776" fill="none" stroke="#bc8cff" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
 
@@ -484,8 +484,8 @@
   <text x="820" y="608" fill="#f778ba" font-size="10">explore_refresh_hours</text><text x="1100" y="608" text-anchor="end" fill="#8b949e" font-size="10">12h</text>
   <text x="820" y="628" fill="#3fb950" font-size="10">discovery_limit</text><text x="1100" y="628" text-anchor="end" fill="#8b949e" font-size="10">30/策略 (1..60)</text>
   <text x="820" y="648" fill="#da3633" font-size="10">MAX_BACKFILL/次</text><text x="1100" y="648" text-anchor="end" fill="#8b949e" font-size="10">60</text>
-  <text x="820" y="668" fill="#3fb950" font-size="10">score_threshold</text><text x="1100" y="668" text-anchor="end" fill="#8b949e" font-size="10">0.70 (explore 0.65)</text>
-  <text x="820" y="688" fill="#8b949e" font-size="10">　backfill 放宽</text><text x="1100" y="688" text-anchor="end" fill="#8b949e" font-size="10">−0.07 → 0.63 / 0.58</text>
+  <text x="820" y="668" fill="#3fb950" font-size="10">admission_min_score</text><text x="1100" y="668" text-anchor="end" fill="#8b949e" font-size="10">普通 0.60 (explore 0.58)</text>
+  <text x="820" y="688" fill="#8b949e" font-size="10">　backfill floor</text><text x="1100" y="688" text-anchor="end" fill="#8b949e" font-size="10">普通 0.60 / explore 0.55</text>
   <text x="820" y="708" fill="#f778ba" font-size="10">speculation_interval</text><text x="1100" y="708" text-anchor="end" fill="#8b949e" font-size="10">10min (idle 30min)</text>
   <text x="820" y="728" fill="#f778ba" font-size="10">speculation_ttl</text><text x="1100" y="728" text-anchor="end" fill="#8b949e" font-size="10">3 天</text>
   <text x="820" y="748" fill="#bc8cff" font-size="10">proactive_push_interval</text><text x="1100" y="748" text-anchor="end" fill="#8b949e" font-size="10">120s</text>
@@ -1103,10 +1103,10 @@
       </li>
       <li><b>怎么抓？</b> 调用 <code>ContentDiscoveryEngine.discover()</code>（内容发现引擎的主入口），把多个策略并发跑（<code>asyncio.gather</code>，同时执行多个任务）。默认是「两段式」：先单独跑 search，停 2 秒避开 B 站风控，再并发跑其余三个。所有策略都用<b>真实</b>的 <code>BilibiliAPIClient</code>（B 站官方接口客户端）抓数据。</li>
       <li><b>四个策略</b>（每个都先抓候选、再用大语言模型 <code>LLM</code> 逐条打相关度分）：
-        <span class="sub">• <b>search 搜索</b>：大模型按画像生成搜索词 → 搜索 → 打分，保留 ≥ 0.70；<br>
-        • <b>trending 热门</b>：大模型挑分区 → 拉排行榜 → 打分 ≥ 0.70；<br>
-        • <b>related_chain 相关链</b>：拿你看过 / 收藏的视频当「种子」，沿「相关推荐」做 <code>BFS</code>（广度优先遍历）最多 2 层 → 打分 ≥ 0.70；<br>
-        • <b>explore 探索</b>：大模型生成你舒适区之外的新领域 → 搜索 → 打分（带新颖度加成），阈值 0.65。</span>
+        <span class="sub">• <b>search 搜索</b>：大模型按画像生成搜索词 → 搜索 → 打分，保留 ≥ 0.60；<br>
+        • <b>trending 热门</b>：大模型挑分区 → 拉排行榜 → 打分 ≥ 0.60；<br>
+        • <b>related_chain 相关链</b>：拿你看过 / 收藏的视频当「种子」，沿「相关推荐」做 <code>BFS</code>（广度优先遍历）最多 2 层 → 打分 ≥ 0.60；<br>
+        • <b>explore 探索</b>：大模型生成你舒适区之外的新领域 → 搜索 → 打分（带新颖度加成），阈值 0.58。</span>
       </li>
       <li><b>汇总成池</b>：<code>_merge_and_rank</code>（去重 + 排序）→ <code>_normalize_topic_*</code>（用向量把同义话题归并）→ <code>_compress_topic_repeats</code>（同话题 / 风格限量，保证多样性）→ 数量不够则 <code>_run_backfill</code>（放宽阈值重抓 / 取历史缓存）→ <code>_cache_results</code> 写入候选池 <code>content_cache</code>。</li>
       <li><b>结果</b>：这些视频在引擎里已经打好分、分好话题 / 风格，<b>可直接进推荐</b>，无需后续补分类。</li>
@@ -1196,7 +1196,7 @@
   <tr><td class="term">MockBilibiliClient</td><td>模拟客户端，<b>仅离线评估 (§3) 使用</b>，生产环境从不使用。</td></tr>
   <tr><td class="term">LLM</td><td>大语言模型：这里用来生成搜索词、给内容打相关度分、写推荐文案等。</td></tr>
   <tr><td class="term">evaluate_content_batch</td><td>批量内容打分：把候选成批交给大模型逐条评相关度（发现侧，caller=discovery.evaluate_batch）。<b>同一套 prompt 也被推荐侧 classify_pool_backlog 复用</b>，给扩展直采来源（小红书 / 抖音扩展）补分。</td></tr>
-  <tr><td class="term">score_threshold</td><td>保留阈值，低于此分的内容被丢弃。search / trending / related = 0.70，explore = 0.65。</td></tr>
+  <tr><td class="term">score_threshold</td><td>保留阈值，低于此分的内容被丢弃。普通 admission floor = 0.60；策略可更严格，explore = 0.58（backfill 最低 0.55）。</td></tr>
   <tr><td class="term">_merge_and_rank</td><td>合并去重 + 排序（按层级、分数、播放量）。</td></tr>
   <tr><td class="term">_normalize_topic_groups / _keys</td><td>话题归一化：用向量把「动漫 / 动漫产业 / 动漫文化」这类同义话题合并成一个。</td></tr>
   <tr><td class="term">_compress_topic_repeats</td><td>多样性压缩：同一话题 / 风格 / 来源限量，避免一批内容太同质。</td></tr>

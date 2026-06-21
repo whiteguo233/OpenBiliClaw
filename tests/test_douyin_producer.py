@@ -149,7 +149,7 @@ async def test_douyin_producer_stamps_strategy_score_threshold_before_enqueue() 
     assert pipeline.enqueued
     thresholds = {item.content_id: item.score_threshold for item in pipeline.enqueued[0][0]}
     assert thresholds == {
-        "dy-search-1": 0.65,
+        "dy-search-1": 0.60,
         "dy-hot-1": 0.60,
         "dy-feed-1": 0.60,
     }

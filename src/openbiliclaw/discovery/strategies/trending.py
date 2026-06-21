@@ -41,7 +41,7 @@ class TrendingStrategy(DiscoveryStrategy):
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     max_related_rids: int = 4
     # Broader default RIDs covering more top-level categories:
@@ -82,11 +82,11 @@ class TrendingStrategy(DiscoveryStrategy):
         return "trending"
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
-        if self.score_threshold <= 0.58:
+        if self.score_threshold <= 0.60:
             return None
         return replace(
             self,
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             last_intermediates={},
         )
 

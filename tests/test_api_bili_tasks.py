@@ -196,10 +196,11 @@ def test_bili_task_result_enqueues_videos_into_discovery_candidates(
     assert row["danmaku_count"] == 66
     assert row["comment_count"] == 55
     assert row["share_count"] == 44
-    assert row["score_threshold"] == 0.65
+    assert row["score_threshold"] == 0.60
     assert row["source_keyword_id"] == 7
     raw_payload = json.loads(str(row["raw_payload"]))
     assert raw_payload["query"] == "机械键盘"
+    assert raw_payload["score_threshold"] == 0.60
     assert scheduled
     for coro in scheduled:
         asyncio.run(coro)

@@ -69,6 +69,12 @@ def _profile() -> SoulProfile:
     )
 
 
+def test_douyin_direct_default_score_threshold_is_normal_admission_floor() -> None:
+    strategy = DouyinDirectStrategy(client=_FakeDouyinClient())
+
+    assert strategy.score_threshold == 0.60
+
+
 @pytest.mark.asyncio
 async def test_strategy_returns_douyin_discovered_content() -> None:
     strategy = DouyinDirectStrategy(

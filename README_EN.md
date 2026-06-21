@@ -190,12 +190,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.132 / extension v0.3.86: guided setup and recommendation tone fixes (2026-06-21)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.133 / extension v0.3.87: unified recommendation-pool admission (2026-06-21)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Selected init sources take effect immediately** — `/setup/`, desktop Web, and the extension no longer require Xiaohongshu / Douyin / YouTube / X to be enabled in settings first; checking them opts into this init run.
-- **Saving model config no longer starts init** — the first setup page only saves LLM/provider/model and does not trigger profile generation, probes, or pool refill work.
-- **Model name is now a required setup field** — `/setup/` moves it out of the advanced fold and auto-fills the recommended default per provider.
-- **Recommendation tone follows the user profile** — `style_key` only changes the reason angle and no longer lightens or sweetens recommendation copy by itself.
+- **Unified admission floor at 0.60** — regular sources, plugin sources, and observed candidates all go through the evaluator score gate; source labels no longer bypass admission.
+- **Explore gets only a small novelty allowance** — `explore` keeps a slightly lower strategy threshold, but the old low-score discount is gone; Xiaohongshu no longer has special admission behavior.
+- **Recommendation reads now guard against old low-score data** — `content_cache`, historical recommendations, delight candidates, and regular pool reads all filter below the admission floor.
+- **First-run completion waits for real inventory** — setup completion now waits until recommendable content exists instead of entering an empty experience after profile generation alone.
 
 ## Community
 
@@ -662,7 +662,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.132 / extension v0.3.86: guided setup and recommendation tone fixes (2026-06-21)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
+Latest: **v0.3.133 / extension v0.3.87: unified recommendation-pool admission (2026-06-21)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

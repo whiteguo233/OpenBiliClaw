@@ -198,7 +198,7 @@ async def test_youtube_producer_stamps_strategy_score_threshold_before_enqueue(
     await producer.produce_if_due(limit=4)
 
     assert pipeline.enqueued
-    assert pipeline.enqueued[0][0][0].score_threshold == 0.65
+    assert pipeline.enqueued[0][0][0].score_threshold == 0.60
 
 
 async def test_youtube_producer_skips_discovery_when_pipeline_pool_is_full(

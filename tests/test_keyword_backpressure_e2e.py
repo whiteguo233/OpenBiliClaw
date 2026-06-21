@@ -471,7 +471,7 @@ async def test_flag_on_planner_to_fetch_to_yield_end_to_end(db: Database) -> Non
             discovered_content_to_candidate_write(
                 note,
                 source_context="task",
-                raw_payload={"admission_policy": "observed", "score_threshold": 0.65},
+                raw_payload={"admission_policy": "observed", "score_threshold": 0.60},
             )
         ]
     )

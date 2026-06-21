@@ -2373,14 +2373,14 @@ def test_real_database_enforce_then_replenish_reaches_available_target(
     )
 
     assert db.count_pool_candidates() == 246
-    assert db.count_pool_candidates_by_source() == {"bilibili": 300}
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
+    assert db.count_pool_candidates_by_source() == {"bilibili": 246}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 246}
     assert controller._build_source_replenishment_plan() == [
         (["search", "related_chain", "trending", "explore"], 54)
     ]
 
     assert controller._enforce_pool_cap() is False
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 246}
 
     for index in range(54):
         _seed_visible_pool_row(
@@ -2392,7 +2392,7 @@ def test_real_database_enforce_then_replenish_reaches_available_target(
 
     assert controller._enforce_pool_cap() is True
     assert db.count_pool_candidates() == 300
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 354}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
     db.close()
 
 

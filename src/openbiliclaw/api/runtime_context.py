@@ -605,7 +605,7 @@ class RuntimeContext:
         from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 
         discovery_cfg = getattr(new_config, "discovery", None)
-        admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.65) or 0.65)
+        admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.60) or 0.60)
         set_admission_min_score = getattr(self.database, "set_admission_min_score", None)
         if callable(set_admission_min_score):
             set_admission_min_score(admission_min_score)

@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 YOUTUBE_DISCOVERY_STRATEGIES = ("yt_search", "yt_trending", "yt_channel")
 _YT_SEARCH = "yt_search"
 _YOUTUBE_SCORE_THRESHOLDS = {
-    "yt_search": 0.65,
+    "yt_search": 0.60,
     "yt_trending": 0.60,
-    "yt_channel": 0.65,
+    "yt_channel": 0.60,
 }
 
 

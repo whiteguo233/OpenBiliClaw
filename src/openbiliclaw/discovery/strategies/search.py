@@ -49,7 +49,7 @@ class SearchStrategy(DiscoveryStrategy):
     page_size: int = 10
     max_pages: int = 1
     llm_evaluation: bool = True
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -252,7 +252,7 @@ class SearchStrategy(DiscoveryStrategy):
             queries_per_run=min(max(self.queries_per_run + 4, self.queries_per_run), 12),
             page_size=min(max(self.page_size, 12), 20),
             max_pages=max(self.max_pages, 2),
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             last_intermediates={},
         )
 

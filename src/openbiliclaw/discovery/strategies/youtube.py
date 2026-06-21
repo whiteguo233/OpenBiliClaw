@@ -81,7 +81,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     database: Database | None = None
     queries_per_run: int = 6
     results_per_query: int = 15
-    score_threshold: float = 0.65
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
@@ -289,7 +289,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
     database: Database | None = None
     max_channels: int = 10
     videos_per_channel: int = 5
-    score_threshold: float = 0.65
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     last_intermediates: dict[str, object] = field(default_factory=dict)
 

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 DouyinDiscoverCallable = Callable[[Any, DouyinDiscoveryOptions], Awaitable[DouyinDiscoveryResult]]
 _DOUYIN_SCORE_THRESHOLDS = {
-    "search": 0.65,
+    "search": 0.60,
     "hot": 0.60,
     "feed": 0.60,
 }

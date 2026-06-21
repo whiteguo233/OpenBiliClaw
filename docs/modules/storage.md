@@ -39,7 +39,7 @@ count = db.enqueue_discovery_candidates(
             source_strategy="yt_search",
             content_id="abc123",
             title="A YouTube deep dive",
-            score_threshold=0.65,
+            score_threshold=0.60,
         )
     ],
     max_pending_per_source=420,
@@ -100,7 +100,7 @@ raw_by_source = db.count_pool_raw_material_by_source()
 ### Admission Cleanup
 
 ```python
-db.set_admission_min_score(0.65)
+db.set_admission_min_score(0.60)
 db.suppress_low_score_pool_items()
 db.suppress_low_confidence_recommendations()
 ```

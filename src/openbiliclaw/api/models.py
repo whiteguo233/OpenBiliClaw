@@ -1059,7 +1059,7 @@ class DiscoveryConfigOut(BaseModel):
     claim_lease_minutes: int = 10
     planner_poll_seconds: int = 120
     plan_ttl_hours: int = 12
-    admission_min_score: float = 0.65
+    admission_min_score: float = 0.60
     multimodal_evaluation_enabled: bool = False
     multimodal_batch_size: int = 8
     multimodal_image_max_px: int = 384

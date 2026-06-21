@@ -2334,10 +2334,30 @@ class TestDatabase:
                 topic="",
                 presented=0,
             )
+            db.insert_recommendation(
+                "BV1ZEROREC",
+                confidence=0.0,
+                expression="",
+                topic="",
+                presented=0,
+            )
 
             rows = db.get_recommendations(limit=10)
 
             assert [row["bvid"] for row in rows] == ["BV1HIGHREC"]
+            assert db.suppress_low_confidence_recommendations(0.60) == 2
+            feedback_rows = db.conn.execute(
+                """
+                SELECT bvid, feedback_type
+                FROM recommendations
+                ORDER BY bvid
+                """
+            ).fetchall()
+            assert {row["bvid"]: row["feedback_type"] for row in feedback_rows} == {
+                "BV1HIGHREC": None,
+                "BV1LOWREC": "suppressed_low_score",
+                "BV1ZEROREC": "suppressed_low_score",
+            }
 
             db.close()
 

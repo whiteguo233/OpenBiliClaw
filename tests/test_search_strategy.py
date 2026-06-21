@@ -676,6 +676,32 @@ async def test_search_strategy_caps_llm_eval_candidates_for_small_limit() -> Non
     assert [item.bvid for item in results] == ["BVQ0_0", "BVQ1_0", "BVQ2_0"]
 
 
+def test_search_backfill_does_not_drop_below_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    strategy = SearchStrategy(
+        llm_service=FakeLLMService([]),
+        bilibili_client=FakeBilibiliClient({}),
+        score_threshold=0.65,
+    )
+
+    backfill = strategy.create_backfill_strategy()
+
+    assert backfill is not None
+    assert backfill.score_threshold == 0.60
+
+
+def test_search_default_score_threshold_is_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    strategy = SearchStrategy(
+        llm_service=FakeLLMService([]),
+        bilibili_client=FakeBilibiliClient({}),
+    )
+
+    assert strategy.score_threshold == 0.60
+
+
 def test_build_profile_summary_keeps_newest_window_and_all_dislikes() -> None:
     profile = _build_profile()
     profile.preferences.disliked_topics = [f"避雷{i}" for i in range(1, 141)]

@@ -194,12 +194,12 @@
 
 ## 最近更新
 
-最新版本：**v0.3.132 / extension v0.3.86: 初始化向导与推荐语气修复（2026-06-21）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.133 / extension v0.3.87: 推荐池 admission 统一收口（2026-06-21）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **初始化来源勾选即生效** —— `/setup/`、桌面 Web 和插件不再要求先到设置开启小红书 / 抖音 / YouTube / X；勾选就是本轮初始化 opt-in。
-- **保存模型配置不提前初始化** —— 首启向导第一页只保存 LLM/provider/model，不再触发画像生成、兴趣探针或补池后台工作。
-- **模型名成为必填项** —— `/setup/` 把模型名移出高级折叠，并按 provider 自动填入推荐默认模型。
-- **推荐语气跟随画像** —— `style_key` 只影响理由切入角度，不再自动把推荐文案调轻或调油。
+- **统一入池阈值 0.60** —— 普通来源、插件来源和 observed 候选都必须经过 evaluator 分数门，不能再靠来源标签绕过 admission。
+- **探索只做轻微鼓励** —— `explore` 保留略低策略阈值，但不再有旧的低分折扣；小红书不再有特殊入池逻辑。
+- **推荐出口加低分兜底** —— `content_cache`、历史 recommendations、delight 候选和普通推荐读取都会过滤低于入池线的旧脏数据。
+- **首轮内容池完成态更稳** —— 初始化完成页会等待真正有可推荐内容，不再在画像完成但池子为空时直接进入空体验。
 
 ## 用户交流群
 
@@ -674,7 +674,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.132 / extension v0.3.86: 初始化向导与推荐语气修复（2026-06-21）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
+最新版本：**v0.3.133 / extension v0.3.87: 推荐池 admission 统一收口（2026-06-21）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
 
 ## 🗺️ 后续规划
 

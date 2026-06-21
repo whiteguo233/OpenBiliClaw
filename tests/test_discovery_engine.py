@@ -886,7 +886,6 @@ async def test_discovery_engine_runs_explore_strategy() -> None:
                     ]
                 }
             ),
-            score_threshold=0.65,
         )
     )
 

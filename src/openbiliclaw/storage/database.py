@@ -48,7 +48,7 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
 # leaf module (no openbiliclaw imports), so the value is duplicated here and
 # pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_in_sync.
 _DELIGHT_CLAIM_MIN_SCORE = 0.70
-_DEFAULT_ADMISSION_MIN_SCORE = 0.65
+_DEFAULT_ADMISSION_MIN_SCORE = 0.60
 
 # Rows claimed by the surprise (delight) channel: already delivered as a
 # delight, or currently delight-eligible (the pending-queue predicate). The
@@ -1894,7 +1894,6 @@ class Database:
             UPDATE recommendations
             SET feedback_type = 'suppressed_low_score'
             WHERE COALESCE(confidence, 0.0) < ?
-              AND COALESCE(confidence, 0.0) > 0.0
               AND COALESCE(feedback_type, '') = ''
             """,
             (threshold,),
@@ -2167,6 +2166,7 @@ class Database:
     def _load_pool_raw_material_rows(self) -> list[dict[str, Any]]:
         """Load raw fresh material rows governed by the raw ceiling."""
         self._ensure_fresh_read()
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT
@@ -2183,10 +2183,12 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         rows: list[dict[str, Any]] = []
@@ -2317,18 +2319,21 @@ class Database:
 
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         """Return fresh pool counts grouped by discovery source family."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, source, source_platform, content_url
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND NOT EXISTS (
                 SELECT 1
                 FROM recommendations AS r
                 WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, int] = defaultdict(int)
@@ -3710,10 +3715,7 @@ class Database:
                 COALESCE(c.source_platform, '') != 'xiaohongshu'
                 OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
             )
-            AND (
-                COALESCE(r.confidence, 0.0) <= 0.0
-                OR COALESCE(r.confidence, 0.0) >= ?
-            )
+            AND COALESCE(r.confidence, 0.0) >= ?
             {processed_clause}
             ORDER BY created_at DESC, id DESC
             LIMIT ?

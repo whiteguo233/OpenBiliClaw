@@ -412,7 +412,7 @@ planner_poll_seconds = 120
 # 兜底失效（小时）：即便画像 digest 未变，pending 关键词超过这个时长也会过期。
 plan_ttl_hours = 12
 # 统一推荐池入池最低分。来源/插件 observed 标签不能绕过该门槛。
-admission_min_score = 0.65
+admission_min_score = 0.6
 # 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时
 # 把已压缩的候选封面一并送入评估器，模型不支持时自动退回纯文本评估。
 multimodal_evaluation_enabled = false

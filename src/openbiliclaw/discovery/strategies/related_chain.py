@@ -46,7 +46,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
     trending_strategy: SupportsSeedStrategy | None = None
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     max_seeds: int = 5
     related_per_seed: int = 8
@@ -66,11 +66,11 @@ class RelatedChainStrategy(DiscoveryStrategy):
         return "related_chain"
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
-        if self.score_threshold <= 0.58:
+        if self.score_threshold <= 0.60:
             return None
         return replace(
             self,
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             related_per_seed=max(self.related_per_seed, 10),
             last_intermediates={},
         )

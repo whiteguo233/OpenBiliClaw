@@ -100,6 +100,23 @@ def test_normalize_yt_video_maps_optional_engagement_metrics() -> None:
     assert content.comment_count == 44
 
 
+def test_youtube_search_and_channel_default_thresholds_are_normal_floor() -> None:
+    client = _FakeYtClient()
+
+    search = YoutubeSearchStrategy(
+        client=client,
+        llm_service=_FakeLLMService("{}"),
+    )
+    channel = YoutubeChannelStrategy(
+        client=client,
+        llm_service=_FakeLLMService("{}"),
+        memory=None,
+    )
+
+    assert search.score_threshold == 0.60
+    assert channel.score_threshold == 0.60
+
+
 @pytest.mark.asyncio
 async def test_youtube_search_uses_queries_from_llm_response_content() -> None:
     llm = _FakeLLMService('{"queries": ["ai documentary", "systems design"]}')

@@ -120,7 +120,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
     keywords_per_run: int = 5
     per_source_limit: int = 20
     llm_evaluation: bool = True
-    score_threshold: float = 0.65
+    score_threshold: float = 0.60
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property

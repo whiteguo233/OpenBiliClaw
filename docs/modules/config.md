@@ -481,7 +481,7 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `claim_lease_minutes` | int | `10` | 领取租约（分钟）：`claimed`/`executing` 超过这个时长未变会被回收成 `pending`，防 loop / 任务崩溃泄漏在途行。小于 `1` 时回退默认值 |
 | `planner_poll_seconds` | int | `120` | 关键词规划器轮询间隔（秒）；空闲轮询近似零成本。小于 `1` 时回退默认值 |
 | `plan_ttl_hours` | int | `12` | 兜底失效（小时）：即便画像 `profile_kw_digest` 未变，`pending` 关键词超过这个时长也会过期。小于 `1` 时回退默认值 |
-| `admission_min_score` | float | `0.65` | 统一推荐池入池最低分。候选行 / raw payload 显式 `score_threshold` 可作为策略阈值覆盖；来源标签如 `admission_policy="observed"` 不能绕过该分数门。必须在 `(0, 1]` 内，非法值回退默认值 |
+| `admission_min_score` | float | `0.60` | 普通推荐池统一入池最低分。候选行 / raw payload 显式 `score_threshold` 可作为策略阈值覆盖；来源标签如 `admission_policy="observed"` 不能绕过该分数门。探索类策略可略低于该值，但平台 / 插件来源不能获得特权。必须在 `(0, 1]` 内，非法值回退默认值 |
 | `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；开启后仅当当前 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则自动退回纯文本评估 |
 | `multimodal_batch_size` | int | `8` | 图文评估 batch 上限。合法范围 `1..12`，超范围回退默认值；纯文本评估仍使用调用方原 batch size |
 | `multimodal_image_max_px` | int | `384` | 送入评估器前封面图压缩后的最大边。合法范围 `128..768`，超范围回退默认值 |

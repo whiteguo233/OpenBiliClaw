@@ -1788,7 +1788,7 @@ class TestDiscoveryConfig:
         assert config.discovery.claim_lease_minutes == 10
         assert config.discovery.planner_poll_seconds == 120
         assert config.discovery.plan_ttl_hours == 12
-        assert config.discovery.admission_min_score == 0.65
+        assert config.discovery.admission_min_score == 0.60
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.multimodal_batch_size == 8
         assert config.discovery.multimodal_image_max_px == 384
@@ -1801,7 +1801,7 @@ class TestDiscoveryConfig:
         assert config.discovery.unified_keyword_planner_enabled is True
         assert config.discovery.kw_cache_high == 30
         assert config.discovery.plan_ttl_hours == 12
-        assert config.discovery.admission_min_score == 0.65
+        assert config.discovery.admission_min_score == 0.60
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.multimodal_batch_size == 8
 
@@ -1933,7 +1933,7 @@ admission_min_score = {literal}
 
         config = load_config(toml_path)
 
-        assert config.discovery.admission_min_score == 0.65
+        assert config.discovery.admission_min_score == 0.60
 
     def test_discovery_missing_table_uses_defaults(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "c.toml"
@@ -2035,7 +2035,7 @@ admission_min_score = {literal}
         assert "unified_keyword_planner_enabled = true" in rendered
         assert "kw_cache_high = 30" in rendered
         assert "plan_ttl_hours = 12" in rendered
-        assert "admission_min_score = 0.65" in rendered
+        assert "admission_min_score = 0.6" in rendered
         assert "multimodal_evaluation_enabled = false" in rendered
         assert "multimodal_batch_size = 8" in rendered
         assert "multimodal_image_max_px = 384" in rendered

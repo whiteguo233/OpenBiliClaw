@@ -2056,12 +2056,13 @@ async def test_semantic_purge_candidate_with_all_empty_fields_is_skipped(
             topic_key,
             topic_group,
             pool_topic_label,
+            relevance_score,
             pool_status,
             source
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("BVempty", "", "", "", "", "fresh", "test"),
+        ("BVempty", "", "", "", "", 0.90, "fresh", "test"),
     )
     db.conn.commit()
 

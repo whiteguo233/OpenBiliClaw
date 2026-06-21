@@ -907,6 +907,53 @@ async def test_pipeline_observed_candidates_use_unified_relevance_floor_after_ev
 
 
 @pytest.mark.asyncio
+async def test_pipeline_xhs_observed_above_unified_default_floor_is_cached(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="xiaohongshu:xhs-observed-normal",
+                source_platform="xiaohongshu",
+                source_strategy="xhs-extension-task",
+                content_id="xhs-observed-normal",
+                title="Observed normal score",
+                raw_payload={"admission_policy": "observed"},
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "xhs-observed-normal",
+                "score": 0.61,
+                "reason": "ordinary fit",
+                "topic_group": "daily",
+                "style_key": "story_doc",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    assert result == {"evaluated": 1, "cached": 1, "rejected": 0}
+    row = db.conn.execute(
+        "SELECT relevance_score, source_platform FROM content_cache WHERE content_id = ?",
+        ("xhs-observed-normal",),
+    ).fetchone()
+    assert row is not None
+    assert row["source_platform"] == "xiaohongshu"
+    assert row["relevance_score"] == pytest.approx(0.61)
+
+
+@pytest.mark.asyncio
 async def test_pipeline_bili_extension_search_observed_low_score_is_rejected(
     tmp_path: Path,
 ) -> None:
@@ -920,8 +967,8 @@ async def test_pipeline_bili_extension_search_observed_low_score_is_rejected(
                 source_strategy="bili-extension-search",
                 content_id="BVLOWOBS",
                 title="Observed Bilibili low score",
-                score_threshold=0.65,
-                raw_payload={"admission_policy": "observed", "score_threshold": 0.65},
+                score_threshold=0.60,
+                raw_payload={"admission_policy": "observed", "score_threshold": 0.60},
             )
         ]
     )

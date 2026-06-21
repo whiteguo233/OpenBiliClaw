@@ -100,6 +100,16 @@ def _claim_all(db: Database) -> list[dict[str, Any]]:
     return db.claim_discovery_candidates_for_eval(limit=100)
 
 
+def test_x_producer_thresholds_are_normal_admission_floor() -> None:
+    from openbiliclaw.runtime import x_producer
+
+    assert x_producer._X_SCORE_THRESHOLDS == {
+        x_producer.SEARCH: 0.60,
+        x_producer.FEED: 0.60,
+        x_producer.CREATOR: 0.60,
+    }
+
+
 # ── disabled path ────────────────────────────────────────────────────
 
 

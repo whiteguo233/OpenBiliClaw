@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 
 def _default_score_thresholds() -> dict[str, float]:
     return {
-        "search": 0.65,
+        "search": 0.60,
         "trending": 0.60,
         "hot": 0.60,
-        "related": 0.65,
-        "related_chain": 0.65,
+        "related": 0.60,
+        "related_chain": 0.60,
         "explore": 0.58,
         "feed": 0.60,
         "backfill": 0.60,
@@ -50,7 +50,7 @@ class DiscoveryCandidatePipeline:
     discovery_engine: ContentDiscoveryEngine
     pool_target_count: int = 300
     score_thresholds: dict[str, float] = field(default_factory=_default_score_thresholds)
-    admission_min_score: float = 0.65
+    admission_min_score: float = 0.60
     xhs_self_nickname: str = ""
     xhs_self_nickname_provider: Callable[[], str] | None = None
     max_eval_attempts: int = 5
@@ -476,9 +476,9 @@ class DiscoveryCandidatePipeline:
         try:
             threshold = float(self.admission_min_score)
         except (TypeError, ValueError):
-            return 0.65
+            return 0.60
         if threshold <= 0.0 or threshold > 1.0:
-            return 0.65
+            return 0.60
         return threshold
 
     def _current_xhs_self_nickname(self) -> str:

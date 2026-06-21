@@ -384,7 +384,7 @@ class TestXhsTaskResultProvenance:
                 discovered_content_to_candidate_write(
                     item,
                     source_context="task",
-                    raw_payload={"admission_policy": "observed", "score_threshold": 0.65},
+                    raw_payload={"admission_policy": "observed", "score_threshold": 0.60},
                 )
             ]
         )

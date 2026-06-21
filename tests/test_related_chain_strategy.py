@@ -327,10 +327,12 @@ async def test_related_chain_fetches_and_dedupes_related_videos() -> None:
 async def test_related_chain_filters_by_score_and_tolerates_failures() -> None:
     from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
 
-    memory = FakeMemoryManager(events=[
-        _event("BV1FAIL", title="失败视频"),
-        _event("BV1SEED", title="正常视频"),
-    ])
+    memory = FakeMemoryManager(
+        events=[
+            _event("BV1FAIL", title="失败视频"),
+            _event("BV1SEED", title="正常视频"),
+        ]
+    )
     client = FakeRelatedClient(
         related_by_bvid={
             "BV1SEED": [
@@ -354,6 +356,34 @@ async def test_related_chain_filters_by_score_and_tolerates_failures() -> None:
 
     assert client.related_calls == ["BV1FAIL", "BV1SEED"]
     assert [item.bvid for item in results] == ["BV1B"]
+
+
+def test_related_chain_backfill_does_not_drop_below_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+        score_threshold=0.65,
+    )
+
+    backfill = strategy.create_backfill_strategy()
+
+    assert backfill is not None
+    assert backfill.score_threshold == 0.60
+
+
+def test_related_chain_default_score_threshold_is_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+    )
+
+    assert strategy.score_threshold == 0.60
 
 
 @pytest.mark.asyncio

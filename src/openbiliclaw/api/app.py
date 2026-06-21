@@ -3026,10 +3026,10 @@ def create_app(
             runtime_config = getattr(ctx, "config", None) or config
             discovery_config = getattr(runtime_config, "discovery", None)
             try:
-                threshold = float(getattr(discovery_config, "admission_min_score", 0.65) or 0.65)
+                threshold = float(getattr(discovery_config, "admission_min_score", 0.60) or 0.60)
             except (TypeError, ValueError):
-                return 0.65
-            return threshold if 0.0 < threshold <= 1.0 else 0.65
+                return 0.60
+            return threshold if 0.0 < threshold <= 1.0 else 0.60
 
         def _filter_low_confidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             threshold = _admission_min_score()
@@ -3042,7 +3042,7 @@ def create_app(
                     confidence = float(row.get("confidence") or 0.0)
                 except (TypeError, ValueError):
                     confidence = 0.0
-                if confidence <= 0.0 or confidence >= threshold:
+                if confidence >= threshold:
                     filtered.append(row)
             return filtered
 
@@ -5467,7 +5467,7 @@ def create_app(
                 content_url=content_url,
                 source_platform="bilibili",
                 author_name=up_name,
-                score_threshold=0.65,
+                score_threshold=0.60,
                 source_keyword_id=source_keyword_id,
             )
             writes.append(
@@ -5479,7 +5479,7 @@ def create_app(
                         "query": query,
                         "url": content_url,
                         "admission_policy": "observed",
-                        "score_threshold": 0.65,
+                        "score_threshold": 0.60,
                     },
                 )
             )
