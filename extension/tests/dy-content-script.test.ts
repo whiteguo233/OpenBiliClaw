@@ -103,7 +103,7 @@ test("isValidFeedExecuteMessage accepts feed payload and rejects malformed input
 
 test("douyin discovery execution policy is dom first", () => {
   assert.deepEqual(douyinDiscoveryExecutionPolicy(), {
-    search: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+    search: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
     hot: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
     feed: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
   });

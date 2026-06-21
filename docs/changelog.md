@@ -12,6 +12,7 @@
 - **初始化前普通行为事件不再入库**：`POST /api/events` 在 soul 画像明确未初始化时返回 `accepted=0` / `rejected.reason=not_initialized`，不写入 memory、不触发 `activity.added`、也不增加 `pending_signal_events`。首轮画像信号只由用户点击「开始初始化」后的 guided init 来源拉取；初始化任务自己的 `/api/sources/*/task-result` 仍按 init-owned 逻辑放行。
 - **B 站收藏夹初始化按页补齐**：`get_favorites()` 不再固定只取收藏夹第一页 20 条；分页停止优先遵守 B 站返回的 `has_more`，覆盖第一页不足 20 条但仍有后续页的真实账号形态。初始化会把 `--bilibili-favorite-limit` 作为跨收藏夹总预算传入，单个收藏夹按页补齐到剩余预算。
 - **B 站初始化默认信号上限调高**：首轮初始化默认导入的 B 站观看历史从 300 条提升到 500 条，收藏总预算从 300 条提升到 500 条；关注 UP 默认仍保持 100 人。
+- **抖音 search discovery 恢复真实召回**：search 仍从抖音首页搜索框输入关键词并点击按钮提交，且继续用 `search_navigation_ok` 校验真实搜索结果路由；当页面自身 search fetch tap 与 DOM 解析都没有候选时，content script 会改用已登录页面的 MAIN-world search API bridge 兜底，避免当前抖音搜索页软空 / 响应时序变化导致 `dy_search=0`。
 
 ## v0.3.133 / extension v0.3.87: 推荐池 admission 统一收口（2026-06-21）
 

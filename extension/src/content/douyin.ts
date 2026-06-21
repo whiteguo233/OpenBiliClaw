@@ -527,12 +527,12 @@ export function filterDiscoveryItemsForScope(
 }
 
 export function douyinDiscoveryExecutionPolicy(): {
-  search: { activeApiBridge: false; passiveFetchTap: true; domInteraction: true };
+  search: { activeApiBridge: true; passiveFetchTap: true; domInteraction: true };
   hot: { activeApiBridge: true; passiveFetchTap: true; domInteraction: true };
   feed: { activeApiBridge: false; passiveFetchTap: true; domInteraction: true };
 } {
   return {
-    search: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+    search: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
     hot: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
     feed: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
   };
@@ -1354,7 +1354,19 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
       await sleep(1_000);
     }
 
-    const items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
+    let items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
+    if (items.length < maxItems) {
+      try {
+        const apiResult = await harvestSearchViaApiBridge(msg.keyword, maxItems);
+        apiPagesFetched = apiResult.pages;
+        apiItemsHarvested = apiResult.items.length;
+        if (apiResult.error) apiError = apiResult.error;
+        allItems.push(...apiResult.items);
+        items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
+      } catch (err) {
+        apiError = String(err);
+      }
+    }
     return {
       task_id: msg.task_id,
       keyword: msg.keyword,
