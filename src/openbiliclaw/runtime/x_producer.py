@@ -38,6 +38,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.discovery.candidate_pool import discovered_content_to_candidate_write
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_TWITTER as _PLATFORM_TWITTER
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
@@ -54,9 +55,9 @@ CREATOR = "creator"
 X_DISCOVERY_STRATEGIES = (SEARCH, FEED, CREATOR)
 
 _X_SCORE_THRESHOLDS = {
-    SEARCH: 0.62,
+    SEARCH: 0.60,
     FEED: 0.60,
-    CREATOR: 0.62,
+    CREATOR: 0.60,
 }
 
 
@@ -80,6 +81,12 @@ class XDiscoveryProducer:
     # evaluate or admit (fetch-only); accessing an evaluator method would be a
     # bug, which ``tests/test_x_producer.py`` asserts against an exploding stub.
     discovery_engine: Any | None = None
+    # Unified keyword planner fetch coordinator (P1.7). When wired AND the flag
+    # is on, the search strategy claims words from the keyword store and injects
+    # them via ``recipe.config["queries"]``; the words are marked ``used`` once
+    # the raw candidates are handed off to ``discovery_candidates`` (fetch-only:
+    # admission is downstream). ``None`` (default / flag off) → legacy path.
+    keyword_fetch: Any | None = None
     _last_run_at: datetime | None = field(default=None, init=False)
     _last_skip_reason: str = field(default="", init=False)
 
@@ -110,8 +117,32 @@ class XDiscoveryProducer:
 
         # 1. Search — soul-driven keyword(s) (the adapter's search strategy
         #    generates keywords from the profile when no explicit query).
+        #    Unified keyword planner fetch path (P1.7, flag-gated): claim words
+        #    from the store and inject them via recipe.config["queries"]. The
+        #    deficit gate is upstream (the controller only invokes the producer
+        #    when X is under quota); the distinct floor is ``min_interval`` /
+        #    ``_is_due`` above; the daily search budget still gates the run.
+        claimed_search: list[Any] = []
         if self._strategy_budget_remaining(SEARCH, requested_limit) > 0:
-            items += await self._run_strategy(SEARCH, profile, config={}, limit=requested_limit)
+            coordinator = self.keyword_fetch
+            if coordinator is not None and bool(
+                getattr(coordinator, "should_claim", lambda: False)()
+            ):
+                claimed_search = coordinator.claim(_PLATFORM_TWITTER)
+                if claimed_search:
+                    # P1.8: thread the producing keyword's id onto each candidate
+                    # so admit-time yield backfill credits the right word.
+                    search_config = {
+                        "queries": [item.keyword for item in claimed_search],
+                        "keyword_ids": {item.keyword: int(item.id) for item in claimed_search},
+                    }
+                    items += await self._run_strategy(
+                        SEARCH, profile, config=search_config, limit=requested_limit
+                    )
+                # Flag on but store empty → skip the search fetch this cycle
+                # (the planner will refill); feed/creator below still run.
+            else:
+                items += await self._run_strategy(SEARCH, profile, config={}, limit=requested_limit)
 
         # 2. For-You — high-visibility; throttled to a low daily cadence AND
         #    auto-paused after repeated feed failures.
@@ -125,6 +156,11 @@ class XDiscoveryProducer:
         items += await self._run_creators(profile, requested_limit)
 
         enqueued = self._enqueue(items)
+        # Fetch-only lifecycle: the claimed search words are consumed on the
+        # handoff of raw candidates to ``discovery_candidates`` above — mark them
+        # ``used`` (admission is downstream; yield backfill is P1.8).
+        if claimed_search and self.keyword_fetch is not None:
+            self.keyword_fetch.mark_used(claimed_search)
         self._last_run_at = datetime.now(UTC)
         return {"enqueued": enqueued, "discovered": len(items), "reason": "ok"}
 
@@ -290,6 +326,7 @@ def build_x_discovery_producer(
     database: Any,
     soul_engine: Any,
     llm_service: Any,
+    keyword_fetch: Any | None = None,
 ) -> XDiscoveryProducer | None:
     """Build the runtime X producer if the X source is enabled.
 
@@ -344,4 +381,5 @@ def build_x_discovery_producer(
         daily_feed_budget=int(getattr(x_cfg, "daily_feed_budget", 0)),
         daily_creator_budget=int(getattr(x_cfg, "daily_creator_budget", 0)),
         request_interval_seconds=int(getattr(x_cfg, "request_interval_seconds", 3)),
+        keyword_fetch=keyword_fetch,
     )

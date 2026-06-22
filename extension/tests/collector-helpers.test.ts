@@ -17,7 +17,10 @@ import {
   enqueueBufferedEvent,
   shouldFlushImmediately,
 } from "../src/background/buffer.ts";
-import { normalizeActionSignal } from "../src/shared/behavior.ts";
+import {
+  buildActionHintFromClickTarget,
+  normalizeActionSignal,
+} from "../src/shared/behavior.ts";
 import type { BehaviorEvent } from "../src/shared/types.ts";
 
 function makeEvent(
@@ -81,8 +84,77 @@ test("inferBilibiliActionType recognizes common bilibili action buttons", () => 
   );
   assert.equal(
     inferBilibiliActionType({ text: "分享", ariaLabel: null, className: "" }),
-    null,
+    "share",
   );
+  assert.equal(
+    inferBilibiliActionType({ text: "关注", ariaLabel: null, className: "" }),
+    "follow",
+  );
+});
+
+test("buildActionHintFromClickTarget reads action labels from ancestor buttons", () => {
+  const button = {
+    textContent: "分享",
+    className: "yt-spec-button",
+    getAttribute(name: string) {
+      return name === "aria-label" ? "分享" : null;
+    },
+    closest() {
+      return button;
+    },
+  };
+  const innerIcon = {
+    textContent: "",
+    className: { baseVal: "icon-shape" },
+    getAttribute(name: string) {
+      return name === "class" ? "icon-shape" : null;
+    },
+    closest(selector: string) {
+      return selector.includes("button") ? button : null;
+    },
+  };
+
+  const hint = buildActionHintFromClickTarget(innerIcon as unknown as Element);
+
+  assert.equal(hint.text, "分享");
+  assert.equal(hint.ariaLabel, "分享");
+  assert.equal(hint.className, "yt-spec-button");
+  assert.equal(bilibiliAdapter.inferActionType(hint), "share");
+});
+
+test("buildActionHintFromClickTarget prefers a nested button over an outer card link", () => {
+  const cardLink = {
+    textContent: "Reply Repost Like Share",
+    className: "tweet-card",
+    getAttribute(name: string) {
+      return name === "href" ? "/OpenAI/status/1" : null;
+    },
+  };
+  const shareButton = {
+    textContent: "",
+    className: "tweet-share",
+    getAttribute(name: string) {
+      return name === "aria-label" ? "Share" : null;
+    },
+  };
+  const icon = {
+    textContent: "",
+    className: { baseVal: "icon-share" },
+    getAttribute(name: string) {
+      return name === "class" ? "icon-share" : null;
+    },
+    closest(selector: string) {
+      if (selector === "button,[role='button']") return shareButton;
+      if (selector.includes("a")) return cardLink;
+      return null;
+    },
+  };
+
+  const hint = buildActionHintFromClickTarget(icon as unknown as Element);
+
+  assert.equal(hint.text, "");
+  assert.equal(hint.ariaLabel, "Share");
+  assert.equal(hint.className, "tweet-share");
 });
 
 test("inferBilibiliActionType recognizes negative feedback controls", () => {
@@ -183,7 +255,7 @@ test("xiaohongshuAdapter.inferActionType recognizes like/favorite/comment", () =
   );
   assert.equal(
     xiaohongshuAdapter.inferActionType({ text: "分享", ariaLabel: null, className: "" }),
-    null,
+    "share",
   );
 });
 

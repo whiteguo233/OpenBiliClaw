@@ -35,7 +35,8 @@ export function describeInitReason(reason) {
 export function buildInitChecklist(status, selected = null) {
   const prereq = (status && status.prerequisites) || {};
   const enabled = getEnabledPlatforms(status);
-  const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
+  const selectedSources = Array.isArray(selected) ? selected : null;
+  const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
   return [
     {
       key: "bilibili",
@@ -66,13 +67,15 @@ export function buildInitChecklist(status, selected = null) {
     },
     {
       key: "platforms",
-      label: enabled.length
-        ? `数据来源：${enabled.join("、")}`
-        : "数据来源：仅 B 站（可在设置里开启更多平台）",
-      ok: enabled.length > 0,
+      label: selectedSources?.length
+        ? `本次初始化来源：${initSourceLabels(selectedSources).join("、")}`
+        : enabled.length
+          ? `数据来源：${initSourceLabels(enabled).join("、")}`
+          : "数据来源：仅 B 站（可在设置里开启更多平台）",
+      ok: Boolean(selectedSources?.length || enabled.length),
       hard: false,
       hint:
-        enabled.length > 0
+        selectedSources?.length || enabled.length > 0
           ? ""
           : "默认只接入 B 站；想纳入小红书 / 抖音 / YouTube，先到设置页开启对应平台。",
     },
@@ -96,9 +99,9 @@ export const INIT_SOURCE_OPTIONS = [
 ];
 
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH
-// this browser, so the user must be logged into it here (and have enabled it).
+// this browser, so the user must be logged into it here.
 export const INIT_SOURCE_LOGIN_HINT =
-  "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号——否则这个来源拿不到你的数据。未在设置里开启的平台，需先到设置开启。";
+  "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号——否则这个来源拿不到你的数据。勾选会同时开启该来源。";
 
 // Human labels for a list of platform keys (unknown keys pass through).
 export function initSourceLabels(keys) {
@@ -106,15 +109,10 @@ export function initSourceLabels(keys) {
   return (Array.isArray(keys) ? keys : []).map((k) => byKey.get(k) || k);
 }
 
-// Sources the user checked that aren't enabled in backend config, so the UI
-// can tell them to enable those in settings instead of silently skipping (the
-// backend would intersect them away). ``selected`` is the checked keys.
+// Compatibility helper for older callers/tests. A checked source is now an
+// explicit guided-init opt-in, so the UI no longer blocks on prior settings.
 export function initSelectedSourcesNeedingEnable(selected, status) {
-  const checked = new Set(Array.isArray(selected) ? selected : []);
-  const enabled = new Set(getEnabledPlatforms(status));
-  return INIT_SOURCE_OPTIONS.filter(
-    (opt) => checked.has(opt.key) && !enabled.has(opt.key),
-  ).map((opt) => opt.key);
+  return [];
 }
 
 // True only when every HARD prerequisite is satisfied (B 站登录 counts only

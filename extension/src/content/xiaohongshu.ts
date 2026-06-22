@@ -12,6 +12,7 @@
 
 import { startCollector } from "./kernel.js";
 import { xiaohongshuAdapter } from "../shared/platforms/xiaohongshu.js";
+import { registerE2EExecutor } from "./e2e-executor.ts";
 import {
   classifyXhsPageType,
   collectInViewportNoteUrls,
@@ -32,6 +33,7 @@ import { registerTaskExecutor } from "./xhs/task-executor.js";
 
 startCollector(xiaohongshuAdapter);
 registerTaskExecutor();
+registerE2EExecutor("xiaohongshu");
 
 // ── Token sniffer bridge (isolated world receiver) ──────────────────
 //

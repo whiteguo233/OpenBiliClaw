@@ -2,19 +2,27 @@
 
 from pathlib import Path
 
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
     _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT,
+    _MERGED_KEYWORDS_SYSTEM_PROMPT,
     build_avoidance_generation_prompt,
     build_awareness_prompt,
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
+    build_content_evaluation_prompt,
+    build_delight_reason_prompt,
+    build_delight_score_batch_prompt,
     build_explore_domains_prompt,
+    build_merged_keywords_prompt,
     build_recommendation_expression_prompt,
     build_search_queries_prompt,
     build_socratic_dialogue_prompt,
     build_soul_profile_prompt,
     build_speculation_generation_prompt,
+    parse_merged_keywords,
+    parse_merged_keywords_with_presence,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -98,6 +106,22 @@ def test_build_recommendation_expression_prompt_mentions_old_friend_tone() -> No
     assert "老B友" in messages[1]["content"]
     # System keeps the algorithm-recommendation taboo
     assert "不像算法推荐" in messages[0]["content"]
+
+
+def test_recommendation_expression_prompt_defaults_to_warm_direct_tone() -> None:
+    messages = build_recommendation_expression_prompt(
+        profile_summary={"personality_portrait": "尚未建立完整画像"},
+        content_summary={"title": "讲透国际局势", "up_name": "某UP"},
+        tone_profile=None,
+        source_platform="bilibili",
+    )
+
+    user_prompt = messages[1]["content"]
+
+    assert "- 信息密度: balanced" in user_prompt
+    assert "- 情绪温度: warm" in user_prompt
+    assert "- 梗感强度: low" in user_prompt
+    assert "- 直给程度: direct" in user_prompt
 
 
 def test_recommendation_expression_prompts_treat_dislikes_as_avoidance() -> None:
@@ -185,6 +209,52 @@ def test_search_prompt_includes_pool_distribution_hints() -> None:
     assert "<pool_distribution_hints>" in user_prompt
     assert "AI 编程" in user_prompt
     assert "人物纪录" in user_prompt
+
+
+def test_search_prompt_treats_cold_start_hints_as_diversity_budget() -> None:
+    messages = build_search_queries_prompt(
+        profile_summary={"interests": [{"name": "人工智能", "weight": 0.96}]},
+        pool_hints={
+            "cold_start": True,
+            "avoid_topics": ["人工智能", "机器学习"],
+            "prefer_axes": ["篮球战术", "电影拉片", "科技"],
+        },
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+
+    assert "cold_start" in user_prompt
+    assert "冷启动" in system_prompt
+    assert "最多 2 个 query" in system_prompt
+    assert "prefer_axes" in system_prompt
+
+
+def test_merged_keywords_prompt_treats_cold_start_hints_as_diversity_budget() -> None:
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "人工智能", "weight": 0.96}]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 5,
+                "recent_keywords": [],
+                "avoid_topics": ["人工智能"],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+                "prefer_axes": ["篮球战术", "电影拉片"],
+                "cold_start": True,
+            }
+        ],
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+
+    assert "冷启动保护" in system_prompt
+    assert "最多 2 个" in system_prompt
+    assert '"cold_start": true' in user_prompt
+    assert "prefer_axes" in user_prompt
+    assert "篮球战术" in user_prompt
 
 
 def test_build_explore_domains_prompt_requires_directional_diversity() -> None:
@@ -419,13 +489,70 @@ def test_batch_content_evaluation_prompt_allows_per_item_platforms() -> None:
         ],
     )
 
-    system = messages[0]["content"]
     user = messages[1]["content"]
 
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
     assert '"source_platform": "bilibili"' in user
+
+
+def test_batch_content_evaluation_prompt_explains_engagement_metrics() -> None:
+    messages = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["systems"]},
+        source_platform="mixed",
+        source_context="mixed",
+        content_items=[
+            {
+                "content_id": "xhs1",
+                "source_platform": "xiaohongshu",
+                "title": "XHS item",
+                "view_count": 100,
+                "like_count": 10,
+                "collect_count": 9,
+                "tags": ["coffee"],
+            }
+        ],
+    )
+
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert "互动指标" in system
+    assert "不能覆盖内容与画像的真实匹配度" in system
+    assert '"collect_count": 9' in user
+    assert '"tags": [' in user
     assert '"source_platform": "xiaohongshu"' in user
     assert "Do not lower or raise preference score merely because" in system
+
+
+def test_batch_content_evaluation_prompt_explains_cover_image_refs() -> None:
+    messages = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["visual analysis"]},
+        source_platform="mixed",
+        source_context="mixed",
+        content_items=[
+            {
+                "content_id": "yt-demo",
+                "source_platform": "youtube",
+                "title": "Visual item",
+                "cover_image_ref": "cover:yt-demo",
+            },
+            {
+                "content_id": "x-text",
+                "source_platform": "twitter",
+                "content_type": "tweet",
+                "title": "Text-only item",
+            },
+        ],
+    )
+
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert "cover_image_ref" in system
+    assert "cover:<content_id>" in system
+    assert "没有 cover_image_ref" in system
+    assert "只按文本字段判断" in system
+    assert '"cover_image_ref": "cover:yt-demo"' in user
 
 
 def test_build_explore_domains_prompt_caps_covered_groups_at_12() -> None:
@@ -606,6 +733,58 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
                 dislikes_clusters=[{"cluster_id": "D1", "members": ["雷点A", "雷点B"]}],
             ),
         ),
+        (
+            "build_preference_analysis_prompt",
+            dict(events=[{"event_type": "view", "title": "A"}], existing_preference={"a": 1}),
+            dict(events=[{"event_type": "like", "title": "B"}], existing_preference={"a": 2}),
+        ),
+        (
+            "build_category_mapping_prompt",
+            dict(categories=[{"category": "泛娱乐", "tag_count": 12}]),
+            dict(
+                categories=[
+                    {"category": "内容消费方式", "tag_count": 3},
+                    {"category": "宠物", "tag_count": 7},
+                ]
+            ),
+        ),
+        (
+            "build_merged_keywords_prompt",
+            dict(
+                profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+                platform_blocks=[
+                    {
+                        "platform": "bilibili",
+                        "need": 8,
+                        "recent_keywords": ["AI 编程"],
+                        "avoid_topics": ["原神"],
+                        "avoid_styles": ["deep_dive"],
+                        "avoid_franchises": ["原神"],
+                    }
+                ],
+            ),
+            dict(
+                profile_summary={"interests": [{"name": "咖啡", "weight": 0.6}]},
+                platform_blocks=[
+                    {
+                        "platform": "xiaohongshu",
+                        "need": 5,
+                        "recent_keywords": ["手冲咖啡"],
+                        "avoid_topics": ["美甲"],
+                        "avoid_styles": ["lifestyle"],
+                        "avoid_franchises": [],
+                    },
+                    {
+                        "platform": "twitter",
+                        "need": 4,
+                        "recent_keywords": ["llm"],
+                        "avoid_topics": [],
+                        "avoid_styles": [],
+                        "avoid_franchises": [],
+                    },
+                ],
+            ),
+        ),
         # NOTE: build_socratic_dialogue_prompt is intentionally NOT in
         # this list — its system prompt embeds per-user core memory /
         # tone / friend label, which is fine for OpenBiliClaw's single-
@@ -644,6 +823,32 @@ def test_prompt_builder_system_messages_are_call_invariant() -> None:
         "input — extends provider cache miss across all calls): "
         f"{failures}. Refactor to put per-call variables in user_prompt."
     )
+
+
+def test_category_mapping_prompt_user_message_carries_vocab_and_histogram() -> None:
+    from openbiliclaw.llm.prompts import build_category_mapping_prompt
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    messages = build_category_mapping_prompt(categories=[{"category": "泛娱乐", "tag_count": 12}])
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+
+    assert all(term in user for term in CATEGORY_VOCAB)
+    assert "泛娱乐" in user
+    assert '"tag_count": 12' in user
+    assert '"tag_count": 12' not in system
+    assert '"mapping"' in system
+
+
+def test_preference_analysis_system_prompt_contains_full_vocab() -> None:
+    from openbiliclaw.llm.prompts import build_preference_analysis_prompt
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    system = messages[0]["content"]
+
+    assert all(term in system for term in CATEGORY_VOCAB)
+    assert "category 必须" in system
 
 
 # ----------------------------------------------------------------------
@@ -726,6 +931,14 @@ def test_batch_eval_system_invariant_across_negative_example_lengths() -> None:
     assert len(systems) == 1
 
 
+def test_batch_eval_system_uses_json_object_results_wrapper() -> None:
+    system = _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+    assert "严格 JSON 对象" in system
+    assert '"results" 数组' in system
+    assert '"results": [' in system
+
+
 def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:
     """The new block must round-trip differently-ordered dict keys to
     byte-identical bytes — same prompt-cache discipline as the rest of
@@ -784,6 +997,83 @@ def test_batch_eval_prompt_carries_body_text_in_user_message_only() -> None:
     assert system == _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
 
 
+def test_content_evaluation_prompts_use_viewing_mode_style_keys() -> None:
+    single = build_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_summary={"title": "讲透复杂系统"},
+        source_context="search",
+        source_platform="bilibili",
+    )[0]["content"]
+    batch = _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+    for system in (single, batch):
+        assert "style_key(13选1)" in system
+        for style_key in VALID_STYLE_KEYS:
+            assert style_key in system
+        assert "deep_dive / fun_variety / lifestyle" not in system
+        assert "11 个选项" not in system
+
+
+def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
+    single_eval = build_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_summary={"title": "讲透复杂系统", "style_key": "deep_dive"},
+        source_context="search",
+        source_platform="bilibili",
+    )[1]["content"]
+    batch_eval = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_items=[{"title": "城市纪录片", "style_key": "story_doc"}],
+        source_context="search",
+        source_platform="bilibili",
+    )[1]["content"]
+    single_expression = build_recommendation_expression_prompt(
+        profile_summary={"interests": ["生活"]},
+        content_summary={"title": "通勤穿搭", "style_key": "lifestyle"},
+        tone_profile=None,
+        source_platform="xiaohongshu",
+    )[1]["content"]
+    batch_expression = build_batch_expression_prompt(
+        profile_summary={"interests": ["游戏"]},
+        content_items=[{"title": "配队攻略", "style_key": "game_strategy"}],
+        tone_profile=None,
+        source_platform="bilibili",
+    )[1]["content"]
+    delight_score = build_delight_score_batch_prompt(
+        profile_summary={"interests": ["音乐"]},
+        content_batch=[{"title": "现场演出", "style_key": "music_live"}],
+    )[1]["content"]
+    delight_reason = build_delight_reason_prompt(
+        profile_summary={"interests": ["科技"]},
+        content_summary={"title": "AI 芯片解析", "style_key": "tech_analysis"},
+        reason_stub="fit",
+        tone_profile=None,
+        source_platform="bilibili",
+    )[1]["content"]
+
+    combined = "\n".join(
+        [
+            single_eval,
+            batch_eval,
+            single_expression,
+            batch_expression,
+            delight_score,
+            delight_reason,
+        ]
+    )
+
+    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy", "music_live"):
+        assert legacy_key not in combined
+    for canonical_key in (
+        "deep_focus",
+        "story_immersion",
+        "daily_wander",
+        "hands_on",
+        "live_pulse",
+    ):
+        assert canonical_key in combined
+
+
 def test_recommendation_expression_prompt_carries_body_text_in_user_only() -> None:
     item = _twitter_content_item()
     messages = build_recommendation_expression_prompt(
@@ -798,6 +1088,40 @@ def test_recommendation_expression_prompt_carries_body_text_in_user_only() -> No
     assert "TWEET_BODY_MARKER" not in system
 
 
+def test_search_keyword_prompts_normalize_legacy_avoid_styles() -> None:
+    search_user = build_search_queries_prompt(
+        profile_summary={"interests": ["AI"]},
+        pool_hints={
+            "avoid_topics": ["人工智能"],
+            "avoid_styles": ["deep_dive", "story_doc", "not_real"],
+        },
+    )[1]["content"]
+    merged_user = build_merged_keywords_prompt(
+        profile_summary={"interests": ["AI"]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 2,
+                "recent_keywords": [],
+                "avoid_topics": ["人工智能"],
+                "avoid_styles": ["lifestyle", "fun_variety", "not_real"],
+                "avoid_franchises": [],
+            }
+        ],
+    )[1]["content"]
+
+    assert "deep_focus" in search_user
+    assert "story_immersion" in search_user
+    assert "deep_dive" not in search_user
+    assert "story_doc" not in search_user
+    assert "daily_wander" in merged_user
+    assert "mood_release" in merged_user
+    assert "lifestyle" not in merged_user
+    assert "fun_variety" not in merged_user
+    assert "not_real" not in search_user
+    assert "not_real" not in merged_user
+
+
 def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:
     item = _twitter_content_item()
     messages = build_batch_expression_prompt(
@@ -810,3 +1134,301 @@ def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:
 
     assert "TWEET_BODY_MARKER" in user
     assert "TWEET_BODY_MARKER" not in system
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P1.4: merged multi-platform keyword builder + parser.
+
+
+def _merged_platform_blocks() -> list[dict[str, object]]:
+    return [
+        {
+            "platform": "bilibili",
+            "need": 8,
+            "recent_keywords": ["AI 编程 盘点"],
+            "avoid_topics": ["原神"],
+            "avoid_styles": ["deep_dive"],
+            "avoid_franchises": ["原神"],
+        },
+        {
+            "platform": "xiaohongshu",
+            "need": 5,
+            "recent_keywords": ["手冲咖啡 入门"],
+            "avoid_topics": ["美甲教程"],
+            "avoid_styles": ["lifestyle"],
+            "avoid_franchises": [],
+        },
+    ]
+
+
+def test_merged_keywords_prompt_system_message_equals_constant() -> None:
+    """The system message must be the literal module constant — no
+    interpolation — so the provider prompt cache fires across calls."""
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=_merged_platform_blocks(),
+    )
+
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+
+def test_merged_keywords_prompt_user_message_carries_profile_once_and_due_platforms() -> None:
+    """User message holds <profile_summary> exactly once plus only the
+    platforms passed in — absent platforms must not leak into the prompt."""
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=_merged_platform_blocks(),
+    )
+    user = messages[1]["content"]
+
+    assert user.count("<profile_summary>") == 1
+    assert user.count("</profile_summary>") == 1
+    assert "<platforms>" in user
+    # Only the two due platforms appear; the three absent platforms do not.
+    assert "bilibili" in user
+    assert "xiaohongshu" in user
+    for absent in ("douyin", "youtube", "twitter"):
+        assert absent not in user
+    # The avoid_* hints and recent_keywords ride along in the user message.
+    assert "AI 编程 盘点" in user
+    assert "手冲咖啡 入门" in user
+    assert "原神" in user
+
+
+def test_merged_keywords_prompt_serialization_is_deterministic() -> None:
+    """Differently-ordered dict keys with identical semantics must yield a
+    byte-identical user message (sort_keys=True discipline)."""
+    blocks_a = [
+        {
+            "platform": "bilibili",
+            "need": 8,
+            "recent_keywords": ["x"],
+            "avoid_topics": ["原神"],
+            "avoid_styles": [],
+            "avoid_franchises": [],
+        }
+    ]
+    blocks_b = [
+        {
+            "avoid_franchises": [],
+            "avoid_styles": [],
+            "avoid_topics": ["原神"],
+            "recent_keywords": ["x"],
+            "need": 8,
+            "platform": "bilibili",
+        }
+    ]
+    msg_a = build_merged_keywords_prompt(
+        profile_summary={"interests": ["AI"], "disliked_topics": ["标题党"]},
+        platform_blocks=blocks_a,
+    )
+    msg_b = build_merged_keywords_prompt(
+        profile_summary={"disliked_topics": ["标题党"], "interests": ["AI"]},
+        platform_blocks=blocks_b,
+    )
+
+    assert msg_a[1]["content"] == msg_b[1]["content"]
+
+
+def test_parse_merged_keywords_parses_per_platform() -> None:
+    content = '{"bilibili": ["历史 盘点", "摄影 入门"], "xiaohongshu": ["手冲咖啡 教程"]}'
+    parsed = parse_merged_keywords(content, ["bilibili", "xiaohongshu"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["历史 盘点", "摄影 入门"]
+    assert parsed["xiaohongshu"] == ["手冲咖啡 教程"]
+
+
+def test_parse_merged_keywords_returns_key_for_every_requested_platform() -> None:
+    """Every requested platform gets a key, even ones absent from output."""
+    content = '{"bilibili": ["a", "b"]}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert set(parsed) == {"bilibili", "xiaohongshu", "douyin"}
+    assert parsed["bilibili"] == ["a", "b"]
+    # Missing platform → empty list, not absent key.
+    assert parsed["xiaohongshu"] == []
+    assert parsed["douyin"] == []
+
+
+def test_parse_merged_keywords_missing_and_garbage_platform_empty_no_raise() -> None:
+    """A platform whose value is non-list garbage yields [] and never raises."""
+    content = '{"bilibili": ["ok"], "xiaohongshu": "not a list", "douyin": 42}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert parsed["bilibili"] == ["ok"]
+    assert parsed["xiaohongshu"] == []
+    assert parsed["douyin"] == []
+
+
+def test_parse_merged_keywords_total_garbage_does_not_raise() -> None:
+    """Non-JSON / non-object content → all-empty result, no exception."""
+    for junk in ("not json at all", "", "[1, 2, 3]", "null"):
+        parsed = parse_merged_keywords(junk, ["bilibili", "twitter"], per_platform_cap=5)
+        assert parsed == {"bilibili": [], "twitter": []}
+
+
+def test_parse_merged_keywords_partial_truncated_json_salvages() -> None:
+    """Tolerant parse recovers a platform from a truncated payload."""
+    content = '{"bilibili": ["历史 盘点", "摄影 入门"], "xiaohongshu": ["手冲咖'
+    parsed = parse_merged_keywords(content, ["bilibili", "xiaohongshu"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["历史 盘点", "摄影 入门"]
+
+
+def test_parse_merged_keywords_respects_per_platform_cap() -> None:
+    content = '{"bilibili": ["a", "b", "c", "d", "e"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=3)
+
+    assert parsed["bilibili"] == ["a", "b", "c"]
+
+
+def test_parse_merged_keywords_dedups_within_platform() -> None:
+    content = '{"bilibili": ["a", "a", "b", " b ", "b", "c"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=10)
+
+    # "a" deduped; "b" and " b " both strip to "b" so only one kept.
+    assert parsed["bilibili"] == ["a", "b", "c"]
+
+
+def test_parse_merged_keywords_drops_blank_and_non_scalar_items() -> None:
+    content = '{"bilibili": ["", "  ", "good", {"x": 1}, ["y"], "另一个"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=10)
+
+    assert parsed["bilibili"] == ["good", "另一个"]
+
+
+def test_parse_merged_keywords_zero_cap_returns_empty_lists() -> None:
+    content = '{"bilibili": ["a", "b"]}'
+    parsed = parse_merged_keywords(content, ["bilibili"], per_platform_cap=0)
+
+    assert parsed == {"bilibili": []}
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P2.1: static per-platform supply-advantage table.
+
+
+def test_merged_keywords_system_prompt_carries_supply_advantage_table() -> None:
+    """The static system prompt embeds the per-platform supply-advantage block
+    (P2.1) — each platform mapped to where it structurally has good content."""
+    sys_prompt = _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+    assert "<supply_advantage>" in sys_prompt
+    assert "</supply_advantage>" in sys_prompt
+    # Each platform's headline supply advantages from the spec are present.
+    assert "学习区" in sys_prompt and "知识科普" in sys_prompt  # bilibili
+    assert "生活方式" in sys_prompt and "美妆" in sys_prompt  # xiaohongshu
+    assert "热点" in sys_prompt and "搞笑" in sys_prompt  # douyin
+    assert "英文长内容" in sys_prompt and "纪录片" in sys_prompt  # youtube
+    assert "实时讨论" in sys_prompt and "英文技术" in sys_prompt  # twitter
+
+
+def test_merged_keywords_system_prompt_permits_decline() -> None:
+    """The static system prompt instructs the model it MAY return fewer / an
+    empty list for a platform whose supply advantage doesn't fit the user
+    (P2.2 decline) rather than padding."""
+    sys_prompt = _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+    assert "弃权" in sys_prompt
+    assert "[]" in sys_prompt
+
+
+def test_merged_keywords_system_prompt_is_fully_static_supply_table() -> None:
+    """The supply-advantage table never depends on per-call data — two builds
+    with different profiles / platforms keep a byte-identical system message
+    (the call-invariance contract holds with the P2 table added)."""
+    msg_a = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 8,
+                "recent_keywords": [],
+                "avoid_topics": [],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+            }
+        ],
+    )
+    msg_b = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "美妆", "weight": 0.4}]},
+        platform_blocks=[
+            {
+                "platform": "twitter",
+                "need": 4,
+                "recent_keywords": ["x"],
+                "avoid_topics": ["y"],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+            }
+        ],
+    )
+
+    assert msg_a[0]["content"] == msg_b[0]["content"] == _MERGED_KEYWORDS_SYSTEM_PROMPT
+
+
+# ----------------------------------------------------------------------
+# Discover backpressure P2.2: parser distinguishes decline (present-empty)
+# from omission (absent / non-list).
+
+
+def test_parse_merged_keywords_with_presence_marks_explicit_empty_as_present() -> None:
+    """A platform whose value is an explicit empty list is PRESENT (an
+    intentional decline); an omitted platform is NOT present (an omission)."""
+    content = '{"bilibili": ["历史 盘点"], "xiaohongshu": []}'
+    keywords, present = parse_merged_keywords_with_presence(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert keywords["bilibili"] == ["历史 盘点"]
+    assert keywords["xiaohongshu"] == []
+    assert keywords["douyin"] == []
+    # bilibili (had words) and xiaohongshu (explicit []) are present; douyin
+    # (absent from the JSON object) is NOT.
+    assert present == {"bilibili", "xiaohongshu"}
+
+
+def test_parse_merged_keywords_with_presence_non_list_is_not_present() -> None:
+    """A non-list garbage value is treated as an omission (not present), so the
+    planner will fall back rather than read it as a decline."""
+    content = '{"bilibili": ["ok"], "xiaohongshu": "not a list", "douyin": 42}'
+    keywords, present = parse_merged_keywords_with_presence(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+
+    assert keywords["bilibili"] == ["ok"]
+    assert present == {"bilibili"}
+
+
+def test_parse_merged_keywords_with_presence_total_garbage_no_present() -> None:
+    """Non-JSON / non-object content → no platform present (all fall back)."""
+    for junk in ("not json", "", "[1,2]", "null"):
+        keywords, present = parse_merged_keywords_with_presence(
+            junk, ["bilibili", "twitter"], per_platform_cap=5
+        )
+        assert keywords == {"bilibili": [], "twitter": []}
+        assert present == set()
+
+
+def test_parse_merged_keywords_with_presence_zero_cap_no_present() -> None:
+    """With cap 0 nothing is parsed → no platform is present."""
+    keywords, present = parse_merged_keywords_with_presence(
+        '{"bilibili": ["a"]}', ["bilibili"], per_platform_cap=0
+    )
+    assert keywords == {"bilibili": []}
+    assert present == set()
+
+
+def test_parse_merged_keywords_still_collapses_present_and_absent() -> None:
+    """The legacy ``parse_merged_keywords`` keeps its presence-agnostic shape:
+    present-empty and absent both yield ``[]`` (back-compat for old callers)."""
+    content = '{"bilibili": ["a"], "xiaohongshu": []}'
+    parsed = parse_merged_keywords(
+        content, ["bilibili", "xiaohongshu", "douyin"], per_platform_cap=10
+    )
+    assert parsed == {"bilibili": ["a"], "xiaohongshu": [], "douyin": []}

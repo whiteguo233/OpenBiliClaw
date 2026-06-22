@@ -84,7 +84,7 @@ test("enabled platforms surface in the checklist label", () => {
   });
   assert.deepEqual(getEnabledPlatforms(status), ["bilibili", "youtube"]);
   const platformRow = buildInitChecklist(status).find((r) => r.key === "platforms");
-  assert.ok(platformRow?.label.includes("youtube"));
+  assert.ok(platformRow?.label.includes("YouTube"));
   assert.equal(platformRow?.ok, true);
 });
 
@@ -243,7 +243,7 @@ test("initSourceLabels maps known keys and passes unknowns through", () => {
   assert.deepEqual(initSourceLabels(undefined as unknown as string[]), []);
 });
 
-test("needs-enable: flags checked optional sources missing from config", () => {
+test("needs-enable: selected optional sources are guided-init opt-ins", () => {
   const status = statusWith({
     prerequisites: {
       bilibili_logged_in: true,
@@ -253,20 +253,20 @@ test("needs-enable: flags checked optional sources missing from config", () => {
       enabled_platforms: ["bilibili", "xiaohongshu"],
     },
   });
-  // User checked xhs (enabled) + douyin (NOT enabled) → only douyin flagged.
+  // User checked xhs (enabled) + douyin (NOT enabled). The checkbox is now an
+  // explicit opt-in, so the UI must not block before POST /api/init.
   assert.deepEqual(
     initSelectedSourcesNeedingEnable(["bilibili", "xiaohongshu", "douyin"], status),
-    ["douyin"],
+    [],
   );
   // Everything checked is enabled → nothing to flag.
   assert.deepEqual(
     initSelectedSourcesNeedingEnable(["bilibili", "xiaohongshu"], status),
     [],
   );
-  // v0.3.118+: bilibili is config-driven like the rest — flagged when the
-  // user checked it but [sources.bilibili] is disabled in config.
+  // Bilibili follows the same rule: selected means effective for this run.
   const biliDisabled = statusWith({
     prerequisites: { enabled_platforms: [] },
   });
-  assert.deepEqual(initSelectedSourcesNeedingEnable(["bilibili"], biliDisabled), ["bilibili"]);
+  assert.deepEqual(initSelectedSourcesNeedingEnable(["bilibili"], biliDisabled), []);
 });

@@ -1258,14 +1258,14 @@
       <div class="inner install-panel">
         <div class="section-head reveal">
           <p class="eyebrow" data-i18n="installEyebrow">Start</p>
-          <h2 data-i18n="installTitle">下载桌面安装包，或把这句话交给 AI 编程助手，让它在本机部署后端。</h2>
+          <h2 data-i18n="installTitle">从 Latest 聚合页下载，或把这句话交给 AI 编程助手。</h2>
           <p class="lead" data-i18n="installLead">
-            先装浏览器插件（Chrome、Edge、Brave、Arc 等），再二选一部署后端：下载桌面安装包（最省事，自带本地 embedding），或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手按机器契约自动部署、健康检查并初始化。
+            Latest Release 的 openbiliclaw-v* 聚合页会同时列出当前后端源码、浏览器插件包和可用桌面安装包；桌面包如果落后，页面会标出对应 desktop-v*。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。
           </p>
           <div class="hero-actions">
             <a class="btn primary" href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg" data-i18n="installDownload">添加到 Chrome</a>
-            <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases" data-i18n="installDesktop">下载桌面安装包</a>
-            <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases/latest" data-i18n="installManual">下载插件 · Releases 最新</a>
+            <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases/latest" data-i18n="installDesktop">打开 Latest 聚合页</a>
+            <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases/latest" data-i18n="installManual">下载插件 zip</a>
             <a class="btn" href="https://github.com/whiteguo233/OpenBiliClaw#readme" data-i18n="installReadme">查看 README</a>
           </div>
         </div>
@@ -1290,15 +1290,21 @@
           <div class="note">
             <h3 data-i18n="desktopNoteTitle">桌面安装包（最省事）</h3>
             <p data-i18n="desktopNoteText">
-              macOS .dmg / Windows .exe，自带本地 Ollama embedding，常驻菜单栏 / 系统托盘。当前为未签名的实验性预发布，首次打开需绕过系统拦截（mac 拖入应用程序后右键打开，若提示已损坏按 README 命令处理；Windows「更多信息 → 仍要运行」）。想改源码或深度定制，用上面的 AI 一句话部署。
+              macOS 下载 OpenBiliClaw-macos-v*-arm64.dmg，Windows 下载 OpenBiliClaw-windows-*-Setup.exe；可用安装包都附在 openbiliclaw-v* 聚合 Latest Release 里。桌面包可能临时落后于后端源码版本，以页面 Current Channels 标出的 desktop-v* 为准。当前为未签名的实验性预发布，首次打开需绕过系统拦截。
             </p>
           </div>
 
           <div class="note">
             <h3 data-i18n="pluginNoteTitle">插件是主要入口</h3>
             <p data-i18n="pluginNoteText">
-              插件负责侧边栏推荐、行为采集、反馈、聊天，以及 B 站 / 小红书 / 抖音登录态任务桥。
-              安装后请在同一个浏览器里登录你想接入的内容平台。插件最新版建议从 GitHub Releases 下载 extension-v* 手动安装（Firefox 用 -firefox.zip）；Chrome 应用商店一键装会自动更新，但受审核排期影响，版本可能滞后几天到一两周。
+              插件负责侧边栏推荐、行为采集、反馈、聊天，以及 B 站 / 小红书 / 抖音 / YouTube / X 登录态任务桥。最新版建议从 GitHub Latest Release 的 openbiliclaw-v* 聚合页下载 openbiliclaw-extension-v*.zip 手动安装（Firefox 用 -firefox.zip）；Chrome 应用商店一键装会自动更新，但受审核排期影响，版本可能滞后几天到一两周。
+            </p>
+          </div>
+
+          <div class="note">
+            <h3 data-i18n="mobileInstallNoteTitle">手机桌面快捷入口</h3>
+            <p data-i18n="mobileInstallNoteText">
+              后端允许局域网访问后，点击插件顶部手机图标扫码打开 /m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。
             </p>
           </div>
         </div>
@@ -1409,7 +1415,7 @@
           <article class="source-card reveal">
             <span>Douyin</span>
             <h3 data-i18n="sourceDouyinTitle">抖音</h3>
-            <p data-i18n="sourceDouyinText">初始化信号、插件签名搜索、hot related 和首页 feed 都走已登录浏览器链路。</p>
+            <p data-i18n="sourceDouyinText">初始化信号走扩展任务；search、hot 和 feed 从抖音首页 DOM 操作触发，并被动收集页面响应。</p>
           </article>
           <article class="source-card reveal">
             <span>Web</span>
@@ -1582,11 +1588,11 @@
         heroVisualAlt: "OpenBiliClaw 浏览器侧边栏推荐界面",
         nextHint: "Install prompt below",
         installEyebrow: "Start",
-        installTitle: "下载桌面安装包，或把这句话交给 AI 编程助手，让它在本机部署后端。",
-        installLead: "先装浏览器插件（Chrome、Edge、Brave、Arc 等），再二选一部署后端：下载桌面安装包（最省事，自带本地 embedding），或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手按机器契约自动部署、健康检查并初始化。",
+        installTitle: "从 Latest 聚合页下载，或把这句话交给 AI 编程助手。",
+        installLead: "Latest Release 的 openbiliclaw-v* 聚合页会同时列出当前后端源码、浏览器插件包和可用桌面安装包；桌面包如果落后，页面会标出对应 desktop-v*。先装插件，再选择桌面安装包或让 Claude Code、Codex CLI、Cursor、Windsurf 等 AI 助手部署后端。",
         installDownload: "添加到 Chrome",
-        installDesktop: "下载桌面安装包",
-        installManual: "下载插件 · Releases 最新",
+        installDesktop: "打开 Latest 聚合页",
+        installManual: "下载插件 zip",
         installReadme: "查看 README",
         agentPromptLabel: "一句话安装提示",
         agentPrompt: "请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)",
@@ -1595,9 +1601,11 @@
         copySuccess: "已复制",
         copyFallback: "手动复制",
         desktopNoteTitle: "桌面安装包（最省事）",
-        desktopNoteText: "macOS .dmg / Windows .exe，自带本地 Ollama embedding，常驻菜单栏 / 系统托盘。当前为未签名的实验性预发布，首次打开需绕过系统拦截（mac 拖入应用程序后右键打开，若提示已损坏按 README 命令处理；Windows「更多信息 → 仍要运行」）。想改源码或深度定制，用上面的 AI 一句话部署。",
+        desktopNoteText: "macOS 下载 OpenBiliClaw-macos-v*-arm64.dmg，Windows 下载 OpenBiliClaw-windows-*-Setup.exe；可用安装包都附在 openbiliclaw-v* 聚合 Latest Release 里。桌面包可能临时落后于后端源码版本，以页面 Current Channels 标出的 desktop-v* 为准。当前为未签名的实验性预发布，首次打开需绕过系统拦截。",
         pluginNoteTitle: "插件是主要入口",
-        pluginNoteText: "插件负责侧边栏推荐、行为采集、反馈、聊天，以及 B 站 / 小红书 / 抖音登录态任务桥。安装后请在同一个浏览器里登录你想接入的内容平台。插件最新版建议从 GitHub Releases 下载 extension-v* 手动安装（Firefox 用 -firefox.zip）；Chrome 应用商店一键装会自动更新，但受审核排期影响，版本可能滞后几天到一两周。",
+        pluginNoteText: "插件负责侧边栏推荐、行为采集、反馈、聊天，以及 B 站 / 小红书 / 抖音 / YouTube / X 登录态任务桥。最新版建议从 GitHub Latest Release 的 openbiliclaw-v* 聚合页下载 openbiliclaw-extension-v*.zip 手动安装（Firefox 用 -firefox.zip）；Chrome 应用商店一键装会自动更新，但受审核排期影响，版本可能滞后几天到一两周。",
+        mobileInstallNoteTitle: "手机桌面快捷入口",
+        mobileInstallNoteText: "后端允许局域网访问后，点击插件顶部手机图标扫码打开 /m/。iPhone / iPad 用 Safari「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；HTTPS 反代下完整 PWA 安装提示更稳定。",
         whyEyebrow: "Why it matters",
         whyTitle: "推荐顺序反过来：先理解人，再找内容。",
         whyLead: "平台推荐通常先有内容池，再预测你会点什么。OpenBiliClaw 先沉淀对你的理解，再让 Agent 带着这份理解跨平台主动寻找。",
@@ -1634,7 +1642,7 @@
         sourceXhsTitle: "小红书",
         sourceXhsText: "通过浏览器插件任务桥读取收藏、喜欢和页面内容，不由后端直接爬取。",
         sourceDouyinTitle: "抖音",
-        sourceDouyinText: "初始化信号、插件签名搜索、hot related 和首页 feed 都走已登录浏览器链路。",
+        sourceDouyinText: "初始化信号走扩展任务；search、hot 和 feed 从抖音首页 DOM 操作触发，并被动收集页面响应。",
         sourceWebTitle: "通用 Web",
         sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
         screensEyebrow: "Product",
@@ -1719,11 +1727,11 @@
         heroVisualAlt: "OpenBiliClaw browser sidebar recommendation UI",
         nextHint: "Install prompt below",
         installEyebrow: "Start",
-        installTitle: "Download the desktop installer, or hand this prompt to an AI coding agent to deploy the backend locally.",
-        installLead: "Install the browser extension first (Chrome, Edge, Brave, Arc, and other Chromium-based browsers all work), then deploy the backend one of two ways: download the desktop installer (easiest, bundles local embedding), or let Claude Code, Codex CLI, Cursor, or Windsurf deploy it automatically via the machine-readable contract — deployment, health checks, and first initialization.",
+        installTitle: "Use the aggregate Latest Release, or hand this prompt to an AI coding agent.",
+        installLead: "The openbiliclaw-v* aggregate Latest Release lists the current backend source, browser extension packages, and available desktop installers together; if the desktop package lags, Current Channels names the matching desktop-v*. Install the extension first, then use the desktop installer or let Claude Code, Codex CLI, Cursor, or Windsurf deploy the backend.",
         installDownload: "Add to Chrome",
-        installDesktop: "Download desktop installer",
-        installManual: "Extension · latest (Releases)",
+        installDesktop: "Open Latest Release",
+        installManual: "Download extension zip",
         installReadme: "View README",
         agentPromptLabel: "One-line install prompt",
         agentPrompt: "Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).",
@@ -1732,9 +1740,11 @@
         copySuccess: "Copied",
         copyFallback: "Copy manually",
         desktopNoteTitle: "Desktop installer (easiest)",
-        desktopNoteText: "macOS .dmg / Windows .exe — bundles local Ollama embedding and lives in the menu bar / system tray. It's an unsigned experimental pre-release, so the first launch needs a system-prompt bypass (macOS: drag to Applications, then right-click → Open; if it says damaged, use the README command; Windows: 'More info → Run anyway'). To edit the source or customize deeply, use the AI one-line deploy above.",
+        desktopNoteText: "macOS uses OpenBiliClaw-macos-v*-arm64.dmg and Windows uses OpenBiliClaw-windows-*-Setup.exe; available installers are attached to the openbiliclaw-v* aggregate Latest Release. The desktop package can temporarily lag the backend source version, so trust the desktop-v* shown under Current Channels. The app is unsigned and experimental, so first launch still needs the README bypass steps.",
         pluginNoteTitle: "The extension is the main entry point",
-        pluginNoteText: "The extension powers sidebar recommendations, behavior capture, feedback, chat, and the logged-in task bridge for Bilibili, Xiaohongshu, and Douyin. After installing it, log in to the content platforms you want to use in the same browser. For the newest build, download extension-v* from GitHub Releases and load it manually (Firefox: use the -firefox.zip); the Chrome Web Store one-click install auto-updates but its version can lag by days to a couple of weeks due to review scheduling.",
+        pluginNoteText: "The extension powers sidebar recommendations, behavior capture, feedback, chat, and logged-in task bridges for Bilibili, Xiaohongshu, Douyin, YouTube, and X. For the newest build, download openbiliclaw-extension-v*.zip from the openbiliclaw-v* aggregate GitHub Latest Release and load it manually (Firefox: use the -firefox.zip); the Chrome Web Store one-click install auto-updates but can lag by days to a couple of weeks due to review scheduling.",
+        mobileInstallNoteTitle: "Phone home-screen shortcut",
+        mobileInstallNoteText: "After enabling LAN access for the backend, click the phone icon in the extension header and scan the QR code for /m/. On iPhone / iPad, open Safari's Share menu and choose Add to Home Screen; on Android Chrome / Chromium browsers, use Install app or Add to Home screen. LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind an HTTPS reverse proxy.",
         whyEyebrow: "Why it matters",
         whyTitle: "Flip the order: understand the person first, then find content.",
         whyLead: "Platform recommenders usually start with a content pool and predict what you will click. OpenBiliClaw first builds an understanding of you, then lets an Agent search across platforms with that understanding.",
@@ -1771,7 +1781,7 @@
         sourceXhsTitle: "Xiaohongshu",
         sourceXhsText: "Favorites, likes, and page content are read through the browser extension task bridge, not by direct backend crawling.",
         sourceDouyinTitle: "Douyin",
-        sourceDouyinText: "Init signals, plugin-signed search, hot related, and home feed all use the logged-in browser path.",
+        sourceDouyinText: "Init signals use extension tasks; search, hot, and feed start from the Douyin home page via DOM interactions and passively collect page responses.",
         sourceWebTitle: "Generic Web",
         sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",
         screensEyebrow: "Product",

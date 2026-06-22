@@ -50,7 +50,7 @@ class SearchStrategy(DiscoveryStrategy):
     page_size: int = 10
     max_pages: int = 1
     llm_evaluation: bool = True
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -63,6 +63,8 @@ class SearchStrategy(DiscoveryStrategy):
         limit: int = 20,
         *,
         pool_snapshot: object | None = None,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Generate search queries based on user soul and execute them.
 
@@ -76,6 +78,14 @@ class SearchStrategy(DiscoveryStrategy):
             profile: User soul profile.
             limit: Maximum results.
             pool_snapshot: Optional current pool distribution summary.
+            queries: Optional caller-supplied search queries. When provided
+                (non-None), they are used verbatim and the internal LLM
+                query-generation call is skipped (the unified keyword planner
+                injection point). When ``None``, behavior is unchanged.
+            keyword_ids: Optional ``query → discovery_keywords.id`` map (P1.8
+                yield provenance). When provided, each produced candidate is
+                stamped with the id of the query that produced it so admission
+                can credit the originating keyword. ``None`` → no stamping.
 
         Returns:
             Discovered content list.
@@ -93,7 +103,11 @@ class SearchStrategy(DiscoveryStrategy):
             )
             return []
 
-        queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
+        if queries is None:
+            resolved_queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
+        else:
+            resolved_queries = self._dedupe_queries(queries)
+        queries = resolved_queries
         self.last_intermediates = {"queries": list(queries)}
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
@@ -167,6 +181,10 @@ class SearchStrategy(DiscoveryStrategy):
                 )
                 if content is None or content.bvid in seen_bvids:
                     continue
+                # P1.8 yield provenance: stamp the producing query's keyword id
+                # (unified planner injection). No-op when unmapped / not injected.
+                if keyword_ids:
+                    content.source_keyword_id = keyword_ids.get(query)
                 seen_bvids.add(content.bvid)
                 candidates.append(content)
                 candidates_by_query.setdefault(query_index, []).append(content)
@@ -235,7 +253,7 @@ class SearchStrategy(DiscoveryStrategy):
             queries_per_run=min(max(self.queries_per_run + 4, self.queries_per_run), 12),
             page_size=min(max(self.page_size, 12), 20),
             max_pages=max(self.max_pages, 2),
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             last_intermediates={},
         )
 
@@ -402,6 +420,19 @@ class SearchStrategy(DiscoveryStrategy):
             logger.exception("Search query generation failed; falling back to local queries.")
         return self._fallback_queries(profile)
 
+    @staticmethod
+    def _dedupe_queries(queries: list[str]) -> list[str]:
+        """Strip + dedupe caller-injected queries (no per-run cap)."""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in queries:
+            query = str(item).strip()
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped
+
     def _parse_queries(self, content: str) -> list[str]:
         text = content.strip()
         if not text:
@@ -516,6 +547,11 @@ class SearchStrategy(DiscoveryStrategy):
             cover_url=str(item.get("pic", "")),
             duration=parse_duration(item.get("duration", 0)),
             view_count=to_int(item.get("play", 0)),
+            like_count=to_int(item.get("like", 0)),
+            favorite_count=to_int(item.get("favorites", item.get("favorite", 0))),
+            danmaku_count=to_int(item.get("video_review", item.get("danmaku", 0))),
+            comment_count=to_int(item.get("review", item.get("reply", 0))),
+            share_count=to_int(item.get("share", 0)),
             topic_key=self._topic_key_from_query(query),
             topic_group=self._topic_group_from_query(query),
             description=description,

@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,72 @@ class _SlowLLMService:
         await asyncio.sleep(self.delay)
         self.active_calls -= 1
         return _SlowResponse('{"score": 0.88, "reason": "still relevant"}')
+
+
+class _DynamicBatchLLMService:
+    """Returns one score per item found in the batch prompt."""
+
+    def __init__(self) -> None:
+        self.user_inputs: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.user_inputs.append(user_input)
+        batch_json = user_input.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0]
+        items = json.loads(batch_json.strip())
+        payload = [
+            {
+                "content_id": item.get("content_id") or item.get("bvid") or str(index),
+                "score": 0.8,
+                "reason": "ok",
+                "style_key": "deep_dive",
+            }
+            for index, item in enumerate(items)
+        ]
+        return _SlowResponse(json.dumps(payload, ensure_ascii=False))
+
+
+class _RecordingMultimodalBatchLLMService(_DynamicBatchLLMService):
+    supports_image_input = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_inputs: list[list[dict[str, str]]] = []
+
+    async def complete_structured_task(self, **_kwargs: object) -> object:
+        raise AssertionError("multimodal batch should use image-aware LLM method")
+
+    async def complete_multimodal_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        image_inputs: list[dict[str, str]],
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.image_inputs.append(image_inputs)
+        return await super().complete_structured_task(
+            system_instruction=system_instruction,
+            user_input=user_input,
+            history=history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+        )
 
 
 class _RecentViewedDatabase:
@@ -273,8 +340,50 @@ async def test_evaluate_content_passes_disliked_topics_to_prompt() -> None:
 
     user_input = str(llm_service.calls[0]["user_input"])
     assert '"disliked_topics": [' in user_input
-    assert "标题党" in user_input
-    assert "低质混剪" in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_single_passes_text_metrics_and_tags_to_prompt() -> None:
+    llm_service = FakeLLMService(
+        '{"score": 0.82, "reason": "匹配", "topic_group": "系统", "style_key": "deep_dive"}'
+    )
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+
+    await engine.evaluate_content(
+        DiscoveredContent(
+            content_id="tweet-1",
+            title="正文首行",
+            body_text="完整 thread 正文",
+            tags=["systems", "async"],
+            source_platform="twitter",
+            content_type="thread",
+            view_count=1000,
+            like_count=100,
+            favorite_count=90,
+            collect_count=80,
+            comment_count=70,
+            share_count=60,
+            danmaku_count=50,
+            reply_count=40,
+            retweet_count=30,
+            bookmark_count=20,
+            source_strategy="x-search",
+        ),
+        _build_profile(),
+    )
+
+    user_input = str(llm_service.calls[0]["user_input"])
+    assert '"body_text": "完整 thread 正文"' in user_input
+    assert '"tags": [' in user_input
+    assert '"like_count": 100' in user_input
+    assert '"favorite_count": 90' in user_input
+    assert '"collect_count": 80' in user_input
+    assert '"comment_count": 70' in user_input
+    assert '"share_count": 60' in user_input
+    assert '"danmaku_count": 50' in user_input
+    assert '"reply_count": 40' in user_input
+    assert '"retweet_count": 30' in user_input
+    assert '"bookmark_count": 20' in user_input
 
 
 @pytest.mark.asyncio
@@ -362,6 +471,264 @@ async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_
     assert "fresh-yt" in user_input
     assert "seen-yt" not in user_input
     assert "已经看过的 YouTube" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_uses_configured_smaller_batch_size() -> None:
+    llm_service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+        multimodal_vision_supported=True,
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id=f"cover-{idx}",
+                title=f"cover item {idx}",
+                cover_url=f"https://example.com/{idx}.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+            for idx in range(5)
+        ],
+        _build_profile(),
+        batch_size=30,
+    )
+
+    assert scores == [0.8, 0.8, 0.8, 0.8, 0.8]
+    assert len(llm_service.user_inputs) == 3
+    assert [prompt.count('"content_id"') for prompt in llm_service.user_inputs] == [2, 2, 1]
+    assert engine.multimodal_unavailable_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_falls_back_to_text_batch_when_vision_unavailable() -> None:
+    llm_service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+        multimodal_vision_supported=False,
+    )
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id=f"cover-{idx}",
+                title=f"cover item {idx}",
+                cover_url=f"https://example.com/{idx}.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+            for idx in range(5)
+        ],
+        _build_profile(),
+        batch_size=30,
+    )
+
+    assert scores == [0.8, 0.8, 0.8, 0.8, 0.8]
+    assert len(llm_service.user_inputs) == 1
+    assert "vision-capable" in engine.multimodal_unavailable_reason
+
+
+@pytest.mark.asyncio
+async def test_multimodal_evaluation_sends_prepared_cover_images(monkeypatch) -> None:
+    from openbiliclaw.discovery.multimodal import PreparedCoverImage
+
+    async def fake_prepare_cover_image_inputs(*_args: object, **_kwargs: object) -> list[object]:
+        return [
+            PreparedCoverImage(
+                content_id="cover-0",
+                data_url="data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                mime_type="image/jpeg",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.discovery.multimodal.prepare_cover_image_inputs",
+        fake_prepare_cover_image_inputs,
+    )
+    llm_service = _RecordingMultimodalBatchLLMService()
+    engine = ContentDiscoveryEngine(
+        llm_service=llm_service,
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=2,
+    )
+
+    scores = await engine._evaluate_batch(
+        [
+            DiscoveredContent(
+                content_id="cover-0",
+                title="with cover",
+                cover_url="https://i.ytimg.com/vi/demo/hqdefault.jpg",
+                source_platform="youtube",
+                source_strategy="youtube_search",
+            )
+        ],
+        _build_profile(),
+    )
+
+    assert scores == [0.8]
+    assert llm_service.image_inputs == [
+        [
+            {
+                "content_id": "cover-0",
+                "data_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                "mime_type": "image/jpeg",
+            }
+        ]
+    ]
+    assert '"cover_image_ref": "cover:cover-0"' in llm_service.user_inputs[0]
+
+
+async def test_multimodal_evaluation_e2e_binds_cached_cover_to_content_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import Image
+
+    from openbiliclaw.llm.base import LLMResponse
+    from openbiliclaw.llm.service import LLMService
+    from openbiliclaw.runtime import image_cache
+
+    cover_url = "https://i.ytimg.com/vi/openbiliclaw-e2e/hqdefault.jpg"
+    image_content_id = "yt-e2e"
+    text_content_id = "x-text"
+
+    monkeypatch.setattr(image_cache, "_CACHE_DIR", tmp_path)
+    image = Image.new("RGB", (640, 360), (18, 104, 166))
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=92)
+    image_cache.save_image_bytes(cover_url, buffer.getvalue(), "image/jpeg")
+
+    class _VisionProvider:
+        _model = "gpt-4o-mini"
+
+    class _CapturingRegistry:
+        default_provider = "openai"
+
+        def __init__(self) -> None:
+            self.calls: list[list[dict[str, object]]] = []
+            self.json_modes: list[bool] = []
+
+        def get(self, _provider_key: str) -> object:
+            return _VisionProvider()
+
+        async def complete(
+            self,
+            messages: list[dict[str, object]],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            json_mode: bool = False,
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            self.calls.append(messages)
+            self.json_modes.append(json_mode)
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "content_id": image_content_id,
+                            "score": 0.81,
+                            "reason": "封面和标题都指向视觉向内容，和画像匹配。",
+                            "topic_group": "视觉分析",
+                            "style_key": "visual_showcase",
+                            "franchise_key": "",
+                        },
+                        {
+                            "content_id": text_content_id,
+                            "score": 0.42,
+                            "reason": "纯文本候选只有正文线索，匹配度一般。",
+                            "topic_group": "社交动态",
+                            "style_key": "light_chat",
+                            "franchise_key": "",
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="capturing",
+            )
+
+    registry = _CapturingRegistry()
+    engine = ContentDiscoveryEngine(
+        llm_service=LLMService(registry=registry, memory=None),  # type: ignore[arg-type]
+        multimodal_evaluation_enabled=True,
+        multimodal_batch_size=4,
+        multimodal_image_max_px=384,
+        multimodal_image_quality=72,
+        multimodal_image_timeout_seconds=6,
+    )
+
+    scores = await engine._evaluate_batch(
+        [
+            DiscoveredContent(
+                content_id=image_content_id,
+                source_platform="youtube",
+                source_strategy="yt_search",
+                content_type="video",
+                title="A visual analysis demo",
+                description="A demo item with a real cached cover image.",
+                cover_url=cover_url,
+                view_count=1234,
+                like_count=56,
+                tags=["visual", "demo"],
+            ),
+            DiscoveredContent(
+                content_id=text_content_id,
+                source_platform="twitter",
+                source_strategy="x-search",
+                content_type="tweet",
+                title="A text-only tweet",
+                body_text="This candidate intentionally has no cover image.",
+                like_count=7,
+            ),
+        ],
+        SoulProfile(
+            core_traits=["偏好视觉细节和结构化分析"],
+            cognitive_style=["喜欢把图像线索和文字线索一起判断"],
+            deep_needs=["快速判断内容是否值得点开"],
+        ),
+        source_context="e2e",
+    )
+
+    assert scores == [0.81, 0.42]
+    assert registry.json_modes == [True]
+    assert any(path.stem == image_cache.image_cache_key(cover_url) for path in tmp_path.glob("*.*"))
+
+    messages = registry.calls[0]
+    assert len(messages) == 2
+    system_prompt = str(messages[0]["content"])
+    assert "cover_image_ref" in system_prompt
+    assert "没有 cover_image_ref" in system_prompt
+
+    user_parts = messages[1]["content"]
+    assert isinstance(user_parts, list)
+    assert [part.get("type") for part in user_parts if isinstance(part, dict)] == [
+        "text",
+        "text",
+        "image_url",
+    ]
+    user_text = str(user_parts[0]["text"])
+    content_batch = json.loads(
+        user_text.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0].strip()
+    )
+    expected_ref = f"cover:{image_content_id}"
+    assert content_batch[0]["cover_image_ref"] == expected_ref
+    assert "cover_image_ref" not in content_batch[1]
+
+    assert user_parts[1] == {
+        "type": "text",
+        "text": (
+            f"Cover image {expected_ref} maps to the content_batch item whose "
+            f"cover_image_ref is {expected_ref}."
+        ),
+    }
+    assert user_parts[2]["type"] == "image_url"
+    assert user_parts[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
 def test_cache_results_skips_recently_viewed_items() -> None:
@@ -519,7 +886,6 @@ async def test_discovery_engine_runs_explore_strategy() -> None:
                     ]
                 }
             ),
-            score_threshold=0.65,
         )
     )
 
@@ -1275,43 +1641,60 @@ def test_infer_style_key_classifies_hard_courses_and_documentaries() -> None:
             title="【强化学习的数学原理】课程：从零开始到透彻理解",
             source_strategy="explore",
         )
-        == "practical_guide"
+        == "hands_on"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="精密加工的磨床纪录片",
             source_strategy="explore",
         )
-        == "story_doc"
+        == "story_immersion"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="CPU芯片经显微镜放大到纳米级别",
             source_strategy="explore",
         )
-        == "tech_analysis"
+        == "deep_focus"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="钛制造全过程，一般人没见过，工艺难度超乎你的想象",
             source_strategy="explore",
         )
-        == "story_doc"
+        == "story_immersion"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="【从零看懂fsf】世界观/伪从者设定解析",
             source_strategy="explore",
         )
-        == "deep_dive"
+        == "deep_focus"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="囚犯盒子问题，史上最烧脑的逻辑谜题，超乎你的想象！",
             source_strategy="explore",
         )
-        == "deep_dive"
+        == "curiosity_spark"
     )
+
+
+def test_infer_style_key_classifies_viewing_mode_examples() -> None:
+    cases = [
+        ("最新局势快讯，三分钟看懂发生了什么", "quick_scan"),
+        ("耳机购买前必看，五款横向测评", "decision_support"),
+        ("老友访谈：聊聊最近的创作状态", "social_chat"),
+        ("下班后的日常 vlog，一起做饭收拾房间", "daily_wander"),
+        ("高能整活名场面合集", "mood_release"),
+        ("城市雨夜空镜混剪", "aesthetic_browse"),
+        ("专注学习背景音乐 白噪音 两小时", "ambient_companion"),
+        ("演唱会 live 现场高光", "live_pulse"),
+        ("你知道吗？这些冷知识很反直觉", "curiosity_spark"),
+    ]
+
+    for title, expected in cases:
+        assert ContentDiscoveryEngine.infer_style_key(title=title) == expected
 
 
 @pytest.mark.asyncio
@@ -1863,6 +2246,59 @@ async def test_evaluate_batch_accepts_newline_delimited_json_objects() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_batch_accepts_identifier_keyed_object_response() -> None:
+    """JSON-object providers may return a bvid-keyed result map instead of an array."""
+
+    class _KeyedObjectBatchLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            return _SlowResponse(
+                json.dumps(
+                    {
+                        "BVKEY2": {
+                            "score": 0.42,
+                            "reason": "B reason",
+                            "style_key": "story_doc",
+                        },
+                        "BVKEY1": {
+                            "score": 0.88,
+                            "reason": "A reason",
+                            "style_key": "practical_guide",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    llm_service = _KeyedObjectBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BVKEY1", title="t1", up_name="u1", source_strategy="trending"),
+        DiscoveredContent(bvid="BVKEY2", title="t2", up_name="u2", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.88, 0.42]
+    assert batch[0].relevance_reason == "A reason"
+    assert batch[1].relevance_reason == "B reason"
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_evaluate_batch_intra_batch_franchise_cap() -> None:
     """v0.3.50: same-franchise items beyond the cap get their scores zeroed.
 
@@ -2086,6 +2522,46 @@ async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     assert '"source_strategy": "xhs-extension-search"' in user
     assert '"content_type": "note"' in user
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_sends_metrics_and_tags() -> None:
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+
+    await engine._evaluate_batch(
+        [
+            DiscoveredContent(
+                bvid="BV1metrics",
+                title="Metrics",
+                tags=["tag-a", "tag-b"],
+                source_strategy="search",
+                view_count=1000,
+                like_count=100,
+                favorite_count=90,
+                collect_count=80,
+                comment_count=70,
+                share_count=60,
+                danmaku_count=50,
+                reply_count=40,
+                retweet_count=30,
+                bookmark_count=20,
+            )
+        ],
+        _build_profile(),
+    )
+
+    user = llm.user_inputs[0]
+    assert '"tags": [' in user
+    assert '"like_count": 100' in user
+    assert '"favorite_count": 90' in user
+    assert '"collect_count": 80' in user
+    assert '"comment_count": 70' in user
+    assert '"share_count": 60' in user
+    assert '"danmaku_count": 50' in user
+    assert '"reply_count": 40' in user
+    assert '"retweet_count": 30' in user
+    assert '"bookmark_count": 20' in user
 
 
 @pytest.mark.asyncio

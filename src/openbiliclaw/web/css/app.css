@@ -284,6 +284,7 @@ body {
 .card-source[data-source="xiaohongshu"] { background: rgba(255, 45, 85, 0.1); color: #ff2d55; }
 .card-source[data-source="douyin"] { background: rgba(0, 0, 0, 0.06); color: #161823; }
 .card-source[data-source="youtube"] { background: rgba(255, 0, 0, 0.08); color: #ff0000; }
+.card-source[data-source="twitter"] { background: rgba(15, 23, 42, 0.08); color: #0f172a; }
 
 .card-expression {
   margin-top: 8px;

@@ -163,10 +163,23 @@ class BilibiliAPIClient:
 
     _BASE_URL = "https://api.bilibili.com"
     _SEARCH_WEB_LOCATION = 1430654
-    _SEARCH_COOLDOWN_BASE_SECONDS: ClassVar[float] = 600.0
+    # A v_voucher exhaustion is usually recoverable WBI-key churn / mild
+    # rate limiting, so it gets a short, escalating back-off. A genuine
+    # HTTP 412 is an explicit IP-level block and gets the longer hard
+    # cooldown instead (see ``_SEARCH_COOLDOWN_412_SECONDS``).
+    _SEARCH_COOLDOWN_BASE_SECONDS: ClassVar[float] = 180.0
+    _SEARCH_COOLDOWN_412_SECONDS: ClassVar[float] = 600.0
     _SEARCH_COOLDOWN_MAX_SECONDS: ClassVar[float] = 1800.0
+    _SEARCH_DOM_FALLBACK_SECONDS: ClassVar[float] = 180.0
+    # A single challenged keyword (transient churn) must NOT zero out the
+    # whole search round + the explore strategy that shares this cooldown.
+    # Only trip the process-wide cooldown after this many *consecutive*
+    # keyword-level v_voucher exhaustions; any success resets the streak.
+    _SEARCH_VOUCHER_BLOCK_THRESHOLD: ClassVar[int] = 3
     _search_cooldown_until: ClassVar[float] = 0.0
     _search_cooldown_level: ClassVar[int] = 0
+    _search_voucher_block_streak: ClassVar[int] = 0
+    _search_dom_fallback_until: ClassVar[float] = 0.0
     _WBI_MIXIN_KEY_ENC_TAB = [
         46,
         47,
@@ -275,23 +288,67 @@ class BilibiliAPIClient:
         return max(0.0, cls._search_cooldown_until - time.monotonic())
 
     @classmethod
-    def _activate_search_cooldown(cls) -> float:
-        """Back off all search clients after repeated v_voucher/412 blocks."""
+    def search_dom_fallback_remaining(cls) -> float:
+        """Seconds remaining while rendered-page search fallback is preferred."""
+        return max(0.0, cls._search_dom_fallback_until - time.monotonic())
+
+    @classmethod
+    def _activate_search_dom_fallback(cls, *, seconds: float | None = None) -> float:
+        """Ask the extension-search producer to try DOM search soon.
+
+        This signal is intentionally weaker than the global cooldown: API
+        search may keep probing, but the browser extension can backfill via a
+        rendered search page while the API path looks degraded.
+        """
+        duration = cls._SEARCH_DOM_FALLBACK_SECONDS if seconds is None else seconds
+        cls._search_dom_fallback_until = max(
+            cls._search_dom_fallback_until,
+            time.monotonic() + duration,
+        )
+        return duration
+
+    @classmethod
+    def _activate_search_cooldown(cls, *, base_seconds: float | None = None) -> float:
+        """Back off all search clients after repeated v_voucher/412 blocks.
+
+        ``base_seconds`` overrides the per-step base (412 blocks pass the
+        longer hard-cooldown base); the escalation multiplier and absolute
+        ceiling are shared across both causes.
+        """
         cls._search_cooldown_level = min(cls._search_cooldown_level + 1, 3)
+        base = cls._SEARCH_COOLDOWN_BASE_SECONDS if base_seconds is None else base_seconds
         duration = min(
-            cls._SEARCH_COOLDOWN_BASE_SECONDS * cls._search_cooldown_level,
+            base * cls._search_cooldown_level,
             cls._SEARCH_COOLDOWN_MAX_SECONDS,
         )
         cls._search_cooldown_until = max(
             cls._search_cooldown_until,
             time.monotonic() + duration,
         )
+        cls._activate_search_dom_fallback(seconds=duration)
         return duration
 
     @classmethod
+    def _record_voucher_block(cls) -> float:
+        """Record one keyword exhausting its v_voucher retries.
+
+        Returns the cooldown duration if this block crossed the
+        consecutive-failure threshold (the whole search path now backs
+        off), or ``0.0`` if search stays live and only this one keyword is
+        dropped — a lone challenged keyword is usually transient WBI churn,
+        not an IP-level block, and must not strand the search round +
+        explore for the full cooldown.
+        """
+        cls._search_voucher_block_streak += 1
+        if cls._search_voucher_block_streak >= cls._SEARCH_VOUCHER_BLOCK_THRESHOLD:
+            return cls._activate_search_cooldown()
+        return 0.0
+
+    @classmethod
     def _reset_search_cooldown_backoff(cls) -> None:
-        """Reset escalation once search succeeds again."""
+        """Reset escalation + the v_voucher streak once search succeeds again."""
         cls._search_cooldown_level = 0
+        cls._search_voucher_block_streak = 0
 
     async def _get_json(
         self,
@@ -468,7 +525,14 @@ class BilibiliAPIClient:
         # per keyword) lets the WBI key churn settle without immediately
         # surrendering. Steady-state cost is zero — retries don't fire
         # when keys are healthy.
-        max_attempts = 3
+        #
+        # Fast-fail once a storm is suspected: the first keyword to fail in
+        # a fresh round gets the full retry budget so transient churn can
+        # settle, but once one keyword has already fully exhausted
+        # (streak>0) we drop to a single quick probe — confirming a real
+        # storm in a few fast attempts instead of hammering B站 with doomed
+        # ~21s retry chains per keyword (which would only deepen the block).
+        max_attempts = 1 if type(self)._search_voucher_block_streak > 0 else 3
         backoff_schedule = (1.5, 5.0, 15.0)
         for attempt in range(max_attempts):
             try:
@@ -497,7 +561,11 @@ class BilibiliAPIClient:
             except BilibiliAPIError as exc:
                 cause = exc.__cause__
                 if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 412:
-                    duration = self._activate_search_cooldown()
+                    # 412 is an explicit IP-level block — back off hard and
+                    # immediately (no streak threshold), with the longer base.
+                    duration = self._activate_search_cooldown(
+                        base_seconds=self._SEARCH_COOLDOWN_412_SECONDS
+                    )
                     logger.warning(
                         "Bilibili search blocked with 412 for query=%r — "
                         "cooling down search for %.0fs",
@@ -505,6 +573,7 @@ class BilibiliAPIClient:
                         duration,
                     )
                     return []
+                self._activate_search_dom_fallback()
                 raise
 
             # Detect v_voucher-only response (stale WBI keys or rate limit)
@@ -522,16 +591,29 @@ class BilibiliAPIClient:
                     self._cached_wbi_keys = None
                     await asyncio.sleep(delay)
                     continue
-                # Final attempt also got v_voucher — give up cleanly.
-                duration = self._activate_search_cooldown()
-                logger.warning(
-                    "Search exhausted %d v_voucher retries for query=%r — "
-                    "giving up and cooling down search for %.0fs "
-                    "(likely WBI storm or IP rate limit)",
-                    max_attempts,
-                    keyword,
-                    duration,
-                )
+                # Final attempt also got v_voucher. Record the block; only
+                # trip the shared cooldown once consecutive keyword failures
+                # cross the threshold — a lone challenged keyword just gets
+                # dropped so the rest of the round (and explore) stays live.
+                self._activate_search_dom_fallback()
+                duration = self._record_voucher_block()
+                if duration > 0:
+                    logger.warning(
+                        "Search v_voucher storm confirmed (%d consecutive blocked "
+                        "queries, latest=%r) — cooling down search for %.0fs "
+                        "(likely WBI storm or IP rate limit)",
+                        type(self)._search_voucher_block_streak,
+                        keyword,
+                        duration,
+                    )
+                else:
+                    logger.info(
+                        "Search v_voucher challenge persisted for query=%r "
+                        "(streak %d/%d) — dropping this keyword; search stays live",
+                        keyword,
+                        type(self)._search_voucher_block_streak,
+                        self._SEARCH_VOUCHER_BLOCK_THRESHOLD,
+                    )
                 return []
 
             results = _json_list(data.get("result", []))
@@ -579,20 +661,47 @@ class BilibiliAPIClient:
             }
         return items[:max_items]
 
-    async def get_favorites(self, media_id: int) -> list[dict[str, Any]]:
+    async def get_favorites(
+        self,
+        media_id: int,
+        *,
+        max_items: int = 20,
+        page_size: int = 20,
+    ) -> list[dict[str, Any]]:
         """Get content from a favorites folder.
 
         Args:
             media_id: Favorites folder media ID.
+            max_items: Maximum number of favorite items to fetch.
+            page_size: Page size for the Bilibili resource list endpoint.
 
         Returns:
             List of favorite item dicts.
         """
-        data = await self._get_json(
-            "/x/v3/fav/resource/list",
-            params={"media_id": media_id, "pn": 1, "ps": 20},
-        )
-        return _json_list(data.get("medias", []))
+        item_limit = max(0, int(max_items))
+        if item_limit <= 0:
+            return []
+
+        effective_page_size = max(1, min(int(page_size), 20))
+        items: list[dict[str, Any]] = []
+        page = 1
+        while len(items) < item_limit:
+            data = await self._get_json(
+                "/x/v3/fav/resource/list",
+                params={"media_id": media_id, "pn": page, "ps": effective_page_size},
+            )
+            batch = _json_list(data.get("medias", []))
+            if not batch:
+                break
+            items.extend(batch)
+            has_more = data.get("has_more")
+            if has_more is not None:
+                if not bool(has_more):
+                    break
+            elif len(batch) < effective_page_size:
+                break
+            page += 1
+        return items[:item_limit]
 
     async def get_favorite_folders(self) -> list[FavoriteFolder]:
         """Get the authenticated user's favorite folder metadata."""
@@ -616,22 +725,40 @@ class BilibiliAPIClient:
         *,
         max_folders: int = 10,
         max_items_per_folder: int = 50,
+        max_total_items: int | None = None,
     ) -> list[FavoriteFolderWithItems]:
         """Get favorite folders and fetch each folder's items within budget."""
         folders = await self.get_favorite_folders()
+        folder_limit = max(0, int(max_items_per_folder))
+        folder_count = max(0, int(max_folders))
+        if folder_count <= 0 or folder_limit <= 0:
+            return []
+
+        remaining_total: int | None
+        if max_total_items is None:
+            remaining_total = None
+        else:
+            remaining_total = max(0, int(max_total_items))
+            if remaining_total <= 0:
+                return []
+
         aggregated: list[FavoriteFolderWithItems] = []
-        for folder in folders[:max_folders]:
-            items = await self.get_favorites(folder.media_id)
-            limited_items = items[:max_items_per_folder]
+        for folder in folders[:folder_count]:
+            if remaining_total is not None and remaining_total <= 0:
+                break
+            current_limit = folder_limit
+            if remaining_total is not None:
+                current_limit = min(current_limit, remaining_total)
+            limited_items = await self.get_favorites(folder.media_id, max_items=current_limit)
             aggregated.append(
                 FavoriteFolderWithItems(
                     folder=folder,
                     items=limited_items,
-                    truncated=(
-                        len(items) > len(limited_items) or folder.media_count > len(limited_items)
-                    ),
+                    truncated=folder.media_count > len(limited_items),
                 )
             )
+            if remaining_total is not None:
+                remaining_total -= len(limited_items)
         return aggregated
 
     async def get_following(

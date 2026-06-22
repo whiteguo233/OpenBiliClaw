@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
 from openbiliclaw.llm.service import is_llm_rate_limit_error
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
@@ -47,59 +48,22 @@ def _profile_style_summary(profile: SoulProfile) -> dict[str, object]:
     }
 
 
-def _profile_context_summary(profile: SoulProfile) -> dict[str, object]:
-    context = profile.preferences.context
-    return {
-        "weekday_patterns": context.weekday_patterns,
-        "weekend_patterns": context.weekend_patterns,
-        "time_of_day_patterns": context.time_of_day_patterns,
-        "session_type": context.session_type,
-    }
-
-
-def _clone_tone_profile(tone: ToneProfile) -> ToneProfile:
-    return {
-        "density": tone["density"],
-        "warmth": tone["warmth"],
-        "playfulness": tone["playfulness"],
-        "directness": tone["directness"],
-    }
-
-
 def _recommendation_profile_summary(
     profile: SoulProfile,
     *,
     interests: list[dict[str, object]] | None = None,
-    include_active_insights: bool = False,
 ) -> dict[str, object]:
-    summary: dict[str, object] = {
-        "personality_portrait": profile.personality_portrait,
-        "core_traits": profile.core_traits[:5],
-        "deep_needs": profile.deep_needs[:5],
-        "interests": interests
-        if interests is not None
-        else [
-            {
-                "name": item.name,
-                "category": item.category,
-                "weight": item.weight,
-            }
-            for item in _interests_by_weight(profile)[:64]
-        ],
-        "style": _profile_style_summary(profile),
-        "context": _profile_context_summary(profile),
-        "exploration_openness": profile.preferences.exploration_openness,
-        "disliked_topics": profile.preferences.disliked_topics[:64],
-    }
-    if include_active_insights:
-        summary["active_insights"] = [
-            {
-                "hypothesis": str(getattr(ins, "hypothesis", "")),
-                "confidence": float(getattr(ins, "confidence", 0.5)),
-            }
-            for ins in getattr(profile, "active_insights", [])[:5]
-        ]
-    return summary
+    """Unified profile input for recommendation prompts.
+
+    Delegates to :func:`build_profile_summary` so recommendation feeds the LLM
+    the exact same structured profile as discovery: no ``personality_portrait``
+    narrative, every other field included. Pass ``interests`` to substitute the
+    embedding-selected, content-relevant tag list for the default weight-ranked
+    one.
+    """
+    from openbiliclaw.discovery.strategies._utils import build_profile_summary
+
+    return build_profile_summary(profile, interests=interests)
 
 
 def _content_result_keys(content: DiscoveredContent) -> set[str]:
@@ -578,13 +542,13 @@ class RecommendationEngine:
         Falls back to top-K by weight when embedding service is unavailable.
         """
         # Candidate pool aligned with the profile summary's interest cap
-        # (64): a niche interest outside the head ranks should still be
+        # (256): a niche interest outside the head ranks should still be
         # selectable when it's the best semantic match for this content.
         # top_k (5) still bounds how many actually reach the prompt, so the
         # wider pool improves coverage without growing prompt size.
         all_interests = [
             {"name": item.name, "category": item.category, "weight": item.weight}
-            for item in _interests_by_weight(profile)[:64]
+            for item in _interests_by_weight(profile)[:256]
         ]
         if not all_interests:
             return []
@@ -743,18 +707,39 @@ class RecommendationEngine:
         completes in a few minutes against a slow local embedding
         provider (Ollama). Idempotent: ``EmbeddingService.embed``
         short-circuits on L2 hit.
+
+        Return contract (lever 4 observability — let callers tell a benign
+        cold start from a broken embedding backend):
+          * ``>0`` — items warmed.
+          * ``0``  — there WERE candidates but none embedded → the embedding
+            backend is unreachable (e.g. Ollama down). Worth retrying.
+          * ``-1`` — nothing to warm (no embedding service, or pool empty);
+            retrying is pointless — the cache lazy-fills as the pool fills.
         """
         if self._embedding_service is None:
-            return 0
+            logger.debug("Pool MMR prewarm skipped: embedding service not configured")
+            return -1
         candidates = self._load_pool_candidates(limit=limit)
         if not candidates:
-            return 0
+            logger.debug(
+                "Pool MMR prewarm skipped: pool has no servable candidates yet — "
+                "nothing to warm (cache lazy-fills as discovery classifies the pool)"
+            )
+            return -1
         warmed = await self.warm_mmr_embeddings(candidates)
-        logger.info(
-            "Pool MMR embedding prewarm: %d/%d items warmed",
-            warmed,
-            len(candidates),
-        )
+        if warmed == 0:
+            logger.warning(
+                "Pool MMR prewarm: 0/%d items embedded — the embedding backend "
+                "looks unreachable (e.g. Ollama down). Recommendation diversity "
+                "(MMR) degrades until it recovers; see embed-failure debug logs.",
+                len(candidates),
+            )
+        else:
+            logger.info(
+                "Pool MMR embedding prewarm: %d/%d items warmed",
+                warmed,
+                len(candidates),
+            )
         return warmed
 
     async def precompute_pool_copy(
@@ -836,10 +821,36 @@ class RecommendationEngine:
             except Exception:
                 logger.exception("precompute_delight_scores detach failed")
 
+        completed = await self._drain_expression_copy(
+            profile=profile, limit=limit, batch_size=batch_size
+        )
+
+        # Fire delight scoring outside the expression lock so the next
+        # expression batch can start immediately while delight catches up.
+        _spawn_delight()
+        return completed
+
+    async def _drain_expression_copy(
+        self,
+        *,
+        profile: SoulProfile,
+        limit: int,
+        batch_size: int = 30,
+    ) -> int:
+        """Generate popup copy for classified-but-uncopied pool candidates.
+
+        Copy-only: unlike :meth:`precompute_pool_copy` it does NOT spawn
+        classify / delight, so the post-classify hook
+        (:meth:`_safe_classify_pool_backlog`, lever 2b) can call it the
+        moment freshly-classified items become copy-eligible — draining
+        their expression copy in the same cycle instead of waiting for the
+        next refresh-loop tick — without re-entering classify. The shared
+        ``_expression_lock`` serialises it against the regular precompute
+        pass so the same items are never double-spent on LLM tokens.
+        """
         async with self._expression_lock:
             candidates = self._load_pool_candidates_needing_copy(limit=max(0, limit))
             if not candidates:
-                _spawn_delight()
                 return 0
 
             batches = [
@@ -855,10 +866,6 @@ class RecommendationEngine:
                     logger.warning("Expression batch failed: %s", r)
                     continue
                 completed += int(r or 0)
-
-        # Fire delight scoring outside the expression lock so the next
-        # expression batch can start immediately while delight catches up.
-        _spawn_delight()
         return completed
 
     # ── Source-agnostic content classification ───────────────────────
@@ -909,12 +916,27 @@ class RecommendationEngine:
         backoff or a flood of fresh XHS notes) stall precompute for
         minutes; now precompute reads whatever's classified-ready right
         now while classify catches up in parallel.
+
+        v0.3.124+ (lever 2b): when classify actually labels new items, drain
+        their expression copy immediately rather than leaving them for the
+        next refresh-loop precompute tick. This closes the "classified but
+        not yet serveable" gap (the items still need ``pool_expression`` /
+        ``pool_topic_label`` before the pool-availability gate counts them).
+        The drain is copy-only so it can't re-enter classify, and the
+        shared ``_expression_lock`` serialises it against the in-flight
+        precompute pass.
         """
         try:
-            return await self.classify_pool_backlog(profile=profile, limit=limit)
+            classified = await self.classify_pool_backlog(profile=profile, limit=limit)
         except Exception:
             logger.exception("classify_pool_backlog (detached) failed")
             return 0
+        if classified > 0:
+            try:
+                await self._drain_expression_copy(profile=profile, limit=max(limit, classified))
+            except Exception:
+                logger.exception("post-classify expression drain failed")
+        return classified
 
     async def _safe_precompute_delight_scores(
         self,
@@ -1049,7 +1071,6 @@ class RecommendationEngine:
         Mutates each item in-place: sets ``relevance_score``,
         ``relevance_reason``, ``topic_group``, and ``style_key``.
         """
-        from openbiliclaw.discovery.engine import VALID_STYLE_KEYS
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
         profile_data = _recommendation_profile_summary(profile)
@@ -1153,7 +1174,7 @@ class RecommendationEngine:
             score = max(0.0, min(1.0, float(score_value)))
             reason = str(result.get("reason", "")).strip()
             topic_group = str(result.get("topic_group", "")).strip()
-            style_key = str(result.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(result.get("style_key", ""))
 
             content.relevance_score = score or 0.01  # never leave at 0.0
             content.relevance_reason = reason
@@ -1272,16 +1293,13 @@ class RecommendationEngine:
 
         tone_profile = self._expression_tone_profile(profile, content)
         messages = build_delight_reason_prompt(
-            profile_summary=_recommendation_profile_summary(
-                profile,
-                include_active_insights=True,
-            ),
+            profile_summary=_recommendation_profile_summary(profile),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
                 "description": (content.description or "")[:400],
                 "source_strategy": content.source_strategy,
-                "style_key": content.style_key,
+                "style_key": normalize_style_key(content.style_key),
                 "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
                 "content_type": content.content_type,
@@ -1339,7 +1357,7 @@ class RecommendationEngine:
                 "up_name": item.up_name,
                 "description": (item.description or "")[:400],
                 "source_strategy": item.source_strategy,
-                "style_key": item.style_key,
+                "style_key": normalize_style_key(item.style_key),
                 "topic_group": item.topic_group,
                 "relevance_score": item.relevance_score,
                 "content_type": item.content_type,
@@ -1596,7 +1614,7 @@ class RecommendationEngine:
                 "up_name": content.up_name,
                 "description": content.description,
                 "source_strategy": content.source_strategy,
-                "style_key": content.style_key,
+                "style_key": normalize_style_key(content.style_key),
                 "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
                 "content_type": content.content_type,
@@ -1639,18 +1657,6 @@ class RecommendationEngine:
             },
             recent_feedback=[],
         )
-        style_key = RecommendationEngine._style_token(content)
-        if style_key in {"lifestyle", "fun_variety", "light_chat"}:
-            adjusted = _clone_tone_profile(tone)
-            adjusted["density"] = "light"
-            if adjusted["playfulness"] == "low":
-                adjusted["playfulness"] = "medium"
-            return adjusted
-        if style_key in {"story_doc", "review_roundup", "visual_showcase"}:
-            adjusted = _clone_tone_profile(tone)
-            if adjusted["density"] == "dense":
-                adjusted["density"] = "balanced"
-            return adjusted
         return tone
 
     def mark_presented(self, recommendation_ids: list[int]) -> None:
@@ -1700,29 +1706,33 @@ class RecommendationEngine:
     @staticmethod
     def _fallback_expression(content: DiscoveredContent) -> str:
         title = content.title or "这条内容"
-        style_key = content.style_key.strip()
-        if style_key == "game_strategy":
-            return f"《{title}》偏你会点开的那种机制/攻略向，不只是热闹，重点是真有东西能翻。"
-        if style_key == "news_brief":
-            return f"《{title}》这条胜在信息来得快，而且不是纯复读，适合你先抓重点。"
-        if style_key == "practical_guide":
-            return f"《{title}》偏实操一点，信息是能直接拿来用的，不会只有概念。"
-        if style_key == "story_doc":
-            return f"《{title}》这条没那么硬，但会把故事和信息一起带出来，适合你换口气的时候看。"
-        if style_key == "visual_showcase":
-            return f"《{title}》更偏轻一点，适合你换换脑子，但内容不空。"
-        if style_key == "tech_analysis":
-            return f"《{title}》这条偏技术拆解，但入口不算高，适合你先抓重点再决定要不要细看。"
-        if style_key == "deep_dive":
-            return f"《{title}》还是你常吃那一路，偏讲透来龙去脉，不会只给结论。"
-        if style_key == "fun_variety":
-            return f"《{title}》这条更偏轻松整活，拿来换个脑子刚好，也不是纯吵闹。"
-        if style_key == "lifestyle":
-            return f"《{title}》这条是轻一点的生活向，顺手点开不累，氛围和信息都还在线。"
-        if style_key == "review_roundup":
-            return f"《{title}》这种盘点/测评向比较省力，先快速过一遍重点会很顺。"
-        if style_key == "light_chat":
-            return f"《{title}》这条不是硬讲解那路，胜在讲得顺、看着不累，适合随手点开。"
+        style_key = normalize_style_key(content.style_key)
+        if style_key == "deep_focus":
+            return f"《{title}》偏需要认真看进去，但会把结构和原理讲清楚。"
+        if style_key == "quick_scan":
+            return f"《{title}》适合快速抓重点，先把发生了什么和关键变化过一遍。"
+        if style_key == "hands_on":
+            return f"《{title}》偏能照着用的实操内容，不只是概念。"
+        if style_key == "decision_support":
+            return f"《{title}》适合用来做判断，能帮你快速比较重点和取舍。"
+        if style_key == "story_immersion":
+            return f"《{title}》更像进入一个故事，信息会跟着人物和事件一起展开。"
+        if style_key == "opinion_sparring":
+            return f"《{title}》偏观点碰撞，适合拿来校准一下自己的判断。"
+        if style_key == "social_chat":
+            return f"《{title}》胜在像有人把话讲开，适合随手点开听一会儿。"
+        if style_key == "daily_wander":
+            return f"《{title}》是低目标的生活流，看起来不费劲，氛围也顺。"
+        if style_key == "mood_release":
+            return f"《{title}》偏轻松释放，拿来换个脑子刚好。"
+        if style_key == "aesthetic_browse":
+            return f"《{title}》更偏审美浏览，适合先让画面和气质带你进去。"
+        if style_key == "ambient_companion":
+            return f"《{title}》适合当背景陪伴，不一定要一直盯着看。"
+        if style_key == "live_pulse":
+            return f"《{title}》偏现场和即时感，节奏会更直接。"
+        if style_key == "curiosity_spark":
+            return f"《{title}》胜在切口新鲜，适合点开看看这个陌生角度。"
         return f"《{title}》这条切口挺顺的，先丢给你看看，说不定正好能对上你当下的兴趣。"
 
     @staticmethod
@@ -2257,17 +2267,17 @@ class RecommendationEngine:
     @staticmethod
     def _accessible_style_priority(item: DiscoveredContent) -> int:
         style_key = RecommendationEngine._style_token(item)
-        if style_key == "lifestyle":
+        if style_key in {"ambient_companion", "daily_wander", "mood_release"}:
+            return 7
+        if style_key in {"social_chat", "aesthetic_browse", "live_pulse"}:
             return 6
-        if style_key == "fun_variety":
-            return 5
-        if style_key == "light_chat":
+        if style_key in {"curiosity_spark", "decision_support"}:
             return 4
-        if style_key == "review_roundup":
+        if style_key in {"story_immersion", "opinion_sparring"}:
             return 3
-        if style_key == "story_doc":
+        if style_key in {"quick_scan", "hands_on"}:
             return 2
-        if style_key == "visual_showcase":
+        if style_key == "deep_focus":
             return 1
         return 0
 
@@ -2318,7 +2328,7 @@ class RecommendationEngine:
         Without this, unclassified items would all bypass style_counts and
         could flood a batch with visually monotonous rows.
         """
-        token = RecommendationEngine._normalize_topic_token(item.style_key)
+        token = RecommendationEngine._normalize_topic_token(normalize_style_key(item.style_key))
         return token or "unknown"
 
     @staticmethod
@@ -2440,6 +2450,8 @@ class RecommendationEngine:
                 content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                 content_url=str(row.get("content_url", "")),
                 source_platform=str(row.get("source_platform", "") or "bilibili"),
+                content_type=str(row.get("content_type", "") or "video"),
+                body_text=str(row.get("body_text", "") or ""),
             )
             for row in rows
         ]

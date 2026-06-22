@@ -96,7 +96,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
-| 4.1 事件层 | ✅ | SQLite 写入 + 按类型/时间/关键词查询 + 统计；v0.3.x 每行带 `inferred_satisfaction` + `satisfaction_reason`（写入时由 `classify_event_satisfaction` 决定），`query_events(satisfaction_modes=...)` 支持按 positive/negative/neutral/unknown 过滤，`unknown` 同时匹配 pre-migration 的 NULL 行 |
+| 4.1 事件层 | ✅ | SQLite 写入 + 按类型/时间/关键词查询 + 统计；正式事件类型为 `view/dialogue/pause/seek/search/favorite/like/coin/comment/click/scroll/hover/snapshot/feedback/follow/share`；v0.3.x 每行带 `inferred_satisfaction` + `satisfaction_reason`（写入时由 `classify_event_satisfaction` 决定），`query_events(satisfaction_modes=...)` 支持按 positive/negative/neutral/unknown 过滤，`unknown` 同时匹配 pre-migration 的 NULL 行 |
 | 4.2 偏好层 | ✅ | LLM structured extraction + 合并 + 衰减 |
 | 4.3 灵魂层 | ✅ | 初始画像生成 + `profile` CLI 展示 |
 | 4.4 觉察层 + 洞察层 | ✅ | 觉察笔记、洞察假设、反馈更新 |
@@ -127,7 +127,7 @@ memory.initialize()
 
 # 写入事件
 await memory.propagate_event({
-    "event_type": "view",           # view|pause|seek|search|favorite|like|coin|comment|click|scroll|hover|snapshot|feedback
+    "event_type": "view",           # view|dialogue|pause|seek|search|favorite|like|coin|comment|click|scroll|hover|snapshot|feedback|follow|share
     "url": "https://www.bilibili.com/video/BV1xx",
     "title": "视频标题",
     "metadata": {"bvid": "BV1xx"},
@@ -143,6 +143,10 @@ events = memory.query_events(
 
 # 事件统计
 stats = memory.get_event_stats()  # {"view": 42, "search": 7, ...}
+
+# API 入口 POST /api/events 会逐条写入。raw dislike 会规范成
+# feedback + metadata.feedback_type="dislike"；未知类型只进入响应的
+# rejected 明细，不再让整批 500。
 
 # 插件 side panel 的 durable chat turn 由 Database 管理：
 from openbiliclaw.storage.database import Database
@@ -315,7 +319,7 @@ updated_pref = await analyzer.analyze_events(
 5. **聊天信号受控学习**
    聊天提取出的长期信号会先写到 `insight_candidates.json`。
    只有当候选满足：
-   - `confidence >= 0.8`
+   - `confidence >= 0.8`，或
    - `occurrences >= 2`
    才会正式转换成 `dialogue_insight` 事件去更新偏好层。
 6. **画像重建阈值**

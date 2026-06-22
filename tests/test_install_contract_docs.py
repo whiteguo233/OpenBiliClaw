@@ -148,7 +148,7 @@ def test_cli_module_docs_show_current_init_llm_menu() -> None:
     assert "User picked OpenAI 官方 (option 2 in agent-install.md)" not in bootstrap
 
 
-def test_backend_tag_workflow_does_not_publish_backend_packages() -> None:
+def test_backend_tag_workflow_only_updates_aggregate_release() -> None:
     workflow = _read(".github/workflows/release-backend.yml")
     docs_index = _read("docs/index.md")
     extension_doc = _read("docs/modules/extension.md")
@@ -156,13 +156,18 @@ def test_backend_tag_workflow_does_not_publish_backend_packages() -> None:
     assert "backend-v*" in workflow
     assert "Validate Backend Source Tag" in workflow
     assert "Verify backend version matches source tag" in workflow
+    assert "Update aggregate latest release" in workflow
+    assert "CHANNEL: backend" in workflow
+    assert ".github/scripts/sync-aggregate-release.sh" in workflow
     assert "softprops/action-gh-release" not in workflow
     assert "upload-artifact" not in workflow
     assert "Build backend release archive" not in workflow
     assert "Publish backend release" not in workflow
 
-    assert "后端源码更新看 `backend-v*` tag，不发布后端桌面包" in docs_index
-    assert "后端桌面包不走 GitHub Release 分发" in extension_doc
+    assert "`openbiliclaw-v*` 聚合页" in docs_index
+    assert "维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`" in docs_index
+    assert "后端源码更新仍只通过 `backend-v*` tag 标记" in extension_doc
+    assert "桌面安装包仍由 `desktop-v*` workflow 构建" in extension_doc
 
 
 def test_installers_can_clone_code_into_existing_packaged_data_root() -> None:

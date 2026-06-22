@@ -21,7 +21,9 @@
 | 内容发布时间持久化 | ✅ | `discovery_candidates.published_at` 与 `content_cache.published_at` 保存来源内容发布时间；重复发现或重复缓存时优先保留已有非空值，避免后续空 payload 覆盖发布时间 |
 | discovery 状态恢复 | ✅ | 启动初始化会释放过期 `evaluating` 行；terminal 状态有 status guard，避免 stale update 改写 cached / rejected 结果。 |
 | 最近已看过滤 | ✅ | 可换、raw 和评估路径复用 `source_platform:content_id` 与旧 BVID key，避免已看内容重复入池。 |
+| 统一 admission 分数门 | ✅ | 推荐池读取、raw/headroom 统计、topic/franchise 分布、suppressed 复活、delight 候选和历史推荐读取都会应用统一最低分；初始化会清理旧低分 `content_cache` / `recommendations` 脏数据。 |
 | 惊喜通道占位排除 | ✅ | `get_pool_candidates()` / `count_pool_candidates()` 统一排除被惊喜通道认领的行（`delight_notified=1`，或 delight 分数达阈值且 reason/hook 非空即当前惊喜队列候选），普通推荐与惊喜推荐不再重复出同一条内容；阈值镜像 `DEFAULT_DELIGHT_THRESHOLD`（0.70），由测试锁定两边一致。 |
+| `style_key` 历史值迁移 | ✅ | `Database.initialize()` 会把 `content_cache` / `discovery_candidates` 中已知旧内容风格 key 迁移到新的观看模式 key；写入 `cache_content()` 和 `update_discovery_candidate_evaluations()` 时也会归一化已知旧值。 |
 
 ## 公开 API
 
@@ -39,7 +41,7 @@ count = db.enqueue_discovery_candidates(
             content_id="abc123",
             title="A YouTube deep dive",
             published_at="2026-06-01T10:00:00+00:00",
-            score_threshold=0.65,
+            score_threshold=0.60,
         )
     ],
     max_pending_per_source=420,
@@ -97,6 +99,21 @@ raw_by_source = db.count_pool_raw_material_by_source()
 - `pending` 独立计算，不用 `raw - available` 近似，避免 recently viewed 内容被误算为待整理。
 - `pending_eval` 统计 `pending_eval + evaluating`；`evaluated_pending` 统计已评估但尚未 admission 到 `content_cache` 的候选。
 
+### Admission Cleanup
+
+```python
+db.set_admission_min_score(0.60)
+db.suppress_low_score_pool_items()
+db.suppress_low_confidence_recommendations()
+```
+
+行为说明：
+
+- `set_admission_min_score()` 由 runtime 在配置加载 / 热重载时调用；storage 不直接读取 runtime state 或 `config.toml`。
+- `suppress_low_score_pool_items()` 会把 `content_cache.relevance_score` 低于阈值且仍可能展示的 `fresh / shown / suppressed` 行标为 `suppressed`。
+- `suppress_low_confidence_recommendations()` 会把低于阈值且尚无用户反馈的历史推荐标为 `feedback_type='suppressed_low_score'`。
+- `Database.initialize()` 会用默认阈值执行一次上述清理，处理旧版本已经入池 / 入历史的低分数据。
+
 ## 配置项
 
 存储层本身不新增独立配置。本次涉及的运行时上限仍来自：
@@ -105,6 +122,7 @@ raw_by_source = db.count_pool_raw_material_by_source()
 |--------|------|
 | `scheduler.pool_target_count` | 正式可换推荐池目标；达到后 runtime 不再 discovery / drain。 |
 | `[scheduler.pool_source_shares]` | 平台族配比；raw material by-source 统计用它计算 source headroom。 |
+| `discovery.admission_min_score` | 统一推荐池入池最低分；runtime 会注入给 `Database`，用于池读取和旧数据清理。 |
 | `storage.db_path` | SQLite 数据库路径。 |
 
 ## 设计决策
@@ -115,3 +133,5 @@ raw_by_source = db.count_pool_raw_material_by_source()
 4. **评估和入池可分步恢复**：`evaluated` 表示“已经通过喜好评估但还没 admission”，不是失败终态；池子恢复容量后会优先入池。batch 级 provider transient failure 释放回 `pending_eval` 且不递增 `eval_attempts`，但会递增 `batch_eval_attempts` 作为高阈值熔断；只有调用方显式要求递增 attempts 的可归因失败才会使用常规 `eval_attempts` 预算。
 5. **状态机必须防 stale caller**：`evaluating` 有过期回收，terminal rows 有 status guard，避免进程 crash 或并发 caller 让候选永久卡住或复活。
 6. **pending 不是 raw 减 available**：最近已看、缺文案、缺分类、缺链接、待评估属于不同诊断含义，必须分开统计。
+7. **低分清理和展示防线都在存储层落地**：admission 仍由 discovery evaluator 决定；storage 只用统一阈值阻止旧脏数据、suppressed 低分复活和未来绕过入口继续进入可展示读取路径。
+8. **`style_key` 迁移只改已知旧值**：历史安装用户的本地 SQLite 里可能已有 `deep_dive`、`story_doc`、`lifestyle` 等旧内容风格 key。初始化迁移会把这些已知值物理改写为 `deep_focus`、`story_immersion`、`daily_wander` 等新观看模式；未知自定义值会原样保留，避免误删无法识别的历史数据。

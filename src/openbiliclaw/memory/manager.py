@@ -857,6 +857,7 @@ class MemoryManager:
         keyword: str = "",
         limit: int = 100,
         satisfaction_modes: frozenset[str] | None = None,
+        after_event_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Query persisted events from the SQLite-backed event layer."""
         return self._database.query_events(
@@ -866,6 +867,7 @@ class MemoryManager:
             keyword=keyword,
             limit=limit,
             satisfaction_modes=satisfaction_modes,
+            after_event_id=after_event_id,
         )
 
     def get_event_stats(

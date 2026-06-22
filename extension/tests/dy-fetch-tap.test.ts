@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import {
   classifyDouyinResponseUrl,
   installFetchTap,
+  installXhrTap,
   installApiHarvester,
   parseFeedAwemeResponse,
   parseRelatedAwemeResponse,
@@ -347,6 +348,105 @@ test("installFetchTap posts parsed search responses through optional search call
   );
   assert.equal(calls.length, 1);
   assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "search-tap-1");
+});
+
+test("installFetchTap posts chunked search stream responses through optional search callback", async () => {
+  const calls: { items: unknown[] }[] = [];
+  const fakeFetch = async (): Promise<Response> =>
+    new Response(
+      '14c0\r\n{"status_code":0,"data":[{"aweme_info":{"aweme_id":"stream-search-1","desc":"搜索 stream"}}]}',
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  const fakeWindow = { fetch: fakeFetch } as unknown as Window;
+  installFetchTap(
+    fakeWindow,
+    () => {},
+    (items) => calls.push({ items }),
+  );
+  await fakeWindow.fetch(
+    "https://www.douyin.com/aweme/v1/web/general/search/stream/?keyword=%E7%A7%91%E6%8A%80",
+  );
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "stream-search-1");
+});
+
+test("installFetchTap passively posts feed responses through optional search callback", async () => {
+  const calls: { items: unknown[] }[] = [];
+  const fakeFetch = async (): Promise<Response> =>
+    new Response(
+      JSON.stringify({
+        aweme_list: [{ aweme_id: "feed-passive-1", desc: "首页推荐 passive" }],
+      }),
+      { status: 200 },
+    );
+  const fakeWindow = { fetch: fakeFetch } as unknown as Window;
+  installFetchTap(
+    fakeWindow,
+    () => {},
+    (items) => calls.push({ items }),
+  );
+  await fakeWindow.fetch("https://www.douyin.com/aweme/v1/web/tab/feed/?count=10");
+  await fakeWindow.fetch("https://www.douyin.com/aweme/v2/web/module/feed/?count=20");
+  assert.equal(calls.length, 2);
+  assert.equal((calls[0]!.items[0] as { scope: string }).scope, "dy_feed");
+  assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "feed-passive-1");
+  assert.equal((calls[1]!.items[0] as { scope: string }).scope, "dy_feed");
+  assert.equal((calls[1]!.items[0] as { aweme_id: string }).aweme_id, "feed-passive-1");
+});
+
+test("installXhrTap passively posts feed responses through optional search callback", () => {
+  const calls: { items: unknown[] }[] = [];
+
+  class FakeXMLHttpRequest extends EventTarget {
+    readyState = 0;
+    responseText = "";
+
+    open(): void {
+      // The production wrapper stores URL/listener before delegating here.
+    }
+  }
+
+  const fakeWindow = { XMLHttpRequest: FakeXMLHttpRequest } as unknown as Window;
+  installXhrTap(
+    fakeWindow,
+    () => {},
+    (items) => calls.push({ items }),
+  );
+
+  const xhr = new FakeXMLHttpRequest();
+  xhr.open("POST", "https://www.douyin.com/aweme/v2/web/module/feed/");
+  xhr.responseText = JSON.stringify({
+    aweme_list: [{ aweme_id: "feed-xhr-passive-1", desc: "首页推荐 xhr passive" }],
+  });
+  xhr.readyState = 4;
+  xhr.dispatchEvent(new Event("readystatechange"));
+
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0]!.items[0] as { scope: string }).scope, "dy_feed");
+  assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "feed-xhr-passive-1");
+});
+
+test("installFetchTap passively posts related responses through optional search callback", async () => {
+  const calls: { items: unknown[] }[] = [];
+  const fakeFetch = async (): Promise<Response> =>
+    new Response(
+      JSON.stringify({
+        aweme_list: [{ aweme_id: "hot-passive-1", desc: "热点相关 passive" }],
+      }),
+      { status: 200 },
+    );
+  const fakeWindow = { fetch: fakeFetch } as unknown as Window;
+  installFetchTap(
+    fakeWindow,
+    () => {},
+    (items) => calls.push({ items }),
+  );
+  await fakeWindow.fetch(
+    "https://www.douyin.com/aweme/v1/web/aweme/related/?aweme_id=seed&count=10",
+  );
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0]!.items[0] as { scope: string }).scope, "dy_hot");
+  assert.equal((calls[0]!.items[0] as { aweme_id: string }).aweme_id, "hot-passive-1");
 });
 
 test("installFetchTap returns the original fetch's response unchanged", async () => {

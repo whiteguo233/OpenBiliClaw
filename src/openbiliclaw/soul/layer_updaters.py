@@ -249,9 +249,7 @@ async def _update_interest(
                     runtime_state = load_runtime_state()
                 probed_domains_raw = runtime_state.get("probed_domains", {})
                 probed_domains = (
-                    set(probed_domains_raw)
-                    if isinstance(probed_domains_raw, dict)
-                    else set()
+                    set(probed_domains_raw) if isinstance(probed_domains_raw, dict) else set()
                 )
                 added = speculator.ingest_seeds(
                     speculative_seeds,
@@ -626,8 +624,9 @@ async def regenerate_portrait(
         legacy_profile = await profile_builder.build(
             history=[],
             preference=memory.get_layer("preference").data,
-            awareness_notes=[awareness_note_to_dict(n) for n in profile.recent_awareness[:5]],
-            active_insights=[insight_hypothesis_to_dict(i) for i in profile.active_insights[:5]],
+            # Both windows are chronological oldest→newest; take the tail.
+            awareness_notes=[awareness_note_to_dict(n) for n in profile.recent_awareness[-5:]],
+            active_insights=[insight_hypothesis_to_dict(i) for i in profile.active_insights[-5:]],
         )
         return legacy_profile.personality_portrait
     except Exception:

@@ -2683,6 +2683,48 @@
       padding: 6px 0;
     }
 
+    .insight-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .insight-action-btn {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      border: 1px solid rgba(210, 228, 248, 0.9);
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--text-secondary);
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .insight-action-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .insight-action-btn.is-confirm:hover:not(:disabled) {
+      background: rgba(48, 185, 128, 0.12);
+      border-color: rgba(48, 185, 128, 0.4);
+      color: var(--success);
+    }
+
+    .insight-action-btn.is-reject:hover:not(:disabled) {
+      background: rgba(235, 110, 110, 0.12);
+      border-color: rgba(235, 110, 110, 0.4);
+      color: #d9534f;
+    }
+
+    .insight-action-status {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: 2px;
+    }
+
     /* ── Recent awareness ── */
     .awareness-list {
       display: flex;
@@ -5282,6 +5324,27 @@
         <div class="settings-field">
           <label for="cfgDiscoveryLimit">单轮发现上限</label>
           <input id="cfgDiscoveryLimit" type="number" min="1" max="60" step="1" placeholder="30">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgMultimodalEvaluationEnabled" type="checkbox">
+          <label for="cfgMultimodalEvaluationEnabled">启用封面图评估</label>
+        </div>
+        <p class="settings-hint">开启后，支持图像输入的评估模型会把候选封面随文本一起判断；图片会先压缩，图文 batch 默认更小。</p>
+        <div class="settings-field">
+          <label for="cfgMultimodalBatchSize">图文批量大小</label>
+          <input id="cfgMultimodalBatchSize" type="number" min="1" max="12" step="1" placeholder="8">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageMaxPx">封面最大边 px</label>
+          <input id="cfgMultimodalImageMaxPx" type="number" min="128" max="768" step="1" placeholder="384">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageQuality">JPEG 质量</label>
+          <input id="cfgMultimodalImageQuality" type="number" min="40" max="90" step="1" placeholder="72">
+        </div>
+        <div class="settings-field">
+          <label for="cfgMultimodalImageTimeout">封面超时秒数</label>
+          <input id="cfgMultimodalImageTimeout" type="number" min="1" max="20" step="1" placeholder="6">
         </div>
         <div class="settings-field">
           <label for="cfgProactivePushInterval">主动推送轮询秒数</label>

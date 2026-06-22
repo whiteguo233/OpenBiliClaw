@@ -59,6 +59,7 @@
     .msg.show { display: block; }
     .msg.ok { background: rgba(54,196,111,.12); color: var(--ok); border: 1px solid rgba(54,196,111,.3); }
     .msg.err { background: rgba(255,107,107,.12); color: var(--err); border: 1px solid rgba(255,107,107,.3); }
+    .msg.info { background: rgba(255,122,162,.12); color: var(--accent); border: 1px solid rgba(255,122,162,.28); }
     .check-list { list-style: none; padding: 0; margin: 18px 0; }
     .check-list li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel-2);
       border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
@@ -137,11 +138,9 @@
           首次使用前请确保已 <code>ollama pull</code> 对应模型(embedding 的 bge-m3 已自动就绪)。
         </div>
 
-        <details class="adv">
-          <summary>高级（可选：自定义模型名）</summary>
-          <label for="model">模型名</label>
-          <input id="model" type="text" placeholder="留空 = 用该服务商默认模型">
-        </details>
+        <label for="model">模型名</label>
+        <input id="model" type="text" placeholder="填写模型 ID，例如 deepseek-v4-flash">
+        <div class="hint" id="modelHint"></div>
 
         <div class="msg" id="msg0"></div>
         <div class="row-actions">
@@ -218,6 +217,15 @@
       openai_compatible: ["", ""],
       ollama: ["", ""],
     };
+    const DEFAULT_MODELS = {
+      deepseek: "deepseek-v4-flash",
+      openai: "gpt-5-nano",
+      claude: "claude-sonnet-4-6",
+      gemini: "gemini-2.5-flash",
+      openrouter: "openai/gpt-5-nano",
+      openai_compatible: "",
+      ollama: "qwen2.5:7b",
+    };
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -240,11 +248,12 @@
       none: "",
     };
     const INIT_SOURCE_LOGIN_HINT =
-      "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+      "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
     const INIT_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
     const INIT_STREAM_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
     let step = 0, biliConnected = false, biliPoll = null, initPoll = null, initSocket = null;
+    let lastAutoModel = "";
     let initPollInFlight = false, initPollPending = false;
 
     function setStep(n) {
@@ -268,6 +277,15 @@
       $("#ollamaNote").style.display = isOllama ? "block" : "none";
       const [url, name] = KEY_LINKS[p] || ["", ""];
       $("#keyHint").innerHTML = url ? `还没有 key？去 <a href="${url}" target="_blank" rel="noopener">${name}</a> 免费申请,粘贴回来即可。` : "";
+      const modelInput = $("#model");
+      const defaultModel = DEFAULT_MODELS[p] || "";
+      if (!modelInput.value.trim() || (lastAutoModel && modelInput.value.trim() === lastAutoModel)) {
+        modelInput.value = defaultModel;
+        lastAutoModel = defaultModel;
+      }
+      $("#modelHint").textContent = defaultModel
+        ? "已填入推荐默认模型，可按你的服务商实际模型名修改。"
+        : "OpenAI 兼容接口通常需要填写你的部署名或第三方模型 ID。";
     }
 
     function showMsg(id, text, kind) {
@@ -283,16 +301,16 @@
       const model = $("#model").value.trim();
       if (provider !== "ollama" && !apiKey) { showMsg("#msg0", "请先填入 API Key（本地 Ollama 才可免 key）。", "err"); return; }
       if (provider === "openai_compatible" && !baseUrl) { showMsg("#msg0", "OpenAI 兼容接口需要填 Base URL。", "err"); return; }
+      if (!model) { showMsg("#msg0", "请填写模型名。", "err"); return; }
 
       const pcfg = {};
       if (apiKey) pcfg.api_key = apiKey;
       if (baseUrl) pcfg.base_url = baseUrl;
-      if (model) pcfg.model = model;
-      // Local Ollama chat needs an explicit model (the packaged default blanks
-      // it so it stays embedding-only). Default to the recommended one; the
-      // user still has to `ollama pull` it.
-      if (provider === "ollama" && !model) pcfg.model = "qwen2.5:7b";
-      const payload = { llm: { default_provider: provider, [provider]: pcfg } };
+      pcfg.model = model;
+      const payload = {
+        suppress_background_llm_work: true,
+        llm: { default_provider: provider, [provider]: pcfg },
+      };
 
       const btn = $("#saveLlm");
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>保存中…';
@@ -340,8 +358,9 @@
     function buildInitChecklist(status, selected = null) {
       const prereq = status?.prerequisites || {};
       const enabled = enabledPlatforms(status);
+      const selectedSources = Array.isArray(selected) ? selected : null;
       // B站 login only blocks when bilibili is among the checked sources.
-      const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
+      const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
       return [
         {
           key: "bilibili",
@@ -366,7 +385,11 @@
         },
         {
           key: "platforms",
-          label: enabled.length ? `已启用来源：${initSourceLabels(enabled).join("、")}` : "数据来源：仅 B站",
+          label: selectedSources?.length
+            ? `本次初始化来源：${initSourceLabels(selectedSources).join("、")}`
+            : enabled.length
+              ? `已启用来源：${initSourceLabels(enabled).join("、")}`
+              : "数据来源：仅 B站",
           ok: true,
           hard: false,
           hint: "",
@@ -433,18 +456,39 @@
       el.textContent = text || "";
     }
 
-    function selectedSourcesNeedingEnable(selected, status) {
-      const checked = new Set(selected);
-      const enabled = new Set(enabledPlatforms(status));
-      return INIT_SOURCE_OPTIONS
-        .filter((opt) => checked.has(opt.key) && !enabled.has(opt.key))
-        .map((opt) => opt.key);
-    }
-
     async function fetchInitStatus() {
       const r = await fetch("/api/init-status");
       if (!r.ok) throw new Error("HTTP " + r.status);
       return await r.json();
+    }
+
+    async function fetchRuntimeStatus() {
+      const r = await fetch("/api/runtime-status");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }
+
+    function runtimeHasFirstPool(runtime) {
+      return Number(runtime?.pool_available_count ?? runtime?.pool_available ?? runtime?.available_count ?? 0) > 0
+        || Number(runtime?.recommendation_count ?? 0) > 0;
+    }
+
+    async function firstInitPoolReady() {
+      try {
+        return runtimeHasFirstPool(await fetchRuntimeStatus());
+      } catch {
+        return false;
+      }
+    }
+
+    function renderWaitingForFirstPool() {
+      $("#initSources").style.display = "none";
+      $("#initProgress").hidden = false;
+      $("#initProgressBar").style.width = "95%";
+      $("#initProgressLabel").textContent = "画像已生成，正在整理首轮内容池…";
+      $("#startInit").disabled = true;
+      $("#startInit").textContent = "整理首轮内容…";
+      setInitReason("等第一批内容入池可刷后，初始化才会完成。", "info");
     }
 
     function progressView(status) {
@@ -519,8 +563,13 @@
         const status = await fetchInitStatus();
         renderInitProgress(status);
         if (status.initialized) {
-          clearInitPoll();
-          setStep(3);
+          if (await firstInitPoolReady()) {
+            clearInitPoll();
+            setStep(3);
+            return;
+          }
+          renderWaitingForFirstPool();
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
           return;
         }
         if (status.running) {
@@ -550,7 +599,7 @@
         initSocket.onmessage = (event) => {
           try {
             const payload = JSON.parse(event.data);
-            if (["init_progress", "init_completed", "init_failed"].includes(payload.type)) {
+            if (["init_progress", "init_completed", "init_failed", "refresh.pool_updated"].includes(payload.type)) {
               void pollInitStatus();
             }
           } catch {}
@@ -580,7 +629,14 @@
       }
 
       if (status.initialized) {
-        setStep(3);
+        if (await firstInitPoolReady()) {
+          setStep(3);
+        } else {
+          renderInitProgress(status);
+          renderWaitingForFirstPool();
+          connectInitStream();
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+        }
         return;
       }
       if (status.running) {
@@ -594,14 +650,6 @@
         $("#startInit").disabled = false;
         $("#startInit").textContent = "开始初始化";
         setInitReason(INIT_REASON_TEXT.no_sources_selected);
-        return;
-      }
-      const needEnable = selectedSourcesNeedingEnable(selected, status);
-      if (needEnable.length) {
-        renderInitChecklist(status, selected);
-        $("#startInit").disabled = false;
-        $("#startInit").textContent = "开始初始化";
-        setInitReason(`你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到 /web 设置页开启对应平台，或取消勾选后再点一次。`);
         return;
       }
       if (selected.includes("bilibili") && !status?.prerequisites?.bilibili_logged_in) {
@@ -672,9 +720,14 @@
           const data = await r.json();
           const llm = (data.config || data)?.llm || {};
           const prov = llm.default_provider || "";
-          const hasKey = prov && (prov === "ollama" || (llm[prov] && llm[prov].api_key));
+          const providerCfg = (llm[prov] && typeof llm[prov] === "object") ? llm[prov] : {};
+          const hasKey = prov && (prov === "ollama" || providerCfg.api_key);
           if (hasKey) {
             $("#provider").value = prov;
+            if (providerCfg.model) {
+              $("#model").value = providerCfg.model;
+              lastAutoModel = "";
+            }
           }
         }
       } catch {}

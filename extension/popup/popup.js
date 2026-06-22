@@ -44,8 +44,6 @@ import {
   initProgressView,
   INIT_SOURCE_OPTIONS,
   INIT_SOURCE_LOGIN_HINT,
-  initSourceLabels,
-  initSelectedSourcesNeedingEnable,
 } from "./popup-init-control.js";
 import {
   getBackendBaseUrl,
@@ -100,6 +98,7 @@ import {
   submitProfileEdit,
   startChatTurn,
   submitFeedback,
+  submitInsightFeedback,
   updateConfig,
   addToWatchLater,
   removeFromWatchLater,
@@ -519,6 +518,9 @@ function setActiveTab(tabName) {
   }
   if (tabName === "favorites") {
     void loadFavorites();
+  }
+  if (tabName === "chat") {
+    scrollChatMessagesToBottom();
   }
 }
 
@@ -994,18 +996,6 @@ async function handleStartInitClick() {
   if (status.running) {
     renderInitProgress(status);
     _startInitProgressPoll();
-    return;
-  }
-
-  // The user checked a platform that isn't enabled in settings — the backend
-  // would silently drop it, so guide them to enable it (or uncheck) instead.
-  const needEnable = initSelectedSourcesNeedingEnable(selectedSources, status);
-  if (needEnable.length > 0) {
-    _renderInitChecklist(status, selectedSources);
-    _setInitStartButton("开始初始化", true);
-    _setInitReason(
-      `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到设置开启对应平台，或取消勾选后再点一次。`,
-    );
     return;
   }
 
@@ -2835,7 +2825,53 @@ function renderActiveInsights(container, items) {
       row.append(timestampWrapper);
     }
 
+    const actions = document.createElement("div");
+    actions.className = "insight-actions";
+    const status = document.createElement("span");
+    status.className = "insight-action-status";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "insight-action-btn is-confirm";
+    confirmBtn.textContent = "准"; // 准
+    confirmBtn.title = "这个猜测准";
+    const rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "insight-action-btn is-reject";
+    rejectBtn.textContent = "不准"; // 不准
+    rejectBtn.title = "这个猜测不准";
+    confirmBtn.addEventListener("click", () =>
+      handleInsightFeedback(item.hypothesis, "confirm", row, [confirmBtn, rejectBtn], status),
+    );
+    rejectBtn.addEventListener("click", () =>
+      handleInsightFeedback(item.hypothesis, "reject", row, [confirmBtn, rejectBtn], status),
+    );
+    actions.append(confirmBtn, rejectBtn, status);
+    row.append(actions);
+
     container.append(row);
+  }
+}
+
+async function handleInsightFeedback(hypothesis, signal, row, buttons, statusEl) {
+  for (const b of buttons) b.disabled = true;
+  try {
+    const res = await submitInsightFeedback(hypothesis, signal);
+    if (res && res.matched) {
+      if (typeof res.confidence === "number") {
+        const pct = Math.round(res.confidence * 100);
+        const fill = row.querySelector(".insight-confidence-fill");
+        const label = row.querySelector(".insight-confidence-label");
+        if (fill instanceof HTMLElement) fill.style.width = `${pct}%`;
+        if (label) label.textContent = `${pct}%`;
+      }
+      row.classList.toggle("is-validated", Boolean(res.validated));
+    }
+    if (statusEl) {
+      statusEl.textContent = signal === "confirm" ? "已确认 ✓" : "已记下，会少推这类";
+    }
+  } catch {
+    for (const b of buttons) b.disabled = false;
+    if (statusEl) statusEl.textContent = "没存上，稍后再试";
   }
 }
 
@@ -3751,6 +3787,17 @@ function renderEditPanel(container, editState) {
   }
 }
 
+function scrollChatMessagesToBottom() {
+  if (!(elements.chatMessages instanceof HTMLElement)) {
+    return;
+  }
+  const scroll = () => {
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  };
+  scroll();
+  window.requestAnimationFrame(scroll);
+}
+
 function appendChatMessage(role, content, { turnId = "", part = "" } = {}) {
   if (!(elements.chatMessages instanceof HTMLElement)) {
     return null;
@@ -3770,7 +3817,7 @@ function appendChatMessage(role, content, { turnId = "", part = "" } = {}) {
 
   item.append(label, text);
   elements.chatMessages.append(item);
-  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  scrollChatMessagesToBottom();
   return item;
 }
 
@@ -3805,7 +3852,7 @@ function appendChatThinkingPlaceholder(turnId = "") {
 
   item.append(label, text);
   elements.chatMessages.append(item);
-  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  scrollChatMessagesToBottom();
   return item;
 }
 
@@ -3821,9 +3868,7 @@ function replaceChatThinkingPlaceholder(placeholder, content) {
     text.classList.remove("chat-thinking-content");
     text.textContent = content;
   }
-  if (elements.chatMessages instanceof HTMLElement) {
-    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
-  }
+  scrollChatMessagesToBottom();
 }
 
 const DELIGHT_LOCAL_STATE_KEY = "openbiliclaw_delight_local";
@@ -4045,6 +4090,7 @@ async function hydrateChatHistory() {
         });
       }
     }
+    scrollChatMessagesToBottom();
   } catch {
     // History is opportunistic; core panel loading should continue offline.
   }
@@ -6128,6 +6174,14 @@ function bindSettings() {
     setVal("cfgTrendingRefreshHours", cfg.scheduler?.trending_refresh_hours);
     setVal("cfgExploreRefreshHours", cfg.scheduler?.explore_refresh_hours);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
+    const multimodalEvaluation = document.getElementById("cfgMultimodalEvaluationEnabled");
+    if (multimodalEvaluation) {
+      multimodalEvaluation.checked = cfg.discovery?.multimodal_evaluation_enabled === true;
+    }
+    setVal("cfgMultimodalBatchSize", cfg.discovery?.multimodal_batch_size);
+    setVal("cfgMultimodalImageMaxPx", cfg.discovery?.multimodal_image_max_px);
+    setVal("cfgMultimodalImageQuality", cfg.discovery?.multimodal_image_quality);
+    setVal("cfgMultimodalImageTimeout", cfg.discovery?.multimodal_image_timeout_seconds);
     setVal("cfgProactivePushInterval", cfg.scheduler?.proactive_push_interval_seconds);
     setVal("cfgSpeculatorIdleInterval", cfg.scheduler?.speculator_idle_interval_minutes);
     const autoUpdate = document.getElementById("cfgAutoUpdate");
@@ -6292,6 +6346,14 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgTwitterRequestInterval", 3),
           min_interval_minutes: getInt("cfgTwitterMinInterval", 60),
         },
+      },
+      discovery: {
+        ...(state.runtimeConfig?.discovery || {}),
+        multimodal_evaluation_enabled: checked("cfgMultimodalEvaluationEnabled"),
+        multimodal_batch_size: getInt("cfgMultimodalBatchSize", 8),
+        multimodal_image_max_px: getInt("cfgMultimodalImageMaxPx", 384),
+        multimodal_image_quality: getInt("cfgMultimodalImageQuality", 72),
+        multimodal_image_timeout_seconds: getInt("cfgMultimodalImageTimeout", 6),
       },
       scheduler: {
         enabled: !checked("cfgSchedulerEnabled"),

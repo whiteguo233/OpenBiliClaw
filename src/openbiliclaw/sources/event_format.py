@@ -79,7 +79,8 @@ _EXPLICIT_POSITIVE_EVENT_TYPES = frozenset({"like", "coin", "favorite", "comment
 
 # Feedback metadata vocabulary — set on `feedback` events emitted by the
 # extension's "👍 / 👎" UI and the recommendation feedback endpoint.
-_POSITIVE_FEEDBACK_TYPES = frozenset({"like", "comment"})
+_POSITIVE_FEEDBACK_TYPES = frozenset({"like"})
+_NEUTRAL_FEEDBACK_TYPES = frozenset({"comment"})
 _POSITIVE_REACTIONS = frozenset({"thumbs_up"})
 _NEGATIVE_FEEDBACK_TYPES = frozenset({"dislike"})
 _NEGATIVE_REACTIONS = frozenset({"thumbs_down"})
@@ -133,6 +134,8 @@ def classify_event_satisfaction(event: dict[str, Any]) -> tuple[SatisfactionCate
             return ("negative", "explicit_negative")
         if feedback_type in _POSITIVE_FEEDBACK_TYPES or reaction in _POSITIVE_REACTIONS:
             return ("positive", "explicit_engagement")
+        if feedback_type in _NEUTRAL_FEEDBACK_TYPES:
+            return ("neutral", "direct_feedback")
         return ("unknown", "fallback")
 
     if event_type == "click":

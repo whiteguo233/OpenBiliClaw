@@ -42,7 +42,7 @@ class TrendingStrategy(DiscoveryStrategy):
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     max_related_rids: int = 4
     # Broader default RIDs covering more top-level categories:
@@ -83,11 +83,11 @@ class TrendingStrategy(DiscoveryStrategy):
         return "trending"
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
-        if self.score_threshold <= 0.58:
+        if self.score_threshold <= 0.60:
             return None
         return replace(
             self,
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             last_intermediates={},
         )
 
@@ -208,9 +208,17 @@ class TrendingStrategy(DiscoveryStrategy):
         stat = item.get("stat")
         view_count = to_int(item.get("play", 0))
         like_count = to_int(item.get("like", 0))
+        favorite_count = to_int(item.get("favorite", item.get("favorites", 0)))
+        danmaku_count = to_int(item.get("danmaku", item.get("video_review", 0)))
+        comment_count = to_int(item.get("reply", item.get("review", 0)))
+        share_count = to_int(item.get("share", 0))
         if isinstance(stat, dict):
             view_count = to_int(stat.get("view", view_count))
             like_count = to_int(stat.get("like", like_count))
+            favorite_count = to_int(stat.get("favorite", favorite_count))
+            danmaku_count = to_int(stat.get("danmaku", danmaku_count))
+            comment_count = to_int(stat.get("reply", comment_count))
+            share_count = to_int(stat.get("share", share_count))
 
         title = clean_text(str(item.get("title", "")))
         description = clean_text(str(item.get("description", item.get("desc", ""))))
@@ -232,6 +240,10 @@ class TrendingStrategy(DiscoveryStrategy):
             duration=parse_duration(item.get("duration", 0)),
             view_count=view_count,
             like_count=like_count,
+            favorite_count=favorite_count,
+            danmaku_count=danmaku_count,
+            comment_count=comment_count,
+            share_count=share_count,
             description=description,
             topic_key=topic_key,
             topic_group=topic_key,

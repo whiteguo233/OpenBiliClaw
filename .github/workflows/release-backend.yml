@@ -6,7 +6,7 @@ on:
       - "backend-v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -35,3 +35,11 @@ jobs:
               raise SystemExit(
                   f"backend source tag {release_tag} does not match pyproject version {actual_version}"
               )
+
+      - name: Update aggregate latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          CHANNEL: backend
+        run: bash .github/scripts/sync-aggregate-release.sh

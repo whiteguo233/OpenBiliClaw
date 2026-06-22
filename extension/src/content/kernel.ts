@@ -8,6 +8,7 @@
  */
 
 import {
+  buildActionHintFromClickTarget,
   createBehaviorEvent,
   isTrackableCardElement,
   normalizeActionSignal,
@@ -24,6 +25,12 @@ const SNAPSHOT_TYPES = new Set(["snapshot", "view", "like", "coin", "favorite", 
 
 function sendEvent(event: BehaviorEvent): void {
   chrome.runtime.sendMessage({ action: "BEHAVIOR_EVENT", data: event });
+}
+
+function closestHref(element: Element): string | null {
+  const link = element.closest("a") as (Element & { href?: unknown }) | null;
+  if (!link) return null;
+  return typeof link.href === "string" ? link.href : link.getAttribute("href");
 }
 
 export function startCollector(adapter: PlatformAdapter): void {
@@ -101,34 +108,59 @@ export function startCollector(adapter: PlatformAdapter): void {
   };
 
   const observeScroll = (): void => {
+    const buildScrollMetadata = (target: EventTarget | null): Record<string, unknown> => {
+      if (
+        target instanceof HTMLElement &&
+        target !== document.body &&
+        target !== document.documentElement &&
+        target.scrollHeight > target.clientHeight
+      ) {
+        const maxElementScroll = Math.max(target.scrollHeight - target.clientHeight, 1);
+        return {
+          scrollRatio: Number((target.scrollTop / maxElementScroll).toFixed(4)),
+          scrollY: window.scrollY,
+          elementScrollTop: target.scrollTop,
+          elementScrollHeight: target.scrollHeight,
+          elementClientHeight: target.clientHeight,
+          scrollTarget: target.tagName.toLowerCase(),
+        };
+      }
+
+      const docHeight = Math.max(
+        document.body.scrollHeight,
+        document.documentElement.scrollHeight,
+        1,
+      );
+      const viewportHeight = window.innerHeight || 1;
+      const maxScroll = Math.max(docHeight - viewportHeight, 1);
+      return {
+        scrollRatio: Number((window.scrollY / maxScroll).toFixed(4)),
+        scrollY: window.scrollY,
+      };
+    };
+
+    const handleScroll = (target: EventTarget | null): void => {
+      if (scrollTimer !== null) {
+        window.clearTimeout(scrollTimer);
+      }
+      scrollTimer = window.setTimeout(() => {
+        const now = Date.now();
+        if (now - lastScrollEventAt < SCROLL_DEBOUNCE_MS) return;
+        lastScrollEventAt = now;
+
+        sendEvent(createEvent("scroll", buildScrollMetadata(target)));
+      }, SCROLL_DEBOUNCE_MS);
+    };
+
     window.addEventListener(
       "scroll",
-      () => {
-        if (scrollTimer !== null) {
-          window.clearTimeout(scrollTimer);
-        }
-        scrollTimer = window.setTimeout(() => {
-          const now = Date.now();
-          if (now - lastScrollEventAt < SCROLL_DEBOUNCE_MS) return;
-          lastScrollEventAt = now;
-
-          const docHeight = Math.max(
-            document.body.scrollHeight,
-            document.documentElement.scrollHeight,
-            1,
-          );
-          const viewportHeight = window.innerHeight || 1;
-          const maxScroll = Math.max(docHeight - viewportHeight, 1);
-          sendEvent(
-            createEvent("scroll", {
-              scrollRatio: Number((window.scrollY / maxScroll).toFixed(4)),
-              scrollY: window.scrollY,
-            }),
-          );
-        }, SCROLL_DEBOUNCE_MS);
-      },
+      () => handleScroll(window),
       { passive: true },
     );
+    document.addEventListener("scroll", (event) => handleScroll(event.target), {
+      passive: true,
+      capture: true,
+    });
   };
 
   const observeHover = (): void => {
@@ -172,31 +204,30 @@ export function startCollector(adapter: PlatformAdapter): void {
 
   const observeClicks = (): void => {
     document.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      const link = target.closest("a");
+      if (!(event.target instanceof Element)) return;
+      const target = event.target;
+      const href = closestHref(target);
+      const targetText = target.textContent?.trim().slice(0, 100) ?? null;
       sendEvent(
         createEvent("click", {
           tagName: target.tagName,
-          text: target.textContent?.trim().slice(0, 100) ?? null,
-          href: link?.href ?? null,
-          classList: Array.from(target.classList),
+          text: targetText,
+          href,
+          classList: Array.from(target.classList ?? []),
         }),
       );
 
-      const actionType = adapter.inferActionType({
-        text: target.textContent,
-        ariaLabel: target.getAttribute("aria-label"),
-        className: target.className,
-      });
+      const actionHint = buildActionHintFromClickTarget(target);
+      const actionType = adapter.inferActionType(actionHint);
 
       if (!actionType) return;
       const action = normalizeActionSignal(actionType, {
-          targetText: target.textContent?.trim().slice(0, 100) ?? null,
-          href: link?.href ?? null,
-          actionLabel: target.getAttribute("aria-label"),
+        targetText: actionHint.text?.trim().slice(0, 100) ?? targetText,
+        href,
+        actionLabel: actionHint.ariaLabel,
       });
       sendEvent(createEvent(action.type, action.metadata));
-    });
+    }, { capture: true });
   };
 
   const attachVideoListeners = (): void => {

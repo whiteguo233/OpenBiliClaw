@@ -1,7 +1,16 @@
 import type { BehaviorEvent } from "../shared/types.js";
 
 const HIGH_FREQUENCY_TYPES = new Set(["scroll", "hover", "snapshot"]);
-const STRONG_SIGNAL_TYPES = new Set(["comment", "coin", "favorite", "like", "feedback"]);
+const STRONG_SIGNAL_TYPES = new Set([
+  "comment",
+  "coin",
+  "favorite",
+  "feedback",
+  "follow",
+  "like",
+  "share",
+  "view",
+]);
 
 function getBucket(event: BehaviorEvent): number {
   return Math.floor(event.timestamp / 1000);
@@ -45,5 +54,13 @@ export function enqueueBufferedEvent(
 }
 
 export function shouldFlushImmediately(event: BehaviorEvent): boolean {
+  if (
+    event.type === "click" &&
+    (typeof event.metadata.watch_seconds === "number" ||
+      typeof event.metadata.video_duration_seconds === "number" ||
+      typeof event.metadata.dwell_source === "string")
+  ) {
+    return true;
+  }
   return STRONG_SIGNAL_TYPES.has(event.type);
 }

@@ -24,6 +24,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DouyinBudgetExhausted(Exception):  # noqa: N818 - plan-mandated name (no Error suffix)
+    """Plugin-search task budget exhausted — a *distinguishable* "not searched".
+
+    Raised (only when ``raise_on_budget`` is set on the client — the unified
+    keyword planner fetch path) when the plugin ``search`` task could not be
+    enqueued because the daily task budget is spent, so NO search ran. This is
+    deliberately distinct from a genuinely empty result (``[]``): the unified
+    keyword planner caller rolls the claimed keyword back to ``pending`` instead
+    of burning it as ``used``. Legacy callers leave ``raise_on_budget`` off and
+    keep the historical "budget → fall back to direct-cookie" behavior.
+    """
+
+
 def _normalize_daily_budget(value: int) -> int:
     """Normalize daily task budget; 0 disables the per-day cap."""
 
@@ -68,7 +81,23 @@ def plugin_search_item_to_aweme(item: dict[str, Any]) -> dict[str, object] | Non
         aweme["video"] = {"cover": {"url_list": [cover_url]}}
     else:
         aweme["video"] = {}
+    statistics = {
+        "play_count": _to_int(item.get("view_count")),
+        "digg_count": _to_int(item.get("like_count")),
+        "collect_count": _to_int(item.get("collect_count")),
+        "comment_count": _to_int(item.get("comment_count")),
+        "share_count": _to_int(item.get("share_count")),
+    }
+    if any(statistics.values()):
+        aweme["statistics"] = statistics
     return aweme
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(str(value or 0).replace(",", "")))
+    except (TypeError, ValueError):
+        return 0
 
 
 class DouyinPluginSearchClient:
@@ -90,11 +119,19 @@ class DouyinPluginSearchClient:
         daily_hot_budget: int | None = None,
         daily_feed_budget: int | None = None,
         kick: Callable[[], None] | None = None,
+        raise_on_budget: bool = False,
+        allow_direct_fallback: bool = False,
     ) -> None:
         self._database = database
         self._direct_client = direct_client
         self._wait_seconds = max(0.0, float(wait_seconds))
         self._poll_interval_seconds = max(0.01, float(poll_interval_seconds))
+        # Unified keyword planner fetch path: surface plugin-search budget
+        # exhaustion as ``DouyinBudgetExhausted`` (distinguishable from an empty
+        # result) so a claimed keyword can be rolled back instead of burned.
+        # OFF by default → legacy "budget → fall back to direct-cookie".
+        self._raise_on_budget = bool(raise_on_budget)
+        self._allow_direct_fallback = bool(allow_direct_fallback)
         self._daily_search_budget = _normalize_daily_budget(
             daily_search_budget if daily_search_budget is not None else daily_budget
         )
@@ -112,7 +149,7 @@ class DouyinPluginSearchClient:
         return self._direct_client.cookie
 
     async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
-        """Search via the browser plugin, falling back to direct-cookie."""
+        """Search via the browser plugin; direct-cookie fallback is opt-in diagnostics only."""
         keyword = keyword.strip()
         if not keyword or limit <= 0:
             return []
@@ -121,11 +158,14 @@ class DouyinPluginSearchClient:
         if plugin_items:
             return plugin_items[:limit]
 
-        logger.info("douyin plugin search empty; falling back to direct-cookie search")
-        return await self._direct_client.search_aweme(keyword, limit=limit)
+        if self._allow_direct_fallback:
+            logger.info("douyin plugin search empty; falling back to direct-cookie search")
+            return await self._direct_client.search_aweme(keyword, limit=limit)
+        logger.info("douyin plugin search empty; direct-cookie fallback disabled")
+        return []
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
-        """Resolve hot board through plugin related-video flow, then fallback."""
+        """Resolve hot candidates through the plugin; fallback is opt-in diagnostics only."""
         if limit <= 0:
             return []
 
@@ -134,8 +174,11 @@ class DouyinPluginSearchClient:
         if plugin_items:
             return plugin_items[:limit]
 
-        logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
-        return await self._direct_client.get_hot_board(limit=limit)
+        if self._allow_direct_fallback:
+            logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
+            return await self._direct_client.get_hot_board(limit=limit)
+        logger.info("douyin plugin hot empty; direct-cookie fallback disabled")
+        return []
 
     async def get_creator_posts(
         self,
@@ -156,13 +199,14 @@ class DouyinPluginSearchClient:
             return plugin_items[:limit]
 
         fallback = getattr(self._direct_client, "get_recommend_feed", None)
-        if callable(fallback):
+        if self._allow_direct_fallback and callable(fallback):
             logger.info("douyin plugin feed empty; falling back to direct-cookie feed")
             typed_fallback = cast(
                 "Callable[..., Awaitable[list[dict[str, object]]]]",
                 fallback,
             )
             return await typed_fallback(limit=limit)
+        logger.info("douyin plugin feed empty; direct-cookie fallback disabled")
         return []
 
     async def _search_via_plugin(self, keyword: str, *, limit: int) -> list[dict[str, object]]:
@@ -183,6 +227,10 @@ class DouyinPluginSearchClient:
 
         if not task_id:
             logger.info("douyin plugin search skipped: task budget exhausted")
+            if self._raise_on_budget:
+                # Distinguishable signal for the unified keyword planner fetch
+                # path: budget exhausted → no search ran → roll the word back.
+                raise DouyinBudgetExhausted("douyin plugin search task budget exhausted")
             return []
 
         with suppress(Exception):
@@ -324,8 +372,13 @@ def _normalize_hot_task_items(hot_terms: list[dict[str, object]]) -> list[dict[s
             item["word"] = word
         if "hot_value" in term:
             item["hot_value"] = term["hot_value"]
+        seed_aweme_id = str(
+            term.get("seed_aweme_id") or term.get("group_id") or term.get("aweme_id") or ""
+        ).strip()
+        if seed_aweme_id:
+            item["seed_aweme_id"] = seed_aweme_id
         items.append(item)
-    return items
+    return sorted(items, key=lambda item: not bool(item.get("seed_aweme_id")))
 
 
 def _hot_seed_count(limit: int) -> int:
@@ -333,5 +386,5 @@ def _hot_seed_count(limit: int) -> int:
     if limit <= 0:
         return 0
     if limit <= 10:
-        return 1
+        return 5
     return 2

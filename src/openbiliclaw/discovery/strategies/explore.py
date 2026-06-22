@@ -62,18 +62,10 @@ class ExploreStrategy(DiscoveryStrategy):
     # generator suggesting domains that mapped to already-covered
     # topic_groups by the time the eval LLM labeled them.
     database: _SupportsTopicCoverage | None = None
-    # Explore deliberately keeps a 0.65 threshold while other strategies
-    # use 0.70 (v0.3.31). Reason: explore returns content the user
-    # *hasn't* seen — the eval LLM tends to score these conservatively
-    # (0.65-0.69) because they're outside familiar topics, and a 0.70
-    # bar wipes out 70%+ of the explore pipeline. The whole point of
-    # explore is bringing novelty that doesn't perfectly match
-    # current interests, so a slightly more permissive threshold
-    # preserves the variety it's designed to provide. The blind-spot
-    # guidance (covered_topic_groups, v0.3.31) and high
-    # ``score_threshold`` already used by other strategies still keep
-    # the pool's overall quality high.
-    score_threshold: float = 0.65
+    # Explore can sit slightly below the normal 0.60 admission floor because
+    # its purpose is controlled novelty, but it must not become a broad low-
+    # score bypass for regular recommendation pool admission.
+    score_threshold: float = 0.58
     llm_evaluation: bool = True
     queries_per_domain: int = 3
     max_domains: int = 5
@@ -84,11 +76,11 @@ class ExploreStrategy(DiscoveryStrategy):
         return "explore"
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
-        if self.score_threshold <= 0.58:
+        if self.score_threshold <= 0.55:
             return None
         return replace(
             self,
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.55, round(self.score_threshold - 0.03, 2)),
             queries_per_domain=max(self.queries_per_domain, 3),
             max_domains=max(self.max_domains, 6),
             last_intermediates={},
@@ -256,11 +248,9 @@ class ExploreStrategy(DiscoveryStrategy):
                 0.0,
                 min(1.0, round(score * 0.60 + bonus * 0.40, 4)),
             )
-            # Lower threshold for explore: cross-domain content is intentionally
-            # less "relevant" in the narrow sense, so we accept more of it
-            explore_threshold = (
-                self.score_threshold - 0.25 if self.score_threshold > 0.40 else self.score_threshold
-            )
+            # Explore may use a gently lower strategy threshold, but not the
+            # old 0.25 discount that admitted ordinary low-score content.
+            explore_threshold = max(0.55, min(1.0, self.score_threshold))
             if content.relevance_score < explore_threshold:
                 continue
             results.append(content)

@@ -41,12 +41,18 @@ def test_feedback_thumbs_down_reaction_is_explicit_negative() -> None:
     assert (category, reason) == ("negative", "explicit_negative")
 
 
-@pytest.mark.parametrize("feedback_type", ["like", "comment"])
-def test_feedback_like_or_comment_is_positive(feedback_type: str) -> None:
+def test_feedback_like_is_positive() -> None:
     category, reason = classify_event_satisfaction(
-        {"event_type": "feedback", "metadata": {"feedback_type": feedback_type}}
+        {"event_type": "feedback", "metadata": {"feedback_type": "like"}}
     )
     assert (category, reason) == ("positive", "explicit_engagement")
+
+
+def test_feedback_comment_is_neutral_direct_feedback() -> None:
+    category, reason = classify_event_satisfaction(
+        {"event_type": "feedback", "metadata": {"feedback_type": "comment"}}
+    )
+    assert (category, reason) == ("neutral", "direct_feedback")
 
 
 def test_feedback_thumbs_up_reaction_is_positive() -> None:

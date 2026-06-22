@@ -38,6 +38,11 @@ export interface DouyinBootstrapItem {
   author: string;
   author_sec_uid: string;
   cover_url: string;
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
 }
 
 export interface DouyinSearchItem {
@@ -51,6 +56,11 @@ export interface DouyinSearchItem {
   hot_word?: string;
   sentence_id?: string;
   seed_aweme_id?: string;
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
 }
 
 /**
@@ -79,6 +89,44 @@ export function classifyDouyinResponseUrl(url: string): DouyinScope | null {
 
 function pickString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function pickNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(/,/g, ""));
+    return Number.isFinite(parsed) ? Math.floor(parsed) : 0;
+  }
+  return 0;
+}
+
+function pickAwemeMetrics(rawStatistics: unknown): {
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
+  share_count?: number;
+} {
+  if (!rawStatistics || typeof rawStatistics !== "object") return {};
+  const statistics = rawStatistics as {
+    play_count?: unknown;
+    digg_count?: unknown;
+    collect_count?: unknown;
+    comment_count?: unknown;
+    share_count?: unknown;
+  };
+  const view_count = pickNumber(statistics.play_count);
+  const like_count = pickNumber(statistics.digg_count);
+  const collect_count = pickNumber(statistics.collect_count);
+  const comment_count = pickNumber(statistics.comment_count);
+  const share_count = pickNumber(statistics.share_count);
+  return {
+    ...(view_count > 0 ? { view_count } : {}),
+    ...(like_count > 0 ? { like_count } : {}),
+    ...(collect_count > 0 ? { collect_count } : {}),
+    ...(comment_count > 0 ? { comment_count } : {}),
+    ...(share_count > 0 ? { share_count } : {}),
+  };
 }
 
 function pickFirstUrl(coverField: unknown): string {
@@ -127,6 +175,7 @@ export function parseAwemeListResponse(
       preview_title?: unknown;
       author?: unknown;
       video?: { cover?: unknown };
+      statistics?: unknown;
     };
     const awemeId = pickString(aweme.aweme_id);
     const title = pickString(aweme.desc) || pickString(aweme.preview_title);
@@ -142,6 +191,7 @@ export function parseAwemeListResponse(
       author: author.nickname,
       author_sec_uid: author.sec_uid,
       cover_url: coverUrl,
+      ...pickAwemeMetrics(aweme.statistics),
     });
   }
   return items;
@@ -207,6 +257,7 @@ function normalizeSearchAweme(
     share_info?: { share_title?: unknown; share_desc?: unknown };
     author?: unknown;
     video?: { cover?: unknown; origin_cover?: unknown; animated_cover?: unknown };
+    statistics?: unknown;
   };
   const awemeId = pickString(aweme.aweme_id);
   const title =
@@ -227,6 +278,7 @@ function normalizeSearchAweme(
       pickFirstUrl(aweme.video?.cover) ||
       pickFirstUrl(aweme.video?.origin_cover) ||
       pickFirstUrl(aweme.video?.animated_cover),
+    ...pickAwemeMetrics(aweme.statistics),
   };
   if (scope === "dy_hot") {
     item.hot_word = meta.word ?? "";
@@ -377,8 +429,63 @@ function isSearchResponseUrl(url: string): boolean {
   const path = url.split("?", 1)[0] ?? "";
   return (
     path.includes("/aweme/v1/web/general/search/single/") ||
+    path.includes("/aweme/v1/web/general/search/stream/") ||
     path.includes("/aweme/v1/web/search/item/")
   );
+}
+
+function isPassiveDiscoveryResponseUrl(url: string): boolean {
+  if (!url) return false;
+  const path = url.split("?", 1)[0] ?? "";
+  return (
+    isSearchResponseUrl(url) ||
+    path.includes("/aweme/v1/web/aweme/related/") ||
+    path.includes("/aweme/v1/web/tab/feed/") ||
+    path.includes("/aweme/v2/web/module/feed/")
+  );
+}
+
+function parsePassiveDiscoveryResponse(url: string, json: unknown): DouyinSearchItem[] {
+  const path = url.split("?", 1)[0] ?? "";
+  if (path.includes("/aweme/v1/web/aweme/related/")) {
+    return parseRelatedAwemeResponse(json);
+  }
+  if (path.includes("/aweme/v1/web/tab/feed/") || path.includes("/aweme/v2/web/module/feed/")) {
+    return parseFeedAwemeResponse(json);
+  }
+  if (isSearchResponseUrl(url)) {
+    return parseSearchAwemeResponse(json);
+  }
+  return [];
+}
+
+function parseJsonText(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) throw new SyntaxError("empty JSON body");
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const withoutChunkPrefix = trimmed.replace(/^[0-9a-fA-F]+\r?\n/, "").trim();
+    try {
+      return JSON.parse(withoutChunkPrefix) as unknown;
+    } catch {
+      const start = withoutChunkPrefix.search(/[{\[]/);
+      const objectEnd = withoutChunkPrefix.lastIndexOf("}");
+      const arrayEnd = withoutChunkPrefix.lastIndexOf("]");
+      const end = Math.max(objectEnd, arrayEnd);
+      if (start < 0 || end < start) throw new SyntaxError("invalid JSON body");
+      return JSON.parse(withoutChunkPrefix.slice(start, end + 1)) as unknown;
+    }
+  }
+}
+
+async function readJsonResponse(resp: Response): Promise<unknown> {
+  try {
+    return (await resp.clone().json()) as unknown;
+  } catch {
+    const text = await resp.clone().text();
+    return parseJsonText(text);
+  }
 }
 
 /**
@@ -412,7 +519,7 @@ export function installFetchTap(
     const scope = classifyDouyinResponseUrl(url);
     if (scope) {
       try {
-        const json: unknown = await resp.clone().json();
+        const json: unknown = await readJsonResponse(resp);
         const items =
           scope === "dy_follow"
             ? parseUserFollowListResponse(json)
@@ -425,10 +532,10 @@ export function installFetchTap(
         // right move; we never want to throw inside fetch-tap because
         // the page's React app would observe the rejection.
       }
-    } else if (isSearchResponseUrl(url) && postSearchBack) {
+    } else if (isPassiveDiscoveryResponseUrl(url) && postSearchBack) {
       try {
-        const json: unknown = await resp.clone().json();
-        const items = parseSearchAwemeResponse(json);
+        const json: unknown = await readJsonResponse(resp);
+        const items = parsePassiveDiscoveryResponse(url, json);
         if (items.length > 0) {
           postSearchBack(items);
         }
@@ -486,11 +593,11 @@ export function installXhrTap(
       if (this.readyState !== 4) return;
       const u = (this as unknown as { __obcUrl?: string }).__obcUrl ?? urlString;
       const scope = classifyDouyinResponseUrl(u);
-      if (!scope && !isSearchResponseUrl(u)) return;
+      if (!scope && !isPassiveDiscoveryResponseUrl(u)) return;
       try {
         const text = this.responseText;
         if (!text) return;
-        const json: unknown = JSON.parse(text);
+        const json: unknown = parseJsonText(text);
         if (scope) {
           const items =
             scope === "dy_follow"
@@ -499,7 +606,7 @@ export function installXhrTap(
           if (items.length > 0) postBack(items, scope);
           return;
         }
-        const searchItems = parseSearchAwemeResponse(json);
+        const searchItems = parsePassiveDiscoveryResponse(u, json);
         if (searchItems.length > 0 && postSearchBack) postSearchBack(searchItems);
       } catch {
         // Best-effort: never throw inside XHR listener.

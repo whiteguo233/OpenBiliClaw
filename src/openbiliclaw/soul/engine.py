@@ -152,6 +152,7 @@ class SoulEngine:
         self._preference_analyzer = PreferenceAnalyzer(
             self._llm_service,
             satisfaction_filter_enabled=satisfaction_filter_enabled,
+            embedding_service=embedding_service,
         )
         self._profile_builder = ProfileBuilder(self._llm_service)
         data_dir = getattr(memory, "_data_dir", None)
@@ -218,6 +219,7 @@ class SoulEngine:
         engine in the bootstrap order.
         """
         self._embedding_service = embedding_service
+        self._preference_analyzer.embedding_service = embedding_service
         self._pipeline.set_embedding_service(embedding_service)
         if self._profile_consolidator is not None:
             self._profile_consolidator.set_embedding_service(embedding_service)
@@ -624,14 +626,25 @@ class SoulEngine:
             return f"你恢复了{label}的 AI 建议。"
         return f"你编辑了{label}。"
 
-    async def update_from_feedback(self, feedback: dict[str, Any]) -> None:
-        """Update soul understanding based on explicit user feedback.
+    async def update_from_feedback(self, feedback: dict[str, Any]) -> dict[str, Any]:
+        """Update soul understanding based on explicit user feedback on a hypothesis.
 
-        This can trigger updates across all memory layers, depending
-        on the significance of the feedback.
+        Confirm/reject feedback on a specific insight hypothesis calibrates that
+        hypothesis: a confirm pins ``validated=True`` and raises confidence to at
+        least 0.75; a reject sets ``validated=False`` and caps confidence at 0.35
+        (the "soft invalidation" — the hypothesis is down-weighted in delight
+        scoring rather than deleted). The feedback is also logged as an event.
+
+        Wired to ``POST /api/insights/feedback`` so the UI's insight cards can
+        drive this loop.
 
         Args:
-            feedback: User feedback data.
+            feedback: ``{"hypothesis": str, "signal": str}``. ``signal`` is one
+                of confirm/like/support (positive) or reject/dislike/deny.
+
+        Returns:
+            A result dict describing whether a hypothesis matched and its
+            post-update state — consumed by the API endpoint.
         """
         logger.info("Updating soul from feedback...")
         await self._memory.propagate_event(
@@ -644,7 +657,13 @@ class SoulEngine:
         hypotheses = self._load_insights()
         target = self._normalize_text(str(feedback.get("hypothesis", "")))
         signal = str(feedback.get("signal", "")).strip().lower()
-        updated = False
+        result: dict[str, Any] = {
+            "matched": False,
+            "hypothesis": str(feedback.get("hypothesis", "")),
+            "signal": signal,
+            "validated": False,
+            "confidence": 0.0,
+        }
         for item in hypotheses:
             if self._normalize_text(item.hypothesis) != target:
                 continue
@@ -654,10 +673,62 @@ class SoulEngine:
             elif signal in {"reject", "dislike", "deny"}:
                 item.validated = False
                 item.confidence = max(0.0, round(min(item.confidence, 0.35), 4))
-            updated = True
+            result["matched"] = True
+            result["hypothesis"] = item.hypothesis
+            result["validated"] = item.validated
+            result["confidence"] = item.confidence
             break
-        if updated:
+        if result["matched"]:
             self._save_insights(hypotheses)
+            # The insight layer is the source of truth, but get_profile()
+            # (UI profile-summary + delight scoring) reads the windowed
+            # ``active_insights`` snapshot cached on the soul layer. Without
+            # mirroring the calibration there, a confirm/reject wouldn't take
+            # visible or recommendation effect until the next 12h cognition
+            # sync. Patch the snapshot in place so the change is immediate.
+            self._sync_insight_to_soul_snapshot(
+                target_normalized=target,
+                validated=bool(result["validated"]),
+                confidence=float(result["confidence"]),
+            )
+        return result
+
+    def _sync_insight_to_soul_snapshot(
+        self,
+        *,
+        target_normalized: str,
+        validated: bool,
+        confidence: float,
+    ) -> None:
+        """Mirror an insight calibration onto the soul layer's active_insights.
+
+        No-op when the soul profile has no matching active insight (e.g. the
+        hypothesis exists only in the insight layer, not in the surfaced
+        window). Re-syncs the human-readable profile files on change.
+        """
+        soul_layer = self._memory.get_layer("soul")
+        if not soul_layer.data:
+            return
+        try:
+            profile = OnionProfile.from_dict(soul_layer.data)
+        except Exception:
+            logger.debug("Failed to load OnionProfile for insight snapshot sync", exc_info=True)
+            return
+        changed = False
+        for insight in profile.active_insights:
+            if self._normalize_text(insight.hypothesis) == target_normalized:
+                insight.validated = validated
+                insight.confidence = confidence
+                changed = True
+        if not changed:
+            return
+        soul_layer.data.clear()
+        soul_layer.data.update(profile.to_dict())
+        soul_layer.save()
+        try:
+            self._memory.sync_profile_files(profile)
+        except Exception:
+            logger.debug("sync_profile_files after insight feedback failed", exc_info=True)
 
     async def learn_from_dialogue(
         self,
@@ -802,6 +873,17 @@ class SoulEngine:
             existing_preference=existing_preference,
             event_chunk_size=200,
         )
+        old_disliked = {
+            str(item).strip()
+            for item in self._as_str_list(existing_preference.get("disliked_topics", []))
+            if str(item).strip()
+        }
+        new_disliked = {
+            str(item).strip()
+            for item in self._as_str_list(updated_preference.get("disliked_topics", []))
+            if str(item).strip()
+        }
+        newly_added_dislikes = sorted(new_disliked - old_disliked)
         preference_layer.data.clear()
         preference_layer.data.update(updated_preference)
         preference_layer.save()
@@ -829,6 +911,15 @@ class SoulEngine:
                 profile_rebuilt = True
             except Exception:
                 logger.exception("Failed to rebuild soul profile after feedback refresh.")
+
+        if newly_added_dislikes:
+            self._schedule_dislike_purge(
+                newly_added=newly_added_dislikes,
+                all_dislikes=sorted(new_disliked),
+                database=getattr(self._memory, "_database", None),
+                embedding_service=self._embedding_service,
+                llm_service=self._llm_service,
+            )
 
         self._record_cognition_updates(
             existing_preference=existing_preference,
@@ -881,8 +972,8 @@ class SoulEngine:
                 summary = f"阿B 刚记下了：{note.strip()}"
                 evidence = note.strip()
                 context_line = "来自：这次推荐反馈"
-            impact = "画像里对这类方向的偏好会更明确，后面会更容易继续往深一点补。"
-            reasoning = "这属于单条明确反馈，先记作方向修正，不直接重写整张画像。"
+            impact = "画像会结合评论内容判断这是喜欢、不喜欢还是补充说明，不会默认当成正向偏好。"
+            reasoning = "这属于一条中性直接反馈，先记作方向修正，不直接重写整张画像。"
         elif normalized_feedback == "dislike":
             note_text = note.strip()
             generic_dislike_notes = {"太浅了", "不喜欢", "一般", "太水了", "没意思"}
@@ -1115,7 +1206,7 @@ class SoulEngine:
             return False
         confidence = self._to_float(candidate.get("confidence", 0.0))
         occurrences = self._to_int(candidate.get("occurrences", 0))
-        return confidence >= 0.8 and occurrences >= 2
+        return confidence >= 0.8 or occurrences >= 2
 
     def _candidate_ready_for_immediate_dialogue_cognition(
         self,

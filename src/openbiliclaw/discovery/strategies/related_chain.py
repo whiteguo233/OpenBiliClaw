@@ -47,7 +47,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
     trending_strategy: SupportsSeedStrategy | None = None
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
-    score_threshold: float = 0.70
+    score_threshold: float = 0.60
     llm_evaluation: bool = True
     max_seeds: int = 5
     related_per_seed: int = 8
@@ -67,11 +67,11 @@ class RelatedChainStrategy(DiscoveryStrategy):
         return "related_chain"
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
-        if self.score_threshold <= 0.58:
+        if self.score_threshold <= 0.60:
             return None
         return replace(
             self,
-            score_threshold=max(0.58, round(self.score_threshold - 0.07, 2)),
+            score_threshold=max(0.60, round(self.score_threshold - 0.07, 2)),
             related_per_seed=max(self.related_per_seed, 10),
             last_intermediates={},
         )
@@ -411,9 +411,17 @@ class RelatedChainStrategy(DiscoveryStrategy):
         stat = item.get("stat")
         view_count = 0
         like_count = 0
+        favorite_count = 0
+        danmaku_count = 0
+        comment_count = 0
+        share_count = 0
         if isinstance(stat, dict):
             view_count = to_int(stat.get("view", 0))
             like_count = to_int(stat.get("like", 0))
+            favorite_count = to_int(stat.get("favorite", 0))
+            danmaku_count = to_int(stat.get("danmaku", 0))
+            comment_count = to_int(stat.get("reply", 0))
+            share_count = to_int(stat.get("share", 0))
 
         title_text = clean_text(str(item.get("title", "")))
         # Prefer B站分区名 (tname) for topic_key, fall back to seed's key
@@ -428,6 +436,10 @@ class RelatedChainStrategy(DiscoveryStrategy):
             duration=parse_duration(item.get("duration", 0)),
             view_count=view_count,
             like_count=like_count,
+            favorite_count=favorite_count,
+            danmaku_count=danmaku_count,
+            comment_count=comment_count,
+            share_count=share_count,
             topic_key=item_topic_key,
             topic_group=self._topic_group_from_title(title_text),
             description=clean_text(str(item.get("desc", item.get("description", "")))),

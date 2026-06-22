@@ -19,6 +19,7 @@ from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.recommendation.engine import Recommendation
 from openbiliclaw.soul.profile import (
     CoreLayer,
+    InterestTag,
     OnionProfile,
     PreferenceLayer,
     RoleLayer,
@@ -1154,11 +1155,13 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             *,
             registry: object,
             memory: object,
+            usage_recorder: object | None = None,
             module_overrides: object | None = None,
             concurrency: int = 1,
         ) -> None:
             self.registry = registry
             self.memory = memory
+            self.usage_recorder = usage_recorder
             self.module_overrides = module_overrides
             self.concurrency = concurrency
 
@@ -1182,6 +1185,7 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
             database: object,
             concurrency: object | None = None,
             embedding_service: object | None = None,
+            **_extras: object,
         ) -> None:
             self.llm_service = llm_service
             self.database = database
@@ -1225,6 +1229,10 @@ def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatc
     assert created_memories[0].database is created_databases[0]
     assert recommendation_engine.database is created_databases[0]
     assert discovery_engine.database is created_databases[0]
+    recorder = recommendation_engine.llm.usage_recorder
+    assert recorder is not None
+    assert recorder is discovery_engine.llm_service.usage_recorder
+    assert recorder._sink is created_databases[0]
 
 
 def test_start_accepts_explicit_host_and_port(
@@ -2661,6 +2669,7 @@ def test_init_runs_history_preference_profile_and_discovery(
             self,
             max_folders: int = 20,
             max_items_per_folder: int = 200,
+            max_total_items: int | None = None,
         ) -> list[object]:
             return []
 
@@ -2767,12 +2776,12 @@ def test_init_runs_history_preference_profile_and_discovery(
     assert fake_discovery.calls
 
 
-def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
+def test_init_caps_bilibili_history_and_favorites_at_500_and_following_at_100(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
     class FakeBilibiliClient:
         async def get_user_history(self, max_items: int = 100) -> list[dict[str, object]]:
-            assert max_items == 300
+            assert max_items == 500
             return [
                 {
                     "history": {"bvid": "BV1A", "view_at": 1710000000},
@@ -2785,9 +2794,11 @@ def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
             self,
             max_folders: int = 20,
             max_items_per_folder: int = 200,
+            max_total_items: int | None = None,
         ) -> list[object]:
+            assert max_total_items == 500
             items = [
-                SimpleNamespace(title=f"收藏视频 {idx}", upper=f"UP {idx}") for idx in range(350)
+                SimpleNamespace(title=f"收藏视频 {idx}", upper=f"UP {idx}") for idx in range(550)
             ]
             return [SimpleNamespace(folder=SimpleNamespace(title="默认收藏夹"), items=items)]
 
@@ -2866,12 +2877,12 @@ def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
     assert result.exit_code == 0
     assert fake_soul.analyzed_events
     analyzed = fake_soul.analyzed_events[0]
-    assert len([event for event in analyzed if event["event_type"] == "favorite"]) == 300
+    assert len([event for event in analyzed if event["event_type"] == "favorite"]) == 500
     assert len([event for event in analyzed if event["event_type"] == "follow"]) == 100
-    assert len(fake_memory.events) == 401
+    assert len(fake_memory.events) == 601
     built_history = fake_soul.built_history[0]
     assert len(built_history) == 3
-    assert str(built_history[1]["_favorites_summary"]).startswith("共 300 个收藏")
+    assert str(built_history[1]["_favorites_summary"]).startswith("共 500 个收藏")
     assert str(built_history[2]["_following_summary"]).startswith("共关注 100 人")
 
 
@@ -2892,8 +2903,10 @@ def test_init_accepts_custom_bilibili_favorites_and_following_limits(
             self,
             max_folders: int = 20,
             max_items_per_folder: int = 200,
+            max_total_items: int | None = None,
         ) -> list[object]:
             assert max_items_per_folder == 2
+            assert max_total_items == 2
             items = [
                 SimpleNamespace(title=f"收藏视频 {idx}", upper=f"UP {idx}") for idx in range(5)
             ]
@@ -3015,6 +3028,7 @@ def test_init_includes_xhs_bootstrap_events(
             self,
             max_folders: int = 20,
             max_items_per_folder: int = 200,
+            max_total_items: int | None = None,
         ) -> list[object]:
             return []
 
@@ -3945,16 +3959,22 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
     class FakeDiscoveryEngine:
         def __init__(self, database: FakeDatabase) -> None:
             self.database = database
-            self.calls: list[tuple[list[str] | None, int]] = []
+            self.calls: list[dict[str, object]] = []
 
         async def discover(
             self,
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
-            **_: object,
+            **kwargs: object,
         ) -> list[DiscoveredContent]:
-            self.calls.append((strategies, limit))
+            self.calls.append(
+                {
+                    "strategies": strategies,
+                    "limit": limit,
+                    "pool_snapshot": kwargs.get("pool_snapshot"),
+                }
+            )
             if strategies == ["search", "trending", "related_chain", "explore"]:
                 self.database.pool_count = 15
             else:
@@ -3994,13 +4014,36 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
     )
     monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: fake_database, raising=False)
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_draft_profile_for_discover",
+        lambda memory: SoulProfile(
+            preferences=PreferenceLayer(
+                interests=[
+                    InterestTag(name="人工智能", category="科技", weight=0.96),
+                    InterestTag(name="篮球战术", category="体育", weight=0.72),
+                ]
+            )
+        ),
+        raising=False,
+    )
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert fake_discovery.calls == [
-        (["search", "trending", "related_chain", "explore"], 20),
+    assert len(fake_discovery.calls) == 1
+    assert fake_discovery.calls[0]["strategies"] == [
+        "search",
+        "trending",
+        "related_chain",
+        "explore",
     ]
+    assert fake_discovery.calls[0]["limit"] == 20
+    pool_snapshot = cast("Any", fake_discovery.calls[0]["pool_snapshot"])
+    assert pool_snapshot is not None
+    assert pool_snapshot.cold_start is True
+    assert "人工智能" in pool_snapshot.saturated_topics
+    assert "篮球战术" in pool_snapshot.undercovered_axes
     assert "补货阶段 1/1" in result.stdout
     assert "search + trending + related_chain + explore" in result.stdout
     assert "当前池子 0/15" in result.stdout

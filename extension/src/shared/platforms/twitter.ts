@@ -72,7 +72,7 @@ function normalizeText(value: string | null | undefined): string {
 
 export function inferTwitterActionType(hint: ActionHint): string | null {
   // X's action controls expose English aria-labels (e.g. "Like",
-  // "Bookmark", "Repost", "Reply") that toggle to "Liked"/"Undo repost"
+  // "Bookmark", "Repost", "Share", "Reply") that toggle to "Liked"/"Undo repost"
   // etc. Match on the substring so both states resolve. There is no
   // "coin" concept on X.
   const text = `${normalizeText(hint.text)} ${normalizeText(hint.ariaLabel)} ${hint.className}`
@@ -80,7 +80,7 @@ export function inferTwitterActionType(hint: ActionHint): string | null {
   if (!text) return null;
   if (text.includes("bookmark")) return "favorite";
   if (text.includes("like")) return "like";
-  if (text.includes("repost") || text.includes("retweet")) return "share";
+  if (text.includes("share") || text.includes("repost") || text.includes("retweet")) return "share";
   if (text.includes("reply")) return "comment";
   return null;
 }

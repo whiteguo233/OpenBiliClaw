@@ -49,6 +49,7 @@ function inferXiaohongshuActionType(hint: ActionHint): string | null {
     return "favorite";
   }
   if (text.includes("评论") || text.includes("comment")) return "comment";
+  if (text.includes("分享") || text.includes("share")) return "share";
   return null;
 }
 

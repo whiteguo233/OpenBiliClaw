@@ -148,7 +148,7 @@ async def test_explore_strategy_generates_and_filters_domains() -> None:
     strategy = ExploreStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
-        score_threshold=0.0,
+        llm_evaluation=False,
     )
     results = await strategy.discover(_build_profile(), limit=20)
 
@@ -208,7 +208,7 @@ async def test_explore_strategy_prioritizes_interest_anchored_domains() -> None:
     strategy = ExploreStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
-        score_threshold=0.0,
+        llm_evaluation=False,
         max_domains=3,
     )
     results = await strategy.discover(_build_profile(), limit=20)
@@ -259,6 +259,50 @@ async def test_explore_strategy_applies_exploration_bonus() -> None:
 
 
 @pytest.mark.asyncio
+async def test_explore_strategy_uses_gentle_floor_not_large_threshold_discount() -> None:
+    from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
+
+    llm_service = FakeLLMService(
+        [
+            """
+            {
+              "domains": [
+                {
+                  "domain": "城市空间与建筑叙事",
+                  "why_it_might_resonate": "你偏好系统性理解。",
+                  "novelty_level": 0.5,
+                  "queries": ["城市 建筑 纪录片"]
+                }
+              ]
+            }
+            """,
+            (
+                '[{"content_id": "BV1LOW", "score": 0.66, "reason": "weak novelty"}, '
+                '{"content_id": "BV1OK", "score": 0.72, "reason": "enough novelty"}]'
+            ),
+        ]
+    )
+    bilibili_client = FakeBilibiliClient(
+        {
+            "城市 建筑 纪录片": [
+                {"bvid": "BV1LOW", "title": "低到不能入池", "author": "UP1", "mid": 1},
+                {"bvid": "BV1OK", "title": "探索可接受", "author": "UP2", "mid": 2},
+            ]
+        }
+    )
+
+    strategy = ExploreStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        score_threshold=0.58,
+    )
+    results = await strategy.discover(_build_profile(), limit=20)
+
+    assert [item.bvid for item in results] == ["BV1OK"]
+    assert results[0].relevance_score == pytest.approx(0.592)
+
+
+@pytest.mark.asyncio
 async def test_explore_strategy_tolerates_partial_failures() -> None:
     from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
 
@@ -293,7 +337,6 @@ async def test_explore_strategy_tolerates_partial_failures() -> None:
     strategy = ExploreStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
-        score_threshold=0.0,
     )
     results = await strategy.discover(_build_profile(), limit=20)
 
@@ -402,7 +445,6 @@ async def test_explore_strategy_interleaves_domains_for_eval_fairness() -> None:
     strategy = ExploreStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,
-        score_threshold=0.0,
     )
 
     results = await strategy.discover(_build_profile(), limit=20)

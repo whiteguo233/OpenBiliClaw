@@ -12,6 +12,7 @@ Release contract:
 from __future__ import annotations
 
 import asyncio
+import locale
 import logging
 import os
 import re
@@ -194,6 +195,22 @@ def _remote_has_credentials(remote_url: str) -> bool:
     return False
 
 
+def _is_tls_verification_error(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.TransportError):
+        return False
+    text = repr(exc).lower()
+    return "certificate" in text or "cert_verify" in text or "tls" in text or "ssl" in text
+
+
+def _decode_process_output(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    encoding = locale.getpreferredencoding(False)
+    return data.decode(encoding, errors="replace")
+
+
 def _dirty_paths_besides_uv_lock(porcelain: str) -> list[str]:
     """Return dirty paths from ``git status --porcelain``, ignoring uv.lock.
 
@@ -206,8 +223,18 @@ def _dirty_paths_besides_uv_lock(porcelain: str) -> list[str]:
     for line in porcelain.splitlines():
         if not line.strip():
             continue
+        if line.startswith(("??", "!!")):
+            continue
+        index_status = line[0] if len(line) > 0 else " "
+        worktree_status = line[1] if len(line) > 1 else " "
+        if index_status != " " and worktree_status == " ":
+            continue
         path = line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.rsplit(" -> ", maxsplit=1)[1].strip().strip('"')
         if path == "uv.lock":
+            continue
+        if path == "ollama-models" or path.startswith("ollama-models/"):
             continue
         dirty.append(path)
     return dirty
@@ -512,8 +539,23 @@ class AutoUpdateService:
         ``v*`` / bare-semver fallback; ``desktop`` tracks ``desktop-v*``
         installer tags only.
         """
+        selection = await self._fetch_latest_candidate_once(channel=channel, verify_tls=True)
+        if selection.error_reason != "tls_verification_failed":
+            return selection
+        logger.warning(
+            "Auto-update tag check TLS verification failed; retrying without "
+            "certificate verification"
+        )
+        return await self._fetch_latest_candidate_once(channel=channel, verify_tls=False)
+
+    async def _fetch_latest_candidate_once(
+        self,
+        *,
+        channel: str,
+        verify_tls: bool,
+    ) -> _BackendTagSelection:
         parse = _parse_desktop_candidate if channel == "desktop" else _parse_backend_candidate
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=verify_tls) as client:
             canonical: list[_BackendTagCandidate] = []
             legacy: list[_BackendTagCandidate] = []
             ignored_prereleases: list[_BackendTagCandidate] = []
@@ -525,6 +567,8 @@ class AutoUpdateService:
                         params={"per_page": _TAGS_PER_PAGE, "page": page},
                     )
                 except Exception as exc:
+                    if verify_tls and _is_tls_verification_error(exc):
+                        return _BackendTagSelection(error_reason="tls_verification_failed")
                     logger.warning("Auto-update tag check failed: %s", exc)
                     return _BackendTagSelection(error_reason="github_unreachable")
                 if resp.status_code != 200:
@@ -608,7 +652,7 @@ class AutoUpdateService:
         if _merge_or_rebase_in_progress(root, git_dir.stdout.strip()):
             return "merge_or_rebase_in_progress"
 
-        fetch = await self._run_git(["fetch", "--tags", "origin"], root, timeout=120)
+        fetch = await self._run_git(["fetch", "--force", "--tags", "origin"], root, timeout=120)
         if fetch.returncode != 0:
             return "github_unreachable"
 
@@ -707,17 +751,30 @@ class AutoUpdateService:
         *,
         timeout: int,
     ) -> subprocess.CompletedProcess[str]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
-                list(command),
-                cwd=root,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            ),
+        args = list(command)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            stdout_data, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError as exc:
+            proc.kill()
+            stdout_data, stderr_data = await proc.communicate()
+            raise subprocess.TimeoutExpired(
+                args,
+                timeout,
+                output=_decode_process_output(stdout_data),
+                stderr=_decode_process_output(stderr_data),
+            ) from exc
+        returncode = proc.returncode if proc.returncode is not None else -1
+        return subprocess.CompletedProcess(
+            args,
+            returncode,
+            _decode_process_output(stdout_data),
+            _decode_process_output(stderr_data),
         )
 
     @staticmethod

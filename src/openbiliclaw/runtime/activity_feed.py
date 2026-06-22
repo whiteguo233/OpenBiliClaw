@@ -31,6 +31,13 @@ def _as_int(value: object) -> int:
         return 0
 
 
+def _is_false(value: object) -> bool:
+    if isinstance(value, bool):
+        return value is False
+    text = _normalize_text(value).lower()
+    return text in {"0", "false", "no", "not_initialized"}
+
+
 def _parse_timestamp(value: object) -> datetime:
     text = _normalize_text(value)
     if not text:
@@ -74,10 +81,7 @@ class ActivityFeedBuilder:
         # only items strictly older than it.
         if before:
             cutoff = _parse_timestamp(before)
-            items = [
-                it for it in items
-                if _parse_timestamp(it.get("created_at", "")) < cutoff
-            ]
+            items = [it for it in items if _parse_timestamp(it.get("created_at", "")) < cutoff]
 
         page_size = max(1, min(50, int(limit)))
         page = items[:page_size]
@@ -97,6 +101,10 @@ class ActivityFeedBuilder:
         }
 
     def _live_summary(self, runtime_status: dict[str, object]) -> str:
+        if _is_false(runtime_status.get("initialized")) and not self._has_post_init_runtime_signals(
+            runtime_status
+        ):
+            return "还没完成初始化，先点「开始初始化」把画像和首轮内容池攒起来。"
         manual_state = _normalize_text(runtime_status.get("manual_refresh_state", ""))
         manual_message = _normalize_text(runtime_status.get("manual_refresh_message", ""))
         if manual_state == "running" and manual_message:
@@ -108,6 +116,19 @@ class ActivityFeedBuilder:
             return f"阿B 还在盯着你刚刚的新动作，已经记下 {pending_events} 个信号。"
         pool_count = _as_int(runtime_status.get("pool_available_count", 0))
         return f"这会儿池子里还有 {pool_count} 条能换，阿B 先替你盯着。"
+
+    @staticmethod
+    def _has_post_init_runtime_signals(runtime_status: dict[str, object]) -> bool:
+        return any(
+            _as_int(runtime_status.get(key, 0)) > 0
+            for key in (
+                "recommendation_count",
+                "pool_available_count",
+                "pool_pending_count",
+                "last_replenished_count",
+                "last_discovered_count",
+            )
+        )
 
     def _cognition_items(self, updates: list[dict[str, object]]) -> list[dict[str, object]]:
         items: list[dict[str, object]] = []
@@ -173,8 +194,7 @@ class ActivityFeedBuilder:
                     "kind": "recommendation",
                     "summary": f"这批先给你翻出来了：{title}",
                     "detail": (
-                        _normalize_text(row.get("topic"))
-                        or _normalize_text(row.get("expression"))
+                        _normalize_text(row.get("topic")) or _normalize_text(row.get("expression"))
                     ),
                     "created_at": _normalize_text(row.get("created_at")),
                     "tone": "info",

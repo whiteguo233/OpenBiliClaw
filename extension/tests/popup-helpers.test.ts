@@ -188,6 +188,45 @@ test("normalizeRecommendation carries content_type and body_text for X items", (
   assert.equal(item.source_platform, "twitter");
 });
 
+test("normalizeRecommendation canonicalizes X source aliases", () => {
+  const item = normalizeRecommendation({
+    id: 10,
+    bvid: "1790000000000000002",
+    content_url: "https://x.com/h/status/1790000000000000002",
+    source_platform: "x",
+    title: "alias tweet",
+    content_type: "tweet",
+    body_text: "alias tweet body",
+    cover_url: "",
+  });
+
+  assert.equal(item.source_platform, "twitter");
+});
+
+test("normalizeRecommendation infers X source from URL when source is missing", () => {
+  const item = normalizeRecommendation({
+    id: 11,
+    bvid: "1790000000000000003",
+    content_url: "https://twitter.com/h/status/1790000000000000003",
+    title: "url-only tweet",
+    content_type: "tweet",
+    body_text: "url-only tweet body",
+    cover_url: "",
+  });
+
+  assert.equal(item.source_platform, "twitter");
+});
+
+test("normalizeRecommendation does not infer X from lookalike domains", () => {
+  const item = normalizeRecommendation({
+    id: 12,
+    content_url: "https://notx.com/h/status/1790000000000000004",
+    title: "not X",
+  });
+
+  assert.equal(item.source_platform, "bilibili");
+});
+
 test("getRecommendationCardKind renders a text card for tweet/thread items", () => {
   const tweet = getRecommendationCardKind({
     content_type: "tweet",
@@ -233,6 +272,18 @@ test("getRecommendationCardKind keeps a cover card for video items with a cover"
   assert.equal(result.kind, "cover");
   assert.equal(result.coverUrl, "https://i0.hdslb.com/bfs/archive/cover.jpg");
   assert.equal(result.text, "");
+});
+
+test("popup recommendation renderer has text-card styles for X items", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+
+  assert.match(popupJs, /cover\.classList\.add\("is-fallback", "is-text-card"\)/);
+  assert.match(popupJs, /textNode\.className = "recommendation-cover-text"/);
+  assert.match(popupJs, /source-platform-\$\{platformKey\}/);
+  assert.match(popupJs, /twitter: "X"/);
+  assert.match(popupHtml, /\.recommendation-cover\.is-text-card/);
+  assert.match(popupHtml, /\.recommendation-cover-text/);
 });
 
 test("normalizeProfileSummary keeps speculative avoidances", () => {

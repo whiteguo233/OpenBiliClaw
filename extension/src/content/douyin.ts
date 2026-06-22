@@ -23,8 +23,36 @@ import type {
   DouyinBootstrapItem,
   DouyinScope,
   DouyinSearchItem,
+  DouyinSearchScope,
 } from "../main/dy-fetch-tap.js";
 import { apiUrl } from "../shared/backend-endpoint.ts";
+import { douyinAdapter } from "../shared/platforms/douyin.ts";
+import { registerE2EExecutor } from "./e2e-executor.ts";
+
+let behaviorCollectorStarted = false;
+
+function startDouyinBehaviorCollector(): void {
+  if (behaviorCollectorStarted) return;
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+
+  const start = (): void => {
+    if (behaviorCollectorStarted) return;
+    behaviorCollectorStarted = true;
+    void import("./kernel.js").then(({ startCollector }) => {
+      startCollector(douyinAdapter);
+    });
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+    return;
+  }
+  start();
+}
+
+startDouyinBehaviorCollector();
+registerE2EExecutor("douyin");
 
 // TEMP DEBUG: relay content-script events to daemon (see debug-log.ts).
 function debugLog(event: string, data?: unknown): void {
@@ -139,6 +167,7 @@ interface HotExecuteMessage {
   task_id: string;
   sentence_id: string;
   word: string;
+  seed_aweme_id?: string;
   max_items: number;
   debug_inject_status?: string;
 }
@@ -163,6 +192,8 @@ interface SearchResultPayload {
     dom_items_harvested: number;
     api_error?: string;
     ui_triggered?: boolean;
+    search_navigation_ok?: boolean;
+    search_submit_method?: string;
     inject_status?: string;
     page_url?: string;
   };
@@ -181,7 +212,9 @@ interface HotResultPayload {
     api_pages_fetched: number;
     api_items_harvested: number;
     api_error?: string;
+    dom_items_harvested?: number;
     seed_aweme_id?: string;
+    ui_triggered?: boolean;
     inject_status?: string;
     page_url?: string;
   };
@@ -448,19 +481,110 @@ async function waitForCurrentVideoAwemeId(timeoutMs: number = 8_000): Promise<st
 
 function dedupeSearchItems(items: DouyinSearchItem[], maxItems: number): DouyinSearchItem[] {
   const cap = Math.max(0, Math.floor(maxItems));
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const result: DouyinSearchItem[] = [];
   for (const item of items) {
     const key = item.aweme_id || `${item.title}:${item.author}`;
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
+    if (!key) continue;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex !== undefined) {
+      result[existingIndex] = mergeSearchItemMetadata(result[existingIndex]!, item);
+      continue;
+    }
+    if (result.length >= cap) continue;
+    indexByKey.set(key, result.length);
     result.push(item);
-    if (result.length >= cap) break;
   }
   return result;
 }
 
-async function triggerSearchUi(keyword: string): Promise<boolean> {
+function mergeSearchItemMetadata(
+  primary: DouyinSearchItem,
+  fallback: DouyinSearchItem,
+): DouyinSearchItem {
+  return {
+    ...primary,
+    hot_word: primary.hot_word || fallback.hot_word,
+    sentence_id: primary.sentence_id || fallback.sentence_id,
+    seed_aweme_id: primary.seed_aweme_id || fallback.seed_aweme_id,
+    view_count: primary.view_count ?? fallback.view_count,
+    like_count: primary.like_count ?? fallback.like_count,
+    collect_count: primary.collect_count ?? fallback.collect_count,
+    comment_count: primary.comment_count ?? fallback.comment_count,
+    share_count: primary.share_count ?? fallback.share_count,
+  };
+}
+
+export function filterDiscoveryItemsForScope(
+  items: DouyinSearchItem[],
+  scope: DouyinSearchScope,
+  maxItems: number,
+): DouyinSearchItem[] {
+  return dedupeSearchItems(
+    items.filter((item) => item.scope === scope),
+    maxItems,
+  );
+}
+
+export function douyinDiscoveryExecutionPolicy(): {
+  search: { activeApiBridge: true; passiveFetchTap: true; domInteraction: true };
+  hot: { activeApiBridge: true; passiveFetchTap: true; domInteraction: true };
+  feed: { activeApiBridge: false; passiveFetchTap: true; domInteraction: true };
+} {
+  return {
+    search: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
+    hot: { activeApiBridge: true, passiveFetchTap: true, domInteraction: true },
+    feed: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+  };
+}
+
+function attachPassiveDiscoveryCollector(allItems: DouyinSearchItem[]): () => void {
+  const onMessage = (event: MessageEvent): void => {
+    const data = event?.data as Record<string, unknown> | null;
+    if (!data || typeof data !== "object") return;
+    if (data.type !== "OPENBILICLAW_DOUYIN_SEARCH_PAGE") return;
+    if (!Array.isArray(data.items)) return;
+    allItems.push(...(data.items as DouyinSearchItem[]));
+  };
+  window.addEventListener("message", onMessage);
+  return () => window.removeEventListener("message", onMessage);
+}
+
+export function isDouyinSearchResultUrl(href: string, keyword?: string): boolean {
+  try {
+    const url = new URL(href, "https://www.douyin.com");
+    const path = decodeURIComponent(url.pathname);
+    if (!path.includes("/search/")) return false;
+    const trimmedKeyword = String(keyword ?? "").trim();
+    if (!trimmedKeyword) return true;
+    return (
+      path.includes(`/search/${trimmedKeyword}`) ||
+      url.searchParams.get("keyword") === trimmedKeyword ||
+      url.searchParams.get("q") === trimmedKeyword
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function waitForSearchResultNavigation(
+  keyword: string,
+  timeoutMs: number = 5_000,
+): Promise<boolean> {
+  for (let waited = 0; waited <= timeoutMs; waited += 200) {
+    if (isDouyinSearchResultUrl(location.href, keyword)) return true;
+    await sleep(200);
+  }
+  return isDouyinSearchResultUrl(location.href, keyword);
+}
+
+interface SearchUiTriggerResult {
+  submitted: boolean;
+  navigated: boolean;
+  method: "button" | "enter" | "none";
+}
+
+async function triggerSearchUi(keyword: string): Promise<SearchUiTriggerResult> {
   let input: HTMLInputElement | HTMLTextAreaElement | null = null;
   for (let waited = 0; waited < 5_000 && !input; waited += 200) {
     const inputs = Array.from(
@@ -472,9 +596,12 @@ async function triggerSearchUi(keyword: string): Promise<boolean> {
       null;
     if (!input) await sleep(200);
   }
-  if (!input) return false;
+  if (!input) return { submitted: false, navigated: false, method: "none" };
   input.focus();
-  const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const proto =
+    input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
   if (setter) {
     setter.call(input, keyword);
@@ -493,12 +620,74 @@ async function triggerSearchUi(keyword: string): Promise<boolean> {
   const buttons = Array.from(document.querySelectorAll<HTMLElement>("button, [role='button']"));
   const button = buttons.find((el) => (el.textContent ?? "").trim().includes("搜索"));
   if (button) {
-    button.click();
-    return true;
+    fireRealClick(button);
+    if (await waitForSearchResultNavigation(keyword)) {
+      return { submitted: true, navigated: true, method: "button" };
+    }
   }
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
-  return true;
+  return {
+    submitted: true,
+    navigated: await waitForSearchResultNavigation(keyword, 3_000),
+    method: "enter",
+  };
+}
+
+function visibleText(el: HTMLElement): string {
+  return (el.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function findClickableByText(labels: string[]): HTMLElement | null {
+  const normalized = labels.map((label) => label.trim()).filter(Boolean);
+  if (!normalized.length) return null;
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      'a, button, [role="link"], [role="button"], [role="tab"], [data-e2e]',
+    ),
+  );
+  for (const el of candidates) {
+    const text = visibleText(el);
+    if (!text) continue;
+    if (normalized.some((label) => text === label || text.includes(label))) return el;
+  }
+  return null;
+}
+
+function findHotTarget(sentenceId: string, word: string): HTMLElement | null {
+  const safeSentenceId = sentenceId.trim();
+  if (safeSentenceId) {
+    const hrefTarget = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).find((anchor) => {
+      const href = anchor.href || anchor.getAttribute("href") || "";
+      return href.includes(`/hot/${safeSentenceId}`) || href.includes(`sentence_id=${safeSentenceId}`);
+    });
+    if (hrefTarget) return hrefTarget;
+  }
+  const byWord = findClickableByText([word]);
+  if (byWord) return byWord;
+  return null;
+}
+
+async function triggerHotUi(sentenceId: string, word: string): Promise<boolean> {
+  let target = findHotTarget(sentenceId, word);
+  if (target) {
+    fireRealClick(target);
+    await sleep(2_500);
+    return true;
+  }
+
+  const hotEntry = findClickableByText(["热点", "热榜", "热门", "抖音热榜"]);
+  if (hotEntry) {
+    fireRealClick(hotEntry);
+    await sleep(2_500);
+    target = findHotTarget(sentenceId, word);
+    if (target) {
+      fireRealClick(target);
+      await sleep(2_500);
+      return true;
+    }
+  }
+  return false;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1138,28 +1327,20 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
   let domItemsHarvested = 0;
   let apiError = "";
   let uiTriggered = false;
+  let searchNavigationOk = false;
+  let searchSubmitMethod = "none";
   const allItems: DouyinSearchItem[] = [];
-  const onSearchTapMessage = (event: MessageEvent): void => {
-    const data = event?.data as Record<string, unknown> | null;
-    if (!data || typeof data !== "object") return;
-    if (data.type !== "OPENBILICLAW_DOUYIN_SEARCH_PAGE") return;
-    if (!Array.isArray(data.items)) return;
-    allItems.push(...(data.items as DouyinSearchItem[]));
-  };
-  window.addEventListener("message", onSearchTapMessage);
+  const detachPassiveCollector = attachPassiveDiscoveryCollector(allItems);
 
   try {
     reinjectFetchTap();
     await sleep(POST_INSTALL_SETTLE_MS);
-    uiTriggered = await triggerSearchUi(msg.keyword);
-    debugLog("search_ui_triggered", { keyword: msg.keyword, uiTriggered });
+    const triggerResult = await triggerSearchUi(msg.keyword);
+    uiTriggered = triggerResult.submitted;
+    searchNavigationOk = triggerResult.navigated;
+    searchSubmitMethod = triggerResult.method;
+    debugLog("search_ui_triggered", { keyword: msg.keyword, ...triggerResult });
     await sleep(2_000);
-
-    const apiResult = await harvestSearchViaApiBridge(msg.keyword, maxItems);
-    apiPagesFetched = apiResult.pages;
-    apiError = apiResult.error ?? "";
-    apiItemsHarvested = apiResult.items.length;
-    allItems.push(...apiResult.items);
 
     for (let round = 0; round < 4 && allItems.length < maxItems; round += 1) {
       const domItems = extractDouyinSearchItemsFromDocument(
@@ -1173,7 +1354,19 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
       await sleep(1_000);
     }
 
-    const items = dedupeSearchItems(allItems, maxItems);
+    let items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
+    if (items.length < maxItems) {
+      try {
+        const apiResult = await harvestSearchViaApiBridge(msg.keyword, maxItems);
+        apiPagesFetched = apiResult.pages;
+        apiItemsHarvested = apiResult.items.length;
+        if (apiResult.error) apiError = apiResult.error;
+        allItems.push(...apiResult.items);
+        items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
+      } catch (err) {
+        apiError = String(err);
+      }
+    }
     return {
       task_id: msg.task_id,
       keyword: msg.keyword,
@@ -1187,12 +1380,14 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
         dom_items_harvested: domItemsHarvested,
         api_error: apiError,
         ui_triggered: uiTriggered,
+        search_navigation_ok: searchNavigationOk,
+        search_submit_method: searchSubmitMethod,
         inject_status: msg.debug_inject_status,
         page_url: location.href,
       },
     };
   } catch (err) {
-    const items = dedupeSearchItems(allItems, maxItems);
+    const items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
     return {
       task_id: msg.task_id,
       keyword: msg.keyword,
@@ -1206,81 +1401,131 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
         api_items_harvested: apiItemsHarvested,
         dom_items_harvested: domItemsHarvested,
         api_error: apiError || String(err),
+        ui_triggered: uiTriggered,
+        search_navigation_ok: searchNavigationOk,
+        search_submit_method: searchSubmitMethod,
+        inject_status: msg.debug_inject_status,
+        page_url: location.href,
+      },
+    };
+  } finally {
+    detachPassiveCollector();
+  }
+}
+
+async function runHot(msg: HotExecuteMessage): Promise<HotResultPayload> {
+  const { extractDouyinSearchItemsFromDocument } = await loadDomExtractor();
+  const maxItems = Math.max(1, Math.floor(msg.max_items));
+  let apiPagesFetched = 0;
+  let apiItemsHarvested = 0;
+  let domItemsHarvested = 0;
+  let apiError = "";
+  let seedAwemeId = "";
+  let uiTriggered = false;
+  const fallbackSeedAwemeId = String(msg.seed_aweme_id ?? "").trim();
+  const allItems: DouyinSearchItem[] = [];
+  const detachPassiveCollector = attachPassiveDiscoveryCollector(allItems);
+
+  try {
+    reinjectFetchTap();
+    await sleep(POST_INSTALL_SETTLE_MS);
+    uiTriggered = await triggerHotUi(msg.sentence_id, msg.word);
+    debugLog("hot_ui_triggered", {
+      sentence_id: msg.sentence_id,
+      word: msg.word,
+      uiTriggered,
+    });
+    await sleep(2_000);
+    seedAwemeId = await waitForCurrentVideoAwemeId(2_000);
+    if (!seedAwemeId && fallbackSeedAwemeId) {
+      seedAwemeId = fallbackSeedAwemeId;
+    }
+
+    for (let round = 0; round < 4 && allItems.length < maxItems; round += 1) {
+      const domItems = extractDouyinSearchItemsFromDocument(
+        document,
+        location.origin,
+        maxItems,
+      ).map((item) => ({
+        ...item,
+        scope: "dy_hot" as const,
+        sentence_id: msg.sentence_id,
+        hot_word: msg.word,
+        seed_aweme_id: item.seed_aweme_id || seedAwemeId,
+      }));
+      domItemsHarvested = Math.max(domItemsHarvested, domItems.length);
+      allItems.push(...domItems);
+      window.scrollBy({ top: window.innerHeight * 2, behavior: "auto" });
+      await sleep(1_000);
+    }
+
+    let items = filterDiscoveryItemsForScope(allItems, "dy_hot", maxItems);
+    if (items.length < maxItems && seedAwemeId) {
+      try {
+        const apiResult = await harvestHotRelatedViaApiBridge(
+          seedAwemeId,
+          maxItems,
+          msg.sentence_id,
+          msg.word,
+        );
+        const apiItems = apiResult.items.map((item) => ({
+          ...item,
+          hot_word: item.hot_word || msg.word,
+          sentence_id: item.sentence_id || msg.sentence_id,
+          seed_aweme_id: item.seed_aweme_id || seedAwemeId,
+        }));
+        apiPagesFetched = apiResult.pages;
+        apiItemsHarvested = apiItems.length;
+        if (apiResult.error) apiError = apiResult.error;
+        allItems.push(...apiItems);
+        items = filterDiscoveryItemsForScope(allItems, "dy_hot", maxItems);
+      } catch (err) {
+        apiError = String(err);
+      }
+    }
+    return {
+      task_id: msg.task_id,
+      sentence_id: msg.sentence_id,
+      word: msg.word,
+      items,
+      scope_count: items.length,
+      status: items.length > 0 ? "ok" : "empty",
+      debug: {
+        fetch_tap_install_status: _lastFetchTapInstallStatus,
+        api_pages_fetched: apiPagesFetched,
+        api_items_harvested: apiItemsHarvested,
+        api_error: apiError,
+        dom_items_harvested: domItemsHarvested,
+        seed_aweme_id: seedAwemeId,
+        ui_triggered: uiTriggered,
+        inject_status: msg.debug_inject_status,
+        page_url: location.href,
+      },
+    };
+  } catch (err) {
+    const items = filterDiscoveryItemsForScope(allItems, "dy_hot", maxItems);
+    return {
+      task_id: msg.task_id,
+      sentence_id: msg.sentence_id,
+      word: msg.word,
+      items,
+      scope_count: items.length,
+      status: items.length > 0 ? "ok" : "failed",
+      error: items.length > 0 ? undefined : String(err),
+      debug: {
+        fetch_tap_install_status: _lastFetchTapInstallStatus,
+        api_pages_fetched: apiPagesFetched,
+        api_items_harvested: apiItemsHarvested,
+        api_error: apiError || String(err),
+        dom_items_harvested: domItemsHarvested,
+        seed_aweme_id: seedAwemeId,
         ui_triggered: uiTriggered,
         inject_status: msg.debug_inject_status,
         page_url: location.href,
       },
     };
   } finally {
-    window.removeEventListener("message", onSearchTapMessage);
-  }
-}
-
-async function runHot(msg: HotExecuteMessage): Promise<HotResultPayload> {
-  const maxItems = Math.max(1, Math.floor(msg.max_items));
-  let apiPagesFetched = 0;
-  let apiItemsHarvested = 0;
-  let apiError = "";
-  let seedAwemeId = "";
-  const allItems: DouyinSearchItem[] = [];
-
-  try {
-    reinjectFetchTap();
-    await sleep(POST_INSTALL_SETTLE_MS);
-    seedAwemeId = await waitForCurrentVideoAwemeId();
-    if (!seedAwemeId) {
-      throw new Error("hot_seed_aweme_id_missing");
-    }
-
-    const apiResult = await harvestHotRelatedViaApiBridge(
-      seedAwemeId,
-      maxItems,
-      msg.sentence_id,
-      msg.word,
-    );
-    apiPagesFetched = apiResult.pages;
-    apiError = apiResult.error ?? "";
-    apiItemsHarvested = apiResult.items.length;
-    allItems.push(...apiResult.items);
-
-    const items = dedupeSearchItems(allItems, maxItems);
-    return {
-      task_id: msg.task_id,
-      sentence_id: msg.sentence_id,
-      word: msg.word,
-      items,
-      scope_count: items.length,
-      status: items.length > 0 ? "ok" : "empty",
-      debug: {
-        fetch_tap_install_status: _lastFetchTapInstallStatus,
-        api_pages_fetched: apiPagesFetched,
-        api_items_harvested: apiItemsHarvested,
-        api_error: apiError,
-        seed_aweme_id: seedAwemeId,
-        inject_status: msg.debug_inject_status,
-        page_url: location.href,
-      },
-    };
-  } catch (err) {
-    const items = dedupeSearchItems(allItems, maxItems);
-    return {
-      task_id: msg.task_id,
-      sentence_id: msg.sentence_id,
-      word: msg.word,
-      items,
-      scope_count: items.length,
-      status: items.length > 0 ? "ok" : "failed",
-      error: items.length > 0 ? undefined : String(err),
-      debug: {
-        fetch_tap_install_status: _lastFetchTapInstallStatus,
-        api_pages_fetched: apiPagesFetched,
-        api_items_harvested: apiItemsHarvested,
-        api_error: apiError || String(err),
-        seed_aweme_id: seedAwemeId,
-        inject_status: msg.debug_inject_status,
-        page_url: location.href,
-      },
-    };
+    detachPassiveCollector();
   }
 }
 
@@ -1292,16 +1537,11 @@ async function runFeed(msg: FeedExecuteMessage): Promise<FeedResultPayload> {
   let domItemsHarvested = 0;
   let apiError = "";
   const allItems: DouyinSearchItem[] = [];
+  const detachPassiveCollector = attachPassiveDiscoveryCollector(allItems);
 
   try {
     reinjectFetchTap();
     await sleep(POST_INSTALL_SETTLE_MS);
-
-    const apiResult = await harvestFeedViaApiBridge(maxItems);
-    apiPagesFetched = apiResult.pages;
-    apiError = apiResult.error ?? "";
-    apiItemsHarvested = apiResult.items.length;
-    allItems.push(...apiResult.items);
 
     for (let round = 0; round < 4 && allItems.length < maxItems; round += 1) {
       const domItems = extractDouyinSearchItemsFromDocument(
@@ -1315,7 +1555,7 @@ async function runFeed(msg: FeedExecuteMessage): Promise<FeedResultPayload> {
       await sleep(1_000);
     }
 
-    const items = dedupeSearchItems(allItems, maxItems);
+    const items = filterDiscoveryItemsForScope(allItems, "dy_feed", maxItems);
     return {
       task_id: msg.task_id,
       items,
@@ -1332,7 +1572,7 @@ async function runFeed(msg: FeedExecuteMessage): Promise<FeedResultPayload> {
       },
     };
   } catch (err) {
-    const items = dedupeSearchItems(allItems, maxItems);
+    const items = filterDiscoveryItemsForScope(allItems, "dy_feed", maxItems);
     return {
       task_id: msg.task_id,
       items,
@@ -1349,6 +1589,8 @@ async function runFeed(msg: FeedExecuteMessage): Promise<FeedResultPayload> {
         page_url: location.href,
       },
     };
+  } finally {
+    detachPassiveCollector();
   }
 }
 

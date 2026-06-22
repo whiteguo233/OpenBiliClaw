@@ -73,6 +73,14 @@ CONSUMED_POOL_STATUSES: frozenset[str] = frozenset(
 )
 
 _VALID_IMAGE_EXTS: frozenset[str] = frozenset({"jpeg", "jpg", "png", "webp", "avif", "gif"})
+_CONTENT_TYPE_BY_EXTENSION: dict[str, str] = {
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "avif": "image/avif",
+    "gif": "image/gif",
+}
 
 
 def _https_normalize(url: str) -> str:
@@ -411,6 +419,31 @@ def is_cover_cached(url: str) -> bool:
             if candidate.stat().st_size > 0:
                 return True
     return False
+
+
+def _cached_cover_bytes(url: str) -> tuple[bytes, str] | None:
+    """Return cached cover bytes when a non-empty cached file exists."""
+    for candidate in image_cache_dir().glob(f"{image_cache_key(url)}.*"):
+        ext = candidate.suffix.lower().lstrip(".")
+        if ext not in _CONTENT_TYPE_BY_EXTENSION:
+            continue
+        with suppress(OSError):
+            data = candidate.read_bytes()
+            if data:
+                return data, _CONTENT_TYPE_BY_EXTENSION[ext]
+    return None
+
+
+async def get_or_fetch_cover_bytes(url: str) -> tuple[bytes, str]:
+    """Return cover bytes from disk cache first, fetching and caching on miss."""
+    _parse_image_url(url)
+    cached = _cached_cover_bytes(url)
+    if cached is not None:
+        return cached
+
+    data, content_type = await fetch_cover_bytes(url)
+    save_image_bytes(url, data, content_type)
+    return data, content_type
 
 
 def select_prefetch_targets(urls: Iterable[str], *, max_fetch: int) -> list[str]:

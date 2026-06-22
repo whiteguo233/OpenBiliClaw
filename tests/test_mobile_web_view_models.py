@@ -97,7 +97,8 @@ class TestMobileWebViewModels:
             import * as vm from "./src/openbiliclaw/web/js/view-models.js";
 
             const required = [
-              "buildVideoUrl", "buildContentUrl", "buildRecommendationClickPayload",
+              "buildVideoUrl", "buildYouTubeUrl", "buildTwitterUrl",
+              "buildContentUrl", "buildRecommendationClickPayload",
               "normalizeRecommendation", "normalizeDelightCandidate",
               "getDelightUiState", "getDelightActionState",
               "buildFeedbackPayload", "validateCommentInput", "getCommentSubmitUiState",
@@ -152,6 +153,66 @@ class TestMobileWebViewModels:
               topic_label: "",
               up_name: "这位 UP 还没认出来",
             });
+        """)
+        )
+
+    def test_x_recommendation_source_platform_and_label_are_source_aware(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              buildContentUrl,
+              buildRecommendationClickPayload,
+              getSourceLabel,
+              normalizeRecommendation,
+              normalizeSourcePlatform,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const tweet = normalizeRecommendation({
+              id: 1790000000000000001,
+              bvid: "1790000000000000001",
+              content_id: "1790000000000000001",
+              content_url: "https://x.com/h/status/1790000000000000001",
+              source_platform: "x",
+              title: "a tweet",
+              content_type: "tweet",
+              body_text: "tweet body",
+              cover_url: "",
+            });
+            const tweetWithoutUrl = normalizeRecommendation({
+              id: 1790000000000000002,
+              content_id: "1790000000000000002",
+              source_platform: "x",
+              title: "another tweet",
+              content_type: "tweet",
+              body_text: "another tweet body",
+              cover_url: "",
+            });
+            const fallbackUrl = buildContentUrl(tweetWithoutUrl);
+
+            assert.equal(tweet.source_platform, "twitter");
+            assert.equal(getSourceLabel(tweet.source_platform), "X (Twitter)");
+            assert.equal(fallbackUrl, "https://x.com/i/status/1790000000000000002");
+            assert.equal(
+              buildRecommendationClickPayload(tweetWithoutUrl, fallbackUrl).source_platform,
+              "twitter",
+            );
+            assert.equal(
+              buildRecommendationClickPayload(tweetWithoutUrl, fallbackUrl).content_url,
+              "https://x.com/i/status/1790000000000000002",
+            );
+            assert.equal(
+              normalizeSourcePlatform({ content_url: "https://twitter.com/h/status/1" }),
+              "twitter",
+            );
+            assert.equal(
+              normalizeSourcePlatform({ content_url: "https://notx.com/h/status/1" }),
+              "web",
+            );
+            assert.equal(
+              normalizeSourcePlatform({ source_platform: "twitter" }),
+              "twitter",
+            );
         """)
         )
 

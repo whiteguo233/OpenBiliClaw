@@ -85,3 +85,16 @@ test("chat form reserves a dedicated status line for staged progress", () => {
   assert.match(chatStatusBlock, /font-size:\s*11px;/);
   assert.match(chatMarkup, /id="chatStatus"/);
 });
+
+test("chat tab scrolls restored history to the newest message", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const setActiveTabBlock =
+    popupJs.match(/function setActiveTab\(tabName\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  const hydrateBlock =
+    popupJs.match(/async function hydrateChatHistory\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+  assert.match(popupJs, /function scrollChatMessagesToBottom\(\)/);
+  assert.match(popupJs, /requestAnimationFrame/);
+  assert.match(setActiveTabBlock, /tabName === "chat"[\s\S]*scrollChatMessagesToBottom\(\)/);
+  assert.match(hydrateBlock, /replaceChildren\(\)[\s\S]*scrollChatMessagesToBottom\(\)/);
+});

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from openbiliclaw.llm.base import (
+    LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
     LLMProviderError,
     LLMRateLimitError,
     LLMResponseError,
@@ -986,7 +987,7 @@ async def test_health_check_returns_true_on_success(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_health_check_does_not_cap_completion_tokens(
+async def test_health_check_uses_connectivity_probe_token_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = OpenAIProvider(api_key="test-key")
@@ -1003,7 +1004,7 @@ async def test_health_check_does_not_cap_completion_tokens(
     monkeypatch.setattr(provider, "complete", fake_complete)
 
     assert await provider.health_check() is True
-    assert "max_tokens" not in captured
+    assert captured["max_tokens"] == LLM_CONNECTIVITY_PROBE_MAX_TOKENS
 
 
 @pytest.mark.asyncio

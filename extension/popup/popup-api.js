@@ -390,6 +390,25 @@ export async function submitFeedback(payload) {
 }
 
 /**
+ * Confirm or reject a specific insight hypothesis. confirm → the hypothesis is
+ * validated + its confidence raised; reject → unvalidated + confidence capped
+ * low (soft-invalidated in recommendation scoring). Routes to
+ * ``POST /api/insights/feedback``.
+ *
+ * @param {string} hypothesis
+ * @param {"confirm" | "reject"} signal
+ */
+export async function submitInsightFeedback(hypothesis, signal) {
+  return requestJson("/insights/feedback", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ hypothesis, signal }),
+  });
+}
+
+/**
  * Report a click-through on a recommendation card. Best-effort: errors are
  * swallowed so UI navigation is never blocked by a slow or offline backend.
  *

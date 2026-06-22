@@ -160,6 +160,42 @@ class FakeRelatedClient:
         return self.search_results_by_query.get(keyword, [])
 
 
+def test_related_chain_map_related_item_maps_stat_metrics() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager([]),
+        llm_evaluation=False,
+    )
+
+    content = strategy._map_related_item(
+        {
+            "bvid": "BV1metrics",
+            "title": "指标相关视频",
+            "owner": {"name": "UP", "mid": 1},
+            "stat": {
+                "view": 1000,
+                "like": 100,
+                "favorite": 90,
+                "danmaku": 80,
+                "reply": 70,
+                "share": 60,
+            },
+        },
+        seed_topic_key="seed",
+    )
+
+    assert content is not None
+    assert content.view_count == 1000
+    assert content.like_count == 100
+    assert content.favorite_count == 90
+    assert content.danmaku_count == 80
+    assert content.comment_count == 70
+    assert content.share_count == 60
+
+
 @dataclass
 class FakeSeedStrategy:
     results: list[Any]
@@ -345,6 +381,34 @@ async def test_related_chain_filters_by_score_and_tolerates_failures() -> None:
 
     assert client.related_calls == ["BV1FAIL", "BV1SEED"]
     assert [item.bvid for item in results] == ["BV1B"]
+
+
+def test_related_chain_backfill_does_not_drop_below_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+        score_threshold=0.65,
+    )
+
+    backfill = strategy.create_backfill_strategy()
+
+    assert backfill is not None
+    assert backfill.score_threshold == 0.60
+
+
+def test_related_chain_default_score_threshold_is_normal_admission_floor() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+    )
+
+    assert strategy.score_threshold == 0.60
 
 
 @pytest.mark.asyncio

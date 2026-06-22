@@ -12,6 +12,7 @@ from openbiliclaw.runtime.image_cache import (
     CoverFetchError,
     cleanup_image_cache,
     fetch_cover_bytes,
+    get_or_fetch_cover_bytes,
     image_cache_extension,
     image_cache_key,
     is_allowed_image_url,
@@ -214,6 +215,7 @@ class _FakeHTTPX:
     def __init__(self) -> None:
         self.responses: dict[str, _FakeResp] = {}
         self.timeouts: set[str] = set()
+        self.sent_urls: list[str] = []
 
     def add(
         self,
@@ -245,6 +247,7 @@ class _FakeHTTPX:
 
             async def send(self, request: httpx.Request, *, stream: bool = False) -> _FakeResp:
                 url = str(request.url)
+                fake.sent_urls.append(url)
                 if url in fake.timeouts:
                     raise httpx.TimeoutException("timed out", request=request)
                 return fake.responses.get(url, _FakeResp(404))
@@ -303,6 +306,31 @@ async def test_fetch_cover_bytes_rejects_non_whitelisted() -> None:
     with pytest.raises(CoverFetchError) as exc:
         await fetch_cover_bytes("https://example.com/a.jpg")
     assert exc.value.status_code == 403
+
+
+async def test_get_or_fetch_cover_bytes_uses_cached_copy(
+    cache_dir: Path, fake_httpx: _FakeHTTPX
+) -> None:
+    save_image_bytes(XHS, b"cached-webp", "image/webp")
+
+    data, content_type = await get_or_fetch_cover_bytes(XHS)
+
+    assert data == b"cached-webp"
+    assert content_type == "image/webp"
+    assert fake_httpx.sent_urls == []
+
+
+async def test_get_or_fetch_cover_bytes_fetches_and_caches_on_miss(
+    cache_dir: Path, fake_httpx: _FakeHTTPX
+) -> None:
+    fake_httpx.add(XHS, status_code=200, headers={"content-type": "image/webp"}, chunks=[b"webp"])
+
+    data, content_type = await get_or_fetch_cover_bytes(XHS)
+
+    assert data == b"webp"
+    assert content_type == "image/webp"
+    assert is_cover_cached(XHS) is True
+    assert fake_httpx.sent_urls == [XHS]
 
 
 async def test_prefetch_cover_caches_then_skips(cache_dir: Path, fake_httpx: _FakeHTTPX) -> None:

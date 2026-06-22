@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 from openbiliclaw.soul.awareness_analyzer import AwarenessGenerationError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from openbiliclaw.memory.manager import MemoryManager
     from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
     from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
@@ -48,8 +50,39 @@ logger = logging.getLogger(__name__)
 # Default throttle: generate awareness+insight once every 12 hours.
 DEFAULT_MIN_INTERVAL_SECONDS = 12 * 60 * 60
 
-# How many events to feed the awareness analyzer per run.
-_AWARENESS_EVENT_LIMIT = 50
+# --- Cursor-based incremental reads (replaces the old fixed limit=50) ----
+# Awareness reads events with id > last_awareness_event_id rather than the
+# most-recent-50 window, so a burst of >50 events in one throttle window is
+# never silently dropped, and a quiet window doesn't re-send the same events.
+#
+# Bound on the newest still-unprocessed events folded into a single awareness
+# run. On a huge backlog (e.g. first run after a long offline period) the
+# watermark jumps to the newest event and older unprocessed events beyond this
+# window are skipped (logged, not silent) to keep "recent awareness" recent.
+_AWARENESS_BACKLOG_CAP = 900
+# Per-LLM-call batch size. Sized for modern long-context models (256k+): an
+# event is ~100 tokens, so 300 events ≈ 30-45k input tokens — a typical 12h
+# window (even heavy usage) fits in a SINGLE call, no needless splitting.
+# Batching only kicks in for pathological backlogs (> 300 new events in one
+# window), as a safety net so worst-case is a few modest calls rather than one
+# 90k-token call that smaller-context providers might choke on.
+_AWARENESS_EVENT_BATCH_SIZE = 300
+# Recent already-processed events (id <= watermark) included read-only in the
+# first batch so observations stay trend-aware even when few events are new.
+_AWARENESS_CONTEXT_LOOKBACK = 10
+
+# Insight reads awareness notes after last_insight_awareness_index (a positional
+# cursor — notes are append-only) instead of the full awareness history, so the
+# insight prompt no longer grows without bound. Notes are denser than events
+# (each is an LLM-written observation), so the batch is smaller than awareness'
+# but still large enough that real runs (a handful of new notes) are one call.
+_INSIGHT_NOTE_BACKLOG_CAP = 450
+_INSIGHT_NOTE_BATCH_SIZE = 150
+
+# Output-token budget for the batched cognition LLM calls. Larger than the
+# generic 16k default so a dense batch of events/notes can emit a full notes /
+# hypotheses array without truncation.
+_COGNITION_MAX_TOKENS = 32768
 
 # How many notes/insights to keep attached to the OnionProfile (surfaced in UI).
 _PROFILE_AWARENESS_WINDOW = 8
@@ -141,7 +174,7 @@ class CognitionCycle:
         # 1. Awareness pass
         if awareness_due:
             try:
-                added = await self._run_awareness()
+                added = await self._run_awareness(state)
                 result.awareness_generated = added
                 state["last_awareness_at"] = current_time.isoformat()
             except AwarenessGenerationError as exc:
@@ -163,7 +196,7 @@ class CognitionCycle:
         # 2. Insight pass — runs after awareness so it can use the fresh notes
         if insight_due:
             try:
-                added = await self._run_insight()
+                added = await self._run_insight(state)
                 result.insight_generated = added
                 state["last_insight_at"] = current_time.isoformat()
             except Exception as exc:
@@ -193,67 +226,150 @@ class CognitionCycle:
         elapsed = (now - last_run_at).total_seconds()
         return elapsed >= self._min_interval_seconds
 
-    async def _run_awareness(self) -> int:
-        """Run the awareness analyzer and persist the merged result.
+    async def _run_awareness(self, state: dict[str, Any]) -> int:
+        """Fold events newer than the watermark into awareness notes.
 
-        Returns the number of NEW notes added (0 if LLM returned nothing new).
+        Cursor-based: reads events with ``id > last_awareness_event_id`` (the
+        newest ``_AWARENESS_BACKLOG_CAP`` of them on a large backlog), processes
+        them in ``_AWARENESS_EVENT_BATCH_SIZE`` chunks, and advances the
+        watermark after each successful chunk so partial progress survives a
+        later-chunk failure. A small lookback of already-processed events rides
+        in the first chunk so observations stay trend-aware when little is new.
 
-        Wraps the analyzer call in a single retry on
-        ``AwarenessGenerationError`` (one attempt plus one retry after a
-        2s pause). MiMo 502s and transient JSON-shape glitches usually
-        clear on the second call; persistent failures bubble up to
-        ``run_if_due`` which handles them without advancing the schedule.
+        Each chunk's analyze call retries once on ``AwarenessGenerationError``
+        (mirrors the legacy single-call behavior). A persistent failure bubbles
+        up to ``run_if_due`` — the watermark stays at the last good chunk, so
+        the next tick resumes from there instead of waiting the full throttle.
+
+        Returns the number of NEW notes added across all chunks.
         """
-        events = self._memory.query_events(limit=_AWARENESS_EVENT_LIMIT)
+        watermark = _coerce_int(state.get("last_awareness_event_id", 0))
+        rows = self._memory.query_events(
+            after_event_id=watermark,
+            limit=_AWARENESS_BACKLOG_CAP,
+        )
+        if not rows:
+            return 0
+        if len(rows) >= _AWARENESS_BACKLOG_CAP:
+            logger.warning(
+                "Awareness backlog hit cap %d; older unprocessed events are "
+                "skipped (watermark jumps to newest of this window).",
+                _AWARENESS_BACKLOG_CAP,
+            )
+        rows.reverse()  # query returns newest-first; process chronologically
+
+        lookback = self._awareness_lookback(watermark)
         preference = self._memory.get_layer("preference").data
         soul_profile_data = self._memory.get_layer("soul").data
 
+        total_added = 0
+        for batch_index, batch in enumerate(_chunk(rows, _AWARENESS_EVENT_BATCH_SIZE)):
+            events_for_call = (lookback + batch) if batch_index == 0 else batch
+            new_notes = await self._awareness_with_retry(
+                events_for_call, preference, soul_profile_data
+            )
+            if new_notes:
+                existing = self._load_awareness_notes()
+                merged = self._awareness_analyzer.merge_notes(existing, new_notes)
+                total_added += max(0, len(merged) - len(existing))
+                self._save_awareness_notes(merged)
+            # Advance the watermark past this chunk and persist immediately so a
+            # failure in a later chunk doesn't reprocess this one next tick.
+            batch_max_id = max(_coerce_int(item.get("id", 0)) for item in batch)
+            watermark = max(watermark, batch_max_id)
+            state["last_awareness_event_id"] = watermark
+            self._save_state(state)
+        return total_added
+
+    async def _awareness_with_retry(
+        self,
+        events: list[dict[str, Any]],
+        preference: dict[str, Any],
+        soul_profile_data: dict[str, Any],
+    ) -> list[AwarenessNote]:
+        """One awareness analyze call with a single retry on structured failure."""
         try:
-            new_notes = await self._awareness_analyzer.analyze(
+            return await self._awareness_analyzer.analyze(
                 events=events,
                 preference=preference,
                 soul_profile=soul_profile_data,
+                max_tokens=_COGNITION_MAX_TOKENS,
             )
         except AwarenessGenerationError:
             await asyncio.sleep(_AWARENESS_RETRY_BACKOFF_SECONDS)
-            new_notes = await self._awareness_analyzer.analyze(
+            return await self._awareness_analyzer.analyze(
                 events=events,
                 preference=preference,
                 soul_profile=soul_profile_data,
+                max_tokens=_COGNITION_MAX_TOKENS,
             )
+
+    def _awareness_lookback(self, watermark: int) -> list[dict[str, Any]]:
+        """Recent already-processed events (id <= watermark) for trend context.
+
+        Empty on the first run (no prior events) — the backlog itself supplies
+        plenty of context then. Returned chronologically (oldest-first).
+        """
+        if watermark <= 0:
+            return []
+        recent = self._memory.query_events(limit=_AWARENESS_CONTEXT_LOOKBACK)
+        prior = [item for item in recent if _coerce_int(item.get("id", 0)) <= watermark]
+        prior.reverse()
+        return prior
+
+    async def _run_insight(self, state: dict[str, Any]) -> int:
+        """Derive insights from awareness notes newer than the insight cursor.
+
+        Cursor-based: reads ``awareness_notes[last_insight_awareness_index:]``
+        (notes are append-only, so a positional index is a stable cursor)
+        instead of the full awareness history — bounding the prompt. Processes
+        in ``_INSIGHT_NOTE_BATCH_SIZE`` chunks, passing the current active
+        hypotheses as read-only context so the LLM can refine rather than
+        restate. Advances the cursor after each chunk.
+
+        Returns the number of NEW hypotheses added across all chunks.
+        """
+        all_notes = self._load_awareness_notes()
+        total_notes = len(all_notes)
+        cursor = _coerce_int(state.get("last_insight_awareness_index", 0))
+        if cursor > total_notes:
+            # Notes shrank (unexpected — e.g. a future GC). Reprocess from 0.
+            cursor = 0
+        new_notes = all_notes[cursor:]
         if not new_notes:
             return 0
+        if len(new_notes) > _INSIGHT_NOTE_BACKLOG_CAP:
+            skipped = len(new_notes) - _INSIGHT_NOTE_BACKLOG_CAP
+            logger.warning(
+                "Insight note backlog exceeded cap %d; skipping %d older notes.",
+                _INSIGHT_NOTE_BACKLOG_CAP,
+                skipped,
+            )
+            new_notes = new_notes[-_INSIGHT_NOTE_BACKLOG_CAP:]
+            cursor = total_notes - _INSIGHT_NOTE_BACKLOG_CAP
 
-        existing = self._load_awareness_notes()
-        merged = self._awareness_analyzer.merge_notes(existing, new_notes)
-        added = len(merged) - len(existing)
-        self._save_awareness_notes(merged)
-        return max(0, added)
-
-    async def _run_insight(self) -> int:
-        """Run the insight analyzer and persist the merged result."""
-        awareness_notes = self._load_awareness_notes()
-        if not awareness_notes:
-            # No awareness yet → no insights to derive. This happens on the
-            # very first run when awareness also just ran and produced zero,
-            # or on very quiet accounts.
-            return 0
         preference = self._memory.get_layer("preference").data
         soul_profile_data = self._memory.get_layer("soul").data
 
-        new_insights = await self._insight_analyzer.analyze(
-            awareness_notes=awareness_notes,
-            preference=preference,
-            soul_profile=soul_profile_data,
-        )
-        if not new_insights:
-            return 0
-
-        existing = self._load_insights()
-        merged = self._insight_analyzer.merge_insights(existing, new_insights)
-        added = len(merged) - len(existing)
-        self._save_insights(merged)
-        return max(0, added)
+        total_added = 0
+        processed = cursor
+        for batch in _chunk(new_notes, _INSIGHT_NOTE_BATCH_SIZE):
+            existing = self._load_insights()
+            new_insights = await self._insight_analyzer.analyze(
+                awareness_notes=batch,
+                preference=preference,
+                soul_profile=soul_profile_data,
+                existing_insights=existing,
+                max_tokens=_COGNITION_MAX_TOKENS,
+            )
+            if new_insights:
+                merged = self._insight_analyzer.merge_insights(existing, new_insights)
+                total_added += max(0, len(merged) - len(existing))
+                self._save_insights(merged)
+            processed += len(batch)
+            state["last_insight_awareness_index"] = processed
+            self._save_state(state)
+        return total_added
 
     def _sync_to_profile(self, result: CognitionCycleResult) -> None:
         """Copy the freshest awareness/insights into the OnionProfile.
@@ -374,3 +490,26 @@ def _parse_iso(value: Any) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _coerce_int(value: Any) -> int:
+    """Best-effort int coercion for watermark/cursor values read from JSON state."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _chunk(items: list[Any], size: int) -> Iterator[list[Any]]:
+    """Yield successive ``size``-length slices of ``items`` (last may be shorter)."""
+    step = max(1, int(size))
+    for start in range(0, len(items), step):
+        yield items[start : start + step]

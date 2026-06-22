@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   classifyXhsPageType,
   extractXhsNoteUrl,
+  extractNoteMetadataFromAnchor,
   collectInViewportNoteUrls,
   dedupeObservedUrls,
   filterSelfAuthoredNotes,
@@ -41,6 +42,52 @@ function anchor(
       y: rect.top,
     } as DOMRect,
   };
+}
+
+class FakeDomElement {
+  readonly textContent: string;
+  readonly title: string;
+  readonly href: string;
+  private readonly attrs: Record<string, string>;
+  private readonly selectorMap: Record<string, FakeDomElement[]>;
+  private readonly closestElement?: FakeDomElement;
+
+  constructor(opts: {
+    textContent?: string;
+    title?: string;
+    href?: string;
+    attrs?: Record<string, string>;
+    selectorMap?: Record<string, FakeDomElement[]>;
+    closestElement?: FakeDomElement;
+  } = {}) {
+    this.textContent = opts.textContent ?? "";
+    this.title = opts.title ?? "";
+    this.href = opts.href ?? "";
+    this.attrs = opts.attrs ?? {};
+    this.selectorMap = opts.selectorMap ?? {};
+    this.closestElement = opts.closestElement;
+  }
+
+  closest(): FakeDomElement {
+    return this.closestElement ?? this;
+  }
+
+  querySelector(selector: string): FakeDomElement | null {
+    return this.querySelectorAll(selector)[0] ?? null;
+  }
+
+  querySelectorAll(selector: string): FakeDomElement[] {
+    if (selector.includes("[aria-label]")) {
+      return this.selectorMap.metrics ?? [];
+    }
+    return this.selectorMap[selector] ?? [];
+  }
+
+  getAttribute(name: string): string | null {
+    if (name === "title") return this.title || this.attrs[name] || null;
+    if (name === "href") return this.href || this.attrs[name] || null;
+    return this.attrs[name] ?? null;
+  }
 }
 
 test("classifyXhsPageType identifies search / explore / profile / other", () => {
@@ -147,6 +194,49 @@ test("collectInViewportNoteUrls deduplicates repeated cards", () => {
   });
 
   assert.equal(urls.length, 1);
+});
+
+test("extractNoteMetadataFromAnchor reads visible metric chips", () => {
+  const titleEl = new FakeDomElement({ textContent: "手冲咖啡入门" });
+  const authorEl = new FakeDomElement({ textContent: "豆子老师" });
+  const cover = new FakeDomElement({
+    attrs: { src: "https://sns-webpic-qc.xhscdn.com/cover.jpg" },
+  });
+  const card = new FakeDomElement({
+    selectorMap: {
+      ".title, .note-title, [class*='title'] span, [class*='title']": [titleEl],
+      ".author-wrapper .name, .author .name, .user-name, [class*='author'] .name, .nickname": [
+        authorEl,
+      ],
+      "img.cover, .cover img, img[src*='xhscdn'], img[src*='sns-img'], img": [cover],
+      metrics: [
+        new FakeDomElement({ textContent: "浏览 1.2万" }),
+        new FakeDomElement({ textContent: "赞 42" }),
+        new FakeDomElement({ textContent: "收藏 1,234" }),
+        new FakeDomElement({ textContent: "评论 3k" }),
+      ],
+    },
+  });
+  const anchorEl = new FakeDomElement({
+    href: "/explore/note-1?xsec_token=tok",
+    closestElement: card,
+  });
+
+  const meta = extractNoteMetadataFromAnchor(
+    anchorEl as unknown as HTMLAnchorElement,
+    "https://www.xiaohongshu.com/search_result?keyword=x",
+  );
+
+  assert.deepEqual(meta, {
+    url: "https://www.xiaohongshu.com/explore/note-1?xsec_token=tok",
+    title: "手冲咖啡入门",
+    author: "豆子老师",
+    cover_url: "https://sns-webpic-qc.xhscdn.com/cover.jpg",
+    view_count: 12_000,
+    like_count: 42,
+    collect_count: 1_234,
+    comment_count: 3_000,
+  });
 });
 
 test("dedupeObservedUrls removes previously reported URLs", () => {

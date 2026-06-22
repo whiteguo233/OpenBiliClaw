@@ -14,10 +14,12 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections import Counter
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, parse_llm_json_tolerant
 from openbiliclaw.llm.service import is_llm_rate_limit_error
 
@@ -192,6 +194,21 @@ def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
         item_predicate=lambda item: "score" in item,
     )
     if payload is None:
+        parsed = parse_llm_json_tolerant(raw)
+        if isinstance(parsed, dict):
+            mapped_payload: list[dict[str, Any]] = []
+            for key, value in parsed.items():
+                if not isinstance(value, dict) or "score" not in value:
+                    continue
+                item = dict(value)
+                identifier = str(key).strip()
+                if identifier:
+                    item.setdefault("content_id", identifier)
+                    if identifier.startswith("BV"):
+                        item.setdefault("bvid", identifier)
+                mapped_payload.append(item)
+            if mapped_payload:
+                return mapped_payload
         return None
     return [dict(item) for item in payload]
 
@@ -206,6 +223,29 @@ def _content_result_keys(content: DiscoveredContent) -> set[str]:
         }
         if key
     }
+
+
+_PROMPT_VISIBLE_METRIC_FIELDS: tuple[str, ...] = (
+    "view_count",
+    "like_count",
+    "favorite_count",
+    "collect_count",
+    "comment_count",
+    "share_count",
+    "danmaku_count",
+    "reply_count",
+    "retweet_count",
+    "bookmark_count",
+)
+
+
+def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, object]:
+    fields: dict[str, object] = {
+        field_name: int(getattr(content, field_name, 0) or 0)
+        for field_name in _PROMPT_VISIBLE_METRIC_FIELDS
+    }
+    fields["tags"] = list(getattr(content, "tags", []) or [])
+    return fields
 
 
 def _batch_results_by_content_key(
@@ -243,6 +283,14 @@ class DiscoveredContent:
     duration: int = 0  # seconds
     view_count: int = 0
     like_count: int = 0
+    favorite_count: int = 0
+    collect_count: int = 0
+    comment_count: int = 0
+    share_count: int = 0
+    danmaku_count: int = 0
+    reply_count: int = 0
+    retweet_count: int = 0
+    bookmark_count: int = 0
     tags: list[str] = field(default_factory=list)
     topic_key: str = ""
     topic_group: str = ""  # Coarse semantic category (e.g. "强化学习") for diversity
@@ -277,6 +325,11 @@ class DiscoveredContent:
     score_threshold: float = 0.0  # Strategy-specific admission floor for raw candidates
     body_text: str = ""  # tweet/thread full text; empty for video sources
     content_type: str = "video"  # shape: "video" | "note" | "tweet" | "thread"
+    # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
+    # that produced this item (unified keyword planner). ``None`` for every
+    # non-search / legacy / flag-off path — the admit-time yield backfill is a
+    # no-op then, so attribution stays opt-in and byte-compatible.
+    source_keyword_id: int | None = None
 
     def __post_init__(self) -> None:
         if not self.content_id and self.bvid:
@@ -309,6 +362,14 @@ class DiscoveredContent:
             "cover_url": self.cover_url,
             "view_count": self.view_count,
             "like_count": self.like_count,
+            "favorite_count": self.favorite_count,
+            "collect_count": self.collect_count,
+            "comment_count": self.comment_count,
+            "share_count": self.share_count,
+            "danmaku_count": self.danmaku_count,
+            "reply_count": self.reply_count,
+            "retweet_count": self.retweet_count,
+            "bookmark_count": self.bookmark_count,
             "relevance_score": self.relevance_score,
             "relevance_reason": self.relevance_reason,
             "candidate_tier": self.candidate_tier,
@@ -320,26 +381,9 @@ class DiscoveredContent:
             "author_name": self.author_name or self.up_name,
             "body_text": self.body_text,
             "content_type": self.content_type,
+            "source_keyword_id": self.source_keyword_id,
         }
 
-
-# Canonical set of LLM-returned style_key values accepted by evaluation.
-# Shared across discovery and recommendation — must stay in sync.
-VALID_STYLE_KEYS: frozenset[str] = frozenset(
-    {
-        "game_strategy",
-        "news_brief",
-        "practical_guide",
-        "story_doc",
-        "visual_showcase",
-        "tech_analysis",
-        "deep_dive",
-        "fun_variety",
-        "lifestyle",
-        "review_roundup",
-        "light_chat",
-    }
-)
 
 # v0.3.50+: per-batch franchise cap for ``_evaluate_batch``. The LLM
 # correctly identifies when a batch has many same-IP items (the prompt
@@ -352,7 +396,7 @@ _BATCH_FRANCHISE_CAP: int = 4
 
 # v0.3.51+: per-batch style cap. Mirrors the franchise cap above —
 # without it, a single eval_batch easily had 9-12 items of the same
-# style (fun_variety / story_doc / light_chat / practical_guide all
+# style (mood_release / story_immersion / social_chat / hands_on all
 # observed at 30-40% concentration in production). 8/30 = ~27% which
 # still lets a dominant style breathe but blocks single-style
 # domination of the pool.
@@ -399,15 +443,64 @@ class DiscoveryStrategy(ABC):
         return None
 
 
-def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
-    """Return whether a strategy discover callable accepts ``pool_snapshot=``."""
+def _strategy_declares_param(fn: Any, name: str) -> bool:
+    """Return whether a strategy discover callable declares an explicit ``name`` param."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    return name in signature.parameters
+
+
+def _strategy_accepts_kwarg(fn: Any, name: str) -> bool:
+    """Return whether a strategy discover callable accepts a keyword ``name``."""
     try:
         signature = inspect.signature(fn)
     except (TypeError, ValueError):
         return True
-    return "pool_snapshot" in signature.parameters or any(
+    return name in signature.parameters or any(
         param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
+
+
+def _injected_keyword_kwarg(fn: Any) -> str | None:
+    """Return the kwarg name to forward unified-planner injected words under.
+
+    The real search sub-strategies (B站 ``SearchStrategy``, ``XSearchStrategy``,
+    ``YoutubeSearchStrategy``) all read an explicit ``queries`` parameter — NOT
+    ``keywords`` — so the engine must forward injected words under whatever name
+    the strategy actually declares, or the injection is a silent no-op (the word
+    is claimed + marked ``used`` while the search never sees it). Preference:
+
+    1. an explicit ``queries`` param (every real search strategy),
+    2. an explicit ``keywords`` param (older/alternate signatures + fakes),
+    3. ``keywords`` when the callable only declares ``**kwargs`` (legacy contract),
+    4. ``None`` → the strategy takes no injected words (non-search sub-strategies).
+    """
+    if _strategy_declares_param(fn, "queries"):
+        return "queries"
+    if _strategy_declares_param(fn, "keywords"):
+        return "keywords"
+    if _strategy_accepts_kwarg(fn, "keywords"):
+        return "keywords"
+    return None
+
+
+def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
+    """Return whether a strategy discover callable accepts ``pool_snapshot=``."""
+    return _strategy_accepts_kwarg(fn, "pool_snapshot")
+
+
+def _strategy_accepts_keyword_ids(fn: Any) -> bool:
+    """Return whether a strategy discover callable declares ``keyword_ids=``.
+
+    P1.8 yield provenance: search sub-strategies that opt in declare an explicit
+    ``keyword_ids`` parameter (a ``keyword text → discovery_keywords.id`` map)
+    and stamp each produced item's ``source_keyword_id`` inside their per-keyword
+    loop. We forward the map ONLY to callables that declare it explicitly — never
+    via ``**kwargs`` — so non-search strategies + fakes stay byte-identical.
+    """
+    return _strategy_declares_param(fn, "keyword_ids")
 
 
 async def _call_strategy_discover(
@@ -416,14 +509,27 @@ async def _call_strategy_discover(
     *,
     limit: int,
     pool_snapshot: Any | None,
+    keywords: list[str] | None = None,
+    keyword_ids: dict[str, int] | None = None,
 ) -> list[DiscoveredContent]:
     discover_fn: Any = strategy.discover
+    kwargs: dict[str, Any] = {"limit": limit}
     if _strategy_accepts_pool_snapshot(discover_fn):
-        return cast(
-            "list[DiscoveredContent]",
-            await discover_fn(profile, limit=limit, pool_snapshot=pool_snapshot),
-        )
-    return cast("list[DiscoveredContent]", await discover_fn(profile, limit=limit))
+        kwargs["pool_snapshot"] = pool_snapshot
+    # Only forward injected keywords when the caller supplied them AND the
+    # strategy actually accepts them — under the name the strategy declares
+    # (real search strategies read ``queries``, not ``keywords``). Non-search
+    # sub-strategies declare neither, so they are left byte-identical.
+    if keywords is not None:
+        inject_kwarg = _injected_keyword_kwarg(discover_fn)
+        if inject_kwarg is not None:
+            kwargs[inject_kwarg] = keywords
+    # P1.8: forward the parallel keyword→id map for yield attribution, but only
+    # to a strategy that explicitly opted in (declares ``keyword_ids``). Flag-off
+    # / non-injected callers pass ``None`` → never forwarded → no stamping.
+    if keyword_ids and _strategy_accepts_keyword_ids(discover_fn):
+        kwargs["keyword_ids"] = keyword_ids
+    return cast("list[DiscoveredContent]", await discover_fn(profile, **kwargs))
 
 
 class ContentDiscoveryEngine:
@@ -447,6 +553,12 @@ class ContentDiscoveryEngine:
         embedding_service: SupportsEmbeddingService | None = None,
         target_primary_count: int = 20,
         backfill_target_count: int = 40,
+        multimodal_evaluation_enabled: bool = False,
+        multimodal_batch_size: int = 8,
+        multimodal_image_max_px: int = 384,
+        multimodal_image_quality: int = 72,
+        multimodal_image_timeout_seconds: int = 6,
+        multimodal_vision_supported: bool | None = None,
     ) -> None:
         self._strategies: list[DiscoveryStrategy] = []
         self._llm_service = llm_service
@@ -455,6 +567,16 @@ class ContentDiscoveryEngine:
         self._embedding_service = embedding_service
         self._target_primary_count = max(1, target_primary_count)
         self._backfill_target_count = max(self._target_primary_count, backfill_target_count)
+        self.multimodal_evaluation_enabled = bool(multimodal_evaluation_enabled)
+        self.multimodal_batch_size = max(1, min(12, int(multimodal_batch_size)))
+        self.multimodal_image_max_px = max(128, min(768, int(multimodal_image_max_px)))
+        self.multimodal_image_quality = max(40, min(90, int(multimodal_image_quality)))
+        self.multimodal_image_timeout_seconds = max(
+            1,
+            min(20, int(multimodal_image_timeout_seconds)),
+        )
+        self._multimodal_vision_supported_override = multimodal_vision_supported
+        self.multimodal_unavailable_reason = ""
         self._eval_cache: dict[str, tuple[float, str, str, str, str]] = {}
         # v0.3.x negative-anchors cache: (timestamp, latest_event_id,
         # exemplars). Refreshes when either the latest event id changes
@@ -462,6 +584,40 @@ class ContentDiscoveryEngine:
         self._negative_exemplars_cache: tuple[float, int | None, list[dict[str, object]]] | None = (
             None
         )
+
+    def _supports_multimodal_evaluation(self) -> bool:
+        override = getattr(self, "_multimodal_vision_supported_override", None)
+        if override is not None:
+            return bool(override)
+        service = self._llm_service
+        if service is None:
+            return False
+        for attr in ("supports_image_input", "supports_vision"):
+            value = getattr(service, attr, None)
+            if callable(value):
+                with suppress(Exception):
+                    return bool(value())
+            if value is not None:
+                return bool(value)
+        return callable(getattr(service, "complete_multimodal_structured_task", None))
+
+    def _effective_eval_batch_size(
+        self,
+        contents: list[DiscoveredContent],
+        requested_batch_size: int,
+    ) -> int:
+        batch_size = max(1, int(requested_batch_size))
+        self.multimodal_unavailable_reason = ""
+        if not bool(getattr(self, "multimodal_evaluation_enabled", False)):
+            return batch_size
+        if not any((content.cover_url or "").strip() for content in contents):
+            return batch_size
+        if not self._supports_multimodal_evaluation():
+            self.multimodal_unavailable_reason = (
+                "Current evaluation model is not vision-capable; using text-only evaluation."
+            )
+            return batch_size
+        return min(batch_size, int(getattr(self, "multimodal_batch_size", 8)))
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
@@ -500,6 +656,8 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Run discovery with selected (or all) strategies.
 
@@ -520,6 +678,16 @@ class ContentDiscoveryEngine:
                 full platform deficit.
             pool_snapshot: Optional current pool distribution summary for
                 strategies that can use pool-aware discovery guidance.
+            keywords: Optional caller-supplied search keywords forwarded to
+                search sub-strategies that accept a ``keywords`` kwarg (the
+                unified keyword planner injection point). Non-search strategies
+                never declare the kwarg, so they are unaffected. When ``None``,
+                strategies generate their own keywords as before.
+            keyword_ids: Optional ``keyword text → discovery_keywords.id`` map
+                (P1.8 yield provenance) forwarded alongside ``keywords`` to
+                search sub-strategies that declare a ``keyword_ids`` kwarg, so
+                each produced item is stamped with the id of the word that
+                produced it. ``None`` keeps the path attribution-free.
 
         Returns:
             Combined, deduplicated, and scored list of discovered content.
@@ -539,6 +707,8 @@ class ContentDiscoveryEngine:
             fully_parallel=fully_parallel,
             strategy_limits=strategy_limits,
             pool_snapshot=pool_snapshot,
+            keywords=keywords,
+            keyword_ids=keyword_ids,
         )
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
@@ -580,6 +750,8 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Fetch raw candidates without LLM evaluation or content_cache writes."""
 
@@ -599,6 +771,8 @@ class ContentDiscoveryEngine:
                 fully_parallel=fully_parallel,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                keywords=keywords,
+                keyword_ids=keyword_ids,
             )
         finally:
             _RAW_CANDIDATE_MODE.reset(token)
@@ -831,6 +1005,7 @@ class ContentDiscoveryEngine:
         cached = self._eval_cache.get(cache_key)
         if cached is not None:
             score, reason, topic_group, style_key, franchise_key = cached
+            style_key = normalize_style_key(style_key)
             content.relevance_score = score
             content.relevance_reason = reason
             if topic_group:
@@ -875,12 +1050,18 @@ class ContentDiscoveryEngine:
         messages = build_content_evaluation_prompt(
             profile_summary=build_profile_summary(profile),
             content_summary={
+                "content_id": content.content_id or content.bvid,
+                "content_url": content.content_url,
+                "source_platform": content.source_platform or "bilibili",
+                "content_type": content.content_type,
+                "body_text": content.body_text,
                 "title": content.title,
                 "up_name": content.up_name,
+                "author_name": content.author_name or content.up_name,
                 "description": content.description,
                 "duration": content.duration,
-                "view_count": content.view_count,
                 "source_strategy": content.source_strategy,
+                **_prompt_visible_content_fields(content),
             },
             source_context=source_context or content.source_strategy,
             source_platform=content.source_platform or "bilibili",
@@ -903,20 +1084,17 @@ class ContentDiscoveryEngine:
             score = self._clamp_score(payload.get("score", 0.0))
             reason = str(payload.get("reason", "")).strip()
             topic_group = str(payload.get("topic_group", "")).strip()
-            style_key = str(payload.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(payload.get("style_key", ""))
             franchise_key = str(payload.get("franchise_key", "")).strip()
         except Exception:
             logger.exception("Failed to evaluate discovered content: %s", content.bvid)
             return 0.0
 
-        # Validate LLM-returned style_key against allowed values
-        valid_styles = VALID_STYLE_KEYS
-
         content.relevance_score = score
         content.relevance_reason = reason
         if topic_group:
             content.topic_group = topic_group
-        if style_key in valid_styles:
+        if style_key in VALID_STYLE_KEYS:
             content.style_key = style_key
         if franchise_key:
             content.franchise_key = franchise_key
@@ -1038,6 +1216,7 @@ class ContentDiscoveryEngine:
                 else:
                     score, reason, topic_group, style_key = cached
                     franchise_key = ""
+                style_key = normalize_style_key(style_key)
                 content.relevance_score = score
                 content.relevance_reason = reason
                 if topic_group:
@@ -1054,6 +1233,13 @@ class ContentDiscoveryEngine:
             if len(scores) < original_len:
                 scores = scores + [0.0] * (original_len - len(scores))
             return scores
+
+        batch_size = self._effective_eval_batch_size(
+            [eval_contents[i] for i in uncached_indices],
+            batch_size,
+        )
+        if self.multimodal_unavailable_reason:
+            logger.info("eval_batch multimodal fallback: %s", self.multimodal_unavailable_reason)
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
         logger.info(
@@ -1284,11 +1470,34 @@ class ContentDiscoveryEngine:
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,
                     "description": (c.description or "")[:400],
-                    "published_at": c.published_at
+                    "published_at": c.published_at,
+                    "cover_url": c.cover_url,
                     "duration": c.duration,
-                    "view_count": c.view_count,
+                    **_prompt_visible_content_fields(c),
                 }
             )
+        image_inputs: list[dict[str, str]] = []
+        multimodal_enabled = bool(getattr(self, "multimodal_evaluation_enabled", False))
+        if (
+            multimodal_enabled
+            and self._supports_multimodal_evaluation()
+            and any((content.cover_url or "").strip() for content in batch)
+        ):
+            from openbiliclaw.discovery import multimodal
+
+            prepared_images = await multimodal.prepare_cover_image_inputs(
+                batch,
+                max_px=int(getattr(self, "multimodal_image_max_px", 384)),
+                quality=int(getattr(self, "multimodal_image_quality", 72)),
+                timeout_seconds=int(getattr(self, "multimodal_image_timeout_seconds", 6)),
+            )
+            image_ids = {image.content_id for image in prepared_images}
+            if image_ids:
+                for item in content_items:
+                    content_id = str(item.get("content_id") or item.get("bvid") or "")
+                    if content_id in image_ids:
+                        item["cover_image_ref"] = f"cover:{content_id}"
+                image_inputs = [image.to_llm_input() for image in prepared_images]
         source_platforms = {
             str(item.get("source_platform") or "").strip()
             for item in content_items
@@ -1310,35 +1519,36 @@ class ContentDiscoveryEngine:
             negative_examples=negative_examples,
         )
 
-        valid_styles = {
-            "game_strategy",
-            "news_brief",
-            "practical_guide",
-            "story_doc",
-            "visual_showcase",
-            "tech_analysis",
-            "deep_dive",
-            "fun_variety",
-            "lifestyle",
-            "review_roundup",
-            "light_chat",
-        }
-
         assert self._llm_service is not None
         try:
-            llm_call = self._llm_service.complete_structured_task(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                # v0.3.51+: explicitly disable provider thinking. This
-                # task is structured scoring (return JSON array), not
-                # reasoning — production logs showed 8-16 min/batch
-                # with reasoning enabled, dropping to ~30s without.
-                # 16384 max_tokens is plenty for the 1500-3000 token
-                # output a 30-item JSON array now needs.
-                max_tokens=16384,
-                reasoning_effort="",
-                caller="discovery.evaluate_batch",
+            multimodal_call = getattr(
+                self._llm_service,
+                "complete_multimodal_structured_task",
+                None,
             )
+            if image_inputs and callable(multimodal_call):
+                llm_call = multimodal_call(
+                    system_instruction=messages[0]["content"],
+                    user_input=messages[1]["content"],
+                    image_inputs=image_inputs,
+                    max_tokens=16384,
+                    reasoning_effort="",
+                    caller="discovery.evaluate_batch",
+                )
+            else:
+                llm_call = self._llm_service.complete_structured_task(
+                    system_instruction=messages[0]["content"],
+                    user_input=messages[1]["content"],
+                    # v0.3.51+: explicitly disable provider thinking. This
+                    # task is structured scoring (return JSON array), not
+                    # reasoning — production logs showed 8-16 min/batch
+                    # with reasoning enabled, dropping to ~30s without.
+                    # 16384 max_tokens is plenty for the 1500-3000 token
+                    # output a 30-item JSON array now needs.
+                    max_tokens=16384,
+                    reasoning_effort="",
+                    caller="discovery.evaluate_batch",
+                )
             if self._concurrency is not None:
                 response = await self._concurrency.run_llm(llm_call)
             else:
@@ -1357,8 +1567,10 @@ class ContentDiscoveryEngine:
                 )
                 return [0.0 for _ in batch]
             logger.warning(
-                "Batch evaluation failed for %d items, falling back to single eval",
+                "Batch evaluation failed for %d items (%s: %s), falling back to single eval",
                 len(batch),
+                type(exc).__name__,
+                exc,
             )
             # Fallback: evaluate individually
             return [
@@ -1402,14 +1614,14 @@ class ContentDiscoveryEngine:
             score = self._clamp_score(item_result.get("score", 0.0))
             reason = str(item_result.get("reason", "")).strip()
             topic_group = str(item_result.get("topic_group", "")).strip()
-            style_key = str(item_result.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(item_result.get("style_key", ""))
             franchise_key = str(item_result.get("franchise_key", "")).strip()
 
             content.relevance_score = score
             content.relevance_reason = reason
             if topic_group:
                 content.topic_group = topic_group
-            if style_key in valid_styles:
+            if style_key in VALID_STYLE_KEYS:
                 content.style_key = style_key
             if franchise_key:
                 content.franchise_key = franchise_key
@@ -1466,8 +1678,8 @@ class ContentDiscoveryEngine:
 
         # v0.3.51+: same-style cap (mirrors v0.3.50 franchise cap).
         # Production logs (2026-05-05) showed single-style concentration
-        # 7-12/30 in many eval batches (fun_variety×10, story_doc×11,
-        # light_chat×11, practical_guide×10). Pool inherits this skew
+        # 7-12/30 in many eval batches (mood_release×10,
+        # story_immersion×11, social_chat×11, hands_on×10). Pool inherits this skew
         # because eval_batch keeps all 30 — diversifier at serve time
         # can't unbias a pool that's already 30%+ same-style.
         # Cap=8 (27% of a 30-batch) lets a style have a small foothold
@@ -1478,7 +1690,7 @@ class ContentDiscoveryEngine:
             for i, content in enumerate(batch):
                 if i >= len(results) or results[i] <= 0:
                     continue
-                style_key = (content.style_key or "").strip().lower()
+                style_key = normalize_style_key(content.style_key)
                 if not style_key:
                     continue
                 style_buckets.setdefault(style_key, []).append(i)
@@ -1543,6 +1755,8 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
         run_entries = [
@@ -1576,6 +1790,8 @@ class ContentDiscoveryEngine:
                         profile,
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
+                        keywords=keywords,
+                        keyword_ids=keyword_ids,
                     )
                 finally:
                     logger.info(
@@ -1615,6 +1831,8 @@ class ContentDiscoveryEngine:
                         profile,
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
+                        keywords=keywords,
+                        keyword_ids=keyword_ids,
                     )
                     for s, run_limit in search_entries
                 ]
@@ -1898,6 +2116,17 @@ class ContentDiscoveryEngine:
         values = getattr(pool_snapshot, attribute, ()) or ()
         if not isinstance(values, (list, tuple, set, frozenset)):
             return set()
+        if attribute == "saturated_styles":
+            return {
+                token
+                for value in values
+                if isinstance(value, str)
+                if (
+                    token := ContentDiscoveryEngine._normalize_topic_token(
+                        normalize_style_key(value)
+                    )
+                )
+            }
         return {
             token
             for value in values
@@ -2198,7 +2427,7 @@ class ContentDiscoveryEngine:
 
     @staticmethod
     def _style_bucket(item: DiscoveredContent) -> str:
-        return ContentDiscoveryEngine._normalize_topic_token(item.style_key)
+        return ContentDiscoveryEngine._normalize_topic_token(normalize_style_key(item.style_key))
 
     @staticmethod
     def _normalize_topic_token(value: str) -> str:
@@ -2335,6 +2564,14 @@ class ContentDiscoveryEngine:
                     round_franchise_counts[franchise_key] = (
                         round_franchise_counts.get(franchise_key, 0) + 1
                     )
+                # P1.8 yield backfill — the ONE admission convergence. Every
+                # admitted pool item (inline-admit B站/抖音 here, and the shared
+                # candidate-pipeline X/YT/XHS/抖音 path which also funnels through
+                # ``cache_evaluated_results`` → ``_cache_results``) credits the
+                # keyword that produced it, idempotent on (keyword, content).
+                # Skipped (viewed / franchise-quota) items never reach here, so
+                # they correctly accrue no yield.
+                self._backfill_keyword_yield(item)
             except Exception:
                 logger.exception("Failed to cache discovered content: %s", item.bvid)
 
@@ -2366,6 +2603,28 @@ class ContentDiscoveryEngine:
                 # fall through silently rather than raise.
                 return
             loop.create_task(self._warm_mmr_embeddings(persisted))
+
+    def _backfill_keyword_yield(self, item: DiscoveredContent) -> None:
+        """Credit one admitted item to its producing keyword (P1.8), if any.
+
+        No-op when the item carries no ``source_keyword_id`` (every non-search /
+        legacy / flag-off item) or when the database does not expose the yield
+        DAO (old stubs). Best-effort: a yield-ledger failure must never abort an
+        otherwise-successful pool admission.
+        """
+        keyword_id = item.source_keyword_id
+        if keyword_id is None:
+            return
+        increment = getattr(self._database, "increment_keyword_yield", None)
+        if not callable(increment):
+            return
+        content_id = str(item.content_id or item.bvid or "").strip()
+        if not content_id:
+            return
+        try:
+            increment(int(keyword_id), content_id)
+        except Exception:
+            logger.debug("keyword yield backfill failed for id=%s", keyword_id, exc_info=True)
 
     async def _warm_mmr_embeddings(
         self,

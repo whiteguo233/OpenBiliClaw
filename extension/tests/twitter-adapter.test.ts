@@ -67,6 +67,10 @@ test("inferActionType maps engagement aria-labels", () => {
     "share",
   );
   assert.equal(
+    twitterAdapter.inferActionType({ text: "", ariaLabel: "Share", className: "" }),
+    "share",
+  );
+  assert.equal(
     twitterAdapter.inferActionType({ text: "Reply", ariaLabel: "Reply", className: "" }),
     "comment",
   );

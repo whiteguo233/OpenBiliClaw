@@ -116,7 +116,7 @@ test("bilibili and xhs strong signals coexist in the buffer without dedupe colli
 test("xhs non-action clicks remain plain clicks with no forced flush", () => {
   const url = "https://www.xiaohongshu.com/explore/69dea966000000001a0280ad";
   const share = xiaohongshuAdapter.inferActionType({
-    text: "分享",
+    text: "更多",
     ariaLabel: null,
     className: "",
   });

@@ -24,6 +24,7 @@ import {
   reshuffleRecommendations,
   respondToAvoidanceProbe,
   startChatTurn,
+  submitInsightFeedback,
   updateConfig,
   __resetPopupHealthCacheForTests,
 } from "../popup/popup-api.js";
@@ -257,6 +258,31 @@ test("respondToAvoidanceProbe posts to avoidance probe endpoint", async () => {
     response: "confirm",
     message: "对，这类我不想看",
   });
+});
+
+test("submitInsightFeedback posts hypothesis + signal to the insights endpoint", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { ok: true, matched: true, validated: false, confidence: 0.35 };
+      },
+    };
+  };
+
+  const res = await submitInsightFeedback("用户可能通过深度内容获得掌控感。", "reject");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/insights/feedback");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    hypothesis: "用户可能通过深度内容获得掌控感。",
+    signal: "reject",
+  });
+  assert.equal(res.matched, true);
+  assert.equal(res.confidence, 0.35);
 });
 
 test("fetchRecommendations normalizes cover urls from the recommend endpoint", async () => {

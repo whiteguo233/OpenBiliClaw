@@ -391,10 +391,10 @@ def test_user_reported_scenario_5_genshin_in_popup(tmp_path: Path) -> None:
         )
         db.conn.execute(
             """
-            INSERT INTO recommendations (bvid, expression, topic, presented)
-            VALUES (?, ?, ?, 0)
+            INSERT INTO recommendations (bvid, expression, topic, confidence, presented)
+            VALUES (?, ?, ?, ?, 0)
             """,
-            (bvid, "fake expression", "游戏"),
+            (bvid, "fake expression", "游戏", 0.90),
         )
     db.conn.commit()
 

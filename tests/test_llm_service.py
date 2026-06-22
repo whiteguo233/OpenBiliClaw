@@ -41,13 +41,13 @@ class FakeRegistry:
         self.provider_error = provider_error
         self.chat_capable = {name.lower() for name in (chat_capable or {"openai"})}
         self.default_provider = default_provider
-        self.calls: list[list[dict[str, str]]] = []
+        self.calls: list[list[dict[str, object]]] = []
         self.provider_calls: list[dict[str, object]] = []
         self.json_modes: list[bool] = []
 
     async def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         *,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -63,7 +63,7 @@ class FakeRegistry:
     async def complete_provider(
         self,
         provider_name: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         *,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -199,6 +199,44 @@ async def test_complete_structured_task_enables_json_mode() -> None:
 
     assert registry.calls
     assert registry.json_modes == [True]
+
+
+@pytest.mark.asyncio
+async def test_complete_multimodal_structured_task_sends_text_and_images() -> None:
+    registry = FakeRegistry(LLMResponse(content='[{"score": 0.8}]', provider="openai"))
+    memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
+    service = LLMService(registry=registry, memory=memory)  # type: ignore[arg-type]
+
+    await service.complete_multimodal_structured_task(
+        system_instruction="输出 JSON。",
+        user_input="请评估候选。",
+        image_inputs=[
+            {
+                "content_id": "yt-demo",
+                "data_url": "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+                "mime_type": "image/jpeg",
+            }
+        ],
+        caller="discovery.evaluate_batch",
+    )
+
+    assert registry.json_modes == [True]
+    user_message = registry.calls[0][1]
+    assert user_message["role"] == "user"
+    assert isinstance(user_message["content"], list)
+    parts = user_message["content"]
+    assert parts[0] == {"type": "text", "text": "请评估候选。"}
+    assert parts[1] == {
+        "type": "text",
+        "text": (
+            "Cover image cover:yt-demo maps to the content_batch item whose "
+            "cover_image_ref is cover:yt-demo."
+        ),
+    }
+    assert parts[2] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="},
+    }
 
 
 def test_resolve_priority_longest_prefix_wins() -> None:

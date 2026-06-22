@@ -14,6 +14,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+LLM_CONNECTIVITY_PROBE_MAX_TOKENS = 1024
+
 
 class LLMProviderError(Exception):
     """Base exception for provider request failures."""
@@ -121,7 +123,12 @@ class LLMProvider(ABC):
         try:
             # Reasoning-first OpenAI-compatible backends may spend the
             # initial output budget on reasoning before emitting content.
-            resp = await self.complete([{"role": "user", "content": "hi"}])
+            # Keep the connectivity probe small, but not so tiny that those
+            # providers get truncated before they can return visible content.
+            resp = await self.complete(
+                [{"role": "user", "content": "hi"}],
+                max_tokens=LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
+            )
             return bool(resp.content)
         except Exception:
             logger.exception("Health check failed for %s", self.name)

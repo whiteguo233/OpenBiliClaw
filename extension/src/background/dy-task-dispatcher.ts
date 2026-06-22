@@ -123,6 +123,8 @@ export interface DyHotTaskItem {
   word?: string;
   sentence_id: string;
   hot_value?: number;
+  seed_aweme_id?: string;
+  group_id?: string;
 }
 
 export interface DyTaskResult {
@@ -204,6 +206,13 @@ export function buildDyTaskUrl(task: DyTask): string | null {
     return "https://www.douyin.com/";
   }
   return null;
+}
+
+export function buildDyDiscoveryPageUrl(
+  _type: "search" | "hot" | "feed",
+  _target?: string,
+): string {
+  return "https://www.douyin.com/";
 }
 
 export function isValidDyTask(task: unknown): task is DyTask {
@@ -489,14 +498,6 @@ function sendScopeExecuteMessage(): void {
     });
 }
 
-function buildSearchPageUrl(keyword: string): string {
-  return `https://www.douyin.com/search/${encodeURIComponent(keyword)}?type=video`;
-}
-
-function buildHotPageUrl(sentenceId: string): string {
-  return `https://www.douyin.com/hot/${encodeURIComponent(sentenceId)}`;
-}
-
 function sendSearchExecuteMessage(): void {
   if (!searchProgress || !taskTabId) return;
   const keyword = searchProgress.keywords[searchProgress.current_keyword_idx];
@@ -527,6 +528,7 @@ function sendHotExecuteMessage(): void {
   if (!hotProgress || !taskTabId) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
+  const seedAwemeId = (hotItem.seed_aweme_id ?? hotItem.group_id ?? "").trim();
   void chrome.tabs
     .sendMessage(taskTabId, {
       action: "DY_HOT_EXECUTE",
@@ -534,6 +536,7 @@ function sendHotExecuteMessage(): void {
         task_id: hotProgress.task_id,
         sentence_id: hotItem.sentence_id,
         word: hotItem.word ?? "",
+        ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
         max_items: hotProgress.max_items_per_hot,
         debug_inject_status: _lastInjectStatus,
       },
@@ -577,7 +580,7 @@ function navigateToCurrentSearch(): void {
   if (!searchProgress || taskTabId === null) return;
   const keyword = searchProgress.keywords[searchProgress.current_keyword_idx];
   if (!keyword) return;
-  chrome.tabs.update(taskTabId, { url: buildSearchPageUrl(keyword) }, () => {
+  chrome.tabs.update(taskTabId, { url: buildDyDiscoveryPageUrl("search", keyword) }, () => {
     onTabReady(taskTabId!, () => {
       void injectFetchTapInto(taskTabId!).then(() => {
         debugLog("executeSearchTask:inject_done", { inject_status: _lastInjectStatus });
@@ -591,7 +594,7 @@ function navigateToCurrentHot(): void {
   if (!hotProgress || taskTabId === null) return;
   const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
   if (!hotItem) return;
-  chrome.tabs.update(taskTabId, { url: buildHotPageUrl(hotItem.sentence_id) }, () => {
+  chrome.tabs.update(taskTabId, { url: buildDyDiscoveryPageUrl("hot", hotItem.sentence_id) }, () => {
     onTabReady(taskTabId!, () => {
       void injectFetchTapInto(taskTabId!).then(() => {
         debugLog("executeHotTask:inject_done", { inject_status: _lastInjectStatus });
@@ -603,7 +606,7 @@ function navigateToCurrentHot(): void {
 
 function navigateToFeed(): void {
   if (!feedProgress || taskTabId === null) return;
-  chrome.tabs.update(taskTabId, { url: "https://www.douyin.com/" }, () => {
+  chrome.tabs.update(taskTabId, { url: buildDyDiscoveryPageUrl("feed") }, () => {
     onTabReady(taskTabId!, () => {
       void injectFetchTapInto(taskTabId!).then(() => {
         debugLog("executeFeedTask:inject_done", { inject_status: _lastInjectStatus });
@@ -657,13 +660,15 @@ function normalizeHotTaskItems(items: DyHotTaskItem[] | undefined): DyHotTaskIte
     const sentenceId = String(item?.sentence_id ?? "").trim();
     if (!sentenceId || seen.has(sentenceId)) continue;
     seen.add(sentenceId);
+    const seedAwemeId = String(item.seed_aweme_id ?? item.group_id ?? "").trim();
     result.push({
       sentence_id: sentenceId,
       word: String(item.word ?? "").trim(),
       hot_value: item.hot_value,
+      ...(seedAwemeId ? { seed_aweme_id: seedAwemeId } : {}),
     });
   }
-  return result;
+  return result.sort((a, b) => Number(Boolean(b.seed_aweme_id)) - Number(Boolean(a.seed_aweme_id)));
 }
 
 export async function executeTask(task: DyTask): Promise<void> {
@@ -702,10 +707,12 @@ export async function executeTask(task: DyTask): Promise<void> {
       });
       debugLog("executeSearchTask:tab_created", { tabId: tab.id, keywords: keywords.length });
     } catch (err) {
+      debugLog("executeSearchTask:tab_create_failed", { error: String(err) });
       await postTaskResult({
         task_id: task.id,
         status: "failed",
         error: "tab_create_failed",
+        debug: { tab_create_error: String(err) },
       });
       cleanupTask();
       return;
@@ -751,10 +758,12 @@ export async function executeTask(task: DyTask): Promise<void> {
       });
       debugLog("executeHotTask:tab_created", { tabId: tab.id, hot_count: hotItems.length });
     } catch (err) {
+      debugLog("executeHotTask:tab_create_failed", { error: String(err) });
       await postTaskResult({
         task_id: task.id,
         status: "failed",
         error: "tab_create_failed",
+        debug: { tab_create_error: String(err) },
       });
       cleanupTask();
       return;
@@ -792,10 +801,12 @@ export async function executeTask(task: DyTask): Promise<void> {
       });
       debugLog("executeFeedTask:tab_created", { tabId: tab.id });
     } catch (err) {
+      debugLog("executeFeedTask:tab_create_failed", { error: String(err) });
       await postTaskResult({
         task_id: task.id,
         status: "failed",
         error: "tab_create_failed",
+        debug: { tab_create_error: String(err) },
       });
       cleanupTask();
       return;

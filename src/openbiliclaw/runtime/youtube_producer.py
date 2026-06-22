@@ -14,13 +14,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_YOUTUBE as _PLATFORM_YOUTUBE
+
 logger = logging.getLogger(__name__)
 
 YOUTUBE_DISCOVERY_STRATEGIES = ("yt_search", "yt_trending", "yt_channel")
+_YT_SEARCH = "yt_search"
 _YOUTUBE_SCORE_THRESHOLDS = {
-    "yt_search": 0.65,
+    "yt_search": 0.60,
     "yt_trending": 0.60,
-    "yt_channel": 0.65,
+    "yt_channel": 0.60,
 }
 
 
@@ -50,6 +53,12 @@ class YoutubeDiscoveryProducer:
     daily_channel_budget: int = 0
     strategies: tuple[str, ...] = YOUTUBE_DISCOVERY_STRATEGIES
     candidate_pipeline: Any | None = None
+    # Unified keyword planner fetch coordinator (P1.7). When wired AND the flag
+    # is on, the ``yt_search`` strategy claims words from the keyword store and
+    # injects them as ``queries``; the words are marked ``used`` once the raw
+    # candidates are handed off to the candidate pipeline (fetch-only: admission
+    # is downstream). ``None`` (default / flag off) → legacy self-gen path.
+    keyword_fetch: Any | None = None
     _last_run_at: datetime | None = field(default=None, init=False)
     _last_skip_reason: str = field(default="", init=False)
 
@@ -81,16 +90,41 @@ class YoutubeDiscoveryProducer:
         source_counts: Counter[str] = Counter()
         error_count = 0
 
+        # Unified keyword planner fetch path (P1.7, flag-gated): claim words once
+        # for ``yt_search`` and inject them as ``queries``. The deficit gate is
+        # upstream; the distinct floor is ``min_interval`` / ``_is_due`` above;
+        # the per-strategy daily budget still gates the run.
+        claimed_search: list[Any] = []
+        coordinator = self.keyword_fetch
+        flag_on = coordinator is not None and bool(
+            getattr(coordinator, "should_claim", lambda: False)()
+        )
+        if flag_on and coordinator is not None and _YT_SEARCH in runnable:
+            claimed_search = coordinator.claim(_PLATFORM_YOUTUBE)
+            if not claimed_search:
+                # Flag on but the store has no claimable pending words → drop
+                # yt_search this cycle (the planner refills); other strategies
+                # (trending / channel) still run on their own budgets.
+                runnable = [s for s in runnable if s != _YT_SEARCH]
+
+        search_handed_off = False
         for strategy in runnable:
             unit_budget = max(0, int(remaining.get(strategy, 0)))
             if unit_budget <= 0:
                 continue
+            extra: dict[str, Any] = {}
+            if strategy == _YT_SEARCH and claimed_search:
+                extra["queries"] = [item.keyword for item in claimed_search]
+                # P1.8: thread the producing word's id onto each candidate for
+                # admit-time yield backfill.
+                extra["keyword_ids"] = {item.keyword: int(item.id) for item in claimed_search}
             try:
                 result = await self.discover(
                     profile,
                     strategy=strategy,
                     unit_budget=unit_budget,
                     result_limit=requested_limit,
+                    **extra,
                 )
             except Exception as exc:
                 error_count += 1
@@ -125,6 +159,20 @@ class YoutubeDiscoveryProducer:
                         source_context=strategy,
                     )
                 )
+            if strategy == _YT_SEARCH:
+                # Fetch-only: the claimed words are consumed on the handoff of
+                # raw candidates to the candidate pipeline — mark them ``used``.
+                # When no pipeline is wired (cache mode), reaching this point
+                # after a successful strategy return still counts as consumed.
+                search_handed_off = True
+
+        # Fetch-only lifecycle: yt_search words → ``used`` once handed off (yield
+        # backfill is P1.8). If the strategy errored (never handed off), leave
+        # them claimed — the lease reclaim returns them to pending.
+        if claimed_search and self.keyword_fetch is not None and search_handed_off:
+            self.keyword_fetch.mark_used(claimed_search)
+        elif claimed_search and self.keyword_fetch is not None:
+            self.keyword_fetch.mark_failed(claimed_search)
 
         self._last_run_at = datetime.now(UTC)
         if discovered_total <= 0 and error_count >= len(runnable):

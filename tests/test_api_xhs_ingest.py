@@ -293,6 +293,10 @@ class TestXhsObservedUrls:
                         "title": "手冲咖啡入门",
                         "author": "豆子老师",
                         "cover_url": "https://example.com/cover.jpg",
+                        "view_count": 1000,
+                        "like_count": 100,
+                        "collect_count": 90,
+                        "comment_count": 80,
                     }
                 ],
                 "page_type": "search",
@@ -304,13 +308,18 @@ class TestXhsObservedUrls:
         assert body["enqueued"] == 1
 
         row = db.conn.execute(
-            "SELECT source_strategy, source_platform, content_id, content_url, title, up_name "
+            "SELECT source_strategy, source_platform, content_id, content_url, title, up_name, "
+            "view_count, like_count, collect_count, comment_count "
             "FROM discovery_candidates WHERE content_id=?",
             ("note-xyz-001",),
         ).fetchone()
         assert row is not None, "xhs note was not enqueued"
         assert row["source_strategy"] == "xhs-extension-search"
         assert row["source_platform"] == "xiaohongshu"
+        assert row["view_count"] == 1000
+        assert row["like_count"] == 100
+        assert row["collect_count"] == 90
+        assert row["comment_count"] == 80
 
     def test_notes_ingest_drains_through_pipeline_into_content_cache(
         self,
@@ -396,13 +405,13 @@ class TestXhsObservedUrls:
         assert row["source_platform"] == "xiaohongshu"
         assert row["source"] == "xhs-extension-search"
         assert row["topic_group"] == "生活方式"
-        assert row["style_key"] == "story_doc"
+        assert row["style_key"] == "story_immersion"
         assert row["relevance_score"] == 0.88
         user_input = str(llm.calls[0]["user_input"])
         assert '"source_platform": "xiaohongshu"' in user_input
         assert '"content_type": "note"' in user_input
 
-    def test_observed_note_low_relevance_score_still_reaches_content_cache(
+    def test_observed_note_low_relevance_score_is_rejected_before_content_cache(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -481,10 +490,16 @@ class TestXhsObservedUrls:
             "SELECT * FROM content_cache WHERE content_id = ?",
             ("xhs-low-score-note",),
         ).fetchone()
-        assert row is not None
-        assert row["source_platform"] == "xiaohongshu"
-        assert row["relevance_score"] == 0.30
-        assert db.count_discovery_candidates_by_status()["cached"] == 1
+        candidate = db.conn.execute(
+            "SELECT status, relevance_score, eval_error FROM discovery_candidates "
+            "WHERE content_id = ?",
+            ("xhs-low-score-note",),
+        ).fetchone()
+        assert row is None
+        assert candidate is not None
+        assert candidate["status"] == "rejected_low_score"
+        assert candidate["relevance_score"] == 0.30
+        assert "below threshold" in candidate["eval_error"]
 
     def test_notes_enqueue_does_not_spawn_legacy_classification(
         self,
@@ -1130,6 +1145,9 @@ class TestXhsTaskResults:
                         "xsec_token": "token-task-001",
                         "author": "豆子老师",
                         "cover_url": "https://example.com/cover.jpg",
+                        "like_count": 101,
+                        "collect_count": 91,
+                        "comment_count": 81,
                     }
                 ],
             },
@@ -1157,7 +1175,8 @@ class TestXhsTaskResults:
         assert result["notes"][0]["note_id"] == "note-task-001"
 
         candidate_row = db.conn.execute(
-            "SELECT title, source_strategy, source_platform FROM discovery_candidates "
+            "SELECT title, source_strategy, source_platform, like_count, collect_count, "
+            "comment_count FROM discovery_candidates "
             "WHERE content_id=?",
             ("note-task-001",),
         ).fetchone()
@@ -1165,6 +1184,9 @@ class TestXhsTaskResults:
         assert candidate_row["title"] == "手冲咖啡入门"
         assert candidate_row["source_strategy"] == "xhs-extension-task"
         assert candidate_row["source_platform"] == "xiaohongshu"
+        assert candidate_row["like_count"] == 101
+        assert candidate_row["collect_count"] == 91
+        assert candidate_row["comment_count"] == 81
 
     def test_xhs_bootstrap_skips_notes_already_seen_in_previous_task(
         self,

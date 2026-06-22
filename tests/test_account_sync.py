@@ -80,6 +80,7 @@ class _FakeClient:
         *,
         max_folders: int = 10,
         max_items_per_folder: int = 50,
+        max_total_items: int | None = None,
     ) -> list[FavoriteFolderWithItems]:
         if self.fail_favorites:
             raise RuntimeError("favorites boom")
@@ -387,6 +388,7 @@ class _CookieAwareClient:
         *,
         max_folders: int = 10,
         max_items_per_folder: int = 50,
+        max_total_items: int | None = None,
     ) -> list[FavoriteFolderWithItems]:
         return []
 

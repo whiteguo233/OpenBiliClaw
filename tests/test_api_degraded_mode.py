@@ -109,6 +109,22 @@ def test_degraded_config_put_saves_recovery_config_and_requires_restart(
     assert "sk-new-valid-key" in (tmp_path / "config.toml").read_text(encoding="utf-8")
 
 
+def test_degraded_mode_keeps_mobile_static_shell_assets_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _clear_llm_env(monkeypatch)
+    _save_project_config(monkeypatch, tmp_path, _invalid_config(tmp_path))
+    client = TestClient(create_app())
+
+    mobile_response = client.get("/m/")
+    favicon_response = client.get("/favicon.ico")
+
+    assert mobile_response.status_code == 200
+    assert favicon_response.status_code == 200
+    assert favicon_response.headers.get("content-type", "").startswith("image/png")
+
+
 @pytest.mark.parametrize(
     ("method", "path", "json_payload"),
     [

@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
+from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 
 
 class _FakeDisc:
@@ -18,10 +19,21 @@ class _FakeDisc:
         self.locked_during: bool | None = None
 
     async def discover(
-        self, profile: Any, *, strategies: Any, limit: int, fully_parallel: bool
+        self,
+        profile: Any,
+        *,
+        strategies: Any,
+        limit: int,
+        fully_parallel: bool,
+        pool_snapshot: Any | None = None,
     ) -> list[str]:
         self.calls.append(
-            {"strategies": strategies, "limit": limit, "fully_parallel": fully_parallel}
+            {
+                "strategies": strategies,
+                "limit": limit,
+                "fully_parallel": fully_parallel,
+                "pool_snapshot": pool_snapshot,
+            }
         )
         if self.lock is not None:
             self.locked_during = self.lock.locked()
@@ -56,8 +68,31 @@ async def test_run_init_backfill_discovers_with_expected_shape() -> None:
             "strategies": ["search", "trending", "related_chain", "explore"],
             "limit": 20,  # max(20, target - current)
             "fully_parallel": True,
+            "pool_snapshot": None,
         }
     ]
+
+
+async def test_run_init_backfill_passes_cold_start_snapshot_for_empty_pool() -> None:
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(name="人工智能", category="科技", weight=0.95),
+                InterestTag(name="篮球战术", category="体育", weight=0.72),
+                InterestTag(name="电影拉片", category="影视", weight=0.68),
+            ]
+        )
+    )
+    disc = _FakeDisc()
+    ctrl = _ctrl(_FakeDB([0]), disc)
+
+    await ctrl.run_init_backfill(profile, target_pool_count=15)
+
+    snapshot = disc.calls[0]["pool_snapshot"]
+    assert snapshot is not None
+    assert snapshot.cold_start is True
+    assert "人工智能" in snapshot.saturated_topics
+    assert "篮球战术" in snapshot.undercovered_axes
 
 
 async def test_run_init_backfill_skips_when_pool_already_full() -> None:

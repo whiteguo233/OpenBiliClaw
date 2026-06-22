@@ -419,6 +419,15 @@ def _parse_number(text: str) -> int:
     return int(num * {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}.get(suffix, 1))
 
 
+def _parse_optional_count(raw: Any) -> int:
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    text = _extract_text(raw) if isinstance(raw, dict) else str(raw or "")
+    return _parse_number(text) if text else 0
+
+
 def _parse_duration(value: Any) -> int:
     """Parse seconds (int/str) or 'H:MM:SS' / 'M:SS' text → seconds."""
     if isinstance(value, (int, float)):
@@ -482,6 +491,16 @@ def normalize_yt_video(
     duration = _parse_duration(
         raw.get("lengthText") or raw.get("lengthSeconds") or raw.get("duration")
     )
+    like_count = 0
+    for key in ("like_count", "likeCount", "likes"):
+        like_count = _parse_optional_count(raw.get(key))
+        if like_count:
+            break
+    comment_count = 0
+    for key in ("comment_count", "commentCount", "comments"):
+        comment_count = _parse_optional_count(raw.get(key))
+        if comment_count:
+            break
 
     # Thumbnail — prefer highest resolution
     cover_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
@@ -508,6 +527,8 @@ def normalize_yt_video(
         cover_url=cover_url,
         duration=duration,
         view_count=view_count,
+        like_count=like_count,
+        comment_count=comment_count,
         description=description,
         source_strategy=source_strategy,
     )

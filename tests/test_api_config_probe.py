@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from openbiliclaw.api.app import create_app
 from openbiliclaw.api.models import ConfigServiceProbeIn, ConfigServiceProbeResponse
 from openbiliclaw.config import Config, EmbeddingConfig, LLMConfig, LLMProviderConfig, save_config
-from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.base import LLM_CONNECTIVITY_PROBE_MAX_TOKENS, LLMProviderError, LLMResponse
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -116,7 +116,7 @@ def test_probe_llm_applies_unsaved_provider_payload_without_writing(
     assert [(provider, model) for provider, model, _kwargs in calls] == [
         ("deepseek", "deepseek-chat")
     ]
-    assert "max_tokens" not in calls[0][2]
+    assert calls[0][2]["max_tokens"] == LLM_CONNECTIVITY_PROBE_MAX_TOKENS
     assert config_path.read_bytes() == before
     assert not (tmp_path / "config.toml.bak").exists()
 

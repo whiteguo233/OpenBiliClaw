@@ -19,6 +19,7 @@
 
 import { startCollector } from "./kernel.js";
 import { twitterAdapter } from "../shared/platforms/twitter.js";
+import { registerE2EExecutor } from "./e2e-executor.ts";
 import type {
   CapturedXRequest,
   XEngagement,
@@ -31,6 +32,7 @@ import type { BehaviorEvent } from "../shared/types.js";
 export type { CapturedXRequest };
 
 startCollector(twitterAdapter);
+registerE2EExecutor("twitter");
 
 /** Map an engagement to the canonical x.com tweet URL (best effort). */
 function tweetUrl(engagement: XEngagement): string {

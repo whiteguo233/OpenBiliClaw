@@ -12,6 +12,7 @@ from openbiliclaw.config import (
     Config,
     ConfigError,
     ConfigIssue,
+    DiscoveryConfig,
     LLMConfig,
     LLMProviderConfig,
     SchedulerConfig,
@@ -1142,6 +1143,19 @@ def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:
     assert loaded.llm.embedding.fallback_provider == "ollama"
 
 
+def test_save_config_round_trips_empty_deepseek_reasoning_effort(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.llm.deepseek.reasoning_effort = ""
+
+    save_config(config, config_path)
+    rendered = config_path.read_text(encoding="utf-8")
+    loaded = load_config(config_path)
+
+    assert 'reasoning_effort = ""' in rendered
+    assert loaded.llm.deepseek.reasoning_effort == ""
+
+
 def test_llm_and_embedding_fallback_defaults_are_disabled() -> None:
     config = Config()
 
@@ -1753,3 +1767,275 @@ def test_disabling_twitter_drops_its_pool_quota() -> None:
 
     config.sources.twitter.enabled = False
     assert "twitter" not in effective_pool_source_shares(config)
+
+
+class TestDiscoveryConfig:
+    """Unified keyword planner config group (Discover backpressure P1, spec §6)."""
+
+    def test_discovery_defaults_match_spec_section_6(self) -> None:
+        """Defaults are the owner-approved §6 baseline. Pinning every value here
+        is the contract the planner relies on before any TOML is written."""
+        config = Config()
+
+        assert isinstance(config.discovery, DiscoveryConfig)
+        assert config.discovery.unified_keyword_planner_enabled is True
+        assert config.discovery.kw_cache_high == 30
+        assert config.discovery.kw_cache_low == 10
+        assert config.discovery.gen_batch == 30
+        assert config.discovery.fetch_batch == 5
+        assert config.discovery.history_window_size == 150
+        assert config.discovery.history_window_hours == 48
+        assert config.discovery.claim_lease_minutes == 10
+        assert config.discovery.planner_poll_seconds == 120
+        assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.admission_min_score == 0.60
+        assert config.discovery.multimodal_evaluation_enabled is False
+        assert config.discovery.multimodal_batch_size == 8
+        assert config.discovery.multimodal_image_max_px == 384
+        assert config.discovery.multimodal_image_quality == 72
+        assert config.discovery.multimodal_image_timeout_seconds == 6
+
+    def test_discovery_defaults_from_empty_dict(self) -> None:
+        config = _build_config({})
+
+        assert config.discovery.unified_keyword_planner_enabled is True
+        assert config.discovery.kw_cache_high == 30
+        assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.admission_min_score == 0.60
+        assert config.discovery.multimodal_evaluation_enabled is False
+        assert config.discovery.multimodal_batch_size == 8
+
+    def test_top_level_discovery_is_distinct_from_llm_discovery(self) -> None:
+        """`[discovery]` (planner knobs) must not collide with `[llm.discovery]`
+        (per-module provider override) — they are independent tables."""
+        config = _build_config(
+            {
+                "discovery": {"unified_keyword_planner_enabled": True, "gen_batch": 42},
+                "llm": {"discovery": {"provider": "deepseek", "model": "deepseek-v4-flash"}},
+            }
+        )
+
+        assert config.discovery.unified_keyword_planner_enabled is True
+        assert config.discovery.gen_batch == 42
+        assert config.llm.discovery.provider == "deepseek"
+        assert config.llm.discovery.model == "deepseek-v4-flash"
+
+    def test_discovery_loads_and_normalizes_from_toml(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            """
+[discovery]
+unified_keyword_planner_enabled = true
+kw_cache_high = 50
+kw_cache_low = 20
+gen_batch = 40
+fetch_batch = 8
+history_window_size = 200
+history_window_hours = 72
+claim_lease_minutes = 15
+planner_poll_seconds = 90
+plan_ttl_hours = 6
+admission_min_score = 0.72
+multimodal_evaluation_enabled = true
+multimodal_batch_size = 4
+multimodal_image_max_px = 512
+multimodal_image_quality = 80
+multimodal_image_timeout_seconds = 10
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(toml_path)
+
+        assert config.discovery.unified_keyword_planner_enabled is True
+        assert config.discovery.kw_cache_high == 50
+        assert config.discovery.kw_cache_low == 20
+        assert config.discovery.gen_batch == 40
+        assert config.discovery.fetch_batch == 8
+        assert config.discovery.history_window_size == 200
+        assert config.discovery.history_window_hours == 72
+        assert config.discovery.claim_lease_minutes == 15
+        assert config.discovery.planner_poll_seconds == 90
+        assert config.discovery.plan_ttl_hours == 6
+        assert config.discovery.admission_min_score == 0.72
+        assert config.discovery.multimodal_evaluation_enabled is True
+        assert config.discovery.multimodal_batch_size == 4
+        assert config.discovery.multimodal_image_max_px == 512
+        assert config.discovery.multimodal_image_quality == 80
+        assert config.discovery.multimodal_image_timeout_seconds == 10
+
+    def test_discovery_flag_accepts_string_boolean(self) -> None:
+        """The flag coerces TOML/env string booleans like other bool fields."""
+        assert (
+            _build_config(
+                {"discovery": {"unified_keyword_planner_enabled": "true"}}
+            ).discovery.unified_keyword_planner_enabled
+            is True
+        )
+        assert (
+            _build_config(
+                {"discovery": {"unified_keyword_planner_enabled": "off"}}
+            ).discovery.unified_keyword_planner_enabled
+            is False
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "literal", "expected"),
+        [
+            ("kw_cache_high", "0", 30),
+            ("kw_cache_high", '"abc"', 30),
+            ("kw_cache_low", "-1", 10),
+            ("gen_batch", "0", 30),
+            ("fetch_batch", '"x"', 5),
+            ("history_window_size", "0", 150),
+            ("history_window_hours", "-5", 48),
+            ("claim_lease_minutes", "0", 10),
+            ("planner_poll_seconds", '"nope"', 120),
+            ("plan_ttl_hours", "0", 12),
+            ("multimodal_batch_size", "0", 8),
+            ("multimodal_batch_size", "13", 8),
+            ("multimodal_image_max_px", "127", 384),
+            ("multimodal_image_max_px", "769", 384),
+            ("multimodal_image_quality", "39", 72),
+            ("multimodal_image_quality", "91", 72),
+            ("multimodal_image_timeout_seconds", "0", 6),
+            ("multimodal_image_timeout_seconds", "21", 6),
+        ],
+    )
+    def test_discovery_invalid_values_fall_back_to_defaults(
+        self, tmp_path: Path, field: str, literal: str, expected: int
+    ) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            f"""
+[discovery]
+{field} = {literal}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(toml_path)
+
+        assert getattr(config.discovery, field) == expected
+
+    @pytest.mark.parametrize("literal", ["0", "-0.1", "1.1", '"nope"'])
+    def test_discovery_invalid_admission_min_score_falls_back_to_default(
+        self, tmp_path: Path, literal: str
+    ) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            f"""
+[discovery]
+admission_min_score = {literal}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(toml_path)
+
+        assert config.discovery.admission_min_score == 0.60
+
+    def test_discovery_missing_table_uses_defaults(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text("[scheduler]\nenabled = true\n", encoding="utf-8")
+
+        config = load_config(toml_path)
+
+        assert config.discovery == DiscoveryConfig()
+
+    def test_discovery_non_table_value_falls_back_to_defaults(self) -> None:
+        """A malformed `discovery = "x"` (scalar, not a table) must not crash;
+        it falls back to all defaults like other dict-guarded sections."""
+        config = _build_config({"discovery": "not-a-table"})
+
+        assert config.discovery == DiscoveryConfig()
+
+    def test_discovery_env_override_coerces_string_values(self) -> None:
+        """`_apply_env_overrides` injects env values as strings into the raw
+        table; the loader coerces them exactly like the scheduler fields do.
+        This mirrors the real load path for a (hypothetical) single-token key."""
+        config = _build_config(
+            {
+                "discovery": {
+                    "unified_keyword_planner_enabled": "true",
+                    "gen_batch": "25",
+                    "plan_ttl_hours": "9",
+                }
+            }
+        )
+
+        assert config.discovery.unified_keyword_planner_enabled is True
+        assert config.discovery.gen_batch == 25
+        assert config.discovery.plan_ttl_hours == 9
+
+    def test_discovery_multiword_env_var_mis_nests_like_other_sections(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Documented limitation: the generic ``OPENBILICLAW_A_B_C`` splitter
+        splits on every ``_``, so a multi-word ``[discovery]`` key
+        (``OPENBILICLAW_DISCOVERY_GEN_BATCH`` → ``discovery.gen.batch``) does
+        NOT reach the field — exactly like ``[scheduler]`` multi-word keys. The
+        loader silently keeps the default rather than crashing. Pinned so the
+        behavior is intentional, not an accidental regression. (A future env
+        override for these would need an explicit reader, like `[api.auth]`.)"""
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text("[discovery]\ngen_batch = 30\n", encoding="utf-8")
+        monkeypatch.setenv("OPENBILICLAW_DISCOVERY_GEN_BATCH", "7")
+
+        config = load_config(toml_path)
+
+        assert config.discovery.gen_batch == 30  # env var mis-nested → default kept
+
+    def test_discovery_round_trips_through_save_load(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config = Config()
+        config.discovery.unified_keyword_planner_enabled = True
+        config.discovery.kw_cache_high = 44
+        config.discovery.kw_cache_low = 11
+        config.discovery.gen_batch = 33
+        config.discovery.fetch_batch = 6
+        config.discovery.history_window_size = 175
+        config.discovery.history_window_hours = 60
+        config.discovery.claim_lease_minutes = 12
+        config.discovery.planner_poll_seconds = 100
+        config.discovery.plan_ttl_hours = 8
+        config.discovery.admission_min_score = 0.72
+        config.discovery.multimodal_evaluation_enabled = True
+        config.discovery.multimodal_batch_size = 4
+        config.discovery.multimodal_image_max_px = 512
+        config.discovery.multimodal_image_quality = 80
+        config.discovery.multimodal_image_timeout_seconds = 10
+
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.discovery.unified_keyword_planner_enabled is True
+        assert loaded.discovery.kw_cache_high == 44
+        assert loaded.discovery.kw_cache_low == 11
+        assert loaded.discovery.gen_batch == 33
+        assert loaded.discovery.fetch_batch == 6
+        assert loaded.discovery.history_window_size == 175
+        assert loaded.discovery.history_window_hours == 60
+        assert loaded.discovery.claim_lease_minutes == 12
+        assert loaded.discovery.planner_poll_seconds == 100
+        assert loaded.discovery.plan_ttl_hours == 8
+        assert loaded.discovery.admission_min_score == 0.72
+        assert loaded.discovery.multimodal_evaluation_enabled is True
+        assert loaded.discovery.multimodal_batch_size == 4
+        assert loaded.discovery.multimodal_image_max_px == 512
+        assert loaded.discovery.multimodal_image_quality == 80
+        assert loaded.discovery.multimodal_image_timeout_seconds == 10
+
+    def test_discovery_section_appears_in_rendered_toml(self) -> None:
+        from openbiliclaw.config import _render_config_toml
+
+        rendered = _render_config_toml(Config())
+
+        assert "[discovery]" in rendered
+        assert "unified_keyword_planner_enabled = true" in rendered
+        assert "kw_cache_high = 30" in rendered
+        assert "plan_ttl_hours = 12" in rendered
+        assert "admission_min_score = 0.6" in rendered
+        assert "multimodal_evaluation_enabled = false" in rendered
+        assert "multimodal_batch_size = 8" in rendered
+        assert "multimodal_image_max_px = 384" in rendered

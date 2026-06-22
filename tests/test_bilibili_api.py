@@ -24,6 +24,8 @@ from openbiliclaw.bilibili.api import (
 def _reset_bilibili_search_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0)
     monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_voucher_block_streak", 0)
+    monkeypatch.setattr(BilibiliAPIClient, "_search_dom_fallback_until", 0.0)
 
 
 class FakeResponse:
@@ -303,29 +305,37 @@ async def test_search_returns_empty_on_412() -> None:
     assert results == []
 
 
+_NAV_PAYLOAD = {
+    "code": 0,
+    "data": {
+        "wbi_img": {
+            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+        }
+    },
+}
+
+
 @pytest.mark.asyncio
-async def test_search_enters_global_cooldown_after_v_voucher_storm(
+async def test_single_v_voucher_keyword_does_not_trip_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A lone challenged keyword must not strand the whole search round.
+
+    Before the threshold fix one keyword exhausting its retries cooled the
+    process-wide search path (and explore) for 10+ minutes. Now it only
+    bumps the streak; search stays live for the next keyword.
+    """
+
     async def no_sleep(_delay: float) -> None:
         return None
 
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_until", 0.0, raising=False)
-    monkeypatch.setattr(BilibiliAPIClient, "_search_cooldown_level", 0, raising=False)
-    nav_payload = {
-        "code": 0,
-        "data": {
-            "wbi_img": {
-                "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
-                "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
-            }
-        },
-    }
+
     first_client = BilibiliAPIClient(cookie="SESSDATA=abc")
     first_client._client = RouteAsyncClient(
         {
-            "/x/web-interface/nav": [nav_payload, nav_payload, nav_payload],
+            "/x/web-interface/nav": [_NAV_PAYLOAD, _NAV_PAYLOAD, _NAV_PAYLOAD],
             "/x/web-interface/wbi/search/type": [
                 {"code": 0, "data": {"v_voucher": "a", "result": None}},
                 {"code": 0, "data": {"v_voucher": "b", "result": None}},
@@ -335,11 +345,67 @@ async def test_search_enters_global_cooldown_after_v_voucher_storm(
     )
 
     assert await first_client.search("纪录片") == []
+    # One exhaustion: streak ticks up but NO cooldown yet.
+    assert BilibiliAPIClient.search_cooldown_remaining() == 0.0
+    assert BilibiliAPIClient._search_voucher_block_streak == 1
+    assert BilibiliAPIClient.search_dom_fallback_remaining() > 0
 
+    # The next keyword still reaches the network (not short-circuited),
+    # and a success resets the streak.
     second_client = BilibiliAPIClient(cookie="SESSDATA=abc")
     second_http = RouteAsyncClient(
         {
-            "/x/web-interface/nav": [nav_payload],
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"result": [{"bvid": "BV1"}]}}
+            ],
+        }
+    )
+    second_client._client = second_http
+
+    assert await second_client.search("摄影") == [{"bvid": "BV1"}]
+    assert second_http.calls  # actually hit the network
+    assert BilibiliAPIClient._search_voucher_block_streak == 0
+
+
+@pytest.mark.asyncio
+async def test_search_enters_global_cooldown_after_v_voucher_storm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Consecutive exhaustions across the threshold DO trip the cooldown."""
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    # Pre-load the streak to one below the threshold so a single further
+    # exhaustion trips the shared cooldown. With streak>0 the client
+    # fast-fails to a single probe, so one v_voucher response suffices.
+    monkeypatch.setattr(
+        BilibiliAPIClient,
+        "_search_voucher_block_streak",
+        BilibiliAPIClient._SEARCH_VOUCHER_BLOCK_THRESHOLD - 1,
+    )
+
+    first_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    first_client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"v_voucher": "a", "result": None}}
+            ],
+        }
+    )
+
+    assert await first_client.search("纪录片") == []
+    assert BilibiliAPIClient.search_cooldown_remaining() > 0
+
+    # Now the cooldown is shared: a different client/keyword short-circuits
+    # without touching the network.
+    second_client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    second_http = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
             "/x/web-interface/wbi/search/type": [{"code": 0, "data": {"result": []}}],
         }
     )
@@ -347,6 +413,45 @@ async def test_search_enters_global_cooldown_after_v_voucher_storm(
 
     assert await second_client.search("摄影") == []
     assert second_http.calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_success_resets_voucher_streak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy search clears an in-progress streak so it can't drift up."""
+    monkeypatch.setattr(
+        BilibiliAPIClient,
+        "_search_voucher_block_streak",
+        BilibiliAPIClient._SEARCH_VOUCHER_BLOCK_THRESHOLD - 1,
+    )
+
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [_NAV_PAYLOAD],
+            "/x/web-interface/wbi/search/type": [
+                {"code": 0, "data": {"result": [{"bvid": "BV2"}]}}
+            ],
+        }
+    )
+
+    assert await client.search("纪录片") == [{"bvid": "BV2"}]
+    assert BilibiliAPIClient._search_voucher_block_streak == 0
+    assert BilibiliAPIClient.search_cooldown_remaining() == 0.0
+
+
+@pytest.mark.asyncio
+async def test_search_412_trips_hard_cooldown_immediately() -> None:
+    """A 412 is an explicit IP block — cool down hard, no streak threshold."""
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = NavThenErrorAsyncClient(status_code=412)
+
+    assert await client.search("纪录片") == []
+    # Hard cooldown fires on the first 412 (unlike v_voucher), and uses the
+    # longer 412 base rather than the short v_voucher base.
+    remaining = BilibiliAPIClient.search_cooldown_remaining()
+    assert remaining > BilibiliAPIClient._SEARCH_COOLDOWN_BASE_SECONDS
 
 
 @pytest.mark.asyncio
@@ -440,6 +545,122 @@ async def test_get_all_favorites_respects_budget_limits() -> None:
             truncated=True,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_all_favorites_paginates_folder_until_item_limit() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    page1 = [{"title": f"v{i}"} for i in range(20)]
+    page2 = [{"title": f"v{i}"} for i in range(20, 25)]
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {"code": 0, "data": {"isLogin": True, "uname": "alice", "mid": 42}}
+            ],
+            "/x/v3/fav/folder/created/list-all": [
+                {
+                    "code": 0,
+                    "data": {
+                        "list": [
+                            {"id": 1, "title": "默认收藏夹", "media_count": 25},
+                        ]
+                    },
+                }
+            ],
+            "/x/v3/fav/resource/list": [
+                {"code": 0, "data": {"medias": page1}},
+                {"code": 0, "data": {"medias": page2}},
+            ],
+        }
+    )
+
+    favorites = await client.get_all_favorites(max_folders=1, max_items_per_folder=25)
+
+    assert [item["title"] for item in favorites[0].items] == [f"v{i}" for i in range(25)]
+    fav_calls = [
+        params for url, params, _ in client._client.calls if url.endswith("/x/v3/fav/resource/list")
+    ]
+    assert [call["pn"] for call in fav_calls if call is not None] == [1, 2]
+    assert all(call is not None and call["ps"] == 20 for call in fav_calls)
+
+
+@pytest.mark.asyncio
+async def test_get_all_favorites_continues_when_sparse_page_has_more() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    page1 = [{"title": f"v{i}"} for i in range(19)]
+    page2 = [{"title": f"v{i}"} for i in range(19, 25)]
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {"code": 0, "data": {"isLogin": True, "uname": "alice", "mid": 42}}
+            ],
+            "/x/v3/fav/folder/created/list-all": [
+                {
+                    "code": 0,
+                    "data": {
+                        "list": [
+                            {"id": 1, "title": "默认收藏夹", "media_count": 25},
+                        ]
+                    },
+                }
+            ],
+            "/x/v3/fav/resource/list": [
+                {"code": 0, "data": {"medias": page1, "has_more": True}},
+                {"code": 0, "data": {"medias": page2, "has_more": False}},
+            ],
+        }
+    )
+
+    favorites = await client.get_all_favorites(max_folders=1, max_items_per_folder=25)
+
+    assert [item["title"] for item in favorites[0].items] == [f"v{i}" for i in range(25)]
+    fav_calls = [
+        params for url, params, _ in client._client.calls if url.endswith("/x/v3/fav/resource/list")
+    ]
+    assert [call["pn"] for call in fav_calls if call is not None] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_get_all_favorites_respects_total_item_budget_across_folders() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    page1 = [{"title": f"v{i}"} for i in range(20)]
+    page2 = [{"title": f"v{i}"} for i in range(20, 40)]
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {"code": 0, "data": {"isLogin": True, "uname": "alice", "mid": 42}}
+            ],
+            "/x/v3/fav/folder/created/list-all": [
+                {
+                    "code": 0,
+                    "data": {
+                        "list": [
+                            {"id": 1, "title": "默认收藏夹", "media_count": 40},
+                            {"id": 2, "title": "稍后看", "media_count": 40},
+                        ]
+                    },
+                }
+            ],
+            "/x/v3/fav/resource/list": [
+                {"code": 0, "data": {"medias": page1}},
+                {"code": 0, "data": {"medias": page2}},
+            ],
+        }
+    )
+
+    favorites = await client.get_all_favorites(
+        max_folders=2,
+        max_items_per_folder=40,
+        max_total_items=30,
+    )
+
+    assert len(favorites) == 1
+    assert len(favorites[0].items) == 30
+    fav_calls = [
+        params for url, params, _ in client._client.calls if url.endswith("/x/v3/fav/resource/list")
+    ]
+    assert [call["media_id"] for call in fav_calls if call is not None] == [1, 1]
+    assert [call["pn"] for call in fav_calls if call is not None] == [1, 2]
 
 
 @pytest.mark.asyncio

@@ -569,16 +569,16 @@ init once everything's present.
 
 Before any non-interactive auto-init, confirm:
 
-> 「B 站初始化默认导入最近 300 条观看历史、最多 300 条收藏、最多 300 个关注 UP。
-> 历史保持 300；收藏和关注要改上限吗？直接回车就是 300，填 0 就跳过对应信号。」
+> 「B 站初始化默认导入最近 500 条观看历史、最多 500 条收藏、最多 100 个关注 UP。
+> 历史保持 500；收藏和关注要改上限吗？收藏直接回车就是 500，关注直接回车就是 100，填 0 就跳过对应信号。」
 
 Map answers to:
 
 | 项 | 用户回答 | 命令行参数 |
 |---|---|---|
-| 收藏上限 | 回车 / 不确定 | 省略或 `--bilibili-favorite-limit 300` |
+| 收藏上限 | 回车 / 不确定 | 省略或 `--bilibili-favorite-limit 500` |
 | 收藏上限 | 数字 N | `--bilibili-favorite-limit N` |
-| 关注上限 | 回车 / 不确定 | 省略或 `--bilibili-follow-limit 300` |
+| 关注上限 | 回车 / 不确定 | 省略或 `--bilibili-follow-limit 100` |
 | 关注上限 | 数字 N | `--bilibili-follow-limit N` |
 
 Human-run `install.sh` / `install.ps1` pass `--interactive-confirm`, so
@@ -595,7 +595,7 @@ Before any non-interactive auto-init, ask:
 Then ask separately:
 
 > 「要把你的抖音发布 / 收藏 / 点赞 / 关注也混进初始画像吗？这会让抖音口味进入画像，
-> 但会让扩展打开抖音页面执行拉取；扩展也会把 douyin.com Cookie 同步给后续 discovery，search / hot / feed discovery 则优先复用登录浏览器插件签名桥。
+> 但会让扩展打开抖音页面执行拉取；扩展也会把 douyin.com Cookie 同步给后续 discovery，search / hot / feed discovery 会复用登录浏览器，从抖音首页开始模拟 DOM 操作触发加载，并被动收集页面响应 / 渲染结果。
 > 默认不启用；你明确说要用我才开。」
 
 Then ask separately:
@@ -745,7 +745,7 @@ events to the user instead of staying silent until `init_complete`.
 ### Init 期间会问用户:B 站上限与小红书 / 抖音 / YouTube 数据是否加入
 
 `openbiliclaw init` 在拉 B 站数据前会确认 B 站收藏 / 关注初始化上限：
-默认收藏最多 300 条、关注 UP 最多 100 人；用户直接回车即接受默认，输入
+默认收藏最多 500 条、关注 UP 最多 100 人；用户直接回车即接受默认，输入
 自定义数字会透传到 `--bilibili-favorite-limit` / `--bilibili-follow-limit`，
 输入 `0` 可跳过对应信号。
 

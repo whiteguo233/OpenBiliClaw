@@ -28,6 +28,7 @@ class SupportsAccountClient(Protocol):
         *,
         max_folders: int = 10,
         max_items_per_folder: int = 50,
+        max_total_items: int | None = None,
     ) -> list[Any]: ...
     async def get_following(
         self,

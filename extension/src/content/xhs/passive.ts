@@ -10,6 +10,8 @@
  * anchor-like objects under node --test.
  */
 
+import { pickMetricCount } from "../metric-count.ts";
+
 /** Note detail URL variants xhs exposes. We accept any non-empty segment
  *  after the prefix; backend validation can tighten the id shape. */
 const NOTE_PATH_PATTERNS = [/^\/explore\/[^/?#]+/i, /^\/discovery\/item\/[^/?#]+/i];
@@ -46,6 +48,10 @@ export interface XhsNoteMetadata {
   title: string;
   author: string;
   cover_url: string;
+  view_count?: number;
+  like_count?: number;
+  collect_count?: number;
+  comment_count?: number;
 }
 
 /**
@@ -184,7 +190,21 @@ export function extractNoteMetadataFromAnchor(
   const cover_url =
     coverImg?.getAttribute("src") || coverImg?.getAttribute("data-src") || "";
 
-  return { url, title, author, cover_url };
+  const view_count = pickMetricCount(card, ["浏览", "观看", "view"]);
+  const like_count = pickMetricCount(card, ["赞", "点赞", "喜欢", "like"]);
+  const collect_count = pickMetricCount(card, ["收藏", "collect", "save"]);
+  const comment_count = pickMetricCount(card, ["评论", "comment"]);
+
+  return {
+    url,
+    title,
+    author,
+    cover_url,
+    ...(view_count > 0 ? { view_count } : {}),
+    ...(like_count > 0 ? { like_count } : {}),
+    ...(collect_count > 0 ? { collect_count } : {}),
+    ...(comment_count > 0 ? { comment_count } : {}),
+  };
 }
 
 /**

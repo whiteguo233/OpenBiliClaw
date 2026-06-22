@@ -411,7 +411,7 @@ def signals_from_dialogue(
     """Convert dialogue-derived insight candidates into ProfileSignals.
 
     Only candidates that have reached the readiness threshold
-    (confidence >= 0.8, occurrences >= 2) should be passed here.
+    (confidence >= 0.8 or occurrences >= 2) should be passed here.
     """
     result: list[ProfileSignal] = []
     for candidate in candidates:

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
 import time
 import uuid
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,11 +50,23 @@ from openbiliclaw.api.models import (
     ConfigUpdateResponse,
     DelightAckIn,
     DelightAckResponse,
+    DiscoveryConfigOut,
     DouyinCookieIn,
     DouyinCookieResponse,
     DouyinSourceConfigOut,
     EmbeddingConfigOut,
     EventIngestResponse,
+    EventRejectedOut,
+    ExtensionE2EAction,
+    ExtensionE2EActionReportOut,
+    ExtensionE2EActionStatus,
+    ExtensionE2EEventMatchOut,
+    ExtensionE2EPlatform,
+    ExtensionE2EPlatformReportOut,
+    ExtensionE2EResultIn,
+    ExtensionE2ERunIn,
+    ExtensionE2ERunOut,
+    ExtensionE2ERunStatus,
     FavoriteAddIn,
     FavoriteItem,
     FavoriteListResponse,
@@ -62,6 +77,8 @@ from openbiliclaw.api.models import (
     InitPrerequisitesOut,
     InitStageOut,
     InitStatusOut,
+    InsightFeedbackIn,
+    InsightFeedbackResponse,
     LLMConfigOut,
     LLMProviderConfigOut,
     LoggingConfigOut,
@@ -118,6 +135,10 @@ from openbiliclaw.runtime.image_cache import (
 from openbiliclaw.runtime.image_cache import (
     image_cache_key as _image_cache_key,
 )
+from openbiliclaw.runtime.keyword_fetch import (
+    mark_keyword_terminal_from_xhs_task,
+    source_keyword_id_from_xhs_task,
+)
 from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
@@ -169,6 +190,7 @@ SOURCE_LABELS = {
 }
 
 _SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+_INIT_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -180,6 +202,37 @@ _BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 # (shared by the proxy route and the prefetch sweep). Only the disk-cache age cap
 # is referenced directly from here, by the startup cleanup call.
 _IMAGE_CACHE_MAX_AGE_DAYS = 30
+
+_E2E_STATE_CHANGING_ACTIONS = frozenset({"like", "favorite", "follow", "repost", "bookmark"})
+_E2E_DEFAULT_SAFE_ACTIONS: tuple[ExtensionE2EAction, ...] = (
+    "snapshot",
+    "scroll",
+    "click",
+    "share",
+)
+_E2E_ACTION_EVENT_TYPES: dict[ExtensionE2EAction, frozenset[str]] = {
+    "snapshot": frozenset({"snapshot"}),
+    "scroll": frozenset({"scroll"}),
+    "click": frozenset({"click"}),
+    "share": frozenset({"click"}),
+    "like": frozenset({"like", "favorite"}),
+    "favorite": frozenset({"favorite", "bookmark"}),
+    "follow": frozenset({"follow"}),
+    "repost": frozenset({"share", "repost"}),
+    "bookmark": frozenset({"bookmark", "favorite"}),
+}
+
+
+@dataclass
+class _ExtensionE2ERunState:
+    run_id: str
+    token: str
+    started_at: float
+    after_event_id: int
+    expected_actions: dict[ExtensionE2EPlatform, list[ExtensionE2EAction]]
+    event: asyncio.Event
+    extension_result: ExtensionE2EResultIn | None = None
+    error: str = ""
 
 
 def _default_route_ip() -> str | None:
@@ -377,19 +430,36 @@ def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[
 
     ``enabled`` is the config-enabled set; ``selected`` is the extension's
     per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
-    clients — meaning "use everything enabled"). A selection can only NARROW the
-    set: you can't init a source that isn't configured, so the result is the
-    intersection. Bilibili flows through here like every other source
-    (v0.3.118+): it is config-enabled by default, so legacy clients keep their
-    bilibili-included behaviour, but deselecting it skips the B站 fetch.
+    clients — meaning "use everything enabled"). A sent selection is an
+    explicit local opt-in for those sources, not just a filter over old config.
+    Bilibili flows through here like every other source (v0.3.118+): legacy
+    clients keep their config-enabled behaviour, but deselecting it skips the
+    B站 fetch.
     """
     if selected is None:
-        return set(enabled)
-    return set(enabled) & selected
+        return {
+            normalized
+            for source in enabled
+            if (normalized := _normalize_init_source_key(source)) in _INIT_SOURCE_ORDER
+        }
+    return {
+        normalized
+        for source in selected
+        if (normalized := _normalize_init_source_key(source)) in _INIT_SOURCE_ORDER
+    }
+
+
+def _normalize_init_source_key(source: object) -> str:
+    source_key = str(source or "").strip().lower()
+    if not source_key:
+        return ""
+    return _normalize_source_platform(source_key)
 
 
 def _normalize_source_platform(source: object) -> str:
     source_key = str(source or "").strip().lower()
+    if source_key in {"x", "twitter"}:
+        return "twitter"
     if source_key in {"xhs", "rednote"}:
         return "xiaohongshu"
     if source_key in {"yt", "youtube"}:
@@ -405,6 +475,9 @@ def _infer_source_platform_from_url(url: object) -> str:
     text = str(url or "").strip().lower()
     if "youtube.com" in text or "youtu.be" in text:
         return "youtube"
+    host = (urlparse(text if "://" in text else f"https://{text}").hostname or "").lower()
+    if host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        return "twitter"
     if "xiaohongshu.com" in text or "xhslink.com" in text:
         return "xiaohongshu"
     if "douyin.com" in text:
@@ -412,6 +485,263 @@ def _infer_source_platform_from_url(url: object) -> str:
     if "bilibili.com" in text or "b23.tv" in text:
         return "bilibili"
     return ""
+
+
+def _extension_e2e_actions_for_request(
+    payload: ExtensionE2ERunIn,
+) -> dict[ExtensionE2EPlatform, list[ExtensionE2EAction]]:
+    actions_by_platform: dict[ExtensionE2EPlatform, list[ExtensionE2EAction]] = {}
+    seen_platforms: set[ExtensionE2EPlatform] = set()
+    for platform in payload.platforms:
+        if platform in seen_platforms:
+            continue
+        seen_platforms.add(platform)
+        requested_actions = (
+            payload.actions[platform]
+            if platform in payload.actions
+            else list(_E2E_DEFAULT_SAFE_ACTIONS)
+        )
+        deduped: list[ExtensionE2EAction] = []
+        seen_actions: set[ExtensionE2EAction] = set()
+        for action in requested_actions:
+            if action in seen_actions:
+                continue
+            seen_actions.add(action)
+            deduped.append(action)
+        actions_by_platform[platform] = deduped
+    return actions_by_platform
+
+
+def _event_row_id(row: dict[str, Any]) -> int | None:
+    try:
+        event_id = int(row.get("id", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return event_id if event_id > 0 else None
+
+
+def _event_row_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata", {})
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata) if metadata else {}
+        except Exception:
+            parsed = {}
+        metadata = parsed
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _coerce_e2e_event_rows(rows: object, *, after_event_id: int = 0) -> list[dict[str, Any]]:
+    if not isinstance(rows, list | tuple):
+        return []
+    coerced: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            item = dict(row)
+        else:
+            try:
+                item = dict(row)
+            except Exception:
+                continue
+        event_id = _event_row_id(item)
+        if event_id is not None and event_id <= after_event_id:
+            continue
+        coerced.append(item)
+    return sorted(coerced, key=lambda item: _event_row_id(item) or 0)
+
+
+def _latest_e2e_event_id(ctx: Any) -> int:
+    database = getattr(ctx, "database", None)
+    conn = getattr(database, "conn", None)
+    if conn is not None:
+        try:
+            row = conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM events").fetchone()
+            if row is not None:
+                try:
+                    return int(row["max_id"])
+                except Exception:
+                    return int(row[0])
+        except Exception:
+            pass
+
+    memory_manager = getattr(ctx, "memory_manager", None)
+    query_events = getattr(memory_manager, "query_events", None)
+    if callable(query_events):
+        try:
+            rows = _coerce_e2e_event_rows(query_events(limit=1))
+        except Exception:
+            rows = []
+        if rows:
+            return _event_row_id(rows[-1]) or 0
+    return 0
+
+
+def _query_e2e_events(ctx: Any, *, after_event_id: int, limit: int = 1000) -> list[dict[str, Any]]:
+    memory_manager = getattr(ctx, "memory_manager", None)
+    query_events = getattr(memory_manager, "query_events", None)
+    if callable(query_events):
+        try:
+            return _coerce_e2e_event_rows(
+                query_events(after_event_id=after_event_id, limit=limit),
+                after_event_id=after_event_id,
+            )
+        except TypeError:
+            try:
+                return _coerce_e2e_event_rows(
+                    query_events(limit=limit),
+                    after_event_id=after_event_id,
+                )
+            except Exception:
+                return []
+        except Exception:
+            return []
+
+    database = getattr(ctx, "database", None)
+    query_events = getattr(database, "query_events", None)
+    if callable(query_events):
+        try:
+            return _coerce_e2e_event_rows(
+                query_events(after_event_id=after_event_id, limit=limit),
+                after_event_id=after_event_id,
+            )
+        except Exception:
+            return []
+    return []
+
+
+def _match_e2e_event(
+    events: list[dict[str, Any]],
+    *,
+    platform: ExtensionE2EPlatform,
+    action: ExtensionE2EAction,
+    used_event_ids: set[int],
+) -> dict[str, object] | None:
+    accepted_event_types = _E2E_ACTION_EVENT_TYPES.get(action, frozenset())
+    if not accepted_event_types:
+        return None
+
+    for row in sorted(events, key=lambda item: _event_row_id(item) or 0):
+        event_id = _event_row_id(row)
+        if event_id is None or event_id in used_event_ids:
+            continue
+        event_type = str(row.get("event_type") or row.get("type") or "").strip()
+        if event_type not in accepted_event_types:
+            continue
+        metadata = _event_row_metadata(row)
+        source_platform = _normalize_source_platform(
+            metadata.get("source_platform")
+            or row.get("source_platform")
+            or _infer_source_platform_from_url(row.get("url", ""))
+        )
+        if source_platform != platform:
+            continue
+        used_event_ids.add(event_id)
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "url": str(row.get("url", "") or ""),
+            "title": str(row.get("title", "") or ""),
+        }
+    return None
+
+
+def _build_extension_e2e_report(
+    state: _ExtensionE2ERunState,
+    events: list[dict[str, Any]],
+    *,
+    timed_out: bool,
+    timeout_seconds: int,
+) -> ExtensionE2ERunOut:
+    result = state.extension_result
+    action_results: dict[
+        tuple[ExtensionE2EPlatform, ExtensionE2EAction], tuple[ExtensionE2EActionStatus, str]
+    ] = {}
+    platform_details: dict[ExtensionE2EPlatform, str] = {}
+    if result is not None:
+        for platform_result in result.platforms:
+            platform_details[platform_result.platform] = platform_result.detail
+            for action_result in platform_result.actions:
+                action_results[(platform_result.platform, action_result.action)] = (
+                    action_result.status,
+                    action_result.detail,
+                )
+
+    used_event_ids: set[int] = set()
+    reports: list[ExtensionE2EPlatformReportOut] = []
+    total_actions = 0
+    complete_actions = 0
+    partial_actions = 0
+    default_status: ExtensionE2EActionStatus = "skipped" if timed_out else "failed"
+    default_detail = "extension result timed out" if timed_out else "extension result missing"
+
+    for platform, actions in state.expected_actions.items():
+        action_reports: list[ExtensionE2EActionReportOut] = []
+        for action in actions:
+            total_actions += 1
+            action_status, detail = action_results.get(
+                (platform, action),
+                (default_status, default_detail),
+            )
+            match = _match_e2e_event(
+                events,
+                platform=platform,
+                action=action,
+                used_event_ids=used_event_ids,
+            )
+            backend_event = (
+                ExtensionE2EEventMatchOut(
+                    event_id=cast("int", match["event_id"]),
+                    event_type=str(match["event_type"]),
+                    url=str(match["url"]),
+                    title=str(match["title"]),
+                )
+                if match is not None
+                else None
+            )
+            extension_executed = action_status == "ok"
+            backend_matched = backend_event is not None
+            if extension_executed and backend_matched:
+                complete_actions += 1
+            elif extension_executed or backend_matched:
+                partial_actions += 1
+            action_reports.append(
+                ExtensionE2EActionReportOut(
+                    action=action,
+                    extension_status=action_status,
+                    extension_executed=extension_executed,
+                    extension_detail=detail,
+                    backend_event_matched=backend_matched,
+                    backend_event=backend_event,
+                )
+            )
+        reports.append(
+            ExtensionE2EPlatformReportOut(
+                platform=platform,
+                actions=action_reports,
+                detail=platform_details.get(platform, ""),
+            )
+        )
+
+    error = state.error or (result.error if result is not None else "")
+    if timed_out:
+        run_status: ExtensionE2ERunStatus = "timeout"
+        error = error or "extension e2e result timed out"
+    elif error and complete_actions == 0 and partial_actions == 0:
+        run_status = "failed"
+    elif total_actions == complete_actions:
+        run_status = "ok"
+    elif complete_actions > 0 or partial_actions > 0:
+        run_status = "partial"
+    else:
+        run_status = "failed"
+
+    return ExtensionE2ERunOut(
+        run_id=state.run_id,
+        status=run_status,
+        platforms=reports,
+        error=error,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _fallback_recommendation_click_url(
@@ -428,6 +758,8 @@ def _fallback_recommendation_click_url(
         return f"https://www.youtube.com/watch?v={quote(item_id, safe='')}"
     if source_platform == "douyin":
         return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if source_platform == "twitter":
+        return f"https://x.com/i/status/{quote(item_id, safe='')}"
     if source_platform == "bilibili":
         return f"https://www.bilibili.com/video/{quote(bvid or item_id, safe='')}"
     return ""
@@ -709,6 +1041,7 @@ def create_app(
 
     # ── Password gate (LAN/remote auth) ─────────────────────────────
     app.state.auth_gate = AuthGate(_auth_cfg, getattr(ctx, "database", None))
+    app.state.extension_e2e_runs = {}
 
     def _get_auth_gate() -> AuthGate:
         return cast("AuthGate", app.state.auth_gate)
@@ -899,6 +1232,7 @@ def create_app(
             or path == "/api/ping"
             or path == "/api/health"
             or path == "/api/runtime-status"
+            or path == "/favicon.ico"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
@@ -1477,6 +1811,57 @@ def create_app(
                 pass
         return True, ""
 
+    async def _persist_guided_init_source_opt_in(effective_sources: set[str]) -> None:
+        """Best-effort: checked guided-init sources become enabled settings.
+
+        The run itself uses ``effective_sources`` directly, so a config write
+        failure must not block initialization. Persisting keeps the setup page,
+        popup, and later background discovery aligned with the user's explicit
+        checkbox choice.
+        """
+
+        cfg = getattr(ctx, "config", None)
+        sources_cfg = getattr(cfg, "sources", None) if cfg is not None else None
+        if sources_cfg is None or not effective_sources:
+            return
+
+        changed = False
+        for source in _INIT_SOURCE_ORDER:
+            if source not in effective_sources:
+                continue
+            source_cfg = getattr(sources_cfg, source, None)
+            if source_cfg is not None and not bool(getattr(source_cfg, "enabled", False)):
+                source_cfg.enabled = True
+                changed = True
+        if not changed:
+            return
+
+        try:
+            from openbiliclaw.config import Config, save_config
+
+            cfg = cast("Config", cfg)
+
+            async with _CONFIG_SAVE_LOCK:
+                save_config(cfg)
+        except Exception:
+            logger.warning("guided init source opt-in save_config failed", exc_info=True)
+            return
+
+        if bool(getattr(ctx, "degraded", False)):
+            return
+        try:
+            await ctx.rebuild_from_config(cfg)
+            await ctx.restart_background_tasks(app, run_post_reload_llm_work=False)
+            with suppress(Exception):
+                await ctx.event_hub.publish(
+                    {
+                        "type": "config_reloaded",
+                        "message": "初始化来源选择已写入配置。",
+                    }
+                )
+        except Exception:
+            logger.warning("guided init source opt-in hot-reload failed", exc_info=True)
+
     async def _run_guided_init_wrapper(
         run_id: str, selected_sources: set[str] | None = None
     ) -> None:
@@ -1486,9 +1871,10 @@ def create_app(
         never via a side path. Imported lazily to avoid an import cycle with
         the CLI module that owns the shared pipeline.
 
-        ``selected_sources`` is the extension's per-run platform choice; it can
-        only narrow the config-enabled set (see :func:`_select_init_platforms`).
-        ``None`` keeps the legacy behaviour of using everything enabled.
+        ``selected_sources`` is the extension's per-run platform choice. When
+        present, it is an explicit local opt-in for those sources (see
+        :func:`_select_init_platforms`). ``None`` keeps the legacy behaviour of
+        using everything enabled.
         """
         from openbiliclaw.cli import (
             _INIT_BILIBILI_FAVORITE_LIMIT,
@@ -1546,6 +1932,10 @@ def create_app(
             logger.exception("guided init %s crashed", run_id)
             with suppress(Exception):
                 await coord.fail(run_id, "internal_error")
+        finally:
+            if not bool(getattr(ctx, "degraded", False)):
+                with suppress(Exception):
+                    await ctx.restart_background_tasks(app)
 
     @app.post("/api/init")
     async def start_guided_init(request: Request) -> JSONResponse:
@@ -1564,7 +1954,8 @@ def create_app(
         force = bool(body.get("force", False)) if isinstance(body, dict) else False
         # Optional per-run platform selection from the extension checkboxes. A
         # list (even empty) is an explicit choice; absent → None = use all
-        # enabled (CLI / legacy clients). Narrowed against config-enabled later.
+        # enabled (CLI / legacy clients). Sent source keys are explicit opt-ins
+        # for this local guided-init run.
         raw_sources = body.get("sources") if isinstance(body, dict) else None
         selected_sources = {str(s) for s in raw_sources} if isinstance(raw_sources, list) else None
 
@@ -1578,18 +1969,20 @@ def create_app(
                 {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
                 status_code=409,
             )
-        # At least one config-enabled source must survive an EXPLICIT per-run
-        # selection (v0.3.118+: bilibili is selectable like the rest, so an
-        # empty intersection is now reachable). Cheap rejection, before
-        # reserving. Legacy clients (no "sources" key) stay permissive.
+        # At least one valid source must survive an EXPLICIT per-run selection
+        # (v0.3.118+: bilibili is selectable like the rest, so an empty
+        # selection is reachable). Cheap rejection, before reserving. Legacy
+        # clients (no "sources" key) stay permissive.
         effective_sources = _select_init_platforms(
             set(ctx.init_prereqs.enabled_platforms()), selected_sources
         )
         if selected_sources is not None and not effective_sources:
             return JSONResponse(
-                {"error": "no_sources_selected", "detail": "至少选择一个已启用的数据来源"},
+                {"error": "no_sources_selected", "detail": "至少选择一个有效数据来源"},
                 status_code=409,
             )
+        if selected_sources is not None:
+            await _persist_guided_init_source_opt_in(effective_sources)
 
         run_id = uuid.uuid4().hex
         if not coord.try_start(run_id):
@@ -2545,9 +2938,25 @@ def create_app(
     async def ingest_events(payload: BehaviorEventBatchIn) -> EventIngestResponse:
         from openbiliclaw.sources.event_format import build_event
 
+        if _health_profile_ready() is False:
+            return EventIngestResponse(
+                accepted=0,
+                rejected=[
+                    EventRejectedOut(
+                        index=index,
+                        type=str(item.type or "").strip(),
+                        reason="not_initialized",
+                    )
+                    for index, item in enumerate(payload.events)
+                ],
+            )
+
         accepted = 0
-        for item in payload.events:
+        rejected: list[EventRejectedOut] = []
+        for index, item in enumerate(payload.events):
             source_platform = (item.source_platform or "bilibili").strip() or "bilibili"
+            raw_event_type = str(item.type or "").strip()
+            event_type = "feedback" if raw_event_type == "dislike" else raw_event_type
             # Coerce context to a string for downstream LLM consumers.
             # Pre-v0.3.22 this passed item.context through verbatim — when
             # the extension sent a dict (e.g. structured click context),
@@ -2568,6 +2977,9 @@ def create_app(
                 **item.metadata,
                 "timestamp": item.timestamp,
             }
+            if raw_event_type == "dislike":
+                metadata.setdefault("feedback_type", "dislike")
+                metadata.setdefault("reaction", "thumbs_down")
             if not isinstance(raw_context, str) and raw_context:
                 metadata.setdefault("raw_context", raw_context)
             # v0.3.x event-satisfaction: fold top-level dwell into
@@ -2579,7 +2991,7 @@ def create_app(
             if item.video_duration_seconds is not None:
                 metadata.setdefault("video_duration_seconds", item.video_duration_seconds)
             event = build_event(
-                event_type=item.type,
+                event_type=event_type,
                 source_platform=source_platform,
                 title=item.title or "",
                 url=item.url or "",
@@ -2587,7 +2999,17 @@ def create_app(
                 context=context_str,
                 metadata=metadata,
             )
-            await ctx.memory_manager.propagate_event(event)
+            try:
+                await ctx.memory_manager.propagate_event(event)
+            except ValueError as exc:
+                rejected.append(
+                    EventRejectedOut(
+                        index=index,
+                        type=raw_event_type,
+                        reason=str(exc),
+                    )
+                )
+                continue
             accepted += 1
         refresh_after_event_ingest = getattr(
             ctx.runtime_controller, "refresh_after_event_ingest", None
@@ -2609,16 +3031,42 @@ def create_app(
                             "count": accepted,
                         }
                     )
-        return EventIngestResponse(accepted=accepted)
+        return EventIngestResponse(accepted=accepted, rejected=rejected)
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
     async def recommendations() -> RecommendationListResponse:
+        def _admission_min_score() -> float:
+            runtime_config = getattr(ctx, "config", None) or config
+            discovery_config = getattr(runtime_config, "discovery", None)
+            try:
+                threshold = float(getattr(discovery_config, "admission_min_score", 0.60) or 0.60)
+            except (TypeError, ValueError):
+                return 0.60
+            return threshold if 0.0 < threshold <= 1.0 else 0.60
+
+        def _filter_low_confidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            threshold = _admission_min_score()
+            filtered: list[dict[str, Any]] = []
+            for row in rows:
+                if "confidence" not in row:
+                    filtered.append(row)
+                    continue
+                try:
+                    confidence = float(row.get("confidence") or 0.0)
+                except (TypeError, ValueError):
+                    confidence = 0.0
+                if confidence >= threshold:
+                    filtered.append(row)
+            return filtered
+
         # Pull a 2x window so the per-franchise cap below still has 20
         # survivors to return after dropping over-represented IPs.
         # Without the wider pool, capping 原神 at 2 in a 20-row request
         # would leave gaps that other items further back in time would
         # have filled.
-        rows = ctx.database.get_recommendations(limit=40, exclude_processed=True)
+        rows = _filter_low_confidence(
+            ctx.database.get_recommendations(limit=40, exclude_processed=True)
+        )
 
         # Fresh-install bootstrap: ``recommendations`` table is the
         # write-only history of items we've ever served. On first popup
@@ -2648,7 +3096,9 @@ def create_app(
                 if pool_count > 0:
                     profile = await ctx.soul_engine.get_profile()
                     await ctx.recommendation_engine.serve(profile, limit=10)
-                    rows = ctx.database.get_recommendations(limit=40, exclude_processed=True)
+                    rows = _filter_low_confidence(
+                        ctx.database.get_recommendations(limit=40, exclude_processed=True)
+                    )
                     logger.info(
                         "GET /api/recommendations bootstrap: served from "
                         "empty history (pool_count=%d → wrote %d to history)",
@@ -4854,6 +5304,37 @@ def create_app(
             layers_updated=layers_updated,
         )
 
+    @app.post("/api/insights/feedback", response_model=InsightFeedbackResponse)
+    async def insight_feedback(payload: InsightFeedbackIn) -> InsightFeedbackResponse:
+        """Calibrate an insight hypothesis from a user confirm/reject.
+
+        The popup's insight cards surface ``active_insights`` (hypothesis +
+        confidence). This endpoint routes a confirm/reject back into
+        ``SoulEngine.update_from_feedback`` so the hypothesis is validated and
+        re-weighted (confirm → confidence ≥0.75; reject → ≤0.35), closing the
+        loop that was previously implemented but unwired.
+        """
+        signal = payload.signal.strip().lower()
+        if signal not in {"confirm", "like", "support", "reject", "dislike", "deny"}:
+            raise HTTPException(status_code=422, detail="Unsupported insight feedback signal.")
+        hypothesis = payload.hypothesis.strip()
+        if not hypothesis:
+            raise HTTPException(status_code=422, detail="hypothesis is required.")
+        if ctx.soul_engine is None:
+            raise HTTPException(status_code=503, detail="Soul engine not ready.")
+
+        result = await ctx.soul_engine.update_from_feedback(
+            {"hypothesis": hypothesis, "signal": signal}
+        )
+        return InsightFeedbackResponse(
+            ok=True,
+            matched=bool(result.get("matched", False)),
+            hypothesis=str(result.get("hypothesis", hypothesis)),
+            signal=str(result.get("signal", signal)),
+            validated=bool(result.get("validated", False)),
+            confidence=float(result.get("confidence", 0.0)),
+        )
+
     # ── Source recipe management endpoints ──────────────────────────
 
     @app.get("/api/sources")
@@ -4929,6 +5410,111 @@ def create_app(
         scheduler = getattr(config, "scheduler", None)
         target = int(getattr(scheduler, "pool_target_count", 300) or 300)
         return discovery_candidate_pending_cap(target)
+
+    def _intish(value: Any) -> int:
+        if isinstance(value, bool):
+            return 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _cache_bili_search_videos(
+        database: Any,
+        videos: list[dict[str, Any]],
+        *,
+        query: str = "",
+        source_keyword_id: int | None = None,
+    ) -> int:
+        """Enqueue extension-collected Bilibili search videos for evaluation."""
+
+        from openbiliclaw.discovery.candidate_pool import discovered_content_to_candidate_write
+        from openbiliclaw.discovery.engine import DiscoveredContent
+
+        enqueue = getattr(database, "enqueue_discovery_candidates", None)
+        if not callable(enqueue):
+            return 0
+        writes = []
+        for video in videos:
+            bvid = str(video.get("bvid") or video.get("content_id") or "").strip()
+            if not bvid:
+                continue
+            title = str(video.get("title") or "").strip()
+            if not title:
+                continue
+            up_name = str(
+                video.get("up_name") or video.get("author_name") or video.get("author") or ""
+            ).strip()
+            content_url = str(video.get("content_url") or video.get("url") or "").strip()
+            if not content_url:
+                content_url = f"https://www.bilibili.com/video/{bvid}"
+            tags_raw = video.get("tags")
+            tags = (
+                [str(item).strip() for item in tags_raw if str(item).strip()]
+                if isinstance(tags_raw, list)
+                else []
+            )
+            item = DiscoveredContent(
+                bvid=bvid,
+                title=title,
+                up_name=up_name,
+                up_mid=_intish(video.get("up_mid") or video.get("mid")),
+                cover_url=str(video.get("cover_url") or video.get("pic") or "").strip(),
+                duration=_intish(video.get("duration")),
+                view_count=_intish(video.get("view_count") or video.get("play")),
+                like_count=_intish(video.get("like_count") or video.get("likes")),
+                favorite_count=_intish(
+                    video.get("favorite_count") or video.get("favorites") or video.get("favorite")
+                ),
+                danmaku_count=_intish(
+                    video.get("danmaku_count") or video.get("danmaku") or video.get("video_review")
+                ),
+                comment_count=_intish(
+                    video.get("comment_count") or video.get("reply") or video.get("review")
+                ),
+                share_count=_intish(video.get("share_count") or video.get("share")),
+                tags=tags,
+                description=str(video.get("description") or video.get("desc") or "").strip(),
+                source_strategy="bili-extension-search",
+                content_id=bvid,
+                content_url=content_url,
+                source_platform="bilibili",
+                author_name=up_name,
+                score_threshold=0.60,
+                source_keyword_id=source_keyword_id,
+            )
+            writes.append(
+                discovered_content_to_candidate_write(
+                    item,
+                    source_context="bili-extension-search",
+                    raw_payload={
+                        "bvid": bvid,
+                        "query": query,
+                        "url": content_url,
+                        "admission_policy": "observed",
+                        "score_threshold": 0.60,
+                    },
+                )
+            )
+        if not writes:
+            return 0
+        try:
+            return int(enqueue(writes, max_pending_per_source=_discovery_candidate_pending_cap()))
+        except TypeError:
+            return int(enqueue(writes))
+
+    def _mark_bili_task_keyword_terminal(payload_json: str | None, *, success: bool) -> None:
+        from openbiliclaw.sources.bili_tasks import source_keyword_id_from_bili_task
+
+        keyword_id = source_keyword_id_from_bili_task(payload_json)
+        if keyword_id is None:
+            return
+        method = "mark_keyword_used" if success else "mark_keyword_failed"
+        mark = getattr(ctx.database, method, None)
+        if not callable(mark):
+            return
+        with suppress(Exception):
+            mark(keyword_id)
 
     def _pick_best_xhs_url(database: Any, note_id: str, incoming: str) -> str:
         """Return the most share-worthy URL for a xhs note.
@@ -5204,6 +5790,8 @@ def create_app(
         notes: list[dict[str, Any]],
         page_type: str,
         self_info: dict[str, str] | None = None,
+        *,
+        source_keyword_id: int | None = None,
     ) -> int:
         """Enqueue xhs note metadata from the extension into discovery_candidates.
 
@@ -5212,6 +5800,12 @@ def create_app(
         through ``discovery_runtime_state`` and works against test
         stubs that haven't implemented the runtime-state API.  When
         ``None``, falls back to the persisted state.
+
+        ``source_keyword_id`` (P1.8) is the ``discovery_keywords.id`` carried on
+        the originating xhs *search* task payload. XHS is truly async, so the id
+        cannot be stamped at search time — it rides the task and is threaded onto
+        each ingested candidate here so admission can backfill the keyword's
+        yield. ``None`` for passive / observed / non-planner ingests.
         """
         from urllib.parse import urlparse
 
@@ -5253,6 +5847,16 @@ def create_app(
                 title=title,
                 up_name=author,
                 cover_url=cover_url,
+                view_count=_intish(note.get("view_count") or note.get("views")),
+                like_count=_intish(note.get("like_count") or note.get("likes")),
+                collect_count=_intish(
+                    note.get("collect_count")
+                    or note.get("favorite_count")
+                    or note.get("favorites")
+                    or note.get("collects")
+                ),
+                comment_count=_intish(note.get("comment_count") or note.get("comments")),
+                share_count=_intish(note.get("share_count") or note.get("shares")),
                 description=str(
                     note.get("description") or note.get("desc") or note.get("text") or ""
                 ),
@@ -5261,6 +5865,7 @@ def create_app(
                 content_url=best_url,
                 source_platform="xiaohongshu",
                 author_name=author,
+                source_keyword_id=source_keyword_id,
             )
             writes.append(
                 discovered_content_to_candidate_write(
@@ -5274,7 +5879,6 @@ def create_app(
                         "author": author,
                         "cover_url": cover_url,
                         "admission_policy": "observed",
-                        "score_threshold": 0.0,
                     },
                 )
             )
@@ -5385,6 +5989,102 @@ def create_app(
         upgraded = _backfill_xhs_tokens(ctx.database, urls)
         return {"ok": True, "upgraded": upgraded}
 
+    # ── Bilibili extension search fallback endpoints ────────────────
+
+    from openbiliclaw.sources.bili_tasks import (
+        BiliTaskQueue,
+        source_keyword_id_from_bili_task,
+    )
+
+    _bili_task_queue: BiliTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _bili_task_queue = BiliTaskQueue(ctx.database)
+
+    @app.get("/api/sources/bili/next-task")
+    def bili_next_task(response: Any = None) -> Any:
+        """Claim and return the oldest runnable Bilibili extension task."""
+        from starlette.responses import Response
+
+        if _bili_task_queue is None:
+            return Response(status_code=204)
+        task = _bili_task_queue.next_pending()
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/bili/task-result")
+    async def bili_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept Bilibili extension search results and enqueue candidates."""
+
+        task_id = str(payload.get("task_id", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip()
+        videos = [video for video in payload.get("videos", []) if isinstance(video, dict)]
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        if not task_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=422, detail="task_id is required")
+
+        if _bili_task_queue is None:
+            return {"ok": True, "enqueued": 0}
+
+        task = _bili_task_queue.get(task_id)
+        task_payload_json = str(task.get("payload_json") or "") if task else ""
+
+        if status in {"partial", "ok", "empty"}:
+            is_final = status in {"ok", "empty"}
+            added_videos = _bili_task_queue.merge_result(
+                task_id,
+                videos=videos if videos else None,
+                debug=debug,
+                complete=is_final,
+            )
+            if is_final:
+                _mark_bili_task_keyword_terminal(task_payload_json, success=status == "ok")
+            task_payload: dict[str, Any] = {}
+            if task_payload_json:
+                with suppress(Exception):
+                    parsed = json.loads(task_payload_json)
+                    if isinstance(parsed, dict):
+                        task_payload = parsed
+            query = str(task_payload.get("query") or task_payload.get("keyword") or "").strip()
+            source_keyword_id = source_keyword_id_from_bili_task(task_payload_json)
+            enqueued = 0
+            if added_videos:
+                enqueued = _cache_bili_search_videos(
+                    ctx.database,
+                    added_videos,
+                    query=query,
+                    source_keyword_id=source_keyword_id,
+                )
+                if enqueued:
+                    asyncio.create_task(_drain_discovery_candidates_once())
+            return {"ok": True, "enqueued": enqueued}
+
+        _bili_task_queue.fail(task_id, error=str(payload.get("error", "") or ""), debug=debug)
+        _mark_bili_task_keyword_terminal(task_payload_json, success=False)
+        return {"ok": True, "enqueued": 0}
+
+    @app.post("/api/sources/bili/kick")
+    async def bili_task_kick() -> dict[str, Any]:
+        """Broadcast `bili_task_available` over runtime-stream."""
+        publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "bili_task_available", "source": "task_kick"})
+        return {"ok": True}
+
     # ── XHS task queue endpoints (extension dispatcher) ──────────────
 
     from openbiliclaw.sources.xhs_tasks import (
@@ -5463,6 +6163,14 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
+            # Unified keyword planner lifecycle (P1.7): XHS is truly async, so a
+            # claimed search word stays ``executing`` until this terminal
+            # callback. On a final ``ok`` mark its ``source_keyword_id`` word
+            # ``used`` (a ``partial`` is not terminal → leave it ``executing``).
+            if is_final and task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=True
+                )
             # v0.3.48+: piggyback self_info from bootstrap debug payload.
             # v0.3.57+: also accept self_info at the payload top level for
             # search / creator / passive paths via extension v0.3.10.
@@ -5491,7 +6199,22 @@ def create_app(
                 ctx.database.save_xhs_observed_urls(valid_urls, "task")
                 _backfill_xhs_tokens(ctx.database, valid_urls)
             if added_notes and not _init_busy:
-                enqueued = _cache_xhs_notes(ctx.database, added_notes, "task", self_info_now)
+                # P1.8: a planner-driven xhs *search* task carries its
+                # ``source_keyword_id`` on the payload → thread it onto the
+                # ingested candidates so admission backfills the keyword's yield.
+                # Passive / non-search tasks have no id → plain None.
+                task_source_keyword_id = (
+                    source_keyword_id_from_xhs_task(task.get("payload_json"))
+                    if task is not None
+                    else None
+                )
+                enqueued = _cache_xhs_notes(
+                    ctx.database,
+                    added_notes,
+                    "task",
+                    self_info_now,
+                    source_keyword_id=task_source_keyword_id,
+                )
                 if enqueued:
                     asyncio.create_task(_drain_discovery_candidates_once())
             if task_type == "bootstrap_profile" and added_notes and not _skip_profile:
@@ -5535,6 +6258,12 @@ def create_app(
                     )
         else:
             _xhs_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+            # Unified keyword planner lifecycle (P1.7): the async search failed →
+            # mark its ``source_keyword_id`` word ``failed`` (retry via attempts).
+            if task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=False
+                )
 
         return {"ok": True}
 
@@ -6112,6 +6841,111 @@ def create_app(
                 await publish({"type": "yt_task_available", "source": "task_kick"})
         return {"ok": True}
 
+    @app.post("/api/extension/e2e/run", response_model=ExtensionE2ERunOut)
+    async def extension_e2e_run(
+        request: Request,
+        payload: ExtensionE2ERunIn,
+    ) -> ExtensionE2ERunOut:
+        """Local-only control plane for extension E2E simulation runs."""
+        if not _get_auth_gate().is_trusted_local(request):
+            raise HTTPException(status_code=403, detail="local_only")
+
+        registry = cast("dict[str, _ExtensionE2ERunState]", app.state.extension_e2e_runs)
+        if registry:
+            raise HTTPException(status_code=409, detail="e2e_run_in_progress")
+
+        expected_actions = _extension_e2e_actions_for_request(payload)
+        if not payload.allow_state_changing:
+            blocked_actions = sorted(
+                {
+                    action
+                    for actions in expected_actions.values()
+                    for action in actions
+                    if action in _E2E_STATE_CHANGING_ACTIONS
+                }
+            )
+            if blocked_actions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "allow_state_changing must be true for actions: "
+                        + ", ".join(blocked_actions)
+                    ),
+                )
+
+        run_id = f"e2e-{uuid.uuid4().hex}"
+        token = secrets.token_urlsafe(32)
+        after_event_id = _latest_e2e_event_id(ctx)
+        state = _ExtensionE2ERunState(
+            run_id=run_id,
+            token=token,
+            started_at=time.time(),
+            after_event_id=after_event_id,
+            expected_actions=expected_actions,
+            event=asyncio.Event(),
+        )
+        registry[run_id] = state
+        timed_out = False
+
+        try:
+            publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+            if not callable(publish):
+                state.error = "extension_runtime_unavailable"
+            else:
+                delivered = await publish(
+                    {
+                        "type": "extension_e2e_run",
+                        "source": "api",
+                        "run_id": run_id,
+                        "token": token,
+                        "platforms": list(expected_actions.keys()),
+                        "actions": {
+                            platform: list(actions)
+                            for platform, actions in expected_actions.items()
+                        },
+                        "allow_state_changing": payload.allow_state_changing,
+                        "timeout_seconds": payload.timeout_seconds,
+                    }
+                )
+                if delivered is False:
+                    state.error = "extension_runtime_unavailable"
+
+            if not state.error:
+                try:
+                    await asyncio.wait_for(state.event.wait(), timeout=payload.timeout_seconds)
+                except TimeoutError:
+                    timed_out = True
+
+            events = _query_e2e_events(ctx, after_event_id=after_event_id)
+            return _build_extension_e2e_report(
+                state,
+                events,
+                timed_out=timed_out,
+                timeout_seconds=payload.timeout_seconds,
+            )
+        finally:
+            registry.pop(run_id, None)
+
+    @app.post("/api/extension/e2e/result")
+    async def extension_e2e_result(
+        request: Request,
+        payload: ExtensionE2EResultIn,
+    ) -> dict[str, object]:
+        """Accept a signed callback from the extension E2E runner."""
+        if not _get_auth_gate().is_trusted_local(request):
+            raise HTTPException(status_code=403, detail="local_only")
+
+        registry = cast("dict[str, _ExtensionE2ERunState]", app.state.extension_e2e_runs)
+        state = registry.get(payload.run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="unknown run_id")
+        if not secrets.compare_digest(state.token, payload.token):
+            raise HTTPException(status_code=403, detail="bad token")
+
+        state.extension_result = payload
+        state.event.set()
+        return {"ok": True, "run_id": payload.run_id}
+
     @app.post("/api/extension/reload")
     async def extension_reload() -> dict[str, Any]:
         """Dev-only: broadcast `extension_reload` so the connected
@@ -6549,6 +7383,24 @@ def create_app(
                 auto_update_allow_prerelease=cfg.scheduler.auto_update_allow_prerelease,
                 auto_update_allowed_remotes=list(cfg.scheduler.auto_update_allowed_remotes),
             ),
+            discovery=DiscoveryConfigOut(
+                unified_keyword_planner_enabled=cfg.discovery.unified_keyword_planner_enabled,
+                kw_cache_high=cfg.discovery.kw_cache_high,
+                kw_cache_low=cfg.discovery.kw_cache_low,
+                gen_batch=cfg.discovery.gen_batch,
+                fetch_batch=cfg.discovery.fetch_batch,
+                history_window_size=cfg.discovery.history_window_size,
+                history_window_hours=cfg.discovery.history_window_hours,
+                claim_lease_minutes=cfg.discovery.claim_lease_minutes,
+                planner_poll_seconds=cfg.discovery.planner_poll_seconds,
+                plan_ttl_hours=cfg.discovery.plan_ttl_hours,
+                admission_min_score=cfg.discovery.admission_min_score,
+                multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
+                multimodal_batch_size=cfg.discovery.multimodal_batch_size,
+                multimodal_image_max_px=cfg.discovery.multimodal_image_max_px,
+                multimodal_image_quality=cfg.discovery.multimodal_image_quality,
+                multimodal_image_timeout_seconds=(cfg.discovery.multimodal_image_timeout_seconds),
+            ),
             autostart=AutostartConfigOut(
                 enabled=cfg.autostart.enabled,
                 manage_ollama=cfg.autostart.manage_ollama,
@@ -6646,7 +7498,7 @@ def create_app(
                             continue
                         existing = getattr(provider_cfg, field_name, "")
                         if (
-                            field_name != "auth_mode"
+                            field_name not in {"auth_mode", "reasoning_effort"}
                             and not new_value.strip()
                             and isinstance(existing, str)
                             and existing.strip()
@@ -6705,6 +7557,7 @@ def create_app(
                     mod_cfg.model = str(mdata["model"])
 
     async def _probe_llm_config(cfg: Any) -> ConfigServiceProbeResponse:
+        from openbiliclaw.llm.base import LLM_CONNECTIVITY_PROBE_MAX_TOKENS
         from openbiliclaw.llm.registry import build_llm_registry
 
         started = time.perf_counter()
@@ -6733,6 +7586,7 @@ def create_app(
                         {"role": "user", "content": "OpenBiliClaw connectivity probe."},
                     ],
                     temperature=0,
+                    max_tokens=LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
                     reasoning_effort="",
                     model=model or None,
                 ),
@@ -6837,10 +7691,15 @@ def create_app(
         runtime components so the new settings take effect immediately.
         """
         from openbiliclaw.config import (
+            _DEFAULT_ADMISSION_MIN_SCORE,
             _DEFAULT_DELIGHT_QUEUE_LIMIT,
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
             _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
+            _DEFAULT_MULTIMODAL_BATCH_SIZE,
+            _DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+            _DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+            _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
             _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
             _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS,
             _DEFAULT_SIGNAL_EVENT_THRESHOLD,
@@ -6850,6 +7709,7 @@ def create_app(
             _default_config_path,
             _normalize_extension_disconnect_grace,
             _normalize_pool_source_shares,
+            _normalize_probability,
             _normalize_scheduler_int,
             load_config,
             save_config,
@@ -6858,6 +7718,7 @@ def create_app(
         cfg = load_config()
         update = payload.model_dump(exclude_none=True)
         reset_fields = [str(field) for field in update.pop("reset_fields", [])]
+        suppress_background_llm_work = bool(update.pop("suppress_background_llm_work", False))
         unknown_reset_fields = [
             field for field in reset_fields if field not in _RESETTABLE_CONFIG_FIELDS
         ]
@@ -7147,6 +8008,54 @@ def create_app(
                     sdata["pool_source_shares"]
                 )
 
+        # Apply discovery planner / evaluator updates
+        if "discovery" in update:
+            ddata = update["discovery"]
+            if isinstance(ddata, dict):
+                discovery_int_limits = {
+                    "multimodal_batch_size": (
+                        _DEFAULT_MULTIMODAL_BATCH_SIZE,
+                        1,
+                        12,
+                    ),
+                    "multimodal_image_max_px": (
+                        _DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+                        128,
+                        768,
+                    ),
+                    "multimodal_image_quality": (
+                        _DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+                        40,
+                        90,
+                    ),
+                    "multimodal_image_timeout_seconds": (
+                        _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
+                        1,
+                        20,
+                    ),
+                }
+                if "multimodal_evaluation_enabled" in ddata:
+                    cfg.discovery.multimodal_evaluation_enabled = _as_bool(
+                        ddata["multimodal_evaluation_enabled"]
+                    )
+                if "admission_min_score" in ddata:
+                    cfg.discovery.admission_min_score = _normalize_probability(
+                        ddata["admission_min_score"],
+                        default=_DEFAULT_ADMISSION_MIN_SCORE,
+                    )
+                for key, (default, min_value, max_value) in discovery_int_limits.items():
+                    if key in ddata:
+                        setattr(
+                            cfg.discovery,
+                            key,
+                            _normalize_scheduler_int(
+                                ddata[key],
+                                default=default,
+                                min_value=min_value,
+                                max_value=max_value,
+                            ),
+                        )
+
         # Apply storage updates
         if "storage" in update:
             stdata = update["storage"]
@@ -7245,7 +8154,10 @@ def create_app(
             reload_message = f"配置已保存到 {saved_path}。"
             try:
                 await ctx.rebuild_from_config(cfg)
-                await ctx.restart_background_tasks(app)
+                await ctx.restart_background_tasks(
+                    app,
+                    run_post_reload_llm_work=not suppress_background_llm_work,
+                )
                 reload_message += " 运行时组件已热重载，新配置立即生效。"
                 logger.info("Config hot-reload succeeded")
                 # Notify WebSocket subscribers so the extension re-fetches data

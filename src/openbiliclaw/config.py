@@ -35,6 +35,25 @@ _DEFAULT_DELIGHT_QUEUE_LIMIT = 20
 _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS = 120
 _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
+# Unified keyword planner (Discover backpressure refactor P1, spec §6).
+# All defaults are the owner-approved starting baseline; see
+# docs/plans/2026-06-14-discover-backpressure-refactor-design.md §6 and
+# docs/plans/2026-06-14-discover-backpressure-P1-plan.md §P1.0.
+_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED = True
+_DEFAULT_KW_CACHE_HIGH = 30
+_DEFAULT_KW_CACHE_LOW = 10
+_DEFAULT_GEN_BATCH = 30
+_DEFAULT_FETCH_BATCH = 5
+_DEFAULT_HISTORY_WINDOW_SIZE = 150
+_DEFAULT_HISTORY_WINDOW_HOURS = 48
+_DEFAULT_CLAIM_LEASE_MINUTES = 10
+_DEFAULT_PLANNER_POLL_SECONDS = 120
+_DEFAULT_PLAN_TTL_HOURS = 12
+_DEFAULT_ADMISSION_MIN_SCORE = 0.60
+_DEFAULT_MULTIMODAL_BATCH_SIZE = 8
+_DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
+_DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
+_DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS = 6
 DEFAULT_LLM_CONCURRENCY = 3
 _MIN_LLM_CONCURRENCY = 1
 _MAX_LLM_CONCURRENCY = 16
@@ -238,6 +257,58 @@ class SchedulerConfig:
     auto_update_allowed_remotes: list[str] = field(
         default_factory=lambda: list(_DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES)
     )
+
+
+@dataclass
+class DiscoveryConfig:
+    """Unified keyword planner configuration (Discover backpressure, P1).
+
+    Governs the double-buffered keyword store + merged keyword planner that
+    replaces the per-platform search keyword generators. All knobs are gated
+    behind ``unified_keyword_planner_enabled`` (default ON as of v0.3.124; set
+    it ``false`` to fall back, byte-for-byte, to the legacy per-platform LLM
+    generation path). See
+    ``docs/plans/2026-06-14-discover-backpressure-refactor-design.md`` §6 for
+    the parameter table these defaults come from. ``fetch_floor`` is NOT a
+    field here — the planner reuses each platform's existing ``min_interval``.
+    """
+
+    # Master feature flag. True (default, v0.3.124+) runs the merged planner /
+    # keyword store; False falls back to the legacy per-platform search keyword
+    # generators (the path stays dormant and the fallback is byte-identical).
+    unified_keyword_planner_enabled: bool = _DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED
+    # Per-platform keyword cache high/low watermarks. Generation fires when
+    # pending < low and a real deficit exists; it refills up to high.
+    kw_cache_high: int = _DEFAULT_KW_CACHE_HIGH
+    kw_cache_low: int = _DEFAULT_KW_CACHE_LOW
+    # Keywords generated per platform per merged LLM call.
+    gen_batch: int = _DEFAULT_GEN_BATCH
+    # Keywords atomically claimed per fetch.
+    fetch_batch: int = _DEFAULT_FETCH_BATCH
+    # Dedup history window: at most this many recent keywords, within this many
+    # hours, are surfaced to the planner as "don't repeat".
+    history_window_size: int = _DEFAULT_HISTORY_WINDOW_SIZE
+    history_window_hours: int = _DEFAULT_HISTORY_WINDOW_HOURS
+    # Claim lease: a claimed/executing keyword older than this is reclaimed to
+    # pending (guards loop/task crashes leaking in-flight rows).
+    claim_lease_minutes: int = _DEFAULT_CLAIM_LEASE_MINUTES
+    # Keyword planner poll interval (seconds). Idle polls are near-zero cost.
+    planner_poll_seconds: int = _DEFAULT_PLANNER_POLL_SECONDS
+    # Plan staleness backstop: pending keywords older than this expire even if
+    # the profile digest hasn't changed.
+    plan_ttl_hours: int = _DEFAULT_PLAN_TTL_HOURS
+    # Unified recommendation-pool admission floor. Source/provenance metadata
+    # must never bypass this; explicit strategy thresholds live on candidates.
+    admission_min_score: float = _DEFAULT_ADMISSION_MIN_SCORE
+    # Optional cover-image evaluation. Kept off by default because it changes
+    # LLM cost/latency and requires a vision-capable evaluation model.
+    multimodal_evaluation_enabled: bool = False
+    # Smaller batch for image-bearing evaluation calls.
+    multimodal_batch_size: int = _DEFAULT_MULTIMODAL_BATCH_SIZE
+    # Cover-image preprocessing bounds before sending to the evaluator.
+    multimodal_image_max_px: int = _DEFAULT_MULTIMODAL_IMAGE_MAX_PX
+    multimodal_image_quality: int = _DEFAULT_MULTIMODAL_IMAGE_QUALITY
+    multimodal_image_timeout_seconds: int = _DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -471,6 +542,9 @@ class Config:
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    # Top-level `[discovery]` carries the unified keyword planner / backpressure
+    # knobs (P1). Distinct from `[llm.discovery]` (per-module provider override).
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     autostart: AutostartConfig = field(default_factory=AutostartConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -586,6 +660,9 @@ def _build_config(raw: dict[str, Any]) -> Config:
     bili_raw = raw.get("bilibili", {})
     sources_raw = raw.get("sources", {})
     sched_raw = dict(raw.get("scheduler", {}))
+    discovery_raw = raw.get("discovery", {})
+    if not isinstance(discovery_raw, dict):
+        discovery_raw = {}
     autostart_raw = raw.get("autostart", {})
     if not isinstance(autostart_raw, dict):
         autostart_raw = {}
@@ -807,6 +884,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
                 ),
             }
         ),
+        discovery=_build_discovery(discovery_raw),
         autostart=AutostartConfig(
             enabled=_coerce_bool(autostart_raw.get("enabled"), default=False),
             manage_ollama=_coerce_bool(autostart_raw.get("manage_ollama"), default=True),
@@ -815,6 +893,115 @@ def _build_config(raw: dict[str, Any]) -> Config:
         logging=LoggingConfig(**logging_raw),
         soul=soul,
     )
+
+
+def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
+    """Assemble ``DiscoveryConfig`` from the raw ``[discovery]`` table.
+
+    Every numeric knob goes through ``_normalize_scheduler_int`` (the same
+    bounded-positive-int coercion the scheduler fields use), so a bad / missing
+    / out-of-range value falls back to its spec §6 default. ``_coerce_bool``
+    handles the feature flag, which means env-string overrides
+    (``OPENBILICLAW_DISCOVERY_*``) normalize identically to TOML values.
+    """
+    return DiscoveryConfig(
+        unified_keyword_planner_enabled=_coerce_bool(
+            discovery_raw.get("unified_keyword_planner_enabled"),
+            default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
+        ),
+        kw_cache_high=_normalize_scheduler_int(
+            discovery_raw.get("kw_cache_high"),
+            default=_DEFAULT_KW_CACHE_HIGH,
+            min_value=1,
+        ),
+        kw_cache_low=_normalize_scheduler_int(
+            discovery_raw.get("kw_cache_low"),
+            default=_DEFAULT_KW_CACHE_LOW,
+            min_value=1,
+        ),
+        gen_batch=_normalize_scheduler_int(
+            discovery_raw.get("gen_batch"),
+            default=_DEFAULT_GEN_BATCH,
+            min_value=1,
+        ),
+        fetch_batch=_normalize_scheduler_int(
+            discovery_raw.get("fetch_batch"),
+            default=_DEFAULT_FETCH_BATCH,
+            min_value=1,
+        ),
+        history_window_size=_normalize_scheduler_int(
+            discovery_raw.get("history_window_size"),
+            default=_DEFAULT_HISTORY_WINDOW_SIZE,
+            min_value=1,
+        ),
+        history_window_hours=_normalize_scheduler_int(
+            discovery_raw.get("history_window_hours"),
+            default=_DEFAULT_HISTORY_WINDOW_HOURS,
+            min_value=1,
+        ),
+        claim_lease_minutes=_normalize_scheduler_int(
+            discovery_raw.get("claim_lease_minutes"),
+            default=_DEFAULT_CLAIM_LEASE_MINUTES,
+            min_value=1,
+        ),
+        planner_poll_seconds=_normalize_scheduler_int(
+            discovery_raw.get("planner_poll_seconds"),
+            default=_DEFAULT_PLANNER_POLL_SECONDS,
+            min_value=1,
+        ),
+        plan_ttl_hours=_normalize_scheduler_int(
+            discovery_raw.get("plan_ttl_hours"),
+            default=_DEFAULT_PLAN_TTL_HOURS,
+            min_value=1,
+        ),
+        admission_min_score=_normalize_probability(
+            discovery_raw.get("admission_min_score"),
+            default=_DEFAULT_ADMISSION_MIN_SCORE,
+        ),
+        multimodal_evaluation_enabled=_coerce_bool(
+            discovery_raw.get("multimodal_evaluation_enabled"),
+            default=False,
+        ),
+        multimodal_batch_size=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_batch_size"),
+            default=_DEFAULT_MULTIMODAL_BATCH_SIZE,
+            min_value=1,
+            max_value=12,
+        ),
+        multimodal_image_max_px=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_max_px"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_MAX_PX,
+            min_value=128,
+            max_value=768,
+        ),
+        multimodal_image_quality=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_quality"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_QUALITY,
+            min_value=40,
+            max_value=90,
+        ),
+        multimodal_image_timeout_seconds=_normalize_scheduler_int(
+            discovery_raw.get("multimodal_image_timeout_seconds"),
+            default=_DEFAULT_MULTIMODAL_IMAGE_TIMEOUT_SECONDS,
+            min_value=1,
+            max_value=20,
+        ),
+    )
+
+
+def _normalize_probability(value: object, *, default: float) -> float:
+    """Normalize a TOML probability in the open interval ``(0, 1]``."""
+    if isinstance(value, bool):
+        return default
+    if not isinstance(value, (int, float, str)):
+        return default
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return default
+    if score <= 0.0 or score > 1.0:
+        return default
+    return score
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -1759,6 +1946,27 @@ def _render_config_toml(
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             "",
+            "[discovery]",
+            "unified_keyword_planner_enabled = "
+            f"{_toml_bool(config.discovery.unified_keyword_planner_enabled)}",
+            f"kw_cache_high = {config.discovery.kw_cache_high}",
+            f"kw_cache_low = {config.discovery.kw_cache_low}",
+            f"gen_batch = {config.discovery.gen_batch}",
+            f"fetch_batch = {config.discovery.fetch_batch}",
+            f"history_window_size = {config.discovery.history_window_size}",
+            f"history_window_hours = {config.discovery.history_window_hours}",
+            f"claim_lease_minutes = {config.discovery.claim_lease_minutes}",
+            f"planner_poll_seconds = {config.discovery.planner_poll_seconds}",
+            f"plan_ttl_hours = {config.discovery.plan_ttl_hours}",
+            f"admission_min_score = {config.discovery.admission_min_score:g}",
+            "multimodal_evaluation_enabled = "
+            f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
+            f"multimodal_batch_size = {config.discovery.multimodal_batch_size}",
+            f"multimodal_image_max_px = {config.discovery.multimodal_image_max_px}",
+            f"multimodal_image_quality = {config.discovery.multimodal_image_quality}",
+            "multimodal_image_timeout_seconds = "
+            f"{config.discovery.multimodal_image_timeout_seconds}",
+            "",
             *_autostart_lines(
                 config,
                 on_disk_autostart,
@@ -1801,7 +2009,7 @@ def _render_provider_section(name: str, provider: LLMProviderConfig) -> list[str
         lines.append(f"base_url = {_toml_string(provider.base_url)}")
     if name == "openai":
         lines.append(f"auth_mode = {_toml_string(provider.auth_mode)}")
-    if name == "deepseek" and provider.reasoning_effort:
+    if name == "deepseek":
         lines.append(f"reasoning_effort = {_toml_string(provider.reasoning_effort)}")
     if name == "openrouter":
         lines.append(f"http_referer = {_toml_string(provider.http_referer)}")

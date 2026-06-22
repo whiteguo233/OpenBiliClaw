@@ -20,6 +20,7 @@
       chatTurns: "/chat/turns",
       interestProbeRespond: "/interest-probes/respond",
       avoidanceProbeRespond: "/avoidance-probes/respond",
+      insightFeedback: "/insights/feedback",
       sourceShareSuggestion: "/config/source-share-suggestion",
       configProbe: "/config/probe-service",
       updateStatus: "/update-status",
@@ -55,14 +56,7 @@
       config: null,
       runtimeStatus: null,
       runtimeSocket: null,
-      videos: [
-        { id: 4268, bvid: "BV1KMwuzdEcB", title: "为什么说回县城你也躺不平：县域经济的明斯基时刻", up: "硬核半佛宇宙", topic: "宏观债务", platform: "bilibili", duration: "28:41", presented: false, reason: "你最近一直在盯地缘政治和债务周期，这条用长链条把土地财政、县域就业和个人选择连起来。" },
-        { id: 4269, bvid: "yt-arch-001", title: "Concrete, light and silence: why Tadao Ando still feels modern", up: "Design Essays", topic: "建筑美学", platform: "youtube", duration: "18:09", presented: false, reason: "这是系统猜测兴趣：你对结构、空间和最少元素构建最大张力的内容反应更好。" },
-        { id: 4270, bvid: "dy-feed-882", title: "参数化设计不是炫技：从结构优化看复杂曲面", up: "结构可视化", topic: "参数化设计", platform: "douyin", duration: "04:36", presented: true, reason: "短视频来源用于补足你的轻量入口，但只保留解释密度较高的候选。" },
-        { id: 4271, bvid: "xhs-119", title: "手冲咖啡器具选择：为什么滤杯几何会改变口感", up: "桌面实验室", topic: "咖啡器具", platform: "xiaohongshu", duration: "07:22", presented: false, reason: "小红书兴趣信号和 B 站工艺内容交叉，系统认为你可能会喜欢“器物背后的结构逻辑”。" },
-        { id: 4272, bvid: "BV1OpenClaw", title: "大模型 Agent 为什么需要长期记忆，而不是更长上下文", up: "工程师的抽屉", topic: "AI Agent", platform: "bilibili", duration: "36:12", presented: false, reason: "你近期对本地化、可控和个人数据归属更敏感，这条能解释 OpenBiliClaw 的底层取向。" },
-        { id: 4273, bvid: "yt-macro-144", title: "The plumbing of money markets, explained with one balance sheet", up: "Macro Notes", topic: "金融机制", platform: "youtube", duration: "22:15", presented: false, reason: "它不是新闻，而是机制解释；与你的“先看齿轮怎么咬合”的认知风格更匹配。" }
-      ],
+      videos: [],
       messages: [],
       messageListSnapshot: null,
       messageListDomLocked: false,
@@ -81,8 +75,17 @@
 
     const $ = (selector) => document.querySelector(selector);
     const grid = $("#videoGrid");
-    const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const sourceFilterDefinitions = [
+      { key: "bilibili", label: "B 站" },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "youtube", label: "YouTube" },
+      { key: "twitter", label: "X (Twitter)" }
+    ];
+    const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter" };
+    const textCardContentTypes = new Set(["tweet", "thread"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -93,7 +96,7 @@
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" }
     ];
-    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
       already_running: "初始化正在进行中。",
@@ -108,6 +111,7 @@
     const INIT_STATUS_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
     const INIT_STATUS_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
     const INIT_STATUS_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
+    const INIT_FIRST_POOL_WAIT_TEXT = "画像已生成，正在整理首轮内容池；等第一批内容可刷后才算初始化完成。";
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -578,16 +582,48 @@
       });
     }
 
+    function urlHostMatches(url, hostnames) {
+      const text = String(url || "").trim();
+      if (!text) return false;
+      try {
+        const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+        const host = new URL(candidate).hostname.toLowerCase();
+        return hostnames.some((hostname) => host === hostname || host.endsWith(`.${hostname}`));
+      } catch {
+        return false;
+      }
+    }
+
+    function normalizeSourcePlatform(item) {
+      const explicit = String(item?.source_platform ?? item?.platform ?? "").trim().toLowerCase();
+      if (platformAliases[explicit]) return platformAliases[explicit];
+      const url = String(item?.content_url ?? "").trim().toLowerCase();
+      if (url) {
+        if (url.includes("bilibili.com") || url.includes("b23.tv")) return "bilibili";
+        if (url.includes("xiaohongshu.com") || url.includes("xhslink.com")) return "xiaohongshu";
+        if (url.includes("douyin.com")) return "douyin";
+        if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
+        if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+        return "web";
+      }
+      if (String(item?.bvid ?? "").trim()) return "bilibili";
+      return explicit || "bilibili";
+    }
+
     function normalizeRecommendation(item) {
+      const contentId = String(item?.content_id ?? item?.bvid ?? "");
       return {
         id: Number(item?.id ?? Date.now()),
-        bvid: String(item?.bvid ?? item?.content_id ?? ""),
+        bvid: String(item?.bvid ?? contentId),
+        content_id: contentId,
         title: decodeHtmlEntities(item?.title ?? "未命名内容"),
         up: decodeHtmlEntities(item?.up_name ?? item?.up ?? "未知创作者"),
         cover_url: normalizeImageUrl(item?.cover_url ?? item?.cover ?? item?.pic ?? item?.thumbnail_url ?? item?.thumbnail ?? item?.image_url),
         content_url: String(item?.content_url ?? ""),
         topic: decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类"),
-        platform: String(item?.source_platform ?? item?.platform ?? "bilibili"),
+        platform: normalizeSourcePlatform(item),
+        content_type: String(item?.content_type ?? "video").trim().toLowerCase() || "video",
+        body_text: decodeHtmlEntities(item?.body_text ?? ""),
         duration: String(item?.duration ?? ""),
         presented: Boolean(item?.presented),
         feedback_type: String(item?.feedback_type ?? item?.feedback ?? ""),
@@ -690,8 +726,9 @@
     function buildInitChecklist(status, selected = null) {
       const prereq = status?.prerequisites || {};
       const enabled = initEnabledPlatforms(status);
+      const selectedSources = Array.isArray(selected) ? selected : null;
       // B 站登录只在勾选了 B 站时才是硬前置。
-      const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
+      const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
       return [
         {
           key: "bilibili",
@@ -716,22 +753,16 @@
         },
         {
           key: "platforms",
-          label: enabled.length
-            ? `已启用来源：${initSourceLabels(enabled).join("、")}`
-            : "数据来源：仅 B 站（可在设置里开启更多平台）",
+          label: selectedSources?.length
+            ? `本次初始化来源：${initSourceLabels(selectedSources).join("、")}`
+            : enabled.length
+              ? `已启用来源：${initSourceLabels(enabled).join("、")}`
+              : "数据来源：仅 B 站（可在设置里开启更多平台）",
           ok: true,
           hard: false,
           hint: ""
         }
       ];
-    }
-
-    function initSelectedSourcesNeedingEnable(selected, status) {
-      const checked = new Set(Array.isArray(selected) ? selected : []);
-      const enabled = new Set(initEnabledPlatforms(status));
-      return INIT_SOURCE_OPTIONS
-        .filter((opt) => checked.has(opt.key) && !enabled.has(opt.key))
-        .map((opt) => opt.key);
     }
 
     function initProgressView(status) {
@@ -751,6 +782,28 @@
         stageLabel: currentStage ? `${currentStage.n}/${total} ${currentStage.label}` : "",
         failedReason: failedStage?.reason || ""
       };
+    }
+
+    function initContentReadyFromRuntime(status = state.runtimeStatus) {
+      const runtime = normalizeRuntimeStatus(status);
+      return Boolean(runtime) && (
+        runtime.pool_available_count > 0 ||
+        runtime.recommendation_count > 0
+      );
+    }
+
+    function initWaitingForFirstPool(status = state.initStatus) {
+      return Boolean(status?.initialized) && !initContentReadyFromRuntime(state.runtimeStatus);
+    }
+
+    async function refreshRuntimeStatusForInitContent() {
+      try {
+        const runtime = await requestJsonStrict(ENDPOINTS.runtimeStatus, { timeoutMs: 60000 });
+        state.runtimeStatus = normalizeRuntimeStatus(runtime);
+      } catch {
+        // Keep the last runtime snapshot; the init poll will retry.
+      }
+      return initContentReadyFromRuntime(state.runtimeStatus);
     }
 
     function selectedInitSourcesFromDom() {
@@ -786,7 +839,7 @@
 
     function initOnboardingPhase(status, progress) {
       if (state.initBusy) return "busy";
-      if (Boolean(status?.initialized)) return "completed";
+      if (Boolean(status?.initialized)) return initContentReadyFromRuntime(state.runtimeStatus) ? "completed" : "running";
       if (Boolean(status?.running)) return "running";
       if (progress.failed) return "failed";
       return "idle";
@@ -823,23 +876,31 @@
       const status = state.initStatus;
       const progress = initProgressView(status);
       const isRunning = Boolean(status?.running);
-      const alreadyInitialized = Boolean(status?.initialized);
-      const showProgress = isRunning || progress.failed;
-      const reason = state.initReason || describeInitReason(status?.reason) || status?.detail || "";
-      const phase = initOnboardingPhase(status, progress);
+      const waitingForFirstPool = initWaitingForFirstPool(status);
+      const displayProgress = waitingForFirstPool
+        ? { ...progress, active: true, failed: false, pct: 95, stageLabel: "4/4 整理首轮内容池" }
+        : progress;
+      const alreadyInitialized = Boolean(status?.initialized) && !waitingForFirstPool;
+      const showProgress = isRunning || displayProgress.failed || waitingForFirstPool;
+      const reason = waitingForFirstPool
+        ? (state.initReason || INIT_FIRST_POOL_WAIT_TEXT)
+        : (state.initReason || describeInitReason(status?.reason) || status?.detail || "");
+      const phase = initOnboardingPhase(status, displayProgress);
       const buttonLabel = state.initBusy
         ? "检查中…"
         : isRunning
           ? "初始化进行中…"
+          : waitingForFirstPool
+            ? "整理首轮内容…"
           : alreadyInitialized
             ? "已初始化"
-            : progress.failed
+            : displayProgress.failed
               ? "重试初始化"
               : "开始初始化";
-      const buttonDisabled = state.initBusy || isRunning || alreadyInitialized;
+      const buttonDisabled = state.initBusy || isRunning || waitingForFirstPool || alreadyInitialized;
       const existing = grid.querySelector(".init-onboarding");
       if (existing?.dataset.initPhase === phase && phase !== "idle" && phase !== "busy") {
-        updateInitOnboardingStatus(existing, status, progress, reason, buttonLabel, buttonDisabled);
+        updateInitOnboardingStatus(existing, status, displayProgress, reason, buttonLabel, buttonDisabled);
         const loadMore = $("#loadMoreBtn");
         if (loadMore) loadMore.hidden = true;
         return;
@@ -854,8 +915,8 @@
           ${isRunning ? "" : initSourcesMarkup()}
           <ul class="init-checklist">${initChecklistMarkup(status, state.initSelectedSources)}</ul>
           <div class="init-progress"${showProgress ? "" : " hidden"}>
-            <div class="init-progress-track"><div class="init-progress-fill" style="width:${progress.pct}%"></div></div>
-            <p>${escapeHtml(progress.failed ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。") : progress.active ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）` : "等待开始")}</p>
+            <div class="init-progress-track"><div class="init-progress-fill" style="width:${displayProgress.pct}%"></div></div>
+            <p>${escapeHtml(displayProgress.failed ? (describeInitReason(status?.reason) || displayProgress.failedReason || "初始化未完成，请稍后重试。") : displayProgress.active ? `${displayProgress.stageLabel || "正在初始化"}（${displayProgress.pct}%）` : "等待开始")}</p>
           </div>
           <p class="init-reason"${reason ? "" : " hidden"}>${escapeHtml(reason)}</p>
           <div class="init-actions">
@@ -906,13 +967,19 @@
       }
       initRefreshInFlight = true;
       clearInitPolling();
-      const wasInitialized = Boolean(state.initStatus?.initialized);
+      const wasInitialized = Boolean(state.initStatus?.initialized) && initContentReadyFromRuntime(state.runtimeStatus);
       try {
         const status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
         state.initStatus = status;
         state.initReason = "";
-        renderAll();
         if (status?.initialized) {
+          if (!(await refreshRuntimeStatusForInitContent())) {
+            state.initReason = INIT_FIRST_POOL_WAIT_TEXT;
+            renderAll();
+            scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
+            return;
+          }
+          renderAll();
           clearInitPolling();
           initRefreshPending = false;
           if (!wasInitialized) {
@@ -921,6 +988,7 @@
           }
           return;
         }
+        renderAll();
         if (status?.running) {
           scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
         } else if (!status?.running) {
@@ -955,6 +1023,18 @@
         renderAll();
         return;
       }
+      if (status.initialized) {
+        state.initBusy = false;
+        if (await refreshRuntimeStatusForInitContent()) {
+          state.initReason = "";
+          scheduleBackendHydration();
+        } else {
+          state.initReason = INIT_FIRST_POOL_WAIT_TEXT;
+          scheduleInitStatusRefresh(INIT_STATUS_POLL_MS);
+        }
+        renderAll();
+        return;
+      }
       if (status.running) {
         state.initBusy = false;
         renderAll();
@@ -964,13 +1044,6 @@
       }
       if (!selected.length) {
         state.initReason = INIT_REASON_TEXT.no_sources_selected;
-        state.initBusy = false;
-        renderAll();
-        return;
-      }
-      const needEnable = initSelectedSourcesNeedingEnable(selected, status);
-      if (needEnable.length > 0) {
-        state.initReason = `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；先打开设置开启对应平台，或取消勾选后再点一次。`;
         state.initBusy = false;
         renderAll();
         return;
@@ -1284,8 +1357,22 @@
       return platformLabel[String(value || "").toLowerCase()] || String(value || "").trim();
     }
 
+    function configuredSourceFilterLabels() {
+      const sources = state.config?.sources;
+      const shares = state.config?.scheduler?.pool_source_shares || {};
+      return sourceFilterDefinitions
+        .filter(({ key }) => {
+          const sourceConfig = sources?.[key];
+          if (sourceConfig && typeof sourceConfig === "object" && !Array.isArray(sourceConfig) && Object.prototype.hasOwnProperty.call(sourceConfig, "enabled")) {
+            return sourceConfig.enabled !== false;
+          }
+          return Number(shares[key] ?? 0) > 0;
+        })
+        .map((source) => source.label);
+    }
+
     function buildFilters() {
-      const sourceSet = new Set();
+      const sourceSet = new Set(configuredSourceFilterLabels());
       for (const item of state.videos) {
         const label = platformName(item.platform);
         if (label) sourceSet.add(label);
@@ -1407,7 +1494,29 @@
     function contentUrl(item) {
       if (item.content_url) return item.content_url;
       if (item.platform === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${encodeURIComponent(item.bvid)}`;
+      if (item.platform === "youtube" && item.content_id) return `https://www.youtube.com/watch?v=${encodeURIComponent(item.content_id)}`;
+      if (item.platform === "twitter" && item.content_id) return `https://x.com/i/status/${encodeURIComponent(item.content_id)}`;
       return "";
+    }
+
+    function recommendationTextCardText(item) {
+      return String(item.body_text || item.title || "先看文字也行").trim();
+    }
+
+    function recommendationIsTextCard(item) {
+      const hasCover = Boolean(imageProxyUrl(item.cover_url));
+      return textCardContentTypes.has(String(item.content_type || "").toLowerCase()) || !hasCover;
+    }
+
+    function recommendationCoverClass(item) {
+      return recommendationIsTextCard(item) ? " is-text-card" : "";
+    }
+
+    function recommendationMediaHtml(item) {
+      if (recommendationIsTextCard(item)) {
+        return `<p class="cover-text">${escapeHtml(recommendationTextCardText(item))}</p>`;
+      }
+      return coverImg(item);
     }
 
     function recommendationMeta(item) {
@@ -1439,8 +1548,8 @@
         card.className = "video-card";
         card.dataset.bvid = item.bvid || item.id;
         card.innerHTML = `
-          <button class="cover" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
-            ${coverImg(item)}
+          <button class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
+            ${recommendationMediaHtml(item)}
             <span class="platform">${escapeHtml(platformName(item.platform))}</span>
           </button>
           <div>
@@ -1523,10 +1632,20 @@
     }
 
     function trackRecommendationClick(item) {
+      const url = contentUrl(item);
       void requestJson(ENDPOINTS.click, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic, up_name: item.up })
+        body: JSON.stringify({
+          bvid: item.bvid,
+          content_id: item.content_id || item.bvid,
+          content_url: url || item.content_url,
+          source_platform: item.platform,
+          title: item.title,
+          recommendation_id: item.id,
+          topic_label: item.topic,
+          up_name: item.up
+        })
       }).catch(() => {});
     }
 
@@ -2017,10 +2136,14 @@
     function insightsHtml(items) {
       const list = asArray(items);
       if (!list.length) return `<p class="video-meta">当前没有需要特别展示的活跃洞察。</p>`;
-      return `<div class="profile-card-list">${list.map((item) => {
+      return `<div class="profile-card-list">${list.map((item, idx) => {
         if (typeof item !== "object") return `<div class="profile-insight"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(item)}</span></div></div>`;
         const evidence = asArray(item.evidence).join("、");
-        return `<div class="profile-insight"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(item.hypothesis || item.observation || valueList(item))}</span><span class="profile-confidence">${formatPercent(item.confidence)}</span></div>${evidence ? `<p class="video-meta">证据：${escapeHtml(evidence)}</p>` : ""}${item.validated ? `<p class="video-meta">已验证</p>` : ""}</div>`;
+        const hypothesis = item.hypothesis || "";
+        const actions = hypothesis
+          ? `<div class="insight-actions"><button class="pill-btn" type="button" data-insight-action="confirm" data-insight-idx="${idx}">准</button><button class="pill-btn" type="button" data-insight-action="reject" data-insight-idx="${idx}">不准</button></div>`
+          : "";
+        return `<div class="profile-insight" data-insight-idx="${idx}"><div class="profile-insight-head"><span class="profile-insight-title">${escapeHtml(hypothesis || item.observation || valueList(item))}</span><span class="profile-confidence">${formatPercent(item.confidence)}</span></div>${evidence ? `<p class="video-meta">证据：${escapeHtml(evidence)}</p>` : ""}${item.validated ? `<p class="video-meta">已验证</p>` : ""}${actions}</div>`;
       }).join("")}</div>`;
     }
 
@@ -2099,7 +2222,36 @@
       const profileEditBar = `<div class="profile-edit-bar"><button class="pill-btn" type="button" data-profile-edit-toggle="enter">✏️ 编辑画像</button></div>`;
       $("#profileDetails").innerHTML = profileEditBar + html;
       bindSpeculativeActions();
+      bindInsightActions();
       bindProfileEditToggle();
+    }
+
+    function bindInsightActions() {
+      document.querySelectorAll("[data-insight-action]").forEach((button) => {
+        button.addEventListener("click", () => respondInsightFeedback(button));
+      });
+    }
+
+    async function respondInsightFeedback(button) {
+      const signal = button.dataset.insightAction;
+      const idx = Number(button.dataset.insightIdx);
+      const insight = state.profile?.active_insights?.[idx];
+      const hypothesis = insight && insight.hypothesis;
+      if (!signal || !hypothesis) return;
+      const row = button.closest(".profile-insight");
+      row?.querySelectorAll("[data-insight-action]").forEach((btn) => { btn.disabled = true; });
+      try {
+        await requestJson(ENDPOINTS.insightFeedback, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hypothesis, signal }),
+        });
+        showToast(signal === "confirm" ? "已确认这条洞察" : "已记下，会少推这类");
+        setTimeout(() => { void refreshProfile(); }, 1200);
+      } catch (error) {
+        row?.querySelectorAll("[data-insight-action]").forEach((btn) => { btn.disabled = false; });
+        showToast("没存上，稍后再试");
+      }
     }
 
     // ── Editable profile (Phase 3, desktop) ──────────────────────
@@ -3134,6 +3286,8 @@
 
     function shouldShowInitOnboarding(status) {
       const runtime = normalizeRuntimeStatus(status);
+      if (initWaitingForFirstPool(state.initStatus)) return true;
+      if (Boolean(state.initStatus?.running)) return true;
       return Boolean(status) && runtime.initialized === false && !hasPostInitRuntimeSignals(runtime);
     }
 
@@ -3472,6 +3626,17 @@
       setInput("speculationMaxPrimary", scheduler.speculation_max_primary_interests);
       setInput("speculationMaxSecondary", scheduler.speculation_max_secondary_interests);
 
+      const discovery = config.discovery || {};
+      setSelect("multimodalEvaluationEnabled", discovery.multimodal_evaluation_enabled ? "on" : "off");
+      setInput("multimodalBatchSize", discovery.multimodal_batch_size);
+      setInput("multimodalImageMaxPx", discovery.multimodal_image_max_px);
+      setInput("multimodalImageQuality", discovery.multimodal_image_quality);
+      setInput("multimodalImageTimeout", discovery.multimodal_image_timeout_seconds);
+      const multimodalStatus = $("#multimodalEvaluationStatus");
+      if (multimodalStatus) {
+        multimodalStatus.textContent = discovery.multimodal_evaluation_enabled ? "开启" : "关闭";
+      }
+
       setSelect("language", config.language || "zh");
       setInput("dataDir", config.data_dir);
       setInput("storageDbPath", config.storage?.db_path);
@@ -3723,6 +3888,9 @@
       if (["init_progress", "init_failed", "init_completed"].includes(event.type)) {
         void refreshInitStatus({ schedule: event.type === "init_progress" });
       }
+      if (event.type === "refresh.pool_updated" && Boolean(state.initStatus?.initialized)) {
+        void refreshInitStatus({ schedule: false });
+      }
       if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||
@@ -3798,7 +3966,7 @@
     }
 
     async function hydrateFromBackend() {
-      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config] = await Promise.all([
+      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config, initStatus] = await Promise.all([
         requestJson(ENDPOINTS.health),
         requestJson(ENDPOINTS.recommendations),
         requestJson(ENDPOINTS.runtimeStatus),
@@ -3808,11 +3976,13 @@
         requestJson(ENDPOINTS.notificationPending),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
-        requestJson(ENDPOINTS.config)
+        requestJson(ENDPOINTS.config),
+        requestJson(ENDPOINTS.initStatus)
       ]);
       if (health) $("#statusLabel").textContent = "已连接本地后端";
+      if (initStatus) state.initStatus = initStatus;
       const recommendationItems = Array.isArray(recs) ? recs : asArray(recs?.items);
-      if (recommendationItems.length) state.videos = normalizeRecommendationList(recommendationItems);
+      state.videos = normalizeRecommendationList(recommendationItems);
       if (activity) {
         state.activity = activity;
         state.activityItems = asArray(activity.items);
@@ -3912,12 +4082,10 @@
         };
       }
       const deepseekReasoning = getInput("deepseekReasoning");
-      if (deepseekReasoning || provider === "deepseek" || fallbackProvider === "deepseek") {
-        llm.deepseek = {
-          ...(llm.deepseek || state.config?.llm?.deepseek || {}),
-          reasoning_effort: deepseekReasoning
-        };
-      }
+      llm.deepseek = {
+        ...(llm.deepseek || state.config?.llm?.deepseek || {}),
+        reasoning_effort: deepseekReasoning
+      };
       return {
         language: getInput("language") || "zh",
         data_dir: getInput("dataDir"),
@@ -4003,6 +4171,14 @@
           speculation_max_secondary_interests: getIntInput("speculationMaxSecondary", 60),
           auto_update_enabled: $("#autoUpdate").value === "on",
           auto_update_check_interval_hours: getIntInput("autoUpdateInterval", 6)
+        },
+        discovery: {
+          ...(state.config?.discovery || {}),
+          multimodal_evaluation_enabled: $("#multimodalEvaluationEnabled").value === "on",
+          multimodal_batch_size: getIntInput("multimodalBatchSize", 8),
+          multimodal_image_max_px: getIntInput("multimodalImageMaxPx", 384),
+          multimodal_image_quality: getIntInput("multimodalImageQuality", 72),
+          multimodal_image_timeout_seconds: getIntInput("multimodalImageTimeout", 6)
         },
         storage: { db_path: getInput("storageDbPath") },
         logging: {

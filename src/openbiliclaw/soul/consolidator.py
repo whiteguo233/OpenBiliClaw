@@ -9,15 +9,16 @@ concept, crowding genuinely distinct interests out of the boundary.
 
 The consolidator runs a staged, mostly-free pipeline:
 
-1. **Rule layer** — identical names with different categories merge in
-   code (no LLM).
+1. **Rule layer** — identical names within the same category merge in
+   code (no LLM); identical names across categories are forced to LLM
+   judgement as homonym-safety clusters.
 2. **Clustering** — embedding cosine similarity (or substring fallback)
    groups suspect duplicates. Only multi-member clusters proceed.
 3. **No-merge memory** — pairs an earlier run already judged "distinct"
    are not re-asked; a cluster with no unjudged pair is skipped, so
    steady-state runs make zero LLM calls.
-4. **LLM judgement** — one batched call returns merge/keep *operations*,
-   never a rewritten list.
+4. **LLM judgement** — batched calls (32 clusters per call) return
+   merge/keep *operations*, never a rewritten list.
 5. **Deterministic apply** — code validates every op (members verbatim,
    full cluster coverage, anti-generalization canonical rules) and
    applies it to the flat preference layer; the Onion interest tree is
@@ -51,20 +52,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Consolidation works the boundary region of the 64-entry prompt caps:
-# top-128 likes by weight (2x the display cap) and the full dislike
-# store (<= 128 by _DISLIKED_TOPICS_STORE_CAP). The goal is not to
-# shrink the store but to make the truncated top-64 hold 64 *distinct*
-# concepts; the tail below the boundary is left to weight decay.
-_LIKES_BOUNDARY = 128
+# Consolidation works well past the 64-entry prompt caps: top-512 likes
+# by weight and the full dislike store (<= 128 by
+# _DISLIKED_TOPICS_STORE_CAP). Real profiles accumulate 1000+ interest
+# tags; a narrow boundary (128 until v0.3.121) left most wording
+# variants untouched, so duplicate weight stayed split across variants
+# and never re-entered the truncated top-64. 512 covers the whole
+# meaningful store; only the deep <0.5-weight tail is left to decay.
+_LIKES_BOUNDARY = 512
 _SIMILARITY_THRESHOLD = 0.85
 _DEFAULT_MIN_INTERVAL_SECONDS = 12 * 3600
 _STATE_FILENAME = "consolidation_state.json"
 _RUNS_DIRNAME = "consolidation_runs"
 _CHANGELOG_FILENAME = "soul_changelog.md"
-# Known-distinct pair memory is FIFO-capped so the state file stays
-# bounded even after months of 12h runs.
-_NO_MERGE_PAIRS_CAP = 4000
+# Known-distinct pair memory is capped so the state file stays bounded
+# even after months of 12h runs. Sized for the 512-likes boundary: a
+# wide first pass can judge hundreds of clusters in one run.
+_NO_MERGE_PAIRS_CAP = 16000
+# Clusters per LLM judgement call. One giant call over a wide boundary
+# risks blowing the output token ceiling mid-JSON (the parse then fails
+# and every cluster gets rejected); batches keep each response small
+# and a single failed batch only loses its own clusters.
+_JUDGE_CLUSTER_BATCH = 32
 # Anti-generalization guard for canonical names. Bare umbrella words
 # would turn a specific avoid-pattern into a broad content ban.
 _BANNED_GENERIC_CANONICALS = frozenset(
@@ -102,6 +111,26 @@ class SupportsEmbed(Protocol):
     async def embed(self, text: str) -> list[float]: ...
 
 
+def rebuild_profile_tree(memory: MemoryManager, preference_data: dict[str, object]) -> None:
+    """Rebuild the Onion interest tree from a flat preference payload."""
+    from openbiliclaw.soul.profile import OnionProfile
+
+    soul_layer = memory.get_layer("soul")
+    if not soul_layer.data:
+        return
+    try:
+        profile = OnionProfile.from_dict(dict(soul_layer.data))
+        profile.populate_from_flat_preference(preference_data)
+        soul_layer.data.clear()
+        soul_layer.data.update(profile.to_dict())
+        soul_layer.save()
+        sync = getattr(memory, "sync_profile_files", None)
+        if callable(sync):
+            sync(profile)
+    except Exception:
+        logger.exception("Failed to rebuild profile tree after consolidation")
+
+
 @dataclass
 class ConsolidationReport:
     """Outcome of one consolidation pass."""
@@ -127,10 +156,47 @@ class _Cluster:
     cluster_id: str
     scope: str  # "likes" | "dislikes"
     members: list[str]
+    member_categories: list[str] | None = None
+
+    @property
+    def member_keys(self) -> list[str]:
+        """No-merge pair keys. Homonym clusters qualify duplicate names by category."""
+        if self.member_categories is None:
+            return list(self.members)
+        return [
+            f"{name}::{category}"
+            for name, category in zip(self.members, self.member_categories, strict=True)
+        ]
 
 
 def _pair_key(a: str, b: str) -> str:
     return "||".join(sorted((a, b)))
+
+
+def _qualified_member_key(name: str, category: str) -> str:
+    return f"{name}::{category}" if category else name
+
+
+def _member_name(ref: object) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("name", "")).strip()
+    return str(ref).strip()
+
+
+def _member_ref_key(ref: object) -> str:
+    if isinstance(ref, dict):
+        return _qualified_member_key(
+            str(ref.get("name", "")).strip(),
+            str(ref.get("category", "")).strip(),
+        )
+    return str(ref).strip()
+
+
+def _interest_member_key(item: dict[str, Any]) -> str:
+    return _qualified_member_key(
+        str(item.get("name", "")).strip(),
+        str(item.get("category", "")).strip(),
+    )
 
 
 def _normalize_name(name: str) -> str:
@@ -230,8 +296,8 @@ class ProfileConsolidator:
             "disliked_topics": list(dislikes_raw),
         }
 
-        # ── Stage 0: rule layer — same name, different category ────────────
-        interests, rule_merges = self._rule_merge_exact_names(interests_raw)
+        # ── Stage 0: rule layer — same name + same category ───────────────
+        interests, rule_merges, homonym_groups = self._rule_merge_exact_names(interests_raw)
         report.rule_merges = rule_merges
 
         # ── Boundary slice ─────────────────────────────────────────────────
@@ -241,11 +307,20 @@ class ProfileConsolidator:
         # ── Stage 1: clustering ────────────────────────────────────────────
         state = self._load_state()
         no_merge: set[str] = set(str(p) for p in state.get("no_merge_pairs", []))
+        forced_clusters = [
+            _Cluster(
+                cluster_id=f"H{idx + 1}",
+                scope="likes",
+                members=[str(item.get("name", "")) for item in group],
+                member_categories=[str(item.get("category", "")) for item in group],
+            )
+            for idx, group in enumerate(homonym_groups)
+        ]
         like_clusters = await self._cluster(like_slice_names, scope="likes")
         dislike_clusters = await self._cluster(dislikes_raw, scope="dislikes")
         clusters = [
             cluster
-            for cluster in (*like_clusters, *dislike_clusters)
+            for cluster in (*forced_clusters, *like_clusters, *dislike_clusters)
             if self._has_unjudged_pair(cluster, no_merge)
         ]
         report.clusters_sent = len(clusters)
@@ -278,19 +353,24 @@ class ProfileConsolidator:
         # ── Stage 3: apply ─────────────────────────────────────────────────
         rename_map: dict[str, str] = {}
         for op in valid_ops:
-            members = _as_str_list(op.get("members"))
+            raw_members = op.get("members")
+            display_members = raw_members if isinstance(raw_members, list) else []
+            members = [_member_name(member) for member in display_members]
+            member_keys = _as_str_list(op.get("_member_keys"))
             canonical = str(op.get("canonical", ""))
             if op["scope"] == "likes":
-                interests = self._apply_like_merge(interests, members, canonical)
+                interests = self._apply_like_merge(
+                    interests, members, canonical, member_keys=member_keys
+                )
             else:
                 dislikes_raw = self._apply_dislike_merge(dislikes_raw, members, canonical)
-            for member in members:
-                if member != canonical:
+            for member in display_members:
+                if isinstance(member, str) and member != canonical:
                     rename_map[member] = canonical
             report.merges.append(
                 {
                     "scope": op["scope"],
-                    "members": members,
+                    "members": display_members,
                     "canonical": canonical,
                     "reason": str(op.get("reason", "")),
                 }
@@ -315,6 +395,13 @@ class ProfileConsolidator:
         # Record judged-distinct pairs so future runs skip them, and
         # advance run bookkeeping even on no-op runs.
         for cluster in judged_clusters:
+            if cluster.member_categories is not None:
+                if not any(op.get("cluster_id") == cluster.cluster_id for op in valid_ops):
+                    keys = cluster.member_keys
+                    for i, a in enumerate(keys):
+                        for b in keys[i + 1 :]:
+                            no_merge.add(_pair_key(a, b))
+                continue
             survivors = self._cluster_survivors(cluster, valid_ops)
             for i, a in enumerate(survivors):
                 for b in survivors[i + 1 :]:
@@ -331,16 +418,17 @@ class ProfileConsolidator:
 
     def _rule_merge_exact_names(
         self, interests: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[str]]:
-        """Merge entries whose normalized names are identical (category differs)."""
-        by_name: dict[str, dict[str, Any]] = {}
-        order: list[str] = []
+    ) -> tuple[list[dict[str, Any]], list[str], list[list[dict[str, Any]]]]:
+        """Merge same normalized name within the same category only."""
+        by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str]] = []
         merges: list[str] = []
         for item in interests:
-            key = _normalize_name(str(item["name"]))
-            existing = by_name.get(key)
+            category = str(item.get("category", "")).strip()
+            key = (_normalize_name(str(item["name"])), category)
+            existing = by_key.get(key)
             if existing is None:
-                by_name[key] = item
+                by_key[key] = item
                 order.append(key)
                 continue
             winner, loser = (
@@ -354,12 +442,15 @@ class ProfileConsolidator:
             )
             merged["first_seen"] = _earliest(winner.get("first_seen"), loser.get("first_seen"))
             merged["last_seen"] = _latest(winner.get("last_seen"), loser.get("last_seen"))
-            by_name[key] = merged
-            merges.append(
-                f"同名合并: {winner.get('name')} "
-                f"({winner.get('category')} ∪ {loser.get('category')})"
-            )
-        return [by_name[key] for key in order], merges
+            by_key[key] = merged
+            merges.append(f"同名同类合并: {winner.get('name')} ({category})")
+
+        result = [by_key[key] for key in order]
+        homonym_by_name: dict[str, list[dict[str, Any]]] = {}
+        for item in result:
+            homonym_by_name.setdefault(_normalize_name(str(item.get("name", ""))), []).append(item)
+        homonym_groups = [group for group in homonym_by_name.values() if len(group) >= 2]
+        return result, merges, homonym_groups
 
     # -- Stage 1: clustering ------------------------------------------------------
 
@@ -420,9 +511,9 @@ class ProfileConsolidator:
 
     @staticmethod
     def _has_unjudged_pair(cluster: _Cluster, no_merge: set[str]) -> bool:
-        members = cluster.members
-        for i, a in enumerate(members):
-            for b in members[i + 1 :]:
+        keys = cluster.member_keys
+        for i, a in enumerate(keys):
+            for b in keys[i + 1 :]:
                 if _pair_key(a, b) not in no_merge:
                     return True
         return False
@@ -430,6 +521,37 @@ class ProfileConsolidator:
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
+        """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.
+
+        A failed batch only drops its own clusters (they re-cluster next
+        run); the call raises only when *every* batch failed, so the
+        caller's error reporting still fires on total LLM outage.
+        """
+        if self._llm_service is None:
+            return {}
+        ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
+        batches = [
+            clusters[i : i + _JUDGE_CLUSTER_BATCH]
+            for i in range(0, len(clusters), _JUDGE_CLUSTER_BATCH)
+        ]
+        last_error: Exception | None = None
+        succeeded = 0
+        for batch in batches:
+            try:
+                ops_by_cluster.update(await self._judge_batch(batch))
+                succeeded += 1
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "profile consolidation judge batch failed (%d clusters): %s",
+                    len(batch),
+                    exc,
+                )
+        if batches and succeeded == 0 and last_error is not None:
+            raise last_error
+        return ops_by_cluster
+
+    async def _judge_batch(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         if self._llm_service is None:
             return {}
         preference_layer = self._memory.get_layer("preference")
@@ -438,12 +560,46 @@ class ProfileConsolidator:
             for item in preference_layer.data.get("interests", [])
             if isinstance(item, dict)
         }
+        weight_by_key: dict[str, float] = {}
+        category_by_name: dict[str, str] = {}
+        best_weight_by_name: dict[str, float] = {}
+        for item in preference_layer.data.get("interests", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", ""))
+            weight = _coerce_float(item.get("weight"))
+            key = _interest_member_key(item)
+            weight_by_key[key] = max(weight_by_key.get(key, 0.0), weight)
+            if name not in best_weight_by_name or weight > best_weight_by_name[name]:
+                best_weight_by_name[name] = weight
+                category_by_name[name] = str(item.get("category", ""))
+
+        ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
         likes_payload: list[dict[str, object]] = [
             {
                 "cluster_id": c.cluster_id,
                 "members": [
-                    {"name": name, "weight": round(weight_by_name.get(name, 0.0), 3)}
-                    for name in c.members
+                    {
+                        "name": name,
+                        "weight": round(
+                            weight_by_key.get(
+                                _qualified_member_key(
+                                    name,
+                                    c.member_categories[idx]
+                                    if c.member_categories is not None
+                                    else category_by_name.get(name, ""),
+                                ),
+                                weight_by_name.get(name, 0.0),
+                            ),
+                            3,
+                        ),
+                        "category": (
+                            c.member_categories[idx]
+                            if c.member_categories is not None
+                            else category_by_name.get(name, "")
+                        ),
+                    }
+                    for idx, name in enumerate(c.members)
                 ],
             }
             for c in clusters
@@ -468,7 +624,6 @@ class ProfileConsolidator:
         parsed = parse_llm_json_tolerant(response.content)
         if not isinstance(parsed, dict):
             raise ValueError("consolidation response is not a JSON object")
-        ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
         for scope_key in ("likes", "dislikes"):
             entries = parsed.get(scope_key)
             if not isinstance(entries, list):
@@ -485,30 +640,74 @@ class ProfileConsolidator:
         """Return a rejection reason, or '' when the cluster's ops are valid."""
         if not ops:
             return "no ops returned"
-        member_set = set(cluster.members)
+        records = [
+            {
+                "name": name,
+                "category": (
+                    cluster.member_categories[idx] if cluster.member_categories is not None else ""
+                ),
+                "key": (
+                    _qualified_member_key(name, cluster.member_categories[idx])
+                    if cluster.member_categories is not None
+                    else name
+                ),
+            }
+            for idx, name in enumerate(cluster.members)
+        ]
+        record_keys = {record["key"] for record in records}
         covered: list[str] = []
+
+        def consume(ref: object) -> tuple[str, str] | None:
+            name = _member_name(ref)
+            if not name:
+                return None
+            if isinstance(ref, dict):
+                key = _member_ref_key(ref)
+                if key in record_keys and key not in covered:
+                    return key, name
+                return None
+            if cluster.member_categories is not None:
+                for record in records:
+                    if record["name"] == name and record["key"] not in covered:
+                        return record["key"], name
+                return None
+            if name in record_keys and name not in covered:
+                return name, name
+            return None
+
         for op in ops:
             kind = str(op.get("op", ""))
             if kind == "keep":
-                name = str(op.get("name", ""))
-                if name not in member_set:
-                    return f"keep references unknown member: {name!r}"
-                covered.append(name)
+                ref = op.get("member", op.get("name", ""))
+                consumed = consume(ref)
+                if consumed is None:
+                    return f"keep references unknown member: {ref!r}"
+                key, _name = consumed
+                covered.append(key)
+                op["_member_keys"] = [key]
             elif kind == "merge":
-                members = [str(m) for m in op.get("members", []) if str(m)]
+                raw_members = op.get("members", [])
+                member_refs = raw_members if isinstance(raw_members, list) else []
+                members: list[str] = []
+                member_keys: list[str] = []
+                for member_ref in member_refs:
+                    consumed = consume(member_ref)
+                    if consumed is None:
+                        return f"merge references unknown member: {member_ref!r}"
+                    key, name = consumed
+                    member_keys.append(key)
+                    members.append(name)
+                    covered.append(key)
                 if len(members) < 2:
                     return "merge with fewer than 2 members"
-                unknown = [m for m in members if m not in member_set]
-                if unknown:
-                    return f"merge references unknown members: {unknown!r}"
                 canonical = str(op.get("canonical", "")).strip()
                 problem = self._validate_canonical(canonical, members, scope=cluster.scope)
                 if problem:
                     return problem
-                covered.extend(members)
+                op["_member_keys"] = member_keys
             else:
                 return f"unknown op kind: {kind!r}"
-        if sorted(covered) != sorted(cluster.members):
+        if sorted(covered) != sorted(record_keys):
             return "ops do not cover each member exactly once"
         return ""
 
@@ -535,27 +734,53 @@ class ProfileConsolidator:
         for op in valid_ops:
             if op.get("cluster_id") != cluster.cluster_id:
                 continue
-            members = _as_str_list(op.get("members"))
+            members = _as_str_list(op.get("_member_keys"))
+            if not members:
+                raw_members = op.get("members", [])
+                member_refs = raw_members if isinstance(raw_members, list) else []
+                members = [_member_name(member) for member in member_refs if member]
             canonical = str(op.get("canonical", ""))
             canonicals.append(canonical)
             merged_away.update(m for m in members if m != canonical)
-        kept = [name for name in cluster.members if name not in merged_away]
+        kept = [key for key in cluster.member_keys if key not in merged_away]
         return list(dict.fromkeys([*kept, *canonicals]))
 
     # -- Stage 3: apply --------------------------------------------------------------
 
     @staticmethod
     def _apply_like_merge(
-        interests: list[dict[str, Any]], members: list[str], canonical: str
+        interests: list[dict[str, Any]],
+        members: list[str],
+        canonical: str,
+        *,
+        member_keys: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        member_set = set(members)
-        # An existing entry already named `canonical` (outside the
-        # cluster) folds into the merge too, whatever its position —
-        # otherwise the rename would create a duplicate name.
-        involved_names = member_set | {canonical}
-        involved = [item for item in interests if str(item.get("name")) in involved_names]
-        if not any(str(item.get("name")) in member_set for item in involved):
+        member_set = set(member_keys or members)
+        has_qualified_keys = any("::" in key for key in member_set)
+
+        def is_member(item: dict[str, Any]) -> bool:
+            name = str(item.get("name", "")).strip()
+            key = _interest_member_key(item)
+            return key in member_set or (not has_qualified_keys and name in member_set)
+
+        member_items = [item for item in interests if is_member(item)]
+        if not member_items:
             return interests
+        base = max(member_items, key=lambda item: _coerce_float(item.get("weight")))
+        canonical_category = str(base.get("category", "")).strip()
+
+        def is_existing_canonical(item: dict[str, Any]) -> bool:
+            if str(item.get("name", "")).strip() != canonical:
+                return False
+            if not has_qualified_keys:
+                return True
+            return str(item.get("category", "")).strip() == canonical_category
+
+        # An existing entry already named `canonical` folds into the merge
+        # too, otherwise a rename would create a duplicate. For homonym
+        # clusters, only fold the canonical in the merged category; the
+        # same surface name in another category is a distinct interest.
+        involved = [item for item in interests if is_member(item) or is_existing_canonical(item)]
         base = max(involved, key=lambda item: _coerce_float(item.get("weight")))
         merged = dict(base)
         merged["name"] = canonical
@@ -566,7 +791,7 @@ class ProfileConsolidator:
         result: list[dict[str, Any]] = []
         inserted = False
         for item in interests:
-            if str(item.get("name")) in involved_names:
+            if is_member(item) or is_existing_canonical(item):
                 if not inserted:
                     result.append(merged)
                     inserted = True
@@ -594,22 +819,7 @@ class ProfileConsolidator:
 
     def _rebuild_profile_tree(self, preference_data: dict[str, object]) -> None:
         """Rebuild the Onion interest tree from the consolidated flat preference."""
-        from openbiliclaw.soul.profile import OnionProfile
-
-        soul_layer = self._memory.get_layer("soul")
-        if not soul_layer.data:
-            return
-        try:
-            profile = OnionProfile.from_dict(dict(soul_layer.data))
-            profile.populate_from_flat_preference(preference_data)
-            soul_layer.data.clear()
-            soul_layer.data.update(profile.to_dict())
-            soul_layer.save()
-            sync = getattr(self._memory, "sync_profile_files", None)
-            if callable(sync):
-                sync(profile)
-        except Exception:
-            logger.exception("Failed to rebuild profile tree after consolidation")
+        rebuild_profile_tree(self._memory, preference_data)
 
     # -- Overrides passthrough + revert ------------------------------------------------
 
@@ -736,14 +946,20 @@ class ProfileConsolidator:
 
         preference_layer = self._memory.get_layer("preference")
         interests = [
-            (str(item.get("name", "")), round(_coerce_float(item.get("weight")), 3))
+            (
+                str(item.get("name", "")),
+                str(item.get("category", "")),
+                round(_coerce_float(item.get("weight")), 3),
+            )
             for item in preference_layer.data.get("interests", [])
             if isinstance(item, dict)
         ]
-        ranked = sorted(interests, key=lambda pair: pair[1], reverse=True)
-        boundary_names = sorted(name for name, _ in ranked[: self._likes_boundary])
+        ranked = sorted(interests, key=lambda item: item[2], reverse=True)
+        boundary_items = sorted(
+            (name, category) for name, category, _ in ranked[: self._likes_boundary]
+        )
         dislikes = sorted(str(item) for item in preference_layer.data.get("disliked_topics", []))
-        payload = json.dumps([boundary_names, dislikes], ensure_ascii=False)
+        payload = json.dumps([boundary_items, dislikes], ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
     def _write_run_record(
@@ -760,6 +976,7 @@ class ProfileConsolidator:
             runs_dir.mkdir(parents=True, exist_ok=True)
             record = {
                 "run_id": report.run_id,
+                "kind": "consolidation",
                 "before": before_snapshot,
                 "rule_merges": report.rule_merges,
                 "merges": report.merges,

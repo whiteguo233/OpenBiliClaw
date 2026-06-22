@@ -22,6 +22,8 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 |---|---|---|
 | Bilibili / Xiaohongshu / Douyin / YouTube / X / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
 
+Dev builds also include a local extension-driven E2E check: the backend can ask the installed extension to open or reuse real Douyin / Xiaohongshu / X pages, reset them to stable platform entry URLs, perform whitelisted DOM actions, and verify that events naturally reach the local `/api/events` pipeline.
+
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg"><b>Install the browser extension</b></a>
   ·
@@ -40,17 +42,17 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 
 Most users only need these four steps. Firefox, Docker, and manual setup paths are preserved later in [Setup Details](#setup-details).
 
-1. **Install the extension** — recommended: download the latest `extension-v*` zip from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) and load it (always newest); or one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates, but the listed version can lag behind Releases due to review delays).
+1. **Install the extension** — recommended: open the latest aggregate `openbiliclaw-v*` page on [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest), download `openbiliclaw-extension-v*.zip`, and load it (always newest; Firefox uses `openbiliclaw-extension-v*-firefox.zip`); or one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates, but the listed version can lag behind Releases due to review delays).
 2. **Deploy the backend (two ways — pick one, both recommended)**:
-   - 🖥️ **Download the desktop installer (easiest)**: grab the macOS `.dmg` / Windows `.exe` from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases), install, and launch — it bundles local embedding and lives in the menu bar / system tray. It's an **unsigned experimental pre-release**, so the first launch needs a system-prompt bypass; see [Setup Details](#setup-details).
+   - 🖥️ **Download the desktop installer (easiest)**: the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) aggregate page keeps the current backend source, extension packages, and available desktop installers together; if the desktop package lags the backend, `Current Channels` names the matching `desktop-v*`. Grab the macOS `.dmg` / Windows `.exe`, install, and launch — it bundles local embedding and lives in the menu bar / system tray. It's an **unsigned experimental pre-release**, so the first launch needs a system-prompt bypass; see [Setup Details](#setup-details).
    - 🤖 **Let an AI coding agent deploy it (pick this to customize / edit the source)**: paste this prompt into Claude Code, Codex CLI, Cursor, Windsurf, or another coding agent.
 
 ```text
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-3. **Log in to content platforms in the same browser**. Bilibili is selected by default for init, but you can deselect it and use enabled [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) sources instead; init needs at least one logged-in source that can return signals.
-4. **Open the desktop or mobile Web UI**. Use `http://127.0.0.1:8420/web` on the same machine, or scan the extension QR code for `http://<your-LAN-IP>:8420/m/` on your phone.
+3. **Log in to content platforms in the same browser**. Bilibili is selected by default for init, but you can deselect it and select [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) instead; init needs at least one logged-in source that can return signals, and selecting a source enables it.
+4. **Open the desktop or mobile Web UI**. Use `http://127.0.0.1:8420/web` on the same machine, or scan the extension QR code for `http://<your-LAN-IP>:8420/m/` on your phone, then save it to your home screen for app-like access.
 
 ## Why OpenBiliClaw?
 
@@ -188,12 +190,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.135 / extension v0.3.89 / desktop v0.3.135: Douyin search discovery recovery (2026-06-21)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Desktop installers now remind you to upgrade** — the backend periodically checks for new `desktop-v*` installer releases and the settings page shows a notice with a direct download link plus a toast, no more watching Releases yourself.
-- **Settings page adds "Check now / Apply now"** — auto-update status can be triggered manually, and progress refreshes live from backend events.
-- **Auto-update is safer** — a frozen bundle never rewrites a co-located git checkout, and degraded mode (broken LLM config) can still check for and pull a fix-carrying release.
-- **Delight queue size is now shared across clients** — the new `delight_queue_limit` config saved from desktop Web also applies to the extension and mobile Web.
+- **Douyin search discovery is back** — search still starts from the homepage search box, clicks the submit button, and verifies the real results route with `search_navigation_ok`.
+- **Search now falls back through the page API bridge** — when passive fetch tap and DOM parsing produce no candidates, the extension uses the logged-in MAIN-world search API bridge.
+- **Douyin E2E passed across all three channels** — `discover-douyin --source search|hot|feed` each returned 3 candidates in the current real environment.
 
 ## Community
 
@@ -221,9 +222,9 @@ The extension is the main interface. It shows the sidebar on Bilibili, Xiaohongs
 
 Built on Manifest V3, the extension works in any Chrome-compatible browser — **Chrome, Edge, Brave, Arc, Vivaldi, Opera**, and more.
 
-**Recommended · download the latest build from Releases** (gets the newest features and fixes — the Chrome Web Store listing usually lags by a few days to a couple of weeks due to review scheduling):
+**Recommended · download the latest build from the Latest Release aggregate page** (gets the newest features and fixes — the Chrome Web Store listing usually lags by a few days to a couple of weeks due to review scheduling):
 
-1. Open [OpenBiliClaw Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) and find the latest `extension-v*`
+1. Open [OpenBiliClaw Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest), the newest user-facing aggregate `openbiliclaw-v*` release
 2. Chrome / Edge / Brave users download `openbiliclaw-extension-v*.zip`; Firefox users download `openbiliclaw-extension-v*-firefox.zip`
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Drag the downloaded `.zip` file into the page to install
@@ -266,10 +267,14 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 #### Option A: Download the desktop installer (experimental, easiest)
 
-Grab the installer for your OS from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases):
+Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-- **macOS**: `.dmg` (separate Apple-silicon `arm64` / Intel `x64` builds) — drag OpenBiliClaw into Applications.
-- **Windows**: `.exe` installer — double-click to install.
+- Current backend source tag: `backend-v*`
+- Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`
+- Current desktop installer release: `desktop-v*`, with available `.dmg` / `.exe` assets; the desktop package can temporarily lag the backend source version, so trust the page's `Current Channels`
+
+- **macOS**: download `OpenBiliClaw-macos-v*-arm64.dmg` (Apple silicon is published automatically; Intel `x64` is attached separately when available) — drag OpenBiliClaw into Applications.
+- **Windows**: download `OpenBiliClaw-windows-*-Setup.exe` — double-click to install.
 
 It bundles local Ollama + `bge-m3` embedding (works out of the box) and lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files.
 
@@ -300,7 +305,7 @@ Chrome Web Store / AMO builds only declare local-backend permissions, so keep th
 
 ### 3. Log in to content platforms in the same browser
 
-By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. If you do not want Bilibili, deselect it during init and use another enabled, logged-in source such as [Xiaohongshu](https://www.xiaohongshu.com), [Douyin](https://www.douyin.com), [YouTube](https://www.youtube.com), or [X](https://x.com). Keep at least one source selected, and it must return behavioral signals.
+By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. If you do not want Bilibili, deselect it during init and select another logged-in source such as [Xiaohongshu](https://www.xiaohongshu.com), [Douyin](https://www.douyin.com), [YouTube](https://www.youtube.com), or [X](https://x.com); selecting it enables that source. Keep at least one source selected, and it must return behavioral signals.
 
 ### 4. Open Desktop or Mobile Web
 
@@ -314,6 +319,8 @@ openbiliclaw start
 - **Mobile**: click the phone icon in the extension header to scan the QR code, or type `http://<your-LAN-IP>:8420/m/` manually. Best for browsing recommendations, profile, and chat on your phone.
 
 > During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable, `127.0.0.1` = local only).
+
+After opening `/m/`, save it as a home-screen shortcut: on iPhone / iPad, use Safari's Share menu and choose "Add to Home Screen"; on Android Chrome / Chromium browsers, use the menu item "Install app" or "Add to Home screen". LAN HTTP may only create a shortcut in some Android browsers; full PWA install prompts are more reliable behind HTTPS in a trusted local setup.
 
 The app has five bottom tabs: Recommendations, Watch Later, Favorites, Profile, and Chat. Recommendations support reshuffle, load more, like, not interested, watch later, favorite, comments, and contextual chat. Watch Later and Favorites manage your saved lists. Profile shows the personality sketch, core traits, interests, and cognition updates. Chat shares the main chat history with the extension.
 
@@ -432,7 +439,7 @@ openbiliclaw setup-embedding
 # Manual content discovery
 openbiliclaw discover
 
-# Optional: Douyin discovery (requires [sources.douyin]; search / hot / feed use background plugin signing)
+# Optional: Douyin discovery (requires [sources.douyin]; search / hot / feed are triggered from the home page via DOM)
 openbiliclaw discover --source douyin
 
 # Optional: standalone Douyin search / hot / feed recall debugging
@@ -533,7 +540,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 🔮 **Challenge Interest Probes** — Uses psychological bridging logic to guess unexplored domains you might love, labels distance as near/lateral/bridge/wildcard, keeps 5 regular near slots plus 3 separate challenge slots, buffers weak positives, and guards against short-term over-amplification
 - 🧭 **Avoidance Probe System** — Proactively confirms content forms, low-quality expressions, and style boundaries you may want to avoid; confirmed answers write `disliked_topics`, unconfirmed probes stay out of ranking
 - 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin, YouTube init signals, Douyin search / hot / feed discovery, X (Twitter) server-side cookie-replay discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
-- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
+- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore, with extension-rendered search-page fallback when API search degrades or cools down) + Xiaohongshu safe discovery + Douyin DOM-first search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
 - 🎯 **Smart Diversity** — PoolCurator five-dimension scoring + cross-source/round topic quota (any topic ≤10% of pool) + share-aware pool trimming that protects smaller sources; goodbye to "all AI all day"
 - ⚡ **Instant "Reshuffle"** — popup reshuffle ~0.6s (down from 2.6s in v0.3.0); rapid clicks stay snappy
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
@@ -550,8 +557,8 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
-│      (Cookies · XHS/DY/YT tasks · optional init bridge · autostart setting) │
+│      (Unified Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
+│      (Cookies · Bili/XHS/DY/YT tasks · optional init bridge · autostart setting) │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
                          │ + Mobile/Desktop Web (/m · /web) · optional [api.auth] password gate (local free / LAN needs password)
@@ -570,12 +577,13 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │         recommendations · chat_turns · avoidance_state  │
 │ Profile overrides: edits -> profile_overrides.json overlay │
 │         (merged at read · rebuild-proof · 3 frontends)   │
+│ Profile taxonomy: fixed interest categories · migration · homonym-safe cleanup │
 └─────────────────────────────────────────────────────┘
 ```
 
 ### Content Discovery Engine
 
-Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / plugin-signed search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
+Four Bilibili strategies work in coordination, each with independent API quota; while backend Bilibili search is degraded or cooling down, the runtime can enqueue extension search fallback tasks, have the extension open a real rendered Bilibili search page in the logged-in browser, and accept the visible DOM results. The source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / DOM-first search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
 
 | Strategy | Description | Quota |
 |----------|-------------|-------|
@@ -584,9 +592,9 @@ Four Bilibili strategies work in coordination, each with independent API quota, 
 | **Related Chain** | Expands from seed videos along recommendation chains | Fair share |
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
-**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. For steady-state refill, Douyin signs requests from a background tab in your logged-in browser without stealing focus, and YouTube is refilled backend-side by platform deficit.
+**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); if Bilibili search degrades or is blocked and cooling down, the backend task bridge can enqueue a search task, then the extension opens the real logged-in search page in a background tab and returns visible rendered DOM results as fallback candidates. Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. Ordinary browser behavior events enter the continuous-learning path only after the profile is initialized; first-run profile signals are fetched only after you click "Start initialization" and only from the selected sources. For steady-state refill, Douyin search / hot / feed background tabs first open the Douyin home page and perform real DOM interactions to trigger search, hot, or feed loading; search/feed passively collect page responses and rendered DOM, while hot can use a hot-board seed through the logged-in page's related API bridge when the page path returns no candidates. YouTube is refilled backend-side by platform deficit.
 
-**Unified evaluation** — every source first writes raw candidates to `discovery_candidates`. The backend then claims mixed-source batches and scores them with the Soul profile plus recent negative examples. The "will this user like it?" judgment lives in this shared evaluator, not inside each platform producer.
+**Unified evaluation** — every source first writes raw candidates to `discovery_candidates`. The backend then claims mixed-source batches and scores them with the Soul profile, text / tags, engagement metrics, and recent negative examples. When optional cover-image evaluation is enabled and the evaluation model supports image input, covers are read from the runtime image cache first, fetched through the whitelist boundary only on cache miss, compressed, and sent to the same shared evaluator; the "will this user like it?" judgment does not live inside each platform producer.
 
 **Diversity selection** — accepted results then pass through platform-quota reservation → topic dedup → style balancing → **cross-platform interleaving** → count caps, so recommendations never become "all AI all day". Saved platform shares default to Bilibili / Xiaohongshu / Douyin / YouTube / X = 5 / 1 / 1 / 1 / 1, configurable via `[scheduler.pool_source_shares]`; out of the box only Bilibili is enabled and the others must be turned on explicitly.
 
@@ -633,7 +641,7 @@ OpenBiliClaw/
 | LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url; OpenAI can experimentally reuse Codex CLI OAuth |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; scrolling init imports open `/explore` in the foreground, click the page's profile entry, then use bounded scrolling and partial batches; no backend crawling |
-| Douyin | Extension DOM + MAIN-world fetch/API harvester + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery use background tabs and the logged-in plugin signer; no backend crawling |
+| Douyin | Extension DOM + MAIN-world passive fetch tap + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery starts from the Douyin home page and uses DOM interactions to trigger loading; search/feed passively collect page responses / rendered results, and hot can use a hot-board `group_id` seed as a logged-in related fallback; no backend login crawling |
 | YouTube | Extension DOM task dispatch reads watch history / subscriptions / likes; Google Takeout can import older data offline |
 | X (Twitter) | Server-side cookie replay via lazy-imported `twitter-cli` (optional `openbiliclaw[x]`, read-only); the extension captures your engagement and syncs the x.com cookie; tweets render as text cards |
 | Storage | SQLite + Embedding vector index |
@@ -653,7 +661,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.135 / extension v0.3.89 / desktop v0.3.135: Douyin search discovery recovery (2026-06-21)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

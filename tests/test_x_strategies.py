@@ -105,6 +105,26 @@ async def test_search_strategy_calls_client_search_and_normalizes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_keyword_prompt_uses_unified_profile_summary() -> None:
+    # Keyword generation now feeds the same build_profile_summary dict as
+    # B站 / YouTube query-gen — not the old top-15 name|category|weight tuples.
+    client = _FakeXClient(search_result=[_tweet("1790000000000000009")])
+    llm = _FakeLLMService('{"keywords": ["rust async runtime"]}')
+    strategy = XSearchStrategy(client=client, llm_service=llm)
+
+    await strategy.discover(_profile(), limit=5)
+
+    assert llm.calls and llm.calls[0]["caller"] == "discovery.x.keyword_gen"
+    user_input = str(llm.calls[0]["user_input"])
+    assert "<profile_summary>" in user_input
+    # interest_domains / disliked_topics are structured fields the old tuple
+    # prompt never carried — their presence proves the unified dict is in use.
+    assert "interest_domains" in user_input
+    assert "disliked_topics" in user_input
+    assert "name | category | weight" not in user_input
+
+
+@pytest.mark.asyncio
 async def test_search_strategy_explicit_query_skips_llm() -> None:
     client = _FakeXClient(search_result=[_tweet("1790000000000000002")])
     llm = _FakeLLMService('{"keywords": ["should not be used"]}')
@@ -128,6 +148,34 @@ async def test_search_strategy_drops_tombstones() -> None:
     items = await strategy.discover(_profile(), limit=5)
 
     assert len(items) == 1  # the empty-id tombstone normalized to None and was dropped
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_falls_back_to_interest_names_without_llm() -> None:
+    # P1.3: no LLM → deterministic interest-name keywords (not empty), so the
+    # unified planner / legacy path never loses X to a missing LLM.
+    client = _FakeXClient(search_result=[_tweet("1790000000000000020")])
+    strategy = XSearchStrategy(client=client, llm_service=None)
+
+    items = await strategy.discover(_profile(), limit=5)
+
+    assert client.calls[0][1][0] == "rust async"  # the profile's interest name
+    assert items
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_falls_back_on_llm_failure() -> None:
+    class _BoomLLM(_FakeLLMService):
+        async def complete_structured_task(self, **kwargs: object) -> object:
+            raise RuntimeError("llm down")
+
+    client = _FakeXClient(search_result=[_tweet("1790000000000000021")])
+    strategy = XSearchStrategy(client=client, llm_service=_BoomLLM(payload=""))
+
+    items = await strategy.discover(_profile(), limit=5)
+
+    assert client.calls[0][1][0] == "rust async"
+    assert items
 
 
 # ── XForYouStrategy ──────────────────────────────────────────────────
@@ -172,3 +220,72 @@ async def test_creator_strategy_without_handle_is_noop() -> None:
 
     assert client.calls == []  # no handle → nothing to fetch
     assert items == []
+
+
+# ── P1.5 strategy keyword injection ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_x_search_injected_keywords_skip_llm_generation() -> None:
+    client = _FakeXClient(search_result=[_tweet("1790000000000000030")])
+    llm = _FakeLLMService('{"keywords": ["should not be used"]}')
+    strategy = XSearchStrategy(client=client, llm_service=llm)
+
+    items = await strategy.discover(
+        _profile(),
+        limit=5,
+        queries=["rust async runtime", "ml papers"],
+    )
+
+    assert [c[0] for c in client.calls] == ["search", "search"]
+    assert [c[1][0] for c in client.calls] == ["rust async runtime", "ml papers"]
+    assert llm.calls == []  # injected keywords skip keyword generation
+    assert items
+    assert strategy.last_intermediates == {"keywords": ["rust async runtime", "ml papers"]}
+
+
+@pytest.mark.asyncio
+async def test_x_search_explicit_query_wins_over_injected_keywords() -> None:
+    client = _FakeXClient(search_result=[_tweet("1790000000000000031")])
+    llm = _FakeLLMService('{"keywords": ["nope"]}')
+    strategy = XSearchStrategy(client=client, llm_service=llm)
+
+    await strategy.discover(
+        _profile(),
+        limit=5,
+        query="explicit query",
+        queries=["ignored kw"],
+    )
+
+    # The single explicit query short-circuit still wins.
+    assert [c[1][0] for c in client.calls] == ["explicit query"]
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_x_search_injected_keywords_are_deduped() -> None:
+    client = _FakeXClient(search_result=[])
+    llm = _FakeLLMService('{"keywords": ["x"]}')
+    strategy = XSearchStrategy(client=client, llm_service=llm)
+
+    await strategy.discover(
+        _profile(),
+        limit=5,
+        queries=["  rust  ", "rust", "", "go"],
+    )
+
+    assert [c[1][0] for c in client.calls] == ["rust", "go"]
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_x_search_without_injection_still_generates() -> None:
+    # Flag-off / no-injection regression: query="" and queries=None → LLM gen.
+    client = _FakeXClient(search_result=[_tweet("1790000000000000032")])
+    llm = _FakeLLMService('{"keywords": ["rust async runtime"]}')
+    strategy = XSearchStrategy(client=client, llm_service=llm)
+
+    await strategy.discover(_profile(), limit=5)
+
+    assert llm.calls and llm.calls[0]["caller"] == "discovery.x.keyword_gen"
+    assert client.calls[0][1][0] == "rust async runtime"

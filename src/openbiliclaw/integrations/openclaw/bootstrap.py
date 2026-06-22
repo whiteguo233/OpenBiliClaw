@@ -19,6 +19,7 @@ from openbiliclaw.discovery.strategies.strategies import (
 )
 from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+from openbiliclaw.llm.usage_recorder import UsageRecorder
 from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.recommendation.engine import RecommendationEngine
 from openbiliclaw.runtime.account_sync import AccountSyncService
@@ -63,9 +64,12 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     llm_cfg = getattr(config, "llm", None)
     llm_concurrency = int(getattr(llm_cfg, "concurrency", 3))
 
+    usage_recorder = UsageRecorder(sink=database)
+
     soul_engine = SoulEngine(
         llm=llm_registry,
         memory=memory_manager,
+        usage_recorder=usage_recorder,
         module_overrides=module_overrides,
         llm_concurrency=llm_concurrency,
         speculation_interval_minutes=config.scheduler.speculation_interval_minutes,
@@ -101,6 +105,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     llm_service = LLMService(
         registry=llm_registry,
         memory=memory_manager,
+        usage_recorder=usage_recorder,
         module_overrides=module_overrides,
         concurrency=llm_concurrency,
     )

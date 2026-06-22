@@ -64,6 +64,37 @@ class TestDiscoveredContentMultisourceFields:
         assert item.author_name == "小红书用户"
         assert item.title == "机械键盘开箱"
 
+    def test_social_metrics_are_cache_visible(self) -> None:
+        item = DiscoveredContent(
+            bvid="BV1metrics",
+            view_count=1000,
+            like_count=100,
+            favorite_count=90,
+            collect_count=80,
+            comment_count=70,
+            share_count=60,
+            danmaku_count=50,
+            reply_count=40,
+            retweet_count=30,
+            bookmark_count=20,
+        )
+
+        cache_kwargs = item.to_cache_kwargs()
+        expected = {
+            "view_count": 1000,
+            "like_count": 100,
+            "favorite_count": 90,
+            "collect_count": 80,
+            "comment_count": 70,
+            "share_count": 60,
+            "danmaku_count": 50,
+            "reply_count": 40,
+            "retweet_count": 30,
+            "bookmark_count": 20,
+        }
+        for key, value in expected.items():
+            assert cache_kwargs[key] == value
+
 
 class TestPlatformPromptLabels:
     """Verify prompt label helpers produce correct platform-specific text."""

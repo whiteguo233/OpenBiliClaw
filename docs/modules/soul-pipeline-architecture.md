@@ -176,7 +176,7 @@ profile = await builder.build(
 - `to_dict()` -> JSON可序列化的字典
 - `from_dict()` -> 从JSON反构造
 - `from_legacy()` -> 从遗留SoulProfile升级
-- `to_llm_context()` -> 格式化为LLM输入文本
+- `to_llm_context(*, include_portrait=True)` -> 格式化为LLM输入文本；兴趣 / 规避探测器传 `include_portrait=False` 略过 `personality_portrait` 那段叙事（eval / persona 渲染保留默认，画像总结是 persona 真值）
 - `populate_from_flat_preference()` -> 从偏好层填充Interest和Surface
 
 ---

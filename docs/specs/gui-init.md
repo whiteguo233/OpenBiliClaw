@@ -10,7 +10,7 @@
 让没有终端的用户(双击装了 `.dmg`/`.exe`,或只用浏览器插件)能**在界面上一键完成首次初始化**:
 
 - 未初始化时,UI 显示一个明确的「开始初始化」入口,而不是「先跑 `openbiliclaw init`」这种命令行指引。
-- 点初始化前,**清楚列出前置条件并实时显示是否满足**:① B站 已登录 ② LLM provider 已配好 ③(可选)想接入的平台已在配置里开启。前置没满足时按钮置灰,并给出去哪儿补的指引。
+- 点初始化前,**清楚列出前置条件并实时显示是否满足**:① 所选平台已登录 ② LLM provider 已配好 ③ 至少勾选一个来源。来源勾选即作为本轮 opt-in,不要求先去设置页开启；前置没满足时按钮置灰,并给出去哪儿补的指引。
 - 初始化是个 2–5 分钟的四阶段重操作,UI 要**显示分阶段进度**,完成后自动进入主界面。
 - 复用既有 `openbiliclaw init` 的核心流水线,**不复制**灵魂引擎/发现池逻辑。
 
@@ -105,7 +105,7 @@ async def run_guided_init(
 | B站 已登录 | **硬** | **真实校验 + TTL 缓存**:有 cookie 时调 `AuthManager.validate_cookie`(`bilibili/auth.py:95`)确认有效,**结果缓存**(成功 60s / 失败 10s / `checking` 态)——`validate_cookie` 走 ~30s 超时且可能被限频,**绝不每次 poll 都打 B站** | 装浏览器扩展自动同步 / 去设置贴 cookie |
 | LLM 已配好 | **硬** | **chat 可用性探测 + 缓存**:registry 能构建只是必要非充分(qwen2.5 那种 call 时才 404,刚踩过)。照 `embedding_ready` 的 live-cached probe 模式做一个带超时 + single-flight 的 chat 探测;字段名用 `llm_ready`(真探测)而非「registry 构建成功」 | 去 `/setup` 或设置页选 provider + 填 key |
 | Embedding 就绪 | 软 | 既有 `embedding_ready` 缓存探测 | 打包版默认随包 ollama,一般已就绪 |
-| 想接入的平台已开启 | 软 | `config.sources.*.enabled` | 前置面板内联开关顺手开(init 启动前) |
+| 想接入的平台已选择 | 软 | `POST /api/init` 的 `sources` | 勾选即作为本轮显式 opt-in，并 best-effort 写回 `config.sources.*.enabled=true` |
 
 硬前置都满足且未在跑且本机 → `can_start=true`,按钮可点;否则置灰 + 按 reason 文案解释。
 
@@ -115,12 +115,12 @@ async def run_guided_init(
 
 - **Phase 1 — 浏览器插件(优先)**:
   - 「推荐」tab 未初始化空状态(`popup.js` ~4593 `showRecommendationEmptyState` kind `"uninitialized"`):换成「开始初始化」按钮 + 前置清单面板(B站 ✓/✗、LLM ✓/✗、平台开关)。
-  - 前置面板**内联平台开关**(xhs/dy/yt):直接 `PUT /api/config` 顺手开,不跳设置页。
+  - 前置面板**来源勾选**(xhs/dy/yt/x):直接随 `POST /api/init` 作为本轮 opt-in 生效,并 best-effort 写回 source enabled,不跳设置页。
   - B站 登录:插件本就在 bilibili.com 自动同步 cookie,该前置一般天然满足;未满足时提示「先在 bilibili.com 登录」。
   - 按钮调 `GET /api/init-status` 渲染、`POST /api/init` 触发、订阅既有 `/api/runtime-stream` 显示阶段进度;完成后空状态消失、自动加载推荐。
   - 「画像」「编辑」空状态(`popup.js` ~2812/3229):文案由「先跑 openbiliclaw init」改为「还没初始化,去『推荐』页开始」,**不放按钮**。
   - 设置页新增「重新初始化 / 重建画像」入口(带二次确认,调 `POST /api/init {force:true}`)。
-- **Phase 2 — 网页(已落地 v0.3.111)**:`/setup` 向导加第 ④ 步「初始化」(前置清单 + 按钮 + 进度 → 跳 `/web`);`/web` 推荐区未初始化空状态同插件做法:仅在 `initialized=false` 且没有推荐数 / 候选池可用数 / 待整理数 / 最近发现或补货数这些初始化后信号时展示 CTA,避免状态标记短暂滞后时误回初始化页。纯网页用户(没装插件)若要连 B站,再考虑网页内扫码(QR API,本期不做)。
+- **Phase 2 — 网页(已落地 v0.3.111)**:`/setup` 向导加第 ④ 步「初始化」(前置清单 + 按钮 + 进度 → 跳 `/web`)。`/setup` 第一页保存 LLM/provider/model 只热重载配置并暂停后台 LLM work,不触发画像、兴趣探针或补池；真正初始化只在来源页点击「开始初始化」后由 `POST /api/init` 进入四阶段流水线。`/web` 推荐区未初始化空状态同插件做法:仅在 `initialized=false` 且没有推荐数 / 候选池可用数 / 待整理数 / 最近发现或补货数这些初始化后信号时展示 CTA,避免状态标记短暂滞后时误回初始化页。纯网页用户(没装插件)若要连 B站,再考虑网页内扫码(QR API,本期不做)。
 
 ### 5. 并发与活后端安全 / InitCoordinator（Codex R1+R2 补强 — 核心)
 
@@ -227,7 +227,7 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
 - 两端点都进 `_is_public` + degraded 白名单(否则核心未起来时被 401/503,用户没法初始化)。
 - `run_guided_init` 抽取**不得回归** `openbiliclaw init` 的现有行为/退出码/文案;CLI 既有测试纳入更新范围。
 - 复用既有 `init_completed` 事件类型,不另造完成信号(Web/插件已监听);但 GUI init **自己 publish**,不调带 manual-refresh 副作用的 `/api/init-completed` 端点。
-- **init 运行中锁写(分流,见 §5c)**:`init_active` 时——**HTTP 写端**(`PUT /api/config`、source 开关、`POST /api/profile/edit`、手动 refresh、cookie 异值)返回 `409 init_running`;**后台循环**(连续 refresh / account-sync / soul pipeline tick / 事件摄入)**跳过本 tick + log**(它们不是 HTTP handler,**不能**返回 409)。例外:init 自己的 bootstrap task-result 按 `task_id ∈ 本 run enqueue 集合` 放行(非 run_id)、同值 cookie no-op。⇒ 平台开关必须 init 前设好。
+- **init 运行中锁写(分流,见 §5c)**:`init_active` 时——**HTTP 写端**(`PUT /api/config`、source 开关、`POST /api/profile/edit`、手动 refresh、cookie 异值)返回 `409 init_running`;**后台循环**(连续 refresh / account-sync / soul pipeline tick / 事件摄入)**跳过本 tick + log**(它们不是 HTTP handler,**不能**返回 409)。例外:init 自己的 bootstrap task-result 按 `task_id ∈ 本 run enqueue 集合` 放行(非 run_id)、同值 cookie no-op，以及 `POST /api/init` 在占用 run 前对本轮勾选来源做 best-effort enable 写回。
 - **Stage 4 经 `_refresh_lock`**:绝不直接 `discovery_engine.discover`;init 期间让位连续 refresh,二者不并发写 `content_cache`。
 - **Docker/不可写**:复用 `docker_runtime.is_running_in_container()` 判 Docker,另查 data/config 可写性,不支持 `unsupported_runtime`。
 - **外部探测带 TTL 缓存**:chat 可用性 + B站 `validate_cookie` 都缓存(B站 成功 60s/失败 10s),`GET /api/init-status` 不在每次 poll 同步打外部服务。
@@ -264,7 +264,7 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
 ## Resolved Decisions（2026-06-06,用户已拍板)
 
 1. **重新初始化 + 入口收敛**:默认拦截 `409 already_initialized`,需 `force:true` 才重建;**重建入口只在设置页**(带二次确认)。未初始化的「开始初始化」CTA **只出现在「推荐」tab**;画像/编辑等其它空状态只被动提示「去推荐页开始」,**不重复按钮**。
-2. **平台开关**:**做进 init 前置面板**——xhs/dy/yt 内联开关,直接 `PUT /api/config` 顺手开,不跳设置页。
+2. **平台开关**:**做进 init 前置面板**——xhs/dy/yt/x 来源勾选随 `POST /api/init` 作为 opt-in 生效,后端 best-effort 写回配置,不跳设置页。
 3. **B站 登录判定**:**真实校验**——有 cookie 时调 `AuthManager.validate_cookie`(`bilibili/auth.py:95`)问一次 B站确认有效,不只看非空。
 4. **优先级**:**插件优先(Phase 1)**;网页 `/setup` + `/web` 放 Phase 2。
 5. **B站 连接方式**:插件优先 ⇒ 由插件既有「在 bilibili.com 自动同步 cookie」机制满足,**本期不做网页内扫码登录(QR API)**,留待将来纯网页路径。

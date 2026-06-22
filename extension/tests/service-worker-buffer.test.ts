@@ -23,6 +23,10 @@ test("shouldFlushImmediately only promotes strong-signal events", () => {
   assert.equal(shouldFlushImmediately(makeEvent("comment")), true);
   assert.equal(shouldFlushImmediately(makeEvent("coin")), true);
   assert.equal(shouldFlushImmediately(makeEvent("favorite")), true);
+  assert.equal(shouldFlushImmediately(makeEvent("follow")), true);
+  assert.equal(shouldFlushImmediately(makeEvent("share")), true);
+  assert.equal(shouldFlushImmediately(makeEvent("view")), true);
+  assert.equal(shouldFlushImmediately(makeEvent("click")), false);
   assert.equal(shouldFlushImmediately(makeEvent("search")), false);
   assert.equal(shouldFlushImmediately(makeEvent("scroll")), false);
 });
@@ -42,4 +46,5 @@ test("enqueueBufferedEvent forwards dwell metadata verbatim", () => {
   assert.equal(buffer[0].metadata.watch_seconds, 18);
   assert.equal(buffer[0].metadata.video_duration_seconds, 60);
   assert.equal(buffer[0].metadata.dwell_source, "video_page_exit");
+  assert.equal(shouldFlushImmediately(dwellEvent), true);
 });

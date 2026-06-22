@@ -166,8 +166,8 @@ _INIT_DISCOVERY_PLAN = [
 # ``scheduler.pool_target_count`` (300 by default) over the following hour, so a
 # tiny init pool only delays diversity, never reduces it.
 _INIT_POOL_TARGET_COUNT = 15
-_INIT_BILIBILI_HISTORY_LIMIT = 300
-_INIT_BILIBILI_FAVORITE_LIMIT = 300
+_INIT_BILIBILI_HISTORY_LIMIT = 500
+_INIT_BILIBILI_FAVORITE_LIMIT = 500
 _INIT_BILIBILI_FOLLOW_LIMIT = 100
 # X (Twitter): the user's own Likes + Bookmarks, fetched server-side via
 # twitter-cli (no extension task). Both are strong explicit-preference signals.
@@ -484,6 +484,7 @@ def _build_soul_engine() -> Any:
     return SoulEngine(
         llm=llm,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
@@ -505,9 +506,7 @@ def _build_soul_engine() -> Any:
         avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
         profile_consolidation_enabled=cfg.scheduler.profile_consolidation_enabled,
-        profile_consolidation_interval_hours=(
-            cfg.scheduler.profile_consolidation_interval_hours
-        ),
+        profile_consolidation_interval_hours=(cfg.scheduler.profile_consolidation_interval_hours),
     )
 
 
@@ -527,6 +526,7 @@ def _build_recommendation_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -620,6 +620,7 @@ def _build_discovery_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -634,12 +635,22 @@ def _build_discovery_engine() -> Any:
     from openbiliclaw.llm.registry import build_embedding_service
 
     embedding_service = build_embedding_service(cfg, registry)
+    discovery_cfg = getattr(cfg, "discovery", None)
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
         concurrency=concurrency,
         embedding_service=embedding_service,
+        multimodal_evaluation_enabled=bool(
+            getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
+        ),
+        multimodal_batch_size=int(getattr(discovery_cfg, "multimodal_batch_size", 8)),
+        multimodal_image_max_px=int(getattr(discovery_cfg, "multimodal_image_max_px", 384)),
+        multimodal_image_quality=int(getattr(discovery_cfg, "multimodal_image_quality", 72)),
+        multimodal_image_timeout_seconds=int(
+            getattr(discovery_cfg, "multimodal_image_timeout_seconds", 6)
+        ),
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,
@@ -691,6 +702,24 @@ def _get_runtime_database() -> Any:
     database.initialize()
     _RUNTIME_COMPONENTS["database"] = database
     return database
+
+
+def _build_usage_recorder() -> Any:
+    """Build or return the shared LLM usage recorder (cost ledger sink).
+
+    CLI commands construct their own ``LLMService`` / ``SoulEngine``
+    instead of going through ``runtime_context``, so without this every
+    CLI-run LLM call was invisible in ``openbiliclaw cost``.
+    """
+    cached = _RUNTIME_COMPONENTS.get("usage_recorder")
+    if cached is not None:
+        return cached
+
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    recorder = UsageRecorder(sink=_get_runtime_database())
+    _RUNTIME_COMPONENTS["usage_recorder"] = recorder
+    return recorder
 
 
 def _runtime_database_path() -> Path:
@@ -2093,6 +2122,8 @@ async def _run_init_discovery_backfill_async(
     label_suffix: str = "",
 ) -> int:
     """Backfill the initial discovery pool in stages until the target is reached."""
+    from openbiliclaw.discovery.pool_snapshot import build_cold_start_pool_snapshot
+
     database = _get_runtime_database()
     discovery_engine = _build_discovery_engine()
     discovered_count = 0
@@ -2102,6 +2133,15 @@ async def _run_init_discovery_backfill_async(
         if current_pool_count >= target_pool_count:
             break
         request_limit = max(20, target_pool_count - current_pool_count)
+        pool_snapshot = (
+            build_cold_start_pool_snapshot(
+                profile,
+                pool_target_count=target_pool_count,
+                source_targets={"bilibili": target_pool_count},
+            )
+            if current_pool_count <= 0
+            else None
+        )
         console.print(
             f"补货阶段 {index}/{len(_INIT_DISCOVERY_PLAN)}: {_format_strategy_group(strategies)}"
             f"{label_suffix}"
@@ -2117,6 +2157,7 @@ async def _run_init_discovery_backfill_async(
                 # Init is latency-critical — skip the default search-first
                 # phase split and let every strategy share the gather.
                 fully_parallel=True,
+                pool_snapshot=pool_snapshot,
             ),
             label=f"发现内容({_format_strategy_group(strategies)} 并发){label_suffix}",
             eta_seconds=300,
@@ -4349,6 +4390,7 @@ async def _fetch_bilibili_init_data(
             await client.get_all_favorites(
                 max_folders=200,
                 max_items_per_folder=max(1, favorite_limit),
+                max_total_items=favorite_limit,
             )
             if favorite_limit > 0
             else []
@@ -5474,17 +5516,30 @@ def profile_consolidate(
         "--revert",
         help="按 run_id 回滚一次已应用的整理（备份在 data/memory/consolidation_runs/）。",
     ),
+    migrate_categories: bool = typer.Option(
+        False,
+        "--migrate-categories",
+        help="一次性把存量一级分类迁移到固定词表（默认 dry-run，配 --apply 写入）。",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="把 likes 整理边界从默认 top-512 开到全量标签库（嫌疑簇 32/批送审）。",
+    ),
 ) -> None:
     """用 LLM 整理合并画像里重复的喜欢 / 讨厌主题。
 
     兴趣标签和避雷主题会不断积累措辞变体（「智能体开发」vs
-    「智能体开发与实现」），把进入 prompt 的 top-64 名额挤占掉。
+    「智能体开发与实现」），把进入 prompt 的兴趣名额挤占掉。
     本命令按「规则合并 → embedding 聚类 → LLM 裁决 → 校验执行」
-    的流水线做同义合并，卡 64 边界整理（likes 只看权重 top-128）。
+    的流水线做同义合并（likes 看权重 top-512 + 全量避雷主题，
+    LLM 裁决每批 32 簇分批执行）。
 
     \b
       - 默认 dry-run，先看建议再决定
       - --apply 写入,自动备份到 data/memory/consolidation_runs/
+      - --migrate-categories 一次性分类词表迁移（同样 dry-run/--apply/--revert）
+      - --full 一次性全量清理 likes 长尾标签（与 --migrate-categories 互斥）
       - 审计记录追加到 data/memory/soul_changelog.md
     """
     import asyncio as _asyncio
@@ -5505,6 +5560,7 @@ def profile_consolidate(
         llm_service = LLMService(
             registry=registry,
             memory=memory,
+            usage_recorder=_build_usage_recorder(),
             module_overrides=module_overrides_from_config(cfg),
             concurrency=cfg.llm.concurrency,
         )
@@ -5519,11 +5575,28 @@ def profile_consolidate(
     if embedding_service is None:
         console.print("[dim]  embedding 服务不可用，退回子串聚类。[/dim]")
 
-    consolidator = ProfileConsolidator(
-        memory=memory,
-        llm_service=llm_service,
-        embedding_service=embedding_service,
-    )
+    if full and migrate_categories:
+        console.print("[bold red]  --full 与 --migrate-categories 不能同时使用。[/bold red]")
+        console.print("[dim]  推荐顺序：先 --migrate-categories --apply，再 --full --apply。[/dim]")
+        raise typer.Exit(code=1)
+
+    if full:
+        raw_interests = memory.get_layer("preference").data.get("interests", [])
+        interest_count = len([item for item in raw_interests if isinstance(item, dict)])
+        likes_boundary = max(interest_count, 128)
+        console.print(f"  [cyan]--full：likes 边界开到全量（{likes_boundary} 条）。[/cyan]")
+        consolidator = ProfileConsolidator(
+            memory=memory,
+            llm_service=llm_service,
+            embedding_service=embedding_service,
+            likes_boundary=likes_boundary,
+        )
+    else:
+        consolidator = ProfileConsolidator(
+            memory=memory,
+            llm_service=llm_service,
+            embedding_service=embedding_service,
+        )
 
     if revert.strip():
         ok = consolidator.revert(revert.strip())
@@ -5532,6 +5605,40 @@ def profile_consolidate(
             console.print("  [dim]被回滚的合并已记入 no-merge 记忆，下轮整理不会重做。[/dim]")
         else:
             console.print(f"[bold red]  回滚失败：找不到 run 记录 {revert.strip()}。[/bold red]")
+            raise typer.Exit(code=1)
+        return
+
+    if migrate_categories:
+        from openbiliclaw.soul.category_migration import CategoryMigrator
+
+        migrator = CategoryMigrator(memory=memory, llm_service=llm_service)
+        migration_report = _asyncio.run(migrator.run(dry_run=not apply))
+        for err in migration_report.errors:
+            console.print(f"[yellow]  ⚠ {err}[/yellow]")
+        console.print(
+            f"  现存分类: {len(migration_report.histogram)} 个，"
+            f"标签 {sum(migration_report.histogram.values())} 条"
+        )
+        for old, new in sorted(
+            migration_report.mapping.items(),
+            key=lambda item: -migration_report.histogram.get(item[0], 0),
+        ):
+            console.print(f"  {old}({migration_report.histogram.get(old, 0)}) → [bold]{new}[/bold]")
+        if migration_report.mapping:
+            suffix = "  [yellow]⚠ 超过 10%[/yellow]" if migration_report.other_ratio > 0.10 else ""
+            console.print(f"\n  「其他」占比: {migration_report.other_ratio:.1%}{suffix}")
+        if not apply and migration_report.mapping:
+            console.print("\n  [dim]满意的话用 --apply 真正写入。[/dim]")
+        if migration_report.applied:
+            console.print(
+                "\n  [dim]已备份，"
+                f"run_id={migration_report.run_id}（--revert {migration_report.run_id} 可回滚）"
+                "[/dim]"
+            )
+        # 只有「LLM 服务不可用」是降级只读预览（打印 histogram 即成功，code=0）；
+        # LLM 调用异常 / 映射校验失败必须非零退出，脚本化调用才能区分失败与预览。
+        degraded = migration_report.errors == ["llm: service unavailable"]
+        if migration_report.errors and not migration_report.mapping and not degraded:
             raise typer.Exit(code=1)
         return
 
@@ -5546,7 +5653,9 @@ def profile_consolidate(
     for rule_merge in report.rule_merges:
         console.print(f"  [cyan][规则][/cyan] {rule_merge}")
     for merge in report.merges:
-        members = " / ".join(str(m) for m in merge.get("members", []))
+        raw_members = merge.get("members", [])
+        member_items = raw_members if isinstance(raw_members, list) else []
+        members = " / ".join(str(m) for m in member_items)
         scope = "兴趣" if merge.get("scope") == "likes" else "避雷"
         console.print(
             f"  [green][{scope}][/green] {members} → [bold]{merge.get('canonical')}[/bold]"
@@ -6213,6 +6322,7 @@ def _run_xhs_discovery(*, force: bool) -> None:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(config),
         concurrency=config.llm.concurrency,
     )

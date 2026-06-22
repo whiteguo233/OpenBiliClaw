@@ -145,6 +145,10 @@ def normalize_tweet(
     metrics: dict[str, Any] = raw_metrics if isinstance(raw_metrics, dict) else {}
     view_count = _as_int(metrics.get("views"))
     like_count = _as_int(metrics.get("likes"))
+    reply_count = _as_int(metrics.get("replies"))
+    retweet_count = _as_int(metrics.get("retweets"))
+    quote_count = _as_int(metrics.get("quotes"))
+    bookmark_count = _as_int(metrics.get("bookmarks"))
 
     cover_url = _first_media_url(raw.get("media"))
     tags = _extract_hashtags(text)
@@ -161,6 +165,12 @@ def normalize_tweet(
         cover_url=cover_url,
         view_count=view_count,
         like_count=like_count,
+        favorite_count=bookmark_count,
+        comment_count=reply_count,
+        share_count=retweet_count + quote_count,
+        reply_count=reply_count,
+        retweet_count=retweet_count,
+        bookmark_count=bookmark_count,
         tags=tags,
         description=body_text,
     )

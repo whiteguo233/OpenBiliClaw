@@ -122,7 +122,23 @@ const SOURCE_LABEL_MAP = {
   xiaohongshu: "Xiaohongshu",
   douyin: "Douyin",
   youtube: "YouTube",
+  twitter: "X (Twitter)",
   web: "Web",
+};
+
+const SOURCE_ALIAS_MAP = {
+  bili: "bilibili",
+  bilibili: "bilibili",
+  xhs: "xiaohongshu",
+  xiaohongshu: "xiaohongshu",
+  rednote: "xiaohongshu",
+  dy: "douyin",
+  douyin: "douyin",
+  tiktok: "douyin",
+  yt: "youtube",
+  youtube: "youtube",
+  x: "twitter",
+  twitter: "twitter",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -148,15 +164,29 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   youtube_channel: "YouTube 频道",
 };
 
+function urlHostMatches(url, hostnames) {
+  const text = normalizeText(url);
+  if (!text) return false;
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+    const host = new URL(candidate).hostname.toLowerCase();
+    return hostnames.some((hostname) => host === hostname || host.endsWith(`.${hostname}`));
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeSourcePlatform(item) {
-  const explicit = normalizeText(item?.source_platform);
-  if (explicit && SOURCE_LABEL_MAP[explicit]) return explicit;
+  const explicit = normalizeText(item?.source_platform).toLowerCase();
+  if (explicit && SOURCE_ALIAS_MAP[explicit]) return SOURCE_ALIAS_MAP[explicit];
   const url = normalizeText(item?.content_url);
   if (url) {
-    if (url.includes("bilibili.com") || url.includes("b23.tv")) return "bilibili";
-    if (url.includes("xiaohongshu.com") || url.includes("xhslink.com")) return "xiaohongshu";
-    if (url.includes("douyin.com")) return "douyin";
-    if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes("bilibili.com") || lowerUrl.includes("b23.tv")) return "bilibili";
+    if (lowerUrl.includes("xiaohongshu.com") || lowerUrl.includes("xhslink.com")) return "xiaohongshu";
+    if (lowerUrl.includes("douyin.com")) return "douyin";
+    if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
+    if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
     return "web";
   }
   if (normalizeText(item?.bvid)) return "bilibili";
@@ -209,12 +239,17 @@ export function buildYouTubeUrl(videoId) {
   return `https://www.youtube.com/watch?v=${normalizeText(videoId)}`;
 }
 
+export function buildTwitterUrl(statusId) {
+  return `https://x.com/i/status/${normalizeText(statusId)}`;
+}
+
 export function buildContentUrl(item) {
   if (item?.content_url) return item.content_url;
-  const platform = normalizeText(item?.source_platform);
+  const platform = normalizeSourcePlatform(item);
   const vid = normalizeText(item?.content_id || item?.bvid);
   if (!vid) return "";
   if (platform === "youtube") return buildYouTubeUrl(vid);
+  if (platform === "twitter") return buildTwitterUrl(vid);
   return buildVideoUrl(vid);
 }
 
@@ -225,7 +260,7 @@ export function buildRecommendationClickPayload(item, contentUrl = "") {
     bvid,
     content_id: contentId,
     content_url: normalizeText(contentUrl) || normalizeText(item?.content_url),
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    source_platform: normalizeSourcePlatform(item),
     title: normalizeText(item?.title),
     recommendation_id: typeof item?.id === "number" ? item.id : null,
     topic_label: normalizeText(item?.topic_label),

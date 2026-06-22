@@ -8,7 +8,7 @@ import itertools
 import logging
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
@@ -452,6 +452,127 @@ class LLMService:
             caller=caller,
             reasoning_effort=reasoning_effort,
         )
+
+    def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
+        """Best-effort check for OpenAI-compatible vision-capable routes."""
+        routed = self._resolve_module_override(caller)
+        provider_name = (
+            routed[0] if routed is not None else self.registry.default_provider
+        ).strip()
+        provider_key = provider_name.lower()
+        if provider_key not in {"openai", "openai_compatible", "openrouter"}:
+            return False
+
+        provider_obj: object | None = None
+        get_provider = getattr(self.registry, "get", None)
+        if callable(get_provider):
+            with suppress(Exception):
+                provider_obj = get_provider(provider_key)
+        model = ""
+        if routed is not None and routed[1]:
+            model = routed[1]
+        elif provider_obj is not None:
+            model = str(getattr(provider_obj, "_model", "") or "")
+        model_lower = model.lower()
+        vision_markers = (
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-5",
+            "o3",
+            "o4",
+            "vision",
+            "vl",
+            "qwen-vl",
+            "pixtral",
+            "llava",
+            "gemini",
+            "claude-3",
+            "claude-sonnet-4",
+        )
+        return any(marker in model_lower for marker in vision_markers)
+
+    async def complete_multimodal_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        image_inputs: list[dict[str, str]],
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> LLMResponse:
+        """Execute a JSON-mode task with user text plus image inputs."""
+        core_memory_block = ""
+        if self.memory is not None:
+            with suppress(Exception):
+                core_memory_block = self.memory.render_core_memory_prompt()
+        parts = [system_instruction.strip()]
+        if core_memory_block:
+            parts.append("以下是当前用户的 core memory，请作为理解背景：")
+            parts.append(core_memory_block)
+        system_content = "\n\n".join(parts)
+
+        user_parts: list[dict[str, Any]] = [{"type": "text", "text": user_input}]
+        for image in image_inputs:
+            content_id = str(image.get("content_id") or "").strip()
+            data_url = str(image.get("data_url") or "").strip()
+            if not content_id or not data_url:
+                continue
+            cover_ref = f"cover:{content_id}"
+            user_parts.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"Cover image {cover_ref} maps to the content_batch item whose "
+                        f"cover_image_ref is {cover_ref}."
+                    ),
+                }
+            )
+            user_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
+        if history:
+            messages.extend(cast("list[dict[str, Any]]", history))
+        messages.append({"role": "user", "content": user_parts})
+        priority = self._resolve_priority(caller)
+
+        async def _do_llm_call() -> LLMResponse:
+            routed = self._resolve_module_override(caller)
+            if routed is None:
+                return await self.registry.complete(
+                    cast("Any", messages),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    json_mode=True,
+                    reasoning_effort=reasoning_effort,
+                )
+            provider, model = routed
+            return await self.registry.complete_provider(
+                provider,
+                cast("Any", messages),
+                temperature=temperature,
+                max_tokens=max_tokens,
+                json_mode=True,
+                reasoning_effort=reasoning_effort,
+                model=model,
+            )
+
+        try:
+            async with self._priority_sem.slot(priority):
+                response = await _do_llm_call()
+        except LLMProviderError as exc:
+            raise LLMProviderExecutionError(str(exc)) from exc
+        if not response.content.strip():
+            raise LLMResponseContentError("LLM returned an empty response.")
+        recorder = self.usage_recorder
+        if recorder is not None:
+            record_fn = getattr(recorder, "record", None)
+            if callable(record_fn):
+                with suppress(Exception):
+                    record_fn(response, caller=caller)
+        return response
 
     async def complete_with_tools(
         self,

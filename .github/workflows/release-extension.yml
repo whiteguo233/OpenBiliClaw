@@ -142,3 +142,12 @@ jobs:
               sleep "$((attempt * 5))"
             done
           done
+
+      - name: Update aggregate latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          CHANNEL: extension
+          ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip
+        run: bash .github/scripts/sync-aggregate-release.sh

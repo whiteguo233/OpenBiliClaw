@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 
 def _default_score_thresholds() -> dict[str, float]:
     return {
-        "search": 0.65,
+        "search": 0.60,
         "trending": 0.60,
         "hot": 0.60,
-        "related": 0.65,
-        "related_chain": 0.65,
+        "related": 0.60,
+        "related_chain": 0.60,
         "explore": 0.58,
         "feed": 0.60,
         "backfill": 0.60,
@@ -50,6 +50,7 @@ class DiscoveryCandidatePipeline:
     discovery_engine: ContentDiscoveryEngine
     pool_target_count: int = 300
     score_thresholds: dict[str, float] = field(default_factory=_default_score_thresholds)
+    admission_min_score: float = 0.60
     xhs_self_nickname: str = ""
     xhs_self_nickname_provider: Callable[[], str] | None = None
     max_eval_attempts: int = 5
@@ -94,11 +95,30 @@ class DiscoveryCandidatePipeline:
         limit: int,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
     ) -> int:
-        """Fetch raw candidates with the discovery engine and enqueue them."""
+        """Fetch raw candidates with the discovery engine and enqueue them.
+
+        ``keywords`` (when provided) is forwarded to search sub-strategies that
+        accept it — the unified keyword planner injection point. ``None`` keeps
+        the legacy self-generating behavior. Only forwarded when non-None so
+        engines/stubs without a ``keywords`` kwarg stay byte-compatible.
+
+        ``keyword_ids`` (P1.8) is the parallel ``keyword text → keyword id`` map
+        forwarded alongside ``keywords`` so each produced candidate carries its
+        producing word's ``source_keyword_id`` for admit-time yield backfill.
+        Only forwarded when truthy, so the flag-off path stays byte-compatible.
+        """
 
         if self.pool_full():
             return 0
+
+        extra: dict[str, Any] = {}
+        if keywords is not None:
+            extra["keywords"] = keywords
+        if keyword_ids:
+            extra["keyword_ids"] = keyword_ids
 
         produce_fn = getattr(self.discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
@@ -108,6 +128,7 @@ class DiscoveryCandidatePipeline:
                 limit=limit,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                **extra,
             )
         else:
             items = await self.discovery_engine.discover(
@@ -116,6 +137,7 @@ class DiscoveryCandidatePipeline:
                 limit=limit,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                **extra,
             )
         return self.enqueue_candidates(list(items), source_context="mixed")
 
@@ -406,28 +428,12 @@ class DiscoveryCandidatePipeline:
 
     def _threshold_for(self, row: dict[str, Any]) -> float:
         payload = self._raw_payload(row)
-        admission_policy = str(payload.get("admission_policy") or "").strip().lower()
-        if admission_policy in {"observed", "always_admit"}:
-            return 0.0
         candidate_threshold = self._coerce_threshold(row.get("score_threshold"))
         if candidate_threshold is None:
             candidate_threshold = self._coerce_threshold(payload.get("score_threshold"))
         if candidate_threshold is not None:
             return candidate_threshold
-        strategy = str(row.get("source_strategy") or "").strip().lower()
-        if "related" in strategy:
-            return self.score_thresholds["related"]
-        if "search" in strategy:
-            return self.score_thresholds["search"]
-        if "trending" in strategy:
-            return self.score_thresholds["trending"]
-        if "hot" in strategy:
-            return self.score_thresholds["hot"]
-        if "explore" in strategy:
-            return self.score_thresholds["explore"]
-        if "feed" in strategy:
-            return self.score_thresholds["feed"]
-        return self.score_thresholds["default"]
+        return self._normalized_admission_min_score()
 
     def _max_pending_per_source(self) -> int | None:
         return discovery_candidate_pending_cap(int(self.pool_target_count))
@@ -465,6 +471,15 @@ class DiscoveryCandidatePipeline:
         if threshold <= 0:
             return None
         return min(1.0, threshold)
+
+    def _normalized_admission_min_score(self) -> float:
+        try:
+            threshold = float(self.admission_min_score)
+        except (TypeError, ValueError):
+            return 0.60
+        if threshold <= 0.0 or threshold > 1.0:
+            return 0.60
+        return threshold
 
     def _current_xhs_self_nickname(self) -> str:
         if self.xhs_self_nickname_provider is not None:

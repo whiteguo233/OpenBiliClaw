@@ -77,6 +77,7 @@ class AwarenessAnalyzer:
         events: list[dict[str, object]],
         preference: dict[str, object],
         soul_profile: dict[str, object],
+        max_tokens: int = DEFAULT_STRUCTURED_MAX_TOKENS,
     ) -> list[AwarenessNote]:
         messages = build_awareness_prompt(
             events=events,
@@ -87,7 +88,7 @@ class AwarenessAnalyzer:
             response = await self.registry.complete_structured_task(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
-                max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
+                max_tokens=max_tokens,
                 caller="soul.awareness",
             )
         except (LLMProviderError, LLMServiceError) as exc:

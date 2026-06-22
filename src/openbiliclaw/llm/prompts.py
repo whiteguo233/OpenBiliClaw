@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
+from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+
 if TYPE_CHECKING:
     from openbiliclaw.soul.tone import ToneProfile
 
@@ -74,8 +77,8 @@ def _render_tone_profile(
     tone = tone_profile or {
         "density": "balanced",
         "warmth": "warm",
-        "playfulness": "medium",
-        "directness": "balanced",
+        "playfulness": "low",
+        "directness": "direct",
     }
     return (
         _tone_context_line(source_platform_mix) + "\n"
@@ -84,6 +87,45 @@ def _render_tone_profile(
         f"- 梗感强度: {tone['playfulness']}\n"
         f"- 直给程度: {tone['directness']}"
     )
+
+
+def _normalize_prompt_style_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        style_key = normalize_style_key(item)
+        if style_key and style_key not in seen:
+            result.append(style_key)
+            seen.add(style_key)
+    return result
+
+
+def _normalize_content_style_fields(content: dict[str, object]) -> dict[str, object]:
+    normalized = dict(content)
+    if "style_key" in normalized:
+        normalized["style_key"] = normalize_style_key(normalized.get("style_key"))
+    return normalized
+
+
+def _normalize_pool_hints(pool_hints: dict[str, object] | None) -> dict[str, object]:
+    normalized = dict(pool_hints or {})
+    if "avoid_styles" in normalized:
+        normalized["avoid_styles"] = _normalize_prompt_style_list(normalized.get("avoid_styles"))
+    return normalized
+
+
+def _normalize_platform_blocks(platform_blocks: list[dict[str, object]]) -> list[dict[str, object]]:
+    normalized_blocks: list[dict[str, object]] = []
+    for block in platform_blocks:
+        normalized = dict(block)
+        if "avoid_styles" in normalized:
+            normalized["avoid_styles"] = _normalize_prompt_style_list(
+                normalized.get("avoid_styles")
+            )
+        normalized_blocks.append(normalized)
+    return normalized_blocks
 
 
 def build_socratic_dialogue_prompt(
@@ -131,13 +173,13 @@ def render_preference_summary(preference_summary: dict[str, object]) -> str:
     return json.dumps(preference_summary, ensure_ascii=False, indent=2)
 
 
-def build_preference_analysis_prompt(
-    *,
-    events: list[dict[str, object]],
-    existing_preference: dict[str, object],
-) -> list[dict[str, str]]:
-    """Build a structured prompt for extracting user preferences from events."""
-    system_prompt = """
+def _category_vocab_line() -> str:
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    return "、".join(CATEGORY_VOCAB)
+
+
+_PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
 <task>
 你要从一批用户行为事件中提取稳定偏好画像。
 </task>
@@ -147,12 +189,15 @@ def build_preference_analysis_prompt(
 2. 输出必须是严格 JSON，不要附带解释。
 3. 如果证据不足，返回空数组、默认值或较低权重。
 4. 兴趣标签控制在 5~25 个以内，weight 在 0~1 之间。证据充分时可多提，证据不足时宁可少提、给低权重，不要为了凑数编造标签。
-5. 所有文本字段（name、category、context 下的 patterns/session_type、disliked_topics）必须用中文。
+5. 所有文本字段（name、context 下的 patterns/session_type、disliked_topics）必须用中文。
+   category 必须从以下固定词表中逐字选择，不得发明新分类、不得使用同义变体：
+   __CATEGORY_VOCAB__。拿不准归属时用「其他」。
 6. favorite_up_users 必须从事件的 up_name 字段原样复制，一个字都不能改。先逐条扫描所有事件收集 up_name 值，再与 existing_preference.favorite_up_users 合并去重。严禁根据话题推测可能的UP主名称。如果本批事件中无 up_name 字段，保留 existing_preference 中的原有列表不变。
 7. cognitive_style 描述用户的信息处理偏好（如思维方式、阅读习惯、理解路径），3~5 条，基于观看行为模式推断，不要照搬兴趣标签。
 8. 每条事件都自带一个 `context` 字段（v0.3.22+ 起所有源都统一填充），它是该事件的中文自然语言摘要（如"在 B 站收藏了《讲透历史叙事》,作者:历史实验室"或"小红书点赞:手冲咖啡入门 作者:豆子老师"）。**优先把 context 作为人类可读的事件描述**来理解用户行为；同时用 metadata 里的结构化字段（up_name、bvid、folder、source_platform 等）做精确匹配 / 复制。
 9. 用户的兴趣信号可能跨平台（B 站 / 小红书 / 等）；通过 metadata.source_platform 区分来源，但兴趣分析本身要把所有平台的信号一视同仁，不要因为来自小红书就降权。
 10. 如果事件的 inferred_satisfaction 是 negative，或 metadata.feedback_type 是 dislike / metadata.reaction 是 thumbs_down，表示负向证据。不要把负向事件提取为 interests / favorite_up_users；只能用于 disliked_topics、风格避让或降低相关偏好置信度。
+11. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
 </rules>
 
 <output_schema>
@@ -182,7 +227,16 @@ def build_preference_analysis_prompt(
 输入事件里如果多次出现长视频、纪录片、深度讲解，
 可以提高 “历史/纪录片/知识” 相关标签和 depth_preference。
 </examples>
-""".strip()
+""".strip().replace("__CATEGORY_VOCAB__", _category_vocab_line())
+
+
+def build_preference_analysis_prompt(
+    *,
+    events: list[dict[str, object]],
+    existing_preference: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a structured prompt for extracting user preferences from events."""
+    system_prompt = _PREFERENCE_ANALYSIS_SYSTEM_PROMPT
     user_prompt = "\n\n".join(
         [
             "<existing_preference>",
@@ -605,8 +659,16 @@ def build_insight_prompt(
     awareness_notes: list[dict[str, object]],
     preference_summary: dict[str, object],
     soul_profile: dict[str, object],
+    existing_hypotheses: list[dict[str, object]] | None = None,
 ) -> list[dict[str, str]]:
-    """Build a structured prompt for insight-hypothesis generation."""
+    """Build a structured prompt for insight-hypothesis generation.
+
+    ``existing_hypotheses`` (optional) is the set of currently-active
+    hypotheses passed as read-only context so an incremental run — which
+    only sees *new* awareness notes — can refine or avoid restating them
+    instead of regenerating from the full awareness history every time.
+    See rules 5 / 6 below.
+    """
     system_prompt = """
 <task>
 你要基于近期觉察、偏好摘要和用户画像，生成谨慎的解释性假设。
@@ -617,6 +679,8 @@ def build_insight_prompt(
 2. hypothesis 是假设，不是结论，措辞必须保守。
 3. 每条必须附 1~3 条 evidence。
 4. confidence 保持在 0~1，且不要过高。
+5. existing_hypotheses（如有）是当前已有的活跃假设，仅作上下文参考。本次新的觉察笔记若印证某条已有假设，可重述同一 hypothesis 文本以累积其证据/置信；若指向新方向，再生成新假设。不要为凑数而重复已有假设。
+6. 只依据本次觉察笔记里的新信号下结论；existing_hypotheses 本身不是新证据。
 </rules>
 
 <output_schema>
@@ -634,6 +698,9 @@ def build_insight_prompt(
             "<awareness_notes>",
             json.dumps(awareness_notes, ensure_ascii=False, indent=2),
             "</awareness_notes>",
+            "<existing_hypotheses>",
+            json.dumps(existing_hypotheses or [], ensure_ascii=False, indent=2),
+            "</existing_hypotheses>",
             "<preference_summary>",
             json.dumps(preference_summary, ensure_ascii=False, indent=2),
             "</preference_summary>",
@@ -692,8 +759,16 @@ def build_search_queries_prompt(
    禁止同一概念换皮出现多次。
 9. 如果 user 消息包含 <pool_distribution_hints>，这些是当前推荐池已经拥挤或欠覆盖的方向。
    avoid_topics / avoid_styles / avoid_franchises 是软避让信号；prefer_axes 是优先补货方向。
+   avoid_styles 是封闭 style_key 观看模式，不是题材标签。
    source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
    不要为了避让而生成与用户画像无关的 query。
+10. 冷启动保护：如果 <pool_distribution_hints> 里 cold_start=true，
+   表示当前还没有足够历史 discovery / pool 分布可参考，avoid_topics 不是用户讨厌的内容，
+   而是画像里权重最高、最容易让首批内容过度集中的主题。此时：
+   - avoid_topics 中的主题整组最多 2 个 query 可以直接使用，不能占满搜索词；
+   - 至少一半 query 必须来自 prefer_axes、较低权重兴趣、一级兴趣域的其它切面或跨域探索；
+   - prefer_axes 是冷启动时优先补广度的内容轴，应该优先覆盖，但不要生造无关主题；
+   - 仍要保留少量高权重兴趣入口，让首批内容有命中感，不要完全避开用户最喜欢的方向。
 </rules>
 
 <output_schema>
@@ -739,7 +814,7 @@ def build_search_queries_prompt(
     ]
     compact_pool_hints = {
         key: value
-        for key, value in (pool_hints or {}).items()
+        for key, value in _normalize_pool_hints(pool_hints).items()
         if value not in (None, "", [], {}, ())
     }
     if compact_pool_hints:
@@ -877,14 +952,9 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "同一主题的不同切面必须归为同一个 topic_group。"
     '语义相同的主题必须用同一个词——"AI" "人工智能" "机器学习" 统一写成 "人工智能",'
     '"RL" "强化学习" 统一写成 "强化学习"。\n'
-    "7. style_key 从以下 11 个选项中选一个,描述该内容的呈现风格:\n"
-    "   game_strategy(游戏攻略/机制解析)/ news_brief(新闻资讯/时事快评)/ "
-    "practical_guide(教程/入门/实操指南)/ story_doc(纪录片/故事/人物传记)/ "
-    "visual_showcase(视觉向/混剪/空镜)/ tech_analysis(技术分析/硬件评测)/ "
-    "deep_dive(原理讲解/学术解析)/ "
-    "fun_variety(搞笑/吐槽/整活/挑战)/ lifestyle(日常/vlog/生活分享)/ "
-    "review_roundup(盘点/测评/推荐/合集)/ "
-    "light_chat(闲聊/杂谈/其他)\n"
+    "7. style_key(13选1) 描述用户消费这条内容时的观看状态,不是题材分类。"
+    "必须从以下观看模式中选一个:\n"
+    f"{STYLE_KEY_PROMPT_TEXT}\n"
     "8. franchise_key(可空):内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     '   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」 → "原神"\n'
@@ -902,7 +972,7 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     '  "score": 0.78,\n'
     '  "reason": "这个视频的选题角度新颖,节奏轻快,契合你对该领域的好奇心。",\n'
     '  "topic_group": "生活方式",\n'
-    '  "style_key": "light_chat",\n'
+    '  "style_key": "social_chat",\n'
     '  "franchise_key": ""\n'
     "}\n"
     "</output_schema>"
@@ -940,7 +1010,12 @@ def build_content_evaluation_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
         ]
     )
@@ -963,19 +1038,19 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<source_context>(发现路径)、<content_batch>(本批候选),你按下面规则打分。\n"
     "</task>\n\n"
     "<rules>\n"
-    "1. 输出必须是严格 JSON 数组,不要附带解释。\n"
-    "2. 数组长度必须与输入内容数量一致,顺序一一对应。\n"
+    '1. 输出必须是严格 JSON 对象,不要附带解释。顶层只包含 "results" 数组。\n'
+    "2. results 数组长度必须与输入内容数量一致,顺序一一对应。\n"
     "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
-    "reason(一句中文)、topic_group(2-4词粗分类)、style_key(11选1)、"
+    "reason(一句中文)、topic_group(2-4词粗分类)、style_key(13选1)、"
     "franchise_key(可空)。\n"
     "4. 根据 <source_context> 调整评判宽容度:search 要求高度匹配;"
     "trending 基础分 >= 0.6;related_chain 允许适度偏移;"
     "explore 允许主题陌生,但内容仍需具备可看性,过于学术艰深的应适当降分。\n"
     "5. topic_group 规则:2-4 个中文词的粗分类,同主题不同切面统一。"
     "语义相同必须用同一词(AI/人工智能/机器学习 统一为 人工智能)。\n"
-    "6. style_key 从 11 个选项中选:game_strategy / news_brief / "
-    "practical_guide / story_doc / visual_showcase / tech_analysis / "
-    "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
+    "6. style_key(13选1) 描述用户消费这条内容时的观看状态,不是题材分类。"
+    "必须从以下观看模式中选一个:\n"
+    f"{STYLE_KEY_PROMPT_TEXT}\n"
     "7. franchise_key 规则:内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」"
@@ -1000,8 +1075,8 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "   - 反过来,如果 depth_preference 偏高、preferred_duration 偏长,"
     "但 humor_preference >= 0.4、exploration_openness >= 0.6,"
     '或 cognitive_style 里写明 "兼顾/调节/穿插轻松" 这类双轨倾向,'
-    "说明用户也需要轻内容做心理调节、喘气。这时 fun_variety / light_chat / "
-    "lifestyle / story_doc / visual_showcase 风格的内容只要本身可看(话题清晰、"
+    "说明用户也需要轻内容做心理调节、喘气。这时 mood_release / social_chat / "
+    "daily_wander / story_immersion / aesthetic_browse 观看模式的内容只要本身可看(话题清晰、"
     'UP 主观察角度有意思),不要因为"不够深"就一律压到 0.5 以下,'
     "应当给到 0.6-0.75,与画像中的娱乐/二次元/生活类兴趣标签保持权重一致。\n"
     "9. 不同 source_platform(bilibili / xiaohongshu / 其他)的内容标签同 schema,"
@@ -1012,6 +1087,17 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "different platform; score every item against the same Soul-profile rubric. "
     "对 content_type 为 tweet / thread 的纯文本条目(标题往往只是正文首行),"
     "请以该条目的 body_text 字段为内容主体来判断匹配度,而不是只看 title。\n"
+    "10a. content_batch 里的互动指标(view_count / like_count / collect_count / "
+    "comment_count / share_count / favorite_count 等)只能作为辅助上下文,用于判断"
+    "内容是否有平台牵引力、收藏意图或讨论强度,不能覆盖内容与画像的真实匹配度。"
+    "高热度不能拯救明显不匹配的内容;低热度也不能惩罚高度契合的小众内容。"
+    "小红书 collect_count 比被动浏览更接近真实兴趣;X/Twitter 的 body_text 仍是主信号。\n"
+    "10b. 多模态封面图规则:当 content_batch item 含有 cover_image_ref 时,"
+    "它的值形如 cover:<content_id>,对应同一 user 消息中紧随文字锚点"
+    " `Cover image cover:<content_id> ...` 后面的图片。评分时必须结合该头图 / 封面图"
+    "与 title、body_text、description、tags、互动指标一起判断主题、风格、视觉质感和点击诱因;"
+    "如果图片与文本存在冲突,把可见图像证据作为辅助修正,但不要仅凭封面热闹给高分。"
+    "没有 cover_image_ref 的条目表示没有可用图片,只按文本字段判断,不要猜测缺失图片。\n"
     "11. 当 user 消息携带 `<negative_examples>` 时,把这些标题视为用户最近"
     "**明确不喜欢**的样本——理由可能是快速划走 (`quick_exit`) 或显式负反馈"
     " (`explicit_negative`)。\n"
@@ -1023,14 +1109,16 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "score 必须下调,不要把它们当成 interests 的反向补充来加分。\n"
     "</rules>\n\n"
     "<output_schema>\n"
-    "[\n"
-    '  {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
-    '"style_key": "deep_dive", "franchise_key": ""},\n'
-    '  {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
-    '"style_key": "visual_showcase", "franchise_key": "原神"},\n'
-    '  {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
-    '"style_key": "light_chat", "franchise_key": ""}\n'
-    "]\n"
+    "{\n"
+    '  "results": [\n'
+    '    {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
+    '"style_key": "deep_focus", "franchise_key": ""},\n'
+    '    {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
+    '"style_key": "aesthetic_browse", "franchise_key": "原神"},\n'
+    '    {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
+    '"style_key": "social_chat", "franchise_key": ""}\n'
+    "  ]\n"
+    "}\n"
     "</output_schema>"
 )
 
@@ -1100,7 +1188,7 @@ def build_batch_content_evaluation_prompt(
         [
             "<content_batch>",
             json.dumps(
-                content_items,
+                [_normalize_content_style_fields(item) for item in content_items],
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
@@ -1142,8 +1230,9 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 8. 如果 profile_summary.style 里 depth_preference 不高、preferred_duration 偏短,
    或 humor_preference 偏高,expression 要更轻、更顺口,少用"认知偏好 / 底层结构 /
    深层需求"这类抽象词,不要把推荐说得比内容本身还硬。
-9. 如果 content_summary.style_key 是 lifestyle / light_chat / fun_variety /
-   review_roundup / story_doc / visual_showcase,优先从人物、场景、信息点或情绪切口来推荐,
+9. 如果 content_summary.style_key 是 daily_wander / social_chat / mood_release /
+   decision_support / story_immersion / aesthetic_browse / ambient_companion / live_pulse,
+   优先从人物、场景、信息点、情绪或使用场景切口来推荐,
    不要硬写成"系统闭环 / 底层逻辑 / 认知防御"。
 10. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。
 11. 避开 profile_summary.disliked_topics 中的主题或话术模式；如果候选明显命中这些避雷点,
@@ -1190,7 +1279,12 @@ def build_recommendation_expression_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
         ]
     )
@@ -1219,8 +1313,9 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "6. 每条 expression 的开头措辞必须不同,禁止重复同一句式。\n"
     "7. 如果 profile_summary.style 显示 depth_preference 不高、preferred_duration 偏短,"
     "或 humor_preference 偏高,整体措辞要更轻、更顺口,不要把轻内容硬写成分析报告。\n"
-    "8. 如果某条 content.style_key 是 lifestyle / light_chat / fun_variety / "
-    "review_roundup / story_doc / visual_showcase,就优先从人物、场景、信息点或情绪切口下笔,"
+    "8. 如果某条 content.style_key 是 daily_wander / social_chat / mood_release / "
+    "decision_support / story_immersion / aesthetic_browse / ambient_companion / live_pulse,"
+    "就优先从人物、场景、信息点、情绪或使用场景切口下笔,"
     "不要把它写成心理机制拆解。\n"
     "9. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。\n"
     "10. 避开 profile_summary.disliked_topics 中的主题或话术模式;如果候选明显命中这些避雷点,"
@@ -1259,7 +1354,12 @@ def build_batch_expression_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_batch>",
-            json.dumps(content_items, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                [_normalize_content_style_fields(item) for item in content_items],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_batch>",
         ]
     )
@@ -1363,7 +1463,12 @@ def build_delight_score_batch_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_batch>",
-            json.dumps(content_batch, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                [_normalize_content_style_fields(item) for item in content_batch],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_batch>",
         ]
     )
@@ -1402,7 +1507,12 @@ def build_delight_reason_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
             "<reason_stub>",
             reason_stub,
@@ -1473,12 +1583,10 @@ def build_explore_domains_prompt(
      - 幽默·吐槽·消遣    ：搞笑、鬼畜、整活、轻松吐槽
    例：5 个 domain 不许全在"拆解·系统·结构"轴里换皮（钟表/榫卯/开发板/电路/模型
    都属于同一个轴——拆解结构——这种安排是错的）；必须把 5 个槽位分散到至少 4 个不同的轴。
-12. 重要：personality_portrait 里出现的具体名词（如"机械结构""手工技艺""琢磨某物"
-   "钻研某活"等）只是写作时的文风装饰，**不是真实的兴趣信号**。
-   你判断用户兴趣方向时**只能依赖 `interests` 字段中的明确标签**，
-   绝对不要把 portrait 里的比喻或例子当成探索目标。
-   如果 portrait 提到"机械结构"，你不应该把"机械"或"精密拆解"当成 domain；
-   而应该看 interests 实际有什么、并在心理诉求轴清单里挑一个**还没被占用**的轴去拓展。
+12. 重要：判断用户兴趣方向时**只能依赖 `interests` / `interest_domains` 字段中的明确标签**，
+   不要从 core_traits、deep_needs 等人格/心理描述里的比喻或例子反推出兴趣目标
+   （例如看到"钻研""精密"这类字眼就臆造出"机械结构""精密拆解"之类 domain）。
+   应该看 interests 实际有什么、并在心理诉求轴清单里挑一个**还没被占用**的轴去拓展。
 13. **盲区优先 (v0.3.31+)**: 如果 user 消息里给了 `<covered_topic_groups>` 块，
    表示这些 topic_group 在用户推荐池里已经堆积，本轮探索**尽量绕开**这些方向，
    优先去探索没被覆盖的领域。如果实在某条 domain 跟 covered 列表里的方向有重合，
@@ -1569,7 +1677,7 @@ def build_speculation_generation_prompt(
         "<signal_weights>\n"
         "综合用户信号时按以下权重决策：\n"
         "  ≈50%  用户的 likes 分布（直接反映 ta 实际在看什么、占比多少）\n"
-        "  ≈30%  portrait + deep_needs + motivational_drivers（内在动力）\n"
+        "  ≈30%  deep_needs + motivational_drivers（内在动力）\n"
         "  ≈15%  core_traits + cognitive_style（处理信息的风格）\n"
         "   ≤5%  MBTI（**仅作弱参考**）\n"
         "\n"
@@ -1820,7 +1928,8 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "\n"
     "<rules>\n"
     "1. 只能输出操作（op），不能输出整理后的列表。每个操作是 merge 或 keep。\n"
-    "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】，一个字都不能改。\n"
+    "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n"
+    '   同名异类成员必须用 {"name": 原名, "category": 原分类} 精确引用。\n'
     "3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n"
     "4. merge 至少 2 个 members。canonical 是合并后的规范名：优先从 members 里选\n"
     "   最准确的一个；只有当所有 members 都不够准确时才起新名，新名必须与\n"
@@ -1831,9 +1940,13 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "   canonical 绝不能比 members 更宽泛（如把「一个案例反复切悬念拖时长」归并成\n"
     "   「低质内容」是严重错误，会误伤大量正常内容）。拿不准时一律 keep。\n"
     "7. likes 组可以稍宽松，但同样不允许把具体兴趣合并成大类。\n"
-    "8. 输出严格 JSON，不要附带解释文本。\n"
-    "9. 各变量见 user 消息：likes_clusters / dislikes_clusters（各簇带 cluster_id、\n"
-    "   members 及其权重元数据）。\n"
+    "8. likes 成员带 category（一级分类）。同名/近名但 category 不同且语义不同的条目\n"
+    "   是【同名异义】（如 苹果(科技) vs 苹果(美食)），必须分别 keep，严禁合并。\n"
+    "   只有确认它们是同一概念被误标了不同分类时才 merge；此时 merge.members 和\n"
+    "   keep.member 都必须使用 {name, category}，使每个同名条目可被逐一追踪。\n"
+    "9. 输出严格 JSON，不要附带解释文本。\n"
+    "10. 各变量见 user 消息：likes_clusters / dislikes_clusters（各簇带 cluster_id、\n"
+    "   members 及其权重 / category 元数据）。\n"
     "</rules>\n"
     "\n"
     "<output_schema>\n"
@@ -1842,7 +1955,10 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     '    {"cluster_id": "L1", "op": "merge", "members": ["智能体开发", "智能体开发与实现"],\n'
     '     "canonical": "智能体开发", "reason": "同一概念的措辞变体"},\n'
     '    {"cluster_id": "L2", "op": "keep", "name": "篮球", "reason": "NBA 是其子集而非同义"},\n'
-    '    {"cluster_id": "L2", "op": "merge", "members": ["NBA篮球", "NBA球星动态"], "canonical": "NBA"}\n'
+    '    {"cluster_id": "H1", "op": "merge",\n'
+    '     "members": [{"name": "苹果", "category": "科技"}, {"name": "苹果", "category": "资讯"}],\n'
+    '     "canonical": "苹果公司"},\n'
+    '    {"cluster_id": "H1", "op": "keep", "member": {"name": "苹果", "category": "美食"}}\n'
     "  ],\n"
     '  "dislikes": [\n'
     '    {"cluster_id": "D1", "op": "merge", "members": ["偶像团体练习室内容", "偶像练习室物料"],\n'
@@ -1861,7 +1977,7 @@ def build_profile_consolidation_prompt(
     """Build the prompt for LLM-judged consolidation of like/dislike topics.
 
     Each cluster dict carries ``cluster_id`` and ``members`` (list of dicts
-    with name + weight metadata for likes, plain strings for dislikes).
+    with name + weight + category metadata for likes, plain strings for dislikes).
     System prompt is fully static (cache-friendly per CLAUDE.md convention);
     all per-call data lives in the user message with deterministic
     serialization.
@@ -1880,3 +1996,281 @@ def build_profile_consolidation_prompt(
         {"role": "system", "content": _PROFILE_CONSOLIDATION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
+
+
+_CATEGORY_MAPPING_SYSTEM_PROMPT = (
+    "<task>\n"
+    "你是用户画像分类体系的迁移器。user 消息提供：vocab（固定一级分类词表）和\n"
+    "categories（现存分类及各自的标签数 tag_count）。\n"
+    "你要为【每一个】现存分类选择词表中【恰好一个】目标分类。\n"
+    "</task>\n"
+    "\n"
+    "<rules>\n"
+    "1. mapping 必须覆盖 categories 里的每一个分类，一个都不能漏，也不能多出输入里没有的分类。\n"
+    "2. 映射目标必须逐字来自 vocab，不得发明新分类、不得返回 vocab 之外的写法。\n"
+    "3. 优先语义归属（如 泛娱乐/文娱→娱乐；宠物/动物→萌宠；技术/数码/人工智能→科技；\n"
+    "   二次元→动漫；商业→财经）。\n"
+    "4. 现存分类本身已在 vocab 中的，映射到它自己。\n"
+    "5. 实在无法归属的才映射到「其他」，不要偷懒批量扔「其他」。\n"
+    "6. 输出严格 JSON，不要附带解释文本。\n"
+    "</rules>\n"
+    "\n"
+    "<output_schema>\n"
+    "{\n"
+    '  "mapping": {"泛娱乐": "娱乐", "宠物": "萌宠", "内容消费方式": "其他"}\n'
+    "}\n"
+    "</output_schema>"
+)
+
+
+# Module-level constant: 100% static system prompt for the MERGED, multi-
+# platform search-keyword generator (Discover backpressure refactor P1.4).
+# This single call subsumes the five per-platform keyword builders (B站
+# search / 小红书 / 抖音 / YouTube / X) so the profile is sent ONCE and the
+# provider-side prompt cache fires on the byte-identical prefix. Per
+# CLAUDE.md "LLM Prompt-Cache Convention": NOTHING per-call lives here —
+# the profile, the due-platform set, each platform's need count, recent
+# keywords, and avoid_* hints ALL live in the user message (<profile_summary>
+# + <platforms>). The <supply_advantage> block below (P2) is STATIC per
+# platform (it describes where each platform structurally has good content,
+# never anything about *this* user), so it belongs in the system constant and
+# the call-invariance test still holds.
+_MERGED_KEYWORDS_SYSTEM_PROMPT = (
+    "<task>\n"
+    "你要为多个平台的内容发现一次性生成搜索关键词。\n"
+    "见 user 消息里的 <profile_summary>(用户画像,只发一次)和 <platforms>"
+    "(本轮需要补词的平台数组)。<platforms> 里每个平台块给出 platform、need"
+    "(要生成多少个该平台关键词)、recent_keywords(最近已经搜过、不要再出的词)、"
+    "avoid_topics / avoid_styles / avoid_franchises(当前推荐池已饱和、要避开的方向)、"
+    "prefer_axes(冷启动或手动传入的优先补广度方向)、cold_start(是否空池冷启动)、"
+    "supply_hint(数据观察:该平台近来实际产出较多、用户没有反感的方向,是下面 "
+    "<supply_advantage> 静态表的数据化补充,可能为空)。\n"
+    "</task>\n\n"
+    "<supply_advantage>\n"
+    "每个平台结构性擅长的内容方向不同(下面是平台的固有供给优势,与具体用户无关)。"
+    "请把用户画像里的兴趣,映射到该平台真正有好内容的形态上:\n"
+    "  - bilibili:学习区 / 知识科普 / 深度长视频 / 梗文化 / 技术。把兴趣做成"
+    "主题 + 风格词(盘点 / 入门 / 测评 / 教程 / 整活)。\n"
+    "  - xiaohongshu:生活方式 / 好物种草 / 教程攻略 / 美妆 / 体验分享。具象、带场景的"
+    "长尾(教程 / 攻略 / vlog / 踩坑 / 真实体验),避免裸类目词。\n"
+    "  - douyin:短视频 / 娱乐 / 热点 / 搞笑 / 才艺。短平快、口语、跟得上当下热度。\n"
+    "  - youtube:英文长内容 / 纪录片 / 讲座 / 国际视角。2-4 词,中英文按话题选最常见的"
+    "搜索语言。\n"
+    "  - twitter:实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,"
+    "华语圈话题可用中文。\n"
+    "</supply_advantage>\n\n"
+    "<rules>\n"
+    "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
+    "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
+    "(bilibili / xiaohongshu / douyin / youtube / twitter),每个 key 的值是一个"
+    "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。\n"
+    "3. 每个平台生成恰好该平台 need 个搜索关键词;凑不满时宁缺毋滥,数组可短于 need,"
+    "但不要为了凑数编造与画像无关的词。\n"
+    "4. 每个关键词都要是适合在该平台搜索框直接输入的短词 / 短组合,不要写成长句。\n"
+    "5. **不要重复**该平台 recent_keywords 里已有的词(换皮、加无意义尾词也算重复)。\n"
+    "6. 避开该平台的 avoid_topics / avoid_styles / avoid_franchises;这些是软避让信号。"
+    "avoid_styles 是封闭 style_key 观看模式,不是题材标签。不要为了避让而生成与用户画像无关的词。\n"
+    "7. 把同一个兴趣映射到该平台 <supply_advantage> 里描述的强项形态上,保持该平台的"
+    "原生搜索风格。若该平台块带非空 supply_hint,优先往这些已被实际验证有产出的方向上"
+    "映射(它和 avoid_* 不会重叠);supply_hint 为空时只依据 <supply_advantage> 静态表。\n"
+    "8. **弃权(可少出 / 不出)**:如果用户的兴趣和某个平台的 <supply_advantage> 基本不"
+    "匹配(在该平台搜不到对用户有价值的内容),就为该平台返回更少、甚至空数组 []——"
+    "不要硬凑、不要为了填满 need 而编造不契合该平台的词。该平台留空是允许且正确的。\n"
+    "9. 同一平台内各关键词的核心主题词要两两不同,不要同一概念换皮出现多次。\n"
+    "10. 冷启动保护:如果某平台块 cold_start=true,avoid_topics 不是用户讨厌的内容,"
+    "而是画像里权重最高、最容易让首批关键词过度集中的主题。该平台的关键词中,"
+    "avoid_topics 整组最多 2 个可以直接使用;至少一半关键词应覆盖 prefer_axes、"
+    "较低权重兴趣、一级兴趣域的其它切面或适合该平台的跨域映射。仍要保留少量"
+    "高权重兴趣入口,不要完全避开用户最喜欢的方向。\n"
+    "</rules>\n\n"
+    "<output_schema>\n"
+    "{\n"
+    '  "bilibili": ["历史 冷知识 盘点", "摄影 入门 推荐"],\n'
+    '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
+    '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
+    '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
+    '  "twitter": ["rust async runtime", "llm agents discussion"]\n'
+    "}\n"
+    "</output_schema>"
+)
+
+
+def _category_tag_count(category: dict[str, object]) -> int:
+    raw = category.get("tag_count", 0)
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
+    return 0
+
+
+def build_category_mapping_prompt(
+    *,
+    categories: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Build a cache-friendly prompt for mapping categories to the fixed vocab."""
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    payload = {
+        "categories": sorted(
+            categories,
+            key=lambda c: (
+                -_category_tag_count(c),
+                str(c.get("category", "")),
+            ),
+        ),
+        "vocab": list(CATEGORY_VOCAB),
+    }
+    user_prompt = "\n\n".join(
+        [
+            "<category_mapping_context>",
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            "</category_mapping_context>",
+        ]
+    )
+    return [
+        {"role": "system", "content": _CATEGORY_MAPPING_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_merged_keywords_prompt(
+    *,
+    profile_summary: dict[str, object],
+    platform_blocks: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Build the merged, multi-platform search-keyword generation prompt.
+
+    Subsumes the five legacy per-platform keyword builders into ONE LLM call
+    (Discover backpressure refactor, design spec §7.1 / §7.2): the profile is
+    serialized once and every due platform rides along in a single ``<platforms>``
+    block, so the provider prompt cache fires on the stable prefix.
+
+    Args:
+        profile_summary: The canonical ``build_profile_summary`` dict, sent once.
+        platform_blocks: One dict per due platform, each carrying
+            ``platform`` plus ``need`` / ``recent_keywords`` /
+            ``avoid_topics`` / ``avoid_styles`` / ``avoid_franchises`` /
+            ``prefer_axes`` / ``cold_start``. Only the platforms passed in
+            appear in the prompt (and may appear in the output). The ``avoid_*``
+            and ``prefer_axes`` fields come from
+            ``PoolDistributionSnapshot.to_prompt_hints()``.
+
+    Cache-friendly per CLAUDE.md: ``system_prompt`` is the module-level constant
+    ``_MERGED_KEYWORDS_SYSTEM_PROMPT`` (100% static). All per-call data lives in
+    ``user_prompt``, ordered most-stable (profile) → most-variable (this batch's
+    due platforms), each serialized with ``ensure_ascii=False, indent=2,
+    sort_keys=True``.
+    """
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            "</profile_summary>",
+            "<platforms>",
+            json.dumps(
+                _normalize_platform_blocks(platform_blocks),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            "</platforms>",
+        ]
+    )
+    return [
+        {"role": "system", "content": _MERGED_KEYWORDS_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def parse_merged_keywords(
+    content: str,
+    platforms: list[str],
+    *,
+    per_platform_cap: int,
+) -> dict[str, list[str]]:
+    """Parse the merged keyword-generation response into per-platform lists.
+
+    Tolerant counterpart to :func:`build_merged_keywords_prompt`. Reuses
+    ``parse_llm_json_tolerant`` so truncated / fenced JSON still salvages.
+    Never raises — a missing, non-list, or garbage value for any requested
+    platform yields an empty list for that platform.
+
+    Args:
+        content: The raw LLM response text.
+        platforms: The platforms to extract (typically the same set passed to
+            the builder). The returned dict has exactly these keys.
+        per_platform_cap: Maximum keywords kept per platform after dedup.
+
+    Returns:
+        ``{platform: [keyword, ...]}`` for every platform in ``platforms``,
+        each list deduped (order-preserving) and capped at ``per_platform_cap``.
+    """
+    keywords, _present = parse_merged_keywords_with_presence(
+        content, platforms, per_platform_cap=per_platform_cap
+    )
+    return keywords
+
+
+def parse_merged_keywords_with_presence(
+    content: str,
+    platforms: list[str],
+    *,
+    per_platform_cap: int,
+) -> tuple[dict[str, list[str]], set[str]]:
+    """Like :func:`parse_merged_keywords` but also report decline vs omission.
+
+    The planner (P2.2) must tell an **intentional decline** — the model
+    addressed the platform and returned an explicit empty list ``[]`` (the
+    user's interests don't fit that platform's supply advantage, see system
+    prompt rule 8) — apart from an **omission** (the platform key is absent /
+    non-list garbage, the model never answered for it). The first must NOT
+    trigger the interest-name fallback (skip the platform this cycle); the
+    second still falls back.
+
+    A platform counts as "present" when the parsed payload is a dict and that
+    platform's value is a JSON list (``[]`` included). A non-list value
+    (``"x"`` / ``42`` / missing) is NOT present → omission → fallback. With
+    ``per_platform_cap <= 0`` nothing is parsed and no platform is present.
+
+    Returns:
+        ``(keywords_by_platform, present_platforms)`` where ``keywords`` has a
+        key for every requested platform (deduped, capped) and
+        ``present_platforms`` is the subset whose value was an explicit list.
+    """
+    result: dict[str, list[str]] = {platform: [] for platform in platforms}
+    present: set[str] = set()
+    if per_platform_cap <= 0:
+        return result, present
+
+    payload = parse_llm_json_tolerant(content)
+    if not isinstance(payload, dict):
+        return result, present
+
+    for platform in platforms:
+        raw = payload.get(platform)
+        if not isinstance(raw, list):
+            continue
+        # An explicit list (even empty) means the model addressed this platform.
+        present.add(platform)
+        seen: set[str] = set()
+        keywords: list[str] = []
+        for item in raw:
+            if not isinstance(item, (str, int, float)):
+                continue
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            keywords.append(text)
+            if len(keywords) >= per_platform_cap:
+                break
+        result[platform] = keywords
+    return result, present

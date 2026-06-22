@@ -14,6 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildDyDiscoveryPageUrl,
   buildDyTaskUrl,
   buildDyExecuteMessageData,
   computeDyTaskTimeoutMs,
@@ -58,6 +59,12 @@ test("buildDyTaskUrl routes feed task to the douyin home", () => {
     buildDyTaskUrl({ id: "t-feed", type: "feed", max_items: 10 }),
     "https://www.douyin.com/",
   );
+});
+
+test("discovery task page URLs stay on douyin home", () => {
+  assert.equal(buildDyDiscoveryPageUrl("search", "猫"), "https://www.douyin.com/");
+  assert.equal(buildDyDiscoveryPageUrl("hot", "2495363"), "https://www.douyin.com/");
+  assert.equal(buildDyDiscoveryPageUrl("feed"), "https://www.douyin.com/");
 });
 
 test("buildDyTaskUrl returns null for unknown task types", () => {
@@ -179,7 +186,7 @@ test("computeDyTaskTimeoutMs falls back to 4-scope assumption when scopes omitte
   assert.ok(timeout > 30_000, `expected > 30s with 5 rounds, got ${timeout}`);
 });
 
-test("computeDyTaskTimeoutMs gives search enough time for page signing", () => {
+test("computeDyTaskTimeoutMs gives search enough time for DOM-triggered loading", () => {
   const timeout = computeDyTaskTimeoutMs({
     id: "search-timeout",
     type: "search",
@@ -204,7 +211,7 @@ test("computeDyTaskTimeoutMs scales with hot item count", () => {
   assert.ok(timeout <= 360_000, `expected <= 360s ceiling, got ${timeout}`);
 });
 
-test("computeDyTaskTimeoutMs gives feed enough time for signed API harvest", () => {
+test("computeDyTaskTimeoutMs gives feed enough time for passive response harvest", () => {
   const timeout = computeDyTaskTimeoutMs({ id: "feed-timeout", type: "feed", max_items: 10 });
 
   assert.ok(timeout >= 60_000, `expected at least 60s for feed harvest, got ${timeout}`);
@@ -241,14 +248,26 @@ test("buildDyExecuteMessageData includes hot task payload", () => {
   const data = buildDyExecuteMessageData({
     id: "hot-task",
     type: "hot",
-    hot_items: [{ word: "热点词", sentence_id: "2495363" }],
+    hot_items: [
+      {
+        word: "热点词",
+        sentence_id: "2495363",
+        seed_aweme_id: "7652229189183427849",
+      },
+    ],
     max_items_per_hot: 8,
     max_items: 3,
   });
 
   assert.equal(data.task_id, "hot-task");
   assert.equal(data.type, "hot");
-  assert.deepEqual(data.hot_items, [{ word: "热点词", sentence_id: "2495363" }]);
+  assert.deepEqual(data.hot_items, [
+    {
+      word: "热点词",
+      sentence_id: "2495363",
+      seed_aweme_id: "7652229189183427849",
+    },
+  ]);
   assert.equal(data.max_items_per_hot, 8);
   assert.equal(data.max_items, 3);
 });

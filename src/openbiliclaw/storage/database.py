@@ -48,6 +48,7 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
 # leaf module (no openbiliclaw imports), so the value is duplicated here and
 # pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_in_sync.
 _DELIGHT_CLAIM_MIN_SCORE = 0.70
+_DEFAULT_ADMISSION_MIN_SCORE = 0.60
 
 # Rows claimed by the surprise (delight) channel: already delivered as a
 # delight, or currently delight-eligible (the pending-queue predicate). The
@@ -64,6 +65,32 @@ _DELIGHT_CLAIM_GUARD_SQL = f"""
                   )
 """
 
+_LEGACY_STYLE_KEY_MAP: dict[str, str] = {
+    "deep_dive": "deep_focus",
+    "tech_analysis": "deep_focus",
+    "music_analysis": "deep_focus",
+    "news_brief": "quick_scan",
+    "practical_guide": "hands_on",
+    "tutorial_short": "hands_on",
+    "game_strategy": "hands_on",
+    "review_roundup": "decision_support",
+    "unboxing_experience": "decision_support",
+    "story_doc": "story_immersion",
+    "emotional_narrative": "story_immersion",
+    "true_crime": "story_immersion",
+    "opinion_stand": "opinion_sparring",
+    "light_chat": "social_chat",
+    "lifestyle": "daily_wander",
+    "fun_variety": "mood_release",
+    "parody_remix": "mood_release",
+    "visual_showcase": "aesthetic_browse",
+    "audio_background": "ambient_companion",
+    "music_live": "live_pulse",
+    "live_moment": "live_pulse",
+    "sports_highlight": "live_pulse",
+    "sci_fact": "curiosity_spark",
+}
+
 _XHS_SOURCE_FAMILY = "xiaohongshu"
 _XHS_SOURCE_PREFIXES = ("xhs-", "xhs_", "xiaohongshu")
 _DOUYIN_SOURCE_FAMILY = "douyin"
@@ -72,6 +99,8 @@ _BILIBILI_SOURCE_FAMILY = "bilibili"
 _BILIBILI_SOURCE_KEYS = ("search", "related_chain", "trending", "explore")
 _YOUTUBE_SOURCE_FAMILY = "youtube"
 _YOUTUBE_SOURCE_PREFIXES = ("yt-", "yt_", "youtube")
+_TWITTER_SOURCE_FAMILY = "twitter"
+_TWITTER_SOURCE_PREFIXES = ("x-", "x_", "twitter")
 _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "manufacturing",
@@ -118,6 +147,14 @@ CREATE TABLE IF NOT EXISTS content_cache (
     cover_url   TEXT,
     view_count  INTEGER DEFAULT 0,
     like_count  INTEGER DEFAULT 0,
+    favorite_count INTEGER DEFAULT 0,
+    collect_count INTEGER DEFAULT 0,
+    comment_count INTEGER DEFAULT 0,
+    share_count INTEGER DEFAULT 0,
+    danmaku_count INTEGER DEFAULT 0,
+    reply_count INTEGER DEFAULT 0,
+    retweet_count INTEGER DEFAULT 0,
+    bookmark_count INTEGER DEFAULT 0,
     relevance_score REAL DEFAULT 0.0,
     relevance_reason TEXT DEFAULT '',
     pool_expression TEXT DEFAULT '',
@@ -134,7 +171,10 @@ CREATE TABLE IF NOT EXISTS content_cache (
     feedback_at TIMESTAMP,
     source      TEXT,                -- Which discovery strategy found it
     body_text   TEXT DEFAULT '',     -- Full text body for text-first sources (X tweet/thread)
-    content_type TEXT DEFAULT 'video'  -- Content shape: "video"|"note"|"tweet"|"thread"
+    content_type TEXT DEFAULT 'video',  -- Content shape: "video"|"note"|"tweet"|"thread"
+    -- P1.8 yield provenance: discovery_keywords.id that produced this row;
+    -- NULL for legacy / non-search / flag-off content.
+    source_keyword_id INTEGER
 );
 
 -- Unified raw discovery candidate queue.
@@ -161,11 +201,20 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     duration              INTEGER NOT NULL DEFAULT 0,
     view_count            INTEGER NOT NULL DEFAULT 0,
     like_count            INTEGER NOT NULL DEFAULT 0,
+    favorite_count        INTEGER NOT NULL DEFAULT 0,
+    collect_count         INTEGER NOT NULL DEFAULT 0,
+    comment_count         INTEGER NOT NULL DEFAULT 0,
+    share_count           INTEGER NOT NULL DEFAULT 0,
+    danmaku_count         INTEGER NOT NULL DEFAULT 0,
+    reply_count           INTEGER NOT NULL DEFAULT 0,
+    retweet_count         INTEGER NOT NULL DEFAULT 0,
+    bookmark_count        INTEGER NOT NULL DEFAULT 0,
     tags                  TEXT NOT NULL DEFAULT '[]',
     published_at          TEXT NOT NULL DEFAULT '',
     candidate_tier        TEXT NOT NULL DEFAULT 'primary',
     score_threshold       REAL NOT NULL DEFAULT 0.0,
     raw_payload           TEXT NOT NULL DEFAULT '{}',
+    source_keyword_id     INTEGER,
     topic_key             TEXT NOT NULL DEFAULT '',
     topic_group           TEXT NOT NULL DEFAULT '',
     style_key             TEXT NOT NULL DEFAULT '',
@@ -269,6 +318,8 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
         _YOUTUBE_SOURCE_PREFIXES
     ):
         return _YOUTUBE_SOURCE_FAMILY
+    if platform in {_TWITTER_SOURCE_FAMILY, "x"} or source_key.startswith(_TWITTER_SOURCE_PREFIXES):
+        return _TWITTER_SOURCE_FAMILY
     if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
         return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
@@ -283,9 +334,19 @@ def _normalize_source_platform_key(source_platform: object) -> str:
         return _DOUYIN_SOURCE_FAMILY
     if raw in {_YOUTUBE_SOURCE_FAMILY, "yt"}:
         return _YOUTUBE_SOURCE_FAMILY
+    if raw in {_TWITTER_SOURCE_FAMILY, "x"}:
+        return _TWITTER_SOURCE_FAMILY
     if raw in {_BILIBILI_SOURCE_FAMILY, "bili"}:
         return _BILIBILI_SOURCE_FAMILY
     return raw
+
+
+def _normalize_style_key_for_storage(value: object) -> str:
+    """Canonicalize known style_key values while preserving unknown legacy rows."""
+    token = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    if not token:
+        return ""
+    return _LEGACY_STYLE_KEY_MAP.get(token, token)
 
 
 def _is_linkable_pool_source(
@@ -324,6 +385,20 @@ def _xhs_self_author_guard_params(xhs_self_nickname: str | None) -> tuple[str, s
     return (nickname, nickname, nickname)
 
 
+def _normalize_admission_min_score(value: object) -> float:
+    if isinstance(value, bool):
+        return _DEFAULT_ADMISSION_MIN_SCORE
+    if not isinstance(value, (int, float, str)):
+        return _DEFAULT_ADMISSION_MIN_SCORE
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_ADMISSION_MIN_SCORE
+    if score <= 0.0 or score > 1.0:
+        return _DEFAULT_ADMISSION_MIN_SCORE
+    return score
+
+
 class Database:
     """Lightweight SQLite wrapper for OpenBiliClaw.
 
@@ -333,6 +408,11 @@ class Database:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._admission_min_score = _DEFAULT_ADMISSION_MIN_SCORE
+
+    def set_admission_min_score(self, value: object) -> None:
+        """Set the unified recommendation-pool admission floor."""
+        self._admission_min_score = _normalize_admission_min_score(value)
 
     def initialize(self) -> None:
         """Initialize the database and run migrations if needed."""
@@ -354,13 +434,17 @@ class Database:
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
         self._ensure_discovery_candidate_columns()
+        self._normalize_legacy_style_keys()
         self._ensure_llm_usage_cache_columns()
         self._ensure_chat_turns_table()
         self._ensure_watch_later_table()
+        self._ensure_discovery_keywords_table()
         self._ensure_favorites_table()
         self._ensure_auth_state_table()
         self._ensure_init_runs_table()
         self.reset_stale_discovery_candidate_evaluations()
+        self.suppress_low_score_pool_items()
+        self.suppress_low_confidence_recommendations()
 
         # Set schema version
         self._conn.execute(
@@ -375,6 +459,9 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         return self._conn
+
+    def _pool_admission_min_score(self) -> float:
+        return _normalize_admission_min_score(self._admission_min_score)
 
     def open_connection(self) -> sqlite3.Connection:
         """Open a short-lived connection to the initialized database.
@@ -421,6 +508,30 @@ class Database:
                 attempts -= 1
                 logger.warning(
                     "SQLite write locked, retrying (%s attempts left): %s",
+                    attempts,
+                    sql.splitlines()[0].strip() if sql.strip() else "<empty-sql>",
+                )
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
+    def _execute_many_write(
+        self,
+        sql: str,
+        seq_of_params: Sequence[tuple[Any, ...] | list[Any]],
+    ) -> sqlite3.Cursor:
+        """Batch-execute a write with the same transient-lock retry as ``_execute_write``."""
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                cursor = self.conn.executemany(sql, seq_of_params)
+                self.conn.commit()
+                return cursor
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                logger.warning(
+                    "SQLite batch write locked, retrying (%s attempts left): %s",
                     attempts,
                     sql.splitlines()[0].strip() if sql.strip() else "<empty-sql>",
                 )
@@ -851,12 +962,18 @@ class Database:
         keyword: str = "",
         limit: int = 100,
         satisfaction_modes: frozenset[str] | None = None,
+        after_event_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Query events with optional filters.
 
         ``satisfaction_modes`` filters by ``inferred_satisfaction``. When
         the set includes ``"unknown"``, rows with a NULL classification
         (pre-migration legacy rows) are also returned.
+
+        ``after_event_id`` restricts to rows with ``id`` strictly greater
+        than the given watermark — used by the cognition cycle to read only
+        events not yet folded into awareness. Result order is unchanged
+        (newest-first); callers that need chronological order reverse it.
         """
         sql = "SELECT * FROM events"
         clauses: list[str] = []
@@ -866,6 +983,10 @@ class Database:
             placeholders = ", ".join("?" for _ in event_types)
             clauses.append(f"event_type IN ({placeholders})")
             params.extend(event_types)
+
+        if after_event_id is not None:
+            clauses.append("id > ?")
+            params.append(after_event_id)
 
         if start_time is not None:
             clauses.append("created_at >= ?")
@@ -955,6 +1076,14 @@ class Database:
                 cover_url,
                 view_count,
                 like_count,
+                favorite_count,
+                collect_count,
+                comment_count,
+                share_count,
+                danmaku_count,
+                reply_count,
+                retweet_count,
+                bookmark_count,
                 relevance_score,
                 relevance_reason,
                 pool_expression,
@@ -968,11 +1097,12 @@ class Database:
                 source_platform,
                 author_name,
                 body_text,
-                content_type
+                content_type,
+                source_keyword_id
             )
             VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -1009,6 +1139,14 @@ class Database:
                 cover_url = excluded.cover_url,
                 view_count = excluded.view_count,
                 like_count = excluded.like_count,
+                favorite_count = excluded.favorite_count,
+                collect_count = excluded.collect_count,
+                comment_count = excluded.comment_count,
+                share_count = excluded.share_count,
+                danmaku_count = excluded.danmaku_count,
+                reply_count = excluded.reply_count,
+                retweet_count = excluded.retweet_count,
+                bookmark_count = excluded.bookmark_count,
                 relevance_score = CASE
                     WHEN excluded.relevance_score > 0 THEN excluded.relevance_score
                     ELSE COALESCE(content_cache.relevance_score, 0)
@@ -1042,9 +1180,18 @@ class Database:
                 -- (which churns slowly) stays bottlenecked because most hot
                 -- BVIDs are already cached as 'suppressed' from earlier
                 -- trim cycles. User-driven states ('shown', 'feedbacked',
-                -- 'purged_by_dislike') are preserved.
+                -- 'purged_by_dislike') are preserved. Low-score suppressed
+                -- rows only revive after a fresh/effective score meets the
+                -- unified admission floor.
                 pool_status = CASE
-                    WHEN content_cache.pool_status = 'suppressed' THEN 'fresh'
+                    WHEN content_cache.pool_status = 'suppressed'
+                         AND (
+                            CASE
+                                WHEN excluded.relevance_score > 0 THEN excluded.relevance_score
+                                ELSE COALESCE(content_cache.relevance_score, 0)
+                            END
+                         ) >= ?
+                    THEN 'fresh'
                     ELSE content_cache.pool_status
                 END,
                 source = excluded.source,
@@ -1065,6 +1212,13 @@ class Database:
                     NULLIF(excluded.content_type, ''),
                     content_cache.content_type,
                     'video'
+                ),
+                -- P1.8: keep the producing-keyword provenance once set; a later
+                -- re-ingest from a source that doesn't carry the id (NULL) must
+                -- not wipe it.
+                source_keyword_id = COALESCE(
+                    excluded.source_keyword_id,
+                    content_cache.source_keyword_id
                 )
             """,
             (
@@ -1076,13 +1230,21 @@ class Database:
                 json.dumps(kwargs.get("tags", []), ensure_ascii=False),
                 kwargs.get("topic_key", ""),
                 kwargs.get("topic_group", ""),
-                kwargs.get("style_key", ""),
+                _normalize_style_key_for_storage(kwargs.get("style_key", "")),
                 kwargs.get("franchise_key", ""),
                 kwargs.get("description", ""),
                 kwargs.get("cover_url", ""),
                 kwargs.get("view_count", 0),
                 kwargs.get("like_count", 0),
-                kwargs.get("relevance_score", 0.0),
+                kwargs.get("favorite_count", 0),
+                kwargs.get("collect_count", 0),
+                kwargs.get("comment_count", 0),
+                kwargs.get("share_count", 0),
+                kwargs.get("danmaku_count", 0),
+                kwargs.get("reply_count", 0),
+                kwargs.get("retweet_count", 0),
+                kwargs.get("bookmark_count", 0),
+                kwargs.get("relevance_score", self._pool_admission_min_score()),
                 kwargs.get("relevance_reason", ""),
                 kwargs.get("pool_expression", ""),
                 kwargs.get("pool_topic_label", ""),
@@ -1095,8 +1257,25 @@ class Database:
                 kwargs.get("author_name", ""),
                 kwargs.get("body_text", ""),
                 kwargs.get("content_type", "video") or "video",
+                self._coerce_source_keyword_id(kwargs.get("source_keyword_id")),
+                self._pool_admission_min_score(),
             ),
         )
+
+    @staticmethod
+    def _coerce_source_keyword_id(value: Any) -> int | None:
+        """Normalize a ``source_keyword_id`` kwarg to ``int`` or ``None``.
+
+        Tolerates the field being absent / blank / non-numeric so any caller
+        that has not been threaded through the P1.8 provenance path stays a
+        plain NULL write (no behavior change vs. the pre-P1.8 schema).
+        """
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _candidate_value(candidate: object, key: str, default: Any = "") -> Any:
@@ -1169,14 +1348,24 @@ class Database:
                     duration,
                     view_count,
                     like_count,
+                    favorite_count,
+                    collect_count,
+                    comment_count,
+                    share_count,
+                    danmaku_count,
+                    reply_count,
+                    retweet_count,
+                    bookmark_count,
                     tags,
                     published_at,
                     candidate_tier,
                     score_threshold,
-                    raw_payload
+                    raw_payload,
+                    source_keyword_id
                 )
                 VALUES (
-                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1198,11 +1387,22 @@ class Database:
                     int(self._candidate_value(candidate, "duration", 0) or 0),
                     int(self._candidate_value(candidate, "view_count", 0) or 0),
                     int(self._candidate_value(candidate, "like_count", 0) or 0),
+                    int(self._candidate_value(candidate, "favorite_count", 0) or 0),
+                    int(self._candidate_value(candidate, "collect_count", 0) or 0),
+                    int(self._candidate_value(candidate, "comment_count", 0) or 0),
+                    int(self._candidate_value(candidate, "share_count", 0) or 0),
+                    int(self._candidate_value(candidate, "danmaku_count", 0) or 0),
+                    int(self._candidate_value(candidate, "reply_count", 0) or 0),
+                    int(self._candidate_value(candidate, "retweet_count", 0) or 0),
+                    int(self._candidate_value(candidate, "bookmark_count", 0) or 0),
                     tags,
                     published_at,
                     str(self._candidate_value(candidate, "candidate_tier", "primary") or "primary"),
                     score_threshold,
                     raw_payload,
+                    self._coerce_source_keyword_id(
+                        self._candidate_value(candidate, "source_keyword_id", None)
+                    ),
                 ),
             )
             if source_platform:
@@ -1442,7 +1642,7 @@ class Database:
                     str(evaluation.get("status") or "evaluated"),
                     str(evaluation.get("topic_key") or ""),
                     str(evaluation.get("topic_group") or ""),
-                    str(evaluation.get("style_key") or ""),
+                    _normalize_style_key_for_storage(evaluation.get("style_key")),
                     str(evaluation.get("franchise_key") or ""),
                     float(evaluation.get("relevance_score") or evaluation.get("score") or 0.0),
                     str(evaluation.get("relevance_reason") or evaluation.get("reason") or ""),
@@ -1648,11 +1848,13 @@ class Database:
 
     def get_unrecommended_content(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get cached content that has not been recommended yet."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT c.*
             FROM content_cache AS c
-            WHERE NOT EXISTS (
+            WHERE COALESCE(c.relevance_score, 0.0) >= ?
+              AND NOT EXISTS (
                 SELECT 1
                 FROM recommendations AS r
                 WHERE r.bvid = c.bvid
@@ -1665,7 +1867,7 @@ class Database:
                 c.bvid ASC
             LIMIT ?
             """,
-            (max(limit * 5, 50),),
+            (min_score, max(limit * 5, 50)),
         )
         rows = [dict(row) for row in cursor.fetchall()]
         rows = self._exclude_viewed_rows(
@@ -1674,6 +1876,42 @@ class Database:
             limit=len(rows),
         )
         return self._balance_pool_rows(rows, limit=limit)
+
+    def suppress_low_score_pool_items(self, min_score: float | None = None) -> int:
+        """Suppress cached pool rows below the unified admission floor."""
+        threshold = (
+            self._pool_admission_min_score()
+            if min_score is None
+            else _normalize_admission_min_score(min_score)
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE content_cache
+            SET pool_status = 'suppressed'
+            WHERE COALESCE(relevance_score, 0.0) < ?
+              AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
+            """,
+            (threshold,),
+        )
+        return int(cursor.rowcount or 0)
+
+    def suppress_low_confidence_recommendations(self, min_score: float | None = None) -> int:
+        """Mark old low-confidence recommendation rows as suppressed."""
+        threshold = (
+            self._pool_admission_min_score()
+            if min_score is None
+            else _normalize_admission_min_score(min_score)
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE recommendations
+            SET feedback_type = 'suppressed_low_score'
+            WHERE COALESCE(confidence, 0.0) < ?
+              AND COALESCE(feedback_type, '') = ''
+            """,
+            (threshold,),
+        )
+        return int(cursor.rowcount or 0)
 
     def get_pool_candidates(
         self,
@@ -1714,6 +1952,7 @@ class Database:
         # Over-fetch widely so the per-group filter still leaves headroom
         # for the downstream balance pass.
         fetch_limit = max(limit * 8, 80)
+        min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
@@ -1723,6 +1962,7 @@ class Database:
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                   AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(relevance_score, 0.0) >= ?
                   AND COALESCE(pool_expression, '') != ''
                   AND COALESCE(pool_topic_label, '') != ''
                   AND COALESCE(style_key, '') != ''
@@ -1746,7 +1986,7 @@ class Database:
                     bvid ASC
                 LIMIT ?
             """
-            params: tuple[Any, ...] = (*guard_params, fetch_limit)
+            params: tuple[Any, ...] = (min_score, *guard_params, fetch_limit)
         else:
             # Per-group rank via window function: keep the top-N classified
             # items of each topic_group, then order the remainder by relevance.
@@ -1764,6 +2004,7 @@ class Database:
                     FROM content_cache
                     WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                       AND COALESCE(feedback_type, '') != 'dislike'
+                      AND COALESCE(relevance_score, 0.0) >= ?
                       AND COALESCE(pool_expression, '') != ''
                       AND COALESCE(pool_topic_label, '') != ''
                       AND COALESCE(style_key, '') != ''
@@ -1790,7 +2031,7 @@ class Database:
                     bvid ASC
                 LIMIT ?
             """
-            params = (*guard_params, max_per_topic_group, fetch_limit)
+            params = (min_score, *guard_params, max_per_topic_group, fetch_limit)
         cursor = self.conn.execute(sql, params)
         rows = [dict(row) for row in cursor.fetchall()]
         rows = self._exclude_viewed_rows(
@@ -1835,6 +2076,7 @@ class Database:
         would refuse to load.
         """
         self._ensure_fresh_read()
+        min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
@@ -1854,6 +2096,7 @@ class Database:
                     FROM content_cache
                     WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                       AND COALESCE(feedback_type, '') != 'dislike'
+                      AND COALESCE(relevance_score, 0.0) >= ?
                       AND COALESCE(pool_expression, '') != ''
                       AND COALESCE(pool_topic_label, '') != ''
                       AND COALESCE(style_key, '') != ''
@@ -1874,7 +2117,7 @@ class Database:
                 FROM ranked
                 WHERE group_rank <= ?
                 """,
-                (*guard_params, max_per_topic_group),
+                (min_score, *guard_params, max_per_topic_group),
             )
         else:
             cursor = self.conn.execute(
@@ -1883,6 +2126,7 @@ class Database:
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') = 'fresh'
                   AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(relevance_score, 0.0) >= ?
                   AND COALESCE(pool_expression, '') != ''
                   AND COALESCE(pool_topic_label, '') != ''
                   AND COALESCE(style_key, '') != ''
@@ -1899,7 +2143,7 @@ class Database:
                     WHERE r.bvid = content_cache.bvid
                   )
                 """,
-                guard_params,
+                (min_score, *guard_params),
             )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         rows: list[dict[str, Any]] = []
@@ -1935,6 +2179,7 @@ class Database:
     def _load_pool_raw_material_rows(self) -> list[dict[str, Any]]:
         """Load raw fresh material rows governed by the raw ceiling."""
         self._ensure_fresh_read()
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT
@@ -1951,10 +2196,12 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         rows: list[dict[str, Any]] = []
@@ -2004,6 +2251,7 @@ class Database:
         recently viewed rows are unavailable, but they are not pending.
         """
         self._ensure_fresh_read()
+        min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         raw_cursor = self.conn.execute(
@@ -2012,6 +2260,7 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               {guard_sql}
               AND NOT EXISTS (
                 SELECT 1
@@ -2019,7 +2268,7 @@ class Database:
                 WHERE r.bvid = content_cache.bvid
               )
             """,
-            guard_params,
+            (min_score, *guard_params),
         )
         raw_count = int(raw_cursor.fetchone()["count"])
         pending_cursor = self.conn.execute(
@@ -2037,6 +2286,7 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               {guard_sql}
               AND NOT EXISTS (
                 SELECT 1
@@ -2044,7 +2294,7 @@ class Database:
                 WHERE r.bvid = content_cache.bvid
               )
             """,
-            guard_params,
+            (min_score, *guard_params),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         pending_count = 0
@@ -2082,18 +2332,21 @@ class Database:
 
     def count_pool_candidates_by_source(self) -> dict[str, int]:
         """Return fresh pool counts grouped by discovery source family."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, source, source_platform, content_url
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND NOT EXISTS (
                 SELECT 1
                 FROM recommendations AS r
                 WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, int] = defaultdict(int)
@@ -2114,12 +2367,14 @@ class Database:
 
     def get_pool_distribution_counts(self) -> dict[str, dict[str, int]]:
         """Return fresh pool counts grouped by topic, style, and franchise."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, topic_group, style_key, franchise_key, source, source_platform, content_url
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(pool_expression, '') != ''
               AND COALESCE(pool_topic_label, '') != ''
               AND NOT EXISTS (
@@ -2127,7 +2382,8 @@ class Database:
                 FROM recommendations AS r
                 WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         counts: dict[str, dict[str, int]] = {
@@ -2151,6 +2407,93 @@ class Database:
                 if value:
                     counts[axis][value] += 1
         return {axis: dict(axis_counts) for axis, axis_counts in counts.items()}
+
+    def get_pool_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        """Per-platform ``topic_group`` counts of fresh servable pool rows (P3.1).
+
+        Same servable filter as :meth:`get_pool_distribution_counts`, but keyed by
+        ``source_platform`` → ``{platform: {topic_group: count}}`` so the keyword
+        planner can avoid topics saturated *on that platform* instead of pool-wide
+        (a topic piled up on B站 may be absent on 小红书). Returns ``{}`` on error.
+        """
+        try:
+            min_score = self._pool_admission_min_score()
+            cursor = self.conn.execute(
+                """
+                SELECT bvid, topic_group, style_key, franchise_key,
+                       source, source_platform, content_url
+                FROM content_cache
+                WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+                  AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(relevance_score, 0.0) >= ?
+                  AND COALESCE(pool_expression, '') != ''
+                  AND COALESCE(pool_topic_label, '') != ''
+                  AND NOT EXISTS (
+                    SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+                  )
+                """,
+                (min_score,),
+            )
+            viewed_content_keys = self.get_recent_viewed_content_keys()
+        except Exception:
+            logger.debug("get_pool_topic_counts_by_platform query failed", exc_info=True)
+            return {}
+        counts: dict[str, dict[str, int]] = {}
+        for row in cursor.fetchall():
+            bvid = str(row["bvid"]).strip()
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+                continue
+            if not _is_linkable_pool_source(
+                row["source"], row["source_platform"], row["content_url"]
+            ):
+                continue
+            platform = str(row["source_platform"] or "").strip()
+            topic = str(row["topic_group"] or "").strip()
+            if not platform or not topic:
+                continue
+            counts.setdefault(platform, defaultdict(int))[topic] += 1
+        return {platform: dict(topics) for platform, topics in counts.items()}
+
+    def get_admitted_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        """Per-platform ``topic_group`` counts of ALL admitted content (P3.3).
+
+        Where :meth:`get_pool_topic_counts_by_platform` counts the *current
+        servable pool* (a saturation signal — too much right now), this counts
+        every non-disliked, linkable row that ever made it into the cache from
+        each platform, served or not — a *supply-advantage* signal: which topics
+        each platform has actually delivered for this user. The keyword planner
+        feeds the top topics back as a data-driven complement to the static
+        ``<supply_advantage>`` table (after subtracting the platform's current
+        avoid set). Returns ``{}`` on error.
+        """
+        try:
+            min_score = self._pool_admission_min_score()
+            cursor = self.conn.execute(
+                """
+                SELECT topic_group, source, source_platform, content_url
+                FROM content_cache
+                WHERE COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(relevance_score, 0.0) >= ?
+                  AND COALESCE(topic_group, '') != ''
+                """,
+                (min_score,),
+            )
+        except Exception:
+            logger.debug("get_admitted_topic_counts_by_platform query failed", exc_info=True)
+            return {}
+        counts: dict[str, dict[str, int]] = {}
+        for row in cursor.fetchall():
+            if not _is_linkable_pool_source(
+                row["source"], row["source_platform"], row["content_url"]
+            ):
+                continue
+            platform = str(row["source_platform"] or "").strip()
+            topic = str(row["topic_group"] or "").strip()
+            if not platform or not topic:
+                continue
+            counts.setdefault(platform, defaultdict(int))[topic] += 1
+        return {platform: dict(topics) for platform, topics in counts.items()}
 
     def canonicalize_topic_groups(self, canonical_map: dict[str, str]) -> int:
         """Rewrite ``content_cache.topic_group`` to canonical form per map.
@@ -2197,16 +2540,19 @@ class Database:
         is excluded — most generic content has no IP signal and the
         quota is only meaningful for series / IP / UP-driven groups.
         """
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT LOWER(TRIM(franchise_key)) AS fk, COUNT(*) AS n
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND franchise_key IS NOT NULL
               AND TRIM(franchise_key) != ''
             GROUP BY LOWER(TRIM(franchise_key))
-            """
+            """,
+            (min_score,),
         )
         return {str(row["fk"]): int(row["n"]) for row in cursor.fetchall() if row["fk"]}
 
@@ -2217,13 +2563,16 @@ class Database:
         before the popup hits ``serve()``. Cheap GROUP BY on a small
         column with no JOIN.
         """
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT DISTINCT topic_group
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(topic_group, '') != ''
-            """
+            """,
+            (min_score,),
         )
         return [str(row[0]) for row in cursor.fetchall() if row and row[0]]
 
@@ -2242,11 +2591,13 @@ class Database:
         single one-off item doesn't block exploration of an actually-
         empty area. Result is sorted by group size DESC.
         """
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT topic_group, COUNT(*) AS n
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(topic_group, '') != ''
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
@@ -2256,7 +2607,7 @@ class Database:
             ORDER BY n DESC, topic_group ASC
             LIMIT ?
             """,
-            (max(1, int(min_count)), max(1, int(limit))),
+            (min_score, max(1, int(min_count)), max(1, int(limit))),
         )
         return [str(row["topic_group"]) for row in cursor.fetchall()]
 
@@ -2281,15 +2632,18 @@ class Database:
         Sample titles are picked top-by-``relevance_score`` within each
         group, so the input is reasonably stable while the pool is steady.
         """
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT topic_group, title, relevance_score
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(topic_group, '') != ''
               AND COALESCE(title, '') != ''
             ORDER BY topic_group, relevance_score DESC, bvid
-            """
+            """,
+            (min_score,),
         )
         by_group: dict[str, list[str]] = defaultdict(list)
         group_max_score: dict[str, float] = {}
@@ -2315,14 +2669,17 @@ class Database:
 
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
         """Suppress excess fresh explore items from high-risk topic clusters."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, title, topic_key, relevance_score, last_scored_at
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(source, '') = 'explore'
-            """
+            """,
+            (min_score,),
         )
         rows = [dict(row) for row in cursor.fetchall()]
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -2385,17 +2742,20 @@ class Database:
         if max_per_group <= 0:
             return 0
 
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, topic_group, relevance_score, last_scored_at
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(topic_group, '') != ''
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
-            """
+            """,
+            (min_score,),
         )
         rows = [dict(row) for row in cursor.fetchall()]
         if not rows:
@@ -2677,12 +3037,14 @@ class Database:
         if not deficits:
             return 0
 
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT bvid, source, source_platform, content_url, relevance_score, last_scored_at
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'suppressed'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND NOT EXISTS (
                 SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
               )
@@ -2691,7 +3053,8 @@ class Database:
                 relevance_score DESC,
                 last_scored_at DESC,
                 bvid ASC
-            """
+            """,
+            (min_score,),
         )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         selected_bvids: list[str] = []
@@ -3058,6 +3421,7 @@ class Database:
         unclassified items (e.g. raw XHS notes) from getting an expression
         and leaking through the serve gate without proper relevance scoring.
         """
+        min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         cursor = self.conn.execute(
@@ -3066,6 +3430,7 @@ class Database:
             FROM content_cache
             WHERE COALESCE(pool_status, 'fresh') = 'fresh'
               AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(style_key, '') != ''
               AND COALESCE(topic_group, '') != ''
               AND (
@@ -3086,7 +3451,7 @@ class Database:
                 bvid ASC
             LIMIT ?
             """,
-            (*guard_params, limit),
+            (min_score, *guard_params, limit),
         )
         rows = [dict(row) for row in cursor.fetchall()]
         rows = self._exclude_viewed_rows(
@@ -3337,6 +3702,7 @@ class Database:
         otherwise five 原神 / 提瓦特 items can land in one popup view.
         """
         self._ensure_fresh_read()
+        min_score = self._pool_admission_min_score()
         processed_clause = (
             "AND (r.feedback_type IS NULL OR r.feedback_type = '')" if exclude_processed else ""
         )
@@ -3362,11 +3728,12 @@ class Database:
                 COALESCE(c.source_platform, '') != 'xiaohongshu'
                 OR COALESCE(c.content_url, '') LIKE '%xsec_token=%'
             )
+            AND COALESCE(r.confidence, 0.0) >= ?
             {processed_clause}
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (limit,),
+            (min_score, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -3682,6 +4049,17 @@ class Database:
             "published_at": "TEXT DEFAULT ''",
             "body_text": "TEXT DEFAULT ''",
             "content_type": "TEXT DEFAULT 'video'",
+            "favorite_count": "INTEGER DEFAULT 0",
+            "collect_count": "INTEGER DEFAULT 0",
+            "comment_count": "INTEGER DEFAULT 0",
+            "share_count": "INTEGER DEFAULT 0",
+            "danmaku_count": "INTEGER DEFAULT 0",
+            "reply_count": "INTEGER DEFAULT 0",
+            "retweet_count": "INTEGER DEFAULT 0",
+            "bookmark_count": "INTEGER DEFAULT 0",
+            # P1.8 yield provenance: the discovery_keywords.id that produced this
+            # row (NULL for legacy / non-search / flag-off). Nullable, additive.
+            "source_keyword_id": "INTEGER",
         }
         added = False
         for column_name, column_type in required_columns.items():
@@ -3705,6 +4083,16 @@ class Database:
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "body_text": "TEXT NOT NULL DEFAULT ''",
+            "favorite_count": "INTEGER NOT NULL DEFAULT 0",
+            "collect_count": "INTEGER NOT NULL DEFAULT 0",
+            "comment_count": "INTEGER NOT NULL DEFAULT 0",
+            "share_count": "INTEGER NOT NULL DEFAULT 0",
+            "danmaku_count": "INTEGER NOT NULL DEFAULT 0",
+            "reply_count": "INTEGER NOT NULL DEFAULT 0",
+            "retweet_count": "INTEGER NOT NULL DEFAULT 0",
+            "bookmark_count": "INTEGER NOT NULL DEFAULT 0",
+            # P1.8 yield provenance: nullable, additive (existing rows stay NULL).
+            "source_keyword_id": "INTEGER",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:
@@ -3712,6 +4100,26 @@ class Database:
             self.conn.execute(
                 f"ALTER TABLE discovery_candidates ADD COLUMN {column_name} {column_type}"
             )
+
+    def _normalize_legacy_style_keys(self) -> None:
+        """Rewrite known legacy content-form style keys to viewing-mode keys."""
+
+        targets = (
+            ("content_cache", "style_key"),
+            ("discovery_candidates", "style_key"),
+        )
+        for table_name, column_name in targets:
+            existing_columns = {
+                str(row["name"])
+                for row in self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            }
+            if column_name not in existing_columns:
+                continue
+            for legacy_key, style_key in _LEGACY_STYLE_KEY_MAP.items():
+                self.conn.execute(
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                    (style_key, legacy_key),
+                )
 
     def _ensure_recommendation_read_indexes(self) -> None:
         """Create indexes used by recommendation and activity-feed reads."""
@@ -3786,6 +4194,682 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_watch_later_added
                 ON watch_later(added_at DESC);
         """)
+
+    def _ensure_discovery_keywords_table(self) -> None:
+        """Create the unified search-keyword store + planner single-flight lock.
+
+        ``discovery_keywords`` is the generation-side cache/history/yield
+        ledger for the unified keyword planner (Discover backpressure
+        refactor, P1). It carries the same atomic-claim + lease-reclaim
+        semantics as the ``xhs_tasks`` / ``dy_tasks`` execution queues
+        (``BEGIN IMMEDIATE`` claim, ``pending → claimed`` transition,
+        ``claimed_at`` lease), but tracks *which words to search* rather
+        than *which tabs to open*.
+
+        The uniqueness constraint is **partial** — it only covers the
+        in-flight states (``pending`` / ``claimed`` / ``executing``) so a
+        word that has already been ``used`` (or ``expired``) does not block
+        the planner from re-generating the same word on a later cycle once
+        it has rolled out of the dedup window.
+
+        ``discovery_planner_lock`` is a tiny CAS row used to single-flight
+        the planner across loops / restarts. It is held only for *short*
+        transactions (acquire → commit → run LLM unlocked → reacquire to
+        write), never across the LLM call, so it cannot block other
+        SQLite writers.
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS discovery_keywords (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform          TEXT NOT NULL,
+                keyword           TEXT NOT NULL,
+                profile_kw_digest TEXT NOT NULL DEFAULT '',
+                status            TEXT NOT NULL DEFAULT 'pending',
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed_at        TIMESTAMP,
+                executing_at      TIMESTAMP,
+                used_at           TIMESTAMP,
+                attempts          INTEGER NOT NULL DEFAULT 0,
+                yield_count       INTEGER NOT NULL DEFAULT 0
+            );
+            -- Partial uniqueness: only the in-flight triplet is unique, so
+            -- used/expired history never blocks re-generating the same word.
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_discovery_keywords_inflight
+                ON discovery_keywords (platform, keyword, profile_kw_digest)
+                WHERE status IN ('pending', 'claimed', 'executing');
+            CREATE INDEX IF NOT EXISTS idx_discovery_keywords_status_digest
+                ON discovery_keywords (platform, status, profile_kw_digest);
+            CREATE INDEX IF NOT EXISTS idx_discovery_keywords_status_used
+                ON discovery_keywords (platform, status, used_at);
+
+            CREATE TABLE IF NOT EXISTS discovery_planner_lock (
+                lock_name    TEXT PRIMARY KEY,
+                owner        TEXT NOT NULL DEFAULT '',
+                locked_until TIMESTAMP NOT NULL,
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- P1.8 yield ledger. One row per (keyword, admitted content) the
+            -- keyword produced. The composite primary key makes the yield
+            -- backfill idempotent: a retried / out-of-order / duplicate admit
+            -- of the SAME (keyword, content) is an INSERT-OR-IGNORE no-op, so
+            -- ``discovery_keywords.yield_count`` is only ever bumped once per
+            -- distinct produced content. Decoupled from ``used`` (P1.7).
+            CREATE TABLE IF NOT EXISTS discovery_keyword_yield (
+                keyword_id  INTEGER NOT NULL,
+                content_id  TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (keyword_id, content_id)
+            );
+        """)
+
+    # ── Discovery keyword store (unified search-keyword planner) ──
+    #
+    # Status machine:
+    #   pending → claimed → (inline:    used / failed)
+    #                     → (async: executing → used / failed)
+    #   any in-flight state → pending (lease reclaim / budget rollback)
+    #   pending (stale digest) → expired
+    # ``used`` only ever lands at the terminal (never at enqueue time); the
+    # word stays "in flight" until its fetch actually completes. yield_count
+    # is backfilled later (P1.8) at admission time; P1.1 only stores the column.
+
+    def insert_pending_keywords(
+        self,
+        platform: str,
+        keywords: Sequence[str],
+        profile_kw_digest: str,
+    ) -> int:
+        """Batch-insert ``pending`` keywords, ignoring in-flight duplicates.
+
+        The partial unique index ``uq_discovery_keywords_inflight`` means a
+        word already ``pending`` / ``claimed`` / ``executing`` for the same
+        ``(platform, profile_kw_digest)`` is silently skipped (``OR IGNORE``);
+        a word that is only present as ``used`` / ``expired`` history does
+        **not** conflict, so the same word can be regenerated. Blank /
+        duplicate words within ``keywords`` are de-duplicated up front.
+
+        Returns the number of rows actually inserted.
+        """
+        platform_key = platform.strip()
+        digest = profile_kw_digest.strip()
+        seen: set[str] = set()
+        rows: list[tuple[str, str, str]] = []
+        for raw in keywords:
+            word = str(raw).strip()
+            if not word or word in seen:
+                continue
+            seen.add(word)
+            rows.append((platform_key, word, digest))
+        if not rows:
+            return 0
+        before = self.conn.total_changes
+        self._execute_many_write(
+            """
+            INSERT OR IGNORE INTO discovery_keywords
+                (platform, keyword, profile_kw_digest, status)
+            VALUES (?, ?, ?, 'pending')
+            """,
+            rows,
+        )
+        return self.conn.total_changes - before
+
+    def count_pending_keywords(self, platform: str, profile_kw_digest: str) -> int:
+        """Return how many ``pending`` keywords exist for this digest."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM discovery_keywords
+            WHERE platform = ? AND status = 'pending' AND profile_kw_digest = ?
+            """,
+            (platform.strip(), profile_kw_digest.strip()),
+        ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    def claim_keywords(self, platform: str, n: int) -> list[dict[str, Any]]:
+        """Atomically claim up to ``n`` ``pending`` keywords for a platform.
+
+        Uses a short-lived connection + ``BEGIN IMMEDIATE`` so two concurrent
+        callers serialize and never receive overlapping rows: the second
+        writer blocks until the first commits, after which the just-claimed
+        rows are no longer ``pending`` and cannot be re-selected. Mirrors the
+        ``xhs_tasks`` / ``dy_tasks`` ``next_pending`` claim, generalized to a
+        batch. Returns the claimed rows (``status='claimed'``), oldest first.
+        """
+        claim_n = max(0, int(n))
+        if claim_n <= 0:
+            return []
+        self._ensure_fresh_read()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            pending = conn.execute(
+                """
+                SELECT id
+                FROM discovery_keywords
+                WHERE platform = ? AND status = 'pending'
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                (platform.strip(), claim_n),
+            ).fetchall()
+            if not pending:
+                conn.commit()
+                return []
+            ids = [int(row["id"]) for row in pending]
+            placeholders = ", ".join("?" for _ in ids)
+            conn.execute(
+                f"""
+                UPDATE discovery_keywords
+                SET status = 'claimed', claimed_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders}) AND status = 'pending'
+                """,
+                ids,
+            )
+            claimed = conn.execute(
+                f"""
+                SELECT *
+                FROM discovery_keywords
+                WHERE id IN ({placeholders}) AND status = 'claimed'
+                ORDER BY claimed_at ASC, id ASC
+                """,
+                ids,
+            ).fetchall()
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return [dict(row) for row in claimed]
+
+    def mark_keyword_executing(self, keyword_id: int) -> None:
+        """Move a ``claimed`` keyword to ``executing`` (async fetch enqueued)."""
+        self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'executing', executing_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status IN ('claimed', 'executing')
+            """,
+            (int(keyword_id),),
+        )
+
+    def mark_keyword_used(self, keyword_id: int) -> None:
+        """Mark a keyword ``used`` (terminal — its fetch has completed)."""
+        self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'used', used_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status IN ('claimed', 'executing')
+            """,
+            (int(keyword_id),),
+        )
+
+    def mark_keyword_failed(self, keyword_id: int) -> int:
+        """Mark a keyword ``failed`` and bump ``attempts``.
+
+        Returns the new ``attempts`` count so the caller can decide whether
+        to retry (re-pend) or treat the word as terminally failed.
+        """
+        self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'failed',
+                attempts = attempts + 1
+            WHERE id = ? AND status IN ('claimed', 'executing')
+            """,
+            (int(keyword_id),),
+        )
+        row = self.conn.execute(
+            "SELECT attempts FROM discovery_keywords WHERE id = ?",
+            (int(keyword_id),),
+        ).fetchone()
+        return int(row["attempts"]) if row is not None else 0
+
+    def rollback_keyword_to_pending(self, keyword_id: int) -> None:
+        """Return a ``claimed`` keyword to ``pending`` (budget-rejection rollback).
+
+        Used when a claim succeeded but the downstream enqueue was rejected
+        (e.g. daily budget exhausted) so no fetch ever ran — the word must go
+        back into the pool rather than be burned. Only ``claimed`` rolls back;
+        ``executing`` rows already have an in-flight task and are left alone.
+        """
+        self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'pending', claimed_at = NULL
+            WHERE id = ? AND status = 'claimed'
+            """,
+            (int(keyword_id),),
+        )
+
+    def reclaim_leased_keywords(
+        self,
+        claim_lease_minutes: float,
+        executing_timeout_minutes: float,
+    ) -> int:
+        """Reclaim leaked in-flight keywords back to ``pending``.
+
+        ``claimed`` rows whose ``claimed_at`` is older than
+        ``claim_lease_minutes`` (a loop crashed between claim and fetch) and
+        ``executing`` rows whose ``executing_at`` is older than
+        ``executing_timeout_minutes`` (an async task never reported back) are
+        returned to ``pending`` so the word is not lost. Returns the number
+        of rows reclaimed.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        claimed_cutoff = (now - timedelta(minutes=max(0.0, claim_lease_minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        executing_cutoff = (now - timedelta(minutes=max(0.0, executing_timeout_minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'pending', claimed_at = NULL, executing_at = NULL
+            WHERE (status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at <= ?)
+               OR (status = 'executing' AND executing_at IS NOT NULL AND executing_at <= ?)
+            """,
+            (claimed_cutoff, executing_cutoff),
+        )
+        return int(cursor.rowcount or 0)
+
+    def history_keywords(
+        self,
+        platform: str,
+        window_size: int,
+        window_hours: float,
+    ) -> list[str]:
+        """Return recent in-flight + used keywords for dedup, newest first.
+
+        Includes ``claimed`` / ``executing`` (in-flight, so the planner does
+        not regenerate a word a fetch is about to consume) and ``used``
+        (recently searched) within the rolling window. Capped at
+        ``window_size`` and bounded to the last ``window_hours``.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cap = max(0, int(window_size))
+        if cap <= 0:
+            return []
+        self._ensure_fresh_read()
+        cutoff = (datetime.now(UTC) - timedelta(hours=max(0.0, window_hours))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        rows = self.conn.execute(
+            """
+            SELECT keyword
+            FROM discovery_keywords
+            WHERE platform = ?
+              AND status IN ('claimed', 'executing', 'used')
+              AND COALESCE(used_at, executing_at, claimed_at, created_at) >= ?
+            ORDER BY COALESCE(used_at, executing_at, claimed_at, created_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (platform.strip(), cutoff, cap),
+        ).fetchall()
+        return [str(row["keyword"]) for row in rows]
+
+    def recycle_oldest_used(
+        self,
+        platform: str,
+        n: int,
+        profile_kw_digest: str,
+    ) -> int:
+        """Recycle the oldest ``used`` keywords back to ``pending``.
+
+        Sparse-profile safety valve: when generation can only produce words
+        already in history, the planner recycles the least-recently-used words
+        so the cache does not starve. Recycled rows are re-stamped with the
+        current ``profile_kw_digest`` and become ``pending`` again. Rows that
+        would collide with an existing in-flight row (same word already
+        pending/claimed/executing for this digest) are skipped to respect the
+        partial unique index. Returns the number of rows recycled.
+        """
+        recycle_n = max(0, int(n))
+        if recycle_n <= 0:
+            return 0
+        digest = profile_kw_digest.strip()
+        self._ensure_fresh_read()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            candidates = conn.execute(
+                """
+                SELECT id, keyword
+                FROM discovery_keywords
+                WHERE platform = ? AND status = 'used'
+                ORDER BY used_at ASC, id ASC
+                """,
+                (platform.strip(),),
+            ).fetchall()
+            recycled = 0
+            for row in candidates:
+                if recycled >= recycle_n:
+                    break
+                clash = conn.execute(
+                    """
+                    SELECT 1
+                    FROM discovery_keywords
+                    WHERE platform = ?
+                      AND keyword = ?
+                      AND profile_kw_digest = ?
+                      AND status IN ('pending', 'claimed', 'executing')
+                    LIMIT 1
+                    """,
+                    (platform.strip(), str(row["keyword"]), digest),
+                ).fetchone()
+                if clash is not None:
+                    continue
+                conn.execute(
+                    """
+                    UPDATE discovery_keywords
+                    SET status = 'pending',
+                        profile_kw_digest = ?,
+                        claimed_at = NULL,
+                        executing_at = NULL,
+                        used_at = NULL
+                    WHERE id = ? AND status = 'used'
+                    """,
+                    (digest, int(row["id"])),
+                )
+                recycled += 1
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return recycled
+
+    def expire_pending_by_digest(self, platform: str, current_digest: str) -> int:
+        """Expire ``pending`` keywords generated under a stale profile digest.
+
+        When the profile changes the planner expires any ``pending`` word from
+        an older digest so the next generation uses the fresh profile.
+        ``used`` / ``claimed`` / ``executing`` rows are left untouched
+        (dedup history + in-flight work are preserved). Returns the count
+        expired.
+        """
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'expired'
+            WHERE platform = ? AND status = 'pending' AND profile_kw_digest != ?
+            """,
+            (platform.strip(), current_digest.strip()),
+        )
+        return int(cursor.rowcount or 0)
+
+    def purge_archived_keywords(
+        self,
+        retention_hours: float,
+        *,
+        platform: str | None = None,
+    ) -> int:
+        """Delete archived (``used`` / ``expired`` / ``failed``) rows past retention.
+
+        Cleanup for rows that have left the dedup window and are no longer
+        needed for yield accounting. Only terminal-archive states are purged;
+        in-flight rows are never deleted. Returns the number of rows removed.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(hours=max(0.0, retention_hours))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        params: list[Any] = [cutoff]
+        platform_clause = ""
+        if platform is not None:
+            platform_clause = " AND platform = ?"
+            params.append(platform.strip())
+        cursor = self._execute_write(
+            f"""
+            DELETE FROM discovery_keywords
+            WHERE status IN ('used', 'expired', 'failed')
+              AND COALESCE(used_at, executing_at, claimed_at, created_at) < ?
+              {platform_clause}
+            """,
+            params,
+        )
+        return int(cursor.rowcount or 0)
+
+    # ── Discovery keyword yield (P1.8 admit-time backfill) ───────
+
+    def increment_keyword_yield(self, keyword_id: int, content_id: str) -> bool:
+        """Idempotently credit one admitted content to the keyword that produced it.
+
+        Called at admission (the single ``_cache_results`` convergence) for every
+        pool item whose ``source_keyword_id`` is set. Idempotency is keyed on
+        ``(keyword_id, content_id)`` via the ``discovery_keyword_yield`` ledger:
+        the ledger ``INSERT OR IGNORE`` only fires once per distinct produced
+        content, so a retried / partial / out-of-order admit of the same item
+        does **not** double-count. ``yield_count`` is bumped only on a genuinely
+        new ledger row. Decoupled from ``used`` (P1.7) — a word can be ``used``
+        and still accrue yield later.
+
+        Returns True if this call recorded a new yield (counter bumped), False
+        if it was a duplicate / invalid no-op.
+        """
+        kid = int(keyword_id)
+        cid = str(content_id or "").strip()
+        if kid <= 0 or not cid:
+            return False
+        before = self.conn.total_changes
+        self._execute_write(
+            """
+            INSERT OR IGNORE INTO discovery_keyword_yield (keyword_id, content_id)
+            VALUES (?, ?)
+            """,
+            (kid, cid),
+        )
+        if self.conn.total_changes == before:
+            # Ledger row already existed → this (keyword, content) was already
+            # credited. Do not touch the counter.
+            return False
+        self._execute_write(
+            "UPDATE discovery_keywords SET yield_count = yield_count + 1 WHERE id = ?",
+            (kid,),
+        )
+        return True
+
+    def keyword_yield_count(self, keyword_id: int) -> int:
+        """Return the stored ``yield_count`` for a keyword (0 if unknown)."""
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            "SELECT yield_count FROM discovery_keywords WHERE id = ?",
+            (int(keyword_id),),
+        ).fetchone()
+        return int(row["yield_count"]) if row is not None else 0
+
+    def keyword_yield_total(self, platform: str) -> int:
+        """Return the platform-wide sum of ``yield_count`` across all keywords.
+
+        Cheap single aggregate (the ``(platform, status, …)`` index already
+        covers the scan) used only for the planner's per-cycle observability
+        ledger (P1.9): the merged LLM call is one ``discovery.keyword_planner``
+        caller (token cost can't be split per platform), so the ledger surfaces
+        per-platform keyword *production* (generated) + cumulative *yield* so
+        operators can still see which platform's search words actually land
+        content. Counts every row's stored ``yield_count`` (used / expired
+        history included) — it is a running production total, not a live-pool
+        gauge. Returns 0 on any error so it never breaks a generation pass.
+        """
+        try:
+            self._ensure_fresh_read()
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(yield_count), 0) AS total "
+                "FROM discovery_keywords WHERE platform = ?",
+                (platform.strip(),),
+            ).fetchone()
+        except Exception:
+            logger.debug("keyword_yield_total failed for %s", platform, exc_info=True)
+            return 0
+        return int(row["total"]) if row is not None else 0
+
+    def used_keyword_count(self, platform: str) -> int:
+        """Count ``used`` keywords for a platform (P3.2 dynamic-cap denominator).
+
+        Paired with :meth:`keyword_yield_total` to derive the platform's observed
+        average yield-per-keyword (total yield / used count). Cheap single
+        aggregate; returns 0 on any error so it never breaks a generation pass.
+        """
+        try:
+            self._ensure_fresh_read()
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM discovery_keywords "
+                "WHERE platform = ? AND status = 'used'",
+                (platform.strip(),),
+            ).fetchone()
+        except Exception:
+            logger.debug("used_keyword_count failed for %s", platform, exc_info=True)
+            return 0
+        return int(row["n"]) if row is not None else 0
+
+    def retire_zero_yield_keywords(
+        self,
+        platform: str,
+        *,
+        min_age_minutes: float = 60.0,
+    ) -> int:
+        """Retire ``used`` words that have produced nothing, conservatively.
+
+        A word that has been ``used`` for at least ``min_age_minutes`` and still
+        has ``yield_count == 0`` is moved to ``expired`` so the recycler does not
+        keep re-pending a search term that demonstrably never lands content.
+
+        The age floor is the safety valve against retiring a *freshly* used word
+        whose admit is still pending: inline-admit credits yield synchronously,
+        but fetch-only (X / YouTube) and async (XHS) words are marked ``used`` at
+        handoff and only accrue yield once the shared pipeline admits — minutes
+        later. ``min_age_minutes`` must comfortably exceed that admit latency.
+        Only ``used`` rows are touched; in-flight / pending / already-expired
+        rows are left alone. Returns the number of rows retired.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(minutes=max(0.0, min_age_minutes))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_keywords
+            SET status = 'expired'
+            WHERE platform = ?
+              AND status = 'used'
+              AND yield_count = 0
+              AND used_at IS NOT NULL
+              AND used_at <= ?
+            """,
+            (platform.strip(), cutoff),
+        )
+        return int(cursor.rowcount or 0)
+
+    # ── Discovery keyword planner single-flight lock ─────────────
+
+    def acquire_planner_lock(self, owner: str, lease_seconds: float) -> bool:
+        """Try to acquire the planner single-flight lock via CAS.
+
+        ``BEGIN IMMEDIATE`` serializes the check-and-set: the lock is granted
+        if it is unheld, already owned by ``owner``, or its ``locked_until``
+        has elapsed (the previous holder crashed). On success ``locked_until``
+        is extended by ``lease_seconds`` and the row's ``owner`` is set.
+        **Short transaction only** — acquire, commit, then run the LLM call
+        *without* holding any DB lock; reacquire/``renew`` to write results.
+        Returns True if the lock is now held by ``owner``.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        lock_name = "keyword_planner"
+        now = datetime.now(UTC)
+        now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+        new_until = (now + timedelta(seconds=max(0.0, lease_seconds))).strftime("%Y-%m-%d %H:%M:%S")
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT owner, locked_until FROM discovery_planner_lock WHERE lock_name = ?",
+                (lock_name,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO discovery_planner_lock
+                        (lock_name, owner, locked_until, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (lock_name, owner, new_until),
+                )
+                conn.commit()
+                return True
+            held_by = str(row["owner"] or "")
+            locked_until = str(row["locked_until"] or "")
+            if held_by and held_by != owner and locked_until > now_text:
+                # Still validly held by someone else.
+                conn.commit()
+                return False
+            conn.execute(
+                """
+                UPDATE discovery_planner_lock
+                SET owner = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE lock_name = ?
+                """,
+                (owner, new_until, lock_name),
+            )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return True
+
+    def renew_planner_lock(self, owner: str, lease_seconds: float) -> bool:
+        """Extend the planner lock lease if still owned by ``owner``.
+
+        Returns True if the lease was extended, False if the lock has been
+        taken over by another owner in the meantime.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        new_until = (datetime.now(UTC) + timedelta(seconds=max(0.0, lease_seconds))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_planner_lock
+            SET locked_until = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE lock_name = 'keyword_planner' AND owner = ?
+            """,
+            (new_until, owner),
+        )
+        return int(cursor.rowcount or 0) > 0
+
+    def release_planner_lock(self, owner: str) -> bool:
+        """Release the planner lock if still owned by ``owner``.
+
+        Clears the owner and expires ``locked_until`` so the next acquirer
+        can take it immediately. Returns True if a row was released.
+        """
+        from datetime import UTC, datetime
+
+        now_text = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = self._execute_write(
+            """
+            UPDATE discovery_planner_lock
+            SET owner = '', locked_until = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE lock_name = 'keyword_planner' AND owner = ?
+            """,
+            (now_text, owner),
+        )
+        return int(cursor.rowcount or 0) > 0
 
     # ── Watch-later CRUD ─────────────────────────────────────────
 
@@ -4419,11 +5503,13 @@ class Database:
             if include_liked
             else "COALESCE(feedback_type, '') = ''"
         )
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             f"""
             SELECT *
             FROM content_cache
             WHERE COALESCE(delight_score, 0.0) >= ?
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
@@ -4432,7 +5518,7 @@ class Database:
             ORDER BY delight_score DESC, relevance_score DESC, discovered_at DESC
             LIMIT ?
             """,
-            (min_delight_score, max(1, int(limit))),
+            (min_delight_score, min_score, max(1, int(limit))),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -4474,18 +5560,20 @@ class Database:
         min_delight_score: float = 0.85,
     ) -> int:
         """Return the number of un-notified delight candidates."""
+        min_score = self._pool_admission_min_score()
         cursor = self.conn.execute(
             """
             SELECT COUNT(*) AS count
             FROM content_cache
             WHERE COALESCE(delight_score, 0.0) >= ?
+              AND COALESCE(relevance_score, 0.0) >= ?
               AND COALESCE(delight_notified, 0) = 0
               AND COALESCE(delight_reason, '') != ''
               AND COALESCE(delight_hook, '') != ''
               AND COALESCE(feedback_type, '') = ''
               AND COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
             """,
-            (min_delight_score,),
+            (min_delight_score, min_score),
         )
         row = cursor.fetchone()
         return int(row["count"]) if row is not None else 0
@@ -4514,6 +5602,7 @@ class Database:
         """
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
+        effective_min_relevance_score = _normalize_admission_min_score(min_relevance_score)
         if min_delight_score_for_reason is None:
             cursor = self.conn.execute(
                 f"""
@@ -4532,7 +5621,7 @@ class Database:
                 ORDER BY relevance_score DESC, discovered_at DESC
                 LIMIT ?
                 """,
-                (min_relevance_score, *guard_params, limit),
+                (effective_min_relevance_score, *guard_params, limit),
             )
         else:
             cursor = self.conn.execute(
@@ -4565,7 +5654,12 @@ class Database:
                     discovered_at DESC
                 LIMIT ?
                 """,
-                (min_relevance_score, min_delight_score_for_reason, *guard_params, limit),
+                (
+                    effective_min_relevance_score,
+                    min_delight_score_for_reason,
+                    *guard_params,
+                    limit,
+                ),
             )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -4630,6 +5724,13 @@ class Database:
             return _DOUYIN_SOURCE_FAMILY
         if "youtube.com" in host or host == "youtu.be":
             return _YOUTUBE_SOURCE_FAMILY
+        if (
+            host == "x.com"
+            or host.endswith(".x.com")
+            or host == "twitter.com"
+            or host.endswith(".twitter.com")
+        ):
+            return _TWITTER_SOURCE_FAMILY
         return ""
 
     @staticmethod

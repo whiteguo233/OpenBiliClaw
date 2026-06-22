@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import tempfile
@@ -69,14 +70,14 @@ def _build_profile() -> SoulProfile:
 
 def test_recommendation_profile_summary_includes_disliked_topics() -> None:
     profile = _build_profile()
-    profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 71)]
+    profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 141)]
 
     summary = _recommendation_profile_summary(profile)
 
-    # Capped at 64 — generous enough for rich negative preferences
-    # without unbounded prompt growth. The store keeps topics in recency
-    # order, so the cut keeps the freshest entries.
-    assert summary["disliked_topics"] == [f"话题{i}" for i in range(1, 65)]
+    # Capped at 128 == _DISLIKED_TOPICS_STORE_CAP, so every stored
+    # avoid-topic reaches prompts; only an over-cap store (impossible in
+    # practice) would be cut.
+    assert summary["disliked_topics"] == [f"话题{i}" for i in range(1, 129)]
 
 
 def _seed_pool(
@@ -260,7 +261,7 @@ def test_select_diversified_batch_caps_newly_confirmed_amplification_direction()
     assert sum(i.topic_group == "城市基础设施观察" for i in selected) <= 1
 
 
-def test_expression_tone_profile_softens_dense_profile_for_lifestyle_content() -> None:
+def test_expression_tone_profile_does_not_soften_based_on_style_key() -> None:
     profile = _build_profile()
     profile.preferences.style.depth_preference = 0.95
 
@@ -273,7 +274,8 @@ def test_expression_tone_profile_softens_dense_profile_for_lifestyle_content() -
         ),
     )
 
-    assert tone["density"] in {"light", "balanced"}
+    assert tone["density"] == "dense"
+    assert tone["playfulness"] == "low"
 
 
 @pytest.mark.asyncio
@@ -778,7 +780,7 @@ async def test_generate_expression_uses_old_friend_tone_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_expression_passes_style_key_to_prompt() -> None:
+async def test_generate_expression_normalizes_style_key_for_prompt() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
@@ -799,7 +801,8 @@ async def test_generate_expression_passes_style_key_to_prompt() -> None:
         )
 
         user_input = str(llm.calls[0]["user_input"])
-        assert '"style_key": "lifestyle"' in user_input
+        assert '"style_key": "daily_wander"' in user_input
+        assert '"style_key": "lifestyle"' not in user_input
         assert '"topic_group": "社会民生"' in user_input
 
 
@@ -1007,6 +1010,51 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
         history = db.get_recommendations(limit=10)
         assert history[0]["expression"] == "第三条已经提前备好了推荐理由。"
         assert history[0]["topic"] == "第三条提前备好的话题"
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_append_recommendations_preserves_x_text_shape_fields() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "2064073338197328079",
+            title="A 12 step program for cats who can’t stop eating and licking plastic.",
+            up_name="@UprootedTexan99",
+            source="x-search",
+            source_platform="twitter",
+            content_id="2064073338197328079",
+            content_url="https://x.com/UprootedTexan99/status/2064073338197328079",
+            content_type="tweet",
+            body_text=(
+                "A 12 step program for cats who can’t stop eating and licking plastic.\n\n"
+                "Is this anything?"
+            ),
+            cover_url="",
+            relevance_score=0.67,
+            relevance_reason="X text item should keep the tweet body through append.",
+            pool_expression="这条是纯文字 X 推荐。",
+            pool_topic_label="猫咪离谱癖好梗",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        recommendations = await engine.append_recommendations(
+            profile=_build_profile(),
+            excluded_bvids=[],
+            limit=1,
+        )
+
+        assert len(recommendations) == 1
+        content = recommendations[0].content
+        assert content.source_platform == "twitter"
+        assert content.content_type == "tweet"
+        assert content.body_text == (
+            "A 12 step program for cats who can’t stop eating and licking plastic.\n\n"
+            "Is this anything?"
+        )
+        assert content.content_url == "https://x.com/UprootedTexan99/status/2064073338197328079"
         db.close()
 
 
@@ -1502,7 +1550,7 @@ def test_build_debug_summary_counts_styles_sources_and_topics() -> None:
     )
 
     assert summary["count"] == 3
-    assert summary["styles"] == {"deep_dive": 2, "news_brief": 1}
+    assert summary["styles"] == {"deep_focus": 2, "quick_scan": 1}
     assert summary["sources"] == {"search": 2, "trending": 1}
     assert summary["topics"] == {"国际时事:地缘政治": 2, "国际时事:贸易": 1}
     assert summary["platforms"] == {"bilibili": 3}
@@ -1794,14 +1842,14 @@ async def test_classify_pool_backlog_fills_metadata() -> None:
 
         xhs1 = by_bvid.get("xhs_001")
         assert xhs1 is not None
-        assert xhs1["style_key"] == "lifestyle"
+        assert xhs1["style_key"] == "daily_wander"
         assert xhs1["topic_group"] == "美食烹饪"
         assert xhs1["topic_key"] == "美食烹饪"  # backfilled from topic_group
         assert float(xhs1["relevance_score"]) == pytest.approx(0.85)
 
         xhs2 = by_bvid.get("xhs_002")
         assert xhs2 is not None
-        assert xhs2["style_key"] == "game_strategy"
+        assert xhs2["style_key"] == "hands_on"
         assert xhs2["topic_group"] == "游戏攻略"
 
 
@@ -1836,6 +1884,239 @@ async def test_classify_pool_backlog_skips_already_classified() -> None:
         assert classified == 0
         # LLM should NOT have been called for classification
         assert len(llm.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_safe_classify_pool_backlog_drains_copy_for_newly_classified() -> None:
+    """Lever 2b: classify's detached wrapper drains copy for the items it just
+    labeled, so they become serveable in the SAME cycle instead of waiting for
+    the next refresh-loop precompute tick.
+
+    Before 2b, a freshly-classified item would sit with empty
+    ``pool_expression`` (gated out of ``count_pool_candidates``) until the
+    next precompute pass; now classify→copy chains in one call.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+
+        # Unclassified + un-copied → needs classify, then needs copy.
+        db.cache_content(
+            "BV2b",
+            title="在家复刻的家常菜",
+            up_name="美食博主",
+            source="search",
+            style_key="",
+            topic_group="",
+            topic_key="",
+            pool_expression="",
+            pool_topic_label="",
+            relevance_score=0.0,
+        )
+        assert db.count_pool_candidates() == 0
+
+        class _ClassifyThenCopyLLM:
+            def __init__(self) -> None:
+                self.callers: list[str] = []
+
+            async def complete_structured_task(
+                self, *, caller: str = "", **_kw: object
+            ) -> LLMResponse:
+                self.callers.append(caller)
+                if caller == "recommendation.write_expression":
+                    content = json.dumps(
+                        [
+                            {
+                                "bvid": "BV2b",
+                                "expression": "这条接住你想下厨的心情。",
+                                "topic_label": "你最近想做饭",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
+                else:  # classify → recommendation.evaluate_batch
+                    content = json.dumps(
+                        [
+                            {
+                                "score": 0.85,
+                                "reason": "美食烹饪",
+                                "topic_group": "美食烹饪",
+                                "style_key": "lifestyle",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
+                return LLMResponse(content=content, provider="test", model="dummy", usage={})
+
+        llm = _ClassifyThenCopyLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        classified = await engine._safe_classify_pool_backlog(profile=_build_profile(), limit=10)
+
+        assert classified == 1
+        # Both stages ran in this one call: classify, then the 2b copy drain.
+        assert "recommendation.evaluate_batch" in llm.callers
+        assert "recommendation.write_expression" in llm.callers
+        # The item is now classified AND copied → serveable.
+        assert db.count_pool_candidates() == 1
+
+
+@pytest.mark.asyncio
+async def test_e2e_precompute_pool_copy_classifies_then_copies_in_one_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E2E (lever 2b): driving the *production* entry ``precompute_pool_copy``
+    on an UNCLASSIFIED candidate makes it fully serveable in one pass.
+
+    precompute_pool_copy spawns classify detached; its own copy drain finds
+    nothing yet (item not classified). Before 2b the item would stay
+    classified-but-uncopied until the next tick. With 2b, the detached
+    classify drains copy for what it just labeled, so after the detached
+    chain settles the item is classified AND copied → count 0 → 1. Only the
+    LLM is faked.
+    """
+    from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        db.cache_content(
+            "BV2bE2E",
+            title="在家复刻的家常菜",
+            up_name="美食博主",
+            source="search",
+            style_key="",
+            topic_group="",
+            topic_key="",
+            pool_expression="",
+            pool_topic_label="",
+            relevance_score=0.0,
+        )
+        assert db.count_pool_candidates() == 0
+
+        class _ClassifyThenCopyLLM:
+            def __init__(self) -> None:
+                self.callers: list[str] = []
+
+            async def complete_structured_task(
+                self, *, caller: str = "", **_kw: object
+            ) -> LLMResponse:
+                self.callers.append(caller)
+                if caller == "recommendation.write_expression":
+                    content = json.dumps(
+                        [
+                            {
+                                "bvid": "BV2bE2E",
+                                "expression": "这条接住你想下厨的心情。",
+                                "topic_label": "你最近想做饭",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
+                else:  # classify (evaluate_batch) + any delight call (harmless)
+                    content = json.dumps(
+                        [
+                            {
+                                "score": 0.85,
+                                "reason": "美食烹饪",
+                                "topic_group": "美食烹饪",
+                                "style_key": "lifestyle",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    )
+                return LLMResponse(content=content, provider="test", model="dummy", usage={})
+
+        llm = _ClassifyThenCopyLLM()
+        registry = BackgroundTaskRegistry()
+        engine = RecommendationEngine(llm=llm, database=db, task_registry=registry)
+
+        # Capture the detached classify task so we can await its full chain.
+        captured: dict[str, asyncio.Task[object]] = {}
+        original_track = registry.track
+
+        def _track(name: str, coro: object) -> object:
+            task = original_track(name, coro)  # type: ignore[arg-type]
+            captured[name] = task
+            return task
+
+        registry.track = _track  # type: ignore[method-assign]
+
+        try:
+            # Production entry point (what the refresh loop / hot-reload call).
+            await engine.precompute_pool_copy(profile=_build_profile(), limit=10)
+            # Its own copy drain found nothing (item not classified yet).
+            assert db.count_pool_candidates() == 0
+            # Await the detached classify → which (2b) drains copy for it.
+            await asyncio.wait_for(captured["classify_pool_backlog_detached"], timeout=2.0)
+
+            assert "recommendation.evaluate_batch" in llm.callers
+            assert "recommendation.write_expression" in llm.callers
+            assert db.count_pool_candidates() == 1  # classified AND copied
+        finally:
+            await registry.cancel_all()
+
+
+@pytest.mark.asyncio
+async def test_prewarm_pool_mmr_embeddings_signals_distinguish_states() -> None:
+    """Lever 4: prewarm's return distinguishes a benign cold start (-1) from a
+    genuinely-unreachable embedding backend (0), so operators can tell
+    "pool empty / embeddings off" apart from "Ollama is down" — the original
+    `warmed=0` ambiguity.
+    """
+
+    class _FakeEmbedding:
+        def __init__(self, *, working: bool) -> None:
+            self.working = working
+            self.similarity_threshold = 0.82
+
+        async def embed(self, _text: str) -> list[float]:
+            return [0.1, 0.2, 0.3] if self.working else []
+
+        def lookup_cached(self, _text: str) -> list[float] | None:
+            return None
+
+    # (1) No embedding service configured → -1 (benign: embeddings disabled).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "a.db")
+        db.initialize()
+        _seed_visible(db, "BVa", title="测试视频", up_name="UP", source="search")
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db, embedding_service=None)
+        assert await engine.prewarm_pool_mmr_embeddings() == -1
+
+    # (2) Working backend but EMPTY pool → -1 (benign cold start, nothing to warm).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "b.db")
+        db.initialize()
+        engine = RecommendationEngine(
+            llm=_DummyLLM(), database=db, embedding_service=_FakeEmbedding(working=True)
+        )
+        assert await engine.prewarm_pool_mmr_embeddings() == -1
+
+    # (3) Candidates present but backend down (embed returns []) → 0 (real failure).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "c.db")
+        db.initialize()
+        _seed_visible(db, "BVc", title="测试视频", up_name="UP", source="search")
+        engine = RecommendationEngine(
+            llm=_DummyLLM(), database=db, embedding_service=_FakeEmbedding(working=False)
+        )
+        assert await engine.prewarm_pool_mmr_embeddings() == 0
+
+    # (4) Candidates present + working backend → warmed count > 0.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "d.db")
+        db.initialize()
+        _seed_visible(db, "BVd", title="测试视频", up_name="UP", source="search")
+        engine = RecommendationEngine(
+            llm=_DummyLLM(), database=db, embedding_service=_FakeEmbedding(working=True)
+        )
+        assert await engine.prewarm_pool_mmr_embeddings() > 0
 
 
 @pytest.mark.asyncio
@@ -1914,8 +2195,8 @@ async def test_classify_pool_backlog_accepts_jsonl_output(caplog: pytest.LogCapt
 
         assert classified == 2
         rows = {row["bvid"]: row for row in db.get_cached_content(limit=10)}
-        assert rows["xhs_jsonl_001"]["style_key"] == "lifestyle"
-        assert rows["xhs_jsonl_002"]["style_key"] == "deep_dive"
+        assert rows["xhs_jsonl_001"]["style_key"] == "daily_wander"
+        assert rows["xhs_jsonl_002"]["style_key"] == "deep_focus"
         assert "classify_pool_backlog: batch failed" not in caplog.text
 
 
@@ -1980,7 +2261,7 @@ async def test_classify_pool_backlog_accepts_wrapped_output(
         row = next(
             r for r in db.get_cached_content(limit=10) if r["bvid"] == f"xhs_wrapped_{wrapper_key}"
         )
-        assert row["style_key"] == "tech_analysis"
+        assert row["style_key"] == "deep_focus"
         assert row["topic_group"] == "工具效率"
         assert "classify_pool_backlog: batch failed" not in caplog.text
 
@@ -2483,7 +2764,7 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
         row = next(r for r in rows if r["bvid"] == "xhs_reingest")
 
         # All classified fields must survive the re-ingest
-        assert row["style_key"] == "lifestyle"
+        assert row["style_key"] == "daily_wander"
         assert row["topic_group"] == "美食烹饪"
         assert row["topic_key"] == "美食烹饪"
         assert float(row["relevance_score"]) == pytest.approx(0.85)

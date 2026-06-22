@@ -22,6 +22,7 @@ from openbiliclaw.youtube.client import (
     _extract_innertube_config,
     _extract_yt_initial_data_videos,
     _topic_page_trending,
+    normalize_yt_video,
 )
 
 if TYPE_CHECKING:
@@ -78,6 +79,42 @@ class _FakeYtClient:
     async def get_channel_videos(self, channel_id: str, limit: int = 5) -> list[dict[str, Any]]:
         self.calls.append((channel_id, limit))
         return []
+
+
+def test_normalize_yt_video_maps_optional_engagement_metrics() -> None:
+    content = normalize_yt_video(
+        {
+            "videoId": "yt123",
+            "title": {"simpleText": "A useful video"},
+            "ownerText": {"simpleText": "Channel"},
+            "viewCountText": {"simpleText": "1,234 views"},
+            "like_count": 55,
+            "comment_count": "44",
+        },
+        source_strategy="yt_search",
+    )
+
+    assert content is not None
+    assert content.view_count == 1234
+    assert content.like_count == 55
+    assert content.comment_count == 44
+
+
+def test_youtube_search_and_channel_default_thresholds_are_normal_floor() -> None:
+    client = _FakeYtClient()
+
+    search = YoutubeSearchStrategy(
+        client=client,
+        llm_service=_FakeLLMService("{}"),
+    )
+    channel = YoutubeChannelStrategy(
+        client=client,
+        llm_service=_FakeLLMService("{}"),
+        memory=None,
+    )
+
+    assert search.score_threshold == 0.60
+    assert channel.score_threshold == 0.60
 
 
 @pytest.mark.asyncio
@@ -508,3 +545,70 @@ def test_topic_page_trending_dedupes_public_topic_pages() -> None:
     videos = _topic_page_trending("US", 3, fetch_html=fake_fetch, topic_paths=("gaming", "news"))
 
     assert [item["videoId"] for item in videos] == ["abc123", "def456", "ghi789"]
+
+
+# ── P1.5 strategy keyword injection ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_youtube_search_injected_queries_skip_llm_generation() -> None:
+    llm = _FakeLLMService('{"queries": ["should not be used"]}')
+    client = _FakeYtClient()
+    strategy = YoutubeSearchStrategy(
+        client=client,
+        llm_service=llm,
+        queries_per_run=2,
+        results_per_query=3,
+        llm_evaluation=False,
+    )
+
+    results = await strategy.discover(
+        _profile(),
+        limit=5,
+        queries=["machine learning", "history documentary"],
+    )
+
+    assert [call[0] for call in client.calls] == ["machine learning", "history documentary"]
+    assert llm.calls == []  # injected queries skip keyword generation
+    assert strategy.last_intermediates == {"queries": ["machine learning", "history documentary"]}
+    assert [item.source_strategy for item in results] == ["yt_search", "yt_search"]
+
+
+@pytest.mark.asyncio
+async def test_youtube_search_injected_queries_are_deduped() -> None:
+    llm = _FakeLLMService('{"queries": ["x"]}')
+    client = _FakeYtClient()
+    strategy = YoutubeSearchStrategy(
+        client=client,
+        llm_service=llm,
+        results_per_query=3,
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(
+        _profile(),
+        limit=5,
+        queries=["  ai  ", "ai", "", "design"],
+    )
+
+    assert [call[0] for call in client.calls] == ["ai", "design"]
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_youtube_search_without_injection_still_generates() -> None:
+    # Flag-off / no-injection regression: queries=None → legacy LLM gen runs.
+    llm = _FakeLLMService('{"queries": ["ai documentary"]}')
+    client = _FakeYtClient()
+    strategy = YoutubeSearchStrategy(
+        client=client,
+        llm_service=llm,
+        queries_per_run=2,
+        results_per_query=3,
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(_profile(), limit=5)
+
+    assert [call[0] for call in client.calls] == ["ai documentary"]
+    assert len(llm.calls) == 1

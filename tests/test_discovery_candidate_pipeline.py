@@ -9,6 +9,7 @@ import pytest
 from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.candidate_pool import (
     REJECTED_FRANCHISE_QUOTA,
+    REJECTED_LOW_SCORE,
     DiscoveryCandidateWrite,
 )
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
@@ -864,7 +865,7 @@ async def test_pipeline_uses_candidate_score_threshold_from_raw_payload(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_observed_candidates_bypass_relevance_floor_after_eval(
+async def test_pipeline_observed_candidates_use_unified_relevance_floor_after_eval(
     tmp_path: Path,
 ) -> None:
     db = Database(tmp_path / "test.db")
@@ -900,8 +901,143 @@ async def test_pipeline_observed_candidates_bypass_relevance_floor_after_eval(
 
     result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
 
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1}
+    assert db.count_discovery_candidates_by_status()[REJECTED_LOW_SCORE] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_xhs_observed_above_unified_default_floor_is_cached(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="xiaohongshu:xhs-observed-normal",
+                source_platform="xiaohongshu",
+                source_strategy="xhs-extension-task",
+                content_id="xhs-observed-normal",
+                title="Observed normal score",
+                raw_payload={"admission_policy": "observed"},
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "xhs-observed-normal",
+                "score": 0.61,
+                "reason": "ordinary fit",
+                "topic_group": "daily",
+                "style_key": "story_doc",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
     assert result == {"evaluated": 1, "cached": 1, "rejected": 0}
-    assert db.count_discovery_candidates_by_status()["cached"] == 1
+    row = db.conn.execute(
+        "SELECT relevance_score, source_platform FROM content_cache WHERE content_id = ?",
+        ("xhs-observed-normal",),
+    ).fetchone()
+    assert row is not None
+    assert row["source_platform"] == "xiaohongshu"
+    assert row["relevance_score"] == pytest.approx(0.61)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_bili_extension_search_observed_low_score_is_rejected(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVLOWOBS",
+                source_platform="bilibili",
+                source_strategy="bili-extension-search",
+                content_id="BVLOWOBS",
+                title="Observed Bilibili low score",
+                score_threshold=0.60,
+                raw_payload={"admission_policy": "observed", "score_threshold": 0.60},
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "BVLOWOBS",
+                "score": 0.18,
+                "reason": "weak fit",
+                "topic_group": "misc",
+                "style_key": "quick_scan",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    row = db.conn.execute(
+        "SELECT status, eval_error FROM discovery_candidates WHERE content_id='BVLOWOBS'"
+    ).fetchone()
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1}
+    assert row["status"] == REJECTED_LOW_SCORE
+    assert "below threshold" in row["eval_error"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_always_admit_policy_does_not_bypass_relevance_floor(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVALWAYS",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVALWAYS",
+                title="Old always admit low score",
+                raw_payload={"admission_policy": "always_admit"},
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "BVALWAYS",
+                "score": 0.20,
+                "reason": "weak fit",
+                "topic_group": "misc",
+                "style_key": "quick_scan",
+            }
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=ContentDiscoveryEngine(llm_service=llm, database=db),
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    assert result == {"evaluated": 1, "cached": 0, "rejected": 1}
+    assert db.count_discovery_candidates_by_status()[REJECTED_LOW_SCORE] == 1
 
 
 def test_pipeline_target_zero_still_bounds_enqueued_candidates(tmp_path: Path) -> None:

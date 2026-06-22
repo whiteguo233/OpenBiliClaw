@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.prompts import build_preference_analysis_prompt
 from openbiliclaw.llm.service import LLMServiceError
 
 
@@ -99,6 +101,18 @@ class ContextOverflowOnceStructuredService:
         )
 
 
+def test_preference_prompt_treats_comment_feedback_as_direct_neutral_feedback() -> None:
+    messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    system_prompt = messages[0]["content"]
+
+    assert "metadata.feedback_type 是 comment" in system_prompt
+    assert "中性反馈容器" in system_prompt
+    assert "直接反馈" in system_prompt
+    assert "根据备注" in system_prompt
+    assert "喜欢" in system_prompt
+    assert "不喜欢" in system_prompt
+
+
 class ServiceContextOverflowOnceStructuredService(ContextOverflowOnceStructuredService):
     async def complete_structured_task(
         self,
@@ -137,6 +151,28 @@ class FakeErrorStructuredService:
         caller: str = "",
     ) -> LLMResponse:
         raise self.error
+
+
+class StubEmbedding:
+    def __init__(self, aliases: dict[str, str]) -> None:
+        self._aliases = aliases
+        self._vectors: dict[str, list[float]] = {}
+
+    async def embed(self, text: str) -> list[float]:
+        key = self._aliases.get(text, text)
+        if key not in self._vectors:
+            axis = len(self._vectors)
+            vec = [0.0] * 64
+            vec[axis] = 1.0
+            self._vectors[key] = vec
+        return self._vectors[key]
+
+
+@pytest.fixture(autouse=True)
+def _clear_vocab_vector_cache() -> None:
+    from openbiliclaw.soul import taxonomy
+
+    taxonomy._vocab_vectors.clear()
 
 
 class RejectingChunkStructuredService:
@@ -293,6 +329,138 @@ async def test_preference_analyzer_can_use_unified_service() -> None:
 
     assert preference["interests"][0]["name"] == "科技"
     assert service.calls
+
+
+@pytest.mark.asyncio
+async def test_off_vocab_category_clamped_via_embedding_nn() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+    from openbiliclaw.soul.taxonomy import CATEGORY_VOCAB
+
+    service = FakeStructuredService(
+        LLMResponse(
+            content=json.dumps(
+                {"interests": [{"name": "AI 工具", "category": "内容消费方式", "weight": 0.8}]},
+                ensure_ascii=False,
+            ),
+            provider="openai",
+        )
+    )
+
+    merged = await PreferenceAnalyzer(
+        service,
+        embedding_service=StubEmbedding({"内容消费方式": "生活"}),
+    ).analyze_events(events=[{"event_type": "view", "title": "AI 工具"}], existing_preference={})
+
+    categories = {item["category"] for item in merged["interests"]}
+    assert categories <= set(CATEGORY_VOCAB)
+    assert categories == {"生活"}
+
+
+@pytest.mark.asyncio
+async def test_off_vocab_category_without_embedding_falls_to_other() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = FakeStructuredService(
+        LLMResponse(
+            content=json.dumps(
+                {"interests": [{"name": "AI 工具", "category": "内容消费方式", "weight": 0.8}]},
+                ensure_ascii=False,
+            ),
+            provider="openai",
+        )
+    )
+
+    merged = await PreferenceAnalyzer(service).analyze_events(
+        events=[{"event_type": "view", "title": "AI 工具"}],
+        existing_preference={},
+    )
+
+    assert merged["interests"][0]["category"] == "其他"
+
+
+@pytest.mark.asyncio
+async def test_in_vocab_category_passthrough_unchanged() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = FakeStructuredService(
+        LLMResponse(
+            content=json.dumps(
+                {"interests": [{"name": "AI 工具", "category": "科技", "weight": 0.8}]},
+                ensure_ascii=False,
+            ),
+            provider="openai",
+        )
+    )
+
+    merged = await PreferenceAnalyzer(
+        service,
+        embedding_service=StubEmbedding({"科技": "生活"}),
+    ).analyze_events(events=[{"event_type": "view", "title": "AI 工具"}], existing_preference={})
+
+    assert merged["interests"][0]["category"] == "科技"
+
+
+@pytest.mark.asyncio
+async def test_clamp_collapses_variants_onto_same_merge_key() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = FakeStructuredService(
+        LLMResponse(
+            content=json.dumps(
+                {"interests": [{"name": "Python", "category": "技术", "weight": 0.8}]},
+                ensure_ascii=False,
+            ),
+            provider="openai",
+        )
+    )
+
+    merged = await PreferenceAnalyzer(
+        service,
+        embedding_service=StubEmbedding({"技术": "科技"}),
+    ).analyze_events(
+        events=[{"event_type": "view", "title": "Python"}],
+        existing_preference={
+            "interests": [
+                {
+                    "name": "Python",
+                    "category": "科技",
+                    "weight": 0.5,
+                    "last_seen": datetime.now().isoformat(),
+                }
+            ]
+        },
+    )
+
+    python_tags = [item for item in merged["interests"] if item["name"] == "Python"]
+    assert len(python_tags) == 1
+    assert python_tags[0]["category"] == "科技"
+    assert python_tags[0]["weight"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_speculative_interests_clamped_too() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = FakeStructuredService(
+        LLMResponse(
+            content=json.dumps(
+                {
+                    "speculative_interests": [
+                        {"name": "低负担生活工具", "category": "内容消费方式", "weight": 0.4}
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            provider="openai",
+        )
+    )
+
+    merged = await PreferenceAnalyzer(
+        service,
+        embedding_service=StubEmbedding({"内容消费方式": "生活"}),
+    ).analyze_events(events=[{"event_type": "view", "title": "轻工具"}], existing_preference={})
+
+    assert merged["speculative_interests"][0]["category"] == "生活"
 
 
 def test_preference_analyzer_requires_core_memory_task_service() -> None:

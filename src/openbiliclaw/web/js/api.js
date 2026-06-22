@@ -190,6 +190,13 @@ export async function submitProfileEdit({ target, op, value = null, parent = "",
   });
 }
 
+export async function submitInsightFeedback(hypothesis, signal) {
+  return requestJson("/insights/feedback", {
+    ...json({ hypothesis, signal }),
+    timeoutMs: 35_000,
+  });
+}
+
 // ── Notifications ───────────────────────────────────────────
 export async function fetchPendingNotifications() {
   return requestJson("/notifications/pending");

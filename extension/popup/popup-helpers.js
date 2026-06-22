@@ -8,6 +8,45 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function urlHostMatches(url, hostnames) {
+  const text = normalizeText(url);
+  if (!text) return false;
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+    const host = new URL(candidate).hostname.toLowerCase();
+    return hostnames.some((hostname) => host === hostname || host.endsWith(`.${hostname}`));
+  } catch {
+    return false;
+  }
+}
+
+function normalizeSourcePlatform(value, url = "") {
+  const key = normalizeText(value).toLowerCase();
+  const aliases = {
+    bili: "bilibili",
+    bilibili: "bilibili",
+    xhs: "xiaohongshu",
+    xiaohongshu: "xiaohongshu",
+    rednote: "xiaohongshu",
+    dy: "douyin",
+    douyin: "douyin",
+    tiktok: "douyin",
+    yt: "youtube",
+    youtube: "youtube",
+    x: "twitter",
+    twitter: "twitter",
+  };
+  if (aliases[key]) return aliases[key];
+  if (key) return key;
+  const lowerUrl = normalizeText(url).toLowerCase();
+  if (lowerUrl.includes("bilibili.com") || lowerUrl.includes("b23.tv")) return "bilibili";
+  if (lowerUrl.includes("xiaohongshu.com") || lowerUrl.includes("xhslink.com")) return "xiaohongshu";
+  if (lowerUrl.includes("douyin.com")) return "douyin";
+  if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
+  if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+  return "";
+}
+
 export function normalizeProbeType(type) {
   return normalizeText(type) === "avoidance.probe" ? "avoidance.probe" : "interest.probe";
 }
@@ -188,7 +227,7 @@ export function normalizeRecommendation(item) {
     presented: Boolean(item?.presented),
     content_id: normalizeText(item?.content_id) || normalizeText(item?.bvid),
     content_url: normalizeText(item?.content_url) || "",
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    source_platform: normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili",
     content_type: normalizeText(item?.content_type) || "video",
     body_text: normalizeText(item?.body_text),
   };
@@ -231,7 +270,7 @@ export function normalizeSavedItem(item) {
     up_name: normalizeText(item?.up_name),
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url),
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    source_platform: normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili",
   };
 }
 
@@ -245,7 +284,7 @@ export function normalizeDelightCandidate(item) {
     delight_hook: normalizeText(item?.delight_hook),
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url) || "",
-    source_platform: normalizeText(item?.source_platform) || "",
+    source_platform: normalizeSourcePlatform(item?.source_platform, item?.content_url) || "",
     state: normalizedState,
     response_message: normalizeText(item?.response_message),
     chat_reply: normalizeText(item?.chat_reply),

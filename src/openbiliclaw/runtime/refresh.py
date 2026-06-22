@@ -11,13 +11,17 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.config import SchedulerConfig
-from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
+from openbiliclaw.discovery.pool_snapshot import (
+    build_cold_start_pool_snapshot,
+    build_pool_distribution_snapshot,
+)
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.runtime.image_cache import (
     cleanup_image_cache,
     prefetch_cover,
     select_prefetch_targets,
 )
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _KW_PLATFORM_BILIBILI
 from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import (
@@ -81,6 +85,38 @@ def _call_accepts_pool_snapshot(fn: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return "pool_snapshot" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
+def _call_accepts_keywords(fn: Any) -> bool:
+    """Return whether a discovery callable accepts a ``keywords=`` keyword.
+
+    Used for the direct-engine B站 search fallback path so the unified keyword
+    planner's injected words are only forwarded to engines/stubs that declare
+    the kwarg — stubs without it stay byte-compatible (flag-off / tests).
+    """
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "keywords" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
+def _call_accepts_keyword_ids(fn: Any) -> bool:
+    """Return whether a discovery callable accepts a ``keyword_ids=`` keyword.
+
+    P1.8 parallel of :func:`_call_accepts_keywords` for the direct-engine B站
+    search fallback so the keyword→id provenance map is only forwarded to
+    engines that declare it; stubs without it stay byte-compatible.
+    """
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "keyword_ids" in signature.parameters or any(
         param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
 
@@ -233,6 +269,7 @@ class ContinuousRefreshController:
     recommendation_engine: SupportsRecommendationEngine
     event_hub: Any | None = None
     discovery_candidate_pipeline: Any | None = None
+    bilibili_producer: Any | None = None
     xhs_producer: Any | None = None
     douyin_producer: Any | None = None
     youtube_producer: Any | None = None
@@ -282,6 +319,19 @@ class ContinuousRefreshController:
     # when this is ``None`` so existing tests that build the controller
     # directly without injecting a registry keep working.
     task_registry: BackgroundTaskRegistry | None = None
+    # P1.6: unified keyword planner (deficit-pulled merged keyword generation).
+    # Constructed as its own object in ``api/runtime_context.py`` because the
+    # controller holds no ``llm_service``. Its loop is launched by
+    # ``run_forever``; with the feature flag off (default) the loop is a pure
+    # no-op, so wiring it in is zero behavior change. ``None`` (the default,
+    # used by tests that build the controller directly) means the planner loop
+    # returns immediately.
+    keyword_planner: Any | None = None
+    # P1.7: unified keyword planner FETCH coordinator. Drives the B站 search
+    # inline-admit lifecycle (claim → inject as ``queries`` → used / failed) when
+    # the flag is on. Constructed in ``api/runtime_context.py``; ``None`` (tests
+    # / flag off) → the B站 search keeps its legacy self-generating path.
+    keyword_fetch: Any | None = None
     _manual_refresh_task: asyncio.Task[None] | None = None
     _discovery_drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
@@ -516,14 +566,43 @@ class ContinuousRefreshController:
                 if current >= target_pool_count:
                     break
                 request_limit = max(20, target_pool_count - current)
+                pool_snapshot = self._build_init_pool_snapshot(
+                    profile,
+                    current_pool_count=current,
+                    target_pool_count=target_pool_count,
+                )
                 discovered = await self.discovery_engine.discover(
                     profile,
                     strategies=strategies,
                     limit=request_limit,
                     fully_parallel=fully_parallel,
+                    pool_snapshot=pool_snapshot,
                 )
                 discovered_count += len(discovered)
         return discovered_count
+
+    def _build_init_pool_snapshot(
+        self,
+        profile: Any,
+        *,
+        current_pool_count: int,
+        target_pool_count: int,
+    ) -> Any | None:
+        if current_pool_count <= 0:
+            return build_cold_start_pool_snapshot(
+                profile,
+                pool_target_count=target_pool_count,
+                source_targets=self._source_target_counts(total=target_pool_count),
+            )
+        try:
+            return build_pool_distribution_snapshot(
+                self.database,
+                pool_target_count=target_pool_count,
+                source_targets=self._source_target_counts(total=target_pool_count),
+            )
+        except Exception:
+            logger.debug("init backfill pool snapshot unavailable", exc_info=True)
+            return None
 
     async def force_refresh(self) -> dict[str, object]:
         """Run a full refresh immediately, bypassing runtime thresholds.
@@ -895,11 +974,13 @@ class ContinuousRefreshController:
             ┌─ _loop_refresh()           60s   LLM-heavy, may take minutes
             ├─ _loop_pool_precompute()   60s   v0.3.60+ — drain pool_expression
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
+            ├─ _loop_bilibili_producer() 60s   Bili extension search fallback under cooldown
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
             ├─ _loop_x_producer()        60s   X (Twitter) discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
+            ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_image_cache_cleanup() 6h  prune consumed+unsaved covers
             └─ _loop_cover_prefetch()    60s   cache fresh-token covers (XHS)
         """
@@ -907,15 +988,27 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self.prepare_delight_candidates()
         self._warn_on_stranded_source_shares()
+        # P1.6: give the keyword planner the controller's deficit / catalyst
+        # 口径 so it shares the exact in-flight + raw-headroom accounting that
+        # drives pool replenishment (it never recounts visible pool rows).
+        if self.keyword_planner is not None:
+            with suppress(Exception):
+                self.keyword_planner.bind_deficit_source(self)
+            bind_soul = getattr(self.keyword_planner, "bind_soul_engine", None)
+            if callable(bind_soul):
+                with suppress(Exception):
+                    bind_soul(self.soul_engine)
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
             asyncio.create_task(self._loop_soul_pipeline()),
+            asyncio.create_task(self._loop_bilibili_producer()),
             asyncio.create_task(self._loop_xhs_producer()),
             asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_x_producer()),
             asyncio.create_task(self._loop_proactive_push()),
+            asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
             asyncio.create_task(self._loop_cover_prefetch()),
         ]
@@ -1114,6 +1207,16 @@ class ContinuousRefreshController:
                 await self._tick_xhs_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_bilibili_producer(self) -> None:
+        """Bilibili extension fallback — only enqueues while API search cools down."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_bilibili_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
     async def _loop_douyin_producer(self) -> None:
         """Douyin production — plugin/direct discovery when Douyin is below quota."""
         while True:
@@ -1143,6 +1246,34 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self._tick_x_producer()
             await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_keyword_planner(self) -> None:
+        """P1.6: deficit-pulled merged keyword generation (flag-gated).
+
+        Owns its own poll cadence (``planner_poll_seconds``) so a slow merged
+        LLM call never blocks the 60s producer / refresh loops. The controller
+        drives the planner per tick (rather than awaiting ``planner.run()``) so
+        it can apply the same ``_llm_work_allowed`` gate every other LLM loop
+        honours — pausing planning while a guided init runs or the extension is
+        away. When ``keyword_planner`` is ``None`` (tests building the
+        controller directly) or the feature flag is off, this is a no-op.
+        """
+        planner = self.keyword_planner
+        if planner is None:
+            return
+        poll_seconds = max(1, int(getattr(planner, "poll_seconds", 120)))
+        while True:
+            if not bool(getattr(planner, "enabled", False)):
+                await asyncio.sleep(poll_seconds)
+                continue
+            if not self._llm_work_allowed():
+                await asyncio.sleep(poll_seconds)
+                continue
+            with suppress(Exception):
+                planner.reclaim_leases()
+            with suppress(Exception):
+                await planner.run_once()
+            await asyncio.sleep(poll_seconds)
 
     async def _loop_proactive_push(self) -> None:
         """Delight + interest probe push — lightweight, never blocks.
@@ -1270,6 +1401,25 @@ class ContinuousRefreshController:
         produce_fn = getattr(producer, "produce_if_due", None)
         if not callable(produce_fn):
             return
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
+    async def _tick_bilibili_producer(self) -> None:
+        """Invoke the Bili extension fallback producer if Bilibili is under quota."""
+        producer = self.bilibili_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("bilibili")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
         if _call_accepts_limit(produce_fn):
             await produce_fn(limit=limit)
         else:
@@ -1553,42 +1703,93 @@ class ContinuousRefreshController:
             except Exception:
                 logger.exception("Failed to build pool distribution snapshot")
                 pool_snapshot = None
+            # Unified keyword planner fetch path (P1.7, flag-gated). B站 search is
+            # inline-admit: this plan iteration fetches + drains (admits) in the
+            # same call. When the flag is on and this entry includes ``search``,
+            # claim words from the store and inject them as ``keywords`` (the
+            # engine maps them onto the search strategy's ``queries`` param); on
+            # a successful admit mark them ``used``, on an empty/failed iteration
+            # mark them ``failed``. Non-search sub-strategies in the same entry
+            # are unaffected (they never receive the injected words).
+            claimed_search: list[Any] = []
+            coordinator = self.keyword_fetch
+            if (
+                "search" in strategies
+                and coordinator is not None
+                and bool(getattr(coordinator, "should_claim", lambda: False)())
+            ):
+                claimed_search = coordinator.claim(_KW_PLATFORM_BILIBILI)
+            injected_keywords = (
+                [item.keyword for item in claimed_search] if claimed_search else None
+            )
+            # P1.8 yield provenance: ``query → keyword id`` for the claimed words
+            # so each produced candidate carries ``source_keyword_id`` for
+            # admit-time yield backfill. Empty / None on the flag-off path.
+            injected_keyword_ids = (
+                {item.keyword: int(item.id) for item in claimed_search} if claimed_search else None
+            )
+
             pipeline = self.discovery_candidate_pipeline
             discovered: list[Any] = []
             topic_items: list[Any] = []
             discovered_count = 0
             admitted_count = 0
-            if pipeline is not None:
-                produced_count = await pipeline.produce_and_enqueue(
-                    profile=profile,
-                    strategies=strategies,
-                    limit=effective_limit,
-                    strategy_limits=strategy_limits,
-                    pool_snapshot=pool_snapshot,
-                )
-                drain_result = await pipeline.drain_pending(
-                    profile=profile,
-                    batch_size=effective_limit,
-                )
-                discovered_count = int(produced_count or 0)
-                admitted_count = int(drain_result.get("cached", 0) or 0)
-                if admitted_count > 0:
-                    topic_items = list(getattr(pipeline, "last_admitted_items", []) or [])
-                pipeline_discovered_count += discovered_count
-            else:
-                discover_fn = self.discovery_engine.discover
-                discover_kwargs: dict[str, Any] = {
-                    "strategies": strategies,
-                    "limit": effective_limit,
-                }
-                if strategy_limits and _call_accepts_strategy_limits(discover_fn):
-                    discover_kwargs["strategy_limits"] = strategy_limits
-                if _call_accepts_pool_snapshot(discover_fn):
-                    discover_kwargs["pool_snapshot"] = pool_snapshot
-                discovered = await discover_fn(profile, **discover_kwargs)
-                topic_items = discovered
-                discovered_count = len(discovered)
-                admitted_count = discovered_count
+            iteration_failed = False
+            try:
+                if pipeline is not None:
+                    produce_kwargs: dict[str, Any] = {
+                        "profile": profile,
+                        "strategies": strategies,
+                        "limit": effective_limit,
+                        "strategy_limits": strategy_limits,
+                        "pool_snapshot": pool_snapshot,
+                    }
+                    if injected_keywords is not None:
+                        produce_kwargs["keywords"] = injected_keywords
+                    if injected_keyword_ids:
+                        produce_kwargs["keyword_ids"] = injected_keyword_ids
+                    produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
+                    drain_result = await pipeline.drain_pending(
+                        profile=profile,
+                        batch_size=effective_limit,
+                    )
+                    discovered_count = int(produced_count or 0)
+                    admitted_count = int(drain_result.get("cached", 0) or 0)
+                    if admitted_count > 0:
+                        topic_items = list(getattr(pipeline, "last_admitted_items", []) or [])
+                    pipeline_discovered_count += discovered_count
+                else:
+                    discover_fn = self.discovery_engine.discover
+                    discover_kwargs: dict[str, Any] = {
+                        "strategies": strategies,
+                        "limit": effective_limit,
+                    }
+                    if strategy_limits and _call_accepts_strategy_limits(discover_fn):
+                        discover_kwargs["strategy_limits"] = strategy_limits
+                    if _call_accepts_pool_snapshot(discover_fn):
+                        discover_kwargs["pool_snapshot"] = pool_snapshot
+                    if injected_keywords is not None and _call_accepts_keywords(discover_fn):
+                        discover_kwargs["keywords"] = injected_keywords
+                    if injected_keyword_ids and _call_accepts_keyword_ids(discover_fn):
+                        discover_kwargs["keyword_ids"] = injected_keyword_ids
+                    discovered = await discover_fn(profile, **discover_kwargs)
+                    topic_items = discovered
+                    discovered_count = len(discovered)
+                    admitted_count = discovered_count
+            except Exception:
+                iteration_failed = True
+                if claimed_search and coordinator is not None:
+                    coordinator.mark_failed(claimed_search)
+                raise
+            finally:
+                if claimed_search and coordinator is not None and not iteration_failed:
+                    # Inline-admit terminal: words that drove a fetch producing
+                    # candidates are ``used``; an empty fetch marks them ``failed``
+                    # (retry). yield backfill is P1.8, decoupled from ``used``.
+                    if discovered_count > 0:
+                        coordinator.mark_used(claimed_search)
+                    else:
+                        coordinator.mark_failed(claimed_search)
             all_discovered.extend(discovered)
             flattened_strategies.extend(strategies)
 
@@ -2087,6 +2288,52 @@ class ContinuousRefreshController:
 
     def _source_deficit(self, source_family: str) -> int:
         return self._source_requested_count(source_family)
+
+    # ── keyword planner deficit / catalyst口径 (P1.6) ─────────────────────
+    # The unified keyword planner reuses these so its "real deficit" shares the
+    # exact in-flight + raw-headroom accounting that drives pool replenishment,
+    # instead of naively counting visible pool rows.
+
+    def keyword_planner_real_deficit(self, platform: str) -> int:
+        """Real search deficit for one platform (in-flight + raw headroom).
+
+        Wraps ``_source_requested_count`` — the same口径 used by
+        ``_build_source_replenishment_plan`` (available_deficit ∧ raw_headroom
+        ∧ global_available_deficit). ``> 0`` means the platform genuinely needs
+        more search supply.
+        """
+        try:
+            return int(self._source_requested_count(str(platform).strip()))
+        except Exception:
+            logger.exception("keyword_planner_real_deficit failed for %s", platform)
+            return 0
+
+    def keyword_planner_bilibili_catalyst(self) -> bool:
+        """B站's extra catalyst: pool-below-target OR ≥ signal-event threshold.
+
+        Mirrors ``_build_refresh_plan`` — B站 search regenerates keywords when
+        the pool is below target (its four strategies fire together) or when
+        ≥ ``signal_event_threshold`` signal events have queued (profile may have
+        just drifted), even if its keyword cache is not below the low watermark.
+        """
+        try:
+            pool_available = self.database.count_pool_candidates(
+                xhs_self_nickname=self._xhs_self_nickname()
+            )
+        except TypeError:
+            pool_available = self.database.count_pool_candidates()
+        except Exception:
+            logger.exception("keyword_planner_bilibili_catalyst pool count failed")
+            return False
+        if int(pool_available) < self.pool_target_count:
+            return True
+        try:
+            state = self.memory_manager.load_discovery_runtime_state()
+            pending_events = self._pending_signal_events_count(state)
+        except Exception:
+            logger.exception("keyword_planner_bilibili_catalyst signal count failed")
+            return False
+        return pending_events >= self.signal_event_threshold
 
     def _source_requested_count(
         self,

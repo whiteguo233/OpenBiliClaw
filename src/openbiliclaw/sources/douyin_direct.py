@@ -90,6 +90,9 @@ def normalize_aweme_item(
         duration=duration_ms // 1000 if duration_ms else 0,
         view_count=_to_int(statistics.get("play_count")),
         like_count=_to_int(statistics.get("digg_count")),
+        collect_count=_to_int(statistics.get("collect_count")),
+        comment_count=_to_int(statistics.get("comment_count")),
+        share_count=_to_int(statistics.get("share_count")),
         description=title,
         source_strategy=source_strategy,
         content_id=aweme_id,
@@ -427,6 +430,10 @@ def _extract_hot_terms(data: dict[str, Any]) -> list[dict[str, Any]]:
         for key in ("hot_value", "position", "rank", "event_time"):
             if key in raw:
                 term[key] = raw[key]
+        seed_aweme_id = _first_text(raw.get("group_id"), raw.get("aweme_id"))
+        if seed_aweme_id:
+            term["group_id"] = seed_aweme_id
+            term["seed_aweme_id"] = seed_aweme_id
         aweme = raw.get("aweme_info") or raw.get("aweme")
         if isinstance(aweme, dict):
             term["aweme"] = aweme

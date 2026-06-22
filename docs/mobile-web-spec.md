@@ -16,7 +16,7 @@
 | 入口 URL | `http://<局域网IP>:8420/m/` |
 | 鉴权 | 可选密码门禁：`[api.auth].enabled`；本机免登录，局域网 / 远程设备需密码（详见 [`docs/plans/2026-05-30-web-password-auth-design.md`](plans/2026-05-30-web-password-auth-design.md)）。仍需 `start --host 0.0.0.0` 才能被手机访问 |
 | 安全边界 | 默认面向可信局域网；开启 `[api.auth]` 后局域网 / 远程访问需密码。LAN HTTP 仍为明文，介意嗅探请上 HTTPS（反代），不建议直接暴露公网 |
-| PWA | 提供 manifest.json，支持添加到主屏幕（暂不做离线缓存） |
+| PWA | 提供 manifest.json + iOS Web Clip 元数据，支持添加到主屏幕（暂不做 service worker / 离线缓存） |
 | 行为采集 | 不做（无 bilibili 页面上下文） |
 | 源管理/爬取 | 不做 |
 | 设置页 | 不做（配置走 config.toml） |
@@ -245,3 +245,5 @@ openbiliclaw start --host 0.0.0.0
 # 手机浏览器打开
 http://<电脑局域网IP>:8420/m/
 ```
+
+打开 `/m/` 后可在 iOS Safari 通过「分享 → 添加到主屏幕」保存为桌面图标；Android Chrome / Chromium 浏览器可通过菜单里的「安装应用」或「添加到主屏幕」保存。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；完整 PWA 安装提示对 HTTPS 更稳定。

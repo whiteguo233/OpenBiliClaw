@@ -198,7 +198,7 @@ async def test_youtube_producer_stamps_strategy_score_threshold_before_enqueue(
     await producer.produce_if_due(limit=4)
 
     assert pipeline.enqueued
-    assert pipeline.enqueued[0][0][0].score_threshold == 0.65
+    assert pipeline.enqueued[0][0][0].score_threshold == 0.60
 
 
 async def test_youtube_producer_skips_discovery_when_pipeline_pool_is_full(
@@ -419,3 +419,123 @@ async def test_youtube_producer_returns_error_when_all_strategies_fail(
 
     assert result == {"discovered": 0, "reason": "error"}
     assert discover.calls == ["yt_search", "yt_trending"]
+
+
+# ── P1.7 unified keyword planner fetch path (fetch-only lifecycle) ───────
+
+
+from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator  # noqa: E402
+
+
+@dataclass
+class _QueriesDiscover:
+    """Records the injected ``queries`` (+ P1.8 ``keyword_ids``) per strategy run."""
+
+    calls: list[tuple[str, list[str] | None]] = field(default_factory=list)
+    keyword_id_calls: list[dict[str, int] | None] = field(default_factory=list)
+    items: int = 2
+
+    async def __call__(
+        self,
+        profile: Any,
+        *,
+        strategy: str,
+        unit_budget: int,
+        result_limit: int,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> YoutubeStrategyRunResult:
+        self.calls.append((strategy, list(queries) if queries is not None else None))
+        self.keyword_id_calls.append(dict(keyword_ids) if keyword_ids is not None else None)
+        n = min(self.items, result_limit)
+        return YoutubeStrategyRunResult(
+            items=[object()] * n, units_used=unit_budget, source_counts={strategy: n}
+        )
+
+
+@dataclass
+class _YtCfg:
+    unified_keyword_planner_enabled: bool = False
+    fetch_batch: int = 5
+
+
+def _yt_statuses(db: Database) -> dict[str, str]:
+    rows = db.conn.execute(
+        "SELECT keyword, status FROM discovery_keywords WHERE platform = 'youtube' ORDER BY id"
+    ).fetchall()
+    return {str(r["keyword"]): str(r["status"]) for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_youtube_flag_off_does_not_claim(db: Database) -> None:
+    db.insert_pending_keywords("youtube", ["stored"], "dig")
+    discover = _QueriesDiscover()
+    producer = YoutubeDiscoveryProducer(
+        database=db,
+        soul_engine=_Soul(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=("yt_search",),
+        daily_search_budget=5,
+        keyword_fetch=KeywordFetchCoordinator(database=db, discovery_config=_YtCfg(False)),
+    )
+    await producer.produce_if_due(limit=4)
+    # Flag off → legacy self-gen (queries None), stored word untouched.
+    assert discover.calls == [("yt_search", None)]
+    assert _yt_statuses(db) == {"stored": "pending"}
+
+
+@pytest.mark.asyncio
+async def test_youtube_flag_on_injects_queries_and_marks_used(db: Database) -> None:
+    db.insert_pending_keywords("youtube", ["py async", "rust gpu"], "dig")
+    discover = _QueriesDiscover()
+    pipeline = _FakeCandidatePipeline()
+    producer = YoutubeDiscoveryProducer(
+        database=db,
+        soul_engine=_Soul(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=("yt_search",),
+        daily_search_budget=5,
+        candidate_pipeline=pipeline,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=db, discovery_config=_YtCfg(True, fetch_batch=5)
+        ),
+    )
+    result = await producer.produce_if_due(limit=4)
+    assert result["reason"] == "ok"
+    # Claimed words injected as queries into yt_search.
+    assert discover.calls == [("yt_search", ["py async", "rust gpu"])]
+    # P1.8: each injected query also carries its producing keyword id so the
+    # admit-time yield backfill can credit the right word.
+    threaded_ids = discover.keyword_id_calls[0]
+    assert threaded_ids is not None
+    assert set(threaded_ids) == {"py async", "rust gpu"}
+    assert all(isinstance(v, int) and v > 0 for v in threaded_ids.values())
+    # Fetch-only handoff to the pipeline → both words USED.
+    assert _yt_statuses(db) == {"py async": "used", "rust gpu": "used"}
+
+
+@pytest.mark.asyncio
+async def test_youtube_flag_on_empty_store_drops_search(db: Database) -> None:
+    db2 = db  # store empty
+    discover = _QueriesDiscover()
+    producer = YoutubeDiscoveryProducer(
+        database=db2,
+        soul_engine=_Soul(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=("yt_search", "yt_trending"),
+        daily_search_budget=5,
+        daily_trending_budget=5,
+        keyword_fetch=KeywordFetchCoordinator(database=db2, discovery_config=_YtCfg(True)),
+    )
+    await producer.produce_if_due(limit=4)
+    # Store empty → yt_search dropped this cycle; yt_trending still runs.
+    strategies_run = [c[0] for c in discover.calls]
+    assert "yt_search" not in strategies_run
+    assert "yt_trending" in strategies_run
+    assert _yt_statuses(db2) == {}

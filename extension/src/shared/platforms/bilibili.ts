@@ -55,6 +55,8 @@ export function inferBilibiliActionType(hint: ActionHint): string | null {
     return "favorite";
   }
   if (text.includes("评论") || text.includes("comment")) return "comment";
+  if (text.includes("分享") || text.includes("share")) return "share";
+  if (text.includes("关注") || text.includes("follow")) return "follow";
   return null;
 }
 

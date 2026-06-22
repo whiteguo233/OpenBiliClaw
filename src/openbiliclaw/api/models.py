@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -586,10 +586,115 @@ class ProfileSummaryResponse(BaseModel):
     overrides: dict[str, object] = Field(default_factory=dict)
 
 
+class EventRejectedOut(BaseModel):
+    """One event skipped during batch ingest."""
+
+    index: int
+    type: str
+    reason: str
+
+
 class EventIngestResponse(BaseModel):
     """Response after accepting a batch of events."""
 
     accepted: int
+    rejected: list[EventRejectedOut] = Field(default_factory=list)
+
+
+ExtensionE2EPlatform = Literal["douyin", "xiaohongshu", "twitter"]
+ExtensionE2EAction = Literal[
+    "snapshot",
+    "scroll",
+    "click",
+    "like",
+    "favorite",
+    "share",
+    "follow",
+    "repost",
+    "bookmark",
+]
+ExtensionE2EActionList = Annotated[list[ExtensionE2EAction], Field(min_length=1)]
+ExtensionE2EActionStatus = Literal["ok", "skipped", "failed"]
+ExtensionE2ERunStatus = Literal["ok", "partial", "failed", "timeout"]
+
+
+def _default_extension_e2e_platforms() -> list[ExtensionE2EPlatform]:
+    return ["douyin", "xiaohongshu", "twitter"]
+
+
+class ExtensionE2ERunIn(BaseModel):
+    """Request to run a local browser-extension E2E simulation."""
+
+    platforms: list[ExtensionE2EPlatform] = Field(
+        default_factory=_default_extension_e2e_platforms,
+        min_length=1,
+    )
+    actions: dict[ExtensionE2EPlatform, ExtensionE2EActionList] = Field(default_factory=dict)
+    allow_state_changing: bool = False
+    timeout_seconds: int = Field(default=45, ge=5, le=180)
+
+
+class ExtensionE2EActionResultIn(BaseModel):
+    """One action result reported by the extension E2E runner."""
+
+    action: ExtensionE2EAction
+    status: ExtensionE2EActionStatus
+    detail: str = ""
+
+
+class ExtensionE2EPlatformResultIn(BaseModel):
+    """Per-platform action results reported by the extension."""
+
+    platform: ExtensionE2EPlatform
+    actions: list[ExtensionE2EActionResultIn] = Field(default_factory=list)
+    detail: str = ""
+
+
+class ExtensionE2EResultIn(BaseModel):
+    """Signed extension callback payload for a local E2E run."""
+
+    run_id: str
+    token: str
+    platforms: list[ExtensionE2EPlatformResultIn] = Field(default_factory=list)
+    error: str = ""
+
+
+class ExtensionE2EEventMatchOut(BaseModel):
+    """Natural backend event matched to a requested extension action."""
+
+    event_id: int
+    event_type: str
+    url: str = ""
+    title: str = ""
+
+
+class ExtensionE2EActionReportOut(BaseModel):
+    """Final report for one requested action."""
+
+    action: ExtensionE2EAction
+    extension_status: ExtensionE2EActionStatus = "skipped"
+    extension_executed: bool = False
+    extension_detail: str = ""
+    backend_event_matched: bool = False
+    backend_event: ExtensionE2EEventMatchOut | None = None
+
+
+class ExtensionE2EPlatformReportOut(BaseModel):
+    """Final report for one requested platform."""
+
+    platform: ExtensionE2EPlatform
+    actions: list[ExtensionE2EActionReportOut] = Field(default_factory=list)
+    detail: str = ""
+
+
+class ExtensionE2ERunOut(BaseModel):
+    """Final local E2E run report."""
+
+    run_id: str
+    status: ExtensionE2ERunStatus
+    platforms: list[ExtensionE2EPlatformReportOut] = Field(default_factory=list)
+    error: str = ""
+    timeout_seconds: int
 
 
 class FeedbackIn(BaseModel):
@@ -606,6 +711,24 @@ class FeedbackResponse(BaseModel):
     ok: bool
     recommendation_id: int
     feedback_type: str
+
+
+class InsightFeedbackIn(BaseModel):
+    """User confirm/reject on a specific insight hypothesis (insight cards)."""
+
+    hypothesis: str
+    signal: str  # confirm/like/support (positive) or reject/dislike/deny
+
+
+class InsightFeedbackResponse(BaseModel):
+    """Result of calibrating an insight hypothesis from user feedback."""
+
+    ok: bool
+    matched: bool
+    hypothesis: str = ""
+    signal: str = ""
+    validated: bool = False
+    confidence: float = 0.0
 
 
 class ProfileEditIn(BaseModel):
@@ -925,6 +1048,25 @@ class SchedulerConfigOut(BaseModel):
     auto_update_allowed_remotes: list[str] = Field(default_factory=list)
 
 
+class DiscoveryConfigOut(BaseModel):
+    unified_keyword_planner_enabled: bool = True
+    kw_cache_high: int = 30
+    kw_cache_low: int = 10
+    gen_batch: int = 30
+    fetch_batch: int = 5
+    history_window_size: int = 150
+    history_window_hours: int = 48
+    claim_lease_minutes: int = 10
+    planner_poll_seconds: int = 120
+    plan_ttl_hours: int = 12
+    admission_min_score: float = 0.60
+    multimodal_evaluation_enabled: bool = False
+    multimodal_batch_size: int = 8
+    multimodal_image_max_px: int = 384
+    multimodal_image_quality: int = 72
+    multimodal_image_timeout_seconds: int = 6
+
+
 class BackendUpdateStatusOut(BaseModel):
     state: str = "unknown"
     auto_update_enabled: bool = False
@@ -1014,6 +1156,7 @@ class ConfigResponse(BaseModel):
     bilibili: BilibiliConfigOut = Field(default_factory=BilibiliConfigOut)
     sources: SourcesConfigOut = Field(default_factory=SourcesConfigOut)
     scheduler: SchedulerConfigOut = Field(default_factory=SchedulerConfigOut)
+    discovery: DiscoveryConfigOut = Field(default_factory=DiscoveryConfigOut)
     autostart: AutostartConfigOut = Field(default_factory=AutostartConfigOut)
     storage: StorageConfigOut = Field(default_factory=StorageConfigOut)
     logging: LoggingConfigOut = Field(default_factory=LoggingConfigOut)
@@ -1026,10 +1169,12 @@ class ConfigUpdateIn(BaseModel):
     language: str | None = None
     data_dir: str | None = None
     reset_fields: list[str] | None = None
+    suppress_background_llm_work: bool | None = None
     llm: dict[str, object] | None = None
     bilibili: dict[str, object] | None = None
     sources: dict[str, object] | None = None
     scheduler: dict[str, object] | None = None
+    discovery: dict[str, object] | None = None
     storage: dict[str, object] | None = None
     logging: dict[str, object] | None = None
 

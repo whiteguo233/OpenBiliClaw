@@ -6,7 +6,10 @@
  * a PlatformAdapter.
  */
 
-import type { BehaviorContext, BehaviorEvent, PlatformAdapter } from "./types.js";
+import type { ActionHint, BehaviorContext, BehaviorEvent, PlatformAdapter } from "./types.js";
+
+const PRIMARY_ACTION_TARGET_SELECTOR = "button,[role='button']";
+const FALLBACK_ACTION_TARGET_SELECTOR = "a,[aria-label],[title]";
 
 export interface NormalizedActionSignal {
   type: string;
@@ -32,6 +35,24 @@ export function normalizeActionSignal(
     };
   }
   return { type: actionType, metadata };
+}
+
+function elementClassName(element: Element): string {
+  const value = (element as HTMLElement).className;
+  return typeof value === "string" ? value : (element.getAttribute("class") ?? "");
+}
+
+export function buildActionHintFromClickTarget(target: Element): ActionHint {
+  const actionElement =
+    target.closest(PRIMARY_ACTION_TARGET_SELECTOR) ??
+    target.closest(FALLBACK_ACTION_TARGET_SELECTOR) ??
+    target;
+  return {
+    text: actionElement.textContent,
+    ariaLabel:
+      actionElement.getAttribute("aria-label") ?? actionElement.getAttribute("title"),
+    className: elementClassName(actionElement),
+  };
 }
 
 export function createDOMSnapshot(doc: Document): string {

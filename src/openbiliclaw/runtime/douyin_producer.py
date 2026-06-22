@@ -16,12 +16,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from openbiliclaw.discovery.douyin import DouyinDiscoveryOptions, DouyinDiscoveryResult
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_DOUYIN as _PLATFORM_DOUYIN
+from openbiliclaw.sources.douyin_plugin_search import (
+    DouyinBudgetExhausted as _DouyinBudgetExhausted,
+)
 
 logger = logging.getLogger(__name__)
 
 DouyinDiscoverCallable = Callable[[Any, DouyinDiscoveryOptions], Awaitable[DouyinDiscoveryResult]]
 _DOUYIN_SCORE_THRESHOLDS = {
-    "search": 0.65,
+    "search": 0.60,
     "hot": 0.60,
     "feed": 0.60,
 }
@@ -51,6 +55,11 @@ class DouyinDiscoveryProducer:
     evaluate: bool = True
     candidate_pipeline: Any | None = None
     per_source_limit: int = 20
+    # Unified keyword planner fetch coordinator (P1.7). When wired AND the flag
+    # is on, the producer's search source claims words from the keyword store
+    # and walks them through the inline-admit lifecycle (used / failed /
+    # budget-rollback). ``None`` (default / tests / flag off) → legacy path.
+    keyword_fetch: Any | None = None
     _last_run_at: datetime | None = field(default=None, init=False)
     _last_skip_reason: str = field(default="", init=False)
 
@@ -81,6 +90,27 @@ class DouyinDiscoveryProducer:
             ),
         )
         use_candidate_pipeline = self.candidate_pipeline is not None
+
+        # Unified keyword planner fetch path (P1.7, flag-gated). Only when this
+        # run actually includes the ``search`` source — hot/feed-only runs never
+        # touch the keyword store. The deficit gate is enforced upstream (the
+        # controller only invokes the producer when douyin is under quota); the
+        # distinct floor is ``min_interval`` via ``_is_due`` above.
+        claimed: list[Any] = []
+        coordinator = self.keyword_fetch
+        flag_on_search = (
+            coordinator is not None
+            and bool(getattr(coordinator, "should_claim", lambda: False)())
+            and "search" in selected_sources
+        )
+        if flag_on_search and coordinator is not None:
+            claimed = coordinator.claim(_PLATFORM_DOUYIN)
+            if not claimed:
+                # Flag on but the store has no claimable pending words → skip the
+                # search fetch this cycle (the planner will refill); don't run a
+                # legacy self-generated search behind the planner's back.
+                return self._skip("no_keywords")
+
         options = DouyinDiscoveryOptions(
             limit=requested_limit,
             sources=selected_sources,
@@ -88,12 +118,35 @@ class DouyinDiscoveryProducer:
             evaluate=False if use_candidate_pipeline else self.evaluate,
             per_source_limit=per_source_limit,
             keywords_per_run=1,
+            keywords=tuple(item.keyword for item in claimed) if claimed else (),
+            # P1.8: thread the producing word's id onto each search candidate for
+            # admit-time yield backfill.
+            keyword_ids={item.keyword: int(item.id) for item in claimed} if claimed else {},
+            raise_on_budget=bool(claimed),
         )
         try:
             result = await self.discover(profile, options)
+        except _DouyinBudgetExhausted:
+            # Claimed but the plugin search budget was spent → no search ran →
+            # roll every claimed word back to pending (do NOT burn as used).
+            if coordinator is not None:
+                for item in claimed:
+                    coordinator.rollback(item)
+            return self._skip("budget_exhausted")
         except Exception as exc:
             logger.warning("douyin producer failed: %s", exc)
+            if claimed and coordinator is not None:
+                coordinator.mark_failed(claimed)
             return self._skip("error")
+
+        # Inline-admit lifecycle: a successful return that produced candidates
+        # marks every claimed word ``used``; an empty fetch marks them ``failed``
+        # (retry). yield backfill is P1.8, decoupled from ``used``.
+        if claimed and coordinator is not None:
+            if result.items:
+                coordinator.mark_used(claimed)
+            else:
+                coordinator.mark_failed(claimed)
 
         self._last_run_at = datetime.now(UTC)
         payload: dict[str, object] = {
@@ -189,6 +242,7 @@ def build_douyin_discovery_producer(
     soul_engine: Any,
     discovery_engine: Any,
     candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
 ) -> DouyinDiscoveryProducer | None:
     """Build the runtime Douyin producer if Douyin discovery is enabled."""
     dy_cfg = getattr(getattr(config, "sources", None), "douyin", None)
@@ -233,6 +287,10 @@ def build_douyin_discovery_producer(
                         requested_limit=options.limit,
                     ),
                     daily_feed_budget=int(getattr(dy_cfg, "daily_feed_budget", 0)),
+                    # Unified keyword planner fetch path: surface budget
+                    # exhaustion as a distinguishable signal so the claimed
+                    # keyword rolls back instead of being burned (P1.7).
+                    raise_on_budget=bool(getattr(options, "raise_on_budget", False)),
                 )
             service = DouyinDiscoveryService(
                 client=client,
@@ -249,4 +307,5 @@ def build_douyin_discovery_producer(
         sources=("search", "hot", "feed"),
         candidate_pipeline=candidate_pipeline,
         per_source_limit=20,
+        keyword_fetch=keyword_fetch,
     )

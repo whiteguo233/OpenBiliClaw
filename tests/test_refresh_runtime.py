@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +13,9 @@ from openbiliclaw.runtime.events import RuntimeEventHub
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _MULTI_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
 
@@ -363,6 +367,15 @@ class _FakeXhsProducer:
         return {"enqueued": 1, "attempted": 1, "reason": "ok"}
 
 
+class _FakeBiliProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 1, "attempted": 1, "reason": "ok"}
+
+
 class _FakeDouyinProducer:
     def __init__(self) -> None:
         self.calls: list[int | None] = []
@@ -432,6 +445,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_refresh", ("_on_profile_ready_if_first_time", "refresh_if_needed")),
     ("_loop_pool_precompute", ("_drain_pool_precompute_backlog",)),
     ("_loop_soul_pipeline", ("_tick_soul_pipeline",)),
+    ("_loop_bilibili_producer", ("_tick_bilibili_producer",)),
     ("_loop_xhs_producer", ("_tick_xhs_producer",)),
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
@@ -2359,14 +2373,14 @@ def test_real_database_enforce_then_replenish_reaches_available_target(
     )
 
     assert db.count_pool_candidates() == 246
-    assert db.count_pool_candidates_by_source() == {"bilibili": 300}
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
+    assert db.count_pool_candidates_by_source() == {"bilibili": 246}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 246}
     assert controller._build_source_replenishment_plan() == [
         (["search", "related_chain", "trending", "explore"], 54)
     ]
 
     assert controller._enforce_pool_cap() is False
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 246}
 
     for index in range(54):
         _seed_visible_pool_row(
@@ -2378,7 +2392,7 @@ def test_real_database_enforce_then_replenish_reaches_available_target(
 
     assert controller._enforce_pool_cap() is True
     assert db.count_pool_candidates() == 300
-    assert db.count_pool_raw_material_by_source() == {"bilibili": 354}
+    assert db.count_pool_raw_material_by_source() == {"bilibili": 300}
     db.close()
 
 
@@ -2525,6 +2539,51 @@ async def test_xhs_producer_receives_source_deficit_limit() -> None:
     await controller._tick_xhs_producer()
 
     assert producer.calls == [2]
+
+
+async def test_bilibili_producer_runs_when_bilibili_under_quota() -> None:
+    producer = _FakeBiliProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=595,
+            source_counts={"bilibili": 475, "xiaohongshu": 60, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        discovery_limit=30,
+        bilibili_producer=producer,
+    )
+
+    await controller._tick_bilibili_producer()
+
+    assert producer.calls == [5]
+
+
+async def test_bilibili_producer_skips_when_bilibili_at_quota() -> None:
+    producer = _FakeBiliProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "xiaohongshu": 60, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        bilibili_producer=producer,
+    )
+
+    await controller._tick_bilibili_producer()
+
+    assert producer.calls == []
 
 
 async def test_douyin_producer_runs_when_douyin_under_quota() -> None:
@@ -3261,3 +3320,114 @@ async def test_refresh_after_feedback_skips_when_scheduler_disabled() -> None:
 
     assert result["refreshed"] is False
     assert result["reason"] == "llm_paused"
+
+
+# ── P1.7 B站 search inline-admit keyword lifecycle ───────────────────────
+
+
+from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator  # noqa: E402
+
+
+class _BiliKwCfg:
+    def __init__(self, enabled: bool = False, fetch_batch: int = 5) -> None:
+        self.unified_keyword_planner_enabled = enabled
+        self.fetch_batch = fetch_batch
+
+
+class _KeywordStoreFakeDatabase(_FakeDatabase):
+    """``_FakeDatabase`` + the keyword-store DAO backed by a real Database."""
+
+    def __init__(self, *args: object, kw_db: Database, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._kw_db = kw_db
+
+    def claim_keywords(self, platform: str, n: int) -> list[dict[str, object]]:
+        return self._kw_db.claim_keywords(platform, n)
+
+    def mark_keyword_used(self, keyword_id: int) -> None:
+        self._kw_db.mark_keyword_used(keyword_id)
+
+    def mark_keyword_failed(self, keyword_id: int) -> int:
+        return self._kw_db.mark_keyword_failed(keyword_id)
+
+
+class _CapturingPipeline:
+    """Captures the ``keywords`` injected into produce_and_enqueue; admits."""
+
+    def __init__(self, *, cached: int = 2) -> None:
+        self.produce_kwargs: list[dict[str, object]] = []
+        self.last_admitted_items = [SimpleNamespace(tags=["t"], source_strategy="search")]
+        self._cached = cached
+
+    async def produce_and_enqueue(self, **kwargs: object) -> int:
+        self.produce_kwargs.append(dict(kwargs))
+        return 4
+
+    async def drain_pending(self, **kwargs: object) -> dict[str, int]:
+        return {"evaluated": 4, "cached": self._cached, "rejected": 0}
+
+
+def _bili_kw_statuses(db: Database) -> dict[str, str]:
+    rows = db.conn.execute(
+        "SELECT keyword, status FROM discovery_keywords WHERE platform = 'bilibili' ORDER BY id"
+    ).fetchall()
+    return {str(r["keyword"]): str(r["status"]) for r in rows}
+
+
+async def test_bili_search_flag_off_does_not_claim(tmp_path: Path) -> None:
+    kw_db = Database(tmp_path / "bili_off.db")
+    kw_db.initialize()
+    kw_db.insert_pending_keywords("bilibili", ["stored"], "dig")
+    pipeline = _CapturingPipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_KeywordStoreFakeDatabase(
+            [{"id": 1, "event_type": "view"}], pool_count=0, kw_db=kw_db
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        keyword_fetch=KeywordFetchCoordinator(database=kw_db, discovery_config=_BiliKwCfg(False)),
+    )
+
+    await controller.force_refresh()
+
+    # Flag off → no keywords injected into any produce_and_enqueue; store untouched.
+    assert all("keywords" not in kw for kw in pipeline.produce_kwargs)
+    assert _bili_kw_statuses(kw_db) == {"stored": "pending"}
+
+
+async def test_bili_search_flag_on_injects_and_marks_used(tmp_path: Path) -> None:
+    kw_db = Database(tmp_path / "bili_on.db")
+    kw_db.initialize()
+    kw_db.insert_pending_keywords("bilibili", ["kw1", "kw2"], "dig")
+    pipeline = _CapturingPipeline(cached=2)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_KeywordStoreFakeDatabase(
+            [{"id": 1, "event_type": "view"}], pool_count=0, kw_db=kw_db
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=kw_db, discovery_config=_BiliKwCfg(True, fetch_batch=5)
+        ),
+    )
+
+    await controller.force_refresh()
+
+    # The search-bearing plan entry injected the claimed words as ``keywords``.
+    search_calls = [
+        kw for kw in pipeline.produce_kwargs if "search" in list(kw.get("strategies", []))
+    ]
+    assert search_calls, "expected a produce_and_enqueue call carrying the search strategy"
+    assert search_calls[0]["keywords"] == ["kw1", "kw2"]
+    # Inline-admit success (discovered > 0) → both words USED.
+    assert _bili_kw_statuses(kw_db) == {"kw1": "used", "kw2": "used"}

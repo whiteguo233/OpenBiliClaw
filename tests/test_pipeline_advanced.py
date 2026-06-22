@@ -2056,12 +2056,13 @@ async def test_semantic_purge_candidate_with_all_empty_fields_is_skipped(
             topic_key,
             topic_group,
             pool_topic_label,
+            relevance_score,
             pool_status,
             source
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("BVempty", "", "", "", "", "fresh", "test"),
+        ("BVempty", "", "", "", "", 0.90, "fresh", "test"),
     )
     db.conn.commit()
 
@@ -2185,6 +2186,24 @@ class _CognitionFakeService:
         return LLMResponse(content=_INSIGHT_RESP, provider="fake")
 
 
+def _seed_cognition_events(
+    memory: MemoryManager, count: int = 4, *, prefix: str = "认知事件"
+) -> None:
+    """Insert view events so the cursor-based awareness pass has work to do.
+
+    Awareness now reads events newer than its watermark; with zero events it
+    short-circuits without calling the analyzer, so cognition tests must seed
+    a few rows (directly via the DB so it's callable inside a running loop).
+    """
+    for i in range(count):
+        memory._database.insert_event(  # noqa: SLF001 — test seeding
+            "view",
+            title=f"{prefix}{i}",
+            context=f"在 B 站看了《{prefix}{i}》",
+            metadata={"source_platform": "bilibili"},
+        )
+
+
 def _make_cognition_cycle(tmp_path: Path, *, min_interval_seconds: int = 43200):
     """Build a CognitionCycle with fake analyzers wired to the fake service."""
     from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
@@ -2195,6 +2214,7 @@ def _make_cognition_cycle(tmp_path: Path, *, min_interval_seconds: int = 43200):
     memory = MemoryManager(Path(tmp_path))
     memory.initialize()
     memory.get_layer("preference").data.update({"interests": []})
+    _seed_cognition_events(memory)
     cycle = CognitionCycle(
         memory=memory,
         awareness_analyzer=AwarenessAnalyzer(registry=svc),
@@ -2268,6 +2288,10 @@ async def test_cognition_cycle_stale_state_retriggers(tmp_path: Path) -> None:
     mid = await cycle.run_if_due(now=t0 + timedelta(seconds=30))
     assert mid.throttled
 
+    # New events arrive so the next due run has fresh material to fold in
+    # (the cursor would otherwise short-circuit with nothing new to observe).
+    _seed_cognition_events(memory, prefix="新一批")
+
     # Third run 120 seconds later — past the 60s window → runs
     late = await cycle.run_if_due(now=t0 + timedelta(seconds=120))
     assert late.ran is True
@@ -2289,6 +2313,7 @@ async def test_cognition_cycle_state_persists_across_instances(
     memory.initialize()
     memory.get_layer("soul").data.update(OnionProfile().to_dict())
     memory.get_layer("soul").save()
+    _seed_cognition_events(memory)
 
     cycle1 = CognitionCycle(
         memory=memory,
@@ -2338,6 +2363,8 @@ async def test_cognition_cycle_awareness_failure_does_not_block_insight(
         }
     )
     memory.get_layer("awareness").save()
+    # Events so the (broken) awareness pass actually attempts a call.
+    _seed_cognition_events(memory)
 
     class _BrokenAwarenessSvc:
         async def complete_structured_task(
@@ -2432,6 +2459,63 @@ async def test_pipeline_tick_invokes_cognition_cycle(tmp_path: Path) -> None:
     assert portrait_updates, "Cognition cycle output should appear in tick() result"
     assert "观察 2" in portrait_updates[0].changes[0]
     assert "洞察 1" in portrait_updates[0].changes[0]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_tick_drives_real_cognition_cursor(tmp_path: Path) -> None:
+    """Full seam: pipeline.tick() → real CognitionCycle → cursor read → DB writes.
+
+    The spy-based test above only proves tick() *calls* run_if_due(); this wires
+    the real cycle (real analyzers, fake LLM, real SQLite + seeded events) so the
+    cursor watermark, awareness notes, and insight hypotheses all land through
+    the production tick path.
+    """
+    from openbiliclaw.soul.awareness_analyzer import AwarenessAnalyzer
+    from openbiliclaw.soul.cognition_cycle import CognitionCycle
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
+    from openbiliclaw.soul.pipeline import (
+        _BUFFERED_LAYERS,
+        LayerThreshold,
+        ProfileUpdatePipeline,
+    )
+
+    svc = _CognitionFakeService()
+    memory = MemoryManager(Path(tmp_path))
+    memory.initialize()
+    memory.get_layer("preference").data.update({"interests": ["AI"]})
+    memory.get_layer("soul").data.update(OnionProfile().to_dict())
+    memory.get_layer("soul").save()
+    _seed_cognition_events(memory, 6)
+
+    cycle = CognitionCycle(
+        memory=memory,
+        awareness_analyzer=AwarenessAnalyzer(registry=svc),
+        insight_analyzer=InsightAnalyzer(registry=svc),
+        min_interval_seconds=43200,
+    )
+    pipeline = ProfileUpdatePipeline(
+        memory=memory,
+        preference_analyzer=PreferenceAnalyzer(registry=svc),
+        profile_builder=ProfileBuilder(registry=svc),
+        thresholds={
+            layer: LayerThreshold(min_signals=1, min_interval_seconds=0, max_buffer_size=200)
+            for layer in _BUFFERED_LAYERS
+        },
+        cognition_cycle=cycle,
+    )
+
+    await pipeline.tick()
+
+    # Awareness pass ran through the cursor: watermark advanced past the 6 events.
+    state = cycle._load_state()  # noqa: SLF001
+    assert state["last_awareness_event_id"] == 6
+    assert state["last_insight_awareness_index"] >= 1
+    # Real analyzer output persisted to layers + synced onto the onion profile.
+    assert memory.get_layer("awareness").data["notes"]
+    assert memory.get_layer("insight").data["hypotheses"]
+    profile = OnionProfile.from_dict(memory.get_layer("soul").data)
+    assert profile.recent_awareness
+    assert profile.active_insights
 
 
 @pytest.mark.asyncio
@@ -2562,6 +2646,7 @@ async def test_cognition_cycle_insight_failure_is_recorded(
     memory.initialize()
     memory.get_layer("soul").data.update(OnionProfile().to_dict())
     memory.get_layer("soul").save()
+    _seed_cognition_events(memory)
 
     class _BrokenInsightSvc:
         async def complete_structured_task(

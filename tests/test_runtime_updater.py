@@ -45,11 +45,14 @@ class _FakeResponse:
 
 class _FakeAsyncClient:
     calls: list[tuple[str, dict[str, object] | None]] = []
+    init_kwargs: list[dict[str, object]] = []
     pages: dict[int, object] = {}
     error: Exception | None = None
+    error_by_verify: dict[bool, Exception] = {}
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
-        pass
+        self.verify = bool(_kwargs.get("verify", True))
+        self.init_kwargs.append(dict(_kwargs))
 
     async def __aenter__(self) -> _FakeAsyncClient:
         return self
@@ -65,6 +68,8 @@ class _FakeAsyncClient:
         params: dict[str, object] | None = None,
     ) -> _FakeResponse:
         self.calls.append((url, params))
+        if self.verify in self.error_by_verify:
+            raise self.error_by_verify[self.verify]
         if self.error is not None:
             raise self.error
         page = int(params.get("page", 1)) if params else 1
@@ -74,8 +79,10 @@ class _FakeAsyncClient:
 @pytest.fixture(autouse=True)
 def _reset_fake_client(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeAsyncClient.calls = []
+    _FakeAsyncClient.init_kwargs = []
     _FakeAsyncClient.pages = {}
     _FakeAsyncClient.error = None
+    _FakeAsyncClient.error_by_verify = {}
     monkeypatch.setattr(updater.httpx, "AsyncClient", _FakeAsyncClient)
 
 
@@ -161,6 +168,22 @@ async def test_fetch_latest_version_returns_empty_and_warns_on_http_error(
         assert await service._fetch_latest_version() == ""
 
     assert "Auto-update tag check failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_version_retries_without_tls_verify_on_cert_error() -> None:
+    _FakeAsyncClient.error_by_verify = {
+        True: httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+    }
+    _FakeAsyncClient.pages = {1: [{"name": "backend-v0.3.92"}]}
+
+    service = updater.AutoUpdateService()
+
+    assert await service._fetch_latest_version() == "backend-v0.3.92"
+    assert [kwargs.get("verify", True) for kwargs in _FakeAsyncClient.init_kwargs] == [
+        True,
+        False,
+    ]
 
 
 @pytest.mark.asyncio
@@ -275,9 +298,13 @@ def test_update_status_payloads_include_install_mode(
     [
         ("", []),
         (" M uv.lock\n", []),
-        ("?? notes.txt\n", ["notes.txt"]),
+        ("?? notes.txt\n", []),
+        ("A  staged.txt\n", []),
+        ("?? ollama-models/model.bin\n", []),
+        (" M ollama-models/model.bin\n", []),
         (" M uv.lock\n M src/openbiliclaw/cli.py\n", ["src/openbiliclaw/cli.py"]),
         ("MM uv.lock\n", []),
+        ("MM src/openbiliclaw/cli.py\n", ["src/openbiliclaw/cli.py"]),
     ],
 )
 def test_dirty_paths_besides_uv_lock(porcelain: str, expected: list[str]) -> None:
@@ -354,7 +381,7 @@ async def test_request_apply_blocks_dirty_worktree_before_install_or_restart(
         cwd=tmp_path,
         check=True,
     )
-    (tmp_path / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("dirty\n", encoding="utf-8")
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     restarted = False
 
@@ -497,7 +524,7 @@ async def test_request_apply_reports_missing_tag_and_diverged_branch(
             return subprocess.CompletedProcess(command, 0, "", "")
         if command == ["git", "rev-parse", "--git-dir"]:
             return subprocess.CompletedProcess(command, 0, ".git\n", "")
-        if command == ["git", "fetch", "--tags", "origin"]:
+        if command == ["git", "fetch", "--force", "--tags", "origin"]:
             return subprocess.CompletedProcess(command, 0, "", "")
         if command == ["git", "rev-parse", "--verify", "backend-v0.3.92^{commit}"]:
             rev_parse_calls += 1
@@ -561,11 +588,59 @@ async def test_successful_apply_fetches_merges_syncs_and_publishes_restart(
 
     assert status_code == 202
     assert payload["accepted"] is True
-    assert ["git", "fetch", "--tags", "origin"] in calls
+    assert ["git", "fetch", "--force", "--tags", "origin"] in calls
     assert ["git", "merge", "--ff-only", "backend-v0.3.92"] in calls
     assert ["uv", "sync"] in calls
     assert restarted is True
     assert events == [{"type": "backend_restart_pending", "latest_tag": "backend-v0.3.92"}]
+
+
+@pytest.mark.asyncio
+async def test_run_command_uses_async_subprocess_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def _unexpected_subprocess_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("subprocess.run must not be used inside _run_command")
+
+    class _FakeProcess:
+        returncode = 7
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"stdout text\n", b"stderr text\n"
+
+        def kill(self) -> None:
+            raise AssertionError("process should not be killed")
+
+    async def _create_subprocess_exec(
+        *args: str,
+        **kwargs: object,
+    ) -> _FakeProcess:
+        calls.append((args, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(updater.subprocess, "run", _unexpected_subprocess_run)
+    monkeypatch.setattr(updater.asyncio, "create_subprocess_exec", _create_subprocess_exec)
+
+    service = updater.AutoUpdateService(enabled=False)
+    result = await service._run_command(["git", "status"], tmp_path, timeout=5)
+
+    assert result.args == ["git", "status"]
+    assert result.returncode == 7
+    assert result.stdout == "stdout text\n"
+    assert result.stderr == "stderr text\n"
+    assert calls == [
+        (
+            ("git", "status"),
+            {
+                "cwd": tmp_path,
+                "stdout": updater.subprocess.PIPE,
+                "stderr": updater.subprocess.PIPE,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

@@ -23,13 +23,16 @@ class _FallbackClient:
         self.keywords: list[str] = []
         self.hot_board_calls = 0
         self.feed_calls = 0
+        self.hot_terms: list[dict[str, object]] = [
+            {"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}
+        ]
 
     async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
         self.keywords.append(keyword)
         return [{"aweme_id": "fallback", "desc": "fallback result"}]
 
     async def get_hot_terms(self, *, limit: int = 30) -> list[dict[str, object]]:
-        return [{"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}]
+        return self.hot_terms[:limit]
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
         self.hot_board_calls += 1
@@ -58,6 +61,11 @@ def test_plugin_search_item_to_aweme_maps_fields() -> None:
             "author": "作者",
             "author_sec_uid": "sec-1",
             "cover_url": "https://cover.example/a.jpg",
+            "view_count": 1000,
+            "like_count": 100,
+            "collect_count": 90,
+            "comment_count": 80,
+            "share_count": 70,
         }
     )
 
@@ -66,6 +74,13 @@ def test_plugin_search_item_to_aweme_maps_fields() -> None:
         "desc": "插件搜索结果",
         "author": {"nickname": "作者", "sec_uid": "sec-1"},
         "video": {"cover": {"url_list": ["https://cover.example/a.jpg"]}},
+        "statistics": {
+            "play_count": 1000,
+            "digg_count": 100,
+            "collect_count": 90,
+            "comment_count": 80,
+            "share_count": 70,
+        },
     }
 
 
@@ -118,7 +133,7 @@ async def test_plugin_search_client_returns_completed_task_items(database: Datab
 
 
 @pytest.mark.asyncio
-async def test_plugin_search_client_falls_back_to_direct_on_empty_task(
+async def test_plugin_search_client_does_not_fallback_to_direct_on_empty_task_by_default(
     database: Database,
 ) -> None:
     fallback = _FallbackClient()
@@ -147,8 +162,116 @@ async def test_plugin_search_client_falls_back_to_direct_on_empty_task(
 
     result, _ = await asyncio.gather(client.search_aweme("猫", limit=5), complete_empty_task())
 
-    assert fallback.keywords == ["猫"]
-    assert result == [{"aweme_id": "fallback", "desc": "fallback result"}]
+    assert fallback.keywords == []
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_plugin_search_client_does_not_fallback_to_direct_hot_on_empty_task_by_default(
+    database: Database,
+) -> None:
+    fallback = _FallbackClient()
+    queue = DyTaskQueue(database)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=2,
+        poll_interval_seconds=0.01,
+        kick=lambda: None,
+    )
+
+    async def complete_empty_task() -> None:
+        for _ in range(100):
+            task = queue.next_pending()
+            if task:
+                queue.merge_result(
+                    str(task["id"]),
+                    videos=[],
+                    scope_counts={"dy_hot": 0},
+                    complete=True,
+                )
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("hot task was not enqueued")
+
+    result, _ = await asyncio.gather(client.get_hot_board(limit=5), complete_empty_task())
+
+    assert fallback.hot_board_calls == 0
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_plugin_hot_preserves_seed_aweme_id_from_hot_terms(database: Database) -> None:
+    fallback = _FallbackClient()
+    fallback.hot_terms = [
+        {
+            "word": "热点词",
+            "sentence_id": "2495363",
+            "group_id": "7652229189183427849",
+            "hot_value": 123,
+        }
+    ]
+    queue = DyTaskQueue(database)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=2,
+        poll_interval_seconds=0.01,
+        kick=lambda: None,
+    )
+
+    async def complete_task() -> None:
+        for _ in range(100):
+            task = queue.next_pending()
+            if task:
+                assert task["type"] == "hot"
+                assert '"sentence_id": "2495363"' in str(task["payload_json"])
+                assert '"seed_aweme_id": "7652229189183427849"' in str(task["payload_json"])
+                queue.merge_result(
+                    str(task["id"]),
+                    videos=[],
+                    scope_counts={"dy_hot": 0},
+                    complete=True,
+                )
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("hot task was not enqueued")
+
+    await asyncio.gather(client.get_hot_board(limit=5), complete_task())
+
+
+@pytest.mark.asyncio
+async def test_plugin_search_client_does_not_fallback_to_direct_feed_on_empty_task_by_default(
+    database: Database,
+) -> None:
+    fallback = _FallbackClient()
+    queue = DyTaskQueue(database)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=2,
+        poll_interval_seconds=0.01,
+        kick=lambda: None,
+    )
+
+    async def complete_empty_task() -> None:
+        for _ in range(100):
+            task = queue.next_pending()
+            if task:
+                queue.merge_result(
+                    str(task["id"]),
+                    videos=[],
+                    scope_counts={"dy_feed": 0},
+                    complete=True,
+                )
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("feed task was not enqueued")
+
+    result, _ = await asyncio.gather(client.get_recommend_feed(limit=5), complete_empty_task())
+
+    assert fallback.feed_calls == 0
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -310,3 +433,46 @@ async def test_plugin_search_client_returns_feed_task_items(database: Database) 
             "video": {"cover": {"url_list": ["https://cover.example/feed.jpg"]}},
         }
     ]
+
+
+# ── P1.7 distinguishable budget-rejection signal ─────────────────────────
+
+
+async def test_search_aweme_raises_budget_sentinel_when_armed(database: Database) -> None:
+    from openbiliclaw.sources.douyin_plugin_search import DouyinBudgetExhausted
+
+    queue = DyTaskQueue(database)
+    # Exhaust today's search-task budget so enqueue is refused.
+    queue.enqueue_with_id("search", {"keywords": ["x"]}, daily_budget=1)
+    fallback = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=1.0,
+        daily_search_budget=1,
+        kick=lambda: None,
+        raise_on_budget=True,
+    )
+    with pytest.raises(DouyinBudgetExhausted):
+        await client.search_aweme("猫", limit=5)
+    # Budget-rejected path must NOT fall back to direct-cookie search.
+    assert fallback.keywords == []
+
+
+async def test_search_aweme_budget_falls_back_to_direct_when_not_armed(database: Database) -> None:
+    # Compatibility mode: budget exhaustion can still fall back to direct-cookie
+    # search when explicitly requested, but the default discovery path keeps it off.
+    queue = DyTaskQueue(database)
+    queue.enqueue_with_id("search", {"keywords": ["x"]}, daily_budget=1)
+    fallback = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=1.0,
+        daily_search_budget=1,
+        kick=lambda: None,
+        allow_direct_fallback=True,
+    )
+    result = await client.search_aweme("猫", limit=5)
+    assert fallback.keywords == ["猫"]
+    assert result == [{"aweme_id": "fallback", "desc": "fallback result"}]
