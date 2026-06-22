@@ -28,25 +28,27 @@ if TYPE_CHECKING:
 class ScoringWeights:
     """Tuneable weights for the composite rec_score.
 
-    Serendipity is weighted higher (0.20) to ensure cross-domain explore
-    content surfaces in recommendations, not just high-relevance safe picks.
+    All weights are normalised to sum to 1.0 so that the additive
+    sub-scores form a weighted average and individual contributions are
+    directly comparable.
 
-    ``topic_fatigue`` was raised from 0.15 to 0.25 after observing that
-    high-relevance candidates for "洛克王国"/"动漫"/etc. kept winning the
-    top-K reshuffle batches because the per-key fatigue penalty (~0.045)
-    couldn't overcome the relevance weight advantage (~0.28). Combined
-    with the steeper fatigue curve (now ``count^1.5/len*5``) and the new
-    topic_group axis, the same candidate now takes a 3-4x harder hit
-    when it has appeared ≥2 times in recent history.
+    Serendipity (0.13) is kept above publication_recency / source_monotony
+    to ensure cross-domain explore content surfaces in recommendations,
+    not just high-relevance safe picks.
+
+    ``topic_fatigue`` (0.18, was 0.25 pre-normalisation) pairs with the
+    steeper ``count^1.5/len*5`` fatigue curve and the topic_group axis so
+    that high-relevance candidates for "洛克王国"/"动漫"/etc. take a 3-4x
+    harder hit when they have appeared ≥2 times in recent history.
     """
 
-    relevance: float = 0.30
-    freshness: float = 0.25
-    publication_recency: float = 0.15
-    time_context: float = 0.10
-    topic_fatigue: float = 0.25
-    source_monotony: float = 0.15
-    serendipity: float = 0.20
+    relevance: float = 0.22
+    freshness: float = 0.18
+    publication_recency: float = 0.11
+    time_context: float = 0.07
+    topic_fatigue: float = 0.18
+    source_monotony: float = 0.11
+    serendipity: float = 0.13
 
 
 @dataclass(frozen=True)

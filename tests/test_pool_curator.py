@@ -138,9 +138,9 @@ def test_topic_fatigue_curve_grows_steeply_after_first_repeat() -> None:
 
     The pre-fix curve (count/len*3) gave count=3/30 only 0.30 fatigue,
     which after the 0.15 weight only deducted 0.045 from the score —
-    not enough to dethrone a high-relevance candidate. The new curve
-    must escalate sharply after count=2 so a topic that's been served
-    three times in a row gets a near-saturating penalty.
+    not enough to dethrone a high-relevance candidate. The steeper
+    ``count^1.5/len*5`` curve and the normalised weight (0.18) ensure a
+    topic served three times in a row gets a near-saturating penalty.
     """
     f1 = PoolCurator._topic_fatigue("games", ("games",) + ("other",) * 29)  # 1/30
     f2 = PoolCurator._topic_fatigue("games", ("games",) * 2 + ("other",) * 28)

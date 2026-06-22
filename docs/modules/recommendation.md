@@ -312,13 +312,13 @@ from openbiliclaw.recommendation.curator import PoolCurator
 
 | 维度 | 权重 |
 |------|------|
-| `relevance` | 0.30 |
-| `freshness` | 0.25 |
-| `publication_recency` | 0.15 |
-| `time_context` | 0.10 |
-| `topic_fatigue` | 0.25 |
-| `source_monotony` | 0.15 |
-| `serendipity` | 0.20 |
+| `relevance` | 0.22 |
+| `freshness` | 0.18 |
+| `publication_recency` | 0.11 |
+| `time_context` | 0.07 |
+| `topic_fatigue` | 0.18 |
+| `source_monotony` | 0.11 |
+| `serendipity` | 0.13 |
 
 #### 关键数据结构
 
