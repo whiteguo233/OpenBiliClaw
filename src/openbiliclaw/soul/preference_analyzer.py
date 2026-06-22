@@ -394,17 +394,18 @@ class PreferenceAnalyzer:
             chunk: list[dict[str, object]],
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             messages = build_preference_analysis_prompt(events=chunk, existing_preference={})
-            user_prompt_chars = len(messages[1]["content"])
+            prompt_chars = self._prompt_char_count(messages)
             logger.info(
-                "preference chunk: events=%d user_prompt=%d chars",
+                "preference chunk check: events=%d prompt_chars=%d budget=%d",
                 len(chunk),
-                user_prompt_chars,
+                prompt_chars,
+                self.max_prompt_chars,
             )
             if not self._prompt_fits_budget(messages):
                 logger.info(
-                    "preference chunk exceeds budget, splitting: events=%d user_prompt=%d",
+                    "preference chunk exceeds budget, splitting: events=%d prompt_chars=%d",
                     len(chunk),
-                    user_prompt_chars,
+                    prompt_chars,
                 )
                 return await _split_or_compact_chunk(chunk)
             try:
