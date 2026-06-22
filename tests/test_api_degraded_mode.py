@@ -137,6 +137,31 @@ def test_degraded_non_config_endpoints_return_503(
     assert response.json()["reason"] == "llm_registry_unavailable"
 
 
+def test_degraded_update_status_is_reachable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Update status must bypass the degraded 503 gate.
+
+    A backend that can't build its LLM registry is exactly when the user may
+    need to pull a fix-carrying release, so ``/api/update-status`` (and manual
+    check/apply) stay on the degraded allow-list and the degraded context now
+    builds a real ``AutoUpdateService`` to back them.
+    """
+    _clear_llm_env(monkeypatch)
+    _save_project_config(monkeypatch, tmp_path, _invalid_config(tmp_path))
+    client = TestClient(create_app())
+
+    response = client.get("/api/update-status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "backend" in body
+    # Not the 503 degraded envelope.
+    assert body.get("status") != "degraded"
+    assert "install_mode" in body["backend"]
+
+
 def test_degraded_runtime_stream_sends_degraded_event_and_stays_open(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

@@ -6,7 +6,7 @@
 
 四阶段（与 CLI 完全一致）：
 
-1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按启用平台）+ X 点赞 / 收藏（`_fetch_x_init_data`,服务端 twitter-cli 直拉、无扩展任务,与 B站 一样在本轮直接持久化;cookie 未同步时静默跳过）→ 统一 `build_event` → `memory.propagate_event` 入库。X 点赞 → `event_type="like"`、收藏 → `event_type="favorite"`(均为显式正向信号)。
+1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`，v0.3.118+ 仅当 `include_bili=True`，B 站与其他来源一样可取消）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按启用平台）+ X 点赞 / 收藏（`_fetch_x_init_data`,服务端 twitter-cli 直拉、无扩展任务,与 B站 一样在本轮直接持久化;cookie 未同步时静默跳过）→ 统一 `build_event` → `memory.propagate_event` 入库。X 点赞 → `event_type="like"`、收藏 → `event_type="favorite"`(均为显式正向信号,v0.3.118+ 同时进画像构建的 history 行,保证 X-only 初始化也有画像输入)。
 2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发。
 3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，发现用 preference-only 草稿画像预热评估。
 
@@ -15,12 +15,12 @@
 | 项 | 说明 |
 |---|---|
 | 位置 | `src/openbiliclaw/cli.py` |
-| 签名 | `async run_guided_init(*, client, memory, soul_engine, favorite_limit, follow_limit, include_xhs, include_dy, include_yt, include_x=False, target_pool_count, discover_backfill, coordinator=None, run_id=None) -> InitResult` |
+| 签名 | `async run_guided_init(*, client, memory, soul_engine, favorite_limit, follow_limit, include_bili=True, include_xhs, include_dy, include_yt, include_x=False, target_pool_count, discover_backfill, coordinator=None, run_id=None) -> InitResult`（`include_bili=False` 时 `client` 可为 `None`） |
 | 为什么是协程 | 四阶段原先内联在 `init` 命令里，被四处独立 `asyncio.run` 包着，后端无法复用（会嵌套事件循环）。合并为一个协程后，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动、API 在服务 loop 里直接 `await`。 |
 | bootstrap 采集器 | 仍是同步实现（有同步调用方 + 测试），但在流水线里走 `await asyncio.to_thread(...)`，不冻结 API 事件循环；`Database` 以 `check_same_thread=False` 打开，跨线程读安全。 |
 | `discover_backfill` 注入 | 唯一与运行路径相关的步骤。CLI 传 `_run_init_discovery_backfill_async`（一次性 `discovery_engine`）；API 传 `controller.run_init_backfill`（持 `_refresh_lock`，与连续 refresh 串行）。其余步骤完全共享。 |
 | 进度上报 | 传入 `coordinator` / `run_id` 时，在每个 stage 边界回调 `coordinator.stage_started/stage_done`、并 `register_enqueued_task` 登记 bootstrap task id；run 生命周期（mark_running / complete / fail）留给调用方。 |
-| 失败语义 | 硬失败抛 `GuidedInitError(reason)`（`empty_history` / `profile_failed`）：CLI 转状态面板 + 退出码 1，API 转 `coordinator.fail(reason)`。发现阶段失败是部分成功（画像已生成），记在 `InitResult.discovery_error`。 |
+| 失败语义 | 硬失败抛 `GuidedInitError(reason)`（`empty_history`（选了 B 站但历史为空）/ `empty_signals`（所有所选来源 0 信号，v0.3.118+）/ `profile_failed`）：CLI 转状态面板 + 退出码 1，API 转 `coordinator.fail(reason)`。发现阶段失败是部分成功（画像已生成），记在 `InitResult.discovery_error`。 |
 
 `InitResult` 携带 CLI summary / API wrapper 需要的全部字段（各来源事件数、scope counts、profile、discovered_count、discovery_error）。
 
@@ -37,7 +37,7 @@
 | 启动 reconcile | `reconcile_on_boot()`（API startup 调用）把崩溃残留的 `starting/running` 行判 `failed(interrupted)`，避免 `/api/init-status` 永远报 running。 |
 | bootstrap 归属 | `register_enqueued_task` / `is_owned_bootstrap_task` 给写者门控判断某 task-result 是否属于本 init run。 |
 
-前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）：`chat_ready()`（provider health，TTL 30s，超时乐观）、`bilibili_check()`（`validate_cookie`，ok 60s / fail 10s TTL）、`enabled_platforms()`；全部 TTL 缓存 + 单飞，避免轮询打爆。
+前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）：`chat_ready()`（provider health，TTL 30s，超时乐观）、`bilibili_check()`（`validate_cookie`，ok 60s / fail 10s TTL）、`enabled_platforms()`；全部 TTL 缓存 + 单飞，避免轮询打爆。v0.3.118+：B 站登录不再硬性拦截 `GET /api/init-status` 的 `can_start`（是否拦截取决于客户端勾选了哪些来源，只有 `POST /api/init` 知道）——`bilibili_logged_in` 仍在 `prerequisites` 里下发，前端在勾选了 B 站时自行拦截；`POST /api/init` 也只在所选来源包含 bilibili 时做登录 409 复验，显式 `sources` 为空（或与已启用集合交集为空）时返回 409 `no_sources_selected`。
 
 ## API 端点
 
@@ -64,7 +64,7 @@
 
 ## 图形 UI（extension / web）
 
-推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（B 站必选基座 + 小红书 / 抖音 / YouTube 可选，配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，勾了未开启的平台 → 提示去设置，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
+推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（v0.3.118+ B 站默认勾选但可取消，与小红书 / 抖音 / YouTube / X 一样可选，至少保留一个；配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，一个来源都没勾 → 提示「至少勾选一个数据来源」，勾了未开启的平台 → 提示去设置，勾了 B 站但未登录 → 提示登录或取消勾选，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
 
 桌面 Web 对齐同一套交互：安装包首启 `/setup/` 从「连接 AI → 连接 B站」后进入第 3 步「初始化画像和推荐池」，展示同款来源勾选、前置清单、`POST /api/init` 启动和 `runtime-stream`/轮询进度；完成后才跳转 `/web`。用户跳过或后来直接打开 `/web` 时，推荐网格仅在 `runtime-status.initialized=false` 且没有插件同款“初始化后信号”（推荐数、候选池可用数、待整理数、最近发现 / 补货数）时渲染同款「开始初始化」面板，不再提示去命令行跑 init，也不展示示例推荐卡。
 

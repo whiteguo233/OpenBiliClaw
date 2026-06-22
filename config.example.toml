@@ -348,6 +348,7 @@ signal_event_threshold = 6               # New behavior events before search+rel
 trending_refresh_hours = 3               # Minimum interval for trending strategy
 explore_refresh_hours = 12               # Minimum interval for explore strategy
 discovery_limit = 30                     # Per discovery wave limit; allowed range 1..60
+delight_queue_limit = 20                 # Surprise queue load size for desktop/mobile/extension; 1..100
 proactive_push_interval_seconds = 120    # Delight/probe push loop interval; values <30 fallback
 speculator_idle_interval_minutes = 30    # Idle interval before checking speculation lifecycle
 # --- 猜测兴趣（Speculative Interest）调度 ---

@@ -576,6 +576,7 @@ class ProfileUpdatePipeline:
         embedding_service: Any | None = None,
         cognition_cycle: Any | None = None,
         speculator_idle_interval_minutes: int = 30,
+        profile_consolidator: Any | None = None,
     ) -> None:
         self._memory = memory
         self._preference_analyzer = preference_analyzer
@@ -585,6 +586,7 @@ class ProfileUpdatePipeline:
         self._avoidance_speculator = avoidance_speculator
         self._embedding_service = embedding_service
         self._cognition_cycle = cognition_cycle
+        self._profile_consolidator = profile_consolidator
         data_dir = getattr(memory, "_data_dir", None)
         self._buffers = (
             load_pipeline_state(data_dir)
@@ -732,8 +734,77 @@ class ProfileUpdatePipeline:
             except Exception:
                 logger.exception("Cognition cycle failed during pipeline tick")
 
+        # Profile consolidation: throttled LLM-judged dedup of like/dislike
+        # topics at the 64-cap boundary (default every 12h; dirty-check and
+        # no-merge memory make stable-profile ticks nearly free).
+        if self._profile_consolidator is not None:
+            try:
+                cons_report = await self._profile_consolidator.run_if_due()
+                if getattr(cons_report, "merges", None) or getattr(
+                    cons_report, "rule_merges", None
+                ):
+                    self._record_consolidation_cognition(cons_report)
+                    cons_update = LayerUpdateResult(
+                        layer=OnionLayer.INTEREST,
+                        changed=True,
+                        changes=[
+                            f"画像整理: 合并 {len(cons_report.merges)} 组同义主题、"
+                            f"{len(cons_report.rule_merges)} 组同名标签",
+                        ],
+                        trigger="12小时画像整理",
+                        timestamp=datetime.now().isoformat(),
+                    )
+                    result.layers_updated.append(cons_update)
+            except Exception:
+                logger.exception("Profile consolidation failed during pipeline tick")
+
         self._save_state()
         return result
+
+    def _record_consolidation_cognition(self, report: Any) -> None:
+        """Surface an applied consolidation run as a cognition update card."""
+        loader = getattr(self._memory, "load_cognition_updates", None)
+        saver = getattr(self._memory, "save_cognition_updates", None)
+        if not callable(loader) or not callable(saver):
+            return
+        merges = list(getattr(report, "merges", []) or [])
+        rule_count = len(getattr(report, "rule_merges", []) or [])
+        like_count = sum(1 for m in merges if m.get("scope") == "likes")
+        dislike_count = sum(1 for m in merges if m.get("scope") == "dislikes")
+        parts: list[str] = []
+        if like_count or rule_count:
+            parts.append(f"兴趣合并 {like_count + rule_count} 组")
+        if dislike_count:
+            parts.append(f"避雷合并 {dislike_count} 组")
+        if not parts:
+            return
+        examples = "；".join(
+            f"{' / '.join(str(x) for x in m.get('members', [])[:2])} → {m.get('canonical')}"
+            for m in merges[:2]
+        )
+        try:
+            updates = loader()
+            updates.insert(
+                0,
+                {
+                    "id": f"cognition-{uuid4()}",
+                    "kind": "profile_consolidation",
+                    "summary": f"帮你把画像里重复的主题整理了一下：{'、'.join(parts)}",
+                    "impact": "进推荐的兴趣/避雷名额不再被同义重复占用",
+                    "reasoning": examples,
+                    "evidence": "",
+                    "context_line": "12 小时画像整理",
+                    "confidence": 1.0,
+                    "created_at": datetime.now().isoformat(),
+                    "source": "consolidation",
+                    "source_label": "画像整理",
+                    "expand_hint": "summary_only",
+                    "notified": False,
+                },
+            )
+            saver(updates)
+        except Exception:
+            logger.debug("Failed to record consolidation cognition update", exc_info=True)
 
     async def flush(
         self,

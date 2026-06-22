@@ -39,7 +39,7 @@
 | M127b 避雷探针用户确认 | ✅ | WebSocket 推送 `avoidance.probe` → popup / Web / OpenClaw 卡片（确实不喜欢 / 不是 / 多聊聊）→ `POST /api/avoidance-probes/respond`；确认后写入 `disliked_topics` 并清理候选池，未确认时不参与过滤 |
 | M128 CLI delight + probe | ✅ | `openbiliclaw delight` 手动查看惊喜推荐候选；`openbiliclaw probe` 手动列出猜测方向并交互确认/拒绝 |
 | M129 惊喜候选自动预热与回填 | ✅ | delight 运行时统一使用共享阈值（默认 `0.70`，保守用户 `0.80`）；后台启动会自动补齐高分但缺 `reason/hook` 的候选，`suppressed` 高分库存也允许作为惊喜推荐入口 |
-| 惊喜推荐反馈保留 | ✅ | `POST /api/delight/respond` 中 `view / like / chat` 只记录正向学习信号并保留当前卡片；`dislike / dismiss` 才消费候选并驱动三端立即移除 |
+| 惊喜推荐反馈保留 | ✅ | `POST /api/delight/respond` 中 `like / chat` 记录正向学习信号并保留候选；`view` 当场保留卡片但标记已读（对齐推荐池 `shown` 语义，下次重灌不再出现）；`dislike / dismiss` 消费候选并驱动三端立即移除。`pending-batch` 重灌以 `include_liked=True` 保留已喜欢候选并下发 `state="liked"`，喜欢过的卡片在 popup 重开后不再静默消失 |
 | v0.3.0 在线 supergroup 合并 | ✅ | `_merge_topic_supergroups` serve 时基于 embedding 把 `动漫杂谈/补番/解说` 等近义 topic 合并为同一聚类，让多样化器把它们当作一个桶 |
 | v0.3.0 reshuffle 性能优化 | ✅ | 三段并发：embedding `asyncio.gather` 并行（替代顺序 await）+ embedding cache key 改为 label-only（命中率 ~0% → ~100%）+ `batch_insert_recommendations` 单 transaction 插入 10 条（10 次 fsync → 1 次）。换一批 2.6s → 0.6s |
 | v0.3.0 supergroup embedding 预热 | ✅ | `prewarm_supergroup_embeddings` 在每次 refresh tick 后台并行预热所有池中 topic_group 的 embedding，让 reshuffle 跑全 cache hit |
@@ -63,6 +63,8 @@
 | v0.3.x 批量文案限流保护 | ✅ | `_precompute_batch()` 遇到 LLM provider rate limit / cooldown / quota 时不再进入逐条 `_try_generate_expression()` fallback；本轮预生成计为 0，保留空 `pool_expression/topic_label` 等后续调度重试 |
 | v0.3.x 批量文案错位 / 重复防护 | ✅ | 强化 v0.3.81：**多条**候选缺 `bvid/content_id` 时（不止数量不完整）一律降级逐条生成——位置匹配只对无歧义的单条批次保留，杜绝弱模型乱序导致的文案张冠李戴；新增去重闸，同一句文案被分配给多个不同 bvid 时整组丢弃（宁可不发也不发重复），根治本地小模型上下文截断时「每条理由都一样且对不上视频」 |
 | v0.3.x 负反馈表达避让 | ✅ | `_recommendation_profile_summary()` 会把 `preferences.disliked_topics` 带入推荐画像摘要；单条和批量推荐表达 prompt 都要求避开这些主题 / 话术模式，候选明显命中时只能保守说明差异化理由，不得热情背书或把避雷项包装成用户偏好 |
+| v0.3.x 画像输入上限放宽 | ✅ | `_recommendation_profile_summary()` 兴趣 tag 上限 10 → 30 → 64 且按 weight 降序排序后截断；`disliked_topics` 5 → 16 → 64；`_select_relevant_interests()` 的 embedding 候选池按 weight 排序取前 64（与画像兴趣上限对齐，让头部之外的小众兴趣在语义最匹配时也能被选中；`top_k=5` 不变，故注入 prompt 的数量不变；fallback「top-K by weight」语义与实现一致） |
+| v0.3.x 文案 / delight 候选 description 对齐 | ✅ | 推荐重评估、批量文案表达、delight 评分 / 理由四处 prompt 的候选 `description` 截断统一对齐到 400 字符（此前 200 / 300 / 280 混用），与 discovery 评估输入一致，避免中文简介在关键句中途被砍。MMR 去重 embedding 文本仍保持 `[:160]/[:200]`（它是缓存 key，不动） |
 | v0.3.x XHS 自发布内容过滤 | ✅ | `get_pool_candidates` / `count_pool_candidates` / `count_pool_readiness` 及后台整理查询（evaluation / copy / delight）在 SQL 层排除已知的自发布小红书行；`_purge_self_authored_pool_items` 同时匹配 `up_name` 和 `author_name`；self_info 首次到达或变更时立即 purge 已入池内容。`RecommendationEngine` 通过 `xhs_self_info_provider` 回调从 runtime state 获取 nickname，`Database` 保持纯存储层不直接读 runtime state |
 
 ## 公开 API
@@ -285,7 +287,11 @@ Content-Type: application/json
 
 ### Delight Feedback
 
-`POST /api/delight/respond` 支持 `view / like / dislike / chat / dismiss`。`view / like / chat` 是正向或探索性表达，只记录点击、喜欢或对话学习信号，并让插件 side panel、桌面 Web 和移动 Web 保留当前惊喜卡片；`dislike / dismiss` 才会标记为 consumed/notified，并驱动三端立即移除该候选。
+`POST /api/delight/respond` 支持 `view / like / dislike / chat / dismiss`。`like / chat` 只记录喜欢或对话学习信号，候选保留在队列里；`view`（看看/点开浏览）保留当场卡片的「已打开」展示，但会把候选标记为已读（`delight_notified=1`，不重置 4 小时主动推送冷却）——语义对齐推荐池的 `pool_status='shown'`：浏览过的惊喜在下次队列重灌时不再出现；`dislike / dismiss` 才会立即驱动三端移除该候选。
+
+正向保留跨重灌生效：`GET /api/delight/pending-batch` 以 `include_liked=True` 调用 `get_delight_candidates`，已点喜欢（`feedback_type='like'`）的候选在 popup 重开 / `delight.refreshed` 重灌后仍保留队列位置，并以 `state="liked"` 下发供三端恢复「已喜欢」展示；`view` / `dismiss` / `dislike`（置 `delight_notified=1`）会让候选退出重灌队列。WS 主动推送（`get_pending_delight`）、候选计数与 CLI 仍排除已喜欢项，避免把喜欢过的内容当新惊喜重复推送。
+
+惊喜与普通推荐互斥：被惊喜通道认领的内容（已作为惊喜送达过，或当前满足惊喜队列条件——delight 分数达阈值且 reason/hook 非空）会被 `get_pool_candidates` / `count_pool_candidates` 的 servable 闸门排除，普通推荐 serve 与「还有 N 条」计数都不会再出同一条内容。
 
 ### PoolCurator
 

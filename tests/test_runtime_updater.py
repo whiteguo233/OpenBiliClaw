@@ -656,3 +656,226 @@ async def test_apply_restart_failure_logs_and_publishes_backend_update_failed(
         {"type": "backend_restart_pending", "latest_tag": "backend-v0.3.92"},
         {"type": "backend_update_failed", "reason": "restart_failed"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_request_apply_refuses_frozen_install_even_with_git_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A PyInstaller bundle co-located with a git checkout must not self-apply.
+
+    entry.py points OPENBILICLAW_PROJECT_ROOT at the shared ~/OpenBiliClaw,
+    which an AI / one-line install populates as a real git repo. Without the
+    explicit frozen guard the bundle would fast-forward someone else's source
+    and restart-loop on its own bundled (old) code.
+    """
+    import sys
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    calls: list[list[str]] = []
+
+    async def _run_command(command, _root, *, timeout):
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    service = updater.AutoUpdateService(enabled=True)
+    monkeypatch.setattr(service, "_run_command", _run_command)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+
+    assert status_code == 409
+    assert payload["state"] == "unsupported"
+    assert payload["reason"] == "unsupported_install_mode"
+    # The guard short-circuits before any git command — nothing is mutated.
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_if_due_checks_but_never_applies_on_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frozen bundles poll for new installers (even with the toggle off) but never apply."""
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    service = updater.AutoUpdateService(enabled=False)
+    check_calls: list[int] = []
+
+    async def _fake_check_now() -> dict[str, object]:
+        check_calls.append(1)
+        service._state = "update_available"
+        service._latest_tag = "desktop-v0.3.119"
+        service._latest_remote_version = "0.3.119"
+        return service.get_update_status()
+
+    async def _fail_apply(*_args: object, **_kwargs: object) -> tuple[int, dict[str, object]]:
+        raise AssertionError("request_apply must never run on a frozen install")
+
+    monkeypatch.setattr(service, "check_now", _fake_check_now)
+    monkeypatch.setattr(service, "request_apply", _fail_apply)
+
+    result = await service.check_and_update_if_due()
+
+    assert check_calls == [1]
+    assert result["checked"] is True
+    assert result["updated"] is False
+    assert result["reason"] == "unsupported_install_mode"
+    # The discovered installer stays visible to the status APIs.
+    assert service.get_update_status()["state"] == "update_available"
+
+
+@pytest.mark.asyncio
+async def test_check_and_update_now_surfaces_update_without_applying_on_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct check_and_update_now callers also never reach apply on frozen."""
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    _FakeAsyncClient.pages = {1: [{"name": "desktop-v0.3.119"}], 2: []}
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.118")
+    service = updater.AutoUpdateService(enabled=True)
+
+    async def _fail_apply(*_args: object, **_kwargs: object) -> tuple[int, dict[str, object]]:
+        raise AssertionError("request_apply must never run on a frozen install")
+
+    monkeypatch.setattr(service, "request_apply", _fail_apply)
+
+    result = await service.check_and_update_now()
+
+    assert result["checked"] is True
+    assert result["updated"] is False
+    assert result["reason"] == "unsupported_install_mode"
+    assert result["remote_version"] == "desktop-v0.3.119"
+
+
+def test_background_loop_enabled_for_frozen_even_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """The check-reminder loop runs unconditionally on frozen bundles."""
+    import sys
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    disabled = updater.AutoUpdateService(enabled=False)
+    assert disabled._background_loop_enabled() is False
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert disabled._background_loop_enabled() is True
+    assert updater.AutoUpdateService(enabled=True)._background_loop_enabled() is True
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected_version"),
+    [
+        ("desktop-v0.3.119", (0, 3, 119)),
+        ("desktop-v0.3.119-rc1", None),  # prerelease excluded by default
+        ("backend-v0.3.119", None),
+        ("v0.3.119", None),  # legacy source tags are never installer candidates
+        ("0.3.119", None),
+        ("extension-v0.3.77", None),
+        ("", None),
+    ],
+)
+def test_parse_desktop_candidate_only_accepts_desktop_tags(
+    tag: str,
+    expected_version: tuple[int, ...] | None,
+) -> None:
+    candidate = updater._parse_desktop_candidate(tag)
+    assert (candidate.version if candidate else None) == expected_version
+
+
+@pytest.mark.asyncio
+async def test_frozen_check_tracks_desktop_installer_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Frozen installs compare against desktop-v* tags, not backend-v* source tags."""
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    # A newer backend source tag exists but no newer installer — must stay quiet.
+    _FakeAsyncClient.pages = {
+        1: [
+            {"name": "backend-v0.3.121"},
+            {"name": "desktop-v0.3.119"},
+            {"name": "extension-v0.3.77"},
+            {"name": "v0.3.120"},
+        ],
+        2: [],
+    }
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.119")
+    service = updater.AutoUpdateService(enabled=False)
+
+    backend = await service.check_now()
+
+    assert backend["state"] == "up_to_date"
+    assert backend["latest_tag"] == "desktop-v0.3.119"
+
+    # And when a newer installer exists it is surfaced as update_available.
+    _FakeAsyncClient.pages = {
+        1: [{"name": "desktop-v0.3.120"}, {"name": "backend-v0.3.119"}],
+        2: [],
+    }
+    backend = await service.check_now()
+
+    assert backend["state"] == "update_available"
+    assert backend["latest_tag"] == "desktop-v0.3.120"
+    assert backend["latest_version"] == "0.3.120"
+
+
+def test_adopt_status_from_carries_settled_check_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A config-save rebuild keeps the freshly-fetched update status."""
+    from datetime import UTC, datetime
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+
+    old = updater.AutoUpdateService(enabled=True)
+    old._state = "update_available"
+    old._reason = "none"
+    old._latest_tag = "backend-v0.3.118"
+    old._latest_remote_version = "0.3.118"
+    old._last_check_at = datetime(2026, 6, 11, 4, 43, 30, tzinfo=UTC)
+
+    new = updater.AutoUpdateService(enabled=False)
+    new.adopt_status_from(old)
+
+    status = new.get_update_status()
+    assert status["state"] == "update_available"
+    assert status["latest_tag"] == "backend-v0.3.118"
+    assert status["latest_version"] == "0.3.118"
+    assert status["last_check_at"] == "2026-06-11T04:43:30+00:00"
+
+
+def test_adopt_status_from_skips_transient_state_but_keeps_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """An in-flight apply on the old instance is not re-stamped onto the new one."""
+    from datetime import UTC, datetime
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+
+    old = updater.AutoUpdateService(enabled=True)
+    old._state = "applying"
+    old._reason = "none"
+    old._latest_tag = "backend-v0.3.118"
+    old._latest_remote_version = "0.3.118"
+    old._last_check_at = datetime(2026, 6, 11, 4, 43, 30, tzinfo=UTC)
+
+    new = updater.AutoUpdateService(enabled=False)
+    new.adopt_status_from(old)
+
+    status = new.get_update_status()
+    # Transient "applying" is not adopted — a disabled fresh service derives
+    # "disabled" — but the version/check metadata still carries forward.
+    assert status["state"] == "disabled"
+    assert status["latest_tag"] == "backend-v0.3.118"
+    assert status["last_check_at"] == "2026-06-11T04:43:30+00:00"

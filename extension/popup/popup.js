@@ -572,6 +572,38 @@ async function loadWatchLater() {
   }
 }
 
+// Optimistic saved-card removal shared by the watch-later and favorites
+// views. The card disappears on click; if the DELETE then fails the card is
+// restored in place and the button flips to "重试". The previous code waited
+// for the response before touching the DOM and swallowed errors silently —
+// whenever the DELETE queued behind slow same-origin requests (covers via
+// image-proxy compete for Chrome's 6-connection limit) or failed, clicking
+// looked like it did nothing.
+function bindSavedCardRemove(card, remove, { bvid, requestRemove, toggles, list, empty }) {
+  remove.addEventListener("click", async () => {
+    if (remove.disabled) return;
+    remove.disabled = true;
+    const anchor = card.nextElementSibling;
+    card.remove();
+    if (empty instanceof HTMLElement && !list?.children.length) {
+      empty.hidden = false;
+    }
+    try {
+      await requestRemove(bvid);
+      toggles.setSaved(bvid, false);
+    } catch (error) {
+      console.error("saved-card remove failed:", bvid, error);
+      if (list instanceof HTMLElement) {
+        list.insertBefore(card, anchor?.parentElement === list ? anchor : null);
+      }
+      if (empty instanceof HTMLElement) empty.hidden = true;
+      remove.disabled = false;
+      remove.textContent = "重试";
+      remove.title = "刚才没移除成功，点一下重试";
+    }
+  });
+}
+
 function buildWatchLaterCard(item) {
   const card = document.createElement("article");
   card.className = "saved-card";
@@ -602,21 +634,12 @@ function buildWatchLaterCard(item) {
   remove.className = "saved-card-remove";
   remove.textContent = "移除";
   remove.title = "移出稍后再看";
-  remove.addEventListener("click", async () => {
-    remove.disabled = true;
-    try {
-      await removeFromWatchLater(item.bvid);
-      watchLaterToggles.setSaved(item.bvid, false);
-      card.remove();
-      if (
-        !elements.watchLaterList?.children.length &&
-        elements.watchLaterEmpty instanceof HTMLElement
-      ) {
-        elements.watchLaterEmpty.hidden = false;
-      }
-    } catch {
-      remove.disabled = false;
-    }
+  bindSavedCardRemove(card, remove, {
+    bvid: item.bvid,
+    requestRemove: removeFromWatchLater,
+    toggles: watchLaterToggles,
+    list: elements.watchLaterList,
+    empty: elements.watchLaterEmpty,
   });
 
   card.append(body, remove);
@@ -692,18 +715,12 @@ function buildFavoriteCard(item) {
   remove.className = "saved-card-remove";
   remove.textContent = "移除";
   remove.title = "取消收藏";
-  remove.addEventListener("click", async () => {
-    remove.disabled = true;
-    try {
-      await removeFromFavorite(item.bvid);
-      favoriteToggles.setSaved(item.bvid, false);
-      card.remove();
-      if (!elements.favoritesList?.children.length && elements.favoritesEmpty instanceof HTMLElement) {
-        elements.favoritesEmpty.hidden = false;
-      }
-    } catch {
-      remove.disabled = false;
-    }
+  bindSavedCardRemove(card, remove, {
+    bvid: item.bvid,
+    requestRemove: removeFromFavorite,
+    toggles: favoriteToggles,
+    list: elements.favoritesList,
+    empty: elements.favoritesEmpty,
   });
 
   card.append(body, remove);
@@ -769,14 +786,14 @@ function _setInitReason(text) {
   }
 }
 
-function _renderInitChecklist(status) {
+function _renderInitChecklist(status, selected = null) {
   // Show the prereq checklist (red ✗ / green ✓ / soft •) — only surfaced AFTER a
   // click whose check failed, so the user sees exactly what to fix.
   if (!(elements.initChecklist instanceof HTMLElement)) {
     return;
   }
   elements.initChecklist.replaceChildren();
-  for (const row of buildInitChecklist(status)) {
+  for (const row of buildInitChecklist(status, selected)) {
     const li = document.createElement("li");
     li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
     const head = document.createElement("div");
@@ -799,9 +816,10 @@ function _renderInitChecklist(status) {
 }
 
 // Render the platform-source checkboxes (gui-init: per-run source selection).
-// Bilibili is the required base (checked + disabled); the rest are opt-in. The
-// list is static so the idle panel paints instantly — eligibility (config
-// enabled + logged in) is validated on click, not via a slow upfront probe.
+// Bilibili is default-checked (recommended) but deselectable like the rest
+// (v0.3.118+) — at least one source must stay checked. The list is static so
+// the idle panel paints instantly — eligibility (config enabled + logged in)
+// is validated on click, not via a slow upfront probe.
 function _renderInitSources() {
   if (!(elements.initSources instanceof HTMLElement)) {
     return;
@@ -809,19 +827,18 @@ function _renderInitSources() {
   elements.initSources.replaceChildren();
   const title = document.createElement("p");
   title.className = "init-sources-title";
-  title.textContent = "选择初始化数据来源";
+  title.textContent = "选择初始化数据来源（至少一个）";
   elements.initSources.append(title);
   for (const opt of INIT_SOURCE_OPTIONS) {
     const row = document.createElement("label");
-    row.className = `init-source-row${opt.required ? " init-source-required" : ""}`;
+    row.className = "init-source-row";
     const box = document.createElement("input");
     box.type = "checkbox";
     box.value = opt.key;
     box.dataset.initSource = opt.key;
-    box.checked = Boolean(opt.required);
-    box.disabled = Boolean(opt.required);
+    box.checked = Boolean(opt.defaultChecked);
     const span = document.createElement("span");
-    span.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+    span.textContent = opt.defaultChecked ? `${opt.label}（推荐）` : opt.label;
     row.append(box, span);
     elements.initSources.append(row);
   }
@@ -832,7 +849,7 @@ function _renderInitSources() {
   elements.initSources.hidden = false;
 }
 
-// Read the currently-checked source keys (bilibili always included as the base).
+// Read the currently-checked source keys.
 function _readSelectedInitSources() {
   const selected = [];
   if (elements.initSources instanceof HTMLElement) {
@@ -841,9 +858,6 @@ function _readSelectedInitSources() {
         selected.push(box.value);
       }
     }
-  }
-  if (!selected.includes("bilibili")) {
-    selected.push("bilibili");
   }
   return selected;
 }
@@ -861,7 +875,7 @@ function renderInitPanelIdle() {
     elements.initChecklist.replaceChildren();
     const li = document.createElement("li");
     li.className = "init-hint-row";
-    li.textContent = "点「开始初始化」会先检查 B 站登录 / AI 服务 / 向量模型，全部通过才开始。";
+    li.textContent = "点「开始初始化」会先检查 AI 服务 / 向量模型，以及所选平台的登录状态，通过才开始。";
     elements.initChecklist.append(li);
   }
   if (elements.initProgress instanceof HTMLElement) {
@@ -952,13 +966,18 @@ function _startInitProgressPoll() {
 async function handleStartInitClick() {
   // Snapshot the source selection BEFORE we replace the panel contents.
   const selectedSources = _readSelectedInitSources();
+  if (selectedSources.length === 0) {
+    _setInitStartButton("开始初始化", true);
+    _setInitReason("至少勾选一个数据来源。");
+    return;
+  }
   _setInitStartButton("检查中…", false);
   _setInitReason("");
   if (elements.initChecklist instanceof HTMLElement) {
     elements.initChecklist.replaceChildren();
     const li = document.createElement("li");
     li.className = "init-checking";
-    li.textContent = "正在检查 B 站登录 / AI 服务 / 向量模型（实时请求测试，可能要十几秒）…";
+    li.textContent = "正在检查 AI 服务 / 向量模型与所选平台登录（实时请求测试，可能要十几秒）…";
     elements.initChecklist.append(li);
   }
 
@@ -982,7 +1001,7 @@ async function handleStartInitClick() {
   // would silently drop it, so guide them to enable it (or uncheck) instead.
   const needEnable = initSelectedSourcesNeedingEnable(selectedSources, status);
   if (needEnable.length > 0) {
-    _renderInitChecklist(status);
+    _renderInitChecklist(status, selectedSources);
     _setInitStartButton("开始初始化", true);
     _setInitReason(
       `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到设置开启对应平台，或取消勾选后再点一次。`,
@@ -990,9 +1009,20 @@ async function handleStartInitClick() {
     return;
   }
 
+  // B 站登录只在勾选了 B 站时才拦截（v0.3.118+：可取消勾选跳过 B 站）。
+  if (
+    selectedSources.includes("bilibili") &&
+    !status?.prerequisites?.bilibili_logged_in
+  ) {
+    _renderInitChecklist(status, selectedSources);
+    _setInitStartButton("开始初始化", true);
+    _setInitReason("还没检测到 B 站登录。先登录 bilibili.com，或取消勾选 B 站再开始。");
+    return;
+  }
+
   // Conditions not met → show exactly what failed; do NOT initialize.
   if (!status.can_start) {
-    _renderInitChecklist(status);
+    _renderInitChecklist(status, selectedSources);
     _setInitStartButton("开始初始化", true);
     _setInitReason(
       describeInitReason(status.reason) || "以下条件未满足，无法开始初始化，补齐后再点一次。",
@@ -1006,7 +1036,7 @@ async function handleStartInitClick() {
   try {
     await startInit({ force: false, sources: selectedSources });
   } catch (error) {
-    _renderInitChecklist(status);
+    _renderInitChecklist(status, selectedSources);
     _setInitStartButton("开始初始化", true);
     _setInitReason(describeInitStartError(error));
     return;
@@ -1364,7 +1394,7 @@ function connectRuntimeStream() {
       if (event.type === "delight.refreshed") {
         void (async () => {
           try {
-            const items = await fetchPendingDelightBatch(20);
+            const items = await fetchPendingDelightBatch();
             if (!Array.isArray(items)) return;
             clearDelightQueue();
             for (const item of items) {
@@ -4359,6 +4389,9 @@ function renderDelightSlot() {
       "action-button action-primary delight-banner-action",
       async () => {
         await openRecommendation(delight.bvid, delight);
+        // 浏览过即已读：上报 view 让后端标记 delight_notified，
+        // 下次重灌不再出现。当场卡片保留 viewed 状态。
+        respondToDelight(delight.bvid, "view", delight.title).catch(() => {});
         updateDelightHead({
           state: "viewed",
           response_message: "已打开，阿B 会把这次点击当成强信号。",
@@ -5291,7 +5324,7 @@ async function initializeRecommendations() {
     await Promise.allSettled([
       fetchRuntimeStatus(),
       fetchRecommendations(),
-      fetchPendingDelightBatch(20),
+      fetchPendingDelightBatch(),
       fetchConfig(),
     ]);
 
@@ -5931,6 +5964,8 @@ function bindSettings() {
     missing: "#e0a800",
     missing_cookie: "#e0a800",
     rate_limited: "#e0a800",
+    partial: "#e0a800",
+    stale: "#e0a800",
     expired_cookie: "#e74c3c",
     blocked: "#e74c3c",
   };
@@ -5961,6 +5996,16 @@ function bindSettings() {
       row.style.opacity = item.enabled ? "1" : "0.6";
     }
   }
+
+  // The side panel stays open while the user signs into platforms in other
+  // tabs, so a one-shot render goes stale — re-poll while a status row is
+  // actually visible.
+  setInterval(() => {
+    if (document.hidden) return;
+    const row = document.querySelector("[data-source-status]");
+    if (!row || row.offsetParent === null) return;
+    void renderSourcesStatus();
+  }, 30000);
 
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);

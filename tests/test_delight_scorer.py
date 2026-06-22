@@ -371,6 +371,7 @@ def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> No
     database = _make_database(tmp_path)
     database.cache_content("BV1LIKE", title="已反馈", relevance_score=0.9)
     database.cache_content("BV1FRESH", title="新惊喜", relevance_score=0.9)
+    database.cache_content("BV1HATE", title="已点不感兴趣", relevance_score=0.9)
     database.update_delight_score(
         "BV1LIKE",
         delight_score=0.95,
@@ -383,9 +384,19 @@ def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> No
         delight_reason="fresh reason",
         delight_hook="fresh hook",
     )
+    database.update_delight_score(
+        "BV1HATE",
+        delight_score=0.93,
+        delight_reason="disliked reason",
+        delight_hook="disliked hook",
+    )
     database.conn.execute(
         "UPDATE content_cache SET feedback_type = 'like' WHERE bvid = ?",
         ("BV1LIKE",),
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET feedback_type = 'dislike' WHERE bvid = ?",
+        ("BV1HATE",),
     )
     database.conn.commit()
 
@@ -393,6 +404,68 @@ def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> No
 
     assert [row["bvid"] for row in candidates] == ["BV1FRESH"]
     assert database.count_delight_candidates(min_delight_score=0.85) == 1
+
+
+def test_delight_claim_threshold_in_sync() -> None:
+    """storage mirrors DEFAULT_DELIGHT_THRESHOLD without importing recommendation.
+
+    The regular feed's delight-claim guard (storage layer) must use the
+    same threshold as the surprise queue, or content could fall in the
+    gap (excluded from the feed yet never surfaced as a surprise) or
+    duplicate across both surfaces.
+    """
+    from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+    from openbiliclaw.storage.database import _DELIGHT_CLAIM_MIN_SCORE
+
+    assert _DELIGHT_CLAIM_MIN_SCORE == DEFAULT_DELIGHT_THRESHOLD
+
+
+def test_database_delight_candidates_include_liked_keeps_liked_rows(tmp_path: Path) -> None:
+    """Queue re-hydration must keep liked delights visible (v0.3.63 contract).
+
+    ``include_liked=True`` is what /api/delight/pending-batch passes so a
+    liked card survives popup reopen; disliked rows stay excluded either way.
+    """
+    database = _make_database(tmp_path)
+    database.cache_content("BV1LIKE", title="已喜欢", relevance_score=0.9)
+    database.cache_content("BV1FRESH", title="新惊喜", relevance_score=0.9)
+    database.cache_content("BV1HATE", title="已点不感兴趣", relevance_score=0.9)
+    database.update_delight_score(
+        "BV1LIKE",
+        delight_score=0.95,
+        delight_reason="liked reason",
+        delight_hook="liked hook",
+    )
+    database.update_delight_score(
+        "BV1FRESH",
+        delight_score=0.94,
+        delight_reason="fresh reason",
+        delight_hook="fresh hook",
+    )
+    database.update_delight_score(
+        "BV1HATE",
+        delight_score=0.93,
+        delight_reason="disliked reason",
+        delight_hook="disliked hook",
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET feedback_type = 'like' WHERE bvid = ?",
+        ("BV1LIKE",),
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET feedback_type = 'dislike' WHERE bvid = ?",
+        ("BV1HATE",),
+    )
+    database.conn.commit()
+
+    candidates = database.get_delight_candidates(min_delight_score=0.85, include_liked=True)
+
+    assert [row["bvid"] for row in candidates] == ["BV1LIKE", "BV1FRESH"]
+
+    # Explicit dismissal still removes a liked delight from re-hydration.
+    database.mark_delight_notified("BV1LIKE")
+    candidates = database.get_delight_candidates(min_delight_score=0.85, include_liked=True)
+    assert [row["bvid"] for row in candidates] == ["BV1FRESH"]
 
 
 def test_database_count_delight_candidates(tmp_path: Path) -> None:

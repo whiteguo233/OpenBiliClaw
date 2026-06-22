@@ -443,6 +443,12 @@ class RuntimeContext:
             speculator_idle_interval_minutes=int(
                 getattr(new_config.scheduler, "speculator_idle_interval_minutes", 30)
             ),
+            profile_consolidation_enabled=bool(
+                getattr(new_config.scheduler, "profile_consolidation_enabled", True)
+            ),
+            profile_consolidation_interval_hours=int(
+                getattr(new_config.scheduler, "profile_consolidation_interval_hours", 12)
+            ),
             feedback_batch_threshold=int(
                 getattr(new_config.scheduler, "feedback_batch_threshold", 3)
             ),
@@ -699,6 +705,14 @@ class RuntimeContext:
                 enabled=False,
                 event_publisher=getattr(self.event_hub, "publish", None),
             )
+
+        # Carry the last update-check result forward so a config save (which
+        # rebuilds this service) doesn't reset the settings page from "发现新版本"
+        # back to "尚未检查更新" until the next scheduled check.
+        old_auto_update = getattr(self, "auto_update_service", None)
+        if old_auto_update is not None:
+            with suppress(Exception):
+                new_auto_update.adopt_status_from(old_auto_update)
 
         # ── Atomic swap ─────────────────────────────────────────────
         # All construction succeeded → assign attributes.
@@ -990,6 +1004,7 @@ def build_degraded_runtime_context(
     from openbiliclaw.config import ConfigIssue
     from openbiliclaw.memory.manager import MemoryManager
     from openbiliclaw.runtime.events import RuntimeEventHub
+    from openbiliclaw.runtime.updater import AutoUpdateService
     from openbiliclaw.storage.database import Database
 
     created_runtime_database = False
@@ -1021,12 +1036,27 @@ def build_degraded_runtime_context(
 
         setter(_on_profile_changed)
 
+    # Keep update check / apply available in degraded mode — a backend that
+    # can't build its LLM registry is exactly when the user may want to pull a
+    # fix-carrying release. Construction is cheap and network-free; never let it
+    # break the degraded recovery context.
+    degraded_auto_update: AutoUpdateService | None = None
+    with suppress(Exception):
+        degraded_auto_update = AutoUpdateService(
+            enabled=config.scheduler.auto_update_enabled,
+            check_interval_hours=config.scheduler.auto_update_check_interval_hours,
+            allow_prerelease=config.scheduler.auto_update_allow_prerelease,
+            allowed_remotes=config.scheduler.auto_update_allowed_remotes,
+            event_publisher=getattr(event_hub, "publish", None),
+        )
+
     message = str(exc) if exc is not None else "LLM registry unavailable"
     return RuntimeContext(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
         config=config,
+        auto_update_service=degraded_auto_update,
         degraded=True,
         degraded_reason="llm_registry_unavailable",
         degraded_issues=[

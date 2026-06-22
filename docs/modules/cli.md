@@ -43,6 +43,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike\|comment\|dismiss>` | 对推荐提交反馈 | ✅ |
 | `profile` | 查看用户画像 | ✅ |
+| `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
 | `discover` | 手动触发发现 | ✅ |
 | `discover-douyin` | 单独调试抖音 search / hot / feed 内容发现 | ✅ |
 | `search-douyin` | 通过浏览器插件调试抖音搜索召回 | ✅ |
@@ -379,19 +380,40 @@ $ openbiliclaw profile
   被理解、持续成长
 ```
 
+### `openbiliclaw profile-consolidate`
+
+用 LLM 整理合并画像里重复的喜欢 / 讨厌主题。兴趣标签和避雷主题会不断积累措辞变体（「智能体开发」vs「智能体开发与实现」），把进入 prompt 的 top-64 名额挤占掉；本命令按「规则合并 → embedding 聚类 → LLM 裁决 → 校验执行」流水线做同义合并，卡 64 边界整理（likes 只看权重 top-128）。后台默认每 12 小时自动跑一轮（见 `[scheduler].profile_consolidation_*`），本命令用于手动触发与预览。
+
+```bash
+$ openbiliclaw profile-consolidate            # dry-run：只打印建议
+$ openbiliclaw profile-consolidate --apply    # 写入；自动备份 + soul_changelog.md 审计
+$ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回滚
+```
+
+要点：
+
+- LLM 只能输出 merge / keep 操作，代码侧校验（members 逐字存在、簇内全覆盖、canonical 禁裸大词）后才执行；任何校验不过整簇放弃
+- 避雷主题只合真同义、严禁向上泛化（canonical 不得比成员更宽泛）
+- 用户在画像编辑里手动 remove/add 的条目会随改名同步（rename map 穿透 overrides），不会被合并「借尸还魂」
+- 回滚会把被回滚的合并对记入 no-merge 记忆，下一轮定时整理不会重做同一合并
+
 ### `openbiliclaw init`
 
 首次运行编排命令。会顺序执行：
 
 1. 检查运行时 LLM 配置
-2. 检查 B 站认证
-3. 拉取 B 站历史 / 收藏 / 关注
+2. 检查 B 站认证（仅当包含 B 站来源时）
+3. 拉取 B 站历史 / 收藏 / 关注（仅当包含 B 站来源时）
 4. best-effort 等待插件导入小红书初始化信号
 5. best-effort 等待插件导入抖音初始化信号
 6. best-effort 等待插件导入 YouTube 初始化信号
 7. 写入事件层并分析偏好
 8. 生成初始画像
 9. 按阶段自动补首轮内容池
+
+> v0.3.118+：B 站不再是必选基座——`--no-bilibili`（或 `OPENBILICLAW_NO_BILIBILI=1`）可跳过 B 站，
+> 但 init **至少需要一个数据来源**：全部来源都关闭时命令直接报错退出（exit 1）。
+> 所有所选来源都没拉到任何信号时，流水线以 `empty_signals` 失败。
 
 > v0.3.102+：第 3–9 步的核心抽成共享异步流水线 `cli.run_guided_init`，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动（交互提示 / 摘要仍在命令里），后端图形化初始化 `POST /api/init` 复用同一协程。CLI 行为 / 输出 / 退出码不变。**也可以不进终端**：插件「推荐」tab 未初始化时直接点「开始初始化」，详见 [init 模块文档](init.md) 与 [extension 模块文档](extension.md)。
 
@@ -440,12 +462,13 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 
 源开关：
 
+- `--no-bilibili`：跳过 B 站数据接入（v0.3.118+，默认包含；至少需保留一个数据来源）。同时把 `[sources.bilibili].enabled` 持久化为 `false`，后台发现也不再跑 B 站。
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`：覆盖 B 站收藏 / 关注初始化信号上限，默认各 `300`；`0` 表示跳过对应信号。
-- `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1`：永久跳过对应源。
+- `OPENBILICLAW_NO_BILIBILI=1` / `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1`：永久跳过对应源。
 - `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 - `OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS` / `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS`：抖音 / YouTube `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 

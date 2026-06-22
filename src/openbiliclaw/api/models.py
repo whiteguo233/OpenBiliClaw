@@ -370,7 +370,11 @@ class SourceStatusItem(BaseModel):
       health store).
     - ``ready``      — credential present and structurally valid, but not
       live-validated (B站 cookie with login fields, 抖音 cookie present, 小红书
-      access tokens synced).
+      access tokens synced within the freshness window).
+    - ``partial``    — credential present but structurally incomplete, likely
+      broken (B站 cookie missing some of the core login fields).
+    - ``stale``      — credential synced before but not recently, likely
+      expired (小红书 tokens older than the freshness window).
     - ``missing``    — source enabled but no usable credential.
     - ``expired`` / ``rate_limited`` / ``blocked`` — X live-health states.
     - ``no_auth``    — source needs no login (YouTube, public).
@@ -392,7 +396,7 @@ class SourcesStatusResponse(BaseModel):
     Backs the unified status chip shown on both the desktop-Web and the
     extension settings pages. Derived entirely from local signals (config
     cookie fields, the X health store, the Douyin cookie file/env, and the
-    count of token-bearing 小红书 cache rows) — no outbound platform calls.
+    recency of token-bearing 小红书 cache rows) — no outbound platform calls.
     """
 
     bilibili: SourceStatusItem = Field(default_factory=SourceStatusItem)
@@ -900,6 +904,7 @@ class SchedulerConfigOut(BaseModel):
     trending_refresh_hours: int = 3
     explore_refresh_hours: int = 12
     discovery_limit: int = 30
+    delight_queue_limit: int = 20
     proactive_push_interval_seconds: int = 120
     speculator_idle_interval_minutes: int = 30
     speculation_interval_minutes: int = 10

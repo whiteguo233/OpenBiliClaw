@@ -504,6 +504,10 @@ def _build_soul_engine() -> Any:
         ),
         avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
+        profile_consolidation_enabled=cfg.scheduler.profile_consolidation_enabled,
+        profile_consolidation_interval_hours=(
+            cfg.scheduler.profile_consolidation_interval_hours
+        ),
     )
 
 
@@ -2888,6 +2892,32 @@ def _yt_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, 
     return [row for row in rows if row.get("title") or row.get("url")]
 
 
+def _x_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert X (Twitter) init events into profile-builder history rows.
+
+    Mirror of ``_xhs_events_to_history_items`` — preserves natural-language
+    ``context`` and tags ``source_platform=twitter``. Keeps the profile
+    builder fed when X is the only (or one of few) selected init sources.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "twitter",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
 @app.command("setup-embedding")
 def setup_embedding() -> None:
     """配置本地 Ollama 作为 embedding 兜底服务（可选）.
@@ -4036,6 +4066,7 @@ def _maybe_setup_password_in_init(*, allow_lan: bool) -> None:
 
 def _persist_init_source_enabled_flags(
     *,
+    include_bili: bool = True,
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
@@ -4048,6 +4079,13 @@ def _persist_init_source_enabled_flags(
 
         cfg = load_config()
         changed = False
+        bilibili_cfg = getattr(cfg.sources, "bilibili", None)
+        if (
+            bilibili_cfg is not None
+            and bool(getattr(bilibili_cfg, "enabled", True)) != include_bili
+        ):
+            bilibili_cfg.enabled = include_bili
+            changed = True
         if bool(getattr(cfg.sources.xiaohongshu, "enabled", False)) != include_xhs:
             cfg.sources.xiaohongshu.enabled = include_xhs
             changed = True
@@ -4417,6 +4455,7 @@ async def run_guided_init(
     soul_engine: Any,
     favorite_limit: int,
     follow_limit: int,
+    include_bili: bool = True,
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
@@ -4435,6 +4474,11 @@ async def run_guided_init(
       1. fetch B站 + collect cross-platform bootstrap signals → propagate
       2. analyze preferences
       3/4. build soul profile ‖ backfill discovery pool (parallel)
+
+    Bilibili is optional like every other source (``include_bili``); at
+    least one selected source must yield signals or stage 1 raises
+    ``GuidedInitError("empty_signals")``. ``client`` may be ``None`` when
+    ``include_bili`` is False.
 
     ``discover_backfill`` is the one genuinely path-specific step: the CLI
     injects :func:`_run_init_discovery_backfill_async` (one-shot engine);
@@ -4490,16 +4534,22 @@ async def run_guided_init(
     # ── Stage 1: fetch + cross-platform bootstrap collect → propagate ──
     await _stage_started(1)
     _print_section_title("1/4 拉取数据")
-    history, favorites_data, following_data = await _fetch_bilibili_init_data(
-        client, favorite_limit=favorite_limit, follow_limit=follow_limit
-    )
-    if not history:
-        raise GuidedInitError("empty_history", "当前无法从 B 站历史中生成初始画像。")
-    console.print(
-        f"  浏览历史 [green]{len(history)}[/green] 条"
-        f" / 收藏 [green]{len(favorites_data)}[/green] 个"
-        f" / 关注 [green]{len(following_data)}[/green] 人"
-    )
+    history: list[dict[str, Any]] = []
+    favorites_data: list[dict[str, Any]] = []
+    following_data: list[dict[str, Any]] = []
+    if include_bili:
+        history, favorites_data, following_data = await _fetch_bilibili_init_data(
+            client, favorite_limit=favorite_limit, follow_limit=follow_limit
+        )
+        if not history:
+            raise GuidedInitError("empty_history", "当前无法从 B 站历史中生成初始画像。")
+        console.print(
+            f"  浏览历史 [green]{len(history)}[/green] 条"
+            f" / 收藏 [green]{len(favorites_data)}[/green] 个"
+            f" / 关注 [green]{len(following_data)}[/green] 人"
+        )
+    else:
+        console.print("  [dim]未选择 B 站来源,跳过 B 站历史 / 收藏 / 关注拉取。[/dim]")
 
     # Bootstrap collectors poll a DB task queue with a blocking sleep —
     # run them in a worker thread (Database is check_same_thread=False) so
@@ -4677,6 +4727,14 @@ async def run_guided_init(
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
+    # With bilibili now optional, the floor is "at least one selected source
+    # produced signals" — an all-empty run can't build a meaningful profile.
+    if not events:
+        raise GuidedInitError(
+            "empty_signals",
+            "所选数据来源没有拉到任何行为信号，无法生成初始画像。"
+            "请确认对应平台已在浏览器登录（或扩展已连接）后重试 init。",
+        )
     # Source-share tuning does an unlocked load_config/save_config. That's
     # fine for the CLI (single-process, no live runtime), but on the API path
     # it would mutate config.toml outside _CONFIG_SAVE_LOCK / rebuild_from_config
@@ -4742,6 +4800,11 @@ async def run_guided_init(
         combined_history.extend(_dy_events_to_history_items(dy_events))
     if yt_events:
         combined_history.extend(_yt_events_to_history_items(yt_events))
+    # X likes/bookmarks previously only fed the analyze stage; feeding the
+    # profile builder too keeps cross-source flow uniform AND guarantees a
+    # non-empty profile input when X is the only selected source.
+    if x_likes_events or x_bookmark_events:
+        combined_history.extend(_x_events_to_history_items(x_likes_events + x_bookmark_events))
 
     # Discover starts on a preference-only draft so trending / search /
     # related_chain / explore can score candidates while the LLM
@@ -4826,6 +4889,11 @@ async def run_guided_init(
 
 @app.command()
 def init(
+    no_bilibili: bool = typer.Option(
+        False,
+        "--no-bilibili",
+        help="跳过 B 站数据接入(默认包含；init 至少需要保留一个数据来源)。",
+    ),
     no_xhs: bool = typer.Option(
         False,
         "--no-xhs",
@@ -4892,21 +4960,37 @@ def init(
     except Exception:
         init_start_usage_id = None
 
-    client = _build_bilibili_client()
+    # B站 is optional like every other source (v0.3.118+): --no-bilibili or
+    # OPENBILICLAW_NO_BILIBILI=1 skips it, as long as ≥1 source remains.
+    include_bili = not (
+        no_bilibili or os.environ.get("OPENBILICLAW_NO_BILIBILI", "").strip() == "1"
+    )
+
+    client = _build_bilibili_client() if include_bili else None
     memory = _build_memory_manager()
     soul_engine = _build_soul_engine()
 
     _print_page_title("初始化 OpenBiliClaw", "首次运行引导")
+    stage1_label = (
+        "拉 B 站历史 / 收藏 / 关注（≈ 20–60s，看你的列表大小）"
+        if include_bili
+        else "拉取所选平台数据（B 站已跳过）"
+    )
     console.print(
         "[bold yellow]⏱  这一步首次运行预计需要 2–5 分钟，"
         "请保持网络畅通别中断。[/bold yellow]\n"
         "  四个阶段会依次跑：\n"
-        "    1/4  拉 B 站历史 / 收藏 / 关注（≈ 20–60s，看你的列表大小）\n"
+        f"    1/4  {stage1_label}\n"
         "    2/4  分析偏好（LLM 调用，≈ 30–90s）\n"
         "    3/4  生成灵魂画像（LLM 调用，≈ 30–60s）\n"
         "    4/4  发现首轮内容池（多策略并发 + LLM 评估，≈ 1–3 分钟）\n"
         "[dim]全程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。[/dim]\n"
     )
+    if not include_bili:
+        console.print(
+            "[dim]  跳过 B 站数据接入"
+            f"({'命令行 --no-bilibili' if no_bilibili else 'OPENBILICLAW_NO_BILIBILI=1'})。[/dim]"
+        )
 
     # v0.3.89+: ask user whether the backend should be reachable from
     # the local network (0.0.0.0) so mobile /m/ works out of the box.
@@ -4914,10 +4998,15 @@ def init(
     _persist_api_host_choice(allow_lan=allow_lan)
     _maybe_setup_password_in_init(allow_lan=allow_lan)
 
-    resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = _ask_init_bilibili_limits(
-        favorite_limit=bilibili_favorite_limit,
-        follow_limit=bilibili_follow_limit,
-    )
+    if include_bili:
+        resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = (
+            _ask_init_bilibili_limits(
+                favorite_limit=bilibili_favorite_limit,
+                follow_limit=bilibili_follow_limit,
+            )
+        )
+    else:
+        resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = 0, 0
 
     # v0.3.27+: ask the user whether to include xhs data, with a prep
     # checklist when they opt in. Defaults stay off unless the user
@@ -4969,7 +5058,18 @@ def init(
     else:
         include_x = _ask_x_inclusion()
 
+    if not any((include_bili, include_xhs, include_dy, include_yt, include_x)):
+        _print_status_panel(
+            "error",
+            "没有可用的数据来源",
+            "已跳过 B 站且未启用任何其他平台——init 至少需要一个数据来源。"
+            "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / --yes-youtube / --yes-x "
+            "启用其他来源。",
+        )
+        raise typer.Exit(code=1)
+
     _persist_init_source_enabled_flags(
+        include_bili=include_bili,
         include_xhs=include_xhs,
         include_dy=include_dy,
         include_yt=include_yt,
@@ -4988,6 +5088,7 @@ def init(
                 soul_engine=soul_engine,
                 favorite_limit=resolved_bilibili_favorite_limit,
                 follow_limit=resolved_bilibili_follow_limit,
+                include_bili=include_bili,
                 include_xhs=include_xhs,
                 include_dy=include_dy,
                 include_yt=include_yt,
@@ -4999,6 +5100,8 @@ def init(
     except GuidedInitError as exc:
         if exc.reason == "empty_history":
             _print_status_panel("warning", "历史为空", exc.message)
+        elif exc.reason == "empty_signals":
+            _print_status_panel("warning", "没有拉到信号", exc.message)
         else:
             _print_status_panel("error", "失败", exc.message)
         raise typer.Exit(code=1) from exc
@@ -5040,7 +5143,10 @@ def init(
     # plus a total. xhs_scope_counts is set whether the task succeeded
     # or returned empty, so this also surfaces "0 / 0 / 0" cases that
     # suggest the user wasn't logged into XHS.
-    bilibili_events = len(events) - len(xhs_events) - len(dy_events) - len(yt_events)
+    # Use the pipeline's snapshot, not a subtraction over ``events`` — the
+    # event list also carries X likes/bookmarks, which the old subtraction
+    # silently lumped into the B站 row (glaring once B站 itself is optional).
+    bilibili_events = result.bilibili_event_count
     xhs_saved = int(xhs_scope_counts.get("saved", 0))
     xhs_liked = int(xhs_scope_counts.get("liked", 0))
     xhs_history = int(xhs_scope_counts.get("xhs_history", 0))
@@ -5090,7 +5196,9 @@ def init(
             "[cyan]openbiliclaw init --yes-youtube[/cyan] 可补齐。[/dim]"
         )
 
-    source_parts = [f"[green]{bilibili_events}[/green] 条 B 站信号"]
+    source_parts = []
+    if bilibili_events > 0:
+        source_parts.append(f"[green]{bilibili_events}[/green] 条 B 站信号")
     if len(xhs_events) > 0:
         source_parts.append(f"[green]{len(xhs_events)}[/green] 条小红书信号")
     if len(dy_events) > 0:
@@ -5352,6 +5460,107 @@ def _run_single_source_bootstrap(
 
     events, scope_counts, status_label = collect(task_id)
     summary_renderer(scope_counts, status_label, len(events))
+
+
+@app.command("profile-consolidate")
+def profile_consolidate(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="真正写入合并结果。默认 dry-run：只打印建议，不改任何数据。",
+    ),
+    revert: str = typer.Option(
+        "",
+        "--revert",
+        help="按 run_id 回滚一次已应用的整理（备份在 data/memory/consolidation_runs/）。",
+    ),
+) -> None:
+    """用 LLM 整理合并画像里重复的喜欢 / 讨厌主题。
+
+    兴趣标签和避雷主题会不断积累措辞变体（「智能体开发」vs
+    「智能体开发与实现」），把进入 prompt 的 top-64 名额挤占掉。
+    本命令按「规则合并 → embedding 聚类 → LLM 裁决 → 校验执行」
+    的流水线做同义合并，卡 64 边界整理（likes 只看权重 top-128）。
+
+    \b
+      - 默认 dry-run，先看建议再决定
+      - --apply 写入,自动备份到 data/memory/consolidation_runs/
+      - 审计记录追加到 data/memory/soul_changelog.md
+    """
+    import asyncio as _asyncio
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.llm.registry import build_embedding_service
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+    from openbiliclaw.soul.consolidator import ProfileConsolidator
+
+    _print_page_title("画像整理", "profile-consolidate")
+
+    cfg = load_config()
+    memory = _build_memory_manager()
+    llm_service = None
+    registry = None
+    try:
+        registry = _build_registry()
+        llm_service = LLMService(
+            registry=registry,
+            memory=memory,
+            module_overrides=module_overrides_from_config(cfg),
+            concurrency=cfg.llm.concurrency,
+        )
+    except Exception as exc:
+        console.print(f"[yellow]  LLM 不可用（{exc}）— 只做规则合并与聚类预览。[/yellow]")
+    embedding_service = None
+    if registry is not None:
+        try:
+            embedding_service = build_embedding_service(cfg, registry)
+        except Exception:
+            embedding_service = None
+    if embedding_service is None:
+        console.print("[dim]  embedding 服务不可用，退回子串聚类。[/dim]")
+
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm_service,
+        embedding_service=embedding_service,
+    )
+
+    if revert.strip():
+        ok = consolidator.revert(revert.strip())
+        if ok:
+            console.print(f"  [green]已回滚 run {revert.strip()}，画像与覆盖层均已恢复。[/green]")
+            console.print("  [dim]被回滚的合并已记入 no-merge 记忆，下轮整理不会重做。[/dim]")
+        else:
+            console.print(f"[bold red]  回滚失败：找不到 run 记录 {revert.strip()}。[/bold red]")
+            raise typer.Exit(code=1)
+        return
+
+    mode_label = "[bold]apply[/bold]" if apply else "dry-run（加 --apply 才会写入）"
+    console.print(f"  模式: {mode_label}")
+    report = _asyncio.run(consolidator.run(dry_run=not apply))
+
+    if report.errors:
+        for err in report.errors:
+            console.print(f"[yellow]  ⚠ {err}[/yellow]")
+    console.print(f"  嫌疑簇送审: {report.clusters_sent} 个")
+    for rule_merge in report.rule_merges:
+        console.print(f"  [cyan][规则][/cyan] {rule_merge}")
+    for merge in report.merges:
+        members = " / ".join(str(m) for m in merge.get("members", []))
+        scope = "兴趣" if merge.get("scope") == "likes" else "避雷"
+        console.print(
+            f"  [green][{scope}][/green] {members} → [bold]{merge.get('canonical')}[/bold]"
+        )
+    for rejected in report.rejected_clusters:
+        console.print(f"  [dim][放弃簇] {rejected}[/dim]")
+    console.print(
+        f"\n  兴趣: {report.likes_before} → {report.likes_after}"
+        f"    避雷: {report.dislikes_before} → {report.dislikes_after}"
+    )
+    if not apply and (report.merges or report.rule_merges):
+        console.print("\n  [dim]满意的话用 --apply 真正写入。[/dim]")
+    if apply and (report.merges or report.rule_merges):
+        console.print(f"\n  [dim]已备份，run_id={report.run_id}[/dim]")
 
 
 @app.command("fetch-douyin")

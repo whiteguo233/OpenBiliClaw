@@ -131,6 +131,11 @@ test("popup saved surfaces round-trip through api clients and are wired in the U
     assert.match(popupJs, /function loadFavorites/);
     assert.match(popupJs, /toggleWatchLaterSaved\(item\.bvid\)/);
     assert.match(popupJs, /toggleFavoriteSaved\(item\.bvid\)/);
+    // Saved-card removal must stay optimistic (remove first, restore + 重试 on
+    // failure) — the old await-then-remove flow read as "clicking does nothing"
+    // whenever the DELETE was slow or failed.
+    assert.match(popupJs, /function bindSavedCardRemove/);
+    assert.match(popupJs, /remove\.textContent = "重试"/);
   } finally {
     __resetBackendEndpointForTests();
     await new Promise((resolveClose) => server.close(resolveClose));

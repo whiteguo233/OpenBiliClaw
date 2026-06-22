@@ -373,14 +373,15 @@ def _count_events_by_source_platform(database: Any) -> dict[str, int]:
 
 
 def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[str]:
-    """Effective optional platform sources for a guided-init run.
+    """Effective platform sources for a guided-init run.
 
     ``enabled`` is the config-enabled set; ``selected`` is the extension's
     per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
     clients — meaning "use everything enabled"). A selection can only NARROW the
     set: you can't init a source that isn't configured, so the result is the
-    intersection. Bilibili is the always-on base (pulled via the client, not an
-    ``include_*`` flag), so it doesn't need to appear here.
+    intersection. Bilibili flows through here like every other source
+    (v0.3.118+): it is config-enabled by default, so legacy clients keep their
+    bilibili-included behaviour, but deselecting it skips the B站 fetch.
     """
     if selected is None:
         return set(enabled)
@@ -895,11 +896,16 @@ def create_app(
         method = request.method.upper()
         allowed = (
             method == "OPTIONS"
+            or path == "/api/ping"
             or path == "/api/health"
             or path == "/api/runtime-status"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
+            # Update status + manual check/apply: a backend that can't build its
+            # LLM registry is exactly when pulling a fix-carrying release matters,
+            # so the recovery surface must stay reachable while degraded.
+            or path in ("/api/update-status", "/api/update/check", "/api/update/apply")
             or (path == "/api/config" and method in {"GET", "PUT"})
             or path.startswith("/api/auth")
             or path.startswith("/m")
@@ -1337,6 +1343,18 @@ def create_app(
             _embedding_ready_checked_at = time.monotonic()
             return ready
 
+    @app.get("/api/ping")
+    async def ping() -> JSONResponse:
+        """Pure liveness probe: no DB, no provider round-trips.
+
+        ``/api/health`` is a READINESS endpoint — its embedding probe can
+        take seconds when the cache is cold (Ollama model reload), which
+        made the extension's connection badge sit on "未连接" after opening
+        the panel. UI liveness indicators should hit this instead and keep
+        ``/api/health`` for profile/embedding state.
+        """
+        return JSONResponse({"status": "ok", "service": "openbiliclaw-api"})
+
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
@@ -1389,7 +1407,12 @@ def create_app(
         trusted = _get_auth_gate().is_trusted_local(request)
         supported = not is_running_in_container()
         running = bool(run["running"])
-        hard_ok = (bili == "ok") and chat
+        # v0.3.118+: bilibili login is no longer a server-side hard gate —
+        # whether it blocks depends on the client's per-run source selection,
+        # which only POST /api/init sees. ``bilibili_logged_in`` stays in the
+        # prerequisites payload so clients gate the start button themselves
+        # when B站 is among the checked sources; POST revalidates regardless.
+        hard_ok = chat
         # Mirror POST /api/init's guards: an already-initialized profile blocks
         # a (non-force) start, so can_start must reflect that too — otherwise E1
         # and E2 disagree and a client could offer "start" that E2 rejects.
@@ -1401,10 +1424,12 @@ def create_app(
             reason, detail = "already_running", "初始化进行中"
         elif initialized:
             reason, detail = "already_initialized", "已经初始化过了；如需重建请用 force"
-        elif bili != "ok":
-            reason, detail = "bilibili_not_logged_in", "还没检测到 B站 登录"
         elif not chat:
             reason, detail = "llm_not_ready", "AI 服务还没配好或当前不可用"
+        elif bili != "ok":
+            # Informational (does not flip can_start): blocks only if the
+            # client keeps bilibili selected, which the UI enforces.
+            reason, detail = "bilibili_not_logged_in", "还没检测到 B站 登录"
         elif run.get("status") in ("failed", "cancelled"):
             # Prereqs are fine and nothing is running, but the last run ended
             # badly — surface why so the UI can show it (can_start stays true so
@@ -1496,6 +1521,7 @@ def create_app(
                 soul_engine=ctx.soul_engine,
                 favorite_limit=_INIT_BILIBILI_FAVORITE_LIMIT,
                 follow_limit=_INIT_BILIBILI_FOLLOW_LIMIT,
+                include_bili="bilibili" in effective,
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
@@ -1552,6 +1578,18 @@ def create_app(
                 {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
                 status_code=409,
             )
+        # At least one config-enabled source must survive an EXPLICIT per-run
+        # selection (v0.3.118+: bilibili is selectable like the rest, so an
+        # empty intersection is now reachable). Cheap rejection, before
+        # reserving. Legacy clients (no "sources" key) stay permissive.
+        effective_sources = _select_init_platforms(
+            set(ctx.init_prereqs.enabled_platforms()), selected_sources
+        )
+        if selected_sources is not None and not effective_sources:
+            return JSONResponse(
+                {"error": "no_sources_selected", "detail": "至少选择一个已启用的数据来源"},
+                status_code=409,
+            )
 
         run_id = uuid.uuid4().hex
         if not coord.try_start(run_id):
@@ -1559,11 +1597,13 @@ def create_app(
 
         # Critical-section revalidation: prereqs may have lapsed between the
         # status poll and now. On a miss, roll the reservation back to idle so
-        # no stuck row remains (review R2 A-2).
-        bili = await ctx.init_prereqs.bilibili_check()
-        if bili != "ok":
-            coord.reset_to_idle(run_id, reason="bilibili_not_logged_in")
-            return JSONResponse({"error": "bilibili_not_logged_in"}, status_code=409)
+        # no stuck row remains (review R2 A-2). B站 login is only a prerequisite
+        # when bilibili is among the selected sources.
+        if "bilibili" in effective_sources:
+            bili = await ctx.init_prereqs.bilibili_check()
+            if bili != "ok":
+                coord.reset_to_idle(run_id, reason="bilibili_not_logged_in")
+                return JSONResponse({"error": "bilibili_not_logged_in"}, status_code=409)
         chat = await ctx.init_prereqs.chat_ready()
         if not chat:
             coord.reset_to_idle(run_id, reason="llm_not_ready")
@@ -3157,20 +3197,35 @@ def create_app(
         return PendingDelightResponse(item=PendingDelightOut(**item))
 
     @app.get("/api/delight/pending-batch")
-    async def pending_delight_batch(limit: int = 20) -> dict[str, Any]:
-        """Return up to ``limit`` un-notified delight candidates.
+    async def pending_delight_batch(limit: int | None = None) -> dict[str, Any]:
+        """Return un-notified delight candidates.
 
+        When ``limit`` is omitted the shared
+        ``scheduler.delight_queue_limit`` setting decides the queue size.
         Unlike ``/api/delight/pending`` this ignores the 4-hour
         notification cooldown — it's intended for the popup to
         re-hydrate the full queue on init, not for active push gating.
         Honors ``disliked_topics`` substring filter same as the singular
         endpoint.
+
+        ``include_liked=True``: a liked delight keeps its queue slot across
+        re-hydration (popup reopen / delight.refreshed) instead of silently
+        vanishing — positive feedback keeps the card visible until the user
+        dismisses it. Such rows come back with ``state="liked"`` so clients
+        render the already-liked treatment.
         """
         from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 
+        configured_limit = getattr(
+            getattr(getattr(ctx, "config", None), "scheduler", None),
+            "delight_queue_limit",
+            20,
+        )
+        requested_limit = configured_limit if limit is None else limit
         rows = ctx.database.get_delight_candidates(
             min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
-            limit=max(1, min(50, int(limit))),
+            limit=max(1, min(100, int(requested_limit))),
+            include_liked=True,
         )
         # Reuse the same disliked-topic filter as get_pending_delight by
         # going through the runtime controller's loader if possible.
@@ -3192,6 +3247,9 @@ def create_app(
                 "cover_url": str(row.get("cover_url", "")),
                 "content_url": str(row.get("content_url", "")),
                 "source_platform": str(row.get("source_platform", "bilibili")),
+                "state": (
+                    "liked" if str(row.get("feedback_type", "") or "") == "like" else "pending"
+                ),
             }
             for row in rows
             if passes_filter(row)
@@ -3216,8 +3274,12 @@ def create_app(
 
         Body:
         ``{ "bvid": "...", "title": "...", "response": "view"|"like"|"dislike"|"chat",
-        "message": "..." }``. Positive responses update learning signals but keep
-        the delight visible; ``dismiss`` and ``dislike`` consume the candidate.
+        "message": "..." }``. ``like`` / ``chat`` update learning signals and keep
+        the delight in the queue; ``view`` keeps the card visible in-session but
+        marks the candidate read (same semantics as the recommendation pool's
+        ``shown`` flag — a browsed surprise doesn't reappear on the next queue
+        re-hydration); ``dismiss`` and ``dislike`` consume the candidate
+        immediately.
         """
         from fastapi.responses import JSONResponse
 
@@ -3240,6 +3302,17 @@ def create_app(
                 ctx.database.mark_delight_notified(bvid)
 
         if response_type == "view":
+            # Browsing the content marks the candidate read — mirrors the
+            # recommendation pool, where a served item flips to 'shown' and
+            # is never re-served. The card keeps its in-session "viewed"
+            # treatment; it just stops re-hydrating on the next queue load.
+            # Direct DB mark (not mark_delight_consumed): viewing must not
+            # bump the 4h proactive-push cooldown — engaging with one
+            # surprise shouldn't delay discovery of the next.
+            try:
+                ctx.database.mark_delight_notified(bvid)
+            except Exception:
+                logger.debug("Failed to mark viewed delight bvid %s", bvid)
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
 
         if response_type == "dismiss":
@@ -5569,6 +5642,12 @@ def create_app(
             updated_at=str(health.get("updated_at", "")),
         )
 
+    # Window for treating synced 小红书 access tokens as fresh. xsec_tokens
+    # die well within a day, so /api/sources/status only reports "ready" when
+    # token activity happened inside this window — older-only rows degrade to
+    # the yellow "stale" state instead of staying green forever.
+    _xhs_token_fresh_hours = 24
+
     # Human-readable detail for each X (twitter) health state, reused by the
     # unified /api/sources/status chip below.
     _x_state_detail = {
@@ -5626,9 +5705,8 @@ def create_app(
         elif bili_cookie.strip():
             bilibili = SourceStatusItem(
                 enabled=bili_enabled,
-                state="ready",
+                state="partial",
                 detail="Cookie 已配置，但缺少部分登录字段，可能未完整登录。",
-                logged_in=True,
             )
         else:
             bilibili = SourceStatusItem(
@@ -5638,24 +5716,62 @@ def create_app(
             )
 
         # ── 小红书: token-bearing cache rows = extension is syncing tokens ──
+        # A bare COUNT(*) is sticky: one token row from weeks ago keeps the
+        # status green forever after the extension stops syncing, while the
+        # stored tokens are long dead (xhs 300031 access-denied). Gate "ready"
+        # on recent activity instead — a token-bearing cache row discovered,
+        # or a candidate token-backfilled (``_backfill_xhs_tokens`` refreshes
+        # ``last_seen_at`` without touching ``discovered_at``), inside the
+        # freshness window. Old-only rows degrade to ``stale``.
         xhs_enabled = bool(getattr(srcs.xiaohongshu, "enabled", False))
         xhs_tokens = 0
+        xhs_fresh = 0
         if hasattr(ctx.database, "conn"):
+            window = f"-{_xhs_token_fresh_hours} hours"
             try:
                 row = ctx.database.conn.execute(
-                    "SELECT COUNT(*) FROM content_cache "
+                    "SELECT COUNT(*), "
+                    "COALESCE(SUM(discovered_at >= datetime('now', ?)), 0) "
+                    "FROM content_cache "
                     "WHERE source_platform = 'xiaohongshu' "
-                    "AND content_url LIKE '%xsec_token=%'"
+                    "AND content_url LIKE '%xsec_token=%'",
+                    (window,),
                 ).fetchone()
                 xhs_tokens = int(row[0]) if row else 0
+                xhs_fresh = int(row[1]) if row else 0
             except Exception:  # pragma: no cover - defensive
                 xhs_tokens = 0
-        if xhs_tokens > 0:
+                xhs_fresh = 0
+            if xhs_tokens and not xhs_fresh:
+                try:
+                    row = ctx.database.conn.execute(
+                        "SELECT COUNT(*) FROM discovery_candidates "
+                        "WHERE source_platform = 'xiaohongshu' "
+                        "AND content_url LIKE '%xsec_token=%' "
+                        "AND last_seen_at >= datetime('now', ?)",
+                        (window,),
+                    ).fetchone()
+                    xhs_fresh = int(row[0]) if row else 0
+                except Exception:  # pragma: no cover - defensive
+                    xhs_fresh = 0
+        if xhs_fresh > 0:
             xiaohongshu = SourceStatusItem(
                 enabled=xhs_enabled,
                 state="ready",
-                detail=f"访问令牌已同步（{xhs_tokens} 条带 xsec_token 的缓存内容）。",
+                detail=(
+                    f"访问令牌已同步（最近 {_xhs_token_fresh_hours} 小时内 {xhs_fresh} 条，"
+                    f"共 {xhs_tokens} 条带 xsec_token 的缓存内容）。"
+                ),
                 logged_in=True,
+            )
+        elif xhs_tokens > 0:
+            xiaohongshu = SourceStatusItem(
+                enabled=xhs_enabled,
+                state="stale",
+                detail=(
+                    f"令牌可能已失效 —— 超过 {_xhs_token_fresh_hours} 小时未同步新令牌"
+                    f"（存量 {xhs_tokens} 条）。在浏览器逛逛小红书即可自动刷新。"
+                ),
             )
         else:
             xiaohongshu = SourceStatusItem(
@@ -6403,6 +6519,7 @@ def create_app(
                 trending_refresh_hours=cfg.scheduler.trending_refresh_hours,
                 explore_refresh_hours=cfg.scheduler.explore_refresh_hours,
                 discovery_limit=cfg.scheduler.discovery_limit,
+                delight_queue_limit=cfg.scheduler.delight_queue_limit,
                 proactive_push_interval_seconds=cfg.scheduler.proactive_push_interval_seconds,
                 speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
                 speculation_interval_minutes=cfg.scheduler.speculation_interval_minutes,
@@ -6616,7 +6733,6 @@ def create_app(
                         {"role": "user", "content": "OpenBiliClaw connectivity probe."},
                     ],
                     temperature=0,
-                    max_tokens=8,
                     reasoning_effort="",
                     model=model or None,
                 ),
@@ -6721,6 +6837,7 @@ def create_app(
         runtime components so the new settings take effect immediately.
         """
         from openbiliclaw.config import (
+            _DEFAULT_DELIGHT_QUEUE_LIMIT,
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
             _DEFAULT_FEEDBACK_BATCH_THRESHOLD,
@@ -6940,6 +7057,7 @@ def create_app(
                 "trending_refresh_hours": (_DEFAULT_TRENDING_REFRESH_HOURS, 1, None),
                 "explore_refresh_hours": (_DEFAULT_EXPLORE_REFRESH_HOURS, 1, None),
                 "discovery_limit": (_DEFAULT_DISCOVERY_LIMIT, 1, 60),
+                "delight_queue_limit": (_DEFAULT_DELIGHT_QUEUE_LIMIT, 1, 100),
                 "proactive_push_interval_seconds": (
                     _DEFAULT_PROACTIVE_PUSH_INTERVAL_SECONDS,
                     30,
@@ -6973,6 +7091,7 @@ def create_app(
                 "trending_refresh_hours",
                 "explore_refresh_hours",
                 "discovery_limit",
+                "delight_queue_limit",
                 "proactive_push_interval_seconds",
                 "speculator_idle_interval_minutes",
                 "speculation_interval_minutes",

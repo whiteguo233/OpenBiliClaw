@@ -31,13 +31,14 @@
 | SoulEngine module overrides | ✅ | 构造时可接收 `module_overrides` 并注入内部 `LLMService`，确保 preference / awareness / insight / profile_builder / speculator / dialogue_insight 都遵循 `[llm.soul]` 路由 |
 | PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据；偏好分析调用前有 prompt 预算保护，超长 chunk 会递归二分，单条超长事件会 compact，`n_keep >= n_ctx` / `context length` 等上下文错误会用更小 chunk 重试 |
 | filter_events_by_satisfaction | ✅ | `soul/event_filters.py` 中的纯函数，按 `inferred_satisfaction` 过滤事件，`"unknown"` 同时匹配缺失 / `None`，使 pre-migration 老行可被显式 opt-in 保留 |
-| recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 8 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
+| recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 16 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像 |
 | ProfileBuilder | ✅ | 结构化 prompt + JSON 校验 + `OnionProfile` 构建 |
 | SoulEngine.build_initial_profile() | ✅ | 从 history + preference 生成并持久化 `soul.json` |
 | SoulEngine.get_profile() | ✅ | 从 soul 层读取画像并叠加用户覆盖层返回**有效画像**，未初始化时抛明确异常 |
 | SoulEngine.get_raw_profile() / get_overrides() | ✅ | 返回不叠加覆盖的纯 AI 画像 / 当前 `ProfileOverrides`，供编辑态与 AI 漂移比对 |
 | 用户画像覆盖层 (`soul/overrides.py`) | ✅ | `ProfileOverrides` + 纯函数 `apply_overrides`（文本/标量固定、列表增删、兴趣树增删/权重）+ 带校验的 `apply_edit` 归约器 + `build_edit_state`；用户手动编辑存独立 `profile_overrides.json`，读时叠加到 AI 画像之上，画像重建不覆盖；列表 remove 持续抑制 AI 再次推断出的同项 |
+| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名合并（零成本）→ embedding 聚类（≥0.85，无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → 单次 batch LLM 输出 merge/keep 操作 → 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、避雷严禁向上泛化）。卡 64 边界整理（likes 取权重 top-128），改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
 | SoulEngine.get_effective_disliked_topics() | ✅ | base（raw soul.interest.dislikes ∪ raw preference.disliked_topics）再套覆盖层 remove/add（remove 最后生效），供 delight 硬过滤，用户移除项不被 raw 反向打穿 |
 | SoulEngine.apply_user_edit() | ✅ | 折叠一次确定性编辑：存覆盖层 → 同步正向/避雷两套 speculator → 记 `source=manual` cognition → 重渲染有效画像镜像并通知两端 → 新增 dislike 按编辑前后差集把 `purge_pool_for_new_dislikes` 清池**调度为 `asyncio` 后台 detached 任务**（embedding 召回 + LLM 分类耗时数十秒，绝不能阻塞编辑响应，否则前端看着像「加了没保存」；`_schedule_dislike_purge` 派发，`wait_for_pending_edits()` 供测试 / 优雅关闭等待） |
 | AwarenessAnalyzer | ✅ | 近期事件 → `AwarenessNote` 列表，支持同日去重；解析 LLM 响应时复用 `llm.json_utils.extract_llm_json_list()`，兼容 `results/items/notes/data/observations/recent_observations/latest/latest_observations` 等 object-wrapped array、reasoning 模型 bare singular-note dict、wrapper-key 下单 note、fenced JSON、JSONL 和 MiMo malformed `{ [ ... ] }`；prompt 按画像 → 偏好 → 近期事件排序以保留缓存前缀，并把近期 `dislike` / `thumbs_down` / negative 事件视为“最近开始避开 X”的保守观察信号 |
@@ -427,7 +428,8 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
   - `first_seen` 保留最早值
   - `last_seen` 更新到现在
   - `weight` 取旧值和新值的较大者
-- `favorite_up_users` 和 `disliked_topics` 走集合并集，不会丢历史值
+- `favorite_up_users` 走旧 ∪ 新集合并集累积，不会丢历史值（修正了此前「本批一旦提到任意创作者就整体替换历史列表」的 bug）
+- `disliked_topics` 走**近因有序并集**：本轮避雷项排在前，与历史去重后再截到 `_DISLIKED_TOPICS_STORE_CAP`（128，下游展示上限 64 的 2 倍，给重排和 LLM 整理留边界余量）。每轮被重新标记的雷点会冒到前面，长期不再出现的雷点滑出尾部衰减掉。下游 `[:64]` 截断因此保留最新 / 最相关的避雷项，而非旧实现里按字典序排在前的那批
 - `style/context` 先继承默认值，再叠加旧状态，再叠加新状态
 
 这意味着行为事件对画像的第一影响，通常不是直接改 `personality_portrait`，而是先慢慢把偏好层往一个更稳定的方向推。

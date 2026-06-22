@@ -49,7 +49,7 @@ Most users only need these four steps. Firefox, Docker, and manual setup paths a
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-3. **Log in to content platforms in the same browser**. Start with [Bilibili](https://www.bilibili.com), then opt in to [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) when you want more signals.
+3. **Log in to content platforms in the same browser**. Bilibili is selected by default for init, but you can deselect it and use enabled [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) sources instead; init needs at least one logged-in source that can return signals.
 4. **Open the desktop or mobile Web UI**. Use `http://127.0.0.1:8420/web` on the same machine, or scan the extension QR code for `http://<your-LAN-IP>:8420/m/` on your phone.
 
 ## Why OpenBiliClaw?
@@ -188,12 +188,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.115: auto-update unblocked (2026-06-10)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Auto-update actually updates now** — fixed stale release lockfiles permanently tripping the dirty-worktree guard on every git install, with zero feedback.
-- **Update status visible in settings** — a status line under the auto-update toggle shows current/latest version, blocking reason, and last check time.
-- **Desktop packages are honest** — frozen desktop installs can't git-self-update; the toggle is now disabled with a hint to install a newer package instead of silently doing nothing.
-- **Existing installs: one-time unlock** — run `git checkout -- uv.lock && git pull` once in the install dir (or re-run the one-line installer) to restore auto-update.
+- **Desktop installers now remind you to upgrade** — the backend periodically checks for new `desktop-v*` installer releases and the settings page shows a notice with a direct download link plus a toast, no more watching Releases yourself.
+- **Settings page adds "Check now / Apply now"** — auto-update status can be triggered manually, and progress refreshes live from backend events.
+- **Auto-update is safer** — a frozen bundle never rewrites a co-located git checkout, and degraded mode (broken LLM config) can still check for and pull a fix-carrying release.
+- **Delight queue size is now shared across clients** — the new `delight_queue_limit` config saved from desktop Web also applies to the extension and mobile Web.
 
 ## Community
 
@@ -300,7 +300,7 @@ Chrome Web Store / AMO builds only declare local-backend permissions, so keep th
 
 ### 3. Log in to content platforms in the same browser
 
-At minimum, log in to [Bilibili](https://www.bilibili.com). OpenBiliClaw uses it to build the first profile and recommendations. If you want Xiaohongshu, Douyin, YouTube, or X, also log in to [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) in the same browser where the extension is installed.
+By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. If you do not want Bilibili, deselect it during init and use another enabled, logged-in source such as [Xiaohongshu](https://www.xiaohongshu.com), [Douyin](https://www.douyin.com), [YouTube](https://www.youtube.com), or [X](https://x.com). Keep at least one source selected, and it must return behavioral signals.
 
 ### 4. Open Desktop or Mobile Web
 
@@ -539,7 +539,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback, understands you better over time
 - 🧩 **Browser Extension (Chrome / Edge / Brave / Arc and more)** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu + Douyin + YouTube + X), chat, and cognition update cards — install and go
-- 🚀 **Guided init in the UI** — No terminal required: the packaged `/setup/` wizard, Desktop Web `/web` uninitialized state, and the extension's "Recommend" tab all show a prerequisite checklist (Bilibili login / LLM / embedding) and a "Start init" button that builds your profile and first content pool in place (the CLI `openbiliclaw init` remains an equivalent entry point)
+- 🚀 **Guided init in the UI** — No terminal required: the packaged `/setup/` wizard, Desktop Web `/web` uninitialized state, and the extension's "Recommend" tab all show source selection plus a prerequisite checklist (selected platform login / LLM / embedding; Bilibili is checked by default but can be deselected) and a "Start init" button that builds your profile and first content pool in place (the CLI `openbiliclaw init` remains an equivalent entry point)
 - 🔬 **Self-Optimizing Eval Loops** — Five modules each have an LLM-as-judge SGD/RL loop that automatically improves prompt quality over rounds — no manual tuning needed
 - 🔒 **Fully Private** — All data in local SQLite; LLM calls use your own key; each instance is built for exactly one person
 - 🔌 **Local Embedding Provider** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
@@ -551,7 +551,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
 │      (Behavior · Recs · Source-Aware Clicks · Chat · Probes) │
-│      (Cookies · XHS/DY/YT tasks · init bridge · autostart setting) │
+│      (Cookies · XHS/DY/YT tasks · optional init bridge · autostart setting) │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
                          │ + Mobile/Desktop Web (/m · /web) · optional [api.auth] password gate (local free / LAN needs password)
@@ -653,7 +653,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.115: auto-update unblocked (2026-06-10)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.120 / extension v0.3.78: Desktop installer update reminders (2026-06-11)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
 
 ## 🗺️ Roadmap
 

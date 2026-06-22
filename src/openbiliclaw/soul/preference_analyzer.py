@@ -20,6 +20,13 @@ from openbiliclaw.soul.event_filters import filter_events_by_satisfaction
 logger = logging.getLogger(__name__)
 
 
+# Stored disliked_topics are recency-ordered and capped so the list (and
+# the preference-analysis prompt that echoes it back) stay bounded.
+# 2x the downstream display cap (_DISLIKED_TOPICS_CAP=64) so re-ranking
+# and LLM consolidation have boundary headroom; the stalest topics decay
+# out past this.
+_DISLIKED_TOPICS_STORE_CAP = 128
+
 _COMPACT_METADATA_KEYS = frozenset(
     {
         "source_platform",
@@ -148,11 +155,7 @@ class PreferenceAnalyzer:
         """
         if not self.satisfaction_filter_enabled:
             return events
-        filtered = [
-            event
-            for event in events
-            if self._keeps_event_under_satisfaction_filter(event)
-        ]
+        filtered = [event for event in events if self._keeps_event_under_satisfaction_filter(event)]
         if len(filtered) != len(events):
             logger.info(
                 "satisfaction_filter dropped %d/%d events before preference analysis",
@@ -179,9 +182,7 @@ class PreferenceAnalyzer:
             feedback_type = str(metadata.get("feedback_type") or "").strip().lower()
             reaction = str(metadata.get("reaction") or "").strip().lower()
         return event_type in {"feedback", "dislike"} and (
-            feedback_type == "dislike"
-            or reaction == "thumbs_down"
-            or event_type == "dislike"
+            feedback_type == "dislike" or reaction == "thumbs_down" or event_type == "dislike"
         )
 
     async def _analyze_events_single(
@@ -226,8 +227,7 @@ class PreferenceAnalyzer:
 
     def _prompt_fits_budget(self, messages: list[dict[str, str]]) -> bool:
         return (
-            self.max_prompt_chars <= 0
-            or self._prompt_char_count(messages) <= self.max_prompt_chars
+            self.max_prompt_chars <= 0 or self._prompt_char_count(messages) <= self.max_prompt_chars
         )
 
     def _estimate_budget_chunk_size(self, *, event_count: int, prompt_chars: int) -> int:
@@ -541,13 +541,25 @@ class PreferenceAnalyzer:
         # previously confirmed UP users.
         new_up = self._as_str_list(new_preference.get("favorite_up_users", []))
         old_up = self._as_str_list(existing_preference.get("favorite_up_users", []))
-        favorite_up_users = sorted(set(new_up)) if new_up else old_up
-        disliked_topics = sorted(
-            {
-                *self._as_str_list(existing_preference.get("disliked_topics", [])),
-                *self._as_str_list(new_preference.get("disliked_topics", [])),
-            }
-        )
+        # Union old+new to accumulate across batches. A single batch may
+        # only mention a subset of UP users, so replacing with this batch's
+        # list (the previous behaviour) silently dropped previously
+        # confirmed creators whenever the batch named any creator at all.
+        favorite_up_users = sorted(set(old_up) | set(new_up))
+        # Recency-ordered union: this round's avoid-topics go first so the
+        # most-recently-reinforced survive the downstream top-N cut, and a
+        # topic re-flagged each round keeps bubbling to the front. The old
+        # alphabetical sort meant the top-N cut kept whichever topics sorted
+        # first, not the freshest/most relevant. Stalest topics fall past
+        # the store cap and decay out.
+        disliked_topics = list(
+            dict.fromkeys(
+                [
+                    *self._as_str_list(new_preference.get("disliked_topics", [])),
+                    *self._as_str_list(existing_preference.get("disliked_topics", [])),
+                ]
+            )
+        )[:_DISLIKED_TOPICS_STORE_CAP]
 
         default_preference = self._default_preference()
         style = self._as_dict(default_preference["style"]).copy()

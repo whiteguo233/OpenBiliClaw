@@ -373,6 +373,11 @@
           <label class="settings-field"><span>自动更新</span><select id="autoUpdate"><option value="off">关闭</option><option value="on">开启</option></select></label>
           <label class="settings-field"><span>自动更新检查小时</span><input id="autoUpdateInterval" inputmode="numeric" placeholder="6"></label>
           <p class="settings-probe-status" id="updateStatusLine" style="grid-column: 1 / -1; margin: 0" aria-live="polite" hidden></p>
+          <div class="settings-update-actions" id="updateActions" style="grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap" hidden>
+            <button type="button" id="updateCheckBtn" class="pill-btn">立即检查</button>
+            <button type="button" id="updateApplyBtn" class="pill-btn primary" hidden>立即应用</button>
+            <a id="updateDownloadLink" class="pill-btn primary" href="https://github.com/whiteguo233/OpenBiliClaw/releases" target="_blank" rel="noopener" hidden>前往下载新安装包</a>
+          </div>
           <p class="settings-section-title">运行节奏</p>
           <div class="inline-row">
             <label class="settings-field"><span>刷新轮询秒数</span><input id="refreshCheckInterval" inputmode="numeric" placeholder="60"></label>
@@ -429,7 +434,7 @@
               <span id="dismissOnReshuffleSettingText">关闭</span>
             </span>
           </label>
-          <p class="settings-note-inline">这些设置只保存在当前浏览器，用于控制 Web UI 如何连接后端和加载前端队列。</p>
+          <p class="settings-note-inline">后端地址、端口和换一批偏好保存在当前浏览器；惊喜推荐加载数量会随保存配置写入后端，供桌面 Web、移动 Web 和插件共享。</p>
         </div>
 
         <div class="settings-panel" data-settings-panel="logging" hidden>

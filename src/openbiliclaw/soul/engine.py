@@ -28,6 +28,7 @@ from .cognition_cycle import (
 from .cognition_cycle import (
     CognitionCycle,
 )
+from .consolidator import ProfileConsolidator
 from .dialogue_insight_analyzer import (
     DialogueInsightAnalysisError,
     DialogueInsightAnalyzer,
@@ -121,6 +122,8 @@ class SoulEngine:
         avoidance_speculation_confirmation_threshold: int = 3,
         avoidance_speculation_max_active: int = 5,
         speculator_idle_interval_minutes: int = 30,
+        profile_consolidation_enabled: bool = True,
+        profile_consolidation_interval_hours: int = 12,
         feedback_batch_threshold: int = 3,
     ) -> None:
         self._llm = llm
@@ -183,6 +186,15 @@ class SoulEngine:
                 else _DEFAULT_COG_INTERVAL
             ),
         )
+        self._profile_consolidator: ProfileConsolidator | None = None
+        if profile_consolidation_enabled:
+            self._profile_consolidator = ProfileConsolidator(
+                memory=memory,
+                llm_service=self._llm_service,
+                embedding_service=embedding_service,
+                data_dir=data_dir,
+                min_interval_seconds=profile_consolidation_interval_hours * 3600,
+            )
         self._pipeline = ProfileUpdatePipeline(
             memory=memory,
             preference_analyzer=self._preference_analyzer,
@@ -192,6 +204,7 @@ class SoulEngine:
             embedding_service=embedding_service,
             cognition_cycle=self._cognition_cycle,
             speculator_idle_interval_minutes=speculator_idle_interval_minutes,
+            profile_consolidator=self._profile_consolidator,
         )
         # Detached post-edit work (the dislike pool purge runs an LLM+embedding
         # recall that must not block the edit response). Tracked so it isn't
@@ -206,6 +219,8 @@ class SoulEngine:
         """
         self._embedding_service = embedding_service
         self._pipeline.set_embedding_service(embedding_service)
+        if self._profile_consolidator is not None:
+            self._profile_consolidator.set_embedding_service(embedding_service)
 
     @property
     def pipeline(self) -> Any:

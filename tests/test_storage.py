@@ -1463,6 +1463,86 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_pool_candidates_excludes_delight_claimed_rows(self) -> None:
+        """Surprise-channel rows never enter the regular feed.
+
+        A row is delight-claimed when it was delivered as a surprise
+        (delight_notified=1) or is currently queue-eligible (score above
+        threshold with reason + hook). Sub-threshold delight scores
+        without metadata keep the row servable. count_pool_candidates
+        must agree with get_pool_candidates so the "还有 N 条" display
+        never overstates what serve() can load.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            _seed_visible(
+                db,
+                "BV1NORMAL",
+                title="普通候选",
+                up_name="UPA",
+                source="search",
+                relevance_score=0.91,
+                topic_group="组A",
+            )
+            _seed_visible(
+                db,
+                "BV1CLAIM",
+                title="惊喜队列候选",
+                up_name="UPB",
+                source="search",
+                relevance_score=0.95,
+                topic_group="组B",
+            )
+            _seed_visible(
+                db,
+                "BV1READ",
+                title="已浏览的惊喜",
+                up_name="UPC",
+                source="search",
+                relevance_score=0.94,
+                topic_group="组C",
+            )
+            _seed_visible(
+                db,
+                "BV1LOW",
+                title="delight低分未达标",
+                up_name="UPD",
+                source="search",
+                relevance_score=0.93,
+                topic_group="组D",
+            )
+            # Currently delight-eligible: in the surprise queue right now.
+            db.update_delight_score(
+                "BV1CLAIM",
+                delight_score=0.85,
+                delight_reason="跨域呼应",
+                delight_hook="惊喜钩子",
+            )
+            # Delivered as a surprise then read — must stay out of the feed.
+            db.update_delight_score(
+                "BV1READ",
+                delight_score=0.9,
+                delight_reason="深度共鸣",
+                delight_hook="惊喜钩子",
+            )
+            db.mark_delight_notified("BV1READ")
+            # Scored but below threshold and without metadata: not claimed.
+            db.update_delight_score(
+                "BV1LOW",
+                delight_score=0.4,
+                delight_reason="",
+                delight_hook="",
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert {item["bvid"] for item in items} == {"BV1NORMAL", "BV1LOW"}
+            assert db.count_pool_candidates() == 2
+
+            db.close()
+
     def test_get_pool_candidates_returns_topic_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

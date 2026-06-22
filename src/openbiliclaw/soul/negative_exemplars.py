@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_LIMIT = 8
+MAX_LIMIT = 16
 DEFAULT_HALF_LIFE_DAYS = 14
 TITLE_MAX_CHARS = 80
 

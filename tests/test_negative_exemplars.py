@@ -75,16 +75,16 @@ def test_returns_records_with_expected_shape() -> None:
 
 
 def test_caps_to_limit_with_recency_priority() -> None:
-    """20 negatives — only the 8 most-recent (highest weight) are kept."""
+    """24 negatives — only the 16 most-recent (highest weight) are kept."""
     now = datetime(2026, 5, 16, 12, 0, 0)
     events = [
-        _row(idx=i, title=f"标题{i}", age_days=i, now=now) for i in range(1, 21)
+        _row(idx=i, title=f"标题{i}", age_days=i, now=now) for i in range(1, 25)
     ]
     out = recent_negative_exemplars(_StubEventStore(events), now=now)
-    assert len(out) == 8
-    # The 8 newest titles should be "标题1" through "标题8"
+    assert len(out) == 16
+    # The 16 newest titles should be "标题1" through "标题16"
     kept_titles = [r["title"] for r in out]
-    assert kept_titles == [f"标题{i}" for i in range(1, 9)]
+    assert kept_titles == [f"标题{i}" for i in range(1, 17)]
 
 
 def test_dedupe_by_normalized_prefix() -> None:

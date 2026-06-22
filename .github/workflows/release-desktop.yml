@@ -139,6 +139,11 @@ jobs:
     # rather than blocking the whole release.
     if: ${{ always() }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Download built installers
         uses: actions/download-artifact@v8
         with:
@@ -150,19 +155,58 @@ jobs:
         run: ls -lhR release-artifacts || true
 
       - name: Publish GitHub pre-release
-        uses: softprops/action-gh-release@v2
-        with:
-          prerelease: true
-          generate_release_notes: true
-          fail_on_unmatched_files: false
-          body: |
-            **实验性桌面安装包**（未签名 / 未公证，仅供尝鲜）。后端源码仍为 source-only；此处只发桌面应用二进制。
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<'EOF'
+          **实验性桌面安装包**（未签名 / 未公证，仅供尝鲜）。后端源码仍为 source-only；此处只发桌面应用二进制。
 
-            ### 首次打开要绕过系统拦截
-            - **macOS**：先拖进「应用程序」，再右键图标 →「打开」→ 在弹窗里再点「打开」；或「系统设置 → 隐私与安全性」点「仍要打开」。若仍提示“已损坏”，确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"; codesign --force --deep --sign - "$APP"; open "$APP"`。
-            - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
+          ### 首次打开要绕过系统拦截
+          - **macOS**：先拖进「应用程序」，再右键图标 →「打开」→ 在弹窗里再点「打开」；或「系统设置 → 隐私与安全性」点「仍要打开」。若仍提示“已损坏”，确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"; codesign --force --deep --sign - "$APP"; open "$APP"`。
+          - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
 
-            自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/Library/Application Support/OpenBiliClaw`（mac）/ `%LOCALAPPDATA%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
-          files: |
-            release-artifacts/*.dmg
-            release-artifacts/*.exe
+          自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/Library/Application Support/OpenBiliClaw`（mac）/ `%LOCALAPPDATA%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
+          EOF
+
+          ensure_release() {
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --notes-file "$notes_file"
+              return
+            fi
+
+            for attempt in 1 2 3; do
+              if gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --generate-notes --notes-file "$notes_file"; then
+                return
+              fi
+              if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --notes-file "$notes_file"
+                return
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                return 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          }
+
+          ensure_release
+          shopt -s nullglob
+          assets=(release-artifacts/*.dmg release-artifacts/*.exe)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No installer assets found"
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          done

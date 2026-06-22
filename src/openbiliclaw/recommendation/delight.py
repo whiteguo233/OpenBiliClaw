@@ -219,7 +219,7 @@ class LLMDelightScorer:
                 {
                     "bvid": c.bvid,
                     "title": (c.title or "")[:140],
-                    "description": (c.description or "")[:280],
+                    "description": (c.description or "")[:400],
                     "topic_group": getattr(c, "topic_group", "") or "",
                     "source_strategy": getattr(c, "source_strategy", "") or "",
                     "relevance_score": round(float(c.relevance_score or 0.0), 3),

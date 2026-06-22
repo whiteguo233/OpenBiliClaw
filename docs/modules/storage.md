@@ -21,6 +21,7 @@
 | 内容发布时间持久化 | ✅ | `discovery_candidates.published_at` 与 `content_cache.published_at` 保存来源内容发布时间；重复发现或重复缓存时优先保留已有非空值，避免后续空 payload 覆盖发布时间 |
 | discovery 状态恢复 | ✅ | 启动初始化会释放过期 `evaluating` 行；terminal 状态有 status guard，避免 stale update 改写 cached / rejected 结果。 |
 | 最近已看过滤 | ✅ | 可换、raw 和评估路径复用 `source_platform:content_id` 与旧 BVID key，避免已看内容重复入池。 |
+| 惊喜通道占位排除 | ✅ | `get_pool_candidates()` / `count_pool_candidates()` 统一排除被惊喜通道认领的行（`delight_notified=1`，或 delight 分数达阈值且 reason/hook 非空即当前惊喜队列候选），普通推荐与惊喜推荐不再重复出同一条内容；阈值镜像 `DEFAULT_DELIGHT_THRESHOLD`（0.70），由测试锁定两边一致。 |
 
 ## 公开 API
 
