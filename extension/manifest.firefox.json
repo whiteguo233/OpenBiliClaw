@@ -34,6 +34,8 @@
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
         "*://*.youtube.com/*",
+        "*://*.x.com/*",
+        "*://*.twitter.com/*",
         "http://127.0.0.1/*",
         "http://localhost/*"
     ],
@@ -89,6 +91,27 @@
                 "content/youtube.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.x.com/*",
+                "*://*.twitter.com/*"
+            ],
+            "js": [
+                "content/x.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.x.com/*",
+                "*://*.twitter.com/*"
+            ],
+            "js": [
+                "main/x-graphql-tap.js"
+            ],
+            "run_at": "document_start",
+            "world": "MAIN"
         }
     ],
     "web_accessible_resources": [

@@ -64,7 +64,7 @@ test("startCookieSync retries quickly when the backend is not ready", async () =
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.deepEqual(alarms.at(-1), {
-    name: "openbiliclaw-cookie-sync",
+    name: "openbiliclaw-cookie-sync-bili",
     info: { delayInMinutes: 1, periodInMinutes: 1 },
   });
 });
@@ -169,7 +169,9 @@ test("cookie sync runtime event posts the current douyin cookie immediately", as
   });
 });
 
-test("cookie sync alarm refreshes bilibili and douyin cookies", async () => {
+test("legacy shared cookie sync alarm refreshes bilibili and douyin cookies", async () => {
+  // Pre-split alarms persist across extension updates — the legacy name
+  // must still trigger a full round instead of being silently dropped.
   const { handleCookieSyncAlarm } = await importCookieSync();
   installChromeMock([
     { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
@@ -195,6 +197,8 @@ test("cookie sync alarm refreshes bilibili and douyin cookies", async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(handled, true);
+  // Regression: the bilibili + douyin alarm paths still fire after adding X.
+  // (No x.com cookies installed here, so X sends nothing.)
   assert.deepEqual(
     calls.map((call) => call.url).sort(),
     [
@@ -206,4 +210,188 @@ test("cookie sync alarm refreshes bilibili and douyin cookies", async () => {
     cookie: "sessionid=dy-sess; sid_guard=dy-guard; ttwid=dy-tw",
     source: "hourly-alarm",
   });
+});
+
+test("readXCookieHeader returns the header only when auth_token and ct0 are present", async () => {
+  const { readXCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "auth_token", value: "at", domain: ".x.com" },
+    { name: "ct0", value: "csrf", domain: ".x.com" },
+    { name: "guest_id", value: "gx", domain: ".x.com" },
+  ]);
+
+  assert.equal(await readXCookieHeader(), "auth_token=at; ct0=csrf; guest_id=gx");
+});
+
+test("readXCookieHeader returns null without ct0", async () => {
+  const { readXCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "auth_token", value: "at", domain: ".x.com" },
+    { name: "guest_id", value: "gx", domain: ".x.com" },
+  ]);
+
+  assert.equal(await readXCookieHeader(), null);
+});
+
+test("readXCookieHeader returns null without auth_token", async () => {
+  const { readXCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "ct0", value: "csrf", domain: ".x.com" },
+    { name: "guest_id", value: "gx", domain: ".x.com" },
+  ]);
+
+  assert.equal(await readXCookieHeader(), null);
+});
+
+test("cookie sync runtime event posts the current x cookie immediately", async () => {
+  const { handleCookieSyncRuntimeEvent } = await importCookieSync();
+  installChromeMock([
+    { name: "auth_token", value: "at", domain: ".x.com" },
+    { name: "ct0", value: "csrf", domain: ".x.com" },
+  ]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  const handled = handleCookieSyncRuntimeEvent({
+    type: "x_cookie_sync_requested",
+    reason: "missing_cookie",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/sources/x/cookie");
+  assert.deepEqual(calls[0].body, {
+    cookie: "auth_token=at; ct0=csrf",
+    source: "runtime-stream-request",
+  });
+});
+
+test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies together", async () => {
+  const { handleCookieSyncAlarm } = await importCookieSync();
+  installChromeMock([
+    { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+    { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+    { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+    { name: "sessionid", value: "dy-sess", domain: ".douyin.com" },
+    { name: "sid_guard", value: "dy-guard", domain: ".douyin.com" },
+    { name: "ttwid", value: "dy-tw", domain: ".douyin.com" },
+    { name: "auth_token", value: "x-at", domain: ".x.com" },
+    { name: "ct0", value: "x-csrf", domain: ".x.com" },
+  ]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    if (String(url).endsWith("/api/bilibili/cookie")) {
+      return new Response(JSON.stringify({ ok: true, authenticated: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  const handled = handleCookieSyncAlarm("openbiliclaw-cookie-sync");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.deepEqual(
+    calls.map((call) => call.url).sort(),
+    [
+      "http://127.0.0.1:8420/api/bilibili/cookie",
+      "http://127.0.0.1:8420/api/sources/dy/cookie",
+      "http://127.0.0.1:8420/api/sources/x/cookie",
+    ],
+  );
+  assert.deepEqual(calls.find((call) => call.url.endsWith("/api/sources/x/cookie"))?.body, {
+    cookie: "auth_token=x-at; ct0=x-csrf",
+    source: "hourly-alarm",
+  });
+});
+
+test("per-platform alarm only syncs its own platform", async () => {
+  const { handleCookieSyncAlarm } = await importCookieSync();
+  installChromeMock([
+    { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+    { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+    { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+    { name: "sessionid", value: "dy-sess", domain: ".douyin.com" },
+    { name: "auth_token", value: "x-at", domain: ".x.com" },
+    { name: "ct0", value: "x-csrf", domain: ".x.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, authenticated: true, has_cookie: true }), {
+      status: 200,
+    });
+  };
+
+  const handled = handleCookieSyncAlarm("openbiliclaw-cookie-sync-dy");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, ["http://127.0.0.1:8420/api/sources/dy/cookie"]);
+});
+
+test("a douyin sync failure does not reschedule the bilibili alarm", async () => {
+  const { handleCookieSyncAlarm } = await importCookieSync();
+  const { alarms } = installChromeMock([
+    { name: "sessionid", value: "dy-sess", domain: ".douyin.com" },
+  ]);
+  globalThis.fetch = async () => {
+    throw new Error("backend down");
+  };
+
+  handleCookieSyncAlarm("openbiliclaw-cookie-sync-dy");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(alarms.map((alarm) => alarm.name), ["openbiliclaw-cookie-sync-dy"]);
+  assert.deepEqual(alarms.at(-1)?.info, { delayInMinutes: 1, periodInMinutes: 1 });
+});
+
+test("startCookieSync triggers an x cookie sync at startup", async () => {
+  const { startCookieSync } = await importCookieSync();
+  installChromeMock([
+    { name: "auth_token", value: "at", domain: ".x.com" },
+    { name: "ct0", value: "csrf", domain: ".x.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.ok(calls.includes("http://127.0.0.1:8420/api/sources/x/cookie"));
+});
+
+test("onChanged on an x.com session cookie schedules a sync", async () => {
+  const { startCookieSync } = await importCookieSync();
+  const { listeners } = installChromeMock([
+    { name: "auth_token", value: "at", domain: ".x.com" },
+    { name: "ct0", value: "csrf", domain: ".x.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  listeners[0]({ cookie: { name: "ct0", domain: ".x.com" }, removed: false });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  assert.ok(calls.includes("http://127.0.0.1:8420/api/sources/x/cookie"));
 });

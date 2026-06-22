@@ -488,7 +488,7 @@ def test_discovery_runtime_state_round_trips_probe_feedback_history(
     ]
 
 
-def test_discovery_runtime_state_caps_avoidance_feedback_history(
+def test_discovery_runtime_state_preserves_full_avoidance_feedback_history(
     tmp_path: Path,
 ) -> None:
     memory = MemoryManager(tmp_path)
@@ -504,8 +504,75 @@ def test_discovery_runtime_state_caps_avoidance_feedback_history(
 
     state = memory.load_discovery_runtime_state()
 
-    assert len(state["avoidance_probe_feedback_history"]) == 100
-    assert state["avoidance_probe_feedback_history"][0]["domain"] == "避雷5"
+    assert len(state["avoidance_probe_feedback_history"]) == 105
+    assert state["avoidance_probe_feedback_history"][0]["domain"] == "避雷0"
+    assert state["avoidance_probe_feedback_history"][-1]["domain"] == "避雷104"
+
+
+def test_update_discovery_runtime_state_preserves_feedback_history(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    stale = memory.load_discovery_runtime_state()
+    latest = memory.update_discovery_runtime_state(
+        lambda state: state["probe_feedback_history"].append(
+            {
+                "domain": "建筑美学",
+                "response": "confirm",
+                "created_at": "2026-06-09T10:00:00",
+            }
+        )
+    )
+    assert latest["probe_feedback_history"]
+
+    stale["probed_domains"] = {"建筑美学": "2026-06-09T10:00:01"}
+    memory.save_discovery_runtime_state(stale)
+
+    state = memory.load_discovery_runtime_state()
+    assert state["probe_feedback_history"][0]["domain"] == "建筑美学"
+    assert state["probed_domains"] == {"建筑美学": "2026-06-09T10:00:01"}
+
+
+def test_stale_discovery_runtime_save_preserves_probe_runtime_maps(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    stale = memory.load_discovery_runtime_state()
+    memory.update_discovery_runtime_state(
+        lambda state: state.setdefault("probed_domains", {}).update(
+            {"建筑美学": "2026-06-09T10:00:00"}
+        )
+    )
+
+    stale["last_notification_at"] = "2026-06-09T10:00:01"
+    memory.save_discovery_runtime_state(stale)
+
+    state = memory.load_discovery_runtime_state()
+    assert state["last_notification_at"] == "2026-06-09T10:00:01"
+    assert state["probed_domains"] == {"建筑美学": "2026-06-09T10:00:00"}
+
+
+def test_stale_discovery_runtime_save_does_not_revert_last_probe_kind(
+    tmp_path: Path,
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+
+    stale = memory.load_discovery_runtime_state()
+    stale["last_probe_kind"] = "interest"
+    memory.update_discovery_runtime_state(
+        lambda state: state.update({"last_probe_kind": "avoidance"})
+    )
+
+    stale["last_notification_at"] = "2026-06-09T10:00:01"
+    memory.save_discovery_runtime_state(stale)
+
+    state = memory.load_discovery_runtime_state()
+    assert state["last_probe_kind"] == "avoidance"
 
 
 def test_account_sync_state_defaults_when_missing(tmp_path: Path) -> None:

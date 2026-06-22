@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. Follow on x.com web is a REST v1.1 call, NOT GraphQL. Form-encoded body carries user_id; there is no tweet_id.",
+  "url": "https://x.com/i/api/1.1/friendships/create.json",
+  "requestBody": "include_profile_interstitial_type=1&include_blocking=1&user_id=44196397&skip_status=1",
+  "responseBody": "{\"id\":44196397,\"id_str\":\"44196397\",\"screen_name\":\"elonmusk\",\"following\":true}"
+}

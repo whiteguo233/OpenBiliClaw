@@ -201,9 +201,17 @@ def build_embedding_service(
         except Exception:
             logger.debug("Failed to init embedding L2 cache", exc_info=True)
 
+        output_dimensionality = _embedding_output_dimensionality(emb_cfg)
+        cache_model = _embedding_cache_model(
+            chosen_name,
+            chosen_model,
+            output_dimensionality,
+        )
+
         return EmbeddingService(
             cast("SupportsEmbed", chosen_provider),
             model=chosen_model,
+            cache_model=cache_model,
             similarity_threshold=emb_cfg.similarity_threshold,
             persistent_cache=l2_cache,
         )
@@ -225,6 +233,7 @@ def _build_dedicated_embedding_provider(
     emb_api_key = emb_cfg.api_key.strip()
     emb_base_url = emb_cfg.base_url.strip()
     fallback_enabled = bool(getattr(emb_cfg, "fallback_enabled", False))
+    output_dimensionality = _embedding_output_dimensionality(emb_cfg)
 
     # First-class path: candidate matches what the user requested AND
     # they supplied credentials in [llm.embedding].
@@ -298,6 +307,7 @@ def _build_dedicated_embedding_provider(
                 api_key=api_key,
                 model=effective_model,
                 base_url=base_url,
+                embedding_output_dimensionality=output_dimensionality,
             ),
             effective_model,
         )
@@ -308,7 +318,12 @@ def _build_dedicated_embedding_provider(
         if not api_key or not gemini_sdk_available():
             return None
         return (
-            GeminiProvider(api_key=api_key, model=effective_model),
+            GeminiProvider(
+                api_key=api_key,
+                model=effective_model,
+                base_url=base_url,
+                embedding_output_dimensionality=output_dimensionality,
+            ),
             effective_model,
         )
 
@@ -352,6 +367,37 @@ def _build_dedicated_embedding_provider(
         )
 
     return None
+
+
+def _embedding_output_dimensionality(emb_cfg: Any) -> int:
+    try:
+        return max(0, int(getattr(emb_cfg, "output_dimensionality", 1024) or 0))
+    except (TypeError, ValueError):
+        return 1024
+
+
+def _embedding_cache_model(
+    provider_name: str,
+    model: str,
+    output_dimensionality: int,
+) -> str:
+    if (
+        output_dimensionality > 0
+        and _embedding_provider_honors_output_dimensionality(provider_name, model)
+    ):
+        return f"{model}#dim={output_dimensionality}"
+    return model
+
+
+def _embedding_provider_honors_output_dimensionality(
+    provider_name: str,
+    model: str,
+) -> bool:
+    if provider_name == "gemini":
+        return True
+    if provider_name == "openai":
+        return model.startswith("text-embedding-3-")
+    return False
 
 
 def _emit_embedding_compat_warning(provider_name: str) -> None:

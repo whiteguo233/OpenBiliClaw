@@ -1,9 +1,15 @@
 name: Build Desktop Installers
 
-# Manual-only. Produces downloadable Actions ARTIFACTS (macOS .dmg / Windows
-# .exe installer) — it does NOT create a GitHub Release and is NOT triggered by
-# any tag push. Backend release policy stays "source-only"; this is just an
-# on-demand convenience build for people who want a packaged installer.
+# Manual-only. Produces downloadable Actions ARTIFACTS (macOS arm64 + Intel .dmg
+# / Windows .exe). This workflow itself does NOT create a GitHub Release and is
+# NOT triggered by any tag push (read-only token below). The backend SOURCE stays
+# "source-only" (backend-v* tags are git markers, no Release).
+#
+# For an actual published Release, push a `desktop-v*` tag → release-desktop.yml
+# auto-builds (arm64 + Windows) and publishes an experimental pre-release. This
+# manual workflow stays for ad-hoc builds — notably the Intel x64 .dmg, which
+# release-desktop.yml skips because the macos-13 runner queues too long to gate a
+# release on. Build it here on demand and attach it to the release if needed.
 on:
   workflow_dispatch:
     inputs:
@@ -18,19 +24,30 @@ permissions:
 
 jobs:
   macos:
-    name: macOS installer (.dmg, arm64)
-    runs-on: macos-latest
+    name: macOS installer (.dmg, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native per-arch builds: each bundles its own ollama + wheels. A
+          # universal2 build isn't viable because the bundled ollama binary
+          # (and some wheels) ship per-architecture only.
+          - { runner: macos-14, arch: arm64 } # Apple Silicon
+          - { runner: macos-13, arch: x64 } # Intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install project + PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pyinstaller
+          # [packaging] pulls pyinstaller + pystray + Pillow + (on macOS) pyobjc
+          # for the menu-bar tray desktop mode.
+          pip install -e ".[packaging]"
 
       - name: Install Ollama (bundled into the app for local bge-m3 embedding)
         run: brew install ollama
@@ -41,14 +58,17 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then v="${{ inputs.version }}"; else
             v="v$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
           fi
+          # Stamp the commit SHA so every build is uniquely identifiable — the
+          # installed app / .dmg name shows exactly which code it contains.
+          v="${v}.${GITHUB_SHA:0:7}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Build .app + .dmg (auto-bundles ollama)
-        run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}"
+        run: python packaging/build.py --clean --archive-version "${{ steps.ver.outputs.version }}-${{ matrix.arch }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: openbiliclaw-macos-installer
+          name: openbiliclaw-macos-installer-${{ matrix.arch }}
           path: |
             dist/release/*.dmg
             dist/release/*.zip
@@ -58,16 +78,17 @@ jobs:
     name: Windows installer (.exe)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install project + PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pyinstaller
+          # [packaging] pulls pyinstaller + pystray + Pillow (tray desktop mode).
+          pip install -e ".[packaging]"
 
       - name: Resolve version
         id: ver
@@ -76,26 +97,51 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then v="${{ inputs.version }}"; else
             v="v$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
           fi
+          # Stamp the commit SHA so the installed app's version (Programs &
+          # Features) shows exactly which code it contains — no more guessing.
+          v="${v}.${GITHUB_SHA:0:7}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "bare=${v#v}" >> "$GITHUB_OUTPUT"
+          numeric="$(python -c 'import re,sys; m=re.match(r"v?(\d+)\.(\d+)\.(\d+)", sys.argv[1]); print(f"{m.group(1)}.{m.group(2)}.{m.group(3)}.0" if m else "0.0.0.0")' "$v")"
+          echo "version_info=$numeric" >> "$GITHUB_OUTPUT"
 
       - name: PyInstaller onedir build (ollama staged separately below)
-        run: python packaging/build.py --clean --no-bundle-ollama
+        run: python packaging/build.py --clean --no-bundle-ollama --archive-version "${{ steps.ver.outputs.version }}"
 
       - name: Stage bundled Ollama (CPU runner only — bge-m3 embedding is CPU)
         shell: pwsh
         run: |
-          $ver = "0.18.2"
+          # Keep ollama current (0.18.2 was ancient). NOTE: even 0.30.6 still
+          # spawns its model runner (llama-server.exe) with its own console on
+          # Windows — the next step flips those exes to the GUI subsystem so no
+          # console window is ever allocated.
+          $ver = "0.30.6"
           Invoke-WebRequest "https://github.com/ollama/ollama/releases/download/v$ver/ollama-windows-amd64.zip" -OutFile ollama.zip
           Expand-Archive ollama.zip -DestinationPath ollama_win -Force
-          Copy-Item ollama_win\ollama.exe dist\OpenBiliClaw\ollama.exe -Force
-          if (Test-Path ollama_win\lib) {
-            Copy-Item ollama_win\lib dist\OpenBiliClaw\lib -Recurse -Force
+          # Locate ollama.exe (root of the zip historically; search as a safety
+          # net in case the layout changes), then its sibling lib/ runners.
+          $exe = Get-ChildItem ollama_win -Recurse -Filter ollama.exe | Select-Object -First 1
+          if (-not $exe) { throw "ollama.exe not found in ollama-windows-amd64.zip" }
+          Copy-Item $exe.FullName dist\OpenBiliClaw\ollama.exe -Force
+          $lib = Join-Path $exe.Directory.FullName "lib"
+          if (Test-Path $lib) {
+            Copy-Item $lib dist\OpenBiliClaw\lib -Recurse -Force
             # Drop large GPU runners; keep the installer lean (embedding runs on CPU).
             Get-ChildItem dist\OpenBiliClaw\lib\ollama -Directory -ErrorAction SilentlyContinue |
               Where-Object { $_.Name -match 'cuda|rocm' } |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
+
+      - name: Make bundled ollama windowless (PE subsystem console -> GUI)
+        shell: pwsh
+        run: |
+          # ollama spawns llama-server.exe with its own console (visible window /
+          # conhost flashing). A GUI-subsystem exe never allocates a console, so
+          # flip ollama.exe + every bundled runner exe to GUI. Doesn't affect the
+          # stdout/stderr pipes ollama reads or the runner's HTTP port.
+          $exes = @("dist\OpenBiliClaw\ollama.exe")
+          $exes += (Get-ChildItem dist\OpenBiliClaw\lib -Recurse -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+          python packaging\patch_pe_subsystem.py @exes
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -103,9 +149,9 @@ jobs:
       - name: Compile installer
         shell: pwsh
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.ver.outputs.bare }} packaging\openbiliclaw.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.ver.outputs.bare }} /DMyAppVersionInfoVersion=${{ steps.ver.outputs.version_info }} packaging\openbiliclaw.iss
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openbiliclaw-windows-installer
           path: dist/release/*.exe

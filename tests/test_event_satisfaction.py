@@ -150,3 +150,22 @@ def test_malformed_event_does_not_raise() -> None:
     )
     assert category == "unknown"
     assert reason == "fallback"
+
+
+def test_twitter_engagement_scoring_v1() -> None:
+    """X v1 mapping: like / bookmark→favorite / reply→comment score positive
+    via the existing explicit set; retweet→share and follow stay context-tier.
+
+    Regression guard — we must NEVER extend the global positive set just for X
+    (that would silently change Bilibili/Douyin/YouTube follow/share scoring).
+    """
+    for event_type in ("like", "favorite", "comment"):
+        category, _ = classify_event_satisfaction(
+            {"event_type": event_type, "metadata": {"source_platform": "twitter"}}
+        )
+        assert category == "positive"
+    for event_type in ("share", "follow"):
+        category, _ = classify_event_satisfaction(
+            {"event_type": event_type, "metadata": {"source_platform": "twitter"}}
+        )
+        assert category != "positive"

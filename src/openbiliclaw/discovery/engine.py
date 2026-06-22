@@ -275,6 +275,8 @@ class DiscoveredContent:
     source_platform: str = ""  # "bilibili" | "xiaohongshu" | "web" | ...
     author_name: str = ""  # Universal author name; equals up_name for Bilibili
     score_threshold: float = 0.0  # Strategy-specific admission floor for raw candidates
+    body_text: str = ""  # tweet/thread full text; empty for video sources
+    content_type: str = "video"  # shape: "video" | "note" | "tweet" | "thread"
 
     def __post_init__(self) -> None:
         if not self.content_id and self.bvid:
@@ -316,6 +318,8 @@ class DiscoveredContent:
             "content_id": self.content_id or self.bvid,
             "content_url": self.content_url,
             "author_name": self.author_name or self.up_name,
+            "body_text": self.body_text,
+            "content_type": self.content_type,
         }
 
 
@@ -1249,6 +1253,7 @@ class ContentDiscoveryEngine:
         source_context: str = "",
     ) -> list[float]:
         """Send one LLM call for a batch of items."""
+        from openbiliclaw.discovery.candidate_pool import resolve_content_type
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
         profile_data = build_profile_summary(profile)
@@ -1273,7 +1278,8 @@ class ContentDiscoveryEngine:
                     "source_platform": platform,
                     "source_strategy": c.source_strategy,
                     "source_context": source_context or c.source_strategy,
-                    "content_type": "note" if platform == "xiaohongshu" else "video",
+                    "content_type": resolve_content_type(c.content_type, platform),
+                    "body_text": c.body_text,
                     "title": c.title,
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,

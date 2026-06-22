@@ -42,6 +42,7 @@ class DiscoveryCandidateWrite:
     source_platform: str
     source_strategy: str
     content_type: str = "video"
+    body_text: str = ""
     bvid: str = ""
     content_id: str = ""
     content_url: str = ""
@@ -116,6 +117,22 @@ def candidate_key_for(item: DiscoveredContent) -> str:
     return f"{platform}:fallback:{digest}"
 
 
+def resolve_content_type(item_content_type: object, platform: str) -> str:
+    """Resolve a candidate's content shape, honoring an explicit value first.
+
+    ``DiscoveredContent.content_type`` defaults to ``"video"`` (the
+    platform-neutral sentinel). Sources that set a real shape — e.g. X
+    ("tweet"/"thread") — win outright. Items that left the default in
+    place fall back to the per-platform default (xiaohongshu → "note",
+    everything else → "video").
+    """
+
+    explicit = str(item_content_type or "").strip()
+    if explicit and explicit != "video":
+        return explicit
+    return "note" if platform == "xiaohongshu" else "video"
+
+
 def discovered_content_to_candidate_write(
     item: DiscoveredContent,
     *,
@@ -135,7 +152,8 @@ def discovered_content_to_candidate_write(
         candidate_key=candidate_key_for(item),
         source_platform=platform,
         source_strategy=item.source_strategy,
-        content_type="note" if platform == "xiaohongshu" else "video",
+        content_type=resolve_content_type(item.content_type, platform),
+        body_text=item.body_text,
         bvid=bvid,
         content_id=content_id or bvid,
         content_url=item.content_url,
@@ -204,4 +222,6 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         source_platform=_canonical_platform(row.get("source_platform") or "bilibili"),
         author_name=author_name,
         score_threshold=float(row.get("score_threshold") or 0.0),
+        body_text=str(row.get("body_text") or ""),
+        content_type=str(row.get("content_type") or "video"),
     )

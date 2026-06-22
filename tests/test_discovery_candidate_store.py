@@ -324,3 +324,25 @@ def test_source_cap_counts_evaluating_rows_without_deleting_them(
     ).fetchall()
     assert len(rows) == 3
     assert [row["status"] for row in rows].count("evaluating") == 2
+
+
+def test_text_candidate_round_trips_body_text_and_content_type(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    item = DiscoveredContent(
+        title="A thread on systems",
+        content_id="1790000000000000001",
+        content_url="https://x.com/handle/status/1790000000000000001",
+        source_platform="twitter",
+        source_strategy="search",
+        author_name="@handle",
+        content_type="thread",
+        body_text="1/ long-form note_tweet body ...",
+    )
+    db.enqueue_discovery_candidates([discovered_content_to_candidate_write(item)])
+    rows = db.claim_discovery_candidates_for_eval(limit=1)
+    assert rows[0]["content_type"] == "thread"
+    assert rows[0]["body_text"].startswith("1/ long-form")
+    back = row_to_discovered_content(rows[0])
+    assert back.content_type == "thread"
+    assert back.body_text.startswith("1/ long-form")

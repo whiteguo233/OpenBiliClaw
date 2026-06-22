@@ -394,21 +394,24 @@ class DyTaskQueue:
             count += 1
         return count
 
-    def next_pending(self) -> dict[str, Any] | None:
+    def next_pending(self, only_ids: set[str] | None = None) -> dict[str, Any] | None:
         stale_before = (datetime.now(UTC) - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+        # ``only_ids`` restricts which tasks may be claimed (gui-init: during an
+        # active init only init-owned bootstrap tasks are handed out). None = all.
+        where = "(status = 'pending' OR (status = 'in_progress' AND claimed_at <= ?))"
+        params: list[Any] = [stale_before]
+        if only_ids is not None:
+            ids = [str(i) for i in only_ids]
+            if not ids:
+                return None
+            where += f" AND id IN ({','.join('?' * len(ids))})"
+            params.extend(ids)
         conn = self._db.open_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                """
-                SELECT *
-                FROM dy_tasks
-                WHERE status = 'pending'
-                   OR (status = 'in_progress' AND claimed_at <= ?)
-                ORDER BY created_at ASC
-                LIMIT 1
-                """,
-                (stale_before,),
+                f"SELECT * FROM dy_tasks WHERE {where} ORDER BY created_at ASC LIMIT 1",
+                params,
             ).fetchone()
             if row is None:
                 conn.commit()

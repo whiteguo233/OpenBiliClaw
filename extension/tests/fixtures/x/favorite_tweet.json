@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. queryId is rotated by X; the parser matches the FavoriteTweet operation name, not this id.",
+  "url": "https://x.com/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+  "requestBody": "{\"variables\":{\"tweet_id\":\"1790000000000000001\"},\"queryId\":\"lI07N6Otwv1PhnEgXILM7A\"}",
+  "responseBody": "{\"data\":{\"favorite_tweet\":\"Done\"}}"
+}

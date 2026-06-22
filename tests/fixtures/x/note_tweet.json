@@ -1,0 +1,30 @@
+{
+  "id": "1790000000000000002",
+  "text": "I wrote a long-form piece on distributed systems consensus. Read the whole thing below 👇",
+  "author": {
+    "id": "12",
+    "name": "Systems Person",
+    "screenName": "systemsperson",
+    "profileImageUrl": "https://pbs.twimg.com/profile_images/systemsperson.jpg",
+    "verified": false
+  },
+  "metrics": {
+    "likes": 4200,
+    "retweets": 870,
+    "replies": 130,
+    "quotes": 44,
+    "views": 512000,
+    "bookmarks": 9100
+  },
+  "createdAt": "Sat Jun 07 09:00:00 +0000 2026",
+  "createdAtLocal": "2026-06-07 17:00:00",
+  "createdAtISO": "2026-06-07T09:00:00Z",
+  "media": [],
+  "urls": [],
+  "isRetweet": false,
+  "retweetedBy": null,
+  "lang": "en",
+  "score": 0.0,
+  "articleTitle": "A Practical Guide to Consensus",
+  "articleText": "Consensus is the heart of any distributed system. In this note I walk through Paxos, Raft, and the trade-offs that matter in production. The short version of the headline tweet does it no justice — the real content is here, spanning several thousand characters of detail about leader election, log replication, and failure modes."
+}

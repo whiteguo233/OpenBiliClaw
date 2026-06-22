@@ -45,6 +45,43 @@ class HealthResponse(BaseModel):
     embedding_ready: bool | None = None
 
 
+class InitStageOut(BaseModel):
+    """One stage of guided init (gui-init spec API shape)."""
+
+    n: int
+    label: str
+    status: str  # pending | running | ok | warning | failed
+    reason: str | None = None
+
+
+class InitPrerequisitesOut(BaseModel):
+    """Pre-init checklist surfaced to the UI."""
+
+    bilibili_logged_in: bool = False
+    bilibili_check: str = "checking"  # ok | failed | checking
+    llm_ready: bool = False
+    embedding_ready: bool = False
+    enabled_platforms: list[str] = Field(default_factory=list)
+
+
+class InitStatusOut(BaseModel):
+    """Authoritative guided-init status / progress (gui-init spec API shape)."""
+
+    initialized: bool = False
+    running: bool = False
+    run_id: str | None = None
+    sequence: int = 0
+    current_stage: int = 0
+    total_stages: int = 4
+    stages: list[InitStageOut] = Field(default_factory=list)
+    partial_success: bool = False
+    can_start: bool = False
+    can_manage: bool = False
+    prerequisites: InitPrerequisitesOut = Field(default_factory=InitPrerequisitesOut)
+    reason: str = "none"
+    detail: str = ""
+
+
 class RecommendationOut(BaseModel):
     """Recommendation payload exposed to the popup."""
 
@@ -61,6 +98,11 @@ class RecommendationOut(BaseModel):
     content_id: str = ""
     content_url: str = ""
     source_platform: str = ""
+    # Text-first sources (X tweet/thread): the popup renders a no-cover
+    # text card from body_text/title when content_type is tweet/thread or
+    # cover_url is empty.
+    content_type: str = "video"
+    body_text: str = ""
 
 
 class RecommendationListResponse(BaseModel):
@@ -113,6 +155,7 @@ class RuntimeStatusResponse(BaseModel):
     last_account_sync_at: str = ""
     last_account_sync_error: str = ""
     auto_update_enabled: bool = False
+    install_mode: str = ""
     current_version: str = ""
     latest_remote_version: str = ""
     last_update_check_at: str = ""
@@ -271,6 +314,92 @@ class DouyinCookieResponse(BaseModel):
     cookie_names: list[str] = Field(default_factory=list)
     message: str = ""
     error_code: str = ""
+
+
+class XCookieIn(BaseModel):
+    """Cookie sync payload for X (Twitter) server-side cookie-replay discovery."""
+
+    cookie: str = Field(
+        ...,
+        description="Cookie header string from x.com.",
+        min_length=1,
+    )
+    source: str = Field(
+        default="extension",
+        description="Where the cookie came from. Used for telemetry only.",
+    )
+
+
+class XCookieResponse(BaseModel):
+    """Result of syncing an X (Twitter) Cookie header.
+
+    ``has_cookie`` is true only when BOTH ``auth_token`` and ``ct0`` are
+    present — twitter-cli needs both to authenticate.
+    """
+
+    ok: bool
+    has_cookie: bool
+    cookie_names: list[str] = Field(default_factory=list)
+    message: str = ""
+    error_code: str = ""
+
+
+class XStatusResponse(BaseModel):
+    """Current X (Twitter) source health (spec §7).
+
+    ``state`` is one of ``ok`` / ``missing_cookie`` / ``expired_cookie`` /
+    ``rate_limited`` / ``blocked``. ``feed_paused`` is true when repeated
+    For-You failures have auto-paused the high-visibility home-timeline fetch.
+    """
+
+    state: str = "ok"
+    consecutive_failures: int = 0
+    feed_paused: bool = False
+    cooldown_until: str = ""
+    detail: str = ""
+    updated_at: str = ""
+
+
+class SourceStatusItem(BaseModel):
+    """Unified per-source login / cookie readiness (settings pages).
+
+    ``state`` is a coarse, source-agnostic status so every platform can render
+    the same chip:
+
+    - ``ok``         — credential present AND live-validated (X only, from the
+      health store).
+    - ``ready``      — credential present and structurally valid, but not
+      live-validated (B站 cookie with login fields, 抖音 cookie present, 小红书
+      access tokens synced).
+    - ``missing``    — source enabled but no usable credential.
+    - ``expired`` / ``rate_limited`` / ``blocked`` — X live-health states.
+    - ``no_auth``    — source needs no login (YouTube, public).
+
+    ``logged_in`` is a convenience flag (``state in {ok, ready, no_auth}``) so
+    the UI can pick a dot colour without re-deriving the rule.
+    """
+
+    enabled: bool = False
+    state: str = "missing"
+    detail: str = ""
+    logged_in: bool = False
+    feed_paused: bool = False
+
+
+class SourcesStatusResponse(BaseModel):
+    """Login / cookie readiness for every content source, keyed by platform.
+
+    Backs the unified status chip shown on both the desktop-Web and the
+    extension settings pages. Derived entirely from local signals (config
+    cookie fields, the X health store, the Douyin cookie file/env, and the
+    count of token-bearing 小红书 cache rows) — no outbound platform calls.
+    """
+
+    bilibili: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    xiaohongshu: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    douyin: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -655,6 +784,7 @@ class EmbeddingConfigOut(BaseModel):
     # v0.3.32+ embedding owns its own credentials; api_key is masked.
     api_key: str = ""
     base_url: str = ""
+    output_dimensionality: int = 1024
     similarity_threshold: float = 0.82
     fallback_enabled: bool = False
     fallback_provider: str = ""
@@ -666,7 +796,7 @@ class ModuleLLMConfigOut(BaseModel):
 
 
 class LLMConfigOut(BaseModel):
-    default_provider: str = "openai"
+    default_provider: str = "deepseek"
     concurrency: int = 3
     timeout: int = 300
     fallback_enabled: bool = False
@@ -712,6 +842,10 @@ class XiaohongshuSourceConfigOut(BaseModel):
 class DouyinSourceConfigOut(BaseModel):
     enabled: bool = False
     mode: str = "direct"
+    # Resolved Cookie header (env override, else data/douyin_cookie.json).
+    # Read-only mirror for the settings pages — masked unless reveal_keys.
+    # PUT routes a non-empty value to DouyinCookieManager, never config.toml.
+    cookie: str = ""
     cookie_env: str = "OPENBILICLAW_DOUYIN_COOKIE"
     daily_search_budget: int = 0
     daily_hot_budget: int = 0
@@ -728,12 +862,28 @@ class YoutubeSourceConfigOut(BaseModel):
     min_interval_minutes: int = 60
 
 
+class TwitterSourceConfigOut(BaseModel):
+    enabled: bool = False
+    mode: str = "cookie"
+    # Resolved Cookie header (env override, else data/x_cookie.json).
+    # Read-only mirror for the settings pages — masked unless reveal_keys.
+    # PUT routes a non-empty value to XCookieManager, never config.toml.
+    cookie: str = ""
+    cookie_env: str = "OPENBILICLAW_X_COOKIE"
+    daily_search_budget: int = 0
+    daily_feed_budget: int = 0
+    daily_creator_budget: int = 0
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
     xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+    twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):
@@ -746,6 +896,7 @@ class SchedulerConfigOut(BaseModel):
     account_sync_interval_hours: int = 6
     refresh_check_interval_seconds: int = 60
     signal_event_threshold: int = 6
+    feedback_batch_threshold: int = 3
     trending_refresh_hours: int = 3
     explore_refresh_hours: int = 12
     discovery_limit: int = 30
@@ -772,6 +923,7 @@ class SchedulerConfigOut(BaseModel):
 class BackendUpdateStatusOut(BaseModel):
     state: str = "unknown"
     auto_update_enabled: bool = False
+    install_mode: str = ""
     current_version: str = ""
     latest_version: str = ""
     latest_tag: str = ""
@@ -875,6 +1027,25 @@ class ConfigUpdateIn(BaseModel):
     scheduler: dict[str, object] | None = None
     storage: dict[str, object] | None = None
     logging: dict[str, object] | None = None
+
+
+class ConfigServiceProbeIn(BaseModel):
+    """No-write request to probe the submitted LLM or embedding config."""
+
+    kind: Literal["llm", "embedding"]
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+class ConfigServiceProbeResponse(BaseModel):
+    """Result of a user-triggered provider connectivity probe."""
+
+    ok: bool
+    kind: Literal["llm", "embedding"]
+    provider: str = ""
+    model: str = ""
+    message: str = ""
+    error: str = ""
+    latency_ms: int = 0
 
 
 class SourceShareSuggestionIn(BaseModel):

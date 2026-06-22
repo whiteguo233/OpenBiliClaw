@@ -1,4 +1,5 @@
 import {
+  buildStaleProbeResponseState,
   buildImageProxyPath,
   getActivityCardState,
   buildFeedbackPayload,
@@ -15,6 +16,7 @@ import {
   getNextExpandedCognitionIndex,
   getManualRefreshResultHint,
   getReadyRecommendationHint,
+  getRecommendationCardKind,
   getHintBannerState,
   getRuntimeRefreshSubmissionState,
   getPopupState,
@@ -23,14 +25,28 @@ import {
   mergeRuntimeStatusEvent,
   mergeDelightCandidate,
   normalizeActivityFeed,
+  normalizeProbeType,
   normalizeRuntimeStatus,
   normalizeProfileSummary,
+  probeMessageKey,
+  shouldDisplayProbeFromWebSocket,
+  shouldHydrateProbe,
   shouldAutoLoadRecommendations,
   shouldFetchProfileSummary,
   shouldSubmitChatOnEnter,
   validateCommentInput,
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
+import {
+  buildInitChecklist,
+  describeInitReason,
+  describeInitStartError,
+  initProgressView,
+  INIT_SOURCE_OPTIONS,
+  INIT_SOURCE_LOGIN_HINT,
+  initSourceLabels,
+  initSelectedSourcesNeedingEnable,
+} from "./popup-init-control.js";
 import {
   getBackendBaseUrl,
   getBackendEndpointConfig,
@@ -62,13 +78,17 @@ import {
   fetchChatTurns,
   fetchConfig,
   fetchHealth,
+  fetchInitStatus,
   fetchPendingDelight,
   fetchPendingDelightBatch,
   fetchProfileSummary,
   fetchRecommendations,
   fetchRuntimeStatus,
   fetchSourceShareSuggestion,
+  fetchSourcesStatus,
   markDelightSent,
+  probeConfigService,
+  startInit,
   readCachedConfigSnapshot,
   reportRecommendationClick,
   reshuffleRecommendations,
@@ -129,6 +149,7 @@ const state = {
   refreshStatusMessage: "",
   pendingProbe: null,
   pendingAvoidanceProbe: null,
+  handledProbeKeys: new Set(),
   messages: [],
 };
 
@@ -142,6 +163,7 @@ let manualRefreshInFlight = false;
 let activityFeedRefreshTimer = null;
 let activityFeedRefreshInFlight = false;
 let activityFeedRefreshPending = false;
+let hasRuntimeStreamConnected = false;
 
 const elements = {
   content: document.querySelector(".content"),
@@ -156,6 +178,14 @@ const elements = {
   emptyState: document.getElementById("emptyState"),
   emptyTitle: document.getElementById("emptyTitle"),
   emptyText: document.getElementById("emptyText"),
+  initPanel: document.getElementById("initPanel"),
+  initSources: document.getElementById("initSources"),
+  initChecklist: document.getElementById("initChecklist"),
+  initProgress: document.getElementById("initProgress"),
+  initProgressBar: document.getElementById("initProgressBar"),
+  initProgressLabel: document.getElementById("initProgressLabel"),
+  initStartBtn: document.getElementById("initStartBtn"),
+  initStartReason: document.getElementById("initStartReason"),
   list: document.getElementById("recommendationList"),
   refreshRecommendationsButton: document.getElementById("refreshRecommendationsButton"),
   poolStatus: document.getElementById("poolStatus"),
@@ -213,6 +243,8 @@ const elements = {
   chatSendButton: document.getElementById("chatSendButton"),
   chatStatus: document.getElementById("chatStatus"),
   openWebButton: document.getElementById("openWebButton"),
+  starButton: document.getElementById("starButton"),
+  starCount: document.getElementById("starCount"),
   mobileQrButton: document.getElementById("mobileQrButton"),
   mobileQrOverlay: document.getElementById("mobileQrOverlay"),
   mobileQrBack: document.getElementById("mobileQrBack"),
@@ -689,12 +721,299 @@ function showRecommendationEmptyState(title, message) {
   elements.emptyState.hidden = false;
   elements.emptyTitle.textContent = title;
   elements.emptyText.textContent = message;
+  // The guided-init panel is only for the uninitialized state; the
+  // uninitialized branch re-shows it via renderInitPanelIdle().
+  if (elements.initPanel instanceof HTMLElement) {
+    elements.initPanel.hidden = true;
+  }
 }
 
 function hideRecommendationEmptyState() {
   if (elements.emptyState instanceof HTMLElement) {
     elements.emptyState.hidden = true;
   }
+  if (elements.initPanel instanceof HTMLElement) {
+    elements.initPanel.hidden = true;
+  }
+  clearInitPolling();
+}
+
+// ── Guided init (gui-init F1) ──────────────────────────────────────────────
+let initPollTimer = null;
+
+function clearInitPolling() {
+  if (initPollTimer != null) {
+    clearTimeout(initPollTimer);
+    initPollTimer = null;
+  }
+}
+
+function _setInitStartButton(label, enabled) {
+  if (!(elements.initStartBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+  elements.initStartBtn.textContent = label;
+  elements.initStartBtn.disabled = !enabled;
+  if (!elements.initStartBtn.dataset.bound) {
+    elements.initStartBtn.dataset.bound = "1";
+    elements.initStartBtn.addEventListener("click", () => {
+      void handleStartInitClick();
+    });
+  }
+}
+
+function _setInitReason(text) {
+  if (elements.initStartReason instanceof HTMLElement) {
+    elements.initStartReason.textContent = text || "";
+    elements.initStartReason.hidden = !text;
+  }
+}
+
+function _renderInitChecklist(status) {
+  // Show the prereq checklist (red ✗ / green ✓ / soft •) — only surfaced AFTER a
+  // click whose check failed, so the user sees exactly what to fix.
+  if (!(elements.initChecklist instanceof HTMLElement)) {
+    return;
+  }
+  elements.initChecklist.replaceChildren();
+  for (const row of buildInitChecklist(status)) {
+    const li = document.createElement("li");
+    li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
+    const head = document.createElement("div");
+    head.className = "init-row";
+    const mark = document.createElement("span");
+    mark.className = "init-mark";
+    mark.textContent = row.ok ? "✓" : row.hard ? "✗" : "•";
+    const label = document.createElement("span");
+    label.textContent = row.label;
+    head.append(mark, label);
+    li.append(head);
+    if (!row.ok && row.hint) {
+      const hint = document.createElement("p");
+      hint.className = "init-hint";
+      hint.textContent = row.hint;
+      li.append(hint);
+    }
+    elements.initChecklist.append(li);
+  }
+}
+
+// Render the platform-source checkboxes (gui-init: per-run source selection).
+// Bilibili is the required base (checked + disabled); the rest are opt-in. The
+// list is static so the idle panel paints instantly — eligibility (config
+// enabled + logged in) is validated on click, not via a slow upfront probe.
+function _renderInitSources() {
+  if (!(elements.initSources instanceof HTMLElement)) {
+    return;
+  }
+  elements.initSources.replaceChildren();
+  const title = document.createElement("p");
+  title.className = "init-sources-title";
+  title.textContent = "选择初始化数据来源";
+  elements.initSources.append(title);
+  for (const opt of INIT_SOURCE_OPTIONS) {
+    const row = document.createElement("label");
+    row.className = `init-source-row${opt.required ? " init-source-required" : ""}`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = opt.key;
+    box.dataset.initSource = opt.key;
+    box.checked = Boolean(opt.required);
+    box.disabled = Boolean(opt.required);
+    const span = document.createElement("span");
+    span.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+    row.append(box, span);
+    elements.initSources.append(row);
+  }
+  const hint = document.createElement("p");
+  hint.className = "init-sources-hint";
+  hint.textContent = INIT_SOURCE_LOGIN_HINT;
+  elements.initSources.append(hint);
+  elements.initSources.hidden = false;
+}
+
+// Read the currently-checked source keys (bilibili always included as the base).
+function _readSelectedInitSources() {
+  const selected = [];
+  if (elements.initSources instanceof HTMLElement) {
+    for (const box of elements.initSources.querySelectorAll("input[data-init-source]")) {
+      if (box.checked) {
+        selected.push(box.value);
+      }
+    }
+  }
+  if (!selected.includes("bilibili")) {
+    selected.push("bilibili");
+  }
+  return selected;
+}
+
+// Idle entry: source checkboxes + the actionable button + a one-line note.
+// Conditions are checked ON CLICK (no slow upfront probe / blank panel);
+// failures are surfaced only after a click that doesn't pass.
+function renderInitPanelIdle() {
+  if (!(elements.initPanel instanceof HTMLElement)) {
+    return;
+  }
+  elements.initPanel.hidden = false;
+  _renderInitSources();
+  if (elements.initChecklist instanceof HTMLElement) {
+    elements.initChecklist.replaceChildren();
+    const li = document.createElement("li");
+    li.className = "init-hint-row";
+    li.textContent = "点「开始初始化」会先检查 B 站登录 / AI 服务 / 向量模型，全部通过才开始。";
+    elements.initChecklist.append(li);
+  }
+  if (elements.initProgress instanceof HTMLElement) {
+    elements.initProgress.hidden = true;
+  }
+  _setInitStartButton("开始初始化", true);
+  _setInitReason("");
+}
+
+function renderInitProgress(status) {
+  if (!(elements.initPanel instanceof HTMLElement)) {
+    return;
+  }
+  elements.initPanel.hidden = false;
+  // Source selection is an idle-only affordance; hide it once a run is shown.
+  if (elements.initSources instanceof HTMLElement) {
+    elements.initSources.hidden = true;
+  }
+  if (elements.initChecklist instanceof HTMLElement) {
+    elements.initChecklist.replaceChildren();
+  }
+  const progress = initProgressView(status);
+  if (elements.initProgress instanceof HTMLElement) {
+    elements.initProgress.hidden = false;
+    if (elements.initProgressBar instanceof HTMLElement) {
+      elements.initProgressBar.style.width = `${progress.pct}%`;
+    }
+    if (elements.initProgressLabel instanceof HTMLElement) {
+      elements.initProgressLabel.textContent = progress.failed
+        ? `初始化未完成：${describeInitReason(status && status.reason) || progress.failedReason || "请稍后重试"}`
+        : progress.active
+          ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）`
+          : "初始化完成！";
+    }
+  }
+  if (progress.active) {
+    _setInitStartButton("初始化进行中…", false);
+    _setInitReason("");
+  } else if (progress.failed) {
+    _setInitStartButton("重试初始化", true);
+    _setInitReason("");
+  } else {
+    _setInitStartButton("已初始化", false);
+    _setInitReason("");
+  }
+}
+
+// Poll init-status while a run is in progress; on terminal, reload (success) or
+// leave the failure reason on screen with the button re-enabled for a retry.
+async function pollInitProgress() {
+  let status = null;
+  try {
+    status = await fetchInitStatus();
+  } catch {
+    clearInitPolling();
+    initPollTimer = setTimeout(() => {
+      void pollInitProgress();
+    }, 3000);
+    return;
+  }
+  renderInitProgress(status);
+  if (status.running) {
+    clearInitPolling();
+    initPollTimer = setTimeout(() => {
+      void pollInitProgress();
+    }, 3000);
+    return;
+  }
+  clearInitPolling();
+  if (status.initialized) {
+    state.profileLoaded = false;
+    setHint("初始化完成！正在加载画像和推荐…", "success");
+    scheduleRecommendationsRefresh();
+    void loadProfileSummary({ force: true });
+  }
+}
+
+function _startInitProgressPoll() {
+  clearInitPolling();
+  initPollTimer = setTimeout(() => {
+    void pollInitProgress();
+  }, 1200);
+}
+
+// THE click handler: run the condition checks on demand. If anything fails,
+// surface the checklist + reason and do NOT initialize; only start init when
+// every condition passes (gui-init: user-requested click-driven gating).
+async function handleStartInitClick() {
+  // Snapshot the source selection BEFORE we replace the panel contents.
+  const selectedSources = _readSelectedInitSources();
+  _setInitStartButton("检查中…", false);
+  _setInitReason("");
+  if (elements.initChecklist instanceof HTMLElement) {
+    elements.initChecklist.replaceChildren();
+    const li = document.createElement("li");
+    li.className = "init-checking";
+    li.textContent = "正在检查 B 站登录 / AI 服务 / 向量模型（实时请求测试，可能要十几秒）…";
+    elements.initChecklist.append(li);
+  }
+
+  let status = null;
+  try {
+    status = await fetchInitStatus();
+  } catch {
+    renderInitPanelIdle();
+    _setInitReason("前置检查没拉到（后端可能在忙），稍后再点「开始初始化」。");
+    return;
+  }
+
+  // Already running (double-click / a run started elsewhere) → show progress.
+  if (status.running) {
+    renderInitProgress(status);
+    _startInitProgressPoll();
+    return;
+  }
+
+  // The user checked a platform that isn't enabled in settings — the backend
+  // would silently drop it, so guide them to enable it (or uncheck) instead.
+  const needEnable = initSelectedSourcesNeedingEnable(selectedSources, status);
+  if (needEnable.length > 0) {
+    _renderInitChecklist(status);
+    _setInitStartButton("开始初始化", true);
+    _setInitReason(
+      `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到设置开启对应平台，或取消勾选后再点一次。`,
+    );
+    return;
+  }
+
+  // Conditions not met → show exactly what failed; do NOT initialize.
+  if (!status.can_start) {
+    _renderInitChecklist(status);
+    _setInitStartButton("开始初始化", true);
+    _setInitReason(
+      describeInitReason(status.reason) || "以下条件未满足，无法开始初始化，补齐后再点一次。",
+    );
+    return;
+  }
+
+  // All conditions pass → start with the chosen sources. The backend
+  // re-validates in its critical section, so a race can still 409 — surface
+  // that and let the user retry.
+  try {
+    await startInit({ force: false, sources: selectedSources });
+  } catch (error) {
+    _renderInitChecklist(status);
+    _setInitStartButton("开始初始化", true);
+    _setInitReason(describeInitStartError(error));
+    return;
+  }
+  setHint("初始化已开始，正在拉取数据…", "info");
+  renderInitProgress({ running: true, current_stage: 1, total_stages: 4, stages: [] });
+  _startInitProgressPoll();
 }
 
 function renderPoolStatus(runtimeStatus) {
@@ -918,10 +1237,6 @@ async function runScheduledActivityFeedRefresh() {
   }
 }
 
-function normalizeProbeType(type) {
-  return type === "avoidance.probe" ? "avoidance.probe" : "interest.probe";
-}
-
 function isAvoidanceProbeType(type) {
   return normalizeProbeType(type) === "avoidance.probe";
 }
@@ -931,14 +1246,43 @@ function isChallengeProbe(probe) {
   return Boolean(probe?.challenge) || mode === "lateral" || mode === "bridge" || mode === "wildcard";
 }
 
-function probeMessageKey(type, domain) {
-  return `${normalizeProbeType(type)}:${String(domain || "")}`;
+function rememberHandledProbe(domain, type = "interest.probe") {
+  const key = probeMessageKey(type, domain);
+  if (key) {
+    state.handledProbeKeys.add(key);
+  }
+  return key;
+}
+
+function forgetHandledProbe(domain, type = "interest.probe") {
+  const key = probeMessageKey(type, domain);
+  if (key) {
+    state.handledProbeKeys.delete(key);
+  }
+}
+
+function applyStaleProbeResponse(domain, type = "interest.probe") {
+  const nextState = buildStaleProbeResponseState({
+    messages: state.messages,
+    pendingProbe: state.pendingProbe,
+    pendingAvoidanceProbe: state.pendingAvoidanceProbe,
+    domain,
+    type,
+  });
+  if (nextState.handledKey) {
+    state.handledProbeKeys.add(nextState.handledKey);
+  }
+  state.messages = nextState.messages;
+  state.pendingProbe = nextState.pendingProbe;
+  state.pendingAvoidanceProbe = nextState.pendingAvoidanceProbe;
+  updateMessageBadge();
 }
 
 function addProbeMessage(event, type = event?.type) {
   if (!event?.domain) return;
   const normalizedType = normalizeProbeType(type);
   const key = probeMessageKey(normalizedType, event.domain);
+  if (state.handledProbeKeys.has(key)) return;
   if (state.messages.some((m) => probeMessageKey(m?.type, m?.domain) === key)) return;
   state.messages.push({ ...event, type: normalizedType });
   updateMessageBadge();
@@ -996,12 +1340,18 @@ function connectRuntimeStream() {
         void loadProfileSummary({ force: true });
       }
       // Probe events: add to messages inbox
-      if (event.type === "interest.probe" && event.domain) {
+      if (
+        event.type === "interest.probe" &&
+        shouldDisplayProbeFromWebSocket(event, "interest.probe", state.handledProbeKeys)
+      ) {
         state.pendingProbe = event;
         addProbeMessage(event, "interest.probe");
         renderProbeCard();
       }
-      if (event.type === "avoidance.probe" && event.domain) {
+      if (
+        event.type === "avoidance.probe" &&
+        shouldDisplayProbeFromWebSocket(event, "avoidance.probe", state.handledProbeKeys)
+      ) {
         state.pendingAvoidanceProbe = event;
         addProbeMessage(event, "avoidance.probe");
         void loadProfileSummary({ force: true });
@@ -1034,6 +1384,11 @@ function connectRuntimeStream() {
       ) {
         setHint(String(event.message || ""), "success");
       }
+      // Live guided-init progress (gui-init F1): drive the recommend-tab
+      // progress bar from the run's stage events.
+      if (event.type === "init_progress" || event.type === "init_failed") {
+        void pollInitProgress();
+      }
       // Init completed: re-fetch everything including profile
       if (event.type === "init_completed") {
         state.profileLoaded = false;
@@ -1054,9 +1409,12 @@ function connectRuntimeStream() {
       if (!state.online) {
         state.online = true;
         setStatus(true);
-        setHint("后端重新连上了，正在刷新。", "success");
-        scheduleRecommendationsRefresh({ delayMs: 0 });
+        if (hasRuntimeStreamConnected) {
+          setHint("后端重新连上了，正在刷新。", "success");
+          scheduleRecommendationsRefresh({ delayMs: 0 });
+        }
       }
+      hasRuntimeStreamConnected = true;
     },
     onDisconnect() {
       if (state.online) {
@@ -1238,8 +1596,12 @@ function renderSpeculativeInterests(container, items, { kind = "interest" } = {}
     return;
   }
   const isAvoidance = kind === "avoidance";
+  const probeType = isAvoidance ? "avoidance.probe" : "interest.probe";
+  const visibleItems = Array.isArray(items)
+    ? items.filter((item) => shouldHydrateProbe(item, probeType, state.handledProbeKeys))
+    : [];
   container.replaceChildren();
-  if (!items || items.length === 0) {
+  if (visibleItems.length === 0) {
     const fallback = document.createElement("p");
     fallback.className = "is-fallback";
     fallback.textContent = isAvoidance ? "暂时没有待确认避雷方向。" : "暂时没有在试探的方向，过一阵会有的。";
@@ -1253,7 +1615,7 @@ function renderSpeculativeInterests(container, items, { kind = "interest" } = {}
     deprecated: "已弃",
     rejected: "已排除",
   };
-  for (const item of items) {
+  for (const item of visibleItems) {
     const row = document.createElement("div");
     row.className = `speculative-item is-status-${item.status || "active"}`;
     if (item.status) {
@@ -1357,6 +1719,7 @@ function renderSpeculativeInterests(container, items, { kind = "interest" } = {}
 async function handleSpecResponse(domain, responseType, rowEl, type = "interest.probe") {
   if (!domain) return;
   const isAvoidance = isAvoidanceProbeType(type);
+  rememberHandledProbe(domain, type);
   // Disable buttons immediately so double-click can't fire twice.
   if (rowEl instanceof HTMLElement) {
     rowEl.querySelectorAll(".probe-btn").forEach((b) => {
@@ -1365,7 +1728,15 @@ async function handleSpecResponse(domain, responseType, rowEl, type = "interest.
   }
   try {
     const respond = isAvoidance ? respondToAvoidanceProbe : respondToInterestProbe;
-    await respond(domain, responseType);
+    const apiResp = await respond(domain, responseType);
+    if (apiResp && apiResp.ok === false) {
+      if (rowEl instanceof HTMLElement) {
+        rowEl.remove();
+      }
+      applyStaleProbeResponse(domain, type);
+      await loadProfileSummary({ force: true });
+      return;
+    }
     if (rowEl instanceof HTMLElement) {
       rowEl.replaceChildren();
       const msg = document.createElement("p");
@@ -1389,6 +1760,7 @@ async function handleSpecResponse(domain, responseType, rowEl, type = "interest.
     }, 2200);
   } catch (err) {
     console.error("spec response failed:", err);
+    forgetHandledProbe(domain, type);
     if (rowEl instanceof HTMLElement) {
       rowEl.querySelectorAll(".probe-btn").forEach((b) => {
         if (b instanceof HTMLButtonElement) b.disabled = false;
@@ -1480,8 +1852,17 @@ async function handleProbeResponse(responseType) {
     return;
   }
 
+  rememberHandledProbe(domain, "interest.probe");
   try {
-    await respondToInterestProbe(domain, responseType);
+    const apiResp = await respondToInterestProbe(domain, responseType);
+    if (apiResp && apiResp.ok === false) {
+      if (probeCard) {
+        probeCard.remove();
+      }
+      applyStaleProbeResponse(domain, "interest.probe");
+      await loadProfileSummary({ force: true });
+      return;
+    }
 
     // Show feedback
     if (probeCard) {
@@ -1507,6 +1888,7 @@ async function handleProbeResponse(responseType) {
     }, 2700);
   } catch (err) {
     console.error("Failed to respond to probe:", err);
+    forgetHandledProbe(domain, "interest.probe");
   }
 }
 
@@ -1580,6 +1962,92 @@ function openMobileWebUrl(url) {
     // Fall back to window.open below.
   }
   window.open(url, "_blank", "noopener");
+}
+
+const STAR_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw";
+
+// Wire the persistent header Star button: always present, opens the repo so the
+// user can give a GitHub Star.
+const STAR_REPO_SLUG = "whiteguo233/OpenBiliClaw";
+const STAR_COUNT_CACHE_KEY = "obc:starCount";
+const STAR_COUNT_TTL_MS = 12 * 60 * 60 * 1000;
+
+function _formatStarCount(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) {
+    return "";
+  }
+  if (n >= 10000) {
+    return `${(n / 1000).toFixed(0)}k`;
+  }
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  }
+  return String(n);
+}
+
+function _showStarCount(n) {
+  const el = elements.starCount;
+  const text = _formatStarCount(n);
+  if (el instanceof HTMLElement && text) {
+    el.textContent = text;
+    el.hidden = false;
+  }
+}
+
+// Fetch + cache the GitHub stargazers count for the count box (the GitHub-Buttons
+// look). api.github.com sends CORS `*`, so no host permission is needed; the
+// count is cached in localStorage so we don't hit the unauthenticated rate limit.
+async function loadStarCount() {
+  if (!(elements.starCount instanceof HTMLElement)) {
+    return;
+  }
+  let cachedTime = 0;
+  try {
+    const raw = localStorage.getItem(STAR_COUNT_CACHE_KEY);
+    if (raw) {
+      const { n, t } = JSON.parse(raw);
+      if (typeof n === "number") {
+        _showStarCount(n);
+        cachedTime = typeof t === "number" ? t : 0;
+      }
+    }
+  } catch {
+    cachedTime = 0;
+  }
+  if (Date.now() - cachedTime < STAR_COUNT_TTL_MS) {
+    return; // cached value is fresh enough
+  }
+  try {
+    const res = await fetch(`https://api.github.com/repos/${STAR_REPO_SLUG}`, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) {
+      return;
+    }
+    const data = await res.json();
+    const n = data?.stargazers_count;
+    if (typeof n === "number") {
+      _showStarCount(n);
+      try {
+        localStorage.setItem(STAR_COUNT_CACHE_KEY, JSON.stringify({ n, t: Date.now() }));
+      } catch {
+        // storage full / unavailable → just skip caching
+      }
+    }
+  } catch {
+    // offline / rate-limited → keep the button without a count
+  }
+}
+
+function bindStarButton() {
+  const { starButton } = elements;
+  if (!(starButton instanceof HTMLElement)) {
+    return;
+  }
+  starButton.addEventListener("click", () => {
+    openMobileWebUrl(STAR_REPO_URL);
+  });
+  void loadStarCount();
 }
 
 async function renderMobileQrPanel() {
@@ -2105,6 +2573,7 @@ async function sendInlineChat(itemEl, domain, input, sendBtn, type = "interest.p
 
   sendBtn.disabled = true;
   const turnId = createClientTurnId(isAvoidance ? "avoidance_probe" : "probe");
+  rememberHandledProbe(domain, type);
 
   // Show a thinking placeholder so the user knows we\u2019re waiting
   // on the LLM. The composer\u2019s send button alone going gray
@@ -2156,6 +2625,7 @@ async function sendInlineChat(itemEl, domain, input, sendBtn, type = "interest.p
     }
   } catch (err) {
     console.error("Inline chat failed:", err);
+    forgetHandledProbe(domain, type);
     thinking.remove();
     sendBtn.disabled = false;
     // Show error hint inline
@@ -2179,6 +2649,7 @@ function dismissMessage(domain, type = "") {
 
 async function handleMessageResponse(domain, responseType, type = "interest.probe") {
   const isAvoidance = isAvoidanceProbeType(type);
+  rememberHandledProbe(domain, type);
   try {
     const respond = isAvoidance ? respondToAvoidanceProbe : respondToInterestProbe;
     const apiResp = await respond(domain, responseType);
@@ -2186,22 +2657,19 @@ async function handleMessageResponse(domain, responseType, type = "interest.prob
     const item = elements.messagesList?.querySelector(`[data-domain="${CSS.escape(domain)}"][data-type="${CSS.escape(normalizeProbeType(type))}"]`);
     // ok=false means the backend no longer recognises this domain
     // (typical: probe rotated out by TTL or a fresh force_tick while
-    // the popup sat open with a stale inbox). Tell the user, then
-    // force-refetch and re-render so the panel matches reality.
+    // the popup sat open with a stale inbox). Remove it locally and
+    // force-refetch so the panel matches reality without showing a
+    // misleading success state.
     if (apiResp && apiResp.ok === false) {
       if (item) {
-        item.replaceChildren();
-        const stale = document.createElement("p");
-        stale.className = "message-result";
-        stale.textContent = "\u8FD9\u6761\u5DF2\u7ECF\u8FC7\u671F\u4E86\uFF0C\u6B63\u5728\u5237\u65B0\u2026";
-        item.append(stale);
+        item.remove();
       }
+      applyStaleProbeResponse(domain, type);
       try {
         await loadProfileSummary({ force: true });
       } catch {
         /* fall through */
       }
-      removeMessageFromState(domain, type);
       renderMessagesList();
       return;
     }
@@ -2230,6 +2698,7 @@ async function handleMessageResponse(domain, responseType, type = "interest.prob
     }, 1800);
   } catch (err) {
     console.error("Failed to respond to message:", err);
+    forgetHandledProbe(domain, type);
   }
 }
 
@@ -2810,7 +3279,8 @@ function renderProfileSummary(summary) {
     elements.profileCard.hidden = true;
     elements.profileEmpty.hidden = false;
     elements.profileEmptyTitle.textContent = "画像还没攒起来";
-    elements.profileEmptyText.textContent = "先跑一遍 openbiliclaw init，再回来看看。";
+    elements.profileEmptyText.textContent =
+      "还没初始化。去「推荐」页点『开始初始化』，攒好画像再回来看。";
     renderCognitionHistoryControls({
       items: [],
       hasMore: false,
@@ -3226,7 +3696,8 @@ function renderEditPanel(container, editState) {
   if (!editState || !editState.initialized || !editState.fields) {
     const note = document.createElement("p");
     note.className = "profile-edit-note";
-    note.textContent = "画像还没攒起来，先跑一遍 openbiliclaw init 再回来编辑。";
+    note.textContent =
+      "还没初始化。去「推荐」页点『开始初始化』，画像攒好后再来编辑。";
     container.append(note);
     return;
   }
@@ -4275,9 +4746,10 @@ function renderRecommendations(items, { append = false } = {}) {
 
     const cover = document.createElement("div");
     cover.className = "recommendation-cover";
-    if (item.cover_url) {
+    const cardMedia = getRecommendationCardKind(item);
+    if (cardMedia.kind === "cover") {
       const image = document.createElement("img");
-      void setProxyImageSrc(image, item.cover_url);
+      void setProxyImageSrc(image, cardMedia.coverUrl);
       image.alt = `${item.title} 的封面`;
       image.addEventListener("error", () => {
         image.remove();
@@ -4289,8 +4761,13 @@ function renderRecommendations(items, { append = false } = {}) {
       });
       cover.append(image);
     } else {
-      cover.classList.add("is-fallback");
-      cover.textContent = "先看标题也行";
+      // No-cover text card (X tweet/thread or empty cover): show the
+      // body text instead of a thumbnail — never an <img> node.
+      cover.classList.add("is-fallback", "is-text-card");
+      const textNode = document.createElement("p");
+      textNode.className = "recommendation-cover-text";
+      textNode.textContent = cardMedia.text || "先看标题也行";
+      cover.append(textNode);
     }
 
     const content = document.createElement("div");
@@ -4311,7 +4788,9 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书" }[platformKey] || item.source_platform;
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X" }[
+        platformKey
+      ] || item.source_platform;
     const sourceCorner = document.createElement("span");
     sourceCorner.className = `recommendation-source-corner source-platform-${platformKey}`;
     sourceCorner.textContent = platformLabel;
@@ -4590,8 +5069,12 @@ function renderRecommendationState(stateShape) {
   }
 
   if (stateShape.kind === "uninitialized") {
-    showRecommendationEmptyState("还没完成初始化", stateShape.message);
-    setHint("先跑一遍 openbiliclaw init，把画像和候选池攒起来。");
+    showRecommendationEmptyState(
+      "还没完成初始化",
+      "点「开始初始化」，会先检查前置条件，通过后就在这里一步步建好画像和首轮内容池。",
+    );
+    setHint("先完成初始化，把画像和候选池攒起来。");
+    renderInitPanelIdle();
     return;
   }
 
@@ -4652,6 +5135,9 @@ function hydrateInboxFromProfile(profile) {
 function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
   if (!Array.isArray(speculations)) return;
   const normalizedType = normalizeProbeType(type);
+  const activeItems = speculations.filter((item) =>
+    shouldHydrateProbe(item, normalizedType, state.handledProbeKeys),
+  );
   // Speculator regenerates probes on a runtime cycle; older actives may
   // have rotated to cooldown.  We must REPLACE the interest.probe slice
   // of state.messages with the current active set, otherwise the inbox
@@ -4659,28 +5145,26 @@ function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
   // what the profile section shows.
   // Delight messages are preserved untouched — they live on a separate
   // lifecycle (delight/pending endpoint).
-  const activeDomains = new Set(
-    speculations
-      .filter((s) => s && s.domain && (!s.status || s.status === "active"))
-      .map((s) => s.domain),
+  const activeKeys = new Set(
+    activeItems.map((item) => probeMessageKey(normalizedType, item.domain)),
   );
   // Drop probe entries of the same type no longer in the active set.
   state.messages = state.messages.filter((m) => {
     const itemType = normalizeProbeType(m?.type);
     if (itemType !== normalizedType) return true;
-    return m.domain && activeDomains.has(m.domain);
+    return activeKeys.has(probeMessageKey(itemType, m?.domain));
   });
   // Add any current active probes not yet in state.messages.
-  const existingDomains = new Set(
+  const existingKeys = new Set(
     state.messages
       .filter((m) => normalizeProbeType(m?.type) === normalizedType && m?.domain)
-      .map((m) => m.domain),
+      .map((m) => probeMessageKey(normalizedType, m.domain)),
   );
-  for (const item of speculations) {
-    if (!item || (item.status && item.status !== "active") || !item.domain) continue;
-    if (existingDomains.has(item.domain)) {
+  for (const item of activeItems) {
+    const itemKey = probeMessageKey(normalizedType, item.domain);
+    if (existingKeys.has(itemKey)) {
       const existing = state.messages.find(
-        (m) => normalizeProbeType(m?.type) === normalizedType && m?.domain === item.domain,
+        (m) => probeMessageKey(m?.type, m?.domain) === itemKey,
       );
       if (existing) {
         existing.probe_mode = item.probe_mode || "";
@@ -4696,7 +5180,7 @@ function hydrateInboxFromSpeculations(speculations, type = "interest.probe") {
       probe_mode: item.probe_mode || "",
       challenge: Boolean(item.challenge),
     });
-    existingDomains.add(item.domain);
+    existingKeys.add(itemKey);
   }
   updateMessageBadge();
 }
@@ -4888,7 +5372,7 @@ async function handleManualRefresh() {
   try {
     const result = await reshuffleRecommendations();
     if (!Array.isArray(result.items)) {
-      setHint("先执行 openbiliclaw init，再回来刷新。", "error");
+      setHint("还没初始化好。去「推荐」页点「开始初始化」，完成后再刷新。", "error");
       return;
     }
     resetRecommendationAutoLoadIntent();
@@ -5437,6 +5921,47 @@ function bindSettings() {
     return el ? el.checked : fallback;
   };
 
+  // Unified per-source login / cookie status from GET /api/sources/status,
+  // rendered as a uniform colored-dot line inside every source card. Only X is
+  // live-validated (state ok); the rest report local cookie/token readiness.
+  const SOURCE_STATUS_DOT = {
+    ok: "#2ecc71",
+    ready: "#2ecc71",
+    no_auth: "#9aa0a6",
+    missing: "#e0a800",
+    missing_cookie: "#e0a800",
+    rate_limited: "#e0a800",
+    expired_cookie: "#e74c3c",
+    blocked: "#e74c3c",
+  };
+  const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter"];
+
+  // Best-effort: when the backend is unreachable, leave a neutral hint.
+  async function renderSourcesStatus() {
+    let data = null;
+    try {
+      data = await fetchSourcesStatus();
+    } catch {
+      data = null;
+    }
+    for (const key of SOURCE_STATUS_KEYS) {
+      const row = document.querySelector(`[data-source-status="${key}"]`);
+      if (!row) continue;
+      const dot = row.querySelector(".src-dot");
+      const detail = row.querySelector(".src-detail");
+      const item = data && data[key];
+      if (!item) {
+        if (detail) detail.textContent = "状态暂不可用(后端未连接)。";
+        if (dot) dot.style.color = "#9aa0a6";
+        row.style.opacity = "1";
+        continue;
+      }
+      if (detail) detail.textContent = (item.enabled ? "" : "(未启用) ") + (item.detail || "");
+      if (dot) dot.style.color = SOURCE_STATUS_DOT[item.state] || "#9aa0a6";
+      row.style.opacity = item.enabled ? "1" : "0.6";
+    }
+  }
+
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
     // LLM
@@ -5512,6 +6037,7 @@ function bindSettings() {
     setVal("cfgXhsTaskInterval", cfg.sources?.xiaohongshu?.task_interval_seconds);
     const douyinEnabled = document.getElementById("cfgDouyinEnabled");
     if (douyinEnabled) douyinEnabled.checked = cfg.sources?.douyin?.enabled === true;
+    setVal("cfgDouyinCookie", cfg.sources?.douyin?.cookie);
     setVal("cfgDouyinCookieEnv", cfg.sources?.douyin?.cookie_env);
     setVal("cfgDouyinDailySearchBudget", cfg.sources?.douyin?.daily_search_budget);
     setVal("cfgDouyinDailyHotBudget", cfg.sources?.douyin?.daily_hot_budget);
@@ -5524,6 +6050,16 @@ function bindSettings() {
     setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
     setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
+    const twitterEnabled = document.getElementById("cfgTwitterEnabled");
+    if (twitterEnabled) twitterEnabled.checked = cfg.sources?.twitter?.enabled === true;
+    setVal("cfgTwitterCookie", cfg.sources?.twitter?.cookie);
+    setVal("cfgTwitterCookieEnv", cfg.sources?.twitter?.cookie_env);
+    setVal("cfgTwitterDailySearchBudget", cfg.sources?.twitter?.daily_search_budget);
+    setVal("cfgTwitterDailyFeedBudget", cfg.sources?.twitter?.daily_feed_budget);
+    setVal("cfgTwitterDailyCreatorBudget", cfg.sources?.twitter?.daily_creator_budget);
+    setVal("cfgTwitterRequestInterval", cfg.sources?.twitter?.request_interval_seconds);
+    setVal("cfgTwitterMinInterval", cfg.sources?.twitter?.min_interval_minutes);
+    void renderSourcesStatus();
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -5556,6 +6092,7 @@ function bindSettings() {
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
+    setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -5657,7 +6194,10 @@ function bindSettings() {
       },
       bilibili: {
         auth_method: getVal("cfgBiliAuth"),
-        cookie: getVal("cfgBiliCookie"),
+        // An empty textarea must not wipe the synced cookie on save — omit
+        // the field so the backend keeps the current value (the web desktop
+        // settings page applies the same guard).
+        ...(getVal("cfgBiliCookie") ? { cookie: getVal("cfgBiliCookie") } : {}),
         browser_executable: getVal("cfgBiliBrowserExecutable"),
         browser_headed: checked("cfgBiliBrowserHeaded"),
       },
@@ -5669,28 +6209,43 @@ function bindSettings() {
         bilibili: {
           enabled: checked("cfgBilibiliEnabled", true),
         },
+        // Empty-field fallbacks mirror the backend dataclass defaults
+        // (budgets: 0 = uncapped) so the popup and the web settings page
+        // write identical values for an untouched form.
         xiaohongshu: {
           enabled: checked("cfgXhsEnabled"),
-          daily_search_budget: getInt("cfgXhsDailySearchBudget", 30),
-          daily_creator_budget: getInt("cfgXhsDailyCreatorBudget", 10),
+          daily_search_budget: getInt("cfgXhsDailySearchBudget", 0),
+          daily_creator_budget: getInt("cfgXhsDailyCreatorBudget", 0),
           task_interval_seconds: getInt("cfgXhsTaskInterval", 45),
         },
         douyin: {
           enabled: checked("cfgDouyinEnabled"),
           mode: "direct",
+          ...(getVal("cfgDouyinCookie") ? { cookie: getVal("cfgDouyinCookie") } : {}),
           cookie_env: getVal("cfgDouyinCookieEnv"),
-          daily_search_budget: getInt("cfgDouyinDailySearchBudget", 30),
-          daily_hot_budget: getInt("cfgDouyinDailyHotBudget", 5),
-          daily_feed_budget: getInt("cfgDouyinDailyFeedBudget", 30),
+          daily_search_budget: getInt("cfgDouyinDailySearchBudget", 0),
+          daily_hot_budget: getInt("cfgDouyinDailyHotBudget", 0),
+          daily_feed_budget: getInt("cfgDouyinDailyFeedBudget", 0),
           request_interval_seconds: getInt("cfgDouyinRequestInterval", 2),
         },
         youtube: {
           enabled: checked("cfgYoutubeEnabled"),
-          daily_search_budget: getInt("cfgYoutubeDailySearchBudget", 6),
-          daily_trending_budget: getInt("cfgYoutubeDailyTrendingBudget", 50),
-          daily_channel_budget: getInt("cfgYoutubeDailyChannelBudget", 10),
+          daily_search_budget: getInt("cfgYoutubeDailySearchBudget", 0),
+          daily_trending_budget: getInt("cfgYoutubeDailyTrendingBudget", 0),
+          daily_channel_budget: getInt("cfgYoutubeDailyChannelBudget", 0),
           request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 60),
+        },
+        twitter: {
+          enabled: checked("cfgTwitterEnabled"),
+          mode: "cookie",
+          ...(getVal("cfgTwitterCookie") ? { cookie: getVal("cfgTwitterCookie") } : {}),
+          cookie_env: getVal("cfgTwitterCookieEnv"),
+          daily_search_budget: getInt("cfgTwitterDailySearchBudget", 0),
+          daily_feed_budget: getInt("cfgTwitterDailyFeedBudget", 0),
+          daily_creator_budget: getInt("cfgTwitterDailyCreatorBudget", 0),
+          request_interval_seconds: getInt("cfgTwitterRequestInterval", 3),
+          min_interval_minutes: getInt("cfgTwitterMinInterval", 60),
         },
       },
       scheduler: {
@@ -5712,6 +6267,7 @@ function bindSettings() {
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
           youtube: getInt("cfgPoolShareYoutube", 1),
+          twitter: getInt("cfgPoolShareTwitter", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -5738,6 +6294,75 @@ function bindSettings() {
         unmanaged_max_age_days: getInt("cfgLogUnmanagedMaxAge", 30),
       },
     };
+  }
+
+  function renderProbeResult(statusEl, result) {
+    if (!statusEl) return;
+    const ok = Boolean(result?.ok);
+    const provider = result?.provider ? ` ${result.provider}` : "";
+    const model = result?.model ? ` / ${result.model}` : "";
+    const latency = Number.isFinite(Number(result?.latency_ms)) && Number(result.latency_ms) > 0
+      ? ` (${Math.round(Number(result.latency_ms))}ms)`
+      : "";
+    const detail = result?.message || result?.error || (ok ? "服务可用" : "服务不可用");
+    statusEl.dataset.tone = ok ? "success" : "error";
+    statusEl.textContent = `${ok ? "可用" : "不可用"}${provider}${model}${latency}: ${detail}`;
+  }
+
+  function renderProbePending(statusEl, label) {
+    if (!statusEl) return;
+    statusEl.dataset.tone = "pending";
+    statusEl.textContent = `${label} 探测中...`;
+  }
+
+  async function runLlmConfigProbe(button, statusEl) {
+    if (!button) return;
+    button.disabled = true;
+    renderProbePending(statusEl, "LLM");
+    try {
+      const result = await probeConfigService("llm", collectForm());
+      renderProbeResult(statusEl, result);
+    } catch (err) {
+      renderProbeResult(statusEl, {
+        ok: false,
+        error: err?.message || "LLM 探测失败",
+      });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function runEmbeddingConfigProbe(button, statusEl) {
+    if (!button) return;
+    button.disabled = true;
+    renderProbePending(statusEl, "Embedding");
+    try {
+      const result = await probeConfigService("embedding", collectForm());
+      renderProbeResult(statusEl, result);
+    } catch (err) {
+      renderProbeResult(statusEl, {
+        ok: false,
+        error: err?.message || "Embedding 探测失败",
+      });
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  const probeLlmBtn = document.getElementById("cfgProbeLlm");
+  const probeLlmStatus = document.getElementById("cfgProbeLlmStatus");
+  if (probeLlmBtn instanceof HTMLButtonElement) {
+    probeLlmBtn.addEventListener("click", () => {
+      void runLlmConfigProbe(probeLlmBtn, probeLlmStatus);
+    });
+  }
+
+  const probeEmbeddingBtn = document.getElementById("cfgProbeEmbedding");
+  const probeEmbeddingStatus = document.getElementById("cfgProbeEmbeddingStatus");
+  if (probeEmbeddingBtn instanceof HTMLButtonElement) {
+    probeEmbeddingBtn.addEventListener("click", () => {
+      void runEmbeddingConfigProbe(probeEmbeddingBtn, probeEmbeddingStatus);
+    });
   }
 
   const backendCheckBtn = document.getElementById("backendUpdateCheck");
@@ -5827,12 +6452,14 @@ function bindSettings() {
             xiaohongshu: checked("cfgXhsEnabled"),
             douyin: checked("cfgDouyinEnabled"),
             youtube: checked("cfgYoutubeEnabled"),
+            twitter: checked("cfgTwitterEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 8),
             xiaohongshu: getInt("cfgPoolShareXhs", 1),
             douyin: getInt("cfgPoolShareDouyin", 1),
             youtube: getInt("cfgPoolShareYoutube", 1),
+            twitter: getInt("cfgPoolShareTwitter", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -5840,6 +6467,7 @@ function bindSettings() {
         if (shares.xiaohongshu !== undefined) setVal("cfgPoolShareXhs", shares.xiaohongshu);
         if (shares.douyin !== undefined) setVal("cfgPoolShareDouyin", shares.douyin);
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
+        if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
         showToast(`生成建议失败: ${err.message}`, "error");
@@ -6017,6 +6645,7 @@ async function initializePopup() {
   bindOpenWeb();
   bindMobileQr();
   bindSettings();
+  bindStarButton();
 
   bindMessages();
   setActiveTab(

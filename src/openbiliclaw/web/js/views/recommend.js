@@ -27,6 +27,7 @@ import {
 import { state, patchState } from "../state.js";
 import {
   getCoverImageAttrs,
+  getRecommendationCardKind,
   getRecommendationCoverPreloadUrls,
   getRecommendationImageLoadingAttrs,
   normalizeRecommendation,
@@ -851,12 +852,20 @@ function renderCard(rawItem, index = 0) {
   const card = document.createElement("div");
   card.className = "card";
   const url = buildContentUrl(item);
-  const cover = getCoverImageAttrs(item.cover_url);
+  const cardMedia = getRecommendationCardKind(item);
   const imageAttrs = getRecommendationImageLoadingAttrs(index);
 
-  const coverHtml = cover
-    ? `<div class="card-cover-frame"><img class="card-cover" src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
-    : `<div class="card-cover-frame is-error"></div>`;
+  let coverHtml;
+  if (cardMedia.kind === "text") {
+    // No-cover text card for text-first sources (X tweet/thread): render
+    // the body text instead of a thumbnail — never an <img> node.
+    coverHtml = `<div class="card-cover-frame is-text-card"><p class="card-cover-text">${esc(cardMedia.text)}</p></div>`;
+  } else {
+    const cover = getCoverImageAttrs(cardMedia.coverUrl);
+    coverHtml = cover
+      ? `<div class="card-cover-frame"><img class="card-cover" src="${esc(cover.src)}" alt="" loading="${esc(imageAttrs.loading)}" fetchpriority="${esc(imageAttrs.fetchPriority)}" decoding="async" onerror="this.parentElement.classList.add('is-error');this.remove()"></div>`
+      : `<div class="card-cover-frame is-error"></div>`;
+  }
 
   card.innerHTML = `
     ${coverHtml}

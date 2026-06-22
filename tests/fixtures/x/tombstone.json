@@ -1,0 +1,28 @@
+{
+  "id": null,
+  "text": "This Tweet is from a suspended account. Learn more",
+  "author": {
+    "id": "",
+    "name": "",
+    "screenName": "",
+    "profileImageUrl": "",
+    "verified": false
+  },
+  "metrics": {
+    "likes": 0,
+    "retweets": 0,
+    "replies": 0,
+    "quotes": 0,
+    "views": 0,
+    "bookmarks": 0
+  },
+  "createdAt": "",
+  "createdAtLocal": "",
+  "createdAtISO": "",
+  "media": [],
+  "urls": [],
+  "isRetweet": false,
+  "retweetedBy": null,
+  "lang": "",
+  "score": 0.0
+}

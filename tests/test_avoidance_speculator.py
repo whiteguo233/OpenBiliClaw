@@ -1,10 +1,39 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+
+
+class _PausingAvoidanceLLM:
+    def __init__(self, domain: str = "低信息密度热点复读") -> None:
+        self.domain = domain
+        self.started = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    async def complete_structured_task(self, **_kwargs: object) -> object:
+        self.started.set()
+        await self.resume.wait()
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "avoidances": [
+                        {
+                            "domain": self.domain,
+                            "reason": "用户近期对浅层热点表达了排斥。",
+                            "source_mode": "negative_signal",
+                            "source_signal": "dislike",
+                            "specifics": ["标题党热点", "重复观点"],
+                            "confidence": 0.55,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 def test_avoidance_state_round_trips(tmp_path):
@@ -86,6 +115,112 @@ def test_promote_ready_avoidances_handles_confirmed_and_threshold(tmp_path):
     assert [item.domain for item in promoted] == ["自动确认", "显式确认"]
     assert [item.domain for item in state.active] == ["未确认"]
     assert state.total_promoted == 2
+
+
+def test_user_confirm_avoidance_returns_none_for_missing_domain(tmp_path) -> None:
+    from openbiliclaw.soul.avoidance_speculator import AvoidanceSpeculator
+
+    speculator = AvoidanceSpeculator(llm_service=None, data_dir=tmp_path)
+
+    assert speculator.user_confirm_avoidance("不存在") is None
+
+
+def test_user_reject_avoidance_returns_false_for_missing_domain(tmp_path) -> None:
+    from openbiliclaw.soul.avoidance_speculator import AvoidanceSpeculator
+
+    speculator = AvoidanceSpeculator(llm_service=None, data_dir=tmp_path)
+
+    assert speculator.user_reject_avoidance("不存在") is False
+
+
+async def test_force_tick_does_not_restore_user_confirmed_avoidance(tmp_path) -> None:
+    from openbiliclaw.soul.avoidance_speculator import (
+        AvoidanceSpeculator,
+        AvoidanceState,
+        SpeculativeAvoidance,
+        load_avoidance_state,
+        save_avoidance_state,
+    )
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_avoidance_state(
+        tmp_path,
+        AvoidanceState(active=[SpeculativeAvoidance(domain="浅层热点复读", status="active")]),
+    )
+    llm = _PausingAvoidanceLLM()
+    speculator = AvoidanceSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    task = asyncio.create_task(speculator.force_tick(OnionProfile()))
+    await llm.started.wait()
+    assert speculator.user_confirm_avoidance("浅层热点复读") is not None
+    llm.resume.set()
+    await task
+
+    state = load_avoidance_state(tmp_path)
+    assert all(item.domain != "浅层热点复读" for item in state.active)
+
+
+async def test_force_tick_does_not_restore_user_rejected_avoidance(tmp_path) -> None:
+    from openbiliclaw.soul.avoidance_speculator import (
+        AvoidanceSpeculator,
+        AvoidanceState,
+        SpeculativeAvoidance,
+        load_avoidance_state,
+        save_avoidance_state,
+    )
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_avoidance_state(
+        tmp_path,
+        AvoidanceState(active=[SpeculativeAvoidance(domain="浅层热点复读", status="active")]),
+    )
+    llm = _PausingAvoidanceLLM()
+    speculator = AvoidanceSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    task = asyncio.create_task(speculator.force_tick(OnionProfile()))
+    await llm.started.wait()
+    assert speculator.user_reject_avoidance("浅层热点复读") is True
+    llm.resume.set()
+    await task
+
+    state = load_avoidance_state(tmp_path)
+    assert all(item.domain != "浅层热点复读" for item in state.active)
+    assert any(item.domain == "浅层热点复读" for item in state.cooldown)
+
+
+async def test_force_tick_avoidance_loader_blocks_duplicate_after_confirmed_item_promoted(
+    tmp_path,
+) -> None:
+    from openbiliclaw.soul.avoidance_speculator import (
+        AvoidanceSpeculator,
+        AvoidanceState,
+        load_avoidance_state,
+        save_avoidance_state,
+    )
+    from openbiliclaw.soul.profile import OnionProfile
+
+    save_avoidance_state(tmp_path, AvoidanceState(active=[]))
+    llm = _PausingAvoidanceLLM(domain="浅层热点复读")
+    speculator = AvoidanceSpeculator(llm_service=llm, data_dir=tmp_path, max_active=5)
+
+    def _loader() -> list[dict[str, object]]:
+        return [
+            {
+                "domain": "浅层热点复读",
+                "response": "confirm",
+                "created_at": "2026-06-09T10:00:00",
+            }
+        ]
+
+    task = asyncio.create_task(
+        speculator.force_tick(OnionProfile(), feedback_history_loader=_loader)
+    )
+    await llm.started.wait()
+    llm.resume.set()
+    await task
+
+    state = load_avoidance_state(tmp_path)
+    assert all(item.domain != "浅层热点复读" for item in state.active)
 
 
 def test_expire_stale_avoidances_creates_cooldown():
@@ -357,8 +492,7 @@ async def test_avoidance_speculator_force_tick_generates_candidates(tmp_path):
                             {
                                 "domain": "浅层热点复读",
                                 "reason": (
-                                    "用户可能不喜欢没有信息增量、"
-                                    "只是在复读热梗和立场的热点内容。"
+                                    "用户可能不喜欢没有信息增量、只是在复读热梗和立场的热点内容。"
                                 ),
                                 "source_mode": "negative_signal",
                                 "source_signal": "thumbs_down: 热点复读",
@@ -556,8 +690,7 @@ async def test_avoidance_speculator_generation_skips_existing_source_topic(tmp_p
                             {
                                 "domain": "AI教程里的模板照抄式伪实战",
                                 "reason": (
-                                    "用户更看重能否真用和原理讲清楚，"
-                                    "可能不喜欢模板堆砌内容。"
+                                    "用户更看重能否真用和原理讲清楚，可能不喜欢模板堆砌内容。"
                                 ),
                                 "source_mode": "positive_boundary",
                                 "source_signal": "confirmed_likes: 人工智能、技术应用、编程",
@@ -572,8 +705,7 @@ async def test_avoidance_speculator_generation_skips_existing_source_topic(tmp_p
                             {
                                 "domain": "游戏争议里的单边情绪输出",
                                 "reason": (
-                                    "用户会补看多方解读来判断争议，"
-                                    "可能不喜欢只站队宣泄的内容。"
+                                    "用户会补看多方解读来判断争议，可能不喜欢只站队宣泄的内容。"
                                 ),
                                 "source_mode": "style_boundary",
                                 "source_signal": "洞察: 面对争议事件倾向多视角拼接",

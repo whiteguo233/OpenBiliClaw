@@ -21,6 +21,7 @@ from openbiliclaw.llm.json_utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from openbiliclaw.soul.profile import OnionProfile
@@ -316,8 +317,16 @@ def _normalize_probe_term(value: Any) -> str:
     return "".join(str(value or "").strip().lower().split())
 
 
-PROBE_FEEDBACK_HISTORY_LIMIT = 100
 NEGATIVE_PROBE_FEEDBACK_RESPONSES = {"reject", "chat_negative", "chat_rejected"}
+HANDLED_PROBE_FEEDBACK_RESPONSES = {
+    "confirm",
+    "confirmed",
+    "reject",
+    "rejected",
+    "chat_positive",
+    "chat_negative",
+    "chat_rejected",
+}
 
 
 def _string_field(value: Any) -> str:
@@ -372,7 +381,7 @@ def normalize_probe_feedback_history(history: object) -> list[dict[str, object]]
         if specifics:
             record["specifics"] = specifics
         records.append(record)
-    return records[-PROBE_FEEDBACK_HISTORY_LIMIT:]
+    return records
 
 
 def append_probe_feedback_history(
@@ -404,6 +413,15 @@ def _negative_probe_feedback_axes(feedback_history: object) -> set[str]:
         if str(item.get("response", "")) in NEGATIVE_PROBE_FEEDBACK_RESPONSES
         and str(item.get("axis", "")).strip()
     }
+
+
+def _handled_probe_feedback_domains(feedback_history: object) -> list[str]:
+    return [
+        str(item.get("domain", ""))
+        for item in normalize_probe_feedback_history(feedback_history)
+        if str(item.get("response", "")).lower() in HANDLED_PROBE_FEEDBACK_RESPONSES
+        and str(item.get("domain", "")).strip()
+    ]
 
 
 def _has_probe_term_overlap(candidate: str, existing: str) -> bool:
@@ -473,8 +491,8 @@ class ProbeNoveltyGuard:
         for domain in probed_domains or set():
             add_term(domain)
         for item in normalize_probe_feedback_history(feedback_history):
-            response = str(item.get("response", ""))
-            if response not in NEGATIVE_PROBE_FEEDBACK_RESPONSES:
+            response = str(item.get("response", "")).lower()
+            if response not in HANDLED_PROBE_FEEDBACK_RESPONSES:
                 continue
             add_term(item.get("domain", ""))
             for specific in _specific_names(item.get("specifics")):
@@ -637,11 +655,31 @@ def load_speculative_state(data_dir: Path) -> SpeculativeState:
 
 def save_speculative_state(data_dir: Path, state: SpeculativeState) -> None:
     """Persist speculative state to disk."""
-    memory_dir = data_dir / "memory"
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    path = memory_dir / "speculative_state.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+    update_speculative_state(data_dir, lambda _state: state)
+
+
+def update_speculative_state(
+    data_dir: Path,
+    mutator: Callable[[SpeculativeState], SpeculativeState | None],
+) -> SpeculativeState:
+    """Atomically update speculative interest state from latest disk data."""
+    from openbiliclaw.memory.json_state import update_json_state
+
+    path = data_dir / "memory" / "speculative_state.json"
+
+    def _mutate(state: SpeculativeState) -> SpeculativeState:
+        result = mutator(state)
+        return state if result is None else result
+
+    return update_json_state(
+        path,
+        default_factory=SpeculativeState,
+        normalize=lambda raw: (
+            SpeculativeState.from_dict(raw) if isinstance(raw, dict) else SpeculativeState()
+        ),
+        serialize=lambda state: state.to_dict(),
+        mutate=_mutate,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +749,89 @@ class InterestSpeculator:
         if self._data_dir:
             save_speculative_state(self._data_dir, state)
 
+    def _update_state(
+        self,
+        mutator: Callable[[SpeculativeState], SpeculativeState | None],
+    ) -> SpeculativeState:
+        if self._data_dir:
+            return update_speculative_state(self._data_dir, mutator)
+        state = SpeculativeState()
+        result = mutator(state)
+        return state if result is None else result
+
+    @staticmethod
+    def _latest_feedback_history(
+        *,
+        feedback_history: object | None,
+        feedback_history_loader: Callable[[], object] | None,
+    ) -> object | None:
+        if feedback_history_loader is None:
+            return feedback_history
+        try:
+            return feedback_history_loader()
+        except Exception:
+            logger.debug("Failed to load latest probe feedback history", exc_info=True)
+            return feedback_history
+
+    def _merge_generated_candidates(
+        self,
+        candidates: list[SpeculativeInterest],
+        profile: OnionProfile,
+        *,
+        feedback_history: object | None,
+    ) -> list[SpeculativeInterest]:
+        if not candidates:
+            return []
+        generated: list[SpeculativeInterest] = []
+
+        def _mutate(state: SpeculativeState) -> None:
+            nonlocal generated
+            near_slots, challenge_slots = _available_probe_slots(
+                state.active,
+                near_limit=self._max_active,
+                challenge_limit=self._challenge_max_active,
+            )
+            if near_slots + challenge_slots <= 0:
+                return
+            novelty_guard = ProbeNoveltyGuard.from_profile_and_state(
+                profile,
+                state,
+                feedback_history=feedback_history,
+            )
+            existing_domains = {
+                str(item.domain).strip().lower()
+                for item in state.active
+                if str(item.domain).strip()
+                and item.status in {"active", "confirmed", "user_rejected", "rejected"}
+            }
+            selected: list[SpeculativeInterest] = []
+            for candidate in _select_candidates_for_probe_slots(
+                candidates,
+                near_limit=near_slots,
+                challenge_limit=challenge_slots,
+                existing=[item for item in state.active if item.status == "active"],
+                feedback_history=feedback_history,
+            ):
+                domain_key = candidate.domain.strip().lower()
+                if not domain_key or domain_key in existing_domains:
+                    continue
+                if novelty_guard.is_duplicate_domain(candidate.domain):
+                    continue
+                if not _probe_slot_available(
+                    state.active,
+                    candidate.probe_mode,
+                    near_limit=self._max_active,
+                    challenge_limit=self._challenge_max_active,
+                ):
+                    continue
+                state.active.append(candidate)
+                existing_domains.add(domain_key)
+                selected.append(candidate)
+            generated = selected
+
+        self._update_state(_mutate)
+        return generated
+
     # -- Public API -----------------------------------------------------------
 
     async def tick(
@@ -718,40 +839,44 @@ class InterestSpeculator:
         profile: OnionProfile,
         *,
         feedback_history: object | None = None,
+        feedback_history_loader: Callable[[], object] | None = None,
     ) -> SpeculatorTickResult:
         """Main periodic entry point: expire → promote → generate → save."""
         now = datetime.now()
-        state = self._load_state()
         result = SpeculatorTickResult()
 
-        # 1. Expire stale speculations
-        rejected, state = expire_stale(state, now, self._cooldown_days)
-        result.rejected = rejected
+        def _prepare(state: SpeculativeState) -> SpeculativeState:
+            rejected, next_state = expire_stale(state, now, self._cooldown_days)
+            result.rejected = rejected
+            promoted, next_state = promote_ready(next_state)
+            result.promoted = promoted
+            return next_state
 
-        # 2. Promote confirmed speculations
-        promoted, state = promote_ready(state)
-        result.promoted = promoted
+        state = self._update_state(_prepare)
 
         # 3. Generate new speculations if interval elapsed and caps not reached
         if self._should_generate(state, now, profile):
             pre_active_domains = {s.domain for s in state.active if s.status == "active"}
-            state = await self._generate(
+            snapshot = await self._generate(
                 profile,
                 state,
                 now,
                 feedback_history=feedback_history,
             )
-            # Only include domains that didn't exist before this _generate call
-            # — otherwise the "generated N" log re-prints the carried-over
-            # active set every tick, falsely suggesting work happened when
-            # the LLM proposed only duplicates that dedup filtered out.
-            result.generated = [
+            candidates = [
                 s
-                for s in state.active
+                for s in snapshot.active
                 if s.status == "active" and s.domain not in pre_active_domains
             ]
-
-        self._save_state(state)
+            latest_feedback = self._latest_feedback_history(
+                feedback_history=feedback_history,
+                feedback_history_loader=feedback_history_loader,
+            )
+            result.generated = self._merge_generated_candidates(
+                candidates,
+                profile,
+                feedback_history=latest_feedback,
+            )
 
         if result.promoted:
             logger.info(
@@ -779,6 +904,7 @@ class InterestSpeculator:
         profile: OnionProfile,
         *,
         feedback_history: object | None = None,
+        feedback_history_loader: Callable[[], object] | None = None,
     ) -> SpeculatorTickResult:
         """Force a speculator tick ignoring the interval timer.
 
@@ -786,14 +912,16 @@ class InterestSpeculator:
         Still respects interest tier caps and max_active.
         """
         now = datetime.now()
-        state = self._load_state()
         result = SpeculatorTickResult()
 
-        # Expire and promote as usual
-        rejected, state = expire_stale(state, now, self._cooldown_days)
-        result.rejected = rejected
-        promoted, state = promote_ready(state)
-        result.promoted = promoted
+        def _prepare(state: SpeculativeState) -> SpeculativeState:
+            rejected, next_state = expire_stale(state, now, self._cooldown_days)
+            result.rejected = rejected
+            promoted, next_state = promote_ready(next_state)
+            result.promoted = promoted
+            return next_state
+
+        state = self._update_state(_prepare)
 
         # Generate regardless of interval (but respect caps).
         # The "primary interests" cap historically gated on
@@ -818,19 +946,26 @@ class InterestSpeculator:
         )
         if can_generate:
             pre_active_domains = {s.domain for s in state.active if s.status == "active"}
-            state = await self._generate(
+            snapshot = await self._generate(
                 profile,
                 state,
                 now,
                 feedback_history=feedback_history,
             )
-            result.generated = [
+            candidates = [
                 s
-                for s in state.active
+                for s in snapshot.active
                 if s.status == "active" and s.domain not in pre_active_domains
             ]
-
-        self._save_state(state)
+            latest_feedback = self._latest_feedback_history(
+                feedback_history=feedback_history,
+                feedback_history_loader=feedback_history_loader,
+            )
+            result.generated = self._merge_generated_candidates(
+                candidates,
+                profile,
+                feedback_history=latest_feedback,
+            )
         # Only log at INFO when something meaningful happened, otherwise
         # demote to DEBUG so idle force_ticks don't pollute the log.
         if result.generated or result.promoted or result.rejected:
@@ -856,14 +991,18 @@ class InterestSpeculator:
         """Observe events against active speculations. Returns match count."""
         if not events:
             return 0
-        state = self._load_state()
-        active_count = sum(1 for s in state.active if s.status == "active")
-        if active_count == 0:
-            return 0
+        match_count = 0
+        active_count = 0
 
-        state, match_count = observe_events(events, state)
+        def _mutate(state: SpeculativeState) -> None:
+            nonlocal active_count, match_count
+            active_count = sum(1 for s in state.active if s.status == "active")
+            if active_count == 0:
+                return
+            _state, match_count = observe_events(events, state)
+
+        self._update_state(_mutate)
         if match_count > 0:
-            self._save_state(state)
             # Promoted to INFO so the live confirmation pulse is visible
             # in production logs (DEBUG was effectively invisible at our
             # default file_level).  Surfaces the active probe count too
@@ -889,54 +1028,55 @@ class InterestSpeculator:
         if not seeds:
             return 0
 
-        state = self._load_state()
         now = datetime.now()
         added = 0
 
-        existing_domains = {s.domain.lower() for s in state.active}
-        cooldown_domains = {c.domain.lower() for c in state.cooldown}
-        novelty_guard = ProbeNoveltyGuard.from_profile_and_state(
-            profile,
-            state,
-            probed_domains=probed_domains,
-            feedback_history=feedback_history,
-        )
-
-        for seed in seeds:
-            domain = str(seed.get("domain") or seed.get("name", "")).strip()
-            if not domain:
-                continue
-            if domain.lower() in existing_domains or domain.lower() in cooldown_domains:
-                continue
-            if novelty_guard.is_duplicate_domain(domain):
-                continue
-            probe_mode = _normalize_probe_mode(seed.get("probe_mode"))
-            if not _probe_slot_available(
-                state.active,
-                probe_mode,
-                near_limit=self._max_active,
-                challenge_limit=self._challenge_max_active,
-            ):
-                continue
-
-            state.active.append(
-                SpeculativeInterest(
-                    domain=domain,
-                    category=str(seed.get("category", "")),
-                    reason=str(seed.get("reason", "")),
-                    confidence=float(seed.get("confidence") or seed.get("weight", 0.4)),
-                    weight=float(seed.get("weight", 0.4)),
-                    created_at=now.isoformat(),
-                    ttl_days=self._default_ttl_days,
-                    confirmation_threshold=self._confirmation_threshold,
-                    probe_mode=probe_mode,
-                )
+        def _mutate(state: SpeculativeState) -> None:
+            nonlocal added
+            existing_domains = {s.domain.lower() for s in state.active}
+            cooldown_domains = {c.domain.lower() for c in state.cooldown}
+            novelty_guard = ProbeNoveltyGuard.from_profile_and_state(
+                profile,
+                state,
+                probed_domains=probed_domains,
+                feedback_history=feedback_history,
             )
-            existing_domains.add(domain.lower())
-            added += 1
 
+            for seed in seeds:
+                domain = str(seed.get("domain") or seed.get("name", "")).strip()
+                if not domain:
+                    continue
+                if domain.lower() in existing_domains or domain.lower() in cooldown_domains:
+                    continue
+                if novelty_guard.is_duplicate_domain(domain):
+                    continue
+                probe_mode = _normalize_probe_mode(seed.get("probe_mode"))
+                if not _probe_slot_available(
+                    state.active,
+                    probe_mode,
+                    near_limit=self._max_active,
+                    challenge_limit=self._challenge_max_active,
+                ):
+                    continue
+
+                state.active.append(
+                    SpeculativeInterest(
+                        domain=domain,
+                        category=str(seed.get("category", "")),
+                        reason=str(seed.get("reason", "")),
+                        confidence=float(seed.get("confidence") or seed.get("weight", 0.4)),
+                        weight=float(seed.get("weight", 0.4)),
+                        created_at=now.isoformat(),
+                        ttl_days=self._default_ttl_days,
+                        confirmation_threshold=self._confirmation_threshold,
+                        probe_mode=probe_mode,
+                    )
+                )
+                existing_domains.add(domain.lower())
+                added += 1
+
+        self._update_state(_mutate)
         if added > 0:
-            self._save_state(state)
             logger.info("Speculator ingested %d seed speculations", added)
         return added
 
@@ -961,43 +1101,50 @@ class InterestSpeculator:
         seconds after the user clicked "喜欢" — looking like the action
         was ignored.
         """
-        state = self._load_state()
         now = datetime.now().isoformat()
-        for spec in state.active:
-            if spec.domain.lower() == domain.lower() and spec.status == "active":
-                spec.confirmation_count = spec.confirmation_threshold  # Meet threshold
-                spec.confirming_events.append(confirmation_source)
-                spec.confirmation_source = confirmation_source
-                spec.confirmed_at = now
-                spec.status = "confirmed"
-                self._save_state(state)
-                return True
-        return False
+        found = False
+
+        def _mutate(state: SpeculativeState) -> None:
+            nonlocal found
+            for spec in state.active:
+                if spec.domain.lower() == domain.lower() and spec.status == "active":
+                    spec.confirmation_count = spec.confirmation_threshold
+                    spec.confirming_events.append(confirmation_source)
+                    spec.confirmation_source = confirmation_source
+                    spec.confirmed_at = now
+                    spec.status = "confirmed"
+                    found = True
+                    return
+
+        self._update_state(_mutate)
+        return found
 
     def user_reject_speculation(self, domain: str, cooldown_days: int = 30) -> bool:
         """User explicitly rejected a speculated interest. Move to cooldown."""
-        state = self._load_state()
-        remaining = []
         found = False
         now = datetime.now()
-        for spec in state.active:
-            if spec.domain.lower() == domain.lower() and spec.status == "active":
-                spec.status = "rejected"
-                state.total_rejected += 1
-                state.cooldown.append(
-                    CooldownEntry(
-                        domain=spec.domain,
-                        category=spec.category,
-                        rejected_at=now.isoformat(),
-                        cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+
+        def _mutate(state: SpeculativeState) -> None:
+            nonlocal found
+            remaining = []
+            for spec in state.active:
+                if spec.domain.lower() == domain.lower() and spec.status == "active":
+                    spec.status = "rejected"
+                    state.total_rejected += 1
+                    state.cooldown.append(
+                        CooldownEntry(
+                            domain=spec.domain,
+                            category=spec.category,
+                            rejected_at=now.isoformat(),
+                            cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+                        )
                     )
-                )
-                found = True
-            else:
-                remaining.append(spec)
-        state.active = remaining
-        if found:
-            self._save_state(state)
+                    found = True
+                else:
+                    remaining.append(spec)
+            state.active = remaining
+
+        self._update_state(_mutate)
         return found
 
     # -- Internal -------------------------------------------------------------
@@ -1644,6 +1791,8 @@ def choose_next_probe_candidate(
     negative_axes = _negative_probe_feedback_axes(feedback_history)
     candidates = []
     for candidate in specs:
+        if str(getattr(candidate, "status", "active")).strip().lower() != "active":
+            continue
         domain = str(getattr(candidate, "domain", "")).strip().lower()
         if not domain or domain in recent_domains:
             continue

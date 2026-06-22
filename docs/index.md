@@ -4,15 +4,16 @@
 
 ## 项目概览
 
-- [项目主页](index.html) — GitHub Pages 首页，一句话安装、插件下载、GitHub 入口和产品卖点概览
+- [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载、GitHub 入口和产品卖点概览
 - [主页 SEO 维护指南](seo.md) — Search Console / Bing 提交清单、sitemap / OG / JSON-LD 长期维护要点
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [隐私权政策](privacy.md) — Chrome Web Store / 插件数据收集披露与本地优先数据流说明
+- [Chrome Web Store 商店页文案](chrome-webstore-listing.md) — 可直接复制到商店后台的项目入口、安装使用说明和隐私引导
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [变更日志](changelog.md) — 各里程碑交付记录
-- [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) — 从 `extension-v*` 下载插件；后端源码更新看 `backend-v*` tag，不发布后端桌面包
+- [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) — 从 `extension-v*` 下载插件、从 `desktop-v*` 下载实验性桌面安装包；后端源码更新看 `backend-v*` tag，不发布后端桌面包
 - [手动端到端联调](manual-e2e.md) — CLI、插件与 SQLite 的真实联调步骤
 - [OpenClaw 接入最短指南](openclaw-quickstart.md) — Docker 优先、本地兜底的安装、初始化、skill 发现与 CLI bridge 自检
 - [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体 WebFetch 的短契约,配合 README 的短粘贴语句
@@ -48,6 +49,7 @@
 | 局域网密码门禁 | [modules/api-auth.md](modules/api-auth.md) | `src/openbiliclaw/auth_core.py` + `src/openbiliclaw/api/auth.py` | ✅ 可选 `[api.auth]` 密码门禁 + `/api/auth/*` + `set-password` |
 | 集成适配层 | [modules/integrations.md](modules/integrations.md) | `src/openbiliclaw/integrations/` | ✅ OpenClaw adapter 已接入 |
 | 运行时服务 | [modules/runtime.md](modules/runtime.md) | `src/openbiliclaw/runtime/` | ✅ refresh / candidate pipeline / presence gate / autostart / Ollama preflight / degraded boot / runtime-stream / backend tag auto-update |
+| 引导初始化 | [modules/init.md](modules/init.md) | `src/openbiliclaw/cli.py`（`run_guided_init`）+ `runtime/init_coordinator.py` + `runtime/init_prereqs.py` | ✅ v0.3.102 共享流水线 + `InitCoordinator` 状态机 + `/api/init*` + 写者门控 + 插件推荐 tab CTA |
 
 ## 开发指南
 

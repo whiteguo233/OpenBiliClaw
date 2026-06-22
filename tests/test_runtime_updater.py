@@ -241,6 +241,99 @@ async def test_manual_check_reports_prerelease_ignored_when_only_newer_rc_exists
     assert backend["latest_tag"] == ""
 
 
+def test_detect_install_mode_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert updater.detect_install_mode() == "frozen"
+
+
+def test_detect_install_mode_git_and_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    assert updater.detect_install_mode() == "unsupported"
+    (tmp_path / ".git").mkdir()
+    assert updater.detect_install_mode() == "git"
+
+
+def test_update_status_payloads_include_install_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    service = updater.AutoUpdateService(enabled=False)
+
+    assert service.get_update_status()["install_mode"] == "git"
+    assert service.get_runtime_status()["install_mode"] == "git"
+
+
+@pytest.mark.parametrize(
+    ("porcelain", "expected"),
+    [
+        ("", []),
+        (" M uv.lock\n", []),
+        ("?? notes.txt\n", ["notes.txt"]),
+        (" M uv.lock\n M src/openbiliclaw/cli.py\n", ["src/openbiliclaw/cli.py"]),
+        ("MM uv.lock\n", []),
+    ],
+)
+def test_dirty_paths_besides_uv_lock(porcelain: str, expected: list[str]) -> None:
+    assert updater._dirty_paths_besides_uv_lock(porcelain) == expected
+
+
+@pytest.mark.asyncio
+async def test_request_apply_allows_uv_lock_only_dirty_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A worktree dirty only in uv.lock must not block updates.
+
+    Release tags occasionally ship a stale uv.lock; the install's first
+    ``uv sync`` then rewrites it, so virtually every real install is in
+    this state permanently (the original dirty_worktree blocker).
+    """
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").write_text("", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    calls: list[list[str]] = []
+    restarted = False
+
+    async def _run_command(command, _root, *, timeout):
+        calls.append(list(command))
+        if command == ["git", "config", "--get", "remote.origin.url"]:
+            return subprocess.CompletedProcess(
+                command, 0, "https://github.com/whiteguo233/OpenBiliClaw.git\n", ""
+            )
+        if command == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(command, 0, " M uv.lock\n", "")
+        if command == ["git", "rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(command, 0, ".git\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def _restart() -> None:
+        nonlocal restarted
+        restarted = True
+
+    service = updater.AutoUpdateService(enabled=False)
+    monkeypatch.setattr(service, "_run_command", _run_command)
+    monkeypatch.setattr(service, "_restart_process", _restart)
+
+    status_code, payload = await service.request_apply(tag="backend-v0.3.92")
+    if service._apply_task is not None:
+        await asyncio.wait_for(service._apply_task, timeout=0.5)
+
+    assert status_code == 202
+    assert payload["accepted"] is True
+    # The local uv.lock rewrite is dropped before the fast-forward merge.
+    checkout_index = calls.index(["git", "checkout", "--", "uv.lock"])
+    merge_index = calls.index(["git", "merge", "--ff-only", "backend-v0.3.92"])
+    assert checkout_index < merge_index
+    assert restarted is True
+
+
 @pytest.mark.asyncio
 async def test_request_apply_blocks_dirty_worktree_before_install_or_restart(
     monkeypatch: pytest.MonkeyPatch,

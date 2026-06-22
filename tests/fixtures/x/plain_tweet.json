@@ -1,0 +1,35 @@
+{
+  "id": "1790000000000000001",
+  "text": "Rust's async story finally clicked for me today. The borrow checker is a teacher, not a jailer. #rustlang #async",
+  "author": {
+    "id": "44196397",
+    "name": "Jane Doe",
+    "screenName": "janedoe",
+    "profileImageUrl": "https://pbs.twimg.com/profile_images/janedoe.jpg",
+    "verified": true
+  },
+  "metrics": {
+    "likes": 1234,
+    "retweets": 56,
+    "replies": 78,
+    "quotes": 9,
+    "views": 98765,
+    "bookmarks": 321
+  },
+  "createdAt": "Sun Jun 08 12:34:56 +0000 2026",
+  "createdAtLocal": "2026-06-08 20:34:56",
+  "createdAtISO": "2026-06-08T12:34:56Z",
+  "media": [
+    {
+      "type": "photo",
+      "url": "https://pbs.twimg.com/media/plain_cover.jpg",
+      "width": 1200,
+      "height": 675
+    }
+  ],
+  "urls": ["https://blog.example.com/rust-async"],
+  "isRetweet": false,
+  "retweetedBy": null,
+  "lang": "en",
+  "score": 0.0
+}

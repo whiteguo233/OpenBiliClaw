@@ -1,0 +1,43 @@
+{
+  "id": "1790000000000000004",
+  "text": "This is exactly the take I've been waiting for. Boost. #signal",
+  "author": {
+    "id": "9090",
+    "name": "Amplifier",
+    "screenName": "amplifier",
+    "profileImageUrl": "https://pbs.twimg.com/profile_images/amplifier.jpg",
+    "verified": true
+  },
+  "metrics": {
+    "likes": 150,
+    "retweets": 12,
+    "replies": 3,
+    "quotes": 1,
+    "views": 4500,
+    "bookmarks": 7
+  },
+  "createdAt": "Thu Jun 05 11:11:11 +0000 2026",
+  "createdAtLocal": "2026-06-05 19:11:11",
+  "createdAtISO": "2026-06-05T11:11:11Z",
+  "media": [
+    {
+      "type": "video",
+      "url": "https://pbs.twimg.com/amplify_video_thumb/quote_thumb.jpg",
+      "width": 1280,
+      "height": 720
+    }
+  ],
+  "urls": [],
+  "isRetweet": false,
+  "retweetedBy": "amplifier",
+  "lang": "en",
+  "score": 0.0,
+  "quotedTweet": {
+    "id": "1789999999999999999",
+    "text": "The original hot take everyone is quoting.",
+    "author": {
+      "screenName": "originalposter",
+      "name": "Original Poster"
+    }
+  }
+}

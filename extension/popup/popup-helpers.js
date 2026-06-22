@@ -8,6 +8,72 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+export function normalizeProbeType(type) {
+  return normalizeText(type) === "avoidance.probe" ? "avoidance.probe" : "interest.probe";
+}
+
+export function probeMessageKey(type, domain) {
+  const normalizedDomain = normalizeText(domain).toLowerCase();
+  if (!normalizedDomain) {
+    return "";
+  }
+  return `${normalizeProbeType(type)}:${normalizedDomain}`;
+}
+
+function hasProbeKey(handledProbeKeys, key) {
+  return Boolean(key && handledProbeKeys && typeof handledProbeKeys.has === "function" && handledProbeKeys.has(key));
+}
+
+export function shouldHydrateProbe(item, type = "interest.probe", handledProbeKeys = new Set()) {
+  const domain = normalizeText(item?.domain);
+  if (!domain) {
+    return false;
+  }
+  const status = normalizeText(item?.status).toLowerCase() || "active";
+  if (status !== "active") {
+    return false;
+  }
+  return !hasProbeKey(handledProbeKeys, probeMessageKey(type, domain));
+}
+
+export function shouldDisplayProbeFromWebSocket(
+  event,
+  type = event?.type || "interest.probe",
+  handledProbeKeys = new Set(),
+) {
+  return shouldHydrateProbe(
+    { domain: event?.domain, status: "active" },
+    normalizeProbeType(type),
+    handledProbeKeys,
+  );
+}
+
+export function buildStaleProbeResponseState({
+  messages = [],
+  pendingProbe = null,
+  pendingAvoidanceProbe = null,
+  domain = "",
+  type = "interest.probe",
+} = {}) {
+  const normalizedType = normalizeProbeType(type);
+  const handledKey = probeMessageKey(normalizedType, domain);
+  const nextMessages = Array.isArray(messages)
+    ? messages.filter((message) => probeMessageKey(message?.type, message?.domain) !== handledKey)
+    : [];
+  return {
+    handledKey,
+    messages: nextMessages,
+    pendingProbe:
+      normalizedType === "interest.probe" && probeMessageKey("interest.probe", pendingProbe?.domain) === handledKey
+        ? null
+        : pendingProbe,
+    pendingAvoidanceProbe:
+      normalizedType === "avoidance.probe" && probeMessageKey("avoidance.probe", pendingAvoidanceProbe?.domain) === handledKey
+        ? null
+        : pendingAvoidanceProbe,
+  };
+}
+
 function normalizeCoverUrl(value) {
   const text = normalizeText(value);
   if (!text) {
@@ -123,7 +189,37 @@ export function normalizeRecommendation(item) {
     content_id: normalizeText(item?.content_id) || normalizeText(item?.bvid),
     content_url: normalizeText(item?.content_url) || "",
     source_platform: normalizeText(item?.source_platform) || "bilibili",
+    content_type: normalizeText(item?.content_type) || "video",
+    body_text: normalizeText(item?.body_text),
   };
+}
+
+const TEXT_CARD_CONTENT_TYPES = new Set(["tweet", "thread"]);
+
+/**
+ * Decide how a recommendation card should render its media slot.
+ *
+ * Text-first sources (X tweets / threads) ship no cover image — the
+ * value is the text. For those (content_type tweet/thread, or simply an
+ * empty cover_url) the card shows a "no-cover text card" built from
+ * body_text/title instead of an <img> thumbnail, so the popup never
+ * paints a broken-image node.
+ *
+ * @param {object} item - A (normalized or raw) recommendation item.
+ * @returns {{kind: "text"|"cover", coverUrl: string, text: string}}
+ */
+export function getRecommendationCardKind(item) {
+  const contentType = normalizeText(item?.content_type).toLowerCase();
+  const coverUrl = normalizeCoverUrl(item?.cover_url);
+  const isText = TEXT_CARD_CONTENT_TYPES.has(contentType) || !coverUrl;
+  if (isText) {
+    return {
+      kind: "text",
+      coverUrl: "",
+      text: normalizeText(item?.body_text) || normalizeText(item?.title),
+    };
+  }
+  return { kind: "cover", coverUrl, text: "" };
 }
 
 export function normalizeSavedItem(item) {
@@ -956,8 +1052,6 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
 
   const normalizedItems = items.map(normalizeRecommendation);
   const runtime = normalizeRuntimeStatus(runtimeStatus);
-  const refreshInProgress =
-    runtime.manual_refresh_state === "running" || runtime.pending_signal_events > 0;
   const hasPostInitRuntimeSignals =
     runtime.recommendation_count > 0 ||
     runtime.pool_available_count > 0 ||
@@ -966,20 +1060,29 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
     runtime.last_discovered_count > 0;
 
   if (normalizedItems.length === 0) {
-    if (refreshInProgress) {
-      return {
-        kind: "refreshing",
-        message: runtime.manual_refresh_message || "正在根据你最近的新行为补货，再刷一会儿就会更新。",
-        items: [],
-      };
-    }
+    const refreshMessage =
+      runtime.manual_refresh_message || "正在根据你最近的新行为补货，再刷一会儿就会更新。";
 
+    // Genuinely uninitialized (no profile, empty pool/recommendations) ALWAYS
+    // shows the guided-init entry, regardless of any refresh state. A refresh
+    // can't produce anything without a profile (refresh_if_needed returns
+    // not_initialized), so manual_refresh_state="running" / pending behavior
+    // signals must NOT mask the uninitialized state — that would hide the only
+    // in-UI way to start init and leave the popup stuck on "补货" forever
+    // (gui-init: live Windows testing). The init panel itself shows the CTA vs.
+    // live progress based on /api/init-status, so an in-flight run still renders
+    // correctly under this kind.
     if (!runtime.initialized && !hasPostInitRuntimeSignals) {
       return {
         kind: "uninitialized",
         message: "还没完成初始化，先运行 openbiliclaw init",
         items: [],
       };
+    }
+
+    // Initialized: an active refresh or queued behavior signals → replenishing.
+    if (runtime.manual_refresh_state === "running" || runtime.pending_signal_events > 0) {
+      return { kind: "refreshing", message: refreshMessage, items: [] };
     }
 
     return {

@@ -209,6 +209,40 @@ function Detect-ReuseSource {
 # -----------------------------------------------------------------------------
 # Checkout: clone or update existing
 
+function Test-UserDataOnlyRoot([string]$Path) {
+    if (-not (Test-Path $Path -PathType Container)) { return $false }
+    $allowed = @('config.toml', 'config.local.toml', 'data', 'logs', 'openbiliclaw.lock')
+    $entries = @(Get-ChildItem -LiteralPath $Path -Force | Where-Object { $_.Name -ne '.DS_Store' })
+    if ($entries.Count -eq 0) { return $false }
+    foreach ($entry in $entries) {
+        if (-not $allowed.Contains($entry.Name)) { return $false }
+    }
+    return $true
+}
+
+function Clone-IntoUserDataRoot {
+    $parent = Split-Path $InstallDir -Parent
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $tmp = Join-Path $parent ("openbiliclaw-clone." + [Guid]::NewGuid().ToString('N'))
+    Log-Info "Target contains existing user data only; cloning source into $InstallDir without touching config/data/logs."
+    git clone --branch $Branch --depth 1 $RepoUrl $tmp
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+        Log-Err 'git clone failed.'
+        exit 1
+    }
+    foreach ($entry in Get-ChildItem -LiteralPath $tmp -Force) {
+        $dest = Join-Path $InstallDir $entry.Name
+        if (Test-Path $dest) {
+            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            Log-Err "Cannot merge checkout into $InstallDir: destination exists: $dest"
+            exit 1
+        }
+        Move-Item -LiteralPath $entry.FullName -Destination $InstallDir
+    }
+    Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+}
+
 function Ensure-Checkout {
     $hasPyproject = Test-Path (Join-Path $InstallDir 'pyproject.toml')
     $hasExample   = Test-Path (Join-Path $InstallDir 'config.example.toml')
@@ -251,6 +285,10 @@ function Ensure-Checkout {
     }
 
     if ((Test-Path $InstallDir) -and ((Get-ChildItem -Path $InstallDir -Force | Measure-Object).Count -gt 0)) {
+        if (Test-UserDataOnlyRoot $InstallDir) {
+            Clone-IntoUserDataRoot
+            return
+        }
         Log-Err "Target directory is not empty and not an OpenBiliClaw checkout: $InstallDir"
         Log-Err 'Set $env:INSTALL_DIR to an empty/non-existent path, or remove the existing one first.'
         exit 1
@@ -518,7 +556,7 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
         Write-Host 'Next steps (credentials are missing):'
         Write-Host ''
         Write-Host '  1. Choose your LLM provider (default: deepseek):'
-        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | ollama'
+        Write-Host '     Supported: deepseek | openai | gemini | claude | openrouter | ollama | openai_compatible'
         Write-Host ''
         if ($missing -match 'api_key') {
             Write-Host '     LLM API key - get one from your chosen provider:'

@@ -2481,7 +2481,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   5. "n" — skip module overrides
     #   6. "y" — allow LAN access
     #   7-8. "" — accept Bili favorite/follow init limits
-    #   9+. "n" — skip optional source prompts
+    #   9+. "n" — skip optional source prompts (xhs / douyin / youtube / X)
     wizard_input = (
         "\n".join(
             [
@@ -2493,6 +2493,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "y",
                 "",
                 "",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -2567,9 +2568,9 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube so this test stays focused on the
+    # to XHS / Douyin / YouTube / X so this test stays focused on the
     # cookie-prompt path.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\nn\nn\nn\n")
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\nn\nn\nn\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"
@@ -3724,6 +3725,9 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "xiaohongshu": 3,
         "douyin": 1,
         "youtube": 5,
+        # twitter carries its default share (1) even when not in the import's
+        # enabled_sources; effective_pool_source_shares drops it while disabled.
+        "twitter": 1,
     }
 
 
@@ -3761,6 +3765,8 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        # twitter carries its default share (1); dropped later while disabled.
+        "twitter": 1,
     }
 
 
@@ -5343,3 +5349,203 @@ def test_set_password_rotate_secret_rebases_fingerprint(
     )
     assert db2.reconcile_password_fingerprint(expected_fp) is False  # no redundant bump
     db2.close()
+
+
+# ── X (twitter) source enable toggle in init (Task 12) ──────────────────────
+
+
+def test_persist_init_source_enabled_flags_toggles_twitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--yes-x`` flows into _persist_init_source_enabled_flags(include_x=True)
+    and must flip ``[sources.twitter].enabled`` on (mirror xhs/douyin/youtube)."""
+    from openbiliclaw.config import Config
+
+    cfg = Config()
+    cfg.sources.twitter.enabled = False
+
+    saved: list[Config] = []
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.setattr(config_module, "save_config", lambda c: saved.append(c))
+
+    cli_module._persist_init_source_enabled_flags(
+        include_xhs=False,
+        include_dy=False,
+        include_yt=False,
+        include_x=True,
+    )
+
+    assert cfg.sources.twitter.enabled is True
+    assert saved and saved[-1] is cfg
+
+    # And the inverse: include_x=False turns it back off.
+    cfg.sources.twitter.enabled = True
+    saved.clear()
+    cli_module._persist_init_source_enabled_flags(
+        include_xhs=False,
+        include_dy=False,
+        include_yt=False,
+        include_x=False,
+    )
+    assert cfg.sources.twitter.enabled is False
+    assert saved and saved[-1] is cfg
+
+
+def test_init_yes_x_flag_is_registered() -> None:
+    """The ``init`` command must expose ``--yes-x`` (scripted opt-in),
+    mirroring ``--yes-xhs`` / ``--yes-douyin`` / ``--yes-youtube``."""
+    import inspect
+
+    sig = inspect.signature(cli_module.init)
+    assert "skip_x_prompt" in sig.parameters
+    default = sig.parameters["skip_x_prompt"].default
+    # typer.Option(...) carries the flag declarations in param_decls.
+    decls = getattr(default, "param_decls", ())
+    assert "--yes-x" in decls
+
+
+# ── X (Twitter) likes/bookmarks init backfill ────────────────────────
+
+
+def test_x_tweet_to_event_builds_like_event() -> None:
+    ev = cli_module._x_tweet_to_event(
+        {
+            "id": "123",
+            "text": "rust async wins\nsecond line",
+            "author": {"screenName": "alice", "name": "Alice"},
+        },
+        event_type="like",
+    )
+    assert ev is not None
+    assert ev["event_type"] == "like"
+    assert ev["url"] == "https://x.com/alice/status/123"
+    assert ev["title"] == "rust async wins"  # first line only, truncated to 140
+    assert ev["metadata"]["source_platform"] == "twitter"
+    assert ev["metadata"]["tweet_id"] == "123"
+    assert "点赞" in ev["context"]
+
+
+def test_x_tweet_to_event_bookmark_prefers_article_text() -> None:
+    ev = cli_module._x_tweet_to_event(
+        {
+            "id": "9",
+            "text": "short",
+            "articleText": "long form note body",
+            "author": {"screenName": "bob"},
+        },
+        event_type="favorite",
+    )
+    assert ev is not None
+    assert ev["event_type"] == "favorite"
+    assert ev["metadata"]["body_text"] == "long form note body"
+    assert "收藏" in ev["context"]
+
+
+def test_x_tweet_to_event_tombstone_returns_none() -> None:
+    assert cli_module._x_tweet_to_event({"id": "", "text": "x"}, event_type="like") is None
+
+
+async def test_fetch_x_init_data_skips_without_cookie(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        sources=SimpleNamespace(twitter=SimpleNamespace(cookie_env="OPENBILICLAW_X_COOKIE")),
+        data_path=tmp_path,
+    )
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+    monkeypatch.setattr("openbiliclaw.sources.x_auth.resolve_x_cookie", lambda **kwargs: "")
+    likes, bookmarks = await cli_module._fetch_x_init_data(likes_limit=10, bookmarks_limit=10)
+    assert likes == []
+    assert bookmarks == []
+
+
+async def test_fetch_x_init_data_fetches_likes_and_bookmarks(monkeypatch, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        sources=SimpleNamespace(twitter=SimpleNamespace(cookie_env="OPENBILICLAW_X_COOKIE")),
+        data_path=tmp_path,
+    )
+
+    class _FakeXClient:
+        def __init__(self, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def likes(self, *, limit: int):
+            return [{"id": "1", "text": "liked", "author": {"screenName": "a"}}]
+
+        async def bookmarks(self, *, limit: int):
+            return [{"id": "2", "text": "saved", "author": {"screenName": "b"}}]
+
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: cfg)
+    monkeypatch.setattr(
+        "openbiliclaw.sources.x_auth.resolve_x_cookie", lambda **kwargs: "auth_token=a; ct0=b"
+    )
+    monkeypatch.setattr("openbiliclaw.sources.x_client.XClient", _FakeXClient)
+
+    likes, bookmarks = await cli_module._fetch_x_init_data(likes_limit=5, bookmarks_limit=5)
+    assert [t["id"] for t in likes] == ["1"]
+    assert [t["id"] for t in bookmarks] == ["2"]
+
+
+def test_fetch_x_ingests_likes_and_bookmarks(runner, monkeypatch) -> None:
+    async def _fake_fetch(*, likes_limit, bookmarks_limit):
+        assert likes_limit == 5
+        assert bookmarks_limit == 5
+        return (
+            [{"id": "1", "text": "liked tweet", "author": {"screenName": "a"}}],
+            [{"id": "2", "text": "saved tweet", "author": {"screenName": "b"}}],
+        )
+
+    class _FakeMemory:
+        def __init__(self) -> None:
+            self.events: list[dict[str, Any]] = []
+
+        async def propagate_event(self, ev: dict[str, Any]) -> None:
+            self.events.append(ev)
+
+    mem = _FakeMemory()
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(cli_module, "_bootstrap_container_runtime", lambda: None)
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_fetch_x_init_data", _fake_fetch)
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: mem)
+
+    result = runner.invoke(app, ["fetch-x", "-n", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert [e["event_type"] for e in mem.events] == ["like", "favorite"]
+    assert mem.events[0]["metadata"]["tweet_id"] == "1"
+    assert mem.events[0]["url"] == "https://x.com/a/status/1"
+
+
+def test_fetch_x_dry_run_does_not_persist(runner, monkeypatch) -> None:
+    async def _fake_fetch(*, likes_limit, bookmarks_limit):
+        return ([{"id": "1", "text": "liked", "author": {"screenName": "a"}}], [])
+
+    built = {"memory": False}
+
+    def _build_mem():
+        built["memory"] = True
+        return object()
+
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(cli_module, "_bootstrap_container_runtime", lambda: None)
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_fetch_x_init_data", _fake_fetch)
+    monkeypatch.setattr(cli_module, "_build_memory_manager", _build_mem)
+
+    result = runner.invoke(app, ["fetch-x", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert built["memory"] is False  # dry-run must not build memory / persist
+
+
+def test_fetch_x_no_events_exits_cleanly(runner, monkeypatch) -> None:
+    async def _fake_fetch(*, likes_limit, bookmarks_limit):
+        return ([], [])
+
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(cli_module, "_bootstrap_container_runtime", lambda: None)
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_fetch_x_init_data", _fake_fetch)
+
+    result = runner.invoke(app, ["fetch-x"])
+
+    assert result.exit_code == 0, result.output

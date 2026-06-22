@@ -42,6 +42,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -64,11 +65,40 @@ HEALTH_POLL_INTERVAL = 2.0
 LOCAL_NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")
 DOCKER_CONTAINER_NAME = "openbiliclaw-backend"
 DOCKER_RUNTIME_ROOT = "/app/runtime"
+DOCKER_OLLAMA_BASE_URL = "http://ollama:11434/v1"
+LOCAL_OLLAMA_BASE_URLS = (
+    "http://localhost:11434",
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:11434",
+    "http://127.0.0.1:11434/v1",
+)
 DEFAULT_BILIBILI_FAVORITE_LIMIT = 300
 DEFAULT_BILIBILI_FOLLOW_LIMIT = 100
+USER_DATA_ONLY_ENTRIES = {
+    "config.toml",
+    "config.local.toml",
+    "data",
+    "logs",
+    "openbiliclaw.lock",
+}
 
-SUPPORTED_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "ollama", "openrouter")
-REMOTE_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "openrouter")
+SUPPORTED_PROVIDERS = (
+    "openai",
+    "claude",
+    "gemini",
+    "deepseek",
+    "ollama",
+    "openrouter",
+    "openai_compatible",
+)
+REMOTE_PROVIDERS = (
+    "openai",
+    "claude",
+    "gemini",
+    "deepseek",
+    "openrouter",
+    "openai_compatible",
+)
 
 # Providers whose backend has no embeddings endpoint. When a user picks
 # one of these as the primary LLM and doesn't explicitly configure
@@ -141,6 +171,37 @@ LLM_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 
+HUMAN_LLM_MENU: tuple[tuple[str, str, str], ...] = (
+    ("deepseek", "DeepSeek 官方 ★默认推荐", "deepseek-v4-flash"),
+    ("openai_compatible", "★ 中转站 / OpenAI 协议兼容服务", "relay preset"),
+    ("openai", "OpenAI 官方", "gpt-5-nano"),
+    ("gemini", "Gemini 官方", "gemini-2.5-flash"),
+    ("claude", "Claude 官方", "claude-sonnet-4-6"),
+    ("openrouter", "OpenRouter 聚合", "openai/gpt-5-nano"),
+    ("ollama", "本地 Ollama", "qwen2.5:7b"),
+)
+
+HUMAN_OPENAI_COMPAT_PRESETS: tuple[str, ...] = (
+    "relay",
+    "kimi",
+    "minimax",
+    "qwen",
+    "zhipu",
+    "yi",
+    "azure",
+    "self-hosted",
+    "custom",
+)
+
+PROVIDER_MODEL_DEFAULTS: dict[str, str] = {
+    "deepseek": "deepseek-v4-flash",
+    "openai": "gpt-5-nano",
+    "gemini": "gemini-2.5-flash",
+    "claude": "claude-sonnet-4-6",
+    "openrouter": "openai/gpt-5-nano",
+    "ollama": "qwen2.5:7b",
+}
+
 
 # ---------------------------------------------------------------------------
 # Immutable status + exit codes
@@ -170,6 +231,31 @@ class InitConfirmationAnswers:
     bilibili_cookie: str = ""
 
 
+@dataclass(frozen=True)
+class HumanInstallAnswers:
+    """Full human one-line installer choices collected before bootstrap work."""
+
+    provider: str
+    llm_api_key: str = ""
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    embedding_provider: str = "ollama"
+    embedding_model: str = "bge-m3"
+    embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    xhs: bool = False
+    douyin: bool = False
+    youtube: bool = False
+    cookie_mode: str = "extension"
+    bilibili_cookie: str = ""
+    bilibili_favorite_limit: int = DEFAULT_BILIBILI_FAVORITE_LIMIT
+    bilibili_follow_limit: int = DEFAULT_BILIBILI_FOLLOW_LIMIT
+
+    def __post_init__(self) -> None:
+        if self.provider not in SUPPORTED_PROVIDERS:
+            raise ValueError(f"unknown provider: {self.provider}")
+
+
 def emit(result: BootstrapResult) -> None:
     """Emit a machine-parseable status line for the caller agent."""
 
@@ -187,6 +273,210 @@ def info(message: str) -> None:
 
     print(f"[bootstrap] {message}")
     sys.stdout.flush()
+
+
+def mask_secret_for_prompt(value: str) -> str:
+    """Describe whether a secret is present without revealing its value."""
+
+    return "set, press Enter to reuse" if value.strip() else "not set"
+
+
+def ensure_human_wizard_tty(input_func: Any) -> None:
+    """Refuse explicit human prompts when no terminal is attached."""
+
+    if input_func is input and not sys.stdin.isatty():
+        raise RuntimeError("interactive confirmation requires a terminal")
+
+
+def resolve_human_llm_choice(raw: str) -> str | None:
+    """Resolve a menu number or alias into a supported provider name."""
+
+    value = raw.strip().lower()
+    if not value:
+        return "deepseek"
+    if value.isdigit():
+        index = int(value)
+        if 1 <= index <= len(HUMAN_LLM_MENU):
+            return HUMAN_LLM_MENU[index - 1][0]
+        return None
+    aliases = {
+        "relay": "openai_compatible",
+        "oneapi": "openai_compatible",
+        "openai-compatible": "openai_compatible",
+        "openai_compatible": "openai_compatible",
+        "openai-compat": "openai_compatible",
+        "compat": "openai_compatible",
+    }
+    menu_providers = {key for key, _label, _model in HUMAN_LLM_MENU}
+    return aliases.get(value, value if value in menu_providers else None)
+
+
+def _resolve_human_openai_compatible_preset(raw: str) -> str | None:
+    value = raw.strip().lower()
+    if not value:
+        return "relay"
+    if value.isdigit():
+        index = int(value)
+        if 1 <= index <= len(HUMAN_OPENAI_COMPAT_PRESETS):
+            return HUMAN_OPENAI_COMPAT_PRESETS[index - 1]
+        return None
+    aliases = {
+        "oneapi": "relay",
+        "gateway": "relay",
+        "team": "relay",
+        "selfhosted": "self-hosted",
+        "self_hosted": "self-hosted",
+    }
+    if value in aliases:
+        return aliases[value]
+    return value if value in LLM_PRESETS else None
+
+
+def _prompt_required(input_func: Any, prompt: str, *, default: str = "") -> str:
+    while True:
+        suffix = f" [{default}]" if default else ""
+        value = str(input_func(f"{prompt}{suffix}: ")).strip() or default
+        if value:
+            return value
+        print("This value is required.")
+
+
+def _prompt_optional(input_func: Any, prompt: str, *, default: str = "") -> str:
+    suffix = f" [{default}]" if default else ""
+    return str(input_func(f"{prompt}{suffix}: ")).strip() or default
+
+
+def _prompt_secret(
+    secret_input_func: Any,
+    prompt: str,
+    *,
+    existing: str = "",
+    required: bool = True,
+) -> str:
+    import getpass
+
+    while True:
+        suffix = f" ({mask_secret_for_prompt(existing)})" if existing else ""
+        try:
+            value = str(secret_input_func(f"{prompt}{suffix}: ")).strip()
+        except getpass.GetPassWarning as exc:
+            raise RuntimeError(
+                f"cannot disable terminal echo for secret prompt: {exc}"
+            ) from exc
+        if value:
+            return value
+        if existing:
+            return ""
+        if not required:
+            return ""
+        print(f"{prompt} is required.")
+
+
+def read_secret_no_echo(prompt: str) -> str:
+    import getpass
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            return getpass.getpass(prompt)
+        except getpass.GetPassWarning as exc:
+            raise RuntimeError(
+                f"cannot disable terminal echo for secret prompt: {exc}"
+            ) from exc
+
+
+def _collect_human_openai_compatible_llm(
+    input_func: Any,
+    secret_input_func: Any,
+    *,
+    existing_provider: str,
+    existing_api_key: str,
+    existing_base_url: str,
+    existing_model: str,
+) -> HumanInstallAnswers:
+    print("")
+    print("OpenAI-compatible presets")
+    for index, preset_name in enumerate(HUMAN_OPENAI_COMPAT_PRESETS, start=1):
+        preset_cfg = LLM_PRESETS[preset_name]
+        model_label = preset_cfg.get("model") or "custom model"
+        print(f"{index}. {preset_name} ({model_label})")
+    preset: str | None = None
+    while preset is None:
+        preset = _resolve_human_openai_compatible_preset(
+            str(input_func("OpenAI-compatible preset [1 relay]: "))
+        )
+        if preset is None:
+            print("Unknown OpenAI-compatible preset. Please choose a number from the menu.")
+    preset_cfg = LLM_PRESETS.get(preset, LLM_PRESETS["relay"])
+    base_default = existing_base_url if existing_provider == "openai_compatible" else ""
+    base_default = base_default or preset_cfg.get("base_url", "")
+    base_url = _prompt_required(input_func, "OpenAI-compatible Base URL", default=base_default)
+    key_existing = existing_api_key if existing_provider == "openai_compatible" else ""
+    api_key = _prompt_secret(secret_input_func, "OpenAI-compatible API Key", existing=key_existing)
+    model_default = existing_model if existing_provider == "openai_compatible" else ""
+    model_default = model_default or preset_cfg.get("model", "")
+    if model_default:
+        model = _prompt_optional(input_func, "OpenAI-compatible model", default=model_default)
+    else:
+        model = _prompt_required(input_func, "OpenAI-compatible model")
+    return HumanInstallAnswers(
+        provider="openai_compatible",
+        llm_api_key=api_key,
+        llm_base_url=base_url,
+        llm_model=model,
+    )
+
+
+def collect_human_llm_config(
+    *,
+    input_func: Any = input,
+    secret_input_func: Any | None = None,
+    existing_provider: str = "deepseek",
+    existing_api_key: str = "",
+    existing_base_url: str = "",
+    existing_model: str = "",
+) -> HumanInstallAnswers:
+    """Collect the primary LLM provider and provider-specific fields."""
+
+    secret_input_func = secret_input_func or read_secret_no_echo
+    print("")
+    print("OpenBiliClaw needs an LLM provider.")
+    for index, (_provider, label, model) in enumerate(HUMAN_LLM_MENU, start=1):
+        print(f"{index}. {label} ({model})")
+
+    provider: str | None = None
+    while provider is None:
+        provider = resolve_human_llm_choice(
+            str(input_func("LLM provider [1 DeepSeek]: "))
+        )
+        if provider is None:
+            print("Unknown provider choice. Please choose a number from the menu.")
+
+    if provider == "openai_compatible":
+        return _collect_human_openai_compatible_llm(
+            input_func,
+            secret_input_func,
+            existing_provider=existing_provider,
+            existing_api_key=existing_api_key,
+            existing_base_url=existing_base_url,
+            existing_model=existing_model,
+        )
+
+    model_default = existing_model if provider == existing_provider else ""
+    model_default = model_default or PROVIDER_MODEL_DEFAULTS.get(provider, "")
+    if provider == "ollama":
+        model = _prompt_required(input_func, "Ollama chat model", default=model_default)
+        return HumanInstallAnswers(provider=provider, llm_model=model)
+
+    key_existing = existing_api_key if provider == existing_provider else ""
+    api_key = _prompt_secret(secret_input_func, f"{provider} API Key", existing=key_existing)
+    model = _prompt_optional(input_func, f"{provider} model", default=model_default)
+    return HumanInstallAnswers(
+        provider=provider,
+        llm_api_key=api_key,
+        llm_model=model,
+    )
 
 
 def confirmation_answers_to_bootstrap_args(answers: InitConfirmationAnswers) -> list[str]:
@@ -318,6 +608,146 @@ def collect_interactive_confirmations(input_func: Any | None = input) -> InitCon
     )
 
 
+def _collect_human_embedding_config(
+    input_func: Any,
+    secret_input_func: Any,
+) -> tuple[str, str, str | None, str | None]:
+    print("")
+    print("Embedding provider")
+    print("1. Local Ollama bge-m3 ★default")
+    print("2. Gemini embedding")
+    print("3. Disable embedding")
+    print("4. Custom OpenAI-compatible embedding")
+    print("5. Advanced provider")
+    choice = str(input_func("Embedding provider [1 Ollama bge-m3]: ")).strip().lower()
+
+    if choice in {"", "1", "ollama"}:
+        return "ollama", "bge-m3", None, None
+    if choice in {"2", "gemini"}:
+        api_key = _prompt_secret(secret_input_func, "Gemini embedding API Key")
+        model = _prompt_optional(
+            input_func,
+            "Gemini embedding model",
+            default="gemini-embedding-001",
+        )
+        return "gemini", model, None, api_key
+    if choice in {"3", "disable", "disabled", "none", "no", "off"}:
+        return "", "", None, None
+    if choice in {"4", "openai_compatible", "openai-compatible", "compat"}:
+        base_url = _prompt_required(input_func, "Embedding OpenAI-compatible Base URL")
+        api_key = _prompt_secret(secret_input_func, "Embedding OpenAI-compatible API Key")
+        model = _prompt_required(input_func, "Embedding model")
+        return "openai_compatible", model, base_url, api_key
+
+    provider = _prompt_required(input_func, "Embedding provider name", default=choice)
+    while provider not in SUPPORTED_PROVIDERS:
+        print("Unknown embedding provider.")
+        provider = _prompt_required(input_func, "Embedding provider name")
+    model = _prompt_required(input_func, "Embedding model")
+    base_url = _prompt_optional(input_func, "Embedding base URL")
+    api_key = _prompt_secret(secret_input_func, "Embedding API Key", required=False)
+    return provider, model, base_url or None, api_key or None
+
+
+def _collect_human_cookie_config(
+    input_func: Any,
+    secret_input_func: Any,
+) -> tuple[str, str]:
+    print("")
+    print("Bilibili auth default: browser extension sync.")
+    raw = (
+        str(input_func("Bilibili cookie source: extension/manual/existing [extension]: "))
+        .strip()
+        .lower()
+    )
+    cookie_mode = raw or "extension"
+    if cookie_mode in {"manual", "paste"}:
+        cookie = _prompt_secret(secret_input_func, "Bilibili Cookie")
+        return "manual", cookie
+    if cookie_mode in {"existing", "reuse"}:
+        return "existing", ""
+    return "extension", ""
+
+
+def collect_human_install_wizard(
+    *,
+    input_func: Any = input,
+    secret_input_func: Any | None = None,
+    existing_provider: str = "deepseek",
+    existing_api_key: str = "",
+    existing_base_url: str = "",
+    existing_model: str = "",
+) -> HumanInstallAnswers:
+    """Collect full human one-line installer choices before bootstrap starts."""
+
+    ensure_human_wizard_tty(input_func)
+    secret_input_func = secret_input_func or read_secret_no_echo
+    llm = collect_human_llm_config(
+        input_func=input_func,
+        secret_input_func=secret_input_func,
+        existing_provider=existing_provider,
+        existing_api_key=existing_api_key,
+        existing_base_url=existing_base_url,
+        existing_model=existing_model,
+    )
+    embedding_provider, embedding_model, embedding_base_url, embedding_api_key = (
+        _collect_human_embedding_config(input_func, secret_input_func)
+    )
+
+    print("")
+    print(
+        "Bilibili init signal limits default to 300 favorites / 100 follows; "
+        "enter 0 to skip one signal."
+    )
+    favorite_limit = _ask_non_negative_int(
+        input_func,
+        "Max Bilibili favorites to import during init",
+        default=DEFAULT_BILIBILI_FAVORITE_LIMIT,
+    )
+    follow_limit = _ask_non_negative_int(
+        input_func,
+        "Max Bilibili followed creators to import during init",
+        default=DEFAULT_BILIBILI_FOLLOW_LIMIT,
+    )
+
+    print("")
+    print("Optional source data is disabled by default unless you explicitly opt in.")
+    xhs = _ask_yes_no(
+        input_func,
+        "Include Xiaohongshu likes/favorites in the initial profile?",
+        default=False,
+    )
+    douyin = _ask_yes_no(
+        input_func,
+        "Include Douyin post/favorite/like/follow data in the initial profile?",
+        default=False,
+    )
+    youtube = _ask_yes_no(
+        input_func,
+        "Include YouTube history/subscriptions/likes in the initial profile?",
+        default=False,
+    )
+    cookie_mode, bilibili_cookie = _collect_human_cookie_config(input_func, secret_input_func)
+
+    return HumanInstallAnswers(
+        provider=llm.provider,
+        llm_api_key=llm.llm_api_key,
+        llm_base_url=llm.llm_base_url,
+        llm_model=llm.llm_model,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        embedding_base_url=embedding_base_url,
+        embedding_api_key=embedding_api_key,
+        xhs=xhs,
+        douyin=douyin,
+        youtube=youtube,
+        cookie_mode=cookie_mode,
+        bilibili_cookie=bilibili_cookie,
+        bilibili_favorite_limit=favorite_limit,
+        bilibili_follow_limit=follow_limit,
+    )
+
+
 def apply_confirmation_answers_to_args(
     args: argparse.Namespace,
     answers: InitConfirmationAnswers,
@@ -345,6 +775,52 @@ def apply_confirmation_answers_to_args(
         args.bilibili_cookie = answers.bilibili_cookie
     if answers.cookie_mode == "extension":
         args.wait_for_extension_cookie = True
+
+
+def apply_human_install_answers_to_args(
+    args: argparse.Namespace,
+    answers: HumanInstallAnswers,
+) -> None:
+    """Mutate parsed args with full human installer choices."""
+
+    if answers.provider not in SUPPORTED_PROVIDERS:
+        raise RuntimeError(f"unknown provider from human install wizard: {answers.provider}")
+    if args.provider is None:
+        args.provider = answers.provider
+    if args.llm_api_key is None and answers.llm_api_key:
+        args.llm_api_key = answers.llm_api_key
+    if args.llm_base_url is None and answers.llm_base_url is not None:
+        args.llm_base_url = answers.llm_base_url
+    if args.llm_model is None and answers.llm_model is not None:
+        args.llm_model = answers.llm_model
+    if args.embedding_provider is None:
+        args.embedding_provider = answers.embedding_provider
+    if args.embedding_model is None:
+        args.embedding_model = answers.embedding_model
+    if args.embedding_base_url is None and answers.embedding_base_url is not None:
+        args.embedding_base_url = answers.embedding_base_url
+    if args.embedding_api_key is None and answers.embedding_api_key:
+        args.embedding_api_key = answers.embedding_api_key
+    if not args.yes_xhs and not args.no_xhs:
+        args.yes_xhs = answers.xhs
+        args.no_xhs = not answers.xhs
+    if not args.yes_douyin and not args.no_douyin:
+        args.yes_douyin = answers.douyin
+        args.no_douyin = not answers.douyin
+    if not args.yes_youtube and not args.no_youtube:
+        args.yes_youtube = answers.youtube
+        args.no_youtube = not answers.youtube
+    if args.bilibili_favorite_limit is None:
+        args.bilibili_favorite_limit = answers.bilibili_favorite_limit
+    if args.bilibili_follow_limit is None:
+        args.bilibili_follow_limit = answers.bilibili_follow_limit
+    if (
+        answers.cookie_mode == "manual"
+        and answers.bilibili_cookie
+        and not args.bilibili_cookie
+    ):
+        args.bilibili_cookie = answers.bilibili_cookie
+    args.wait_for_extension_cookie = answers.cookie_mode == "extension"
 
 
 # ---------------------------------------------------------------------------
@@ -1244,7 +1720,9 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
     Rules:
     * If project_dir already contains pyproject.toml + config.example.toml, assume it's already a checkout.
     * Otherwise, clone the repo into project_dir.
-    * Refuses to clone into a non-empty directory that does not already look like OpenBiliClaw.
+    * If project_dir only contains desktop-package user data, clone code into
+      the same directory without touching config.toml / data / logs.
+    * Refuses to clone into other non-empty directories.
     """
 
     project_dir = project_dir.expanduser().resolve()
@@ -1255,6 +1733,8 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
     project_dir.mkdir(parents=True, exist_ok=True)
     entries = [entry for entry in project_dir.iterdir() if entry.name != ".DS_Store"]
     if entries:
+        if _is_user_data_only_root(project_dir):
+            return _clone_repo_into_user_data_root(project_dir, repo_url, branch)
         raise RuntimeError(
             f"Target directory is not empty and does not look like OpenBiliClaw: {project_dir}"
         )
@@ -1265,6 +1745,40 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
 
     info(f"Cloning {repo_url} (branch {branch}) into {project_dir}")
     run_streaming([git, "clone", "--branch", branch, "--depth", "1", repo_url, str(project_dir)])
+    return project_dir
+
+
+def _is_user_data_only_root(path: Path) -> bool:
+    """Return True when a directory only contains OpenBiliClaw user data."""
+    if not path.exists() or not path.is_dir():
+        return False
+    entries = [entry for entry in path.iterdir() if entry.name != ".DS_Store"]
+    return bool(entries) and all(entry.name in USER_DATA_ONLY_ENTRIES for entry in entries)
+
+
+def _clone_repo_into_user_data_root(project_dir: Path, repo_url: str, branch: str) -> Path:
+    """Clone source code into an existing user-data-only root.
+
+    The desktop package now shares ``~/OpenBiliClaw`` with script / AI installs.
+    If the package created that directory first, it contains config/data/logs but
+    no source checkout. Clone to a temporary sibling, then move the repo files
+    in, leaving user data untouched.
+    """
+    git = which("git")
+    if git is None:
+        raise RuntimeError("git is required to clone OpenBiliClaw but was not found on PATH.")
+
+    info(f"Target {project_dir} contains existing user data; cloning source into it")
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-clone-", dir=project_dir.parent) as tmp:
+        clone_dir = Path(tmp)
+        run_streaming([git, "clone", "--branch", branch, "--depth", "1", repo_url, str(clone_dir)])
+        for entry in clone_dir.iterdir():
+            destination = project_dir / entry.name
+            if destination.exists():
+                raise RuntimeError(
+                    f"Cannot merge checkout into {project_dir}: destination exists: {destination}"
+                )
+            shutil.move(str(entry), str(destination))
     return project_dir
 
 
@@ -1311,14 +1825,23 @@ def set_toml_string_value(content: str, section: str, key: str, value: str) -> s
 
     lines = content.splitlines()
     in_section = False
+    section_found = False
+    insert_at: int | None = None
     updated = False
     for index, raw_line in enumerate(lines):
         stripped = raw_line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section:
+                insert_at = index
+                break
             in_section = stripped == section_header
+            if in_section:
+                section_found = True
+                insert_at = index + 1
             continue
         if not in_section:
             continue
+        insert_at = index + 1
         if stripped.startswith("#"):
             continue
         if "=" not in stripped:
@@ -1331,6 +1854,10 @@ def set_toml_string_value(content: str, section: str, key: str, value: str) -> s
             break
 
     if not updated:
+        trailing_newline = "\n" if content.endswith("\n") else ""
+        if section_found:
+            lines.insert(insert_at if insert_at is not None else len(lines), new_line)
+            return "\n".join(lines) + trailing_newline
         # Append the section if missing
         append_lines = []
         if not content.endswith("\n"):
@@ -1425,12 +1952,17 @@ def reuse_config_secrets(project_dir: Path, source_dir: Path) -> dict[str, Any]:
             if api_key:
                 update_config_secret(project_dir / "config.toml", f"llm.{name}", "api_key", api_key)
                 summary["reused"].append(f"llm.{name}.api_key")
-
-        gemini_cfg = llm_section.get("gemini", {})
-        gemini_model = str(gemini_cfg.get("model", "")).strip()
-        if gemini_model:
-            update_config_secret(project_dir / "config.toml", "llm.gemini", "model", gemini_model)
-            summary["reused"].append("llm.gemini.model")
+            for field_name in ("model", "base_url"):
+                value = str(provider_cfg.get(field_name, "")).strip()
+                if not value:
+                    continue
+                update_config_secret(
+                    project_dir / "config.toml",
+                    f"llm.{name}",
+                    field_name,
+                    value,
+                )
+                summary["reused"].append(f"llm.{name}.{field_name}")
 
         bilibili_section = source_data.get("bilibili", {})
         cookie_value = str(bilibili_section.get("cookie", "")).strip()
@@ -1547,6 +2079,38 @@ def apply_embedding_config(
     return {"written": written, "provider": target_provider}
 
 
+def _is_local_ollama_base_url(base_url: str) -> bool:
+    normalized = base_url.strip().rstrip("/")
+    return not normalized or normalized in LOCAL_OLLAMA_BASE_URLS
+
+
+def align_docker_runtime_config(project_dir: Path) -> dict[str, Any]:
+    """Rewrite host-only config values before copying them into Docker runtime."""
+
+    config_path = project_dir / "config.toml"
+    config = read_simple_toml(config_path)
+    embedding_cfg = config.get("llm", {}).get("embedding", {})
+    provider = str(embedding_cfg.get("provider", "") or "").strip().lower()
+    base_url = str(embedding_cfg.get("base_url", "") or "").strip()
+    written: list[str] = []
+
+    if provider == "ollama" and _is_local_ollama_base_url(base_url):
+        update_config_secret(
+            config_path,
+            "llm.embedding",
+            "base_url",
+            DOCKER_OLLAMA_BASE_URL,
+        )
+        base_url = DOCKER_OLLAMA_BASE_URL
+        written.append("llm.embedding.base_url")
+
+    return {
+        "written": written,
+        "embedding_provider": provider,
+        "embedding_base_url": base_url,
+    }
+
+
 def parse_module_override(spec: str) -> tuple[str, str, str]:
     """Parse --module-override values shaped like ``module=provider:model``.
 
@@ -1592,7 +2156,7 @@ def detect_missing_secrets(project_dir: Path) -> dict[str, Any]:
     config_path = project_dir / "config.toml"
     data = read_simple_toml(config_path)
     llm_section = data.get("llm", {})
-    provider = str(llm_section.get("default_provider", "") or "").strip() or "openai"
+    provider = str(llm_section.get("default_provider", "") or "").strip() or "deepseek"
 
     provider_cfg = llm_section.get(provider, {})
     api_key = str(provider_cfg.get("api_key", "") or "").strip()
@@ -1610,6 +2174,10 @@ def detect_missing_secrets(project_dir: Path) -> dict[str, Any]:
     missing: list[str] = []
     if provider in REMOTE_PROVIDERS and not api_key:
         missing.append(f"llm.{provider}.api_key")
+    if provider == "openai_compatible":
+        base_url = str(provider_cfg.get("base_url", "") or "").strip()
+        if not base_url:
+            missing.append("llm.openai_compatible.base_url")
     if not (cookie_inline or cookie_on_disk):
         missing.append("bilibili.cookie")
 
@@ -2110,10 +2678,11 @@ config_path = Path("/app/runtime/config.toml")
 cookie_path = Path("/app/runtime/data/bilibili_cookie.json")
 data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
 llm = data.get("llm", {})
-provider = str(llm.get("default_provider", "") or "").strip() or "openai"
-remote = {"openai", "claude", "gemini", "deepseek", "openrouter"}
+provider = str(llm.get("default_provider", "") or "").strip() or "deepseek"
+remote = {"openai", "claude", "gemini", "deepseek", "openrouter", "openai_compatible"}
 provider_cfg = llm.get(provider, {})
 api_key = str(provider_cfg.get("api_key", "") or "").strip()
+base_url = str(provider_cfg.get("base_url", "") or "").strip()
 bilibili = data.get("bilibili", {})
 cookie_inline = str(bilibili.get("cookie", "") or "").strip()
 cookie_on_disk = False
@@ -2125,6 +2694,8 @@ if cookie_path.exists():
 missing = []
 if provider in remote and not api_key:
     missing.append(f"llm.{provider}.api_key")
+if provider == "openai_compatible" and not base_url:
+    missing.append("llm.openai_compatible.base_url")
 if not (cookie_inline or cookie_on_disk):
     missing.append("bilibili.cookie")
 print(json.dumps({
@@ -2225,16 +2796,28 @@ def run(args: argparse.Namespace) -> int:
 
     if args.interactive_confirm:
         try:
-            answers = collect_interactive_confirmations()
+            current = detect_missing_secrets(project_dir)
+            provider = str(current.get("provider") or "deepseek")
+            provider_cfg = (
+                read_simple_toml(project_dir / "config.toml").get("llm", {}).get(provider, {})
+            )
+            answers = collect_human_install_wizard(
+                existing_provider=provider,
+                existing_api_key=str(provider_cfg.get("api_key", "") or ""),
+                existing_base_url=str(provider_cfg.get("base_url", "") or ""),
+                existing_model=str(provider_cfg.get("model", "") or ""),
+            )
+            apply_human_install_answers_to_args(args, answers)
         except RuntimeError as exc:
             emit(BootstrapResult("error", str(exc), {"step": "interactive_confirm"}))
             return 2
-        apply_confirmation_answers_to_args(args, answers)
         emit(
             BootstrapResult(
                 "ok",
-                "init_confirmations_set",
+                "human_install_choices_set",
                 {
+                    "provider": args.provider,
+                    "llm_model": args.llm_model,
                     "embedding_provider": args.embedding_provider,
                     "embedding_model": args.embedding_model,
                     "xhs": "yes" if args.yes_xhs else "no",
@@ -2337,6 +2920,16 @@ def run(args: argparse.Namespace) -> int:
     if mode == "auto":
         mode = "docker" if detect_docker() else "local"
     emit(BootstrapResult("ok", "mode_selected", {"mode": mode}))
+    if mode == "docker":
+        docker_config_summary = align_docker_runtime_config(project_dir)
+        if docker_config_summary["written"]:
+            emit(
+                BootstrapResult(
+                    "ok",
+                    "docker_runtime_config_aligned",
+                    docker_config_summary,
+                )
+            )
 
     # v0.3.95+: revive the embedding→Ollama safety net. Embedding is fully
     # decoupled from the chat provider (v0.3.32+), so an install that sets
@@ -2425,7 +3018,7 @@ def run(args: argparse.Namespace) -> int:
         init_decisions = detect_init_decisions(
             project_dir,
             args,
-            embedding_touched=embedding_touched or auto_embedding_to_ollama,
+            embedding_touched=embedding_touched,
         )
         emit(
             BootstrapResult(
@@ -2457,7 +3050,7 @@ def run(args: argparse.Namespace) -> int:
         init_decisions = detect_init_decisions(
             project_dir,
             args,
-            embedding_touched=embedding_touched or auto_embedding_to_ollama,
+            embedding_touched=embedding_touched,
         )
         emit(
             BootstrapResult(
@@ -2506,7 +3099,7 @@ def run(args: argparse.Namespace) -> int:
         init_decisions = detect_init_decisions(
             project_dir,
             args,
-            embedding_touched=embedding_touched or auto_embedding_to_ollama,
+            embedding_touched=embedding_touched,
         )
         label = "complete" if not final_status["missing"] else "running_with_missing_secrets"
         if not final_status["missing"] and init_decisions["missing"] and not args.skip_init:
@@ -2627,7 +3220,7 @@ def run(args: argparse.Namespace) -> int:
     init_decisions = detect_init_decisions(
         project_dir,
         args,
-        embedding_touched=embedding_touched or auto_embedding_to_ollama,
+        embedding_touched=embedding_touched,
     )
     emit(
         BootstrapResult(

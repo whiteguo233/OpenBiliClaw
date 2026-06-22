@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. queryId is rotated by X; the parser matches the CreateTweet operation name, not this id. Only treated as a comment when variables.reply.in_reply_to_tweet_id is present.",
+  "url": "https://x.com/i/api/graphql/SoVnbfCycZ7fERGCwpZkYA/CreateTweet",
+  "requestBody": "{\"variables\":{\"tweet_text\":\"great thread, thanks for sharing\",\"reply\":{\"in_reply_to_tweet_id\":\"1790000000000000004\",\"exclude_reply_user_ids\":[]},\"dark_request\":false,\"media\":{\"media_entities\":[],\"possibly_sensitive\":false},\"semantic_annotation_ids\":[]},\"queryId\":\"SoVnbfCycZ7fERGCwpZkYA\"}",
+  "responseBody": "{\"data\":{\"create_tweet\":{\"tweet_results\":{\"result\":{\"rest_id\":\"1790000000000088004\"}}}}}"
+}

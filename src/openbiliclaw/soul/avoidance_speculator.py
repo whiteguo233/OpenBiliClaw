@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 from openbiliclaw.llm.json_utils import DEFAULT_STRUCTURED_MAX_TOKENS, parse_llm_json_tolerant
 from openbiliclaw.soul.speculator import (
     _build_event_text,
@@ -31,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 DENYING_AVOIDANCE_RESPONSES = {"reject", "chat_negative"}
 CONFIRMING_AVOIDANCE_RESPONSES = {"confirm", "chat_positive"}
+HANDLED_AVOIDANCE_RESPONSES = DENYING_AVOIDANCE_RESPONSES | CONFIRMING_AVOIDANCE_RESPONSES
 AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT = 2
 
 
@@ -46,8 +50,7 @@ def _avoidance_topic_markers(value: object) -> set[str]:
 
     markers: set[str] = set()
     if re.search(r"\b(ai|aigc|llm|gpt)\b", text) or any(
-        marker in normalized
-        for marker in ("人工智能", "大模型", "机器学习", "深度学习", "提示词")
+        marker in normalized for marker in ("人工智能", "大模型", "机器学习", "深度学习", "提示词")
     ):
         markers.add("ai")
     if any(marker in normalized for marker in ("动漫", "番剧", "新番", "轻小说")):
@@ -100,8 +103,7 @@ def _avoidance_source_topic_keys(
     if not mode:
         return set()
     return {
-        f"{mode}:{key}"
-        for key in _avoidance_topic_keys(domain=domain, source_signal=source_signal)
+        f"{mode}:{key}" for key in _avoidance_topic_keys(domain=domain, source_signal=source_signal)
     }
 
 
@@ -345,7 +347,7 @@ class AvoidanceNoveltyGuard:
         for item in probed_domains or set():
             add_term(item)
         for item in normalize_probe_feedback_history(feedback_history):
-            if str(item.get("response", "")).lower() not in DENYING_AVOIDANCE_RESPONSES:
+            if str(item.get("response", "")).lower() not in HANDLED_AVOIDANCE_RESPONSES:
                 continue
             raw_specifics = item.get("specifics", [])
             specifics = raw_specifics if isinstance(raw_specifics, list) else []
@@ -432,10 +434,31 @@ def load_avoidance_state(data_dir: Path) -> AvoidanceState:
 
 def save_avoidance_state(data_dir: Path, state: AvoidanceState) -> None:
     """Persist avoidance state to disk."""
-    memory_dir = data_dir / "memory"
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    with open(memory_dir / "avoidance_state.json", "w", encoding="utf-8") as file:
-        json.dump(state.to_dict(), file, ensure_ascii=False, indent=2)
+    update_avoidance_state(data_dir, lambda _state: state)
+
+
+def update_avoidance_state(
+    data_dir: Path,
+    mutator: Callable[[AvoidanceState], AvoidanceState | None],
+) -> AvoidanceState:
+    """Atomically update speculative avoidance state from latest disk data."""
+    from openbiliclaw.memory.json_state import update_json_state
+
+    path = data_dir / "memory" / "avoidance_state.json"
+
+    def _mutate(state: AvoidanceState) -> AvoidanceState:
+        result = mutator(state)
+        return state if result is None else result
+
+    return update_json_state(
+        path,
+        default_factory=AvoidanceState,
+        normalize=lambda raw: (
+            AvoidanceState.from_dict(raw) if isinstance(raw, dict) else AvoidanceState()
+        ),
+        serialize=lambda state: state.to_dict(),
+        mutate=_mutate,
+    )
 
 
 def promote_ready_avoidances(
@@ -543,9 +566,7 @@ def _compute_source_mode_quota(
     biasing toward modes that are under-represented in the current active set.
     Modes already at ``AVOIDANCE_SOURCE_MODE_ACTIVE_LIMIT`` get 0.
     """
-    current = _source_mode_counts(
-        [item for item in active if item.status == "active"]
-    )
+    current = _source_mode_counts([item for item in active if item.status == "active"])
     # Remaining capacity per mode before hitting the per-mode cap
     remaining: dict[str, int] = {}
     for mode in _ALL_SOURCE_MODES:
@@ -757,6 +778,8 @@ def choose_next_avoidance_candidate(
     denied_axes = _denied_avoidance_axes(feedback_history)
     candidates: list[Any] = []
     for item in avoidances:
+        if str(getattr(item, "status", "active")).strip().lower() != "active":
+            continue
         domain = str(getattr(item, "domain", "")).strip().lower()
         if not domain or domain in recent_domains:
             continue
@@ -843,64 +866,146 @@ class AvoidanceSpeculator:
             return
         save_avoidance_state(self._data_dir, state)
 
+    def _update_state(
+        self,
+        mutator: Callable[[AvoidanceState], AvoidanceState | None],
+    ) -> AvoidanceState:
+        if self._data_dir is not None:
+            return update_avoidance_state(self._data_dir, mutator)
+        state = AvoidanceState()
+        result = mutator(state)
+        return state if result is None else result
+
+    @staticmethod
+    def _latest_feedback_history(
+        *,
+        feedback_history: object | None,
+        feedback_history_loader: Callable[[], object] | None,
+    ) -> object | None:
+        if feedback_history_loader is None:
+            return feedback_history
+        try:
+            return feedback_history_loader()
+        except Exception:
+            logger.debug("Failed to load latest avoidance feedback history", exc_info=True)
+            return feedback_history
+
+    def _merge_generated_candidates(
+        self,
+        candidates: list[SpeculativeAvoidance],
+        profile: OnionProfile,
+        *,
+        feedback_history: object | None,
+    ) -> list[SpeculativeAvoidance]:
+        if not candidates:
+            return []
+        generated: list[SpeculativeAvoidance] = []
+
+        def _mutate(state: AvoidanceState) -> None:
+            nonlocal generated
+            slots = self._max_active - sum(1 for item in state.active if item.status == "active")
+            if slots <= 0:
+                return
+            guard = AvoidanceNoveltyGuard.from_profile_and_state(
+                profile,
+                state,
+                feedback_history=feedback_history,
+            )
+            existing_domains = {
+                str(item.domain).strip().lower()
+                for item in state.active
+                if str(item.domain).strip()
+                and item.status in {"active", "confirmed", "user_rejected", "rejected"}
+            }
+            selected: list[SpeculativeAvoidance] = []
+            for candidate in _select_diverse_avoidance_candidates(
+                candidates,
+                slots=slots,
+                existing=[item for item in state.active if item.status == "active"],
+            ):
+                domain_key = candidate.domain.strip().lower()
+                if not domain_key or domain_key in existing_domains:
+                    continue
+                if guard.is_duplicate_candidate(
+                    candidate.domain,
+                    specifics=[specific.name for specific in candidate.specifics],
+                    source_mode=candidate.source_mode,
+                    source_signal=candidate.source_signal,
+                ):
+                    continue
+                state.active.append(candidate)
+                existing_domains.add(domain_key)
+                selected.append(candidate)
+            generated = selected
+
+        self._update_state(_mutate)
+        return generated
+
     def get_active_avoidances(self) -> list[SpeculativeAvoidance]:
         state = self._load_state()
         return [item for item in state.active if item.status == "active"]
 
     def user_confirm_avoidance(self, domain: str) -> SpeculativeAvoidance | None:
         """User explicitly confirmed an avoidance; remove it from active state."""
-        state = self._load_state()
-        remaining: list[SpeculativeAvoidance] = []
         confirmed: SpeculativeAvoidance | None = None
-        for item in state.active:
-            if item.domain.lower() == domain.lower() and item.status == "active":
-                item.status = "promoted"
-                item.confirmation_count = item.confirmation_threshold
-                item.confirming_events.append("user_confirmed")
-                confirmed = item
-                state.total_promoted += 1
-            else:
-                remaining.append(item)
-        if confirmed is not None:
+
+        def _mutate(state: AvoidanceState) -> None:
+            nonlocal confirmed
+            remaining: list[SpeculativeAvoidance] = []
+            for item in state.active:
+                if item.domain.lower() == domain.lower() and item.status == "active":
+                    item.status = "promoted"
+                    item.confirmation_count = item.confirmation_threshold
+                    item.confirming_events.append("user_confirmed")
+                    confirmed = item
+                    state.total_promoted += 1
+                else:
+                    remaining.append(item)
             state.active = remaining
-            self._save_state(state)
+
+        self._update_state(_mutate)
         return confirmed
 
     def user_reject_avoidance(self, domain: str, cooldown_days: int = 30) -> bool:
         """User rejected an avoidance hypothesis; move it to cooldown."""
-        state = self._load_state()
-        remaining: list[SpeculativeAvoidance] = []
         found = False
         now = datetime.now()
-        for item in state.active:
-            if item.domain.lower() == domain.lower() and item.status == "active":
-                item.status = "rejected"
-                state.total_rejected += 1
-                state.cooldown.append(
-                    AvoidanceCooldownEntry(
-                        domain=item.domain,
-                        source_mode=item.source_mode,
-                        rejected_at=now.isoformat(),
-                        cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+
+        def _mutate(state: AvoidanceState) -> None:
+            nonlocal found
+            remaining: list[SpeculativeAvoidance] = []
+            for item in state.active:
+                if item.domain.lower() == domain.lower() and item.status == "active":
+                    item.status = "rejected"
+                    state.total_rejected += 1
+                    state.cooldown.append(
+                        AvoidanceCooldownEntry(
+                            domain=item.domain,
+                            source_mode=item.source_mode,
+                            rejected_at=now.isoformat(),
+                            cooldown_until=(now + timedelta(days=cooldown_days)).isoformat(),
+                        )
                     )
-                )
-                found = True
-            else:
-                remaining.append(item)
-        state.active = remaining
-        if found:
-            self._save_state(state)
+                    found = True
+                else:
+                    remaining.append(item)
+            state.active = remaining
+
+        self._update_state(_mutate)
         return found
 
     def observe(self, events: list[dict[str, Any]]) -> int:
         if not events:
             return 0
-        state = self._load_state()
-        if not any(item.status == "active" for item in state.active):
-            return 0
-        state, match_count = observe_avoidance_events(events, state)
-        if match_count:
-            self._save_state(state)
+        match_count = 0
+
+        def _mutate(state: AvoidanceState) -> None:
+            nonlocal match_count
+            if not any(item.status == "active" for item in state.active):
+                return
+            _state, match_count = observe_avoidance_events(events, state)
+
+        self._update_state(_mutate)
         return match_count
 
     async def tick(
@@ -908,34 +1013,43 @@ class AvoidanceSpeculator:
         profile: OnionProfile,
         *,
         feedback_history: object | None = None,
+        feedback_history_loader: Callable[[], object] | None = None,
     ) -> AvoidanceTickResult:
         now = datetime.now()
-        state = self._load_state()
         result = AvoidanceTickResult()
 
-        rejected, state = expire_stale_avoidances(state, now, self._cooldown_days)
-        result.rejected = rejected
-        promoted, state = promote_ready_avoidances(state)
-        result.promoted = promoted
-        compacted, state = compact_redundant_active_avoidances(
-            state,
-            now,
-            self._cooldown_days,
-        )
-        result.rejected.extend(compacted)
-        if result.promoted or result.rejected:
-            self._save_state(state)
+        def _prepare(state: AvoidanceState) -> AvoidanceState:
+            rejected, next_state = expire_stale_avoidances(state, now, self._cooldown_days)
+            result.rejected = rejected
+            promoted, next_state = promote_ready_avoidances(next_state)
+            result.promoted = promoted
+            compacted, next_state = compact_redundant_active_avoidances(
+                next_state,
+                now,
+                self._cooldown_days,
+            )
+            result.rejected.extend(compacted)
+            return next_state
+
+        state = self._update_state(_prepare)
 
         if self._should_generate(state, now):
             pre_active_domains = {item.domain for item in state.active if item.status == "active"}
-            state = await self._generate(profile, state, now, feedback_history=feedback_history)
-            result.generated = [
+            snapshot = await self._generate(profile, state, now, feedback_history=feedback_history)
+            candidates = [
                 item
-                for item in state.active
+                for item in snapshot.active
                 if item.status == "active" and item.domain not in pre_active_domains
             ]
-
-        self._save_state(state)
+            latest_feedback = self._latest_feedback_history(
+                feedback_history=feedback_history,
+                feedback_history_loader=feedback_history_loader,
+            )
+            result.generated = self._merge_generated_candidates(
+                candidates,
+                profile,
+                feedback_history=latest_feedback,
+            )
 
         if result.promoted:
             logger.info(
@@ -963,35 +1077,44 @@ class AvoidanceSpeculator:
         profile: OnionProfile,
         *,
         feedback_history: object | None = None,
+        feedback_history_loader: Callable[[], object] | None = None,
     ) -> AvoidanceTickResult:
         now = datetime.now()
-        state = self._load_state()
         result = AvoidanceTickResult()
 
-        rejected, state = expire_stale_avoidances(state, now, self._cooldown_days)
-        result.rejected = rejected
-        promoted, state = promote_ready_avoidances(state)
-        result.promoted = promoted
-        compacted, state = compact_redundant_active_avoidances(
-            state,
-            now,
-            self._cooldown_days,
-        )
-        result.rejected.extend(compacted)
-        if result.promoted or result.rejected:
-            self._save_state(state)
+        def _prepare(state: AvoidanceState) -> AvoidanceState:
+            rejected, next_state = expire_stale_avoidances(state, now, self._cooldown_days)
+            result.rejected = rejected
+            promoted, next_state = promote_ready_avoidances(next_state)
+            result.promoted = promoted
+            compacted, next_state = compact_redundant_active_avoidances(
+                next_state,
+                now,
+                self._cooldown_days,
+            )
+            result.rejected.extend(compacted)
+            return next_state
+
+        state = self._update_state(_prepare)
 
         active_count = sum(1 for item in state.active if item.status == "active")
         if active_count < self._max_active and self._llm_service is not None:
             pre_active_domains = {item.domain for item in state.active if item.status == "active"}
-            state = await self._generate(profile, state, now, feedback_history=feedback_history)
-            result.generated = [
+            snapshot = await self._generate(profile, state, now, feedback_history=feedback_history)
+            candidates = [
                 item
-                for item in state.active
+                for item in snapshot.active
                 if item.status == "active" and item.domain not in pre_active_domains
             ]
-
-        self._save_state(state)
+            latest_feedback = self._latest_feedback_history(
+                feedback_history=feedback_history,
+                feedback_history_loader=feedback_history_loader,
+            )
+            result.generated = self._merge_generated_candidates(
+                candidates,
+                profile,
+                feedback_history=latest_feedback,
+            )
 
         if result.generated or result.promoted or result.rejected:
             logger.info(

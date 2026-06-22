@@ -1,0 +1,6 @@
+{
+  "_synthetic": "PLACEHOLDER — replace with a real DevTools capture during the cookie smoke. TweetDetail is a GET; variables (with focalTweetId) are urlencoded into the URL query string, request body is empty.",
+  "url": "https://x.com/i/api/graphql/Vorm5Sd5h8Kd5C5q5oJ9wQ/TweetDetail?variables=%7B%22focalTweetId%22%3A%221790000000000000006%22%2C%22with_rux_injections%22%3Afalse%2C%22includePromotedContent%22%3Atrue%7D&features=%7B%7D",
+  "requestBody": "",
+  "responseBody": "{\"data\":{\"threaded_conversation_with_injections_v2\":{\"instructions\":[]}}}"
+}

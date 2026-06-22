@@ -295,31 +295,48 @@ class SoulEngine:
 
         # Trigger speculator immediately after init to seed speculative interests
         try:
-            feedback_history: object = []
-            avoidance_feedback_history: object = []
             load_runtime_state = getattr(self._memory, "load_discovery_runtime_state", None)
-            if callable(load_runtime_state):
+
+            def _load_runtime_history(key: str) -> object:
+                if not callable(load_runtime_state):
+                    return []
                 runtime_state = load_runtime_state()
-                if isinstance(runtime_state, dict):
-                    feedback_history = runtime_state.get("probe_feedback_history", [])
-                    avoidance_feedback_history = runtime_state.get(
-                        "avoidance_probe_feedback_history",
-                        [],
-                    )
+                if not isinstance(runtime_state, dict):
+                    return []
+                return runtime_state.get(key, [])
+
+            feedback_history = _load_runtime_history("probe_feedback_history")
+            avoidance_feedback_history = _load_runtime_history("avoidance_probe_feedback_history")
             try:
                 await self._speculator.force_tick(
                     profile,
                     feedback_history=feedback_history,
+                    feedback_history_loader=lambda: _load_runtime_history("probe_feedback_history"),
                 )
             except TypeError:
-                await self._speculator.force_tick(profile)
+                try:
+                    await self._speculator.force_tick(
+                        profile,
+                        feedback_history=feedback_history,
+                    )
+                except TypeError:
+                    await self._speculator.force_tick(profile)
             try:
                 await self._avoidance_speculator.force_tick(
                     profile,
                     feedback_history=avoidance_feedback_history,
+                    feedback_history_loader=lambda: _load_runtime_history(
+                        "avoidance_probe_feedback_history"
+                    ),
                 )
             except TypeError:
-                await self._avoidance_speculator.force_tick(profile)
+                try:
+                    await self._avoidance_speculator.force_tick(
+                        profile,
+                        feedback_history=avoidance_feedback_history,
+                    )
+                except TypeError:
+                    await self._avoidance_speculator.force_tick(profile)
         except Exception:
             logger.debug("Speculator force_tick after init failed", exc_info=True)
 

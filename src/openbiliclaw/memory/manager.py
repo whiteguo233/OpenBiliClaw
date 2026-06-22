@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
 
@@ -37,6 +38,17 @@ _EVENT_TYPES = {
     "follow",
     "share",
 }
+_DISCOVERY_RUNTIME_HISTORY_KEYS = (
+    "probe_feedback_history",
+    "avoidance_probe_feedback_history",
+)
+_DISCOVERY_RUNTIME_TIMESTAMP_MAP_KEYS = (
+    "probed_domains",
+    "probed_axes",
+    "probed_distance_bands",
+    "probed_avoidance_domains",
+    "probed_avoidance_axes",
+)
 
 
 class MemoryLayer:
@@ -330,9 +342,8 @@ class MemoryManager:
         with open(self._source_bootstrap_state_path, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
 
-    def load_discovery_runtime_state(self) -> dict[str, object]:
-        """Load continuous-discovery runtime state from disk."""
-        default_state = {
+    def _default_discovery_runtime_state(self) -> dict[str, object]:
+        return {
             "last_event_refresh_at": "",
             "last_trending_refresh_at": "",
             "last_explore_refresh_at": "",
@@ -351,72 +362,157 @@ class MemoryManager:
             "avoidance_probe_feedback_history": [],
             "last_probe_kind": "",
         }
+
+    def _normalize_discovery_runtime_state(self, loaded: object) -> dict[str, object]:
+        """Normalize runtime state while preserving extension fields."""
+        if not isinstance(loaded, dict):
+            return self._default_discovery_runtime_state()
+        state: dict[str, object] = dict(loaded)
+        state.update(
+            {
+                "last_event_refresh_at": str(loaded.get("last_event_refresh_at", "")),
+                "last_trending_refresh_at": str(loaded.get("last_trending_refresh_at", "")),
+                "last_explore_refresh_at": str(loaded.get("last_explore_refresh_at", "")),
+                "last_processed_event_id": self._to_int(loaded.get("last_processed_event_id", 0)),
+                "last_notification_at": str(loaded.get("last_notification_at", "")),
+                "last_discovered_count": self._to_int(loaded.get("last_discovered_count", 0)),
+                "last_replenished_count": self._to_int(loaded.get("last_replenished_count", 0)),
+                "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
+                "probed_domains": self._as_str_map(loaded.get("probed_domains", {})),
+                "probed_axes": self._as_str_map(loaded.get("probed_axes", {})),
+                "probed_distance_bands": self._as_str_map(loaded.get("probed_distance_bands", {})),
+                "probe_feedback_history": self._as_dict_list(
+                    loaded.get("probe_feedback_history", [])
+                ),
+                "short_term_exploration_buffer": self._normalize_exploration_buffer(
+                    loaded.get("short_term_exploration_buffer", {"entries": []})
+                ),
+                "probed_avoidance_domains": self._as_str_map(
+                    loaded.get("probed_avoidance_domains", {})
+                ),
+                "probed_avoidance_axes": self._as_str_map(loaded.get("probed_avoidance_axes", {})),
+                "avoidance_probe_feedback_history": self._as_dict_list(
+                    loaded.get("avoidance_probe_feedback_history", [])
+                ),
+                "last_probe_kind": str(loaded.get("last_probe_kind", "")),
+            }
+        )
+        if "last_delight_notification_at" in loaded:
+            state["last_delight_notification_at"] = str(
+                loaded.get("last_delight_notification_at", "")
+            )
+        return state
+
+    def load_discovery_runtime_state(self) -> dict[str, object]:
+        """Load continuous-discovery runtime state from disk."""
         if not self._discovery_runtime_state_path.exists():
-            return default_state
+            return self._default_discovery_runtime_state()
         with open(self._discovery_runtime_state_path, encoding="utf-8") as file:
             loaded = json.load(file)
-        if not isinstance(loaded, dict):
-            return default_state
-        return {
-            "last_event_refresh_at": str(loaded.get("last_event_refresh_at", "")),
-            "last_trending_refresh_at": str(loaded.get("last_trending_refresh_at", "")),
-            "last_explore_refresh_at": str(loaded.get("last_explore_refresh_at", "")),
-            "last_processed_event_id": self._to_int(loaded.get("last_processed_event_id", 0)),
-            "last_notification_at": str(loaded.get("last_notification_at", "")),
-            "last_discovered_count": self._to_int(loaded.get("last_discovered_count", 0)),
-            "last_replenished_count": self._to_int(loaded.get("last_replenished_count", 0)),
-            "recent_pool_topics": self._as_str_list(loaded.get("recent_pool_topics", [])),
-            "probed_domains": loaded.get("probed_domains", {}),
-            "probed_axes": loaded.get("probed_axes", {}),
-            "probed_distance_bands": loaded.get("probed_distance_bands", {}),
-            "probe_feedback_history": self._as_dict_list(loaded.get("probe_feedback_history", []))[
-                -100:
-            ],
-            "short_term_exploration_buffer": loaded.get(
-                "short_term_exploration_buffer",
-                {"entries": []},
-            ),
-            "probed_avoidance_domains": loaded.get("probed_avoidance_domains", {}),
-            "probed_avoidance_axes": loaded.get("probed_avoidance_axes", {}),
-            "avoidance_probe_feedback_history": self._as_dict_list(
-                loaded.get("avoidance_probe_feedback_history", [])
-            )[-100:],
-            "last_probe_kind": str(loaded.get("last_probe_kind", "")),
-            "last_delight_notification_at": str(loaded.get("last_delight_notification_at", "")),
-        }
+        return self._normalize_discovery_runtime_state(loaded)
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         """Persist continuous-discovery runtime state to disk."""
-        self._discovery_runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "last_event_refresh_at": str(state.get("last_event_refresh_at", "")),
-            "last_trending_refresh_at": str(state.get("last_trending_refresh_at", "")),
-            "last_explore_refresh_at": str(state.get("last_explore_refresh_at", "")),
-            "last_processed_event_id": self._to_int(state.get("last_processed_event_id", 0)),
-            "last_notification_at": str(state.get("last_notification_at", "")),
-            "last_discovered_count": self._to_int(state.get("last_discovered_count", 0)),
-            "last_replenished_count": self._to_int(state.get("last_replenished_count", 0)),
-            "recent_pool_topics": self._as_str_list(state.get("recent_pool_topics", [])),
-            "probed_domains": state.get("probed_domains", {}),
-            "probed_axes": state.get("probed_axes", {}),
-            "probed_distance_bands": state.get("probed_distance_bands", {}),
-            "probe_feedback_history": self._as_dict_list(state.get("probe_feedback_history", []))[
-                -100:
-            ],
-            "short_term_exploration_buffer": state.get(
-                "short_term_exploration_buffer",
-                {"entries": []},
-            ),
-            "probed_avoidance_domains": state.get("probed_avoidance_domains", {}),
-            "probed_avoidance_axes": state.get("probed_avoidance_axes", {}),
-            "avoidance_probe_feedback_history": self._as_dict_list(
-                state.get("avoidance_probe_feedback_history", [])
-            )[-100:],
-            "last_probe_kind": str(state.get("last_probe_kind", "")),
-            "last_delight_notification_at": str(state.get("last_delight_notification_at", "")),
+        incoming = self._normalize_discovery_runtime_state(state)
+
+        def _merge(latest: dict[str, object]) -> dict[str, object]:
+            return self._merge_discovery_runtime_state(latest=latest, incoming=incoming)
+
+        self.update_discovery_runtime_state(_merge)
+
+    def update_discovery_runtime_state(
+        self,
+        mutator: Callable[[dict[str, object]], dict[str, object] | None],
+    ) -> dict[str, object]:
+        """Atomically update continuous-discovery runtime state from latest disk data."""
+        from openbiliclaw.memory.json_state import update_json_state
+
+        def _mutate(state: dict[str, object]) -> dict[str, object]:
+            result = mutator(state)
+            return state if result is None else result
+
+        return update_json_state(
+            self._discovery_runtime_state_path,
+            default_factory=self._default_discovery_runtime_state,
+            normalize=self._normalize_discovery_runtime_state,
+            serialize=self._normalize_discovery_runtime_state,
+            mutate=_mutate,
+        )
+
+    def _merge_discovery_runtime_state(
+        self,
+        *,
+        latest: dict[str, object],
+        incoming: dict[str, object],
+    ) -> dict[str, object]:
+        merged = dict(incoming)
+        for key in _DISCOVERY_RUNTIME_HISTORY_KEYS:
+            merged[key] = self._merge_dict_records(
+                self._as_dict_list(latest.get(key, [])),
+                self._as_dict_list(incoming.get(key, [])),
+            )
+
+        merged["short_term_exploration_buffer"] = {
+            "entries": self._merge_dict_records(
+                self._exploration_entries(latest.get("short_term_exploration_buffer")),
+                self._exploration_entries(incoming.get("short_term_exploration_buffer")),
+            )
         }
-        with open(self._discovery_runtime_state_path, "w", encoding="utf-8") as file:
-            json.dump(payload, file, ensure_ascii=False, indent=2)
+
+        for key in _DISCOVERY_RUNTIME_TIMESTAMP_MAP_KEYS:
+            merged[key] = self._merge_timestamp_map(
+                self._as_str_map(latest.get(key, {})),
+                self._as_str_map(incoming.get(key, {})),
+            )
+
+        latest_kind = str(latest.get("last_probe_kind", "")).strip()
+        incoming_kind = str(incoming.get("last_probe_kind", "")).strip()
+        if latest_kind:
+            merged["last_probe_kind"] = latest_kind
+        elif incoming_kind:
+            merged["last_probe_kind"] = incoming_kind
+        else:
+            merged["last_probe_kind"] = ""
+        return self._normalize_discovery_runtime_state(merged)
+
+    def _merge_timestamp_map(
+        self,
+        latest: dict[str, str],
+        incoming: dict[str, str],
+    ) -> dict[str, str]:
+        merged = dict(latest)
+        for key, timestamp in incoming.items():
+            previous = merged.get(key)
+            if previous is None or str(timestamp) > str(previous):
+                merged[key] = str(timestamp)
+        return merged
+
+    def _merge_dict_records(
+        self,
+        first: list[dict[str, object]],
+        second: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        records: list[dict[str, object]] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for item in [*first, *second]:
+            key = tuple(sorted((str(k), str(v)) for k, v in item.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(dict(item))
+        return records
+
+    def _normalize_exploration_buffer(self, raw: object) -> dict[str, object]:
+        if not isinstance(raw, dict):
+            return {"entries": []}
+        payload = dict(raw)
+        payload["entries"] = self._as_dict_list(raw.get("entries", []))
+        return payload
+
+    def _exploration_entries(self, raw: object) -> list[dict[str, object]]:
+        if not isinstance(raw, dict):
+            return []
+        return self._as_dict_list(raw.get("entries", []))
 
     def load_insight_candidates(self) -> list[dict[str, object]]:
         """Load dialogue-derived insight candidates from disk."""
@@ -638,6 +734,12 @@ class MemoryManager:
         if not isinstance(raw_value, list):
             return []
         return [str(item) for item in raw_value]
+
+    @staticmethod
+    def _as_str_map(raw_value: object) -> dict[str, str]:
+        if not isinstance(raw_value, dict):
+            return {}
+        return {str(key): str(value) for key, value in raw_value.items()}
 
     @staticmethod
     def _as_dict_list(raw_value: object) -> list[dict[str, Any]]:

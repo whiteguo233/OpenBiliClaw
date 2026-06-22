@@ -21,6 +21,11 @@ import {
   formatRelativeTimestamp,
 } from "../view-models.js";
 import { state, patchState } from "../state.js";
+import {
+  filterVisibleProbes,
+  forgetHandledProbe,
+  rememberHandledProbe,
+} from "./probe-notification-helpers.js";
 
 let $root = null;
 let cognitionHistory = null; // { items, hasMore, nextCursor, loadingMore }
@@ -195,13 +200,21 @@ function render() {
   if (surfHtml.length) html += section("\u8BA4\u77E5\u98CE\u683C", surfHtml.join(""));
 
   // Speculative interests
-  if (p.speculative_interests.length) {
-    html += section("\u63A8\u6D4B\u6027\u5174\u8DA3", renderSpecInterests(p.speculative_interests));
+  const visibleSpeculativeInterests = filterVisibleProbes(
+    p.speculative_interests,
+    "interest.probe",
+  );
+  if (visibleSpeculativeInterests.length) {
+    html += section("\u63A8\u6D4B\u6027\u5174\u8DA3", renderSpecInterests(visibleSpeculativeInterests));
   }
 
   // Speculative avoidances
-  if (p.speculative_avoidances.length) {
-    html += section("\u5F85\u786E\u8BA4\u907F\u96F7\u65B9\u5411", renderSpecAvoidances(p.speculative_avoidances));
+  const visibleSpeculativeAvoidances = filterVisibleProbes(
+    p.speculative_avoidances,
+    "avoidance.probe",
+  );
+  if (visibleSpeculativeAvoidances.length) {
+    html += section("\u5F85\u786E\u8BA4\u907F\u96F7\u65B9\u5411", renderSpecAvoidances(visibleSpeculativeAvoidances));
   }
 
   // Cognition history
@@ -337,6 +350,7 @@ function bindSpecInterestActions() {
       const action = e.target.dataset.action;
       if (!domain || !action) return;
       btn.disabled = true;
+      rememberHandledProbe(domain, "interest.probe");
       try {
         await respondToProbe(domain, action, { surface: "profile" });
         const p = state.profile;
@@ -350,6 +364,7 @@ function bindSpecInterestActions() {
         }
         render();
       } catch {
+        forgetHandledProbe(domain, "interest.probe");
         btn.disabled = false;
       }
     });
@@ -390,6 +405,7 @@ function bindSpecAvoidanceActions() {
       const action = e.target.dataset.action;
       if (!domain || !action) return;
       btn.disabled = true;
+      rememberHandledProbe(domain, "avoidance.probe");
       try {
         await respondToAvoidanceProbe(domain, action);
         const p = state.profile;
@@ -403,6 +419,7 @@ function bindSpecAvoidanceActions() {
         }
         render();
       } catch {
+        forgetHandledProbe(domain, "avoidance.probe");
         btn.disabled = false;
       }
     });

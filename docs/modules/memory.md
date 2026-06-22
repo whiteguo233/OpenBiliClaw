@@ -109,6 +109,7 @@
 | 多源 bootstrap 去重状态 | ✅ | `source_bootstrap_state.json` 记录 XHS / 抖音 / YouTube 已进入事件路径的 bootstrap identity key，避免跨任务重放旧画像信号 |
 | 用户画像覆盖层 | ✅ | `profile_overrides.json` 存用户对画像的手动编辑（文本/标量固定 + 列表/兴趣树增删）；`load/save_profile_overrides` 读写，`sync_profile_files` 渲染人类可读镜像前叠加覆盖层，确保编辑在画像重建后仍反映在 `soul_profile.md/.json` |
 | 插件聊天回合 | ✅ | SQLite `chat_turns` 持久化 side panel 主聊天、惊喜推荐内聊、兴趣猜测内聊和避雷探针内聊的 pending/completed/failed 状态 |
+| JSON 状态原子更新 | ✅ | `memory/json_state.py` 提供带进程内锁、跨进程文件锁和 `os.replace` 的 `update_json_state()`；`discovery_runtime.json` 的 probe 反馈历史、冷却 map、短期探索 buffer 等运行态通过 mutator 更新并合并旧快照，避免安装包常驻进程/后台任务并发保存时丢掉用户点击反馈 |
 
 ## 公开 API
 
@@ -188,6 +189,14 @@ runtime_state = memory.load_discovery_runtime_state()
 #   "probed_distance_bands": {},
 #   "short_term_exploration_buffer": {"entries": []}
 # }
+
+def remember_probe_feedback(state):
+    state.setdefault("probe_feedback_history", []).append(
+        {"domain": "建筑美学", "response": "confirm", "created_at": "2026-06-09T12:00:00+00:00"}
+    )
+
+runtime_state = memory.update_discovery_runtime_state(remember_probe_feedback)
+# 原子读改写 discovery_runtime.json，并和磁盘上较新的 probe 反馈/冷却状态合并。
 
 candidates = memory.load_insight_candidates()
 # [

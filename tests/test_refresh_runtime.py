@@ -381,6 +381,15 @@ class _FakeYoutubeProducer:
         return {"discovered": 3, "reason": "ok"}
 
 
+class _FakeXProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 3, "discovered": 3, "reason": "ok"}
+
+
 class _FakeRecommendationEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, object]], dict[str, object], int]] = []
@@ -426,6 +435,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_xhs_producer", ("_tick_xhs_producer",)),
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
+    ("_loop_x_producer", ("_tick_x_producer",)),
     (
         "_loop_proactive_push",
         (
@@ -613,6 +623,7 @@ class _FakeSpeculation:
         entry_load: str = "",
         probe_mode: str = "near",
         specifics: list[object] | None = None,
+        status: str = "active",
     ) -> None:
         self.domain = domain
         self.category = category
@@ -624,6 +635,7 @@ class _FakeSpeculation:
         self.entry_load = entry_load
         self.probe_mode = probe_mode
         self.specifics = specifics or []
+        self.status = status
 
 
 class _FakeSpeculator:
@@ -1657,6 +1669,48 @@ async def test_publish_interest_probe_skips_recent_axis_repeat() -> None:
     assert probe_events[0]["domain"] == "城市漫游"
 
 
+async def test_publish_interest_probe_skips_confirmed_or_rejected_items() -> None:
+    event_hub = _FakeEventHub()
+    memory = _FakeMemoryManager(
+        {
+            "probed_domains": {},
+            "probed_axes": {},
+            "probed_distance_bands": {},
+        }
+    )
+
+    class _SoulEngineWithSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._speculator = _FakeSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="建筑美学",
+                        reason="handled",
+                        status="confirmed",
+                    ),
+                    _FakeSpeculation(
+                        domain="城市基础设施",
+                        reason="handled",
+                        status="rejected",
+                    ),
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+    )
+
+    delivered = await controller._publish_interest_probe_if_available()
+
+    assert delivered is False
+    assert [event for event in event_hub.events if event["type"] == "interest.probe"] == []
+
+
 async def test_publish_interest_probe_records_probed_distance_bands() -> None:
     event_hub = _FakeEventHub()
     memory = _FakeMemoryManager(
@@ -1791,6 +1845,47 @@ async def test_publish_avoidance_probe_skips_recent_axis_repeat() -> None:
     probe_events = [event for event in event_hub.events if event["type"] == "avoidance.probe"]
     assert len(probe_events) == 1
     assert probe_events[0]["domain"] == "浅层情绪争吵"
+
+
+async def test_publish_avoidance_probe_skips_confirmed_or_rejected_items() -> None:
+    event_hub = _FakeEventHub()
+    memory = _FakeMemoryManager(
+        {
+            "probed_avoidance_domains": {},
+            "probed_avoidance_axes": {},
+        }
+    )
+
+    class _SoulEngineWithAvoidanceSpeculator(_FakeSoulEngine):
+        def __init__(self) -> None:
+            self._avoidance_speculator = _FakeAvoidanceSpeculator(
+                [
+                    _FakeSpeculation(
+                        domain="标题党热点解读",
+                        reason="handled",
+                        status="confirmed",
+                    ),
+                    _FakeSpeculation(
+                        domain="浅层情绪争吵",
+                        reason="handled",
+                        status="rejected",
+                    ),
+                ]
+            )
+
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(events=[]),
+        soul_engine=_SoulEngineWithAvoidanceSpeculator(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+    )
+
+    delivered = await controller._publish_avoidance_probe_if_available()
+
+    assert delivered is False
+    assert [event for event in event_hub.events if event["type"] == "avoidance.probe"] == []
 
 
 async def test_publish_avoidance_probe_does_not_record_without_stream_subscriber() -> None:
@@ -2519,6 +2614,67 @@ async def test_youtube_producer_skips_when_youtube_at_quota() -> None:
     await controller._tick_youtube_producer()
 
     assert producer.calls == []
+
+
+async def test_x_producer_runs_when_twitter_under_quota() -> None:
+    producer = _FakeXProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "twitter": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "twitter": 2},
+        discovery_limit=30,
+        x_producer=producer,
+    )
+
+    await controller._tick_x_producer()
+
+    assert producer.calls == [30]
+
+
+async def test_x_producer_skips_when_twitter_at_quota() -> None:
+    producer = _FakeXProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "twitter": 120},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "twitter": 2},
+        x_producer=producer,
+    )
+
+    await controller._tick_x_producer()
+
+    assert producer.calls == []
+
+
+async def test_x_producer_skips_when_not_configured() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=540, source_counts={"bilibili": 480, "twitter": 0}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "twitter": 2},
+        x_producer=None,
+    )
+
+    # No producer wired → tick is a safe no-op (does not raise).
+    await controller._tick_x_producer()
 
 
 def test_pool_cap_total_trim_receives_raw_ceiling_source_quotas() -> None:
