@@ -973,6 +973,7 @@ class ContinuousRefreshController:
 
             ┌─ _loop_refresh()           60s   LLM-heavy, may take minutes
             ├─ _loop_pool_precompute()   60s   v0.3.60+ — drain pool_expression
+            ├─ _loop_candidate_eval()    60s   drain pending raw candidates
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
             ├─ _loop_bilibili_producer() 60s   Bili extension search fallback under cooldown
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
@@ -1001,6 +1002,7 @@ class ContinuousRefreshController:
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
+            asyncio.create_task(self._loop_candidate_eval()),
             asyncio.create_task(self._loop_soul_pipeline()),
             asyncio.create_task(self._loop_bilibili_producer()),
             asyncio.create_task(self._loop_xhs_producer()),
@@ -1068,6 +1070,20 @@ class ContinuousRefreshController:
                 continue
             with suppress(Exception):
                 await self._drain_pool_precompute_backlog()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_candidate_eval(self) -> None:
+        """Drain pending discovery-candidate raw rows independently of refresh plans."""
+        while True:
+            if not self._llm_work_allowed():
+                logger.debug("candidate eval drain skipped: reason=llm_paused")
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._drain_discovery_candidates_and_precompute(
+                    reason="periodic",
+                    batch_size=self.discovery_limit,
+                )
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _drain_pool_precompute_backlog(self) -> None:
@@ -1558,13 +1574,32 @@ class ContinuousRefreshController:
         self,
         *,
         batch_size: int | None = None,
+        reason: str = "manual",
     ) -> dict[str, int]:
         """Drain one pending discovery-candidate batch through the shared evaluator."""
 
+        return await self._drain_discovery_candidates_and_precompute(
+            reason=reason,
+            batch_size=batch_size,
+            precompute=False,
+        )
+
+    async def _drain_discovery_candidates_and_precompute(
+        self,
+        *,
+        reason: str,
+        batch_size: int | None = None,
+        profile: Any | None = None,
+        precompute: bool = True,
+    ) -> dict[str, int]:
+        """Drain one pending raw-candidate batch and optionally precompute it."""
+
         pipeline = self.discovery_candidate_pipeline
         if pipeline is None:
+            logger.debug("candidate eval drain skipped: reason=no_pipeline caller=%s", reason)
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         if self._discovery_drain_lock.locked():
+            logger.debug("candidate eval drain skipped: reason=locked caller=%s", reason)
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         async with self._discovery_drain_lock:
             try:
@@ -1573,21 +1608,55 @@ class ContinuousRefreshController:
                 )
             except TypeError:
                 pool_available = self.database.count_pool_candidates()
+            before_pool_count = int(pool_available)
             if int(pool_available) >= self.pool_target_count:
-                return {"evaluated": 0, "cached": 0, "rejected": 0}
-            try:
-                profile = await self.soul_engine.get_profile()
-            except Exception as exc:
-                logger.info("discovery candidate drain skipped: soul profile unavailable: %s", exc)
+                logger.debug(
+                    "candidate eval drain skipped: reason=pool_at_cap "
+                    "pool_available=%s target=%s caller=%s",
+                    pool_available,
+                    self.pool_target_count,
+                    reason,
+                )
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             if profile is None:
-                logger.info("discovery candidate drain skipped: soul profile unavailable")
+                try:
+                    profile = await self.soul_engine.get_profile()
+                except Exception as exc:
+                    logger.info(
+                        "candidate eval drain skipped: reason=no_profile caller=%s error=%s",
+                        reason,
+                        exc,
+                    )
+                    return {"evaluated": 0, "cached": 0, "rejected": 0}
+            if profile is None:
+                logger.info("candidate eval drain skipped: reason=no_profile caller=%s", reason)
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             result = await pipeline.drain_pending(
                 profile=profile,
                 batch_size=batch_size or self.discovery_limit,
             )
-            return cast("dict[str, int]", result)
+            drain_result = cast("dict[str, int]", result)
+            evaluated = int(drain_result.get("evaluated", 0) or 0)
+            cached = int(drain_result.get("cached", 0) or 0)
+            rejected = int(drain_result.get("rejected", 0) or 0)
+            failed = int(drain_result.get("failed", 0) or 0)
+        if cached > 0 and precompute:
+            await self._safe_precompute_pool_copy(profile=profile)
+            await self._publish_precompute_replenishment_if_needed(
+                before_pool_count=before_pool_count,
+            )
+        if evaluated or cached or rejected or failed:
+            logger.info(
+                "candidate eval drain done: caller=%s evaluated=%s cached=%s rejected=%s failed=%s",
+                reason,
+                evaluated,
+                cached,
+                rejected,
+                failed,
+            )
+        else:
+            logger.debug("candidate eval drain skipped: reason=no_pending caller=%s", reason)
+        return drain_result
 
     async def _complete_manual_refresh(self) -> None:
         try:
@@ -1749,9 +1818,11 @@ class ContinuousRefreshController:
                     if injected_keyword_ids:
                         produce_kwargs["keyword_ids"] = injected_keyword_ids
                     produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
-                    drain_result = await pipeline.drain_pending(
+                    drain_result = await self._drain_discovery_candidates_and_precompute(
+                        reason="refresh",
                         profile=profile,
                         batch_size=effective_limit,
+                        precompute=False,
                     )
                     discovered_count = int(produced_count or 0)
                     admitted_count = int(drain_result.get("cached", 0) or 0)

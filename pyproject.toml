@@ -47,6 +47,7 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.8",
     "mypy>=1.13",
+    "websockets>=13",
 ]
 local-llm = [
     "ollama>=0.4",

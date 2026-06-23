@@ -221,7 +221,7 @@ content executor 的 selector 策略按平台收敛在 `src/content/e2e-executor
 }
 ```
 
-dispatcher 导航到 `https://search.bilibili.com/all?keyword=...`，等 tab ready 后发送 `BILI_TASK_EXECUTE`。`src/content/bili/task-executor.ts` 不在 isolated world 里直连 B 站 API，也不伪造 WBI 签名；它只等待真实搜索页渲染出 `.bili-video-card` / `.video-list-item`，从 DOM 卡片里提取 `bvid`、标题、UP 主、播放数、封面、时长和简介，再用 `BILI_TASK_RESULT` 回给 service worker。service worker POST 到 `/api/sources/bili/task-result` 后，后端把结果写入 `discovery_candidates`，继续走共享 evaluator / admission，而不是由插件直接写推荐池。
+dispatcher 导航到 `https://search.bilibili.com/all?keyword=...`，等 tab ready 后发送 `BILI_TASK_EXECUTE`；如果 Chrome 报 content script listener 暂未就绪，dispatcher 会在 8 秒窗口内短重试，吸收真实页面 `complete` 早于 isolated content script 注册的时序抖动。`src/content/bili/task-executor.ts` 不在 isolated world 里直连 B 站 API，也不伪造 WBI 签名；它只等待真实搜索页渲染出 `.bili-video-card` / `.video-list-item`，从 DOM 卡片里提取 `bvid`、标题、UP 主、播放数、封面、时长和简介，再用 `BILI_TASK_RESULT` 回给 service worker。service worker POST 到 `/api/sources/bili/task-result` 后，后端把结果写入 `discovery_candidates`，继续走共享 evaluator / admission，而不是由插件直接写推荐池。
 
 真实联调可用两档验证：
 
@@ -266,6 +266,8 @@ dispatcher 会把这两个字段透传给 content script；如果 `scroll_wait_m
 小红书 discovery notes 不再由 API 直接写入 `content_cache`。被动 URL / note metadata、search / creator 任务结果和 bootstrap 中可作为内容候选的 notes 会先写入后端 `discovery_candidates` 待评估池；后端随后调用共享 discovery evaluator 混合评估各平台候选，达标后才 admission 到推荐池。这样 XHS 与 B 站、抖音、YouTube 的“用户会不会喜欢”判断处于同一环节。
 
 `/api/sources/xhs/observed-urls` 的返回里，`accepted` 只表示本次接收的有效小红书 URL 数，`enqueued` 表示随请求携带的 note metadata 中有多少条进入 `discovery_candidates`。入池后的喜好评估和 admission 是异步完成的，插件端不应把 `accepted` 理解成“已经可推荐”。
+
+真实浏览器联调可用 `XHS_BROWSER_E2E=1 .venv/bin/pytest tests/test_xhs_browser_e2e.py -q -s`。默认要求后端在 `http://127.0.0.1:8420`，Chrome CDP 在 `http://[::1]:9222`；如果 9222 已被其它 Chrome 占用，可启动另一个带扩展的 Chrome 并设置 `XHS_BROWSER_E2E_CDP=http://127.0.0.1:<port>`，后端地址也可用 `XHS_BROWSER_E2E_BACKEND=...` 覆盖。
 
 #### v0.3.10 self_info 全路径捕获
 

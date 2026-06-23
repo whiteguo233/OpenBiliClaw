@@ -140,7 +140,7 @@ queue.merge_result(task_id, videos=[{"bvid": "BV...", "title": "..."}], complete
 
 扩展侧协议：
 
-- `background/bili-task-dispatcher.ts`：轮询 `/api/sources/bili/next-task`，收到 search task 后打开后台搜索页，等待 tab ready 后向 B 站 content script 发送 `BILI_TASK_EXECUTE`。
+- `background/bili-task-dispatcher.ts`：轮询 `/api/sources/bili/next-task`，收到 search task 后打开后台搜索页，等待 tab ready 后向 B 站 content script 发送 `BILI_TASK_EXECUTE`；如果 Chrome 报 content script listener 暂未就绪，会在 8 秒窗口内短重试，避免真实页面 complete 早于 isolated content script 注册时把任务误标失败。
 - `content/bili/task-executor.ts`：不直连 B 站 API，不生成 WBI 签名，只读取真实页面已渲染的 `.bili-video-card` / `.video-list-item` 等结果卡片，提取 `bvid/title/up_name/url/cover_url/view_count/duration/description`。
 - `service-worker.ts`：监听 runtime stream 的 `bili_task_available` 事件做即时 poll，接收 `BILI_TASK_RESULT` 并回传后端；普通 alarm 作为兜底。
 
@@ -189,4 +189,4 @@ headed = false     # 调试时设为 true
 8. **搜索 WBI 对齐 + 保守降级**：B 站搜索已切到 WBI 路径；客户端现在会复用 `nav` 的 WBI key 对齐浏览器搜索链路，剩余 `412` / `v_voucher` 再降级为空结果，避免把单次 search 失败放大成整轮 refresh 错误
 9. **Cookie 过期显式化**：`/nav` 的 `-101` 与普通业务错误分开处理，日志和异常文本都包含 session expired / re-auth 提示；上层仍可按 `BilibiliAPIError` 统一兜底
 10. **进程级 search 冷却（分级）**：`BilibiliAPIClient.search()` 把 412 与 `v_voucher` 拆开处理——412 即时硬冷却（base 600s）；`v_voucher` 走 `_record_voucher_block()` 阈值化，连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词耗尽才设共享 cooldown（base 180s），单个被风控的关键词不再让整轮 search + explore 归零十几分钟，`_reset_search_cooldown_backoff()` 在任一成功时清零 streak 与升级档位。dedicated search clients 和主 runtime client 仍通过 `search_cooldown_remaining()` 共享同一状态
-11. **扩展兜底只做冷却时补位**：B 站 API 搜索仍是主路径；后端搜索任务只在服务端搜索冷却且浏览器 presence 在线时触发，避免常驻打开搜索页或把插件变成主 crawler。扩展侧只抓用户真实会话中可见的渲染结果，不在 isolated world 里伪造签名请求；回传结果也不直接入正式池，而是进入统一候选待评估池，继续复用跨源评估、去重和 admission 规则。
+11. **扩展兜底只做冷却时补位**：B 站 API 搜索仍是主路径；后端搜索任务只在服务端搜索冷却且浏览器 presence 在线时触发，避免常驻打开搜索页或把插件变成主 crawler。扩展侧只抓用户真实会话中可见的渲染结果，不在 isolated world 里伪造签名请求；background 对 `BILI_TASK_EXECUTE` 做短重试以吸收 content script 注入时序抖动；回传结果也不直接入正式池，而是进入统一候选待评估池，继续复用跨源评估、去重和 admission 规则。

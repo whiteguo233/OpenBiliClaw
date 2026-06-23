@@ -12,6 +12,8 @@ import {
   buildBiliExecuteMessageData,
   buildBiliTaskUrl,
   computeBiliTaskTimeoutMs,
+  executeTask,
+  handleBiliTaskResult,
   isValidBiliTask,
   pollBiliTaskNow,
   type BiliTask,
@@ -87,4 +89,127 @@ test("buildBiliExecuteMessageData includes only executor fields", () => {
 test("pollBiliTaskNow exists as the WS-driven immediate-poll entry point", () => {
   assert.equal(typeof pollBiliTaskNow, "function");
   assert.doesNotThrow(() => pollBiliTaskNow());
+});
+
+interface TabUpdatedListener {
+  (tabId: number, changeInfo: { status?: string }): void;
+}
+
+interface ChromeMock {
+  tabs: {
+    create: (opts: { url: string; active?: boolean }) => Promise<{ id: number }>;
+    get: (tabId: number) => Promise<{ id: number; status?: string }>;
+    remove: (tabId: number) => Promise<void>;
+    sendMessage: (tabId: number, message: unknown) => Promise<void>;
+    onUpdated: {
+      addListener: (l: TabUpdatedListener) => void;
+      removeListener: (l: TabUpdatedListener) => void;
+      _listeners: TabUpdatedListener[];
+      _emit: (tabId: number, changeInfo: { status?: string }) => void;
+    };
+  };
+  alarms: { create: () => void };
+}
+
+interface MockState {
+  createdTabs: { url: string; active?: boolean }[];
+  sentMessages: { tabId: number; message: unknown }[];
+  sendMessageImpl: (tabId: number, message: unknown) => Promise<void>;
+  fetchCalls: { url: string; body?: unknown }[];
+  removedTabs: number[];
+  tabStatus: string;
+}
+
+function installChromeMock(): MockState {
+  const state: MockState = {
+    createdTabs: [],
+    sentMessages: [],
+    sendMessageImpl: async () => {},
+    fetchCalls: [],
+    removedTabs: [],
+    tabStatus: "loading",
+  };
+
+  const listeners: TabUpdatedListener[] = [];
+  const chromeMock: ChromeMock = {
+    tabs: {
+      create: async ({ url, active }) => {
+        state.createdTabs.push({ url, active });
+        return { id: 42 };
+      },
+      get: async (tabId) => ({ id: tabId, status: state.tabStatus }),
+      remove: async (tabId) => {
+        state.removedTabs.push(tabId);
+      },
+      sendMessage: (tabId, message) => {
+        state.sentMessages.push({ tabId, message });
+        return state.sendMessageImpl(tabId, message);
+      },
+      onUpdated: {
+        _listeners: listeners,
+        addListener: (l) => {
+          listeners.push(l);
+        },
+        removeListener: (l) => {
+          const i = listeners.indexOf(l);
+          if (i >= 0) listeners.splice(i, 1);
+        },
+        _emit: (tabId, changeInfo) => {
+          for (const l of [...listeners]) l(tabId, changeInfo);
+        },
+      },
+    },
+    alarms: { create: () => {} },
+  };
+
+  (globalThis as unknown as { chrome: ChromeMock }).chrome = chromeMock;
+  (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    state.fetchCalls.push({
+      url: String(input),
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    });
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  return state;
+}
+
+async function flush(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+test("executeTask retries Bili sendMessage until the content script listener is ready", async () => {
+  const state = installChromeMock();
+  const chrome = (globalThis as unknown as { chrome: ChromeMock }).chrome;
+  let attempts = 0;
+  state.sendMessageImpl = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new Error("Could not establish connection. Receiving end does not exist.");
+    }
+  };
+
+  const task: BiliTask = { id: "bili-retry", type: "search", query: "机械键盘 声音" };
+  await executeTask(task);
+
+  state.tabStatus = "complete";
+  chrome.tabs.onUpdated._emit(42, { status: "complete" });
+  await flush();
+
+  assert.equal(state.sentMessages.length, 1);
+  assert.equal(state.fetchCalls.length, 0, "first missing receiver should not fail the task");
+
+  await new Promise((r) => setTimeout(r, 300));
+  await flush();
+
+  assert.equal(state.sentMessages.length, 2);
+  assert.equal(state.fetchCalls.length, 0, "successful retry should not post a failure");
+
+  await handleBiliTaskResult({ task_id: "bili-retry", status: "ok", videos: [] });
+  await flush();
+  assert.equal(state.removedTabs.length, 1);
 });
