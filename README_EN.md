@@ -190,11 +190,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.137 / extension v0.3.90 / desktop v0.3.137: macOS installer Ollama runtime fix (2026-06-23)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.138 / extension v0.3.90 / desktop v0.3.138: macOS Ollama dynamic libraries fix (2026-06-23)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **macOS local embedding is fixed** — the installer now bundles the official `Ollama.app` runtime's `ollama + llama-server`, avoiding `/api/embeddings` failures with `llama-server binary not found`.
+- **macOS local embedding is fixed** — the installer now bundles the official `Ollama.app` runtime's `ollama + llama-server + lib*.dylib/.so + mlx_metal_*`, avoiding `/api/version` succeeding while `/api/embeddings` returns 500 because runtime libraries are missing.
 - **Guided init now verifies embedding with a real probe** — when local `ollama` embedding is configured by the installer, profile initialization waits for one successful `bge-m3` embedding request instead of silently degrading while the model is still downloading or Ollama is broken.
-- **Release builds now fail fast on incomplete Ollama runtimes** — the macOS desktop build checks the `llama-server` sidecar before producing a package, and the manual installer workflow uses the same official runtime.
+- **Release builds now fail fast on incomplete Ollama runtimes** — the macOS desktop build checks `llama-server` and key dynamic libraries before producing a package, and the manual installer workflow uses the same official runtime.
 - **Extension version unchanged** — browser packages remain on `extension v0.3.90`; this release refreshes backend source and desktop installers only.
 
 ## Community
@@ -663,7 +663,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.137 / extension v0.3.90 / desktop v0.3.137: macOS installer Ollama runtime fix (2026-06-23)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
+Latest: **v0.3.138 / extension v0.3.90 / desktop v0.3.138: macOS Ollama dynamic libraries fix (2026-06-23)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

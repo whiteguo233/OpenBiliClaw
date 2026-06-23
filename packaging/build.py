@@ -374,6 +374,43 @@ def find_ollama_binary(explicit: str | None = None) -> Path | None:
     return None
 
 
+def _macos_ollama_runtime_files(ollama_bin: Path) -> list[Path]:
+    """Return macOS Ollama runtime sidecars required beside ``ollama``."""
+    resources = ollama_bin.parent
+    required = [
+        resources / "llama-server",
+        resources / "libllama-server-impl.dylib",
+    ]
+    missing = [path.name for path in required if not path.is_file()]
+    if missing:
+        raise RuntimeError(
+            "macOS Ollama runtime is incomplete: missing "
+            f"{', '.join(missing)} beside {ollama_bin}. Use the official "
+            "Ollama.app Resources/ollama, not a Homebrew-only ollama binary."
+        )
+
+    runtime_files: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        if path == ollama_bin or not path.is_file() or path in seen:
+            return
+        seen.add(path)
+        runtime_files.append(path)
+
+    for path in required:
+        add(path)
+    for pattern in ("lib*.dylib", "lib*.so", "llama-*"):
+        for path in sorted(resources.glob(pattern)):
+            add(path)
+    return runtime_files
+
+
+def _macos_ollama_runtime_dirs(ollama_bin: Path) -> list[Path]:
+    """Return macOS Ollama runtime data directories to keep beside ``ollama``."""
+    return sorted(path for path in ollama_bin.parent.glob("mlx_metal_*") if path.is_dir())
+
+
 def bundle_ollama_binary(
     dist_dir: Path,
     ollama_bin: Path,
@@ -404,31 +441,37 @@ def bundle_ollama_binary(
     #
     # macOS 0.30.x is no longer reliably single-binary either: Homebrew's formula
     # can expose an ``ollama`` executable that starts /api/version but fails every
-    # GGUF embedding with "llama-server binary not found". The official .app ships
-    # ``llama-server`` beside ``Contents/Resources/ollama``; require and bundle it
-    # so the release never contains a half-working daemon.
+    # GGUF embedding because the model runner is missing. The official .app ships
+    # ``llama-server`` plus dynamic libraries and Metal assets beside
+    # ``Contents/Resources/ollama``; require and bundle that runtime as a unit so
+    # the release never contains a half-working daemon.
     sidecar_files: list[Path] = []
+    sidecar_dirs: list[Path] = []
     if resolved == "Darwin":
-        llama_server = ollama_bin.parent / "llama-server"
-        if not llama_server.is_file():
-            raise RuntimeError(
-                "macOS Ollama runtime is incomplete: missing llama-server beside "
-                f"{ollama_bin}. Use the official Ollama.app Resources/ollama, not "
-                "a Homebrew-only ollama binary."
-            )
-        sidecar_files.append(llama_server)
+        sidecar_files = _macos_ollama_runtime_files(ollama_bin)
+        sidecar_dirs = _macos_ollama_runtime_dirs(ollama_bin)
 
     sibling_lib = ollama_bin.parent / "lib"
     written: list[Path] = []
     for dest in targets:
-        shutil.copyfile(ollama_bin, dest)
+        shutil.copy2(ollama_bin, dest)
         os.chmod(dest, 0o755)
         written.append(dest)
         for sidecar in sidecar_files:
             sidecar_dest = dest.parent / sidecar.name
-            shutil.copyfile(sidecar, sidecar_dest)
-            os.chmod(sidecar_dest, 0o755)
+            shutil.copy2(sidecar, sidecar_dest)
+            if sidecar.name.startswith("llama-"):
+                os.chmod(sidecar_dest, 0o755)
             written.append(sidecar_dest)
+        for sidecar_dir in sidecar_dirs:
+            sidecar_dir_dest = dest.parent / sidecar_dir.name
+            if sidecar_dir_dest.exists() or sidecar_dir_dest.is_symlink():
+                if sidecar_dir_dest.is_dir() and not sidecar_dir_dest.is_symlink():
+                    shutil.rmtree(sidecar_dir_dest)
+                else:
+                    sidecar_dir_dest.unlink()
+            shutil.copytree(sidecar_dir, sidecar_dir_dest)
+            written.append(sidecar_dir_dest)
         if sibling_lib.is_dir():
             dest_lib = dest.parent / "lib"
             if not dest_lib.exists():

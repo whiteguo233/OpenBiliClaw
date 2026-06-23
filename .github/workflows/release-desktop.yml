@@ -44,6 +44,8 @@ jobs:
           unzip -q Ollama-darwin.zip -d ollama-app
           test -x ollama-app/Ollama.app/Contents/Resources/ollama
           test -x ollama-app/Ollama.app/Contents/Resources/llama-server
+          test -f ollama-app/Ollama.app/Contents/Resources/libllama-server-impl.dylib
+          test -f ollama-app/Ollama.app/Contents/Resources/libggml.dylib
           echo "OPENBILICLAW_OLLAMA_BIN=$PWD/ollama-app/Ollama.app/Contents/Resources/ollama" >> "$GITHUB_ENV"
 
       - name: Resolve version

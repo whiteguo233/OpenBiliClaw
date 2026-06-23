@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.138 / extension v0.3.90 / desktop v0.3.138: macOS Ollama 动态库补齐（2026-06-23）
+
+后端源码走 `backend-v0.3.138`，浏览器插件沿用 `extension-v0.3.90`，桌面安装包走 `desktop-v0.3.138`。
+
+- **修复 v0.3.137 真实 DMG E2E 暴露的第二层 Ollama 缺包**：`v0.3.137` 已经不再缺 `llama-server`，但安装包内 `llama-server` 启动时仍会因 `libllama-server-impl.dylib` 等动态库未随包复制而让 `/api/embeddings` 返回 500。`packaging/build.py` 现在把官方 `Ollama.app/Contents/Resources` 视为一个 runtime 单元：除 `ollama` 外同时复制 `llama-server`、`llama-*`、`lib*.dylib`、`lib*.so` 和 `mlx_metal_*` 目录。
+- **发布 workflow 增加动态库闸门**：`release-desktop.yml` 和手动 `build-installers.yml` 下载官方 `Ollama-darwin.zip` 后会检查 `libllama-server-impl.dylib` / `libggml.dylib`，避免再次生成“`/api/version` 正常、模型能下载、真实 embedding 才崩”的 macOS 安装包。
+- **打包回归测试覆盖完整 runtime**：`tests/test_packaging_build.py` 现在断言 macOS onedir 与 `.app/Contents/Resources` 都包含关键动态库、`llama-quantize` 和 `mlx_metal_*` 目录，并在缺失关键 dylib 时直接拒绝构建。
+
 ## v0.3.137 / extension v0.3.90 / desktop v0.3.137: macOS 安装包 Ollama runtime 修复（2026-06-23）
 
 后端源码走 `backend-v0.3.137`，浏览器插件沿用 `extension-v0.3.90`，桌面安装包走 `desktop-v0.3.137`。

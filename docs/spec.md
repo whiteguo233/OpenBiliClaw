@@ -316,7 +316,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ DeepSeek / Ollama /      │  │ L1 内存 + L2 SQLite    │   │
 │  │ OpenRouter + Codex OAuth │  │ Ollama bge-m3 兜底可选  │   │
 │  └──────────────────────────┘  └────────────────────────┘   │
-│  Desktop bundle: official Ollama.app runtime (ollama + llama-server sidecar) │
+│  Desktop bundle: official Ollama.app runtime (ollama + runner dylibs/assets) │
 │  LLMService caller bucket → per-module provider/model override │
 │  discovery evaluator: text + metrics + optional compressed cover image input │
 │  OpenAI auth_mode: api_key / experimental Codex CLI OAuth      │
