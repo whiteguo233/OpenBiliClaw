@@ -190,12 +190,13 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.139 / extension v0.3.91 / desktop v0.3.139: Zhihu multi-source integration and extension discovery (2026-06-24)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.140 / extension v0.3.92 / desktop v0.3.140: Zhihu multi-source integration and extension discovery (2026-06-24)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
 - **Zhihu is now a full source path** — the extension can read Zhihu history, collections, and activity likes/favorites from your already logged-in browser session; `init --yes-zhihu` can feed first-run profiling, while `fetch-zhihu --write-memory` / `--rebuild-profile` support real backfill and profile rebuilds.
 - **Five Zhihu discovery branches** — search / hot / feed / creator / related all use extension tasks, and `discover --source zhihu` is wired into the formal producer and unified candidate pipeline.
 - **Settings and cards are aligned** — the extension, desktop web UI, and mobile web UI can configure Zhihu, render Zhihu recommendation cards, and make the `zhihu` source share participate in runtime scheduling.
 - **Real E2E verified** — logged-in extension bootstrap, profile rebuild, and all five Zhihu discovery branches have been exercised; plain smoke tasks still do not pollute memory or profiling.
+- **Keeps v0.3.139 stability fixes** — this release includes GitHub API rate-limit fallback for update checks, cross-platform signal strength, and coalesced recommendation-feedback learning.
 
 ## Community
 
@@ -665,7 +666,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.139 / extension v0.3.91 / desktop v0.3.139: Zhihu multi-source integration and extension discovery (2026-06-24)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
+Latest: **v0.3.140 / extension v0.3.92 / desktop v0.3.140: Zhihu multi-source integration and extension discovery (2026-06-24)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

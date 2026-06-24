@@ -2489,8 +2489,8 @@ def test_init_guides_missing_runtime_config_interactively(
     #   4. embedding choice "3" (disable embedding; avoids host-dependent Ollama prompts)
     #   5. "n" — skip module overrides
     #   6. "y" — allow LAN access
-    #   7-8. "" — accept Bili favorite/follow init limits
-    #   9+. "n" — skip optional source prompts (xhs / douyin / youtube / X / zhihu)
+    #   7-9. "" — accept Bili history/favorite/follow init limits
+    #   10+. "n" — skip optional source prompts (xhs / douyin / youtube / X / zhihu)
     wizard_input = (
         "\n".join(
             [
@@ -2500,6 +2500,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "3",
                 "n",
                 "y",
+                "",
                 "",
                 "",
                 "n",
@@ -2580,7 +2581,7 @@ def test_init_guides_missing_auth_interactively(
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
     # to XHS / Douyin / YouTube / X / Zhihu so this test stays focused on the
     # cookie-prompt path.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\nn\nn\nn\nn\nn\n")
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"

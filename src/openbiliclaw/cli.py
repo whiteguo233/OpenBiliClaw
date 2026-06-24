@@ -5655,6 +5655,12 @@ def init(
         "--yes-zhihu",
         help="跳过知乎的 y/n 提问,直接启用知乎来源(适合脚本化场景)。",
     ),
+    bilibili_history_limit: int | None = typer.Option(
+        None,
+        "--bilibili-history-limit",
+        min=0,
+        help="B 站历史初始化信号上限；默认 500，0 表示拉全部历史。",
+    ),
     bilibili_favorite_limit: int | None = typer.Option(
         None,
         "--bilibili-favorite-limit",

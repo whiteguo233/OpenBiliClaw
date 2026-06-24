@@ -4,9 +4,9 @@
 
 ---
 
-## v0.3.139 / extension v0.3.91 / desktop v0.3.139: 知乎多源接入与插件发现（2026-06-24）
+## v0.3.140 / extension v0.3.92 / desktop v0.3.140: 知乎多源接入与插件发现（2026-06-24）
 
-后端源码走 `backend-v0.3.139`，浏览器插件走 `extension-v0.3.91`，桌面安装包走 `desktop-v0.3.139`。
+后端源码走 `backend-v0.3.140`，浏览器插件走 `extension-v0.3.92`，桌面安装包走 `desktop-v0.3.140`。
 
 - **新增知乎事件爬取 smoke 链路**：`openbiliclaw fetch-zhihu` 会通过后端 `zhihu_tasks` 队列与浏览器插件前台知乎 tab 拉取最近浏览记录、收藏夹条目和个人动态里的点赞 / 收藏动作。插件会优先用 `/api/v4/me` 自动识别当前知乎用户，`--profile-slug` 仅作为手动覆盖；收藏夹改走当前可用的 favlists API，旧 `/collections/mine` HTML 路径只作为 fallback；动态点赞和动态收藏各自独立使用单分支上限，不共享额度。插件新增知乎 `PlatformAdapter`、content task executor、后台 dispatcher 和 manifest 权限；后端新增 `/api/sources/zhihu/next-task` / `task-result` / `kick`。该命令只转换并打印统一事件计数，不写入 memory、不触发画像初始化或增量画像更新；任务 tab 带 `openbiliclaw_zhihu_task` 标记，content script 在该模式下只运行 executor，不启动普通行为采集，避免 smoke 拉取污染 `/api/events`。
 - **新增知乎搜索 discovery 链路**：`openbiliclaw discover-zhihu <keyword...>` 会入队 `zhihu_tasks(type="search")`，用已登录浏览器插件拉取 `zhihu_search` 候选并写入 `discovery_candidates(pending_eval)`，不写 memory、不触发画像初始化。runtime 新增 `ZhihuDiscoveryProducer`，在 `[sources.zhihu].enabled=true` 且候选池 Zhihu 低于 `[scheduler.pool_source_shares].zhihu` 配额时按统一关键词 planner / 画像 fallback 入队搜索任务；`DiscoveredContent` / 候选池 / source policy / refresh controller / `/api/config` / `/api/sources/status` / 插件设置页 / 桌面 Web 设置页都纳入 `source_platform="zhihu"`。默认保存配比改为 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 = `5 / 1 / 1 / 1 / 1 / 1`，未启用的平台仍不会占 runtime quota。
@@ -17,6 +17,16 @@
 - **知乎事件回填补齐 memory / 画像路径**：`fetch-zhihu` 新增 `--write-memory` 和 `--rebuild-profile`。默认仍只做真实插件 smoke；`--write-memory` 会把本次抓到的知乎浏览 / 收藏 / 点赞事件去重后写入 memory，`--rebuild-profile` 隐含写入并触发真实 LLM 画像重建。`/api/sources/zhihu/task-result` 对 payload 显式带 `profile_update=true` 的 `bootstrap_events` 任务会像其它平台一样把新增事件传播到 memory，并在 profile 已存在时进入 `ProfileUpdatePipeline`；普通 smoke 任务保持不污染画像。
 - **知乎来源比例升级兼容**：旧 `config.toml` 若已有 `[scheduler.pool_source_shares]` 但缺少 `zhihu`，配置加载和运行时 source policy 会自动补默认 `zhihu=1`；配置页保存 `pool_source_shares.zhihu` 后，启用知乎时会进入有效平台配比，关闭知乎时仍保留配置值但不占 runtime quota。
 - **画像偏好分析补齐网页长文本拒答兜底**：真实知乎画像重建时发现 DeepSeek 偶发把含长回答摘要的 preference chunk 拒答成非 JSON。`PreferenceAnalyzer` 的 chunked 路径现在先把可恢复的非 JSON 当作重试信号而不是直接 ERROR；单条事件仍失败时会去掉长 `context`，保留 title / URL / source metadata 做一次安全压缩重试，避免整条知乎浏览 / 收藏 / 点赞信号被丢弃。新增回归测试覆盖“原始 context 被拒答、压缩后成功提取兴趣”的场景。
+
+## v0.3.139 / extension v0.3.91 / desktop v0.3.139: 更新检查限流兜底与知乎 smoke（2026-06-24）
+
+后端源码走 `backend-v0.3.139`，浏览器插件走 `extension-v0.3.91`，桌面安装包走 `desktop-v0.3.139`。
+
+- **检查更新区分并绕过 GitHub API 限流**：后端自动更新查询 GitHub tags 时会把 REST API quota 耗尽的 403/429 识别出来，并优先用 GitHub tags Atom feed 兜底继续选择 `backend-v*` / `desktop-v*`；兜底也失败时才稳定上报 `github_rate_limited`，不再误报 `github_unreachable`。插件 side panel 和桌面 Web 设置页同步显示「GitHub API 限流，请稍后再试」；安装包模式下插件也会隐藏“立即应用”，改为提示下载新版安装包。
+- **新增知乎事件爬取 smoke 链路**：`openbiliclaw fetch-zhihu` 会通过后端 `zhihu_tasks` 队列与浏览器插件前台知乎 tab 拉取最近浏览记录、收藏夹条目，并可用 `--profile-slug` 补个人动态里的点赞 / 收藏动作。插件新增知乎 `PlatformAdapter`、content task executor、后台 dispatcher 和 manifest 权限；后端新增 `/api/sources/zhihu/next-task` / `task-result` / `kick`。该命令只转换并打印统一事件计数，不写入 memory、不触发画像初始化或增量画像更新，便于先做真实端到端来源验证。
+- **跨平台事件强度进入偏好分析**：统一事件构造会为缺失 `metadata.signal_strength` 的行为补兜底强度，B 站初始化 / 账号同步、小红书、抖音、YouTube、X、知乎等来源都能用同一套“证据强度”语义进入 PreferenceAnalyzer；平台自带的强度值优先保留。偏好分析 prompt 明确 `signal_strength` 不是最终兴趣权重，负向反馈 / dislike / thumbs_down / negative satisfaction 仍优先进入避让或降权。
+- **推荐卡反馈按强信号处理**：推荐卡 `comment` 反馈的 `signal_strength` 从 `0.6` 提到 `0.8`，`dismiss` 从 `0.4` 提到 `0.5`；`like` / `dislike` 继续保持 `1.0`。端到端覆盖 `/api/feedback` -> `MemoryManager` -> SQLite 事件入库，确保真实反馈卡片进入画像链路时带正确强度。
+- **推荐反馈画像学习防并发重放**：`/api/feedback` 现在通过 `FeedbackBatchScheduler` 做 5 秒 debounce / coalesce，burst 内多条反馈只触发一次画像批学习；`SoulEngine.process_feedback_batch_if_needed()` 增加 single-flight 锁，已有批处理运行时不再用旧 cursor 并发重复分析当前全部未处理反馈。反馈批处理改用 `query_events_since()` 按 `id ASC` 读取 cursor 后的全部新增 feedback，避免大积压时 newest-first `limit=500` 跳过较早未处理事件。传给 `PreferenceAnalyzer` 前还会瘦身 feedback 事件 metadata，避免扩展原始 `targetText/raw_context` 等大字段进入 LLM prompt。
 
 ## v0.3.138 / extension v0.3.90 / desktop v0.3.138: macOS Ollama 动态库补齐（2026-06-23）
 
