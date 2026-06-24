@@ -466,6 +466,15 @@ class RuntimeContext:
             profile_consolidation_interval_hours=int(
                 getattr(new_config.scheduler, "profile_consolidation_interval_hours", 12)
             ),
+            profile_consolidation_like_target_upper=int(
+                getattr(new_config.scheduler, "profile_consolidation_like_target_upper", 512)
+            ),
+            profile_consolidation_like_target_soft=int(
+                getattr(new_config.scheduler, "profile_consolidation_like_target_soft", 450)
+            ),
+            profile_consolidation_archive_enabled=bool(
+                getattr(new_config.scheduler, "profile_consolidation_archive_enabled", True)
+            ),
             feedback_batch_threshold=int(
                 getattr(new_config.scheduler, "feedback_batch_threshold", 3)
             ),

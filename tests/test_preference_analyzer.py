@@ -331,6 +331,91 @@ def test_merge_preferences_applies_decay_and_deduplicates_tags() -> None:
     assert set(merged["favorite_up_users"]) == {"旧UP", "新UP"}
 
 
+def test_merge_preferences_reactivates_matching_archived_interest() -> None:
+    analyzer = PreferenceAnalyzer(FakeStructuredService())
+    merged = analyzer.merge_preferences(
+        existing_preference={
+            "interests": [
+                {
+                    "name": "活跃兴趣",
+                    "category": "知识",
+                    "weight": 0.8,
+                    "first_seen": "2026-01-01T00:00:00",
+                    "last_seen": "2026-06-01T00:00:00",
+                    "source": "old",
+                }
+            ],
+            "archived_interests": [
+                {
+                    "name": "归档兴趣",
+                    "category": "科技",
+                    "weight": 0.2,
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "archive",
+                },
+                {
+                    "name": "仍归档兴趣",
+                    "category": "生活",
+                    "weight": 0.1,
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "archive",
+                },
+            ],
+        },
+        new_preference={
+            "interests": [
+                {"name": "归档兴趣", "category": "科技", "weight": 0.7, "source": "new"},
+            ],
+        },
+        now=datetime(2026, 6, 24, 0, 0, 0),
+    )
+
+    active_names = {str(item["name"]) for item in merged["interests"]}
+    archived_names = {str(item["name"]) for item in merged["archived_interests"]}
+    revived = next(item for item in merged["interests"] if item["name"] == "归档兴趣")
+    assert "归档兴趣" in active_names
+    assert "归档兴趣" not in archived_names
+    assert archived_names == {"仍归档兴趣"}
+    assert revived["first_seen"] == "2026-02-01T00:00:00"
+    assert revived["last_seen"] == "2026-06-24T00:00:00"
+    assert revived["weight"] == 0.7
+
+
+def test_merge_preferences_matches_active_interest_alias() -> None:
+    analyzer = PreferenceAnalyzer(FakeStructuredService())
+    merged = analyzer.merge_preferences(
+        existing_preference={
+            "interests": [
+                {
+                    "name": "AI工程工具链",
+                    "category": "科技",
+                    "weight": 0.6,
+                    "aliases": ["AI工具与技术", "AI工具与工程实践"],
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "consolidation",
+                }
+            ],
+        },
+        new_preference={
+            "interests": [
+                {"name": "AI工具与技术", "category": "科技", "weight": 0.8, "source": "new"},
+            ],
+        },
+        now=datetime(2026, 6, 24, 0, 0, 0),
+    )
+
+    assert len(merged["interests"]) == 1
+    interest = merged["interests"][0]
+    assert interest["name"] == "AI工程工具链"
+    assert interest["weight"] == 0.8
+    assert interest["first_seen"] == "2026-02-01T00:00:00"
+    assert interest["last_seen"] == "2026-06-24T00:00:00"
+    assert interest["aliases"] == ["AI工具与技术", "AI工具与工程实践"]
+
+
 @pytest.mark.asyncio
 async def test_provider_error_is_wrapped() -> None:
     from openbiliclaw.soul.preference_analyzer import (

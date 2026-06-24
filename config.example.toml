@@ -351,6 +351,14 @@ discovery_limit = 30                     # Per discovery wave limit; allowed ran
 delight_queue_limit = 20                 # Surprise queue load size for desktop/mobile/extension; 1..100
 proactive_push_interval_seconds = 120    # Delight/probe push loop interval; values <30 fallback
 speculator_idle_interval_minutes = 30    # Idle interval before checking speculation lifecycle
+# --- 画像整理（ProfileConsolidator）库存水位 ---
+profile_consolidation_enabled = true
+profile_consolidation_interval_hours = 12
+# active likes 超过 upper 时，定时整理会临时开 full boundary，并在合并后把低权重长尾
+# 归档到 archived_interests，直到 active likes 降到 soft（或至少低于 upper）。
+profile_consolidation_like_target_upper = 512
+profile_consolidation_like_target_soft = 450
+profile_consolidation_archive_enabled = true
 # --- 猜测兴趣（Speculative Interest）调度 ---
 # speculation_interval_minutes = 10   # 猜测推测运行间隔（分钟）
 # speculation_ttl_days = 3            # 猜测兴趣默认存活天数

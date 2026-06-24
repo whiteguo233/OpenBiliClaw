@@ -509,6 +509,11 @@ def _build_soul_engine() -> Any:
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
         profile_consolidation_enabled=cfg.scheduler.profile_consolidation_enabled,
         profile_consolidation_interval_hours=(cfg.scheduler.profile_consolidation_interval_hours),
+        profile_consolidation_like_target_upper=(
+            cfg.scheduler.profile_consolidation_like_target_upper
+        ),
+        profile_consolidation_like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+        profile_consolidation_archive_enabled=(cfg.scheduler.profile_consolidation_archive_enabled),
     )
 
 
@@ -5807,12 +5812,18 @@ def profile_consolidate(
             llm_service=llm_service,
             embedding_service=embedding_service,
             likes_boundary=likes_boundary,
+            like_target_upper=cfg.scheduler.profile_consolidation_like_target_upper,
+            like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+            archive_enabled=cfg.scheduler.profile_consolidation_archive_enabled,
         )
     else:
         consolidator = ProfileConsolidator(
             memory=memory,
             llm_service=llm_service,
             embedding_service=embedding_service,
+            like_target_upper=cfg.scheduler.profile_consolidation_like_target_upper,
+            like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+            archive_enabled=cfg.scheduler.profile_consolidation_archive_enabled,
         )
 
     if revert.strip():
@@ -5866,6 +5877,10 @@ def profile_consolidate(
     if report.errors:
         for err in report.errors:
             console.print(f"[yellow]  ⚠ {err}[/yellow]")
+    if report.likes_before > report.likes_target_upper:
+        console.print(
+            f"  [cyan]likes 动态聚类阈值:[/cyan] cosine ≥ {report.like_similarity_threshold:.2f}"
+        )
     console.print(f"  嫌疑簇送审: {report.clusters_sent} 个")
     for rule_merge in report.rule_merges:
         console.print(f"  [cyan][规则][/cyan] {rule_merge}")
@@ -5883,9 +5898,16 @@ def profile_consolidate(
         f"\n  兴趣: {report.likes_before} → {report.likes_after}"
         f"    避雷: {report.dislikes_before} → {report.dislikes_after}"
     )
+    if report.archived_interests:
+        console.print(
+            f"  [cyan]归档低权重兴趣:[/cyan] {len(report.archived_interests)} 个"
+            f"（目标 ≤ {report.likes_target_upper}，整理水位 {report.likes_target_soft}）"
+        )
+    if report.inventory_reason:
+        console.print(f"  [yellow]库存说明:[/yellow] {report.inventory_reason}")
     if not apply and (report.merges or report.rule_merges):
         console.print("\n  [dim]满意的话用 --apply 真正写入。[/dim]")
-    if apply and (report.merges or report.rule_merges):
+    if apply and (report.merges or report.rule_merges or report.archived_interests):
         console.print(f"\n  [dim]已备份，run_id={report.run_id}[/dim]")
 
 

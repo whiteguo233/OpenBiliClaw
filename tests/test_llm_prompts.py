@@ -16,6 +16,7 @@ from openbiliclaw.llm.prompts import (
     build_delight_score_batch_prompt,
     build_explore_domains_prompt,
     build_merged_keywords_prompt,
+    build_profile_consolidation_prompt,
     build_recommendation_expression_prompt,
     build_search_queries_prompt,
     build_socratic_dialogue_prompt,
@@ -823,6 +824,15 @@ def test_prompt_builder_system_messages_are_call_invariant() -> None:
         "input — extends provider cache miss across all calls): "
         f"{failures}. Refactor to put per-call variables in user_prompt."
     )
+
+
+def test_profile_consolidation_prompt_requires_representative_item_names() -> None:
+    messages = build_profile_consolidation_prompt(likes_clusters=[], dislikes_clusters=[])
+    system_prompt = messages[0]["content"]
+
+    assert "不要默认选择第一个 member 或最短 member" in system_prompt
+    assert "只有当旧 member 能覆盖所有被合并成员时才可作为 canonical" in system_prompt
+    assert "必须起一个组合概念名" in system_prompt
 
 
 def test_category_mapping_prompt_user_message_carries_vocab_and_histogram() -> None:

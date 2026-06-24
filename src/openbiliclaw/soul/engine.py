@@ -124,6 +124,9 @@ class SoulEngine:
         speculator_idle_interval_minutes: int = 30,
         profile_consolidation_enabled: bool = True,
         profile_consolidation_interval_hours: int = 12,
+        profile_consolidation_like_target_upper: int = 512,
+        profile_consolidation_like_target_soft: int = 450,
+        profile_consolidation_archive_enabled: bool = True,
         feedback_batch_threshold: int = 3,
     ) -> None:
         self._llm = llm
@@ -195,6 +198,9 @@ class SoulEngine:
                 embedding_service=embedding_service,
                 data_dir=data_dir,
                 min_interval_seconds=profile_consolidation_interval_hours * 3600,
+                like_target_upper=profile_consolidation_like_target_upper,
+                like_target_soft=profile_consolidation_like_target_soft,
+                archive_enabled=profile_consolidation_archive_enabled,
             )
         self._pipeline = ProfileUpdatePipeline(
             memory=memory,

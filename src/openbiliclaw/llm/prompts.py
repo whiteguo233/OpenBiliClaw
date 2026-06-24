@@ -1932,9 +1932,12 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n"
     '   同名异类成员必须用 {"name": 原名, "category": 原分类} 精确引用。\n'
     "3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n"
-    "4. merge 至少 2 个 members。canonical 是合并后的规范名：优先从 members 里选\n"
-    "   最准确的一个；只有当所有 members 都不够准确时才起新名，新名必须与\n"
-    "   members 同等具体，不得更宽泛。\n"
+    "4. merge 至少 2 个 members。canonical 是合并后的代表性 item 名：如果某个\n"
+    "   member 已能准确代表整个合并组，可以选它；如果 members 分别只覆盖一部分，\n"
+    "   应起一个更准确的组合概念名，让它能代表所有 members。新名必须与 members\n"
+    "   同等具体或更精确，不得更宽泛。\n"
+    "   不要默认选择第一个 member 或最短 member；只有当旧 member 能覆盖所有被合并成员时才可作为 canonical。\n"
+    "   如果旧 member 只是上位词、短词或只覆盖一个侧面，必须起一个组合概念名。\n"
     "5. 「合并」只适用于同一概念的措辞变体（如「智能体开发」vs「智能体开发与实现」）。\n"
     "   子集/包含关系不是同义（如「篮球」vs「NBA」、「游戏」vs「手机游戏」），必须分别 keep。\n"
     "6. dislikes 组的标准更严：只合并语义几乎相同的真同义项；【严禁向上泛化】——\n"
@@ -1953,8 +1956,8 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "<output_schema>\n"
     "{\n"
     '  "likes": [\n'
-    '    {"cluster_id": "L1", "op": "merge", "members": ["智能体开发", "智能体开发与实现"],\n'
-    '     "canonical": "智能体开发", "reason": "同一概念的措辞变体"},\n'
+    '    {"cluster_id": "L1", "op": "merge", "members": ["AI工具与技术", "AI工具与工程实践"],\n'
+    '     "canonical": "AI工程工具链", "reason": "新 item 能同时代表工具和工程实践"},\n'
     '    {"cluster_id": "L2", "op": "keep", "name": "篮球", "reason": "NBA 是其子集而非同义"},\n'
     '    {"cluster_id": "H1", "op": "merge",\n'
     '     "members": [{"name": "苹果", "category": "科技"}, {"name": "苹果", "category": "资讯"}],\n'

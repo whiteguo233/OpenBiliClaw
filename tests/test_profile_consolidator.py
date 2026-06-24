@@ -66,6 +66,14 @@ class _StubEmbedding:
         return self._vectors[text]
 
 
+class _VectorEmbedding:
+    def __init__(self, vectors: dict[str, list[float]]) -> None:
+        self._vectors = vectors
+
+    async def embed(self, text: str) -> list[float]:
+        return self._vectors.get(text, [0.0, 1.0])
+
+
 class _StubLLM:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
@@ -452,6 +460,87 @@ async def test_llm_merge_applies_weight_and_timestamps(tmp_path: Path) -> None:
     assert "画像整理" in (tmp_path / "soul_changelog.md").read_text(encoding="utf-8")
 
 
+async def test_llm_rewritten_canonical_preserves_member_aliases(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI工具与技术", 0.91),
+                _interest("AI工具与工程实践", 0.86),
+                _interest("AI编程工具", 0.89),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": ["AI工具与技术", "AI工具与工程实践", "AI编程工具"],
+                    "canonical": "AI工程工具链",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["AI工具与技术", "AI工具与工程实践", "AI编程工具"]]),
+        data_dir=tmp_path,
+    )
+
+    await consolidator.run(dry_run=False)
+
+    interests = memory.get_layer("preference").data["interests"]
+    assert len(interests) == 1
+    assert interests[0]["name"] == "AI工程工具链"
+    assert interests[0]["aliases"] == ["AI工具与技术", "AI工具与工程实践", "AI编程工具"]
+
+
+async def test_generalized_like_rewritten_canonical_is_rejected(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI工具与技术", 0.91),
+                _interest("AI工具与工程实践", 0.86),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": ["AI工具与技术", "AI工具与工程实践"],
+                    "canonical": "AI",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["AI工具与技术", "AI工具与工程实践"]]),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    assert report.merges == []
+    assert [item["name"] for item in memory.get_layer("preference").data["interests"]] == [
+        "AI工具与技术",
+        "AI工具与工程实践",
+    ]
+    assert report.rejected_clusters == ["L1: canonical looks over-generalized for likes: 'AI'"]
+
+
 async def test_likes_judge_payload_carries_category(tmp_path: Path) -> None:
     memory = _FakeMemory(
         {
@@ -535,6 +624,7 @@ async def test_full_boundary_surfaces_clusters_beyond_top512(tmp_path: Path) -> 
         llm_service=None,
         embedding_service=embedding,
         data_dir=tmp_path,
+        like_target_upper=999,
     ).run(dry_run=True)
     full_report = await ProfileConsolidator(
         memory=memory,
@@ -546,6 +636,69 @@ async def test_full_boundary_surfaces_clusters_beyond_top512(tmp_path: Path) -> 
 
     assert default_report.clusters_sent == 0
     assert full_report.clusters_sent == 1
+
+
+async def test_over_target_likes_lower_similarity_threshold(tmp_path: Path) -> None:
+    interests = [
+        _interest("AI工具与技术", 0.95),
+        _interest("AI工具工程实践", 0.9),
+        _interest("普通兴趣A", 0.8),
+        _interest("普通兴趣B", 0.7),
+    ]
+    embedding = _VectorEmbedding(
+        {
+            "AI工具与技术": [1.0, 0.0],
+            "AI工具工程实践": [0.8, 0.6],
+            "普通兴趣A": [0.0, 1.0],
+            "普通兴趣B": [0.0, -1.0],
+        }
+    )
+
+    under_target = await ProfileConsolidator(
+        memory=_FakeMemory(
+            {"interests": [dict(item) for item in interests], "disliked_topics": []}
+        ),
+        llm_service=None,
+        embedding_service=embedding,
+        data_dir=tmp_path / "under",
+        like_target_upper=10,
+    ).run(dry_run=True)
+
+    over_memory = _FakeMemory(
+        {"interests": [dict(item) for item in interests], "disliked_topics": []},
+        data_dir=tmp_path / "over",
+    )
+    over_report = await ProfileConsolidator(
+        memory=over_memory,
+        llm_service=_StubLLM(
+            {
+                "likes": [
+                    {
+                        "cluster_id": "L1",
+                        "op": "merge",
+                        "members": ["AI工具与技术", "AI工具工程实践"],
+                        "canonical": "AI工具工程实践",
+                    }
+                ],
+                "dislikes": [],
+            }
+        ),
+        embedding_service=embedding,
+        data_dir=tmp_path / "over",
+        like_target_upper=3,
+        like_target_soft=3,
+        archive_enabled=False,
+    ).run(dry_run=False)
+
+    assert under_target.clusters_sent == 0
+    assert under_target.like_similarity_threshold == 0.85
+    assert over_report.like_similarity_threshold < 0.8
+    assert over_report.clusters_sent == 1
+    assert [item["name"] for item in over_memory.get_layer("preference").data["interests"]] == [
+        "AI工具工程实践",
+        "普通兴趣A",
+        "普通兴趣B",
+    ]
 
 
 async def test_judge_batches_at_most_32_clusters_per_call(tmp_path: Path) -> None:
@@ -620,6 +773,217 @@ async def test_default_path_single_call_regression(tmp_path: Path) -> None:
     await consolidator.run(dry_run=False)
 
     assert llm.calls == 1
+
+
+async def test_run_if_due_does_not_skip_unchanged_digest_when_likes_over_target(
+    tmp_path: Path,
+) -> None:
+    interests = [
+        _interest("主题A", 0.9),
+        _interest("主题B", 0.8),
+        _interest("主题C", 0.7),
+    ]
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=None,
+        data_dir=tmp_path,
+        like_target_upper=2,
+        like_target_soft=2,
+    )
+    digest = consolidator._input_digest()
+    (tmp_path / "consolidation_state.json").write_text(
+        json.dumps(
+            {
+                "last_run_at": "2026-06-23T00:00:00",
+                "last_input_digest": digest,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = await consolidator.run_if_due(now=datetime(2026, 6, 24, 0, 0, 0))
+
+    assert report.ran is True
+    assert report.skipped_clean is False
+
+
+async def test_over_cap_run_uses_full_like_boundary_for_tail_duplicates(tmp_path: Path) -> None:
+    interests = [
+        _interest("头部主题1", 0.9),
+        _interest("头部主题2", 0.8),
+        _interest("长尾智能体开发", 0.2),
+        _interest("长尾智能体开发实践", 0.19),
+    ]
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": ["长尾智能体开发", "长尾智能体开发实践"],
+                    "canonical": "长尾智能体开发",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["长尾智能体开发", "长尾智能体开发实践"]]),
+        data_dir=tmp_path,
+        likes_boundary=2,
+        like_target_upper=3,
+        like_target_soft=3,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    assert report.clusters_sent == 1
+    assert llm.calls == 1
+    assert len(memory.get_layer("preference").data["interests"]) == 3
+
+
+async def test_consolidation_archives_low_weight_tail_to_target(tmp_path: Path) -> None:
+    interests = [
+        _interest("高权重A", 0.9),
+        _interest("高权重B", 0.8),
+        _interest("中权重C", 0.4),
+        _interest("低权重D", 0.05),
+        _interest("低权重E", 0.04),
+    ]
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=None,
+        data_dir=tmp_path,
+        like_target_upper=3,
+        like_target_soft=3,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    active_names = [item["name"] for item in memory.get_layer("preference").data["interests"]]
+    archived_names = [
+        item["name"] for item in memory.get_layer("preference").data["archived_interests"]
+    ]
+    assert active_names == ["高权重A", "高权重B", "中权重C"]
+    assert archived_names == ["低权重E", "低权重D"]
+    assert report.archived_interests == ["低权重E", "低权重D"]
+    assert report.inventory_reason == ""
+
+
+async def test_consolidation_does_not_archive_user_protected_likes(tmp_path: Path) -> None:
+    memory = _OverridesMemory(
+        {
+            "interests": [
+                _interest("高权重A", 0.9),
+                _interest("低权重保护", 0.01),
+                _interest("低权重B", 0.02),
+                _interest("低权重C", 0.03),
+            ],
+            "disliked_topics": [],
+        },
+        {
+            "version": 1,
+            "interest_edits": {
+                "likes": {
+                    "weight_pins": {"低权重保护": 0.9},
+                }
+            },
+        },
+    )
+    memory._data_dir = tmp_path
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=None,
+        data_dir=tmp_path,
+        like_target_upper=2,
+        like_target_soft=2,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    active_names = [item["name"] for item in memory.get_layer("preference").data["interests"]]
+    assert active_names == ["高权重A", "低权重保护"]
+    assert report.protected_interests == ["低权重保护"]
+    assert report.archived_interests == ["低权重B", "低权重C"]
+
+
+async def test_consolidation_reports_when_protected_inventory_exceeds_target(
+    tmp_path: Path,
+) -> None:
+    memory = _OverridesMemory(
+        {
+            "interests": [
+                _interest("保护A", 0.1),
+                _interest("保护B", 0.1),
+                _interest("未保护高权重", 0.9),
+            ],
+            "disliked_topics": [],
+        },
+        {
+            "version": 1,
+            "interest_edits": {
+                "likes": {
+                    "weight_pins": {"保护A": 0.9, "保护B": 0.9},
+                }
+            },
+        },
+    )
+    memory._data_dir = tmp_path
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=None,
+        data_dir=tmp_path,
+        like_target_upper=1,
+        like_target_soft=1,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    active_names = [item["name"] for item in memory.get_layer("preference").data["interests"]]
+    assert active_names == ["保护A", "保护B"]
+    assert report.inventory_reason == "protected_inventory_exceeds_target"
+
+
+async def test_revert_restores_archived_interests(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("高权重A", 0.9),
+                _interest("低权重B", 0.02),
+                _interest("低权重C", 0.01),
+            ],
+            "archived_interests": [_interest("旧归档", 0.01)],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=None,
+        data_dir=tmp_path,
+        like_target_upper=1,
+        like_target_soft=1,
+    )
+
+    report = await consolidator.run(dry_run=False)
+    assert [item["name"] for item in memory.get_layer("preference").data["interests"]] == [
+        "高权重A"
+    ]
+    assert consolidator.revert(report.run_id)
+
+    preference = memory.get_layer("preference").data
+    assert [item["name"] for item in preference["interests"]] == [
+        "高权重A",
+        "低权重B",
+        "低权重C",
+    ]
+    assert [item["name"] for item in preference["archived_interests"]] == ["旧归档"]
 
 
 async def test_dislike_merge_keeps_frontmost_position(tmp_path: Path) -> None:
@@ -1017,16 +1381,25 @@ default_provider = "ollama"
 [scheduler]
 profile_consolidation_enabled = false
 profile_consolidation_interval_hours = 6
+profile_consolidation_like_target_upper = 300
+profile_consolidation_like_target_soft = 240
+profile_consolidation_archive_enabled = false
 """,
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
     assert cfg.scheduler.profile_consolidation_enabled is False
     assert cfg.scheduler.profile_consolidation_interval_hours == 6
+    assert cfg.scheduler.profile_consolidation_like_target_upper == 300
+    assert cfg.scheduler.profile_consolidation_like_target_soft == 240
+    assert cfg.scheduler.profile_consolidation_archive_enabled is False
 
     defaults = load_config(tmp_path / "missing.toml")
     assert defaults.scheduler.profile_consolidation_enabled is True
     assert defaults.scheduler.profile_consolidation_interval_hours == 12
+    assert defaults.scheduler.profile_consolidation_like_target_upper == 512
+    assert defaults.scheduler.profile_consolidation_like_target_soft == 450
+    assert defaults.scheduler.profile_consolidation_archive_enabled is True
 
 
 class _OverridesMemory(_FakeMemory):

@@ -426,7 +426,10 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `proactive_push_interval_seconds` | int | `120` | 主动推荐 / probe 推送循环间隔；小于 `30` 时回退默认值 |
 | `speculator_idle_interval_minutes` | int | `30` | `ProfileUpdatePipeline` 空闲时检查猜测兴趣生命周期的间隔；小于 `5` 时回退默认值 |
 | `profile_consolidation_enabled` | bool | `true` | 是否启用 12 小时画像整理（LLM 合并重复的喜欢 / 讨厌主题，见 soul 模块 `ProfileConsolidator`） |
-| `profile_consolidation_interval_hours` | int | `12` | 画像整理的最小间隔（小时）；输入未变化（digest 相同）或簇都已判过（no-merge 记忆）时该轮零 LLM 调用 |
+| `profile_consolidation_interval_hours` | int | `12` | 画像整理的最小间隔（小时）；输入未变化（digest 相同）且 active likes 未超过库存上限时该轮零 LLM 调用 |
+| `profile_consolidation_like_target_upper` | int | `512` | active likes 目标上限；超过该值时整理会临时使用 full boundary，并在合并后尝试归档低权重长尾 |
+| `profile_consolidation_like_target_soft` | int | `450` | active likes 整理水位；归档开启时会尽量把 active likes 降到该值（实际使用 `min(soft, upper)`） |
+| `profile_consolidation_archive_enabled` | bool | `true` | 合并后仍超过上限时，是否把低权重、非用户保护的兴趣移入 `archived_interests` |
 | `speculation_interval_minutes` | int | `10` | 猜测兴趣推测的运行间隔（分钟） |
 | `speculation_ttl_days` | int | `3` | 猜测兴趣的默认存活天数 |
 | `speculation_cooldown_days` | int | `7` | 猜测兴趣被否定后的冷却天数 |

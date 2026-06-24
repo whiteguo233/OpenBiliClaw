@@ -232,6 +232,9 @@ class SchedulerConfig:
     # and no-merge pair memory make steady-state runs nearly free.
     profile_consolidation_enabled: bool = True
     profile_consolidation_interval_hours: int = 12
+    profile_consolidation_like_target_upper: int = 512
+    profile_consolidation_like_target_soft: int = 450
+    profile_consolidation_archive_enabled: bool = True
     speculation_interval_minutes: int = 10
     speculation_ttl_days: int = 3
     speculation_cooldown_days: int = 7
@@ -853,6 +856,20 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     sched_raw.get("profile_consolidation_interval_hours"),
                     default=12,
                     min_value=1,
+                ),
+                "profile_consolidation_like_target_upper": _normalize_scheduler_int(
+                    sched_raw.get("profile_consolidation_like_target_upper"),
+                    default=512,
+                    min_value=1,
+                ),
+                "profile_consolidation_like_target_soft": _normalize_scheduler_int(
+                    sched_raw.get("profile_consolidation_like_target_soft"),
+                    default=450,
+                    min_value=1,
+                ),
+                "profile_consolidation_archive_enabled": _coerce_bool(
+                    sched_raw.get("profile_consolidation_archive_enabled"),
+                    default=True,
                 ),
                 "avoidance_speculation_interval_minutes": _normalize_scheduler_int(
                     sched_raw.get("avoidance_speculation_interval_minutes"),
