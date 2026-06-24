@@ -12,6 +12,7 @@ from openbiliclaw.llm.service import ModuleOverride
 from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.soul.engine import SoulEngine
 from openbiliclaw.soul.overrides import ProfileOverrides, apply_edit
+from openbiliclaw.soul.preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
 from openbiliclaw.soul.profile import (
     CoreLayer,
     InterestDomain,
@@ -454,7 +455,7 @@ async def test_process_feedback_batch_updates_preference_after_threshold(
         event_chunk_size: int = 0,
     ) -> dict[str, object]:
         assert len(events) == 3
-        assert event_chunk_size == 200
+        assert event_chunk_size == DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
         return {
             "interests": [
                 {"name": "纪录片", "category": "知识", "weight": 0.9, "source": "feedback"}
@@ -1242,7 +1243,7 @@ async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_s
         existing_preference: dict[str, object],
         event_chunk_size: int = 0,
     ) -> dict[str, object]:
-        assert event_chunk_size == 200
+        assert event_chunk_size == DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
         return {
             "interests": [
                 {"name": "纪录片", "category": "知识", "weight": 0.95, "source": "feedback"},

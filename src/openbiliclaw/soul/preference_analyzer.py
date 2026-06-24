@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # this when re-flagged entries keep bubbling to the front.
 _DISLIKED_TOPICS_STORE_CAP = 128
 
+DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE = 200
+MAX_CONCURRENT_PREFERENCE_CHUNKS = 16
+
 _COMPACT_METADATA_KEYS = frozenset(
     {
         "source_platform",
@@ -334,7 +337,7 @@ class PreferenceAnalyzer:
         existing_preference: dict[str, object],
         chunk_size: int,
     ) -> dict[str, object]:
-        """Split events into chunks, analyse each concurrently, then fold."""
+        """Split events into bounded concurrent chunk batches, then fold."""
         import asyncio as _asyncio
 
         chunk_size = max(1, chunk_size)
@@ -467,7 +470,12 @@ class PreferenceAnalyzer:
                     return []
                 return await _split_or_compact_chunk(chunk)
 
-        outcome_groups = await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in chunks))
+        outcome_groups: list[list[tuple[dict[str, object], dict[str, object]]]] = []
+        for batch_start in range(0, len(chunks), MAX_CONCURRENT_PREFERENCE_CHUNKS):
+            batch = chunks[batch_start : batch_start + MAX_CONCURRENT_PREFERENCE_CHUNKS]
+            outcome_groups.extend(
+                await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in batch))
+            )
         outcomes = [item for group in outcome_groups for item in group]
 
         # Fold each chunk's normalized preference into the running merge

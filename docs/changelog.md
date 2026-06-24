@@ -30,6 +30,7 @@
 - **跨平台事件强度进入偏好分析**：统一事件构造会为缺失 `metadata.signal_strength` 的行为补兜底强度，B 站初始化 / 账号同步、小红书、抖音、YouTube、X、知乎等来源都能用同一套“证据强度”语义进入 PreferenceAnalyzer；平台自带的强度值优先保留。偏好分析 prompt 明确 `signal_strength` 不是最终兴趣权重，负向反馈 / dislike / thumbs_down / negative satisfaction 仍优先进入避让或降权。
 - **推荐卡反馈按强信号处理**：推荐卡 `comment` 反馈的 `signal_strength` 从 `0.6` 提到 `0.8`，`dismiss` 从 `0.4` 提到 `0.5`；`like` / `dislike` 继续保持 `1.0`。端到端覆盖 `/api/feedback` -> `MemoryManager` -> SQLite 事件入库，确保真实反馈卡片进入画像链路时带正确强度。
 - **推荐反馈画像学习防并发重放**：`/api/feedback` 现在通过 `FeedbackBatchScheduler` 做 5 秒 debounce / coalesce，burst 内多条反馈只触发一次画像批学习；`SoulEngine.process_feedback_batch_if_needed()` 增加 single-flight 锁，已有批处理运行时不再用旧 cursor 并发重复分析当前全部未处理反馈。反馈批处理改用 `query_events_since()` 按 `id ASC` 读取 cursor 后的全部新增 feedback，避免大积压时 newest-first `limit=500` 跳过较早未处理事件。传给 `PreferenceAnalyzer` 前还会瘦身 feedback 事件 metadata，避免扩展原始 `targetText/raw_context` 等大字段进入 LLM prompt。
+- **偏好分析 chunk 调度分批推进**：`PreferenceAnalyzer` 初始化大批量事件时不再一次性 fan-out 全部 chunk，而是每批最多推进 16 个 chunk，处理完再进入下一批；默认粗分片大小收口为 `DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE=200`，即本地批次最多推进约 3200 条事件后再进入下一批。`LLMService` 默认并发保持不变，避免拉全量历史时产生无界 prompt 任务和等待队列。
 
 ## v0.3.138 / extension v0.3.90 / desktop v0.3.138: macOS Ollama 动态库补齐（2026-06-23）
 

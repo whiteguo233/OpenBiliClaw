@@ -36,7 +36,7 @@ from .dialogue_insight_analyzer import (
 from .insight_analyzer import InsightAnalyzer
 from .overrides import ProfileOverrides, apply_edit, apply_overrides
 from .pipeline import ProfileUpdatePipeline
-from .preference_analyzer import PreferenceAnalyzer
+from .preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE, PreferenceAnalyzer
 from .profile import (
     AwarenessNote,
     InsightHypothesis,
@@ -913,7 +913,7 @@ class SoulEngine:
         updated_preference = await self._preference_analyzer.analyze_events(
             events=[self._compact_feedback_event_for_analysis(event) for event in feedback_events],
             existing_preference=existing_preference,
-            event_chunk_size=200,
+            event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
         )
         old_disliked = {
             str(item).strip()

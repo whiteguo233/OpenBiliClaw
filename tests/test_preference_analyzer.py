@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 
@@ -8,7 +9,11 @@ import pytest
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.prompts import build_preference_analysis_prompt
 from openbiliclaw.llm.service import LLMServiceError
-from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+from openbiliclaw.soul.preference_analyzer import (
+    DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    MAX_CONCURRENT_PREFERENCE_CHUNKS,
+    PreferenceAnalyzer,
+)
 
 
 class FakeRegistry:
@@ -112,6 +117,12 @@ def test_preference_prompt_treats_comment_feedback_as_direct_neutral_feedback() 
     assert "根据备注" in system_prompt
     assert "喜欢" in system_prompt
     assert "不喜欢" in system_prompt
+
+
+def test_preference_chunk_defaults_bound_initial_batch_events() -> None:
+    assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE == 200
+    assert MAX_CONCURRENT_PREFERENCE_CHUNKS == 16
+    assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE * MAX_CONCURRENT_PREFERENCE_CHUNKS == 3200
 
 
 def test_preference_prompt_explains_cross_platform_signal_strength() -> None:
@@ -261,6 +272,36 @@ class RejectingContextStructuredService:
         return LLMResponse(
             content='{"interests": [{"name": "AI Agent", "category": "科技", "weight": 0.9}]}',
             provider="deepseek",
+        )
+
+
+class ConcurrentChunkStructuredService:
+    def __init__(self, *, delay_seconds: float = 0.01) -> None:
+        self.delay_seconds = delay_seconds
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(self.delay_seconds)
+        finally:
+            self.active_calls -= 1
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
         )
 
 
@@ -751,6 +792,25 @@ async def test_analyze_events_count_chunking_avoids_whole_batch_prompt_build(
     )
 
     assert len(service.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_chunked_analysis_batches_initial_chunk_fanout() -> None:
+    service = ConcurrentChunkStructuredService()
+    events = [
+        {"event_type": "view", "title": f"事件 {idx}", "metadata": {"source_platform": "bilibili"}}
+        for idx in range(20)
+    ]
+
+    preference = await PreferenceAnalyzer(service).analyze_events(
+        events=events,
+        existing_preference={},
+        event_chunk_size=1,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert len(service.calls) == 20
+    assert service.max_active_calls <= 16
 
 
 @pytest.mark.asyncio

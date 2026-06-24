@@ -404,7 +404,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 4. 返回结果会进入 `merge_preferences()`，与旧偏好合并。
 5. 合并后的偏好写回 `preference.json`。
 
-初始化这类大批量事件会按分片并发分析。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
+初始化这类大批量事件会按分片并发分析，但初始 chunk 调度会按最多 16 个一批推进；一批处理完再处理下一批，避免拉全量历史时一次性创建所有 prompt 任务和等待队列。真实 provider 并发仍由 `LLMService` 控制，不通过这里调高。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
 
 若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 仍会递归拆小该分片；最终只有仍失败的单条事件会被跳过。若 provider 返回明确的 context-window 错误（例如 `n_keep >= n_ctx`、`context length`、`prompt is too long`），偏好分析会按同一套拆分 / compact 逻辑重试；认证、网络、限流、模型不存在等非上下文错误仍会让调用失败，避免把服务不可用伪装成成功。
 
@@ -792,7 +792,11 @@ dialogue.clear_history()
 ### PreferenceAnalyzer
 
 ```python
-from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+from openbiliclaw.soul.preference_analyzer import (
+    DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    MAX_CONCURRENT_PREFERENCE_CHUNKS,
+    PreferenceAnalyzer,
+)
 
 analyzer = PreferenceAnalyzer(
     registry=llm_registry,
@@ -801,8 +805,11 @@ analyzer = PreferenceAnalyzer(
 updated_pref = await analyzer.analyze_events(
     events=[...],
     existing_preference=current_pref,
-    event_chunk_size=200,  # 可选：先按条数粗分片，再由 prompt 预算继续拆
+    event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,  # 默认初始化粗分片：200 条
 )
+# 初始化路径每批最多推进 200 * 16 = 3200 条事件的粗分片；
+# 单个 chunk 超过 max_prompt_chars 时仍会继续按 prompt 预算拆小。
+assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE * MAX_CONCURRENT_PREFERENCE_CHUNKS == 3200
 # 返回:
 # {
 #   "interests": [{"name": "历史", "category": "知识", "weight": 0.82, ...}],

@@ -27,6 +27,7 @@ from openbiliclaw.runtime.ollama_supervisor import (
     is_loopback,
     ollama_required,
 )
+from openbiliclaw.soul.preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
 
 
 def _force_utf8_stdout_on_windows() -> None:
@@ -5469,11 +5470,14 @@ async def run_guided_init(
     await _stage_started(2)
     _print_section_title("2/4 分析偏好")
     console.print(f"  总信号量: [green]{len(events)}[/green] 条事件")
-    # Chunk the event list so multiple analysis calls run concurrently
-    # instead of serialising one max-thinking call over ~800 events.
+    # Chunk the event list so bootstrap does bounded batch processing
+    # instead of serialising one max-thinking call over hundreds of events.
     await _run_with_progress(
-        soul_engine.analyze_events(events, event_chunk_size=200),
-        label="分析偏好(4 个并发分片)",
+        soul_engine.analyze_events(
+            events,
+            event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+        ),
+        label="分析偏好（分片批处理）",
         eta_seconds=180,
     )
     await _stage_done(2)
@@ -6150,7 +6154,10 @@ def rebuild_profile(
         console.print(f"  总信号量: [green]{len(events)}[/green] 条")
         asyncio.run(
             _run_with_progress(
-                soul_engine.analyze_events(events, event_chunk_size=200),
+                soul_engine.analyze_events(
+                    events,
+                    event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+                ),
                 label="分析偏好（分片并发）",
                 eta_seconds=180,
             )
@@ -7161,10 +7168,16 @@ def import_youtube(
     console.print("  [green]✓ 记忆层写入完成[/green]")
 
     _print_section_title("2/2 更新偏好画像")
-    console.print(f"  分析 {stats.total} 条 YouTube 信号（并发分片 200 条）…")
+    console.print(
+        f"  分析 {stats.total} 条 YouTube 信号"
+        f"（分片 {DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE} 条）…"
+    )
     asyncio.run(
         _run_with_progress(
-            soul_engine.analyze_events(result.events, event_chunk_size=200),
+            soul_engine.analyze_events(
+                result.events,
+                event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+            ),
             label="分析偏好（YouTube 信号）",
             eta_seconds=90,
         )
