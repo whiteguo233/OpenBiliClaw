@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from urllib import request as urllib_request
 
 from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.discovery.strategies._utils import normalize_published_at
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -531,6 +532,10 @@ def normalize_yt_video(
         comment_count=comment_count,
         description=description,
         source_strategy=source_strategy,
+        published_at=normalize_published_at(
+            raw.get("timestamp"),
+            raw.get("upload_date"),
+        ),
     )
 
 
