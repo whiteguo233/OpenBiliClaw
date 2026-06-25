@@ -13,6 +13,8 @@
 - **低可用池不再被 source overflow 压掉**：`_enforce_pool_cap()` 在 `pool_available < pool_target_count` 时跳过 `trim_pool_source_overflow()`，避免 raw/source 配额把当前可用候选继续 suppress；总 raw ceiling 仍由 `trim_pool_to_target_count()` 收敛。
 - **空补货计划可诊断**：`_build_refresh_plan()` 在池子低于 target 但 plan 为空时会输出 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`，方便直接定位是来源配额、raw headroom、非 B 站 producer 还是其它 gating 导致不补。
 - **减少重复 discovery 导致的小批 eval**：API runtime 的主 discovery raw 生产改为 4 倍 oversample，并同步放大 strategy limits；重复候选仍由 `candidate_key` 去重，但新候选更容易把 `pending_eval` 攒到有效 batch。
+- **画像整理日志区分 run 与 batch**：`ProfileConsolidator` 每次逻辑运行结束会输出一条 `profile consolidation run completed` 汇总，包含 `run_id`、候选簇数、LLM batch 数、合并 / 归档数量和前后库存，避免把同一轮拆批 LLM 调用误判为短时间重复合并。
+- **OpenAI SDK DEBUG 降噪**：全局 logging 初始化现在把 `openai` / `openai._base_client` 提升到 WARNING，避免 `logging.file_level=DEBUG` 时把完整 LLM prompt / 用户画像写进文件日志；业务侧 `[llm-cost]` 与模块 INFO 日志不受影响。
 
 ## v0.3.142 / extension v0.3.94 / desktop v0.3.142: 知乎后台 discovery 与发布包同步（2026-06-25）
 
