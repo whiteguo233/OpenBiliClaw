@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
@@ -194,6 +195,24 @@ async def test_trending_strategy_fetches_global_and_related_rankings() -> None:
     assert bilibili_client.calls == [0, 36, 181]
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]
     assert all(item.source_strategy == "trending" for item in results)
+
+
+def test_trending_strategy_maps_bilibili_publish_time() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    pubdate = 1_710_000_000
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+    )
+
+    item = strategy._map_ranking_item(
+        {"bvid": "BV1PUB", "title": "新发布内容", "pubdate": pubdate},
+        rid=0,
+    )
+
+    assert item is not None
+    assert item.published_at == datetime.fromtimestamp(pubdate, UTC).isoformat()
 
 
 @pytest.mark.asyncio

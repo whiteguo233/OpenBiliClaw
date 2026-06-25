@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -281,6 +282,30 @@ async def test_related_chain_prioritizes_positive_event_seeds_over_plain_views()
     seeds = await strategy._select_seed_descriptors(_build_profile())
 
     assert [bvid for bvid, _ in seeds[:2]] == ["BVFAV", "BVLIKE"]
+
+
+def test_related_chain_maps_bilibili_publish_time() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    pubdate = 1_710_000_000
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=FakeMemoryManager(events=[]),
+    )
+
+    item = strategy._map_related_item(
+        {
+            "bvid": "BV1REL",
+            "title": "相关新内容",
+            "pubdate": pubdate,
+            "owner": {"name": "UP", "mid": 1},
+        },
+        seed_topic_key="seed",
+    )
+
+    assert item is not None
+    assert item.published_at == datetime.fromtimestamp(pubdate, UTC).isoformat()
 
 
 @pytest.mark.asyncio

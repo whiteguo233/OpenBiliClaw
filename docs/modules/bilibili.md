@@ -18,6 +18,7 @@
 | 3.1 Cookie 认证 | ✅ | set / load / validate / clear + CLI auth 命令 + 运行时 cookie 回退 |
 | 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传 |
 | 3.2 核心 API | ✅ | 10+ API 方法 + 限流 + 统一错误处理 |
+| B 站发布时间归一化 | ✅ | `get_video_info()` 会把 `pubdate` 归一化为 ISO 时间；search / ranking / related 候选会把 `pubdate`、`senddate`、`ctime` 等字段映射为 `published_at`，供 discovery 入池和推荐权重使用 |
 | `/nav` 登录态诊断 | ✅ | `/x/web-interface/nav` 返回 `-101` 时抛 `BilibiliAuthExpiredError`，日志明确提示 session expired / 重新登录或保持扩展在线同步 Cookie |
 | 搜索 WBI 化与 412 软降级 | ✅ | `search()` 现会先从 `nav` 获取 WBI key，走 `/x/web-interface/wbi/search/type`；遇到 `412 Precondition Failed` 时会记录 warning 并返回空结果，避免拖垮整轮 discover |
 | 搜索风控冷却（分级） | ✅ | 412（显式 IP 封禁）即时进入硬冷却（base 600s）；`v_voucher`（多为 WBI key churn / 轻限流）改为**阈值化软冷却**——单个关键词耗尽重试只记一次 streak、不触发冷却（整轮其余关键词 + 共用此冷却的 explore 继续出货），但会打开短期 `search_dom_fallback_remaining()` 信号让扩展可补一轮真实搜索页；连续 `_SEARCH_VOUCHER_BLOCK_THRESHOLD`（默认 3）个关键词级耗尽才启用进程级 cooldown（base 缩到 180s）；一旦怀疑风暴（streak>0）后续关键词只做单次快探测、不再每词 ~21s 硬抗，任一成功即清零 streak。所有 BilibiliAPIClient 实例共享冷却和 DOM fallback 状态 |
@@ -158,7 +159,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | 类 | 用途 |
 |----|------|
 | `NavInfo` | 登录用户基本信息（is_login, uname, mid） |
-| `VideoInfo` | 视频详情（标题、UP主、播放/点赞/收藏数等） |
+| `VideoInfo` | 视频详情（标题、UP主、播放/点赞/收藏数等），`pub_date` 为归一化后的 ISO 发布时间 |
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
 | `FollowingUser` | 关注用户（mid, uname, sign） |

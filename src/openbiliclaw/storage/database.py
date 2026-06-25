@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS content_cache (
     candidate_tier TEXT DEFAULT 'primary',
     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    published_at TEXT DEFAULT '',
     notification_sent INTEGER DEFAULT 0,
     notified_at TIMESTAMP,
     pool_status TEXT DEFAULT 'fresh',
@@ -228,6 +229,7 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     retweet_count         INTEGER NOT NULL DEFAULT 0,
     bookmark_count        INTEGER NOT NULL DEFAULT 0,
     tags                  TEXT NOT NULL DEFAULT '[]',
+    published_at          TEXT NOT NULL DEFAULT '',
     candidate_tier        TEXT NOT NULL DEFAULT 'primary',
     score_threshold       REAL NOT NULL DEFAULT 0.0,
     raw_payload           TEXT NOT NULL DEFAULT '{}',
@@ -1106,6 +1108,7 @@ class Database:
                 pool_expression,
                 pool_topic_label,
                 candidate_tier,
+                published_at,
                 last_scored_at,
                 source,
                 content_id,
@@ -1118,7 +1121,7 @@ class Database:
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -1183,6 +1186,11 @@ class Database:
                     ''
                 ),
                 candidate_tier = excluded.candidate_tier,
+                published_at = COALESCE(
+                    NULLIF(excluded.published_at, ''),
+                    content_cache.published_at,
+                    ''
+                ),
                 last_scored_at = CURRENT_TIMESTAMP,
                 -- Re-fresh items previously trim-suppressed: 'suppressed' is
                 -- an internal diversity decision (over-quota cuts, topic cap),
@@ -1260,6 +1268,7 @@ class Database:
                 kwargs.get("pool_expression", ""),
                 kwargs.get("pool_topic_label", ""),
                 kwargs.get("candidate_tier", "primary"),
+                kwargs.get("published_at", ""),
                 kwargs.get("source", ""),
                 kwargs.get("content_id", bvid),
                 kwargs.get("content_url", ""),
@@ -1335,6 +1344,7 @@ class Database:
                 default={},
             )
             score_threshold = float(self._candidate_value(candidate, "score_threshold", 0.0) or 0.0)
+            published_at = str(self._candidate_value(candidate, "published_at", "") or "")
             cursor = self._execute_write(
                 """
                 INSERT OR IGNORE INTO discovery_candidates (
@@ -1366,6 +1376,7 @@ class Database:
                     retweet_count,
                     bookmark_count,
                     tags,
+                    published_at,
                     candidate_tier,
                     score_threshold,
                     raw_payload,
@@ -1373,7 +1384,7 @@ class Database:
                 )
                 VALUES (
                     ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1404,6 +1415,7 @@ class Database:
                     int(self._candidate_value(candidate, "retweet_count", 0) or 0),
                     int(self._candidate_value(candidate, "bookmark_count", 0) or 0),
                     tags,
+                    published_at,
                     str(self._candidate_value(candidate, "candidate_tier", "primary") or "primary"),
                     score_threshold,
                     raw_payload,
@@ -1420,10 +1432,11 @@ class Database:
             self._execute_write(
                 """
                 UPDATE discovery_candidates
-                SET last_seen_at = CURRENT_TIMESTAMP
+                SET last_seen_at = CURRENT_TIMESTAMP,
+                    published_at = COALESCE(NULLIF(?, ''), published_at, '')
                 WHERE candidate_key = ?
                 """,
-                (candidate_key,),
+                (published_at, candidate_key),
             )
         if max_pending_per_source is not None:
             max_pending = max(0, int(max_pending_per_source))
@@ -4101,6 +4114,7 @@ class Database:
             "content_url": "TEXT DEFAULT ''",
             "source_platform": "TEXT DEFAULT 'bilibili'",
             "author_name": "TEXT DEFAULT ''",
+            "published_at": "TEXT DEFAULT ''",
             "body_text": "TEXT DEFAULT ''",
             "content_type": "TEXT DEFAULT 'video'",
             "favorite_count": "INTEGER DEFAULT 0",
@@ -4132,6 +4146,7 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(discovery_candidates)").fetchall()
         }
         required_columns = {
+            "published_at": "TEXT NOT NULL DEFAULT ''",
             "score_threshold": "REAL NOT NULL DEFAULT 0.0",
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",

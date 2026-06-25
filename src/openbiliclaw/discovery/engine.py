@@ -417,6 +417,7 @@ class DiscoveredContent:
     candidate_tier: str = "primary"  # Primary discovery vs backfill supply
     discovered_at: str = ""  # Cache timestamp for recency-aware ranking
     last_scored_at: str = ""  # Last relevance scoring timestamp
+    published_at: str = ""  # Source content publish timestamp
 
     # ── Multi-source fields (Phase 0) ───────────────────────────────
     content_id: str = ""  # Universal content ID; equals bvid for Bilibili content
@@ -474,6 +475,7 @@ class DiscoveredContent:
             "relevance_score": self.relevance_score,
             "relevance_reason": self.relevance_reason,
             "candidate_tier": self.candidate_tier,
+            "published_at": self.published_at,
             "source": self.source_strategy,
             "source_platform": self.source_platform or "bilibili",
             "content_id": self.content_id or self.bvid,
@@ -1570,6 +1572,7 @@ class ContentDiscoveryEngine:
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,
                     "description": (c.description or "")[:400],
+                    "published_at": c.published_at,
                     "cover_url": c.cover_url,
                     "duration": c.duration,
                     **_prompt_visible_content_fields(c),
@@ -2114,6 +2117,7 @@ class ContentDiscoveryEngine:
                     candidate_tier="backfill",
                     discovered_at=str(row.get("discovered_at", "")),
                     last_scored_at=str(row.get("last_scored_at", "")),
+                    published_at=str(row.get("published_at", "")),
                     content_id=str(row.get("content_id", "") or bvid),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),

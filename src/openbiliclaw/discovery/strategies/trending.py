@@ -22,6 +22,7 @@ from openbiliclaw.discovery.strategies._utils import (
     _gather_bounded,
     build_profile_summary,
     clean_text,
+    normalize_published_at,
     parse_duration,
     to_int,
 )
@@ -246,6 +247,12 @@ class TrendingStrategy(DiscoveryStrategy):
             description=description,
             topic_key=topic_key,
             topic_group=topic_key,
+            published_at=normalize_published_at(
+                item.get("published_at"),
+                item.get("pubdate"),
+                item.get("ctime"),
+                item.get("created_at"),
+            ),
             style_key=ContentDiscoveryEngine.infer_style_key(
                 title=title,
                 description=description,

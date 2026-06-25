@@ -17,6 +17,8 @@
 | SQLite schema 初始化 | ✅ | `Database.initialize()` 自动创建核心表和索引，支持旧库增量补列 / 补索引。 |
 | 推荐池 readiness 计数 | ✅ | `count_pool_readiness()` 返回 `available/raw/pending/pending_eval/evaluated_pending`，供 runtime status 和补货判断使用。 |
 | 来源 raw material 统计 | ✅ | `count_pool_raw_material_by_source()` 合并 `content_cache` raw rows 和 `discovery_candidates` 待评估候选，供 raw ceiling headroom 使用。 |
+| discovery 待评估池 | ✅ | 新增 `discovery_candidates` 表，支持 mixed-source enqueue / claim / evaluation update / cached mark / rejection status，并持久化 `score_threshold`、`published_at`、`eval_attempts` 与 batch 级 `batch_eval_attempts`。 |
+| 内容发布时间持久化 | ✅ | `discovery_candidates.published_at` 与 `content_cache.published_at` 保存来源内容发布时间；重复发现或重复缓存时优先保留已有非空值，避免后续空 payload 覆盖发布时间 |
 | discovery 待评估池 | ✅ | 新增 `discovery_candidates` 表，支持 mixed-source enqueue / claim / evaluation update / cached mark / rejection status，并持久化 `score_threshold`、`eval_attempts` 与 batch 级 `batch_eval_attempts`。 |
 | discovery 历史候选查询 | ✅ | `get_existing_discovery_candidate_keys()` 与 `get_existing_content_cache_ids()` 支持 pipeline 在 enqueue 前过滤历史候选和已缓存内容，避免重复 raw 占住 Evo 前供给窗口。 |
 | discovery 状态恢复 | ✅ | 启动初始化会释放过期 `evaluating` 行；terminal 状态有 status guard，避免 stale update 改写 cached / rejected 结果。 |
@@ -40,6 +42,7 @@ count = db.enqueue_discovery_candidates(
             source_strategy="yt_search",
             content_id="abc123",
             title="A YouTube deep dive",
+            published_at="2026-06-01T10:00:00+00:00",
             score_threshold=0.60,
         )
     ],
@@ -69,7 +72,7 @@ known_content_ids = db.get_existing_content_cache_ids(["BV1xx411c7mD"])
 
 行为说明：
 
-- `enqueue_discovery_candidates()` 用 `candidate_key` 去重；重复发现只刷新 `last_seen_at`。传入 `max_pending_per_source` 时，会按来源用总行数判断 cap、删除时保护 `evaluating` 行，并优先删除 terminal rows，避免长期满池时 candidate table 无界增长。
+- `enqueue_discovery_candidates()` 用 `candidate_key` 去重；重复发现只刷新 `last_seen_at`，并在新 payload 带非空 `published_at` 时回填来源发布时间。传入 `max_pending_per_source` 时，会按来源用总行数判断 cap、删除时保护 `evaluating` 行，并优先删除 terminal rows，避免长期满池时 candidate table 无界增长。
 - `claim_discovery_candidates_for_eval(limit=...)` 只领取 `pending_eval`，并按 `source_platform` round-robin 选取 mixed-source batch；运行中不会回收其他 in-flight evaluator 的 claim。
 - `update_discovery_candidate_evaluations()` 将 evaluator 输出回写到候选行，常用状态为 `evaluated`；只更新仍处于 `evaluating` 的行。
 - `get_evaluated_discovery_candidates_for_admission(limit=...)` 读取已完成评估但尚未写入 `content_cache` 的行，供池子从满池降回目标以下后重试 admission。

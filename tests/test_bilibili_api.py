@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import httpx
@@ -788,3 +789,24 @@ async def test_get_video_info_returns_defaults_when_data_is_null() -> None:
     assert info.title == ""
     assert info.up_name == ""
     assert info.view_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_video_info_normalizes_pubdate_to_iso_timestamp() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    pubdate = 1_710_000_000
+    client._client = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": {
+                "bvid": "BV1xx",
+                "pubdate": pubdate,
+                "stat": {},
+                "owner": {},
+            },
+        }
+    )
+
+    info = await client.get_video_info("BV1xx")
+
+    assert info.pub_date == datetime.fromtimestamp(pubdate, UTC).isoformat()

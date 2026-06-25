@@ -57,6 +57,8 @@
 | X (Twitter) 文字卡 + body_text | ✅ | X 推文 / thread 以 `content_type ∈ {tweet, thread}` + `body_text` 进入推荐池；前端在 `content_type` 为文字态或 `cover_url` 为空时渲染**无封面文字卡**（显示正文而非断图），franchise / diversity / MMR 对空 `cover_url` / `duration=0` 容错；推荐解释 / 评估 builder 的 user_prompt 带上 `body_text`，system prompt 仍保持字节静态（prompt-cache 约定），新 builder 已纳入不变量测试 |
 | X append 文字形态保持 | ✅ | `append_recommendations()` 从 discovery pool row 还原候选时保留 `content_type/body_text`，避免 X tweet 在续页链路退回默认 `video` 并丢正文；真实浏览器 E2E 覆盖 PC Web、移动 Web 与扩展 side panel |
 | v0.3.91 新兴趣放大保护 | ✅ | 新确认兴趣会生成 amplification key，`PoolCurator` 用最近 24h 推荐历史计算滚动占比，超过 25% 的方向会被降权；最终批量选择还会硬限制同一新方向最多 `max(1, floor(limit * 0.25))` 条，避免刚确认的兴趣短期刷屏 |
+| v0.3.x 时间上下文权重 | ✅ | `PoolCurator` 的综合 `rec_score` 新增 `time_context` 分量，并将 freshness 权重提升到 `0.25`；`serve()` 会把画像中的 `preferences.context.time_of_day_patterns` 传入排序上下文，让当前早/午/晚/深夜时段更匹配的短内容或深度内容小幅上浮，同时保留原有入池新鲜度、疲劳、来源单调和惊喜分 |
+| v0.3.x 内容发布时间权重 | ✅ | `PoolCurator` 的综合 `rec_score` 新增 `publication_recency` 分量，按 `content_cache.published_at` 以 7 天半衰期计算来源内容发布时间新鲜度；该权重与 `discovered_at` 入池 freshness 分离，让同等相关性的 B 站近期发布内容更容易上浮 |
 | v0.3.91 推荐读取索引 | ✅ | `recommendations(created_at, id)` 与 `content_cache(content_id)` 在数据库初始化时自动创建索引，`/api/recommendations` 和 activity feed 的推荐历史读取不再因 `c.bvid = r.bvid OR c.content_id = r.bvid` 退化为双表扫描。 |
 | v0.3.x 统一 admission 分数防线 | ✅ | `get_pool_candidates()` / `count_pool_candidates()` / `/api/recommendations` 历史读取都会过滤低于 `[discovery].admission_min_score` 的内容；旧低分推荐会标记为 `suppressed_low_score`，防止 observed / 插件来源脏数据继续展示。 |
 | v0.3.74 recommendation/delight JSON 容错统一 | ✅ | `RecommendationEngine` 的内容分类、单条表达和批量表达解析，以及 `delight.precompute_delight_scores()` 的 batch scorer 都改用 `llm.json_utils`。MiMo / OpenAI-compatible provider 返回 object wrapper、fenced JSON、JSONL、schema echo 或 malformed `{ [ ... ] }` 时会优先提取满足字段 predicate 的真实结果 |
@@ -312,11 +314,13 @@ from openbiliclaw.recommendation.curator import PoolCurator
 
 | 维度 | 权重 |
 |------|------|
-| `relevance` | 0.30 |
-| `freshness` | 0.20 |
-| `topic_fatigue` | 0.15 |
-| `source_monotony` | 0.15 |
-| `serendipity` | 0.20 |
+| `relevance` | 0.22 |
+| `freshness` | 0.18 |
+| `publication_recency` | 0.11 |
+| `time_context` | 0.07 |
+| `topic_fatigue` | 0.18 |
+| `source_monotony` | 0.11 |
+| `serendipity` | 0.13 |
 
 #### 关键数据结构
 
@@ -329,6 +333,7 @@ from openbiliclaw.recommendation.curator import PoolCurator
 **ScoringContext**：评分时的上下文快照，包含：
 - `recent_topic_keys` — 近期已推荐话题键列表
 - `recent_sources` — 近期已推荐来源列表
+- `time_of_day_patterns` — 画像中的早 / 午 / 晚 / 深夜内容偏好摘要，用于 `time_context` 分量
 - `newly_confirmed_amplification_keys` — 刚确认兴趣及其 specifics/topic aliases 的归一化键集合
 - `over_budget_amplification_keys` — 最近 24h 推荐占比已达到 25% 的新兴趣方向集合
 - `feedback` — `FeedbackSignals` 实例
@@ -353,6 +358,7 @@ from openbiliclaw.recommendation.curator import PoolCurator
 | 常量 | 值 |
 |------|----|
 | 新鲜度半衰期 | 3 天 |
+| 内容发布时间半衰期 | 7 天 |
 | dislike UP 主惩罚 | 0.20 |
 | dislike 话题惩罚 | 0.10 |
 | like 话题加成 | 0.05 |
