@@ -210,13 +210,13 @@
 
 ## 最近更新
 
-最新版本：**v0.3.143 / extension v0.3.94 / desktop v0.3.143: 候选评估蓄水与补池诊断（2026-06-25）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo 候选供给循环与 init 默认值修复（2026-06-25）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **候选评估先蓄 batch** —— daemon runtime 中 `pending_eval` 少于 8 条会先等待，最多等 120 秒再跑，避免 1-3 条候选也消耗一整份画像 prompt。
-- **评估 prompt 更瘦** —— discovery batch evaluator 只带高权重兴趣、最新 awareness / insight 和完整避雷项，减少固定画像 token。
-- **低可用池不再被 source overflow 压掉** —— 可换池低于 target 时跳过 source overflow trim，只让 raw ceiling 总量 trim 收敛素材。
-- **空 plan 诊断补齐** —— refresh plan 为空时会记录 pool/raw/pending、source available/raw/target 和 requested_by_source。
-- **发现多样性补强** —— API runtime 对主 discovery 生产 raw candidates 做 4 倍 oversample，降低重复候选导致 pending 队列只有 1-3 条的概率。
+- **抖音 / YouTube 初始化默认跳过** —— 交互式 `init` 里两个需要浏览器前台 tab 的可选来源现在默认 No，避免回车误触发账号数据拉取；显式启用仍用 `--yes-douyin` / `--yes-youtube`。
+- **Evo 前供给改为按水位补肉** —— refresh 会按 `pending_eval + evaluating` 水位循环生产 raw candidates，不再只跑一次 discover 后插入几个算几个。
+- **Evo 首批评估强制使用批量下限** —— `min_eval_batch_size=8` 同时约束 supply target、策略预算和 drain claim size，减少首轮小批量评估。
+- **重复候选更早过滤** —— 入待评估池前过滤同批重复、历史候选和已入 `content_cache` 内容，减少无效 raw 前排占位。
+- **热重载取消释放 evaluating** —— 模型返回前后被取消的 Evo batch 会即时释放 claim 回 `pending_eval`，后续 drain 可继续处理。
 
 ## 安装与部署详情
 
@@ -681,7 +681,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.143 / extension v0.3.94 / desktop v0.3.143: 候选评估蓄水与补池诊断（2026-06-25）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
+最新版本：**v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo 候选供给循环与 init 默认值修复（2026-06-25）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
 
 ## 🗺️ 后续规划
 

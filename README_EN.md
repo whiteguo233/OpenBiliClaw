@@ -190,12 +190,13 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.143 / extension v0.3.94 / desktop v0.3.143: candidate eval batching and pool diagnostics (2026-06-25)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo supply loop and init default fixes (2026-06-25)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Candidate eval batches now accumulate** — daemon runtime waits for at least 8 `pending_eval` rows, or up to 120 seconds, before spending a full profile prompt.
-- **Eval prompts are slimmer** — discovery batch evaluation keeps top interests, newest awareness / insights, and full avoid topics while trimming long profile windows.
-- **Low available pools keep source material** — source-overflow trim is skipped while the ready pool is below target; raw ceiling trim still bounds total material.
-- **Empty refresh plans are diagnosable** — logs now include pool/raw/pending counts, source available/raw/targets, and `requested_by_source`.
+- **Douyin / YouTube init now default to skip** — the interactive `init` prompts for browser-front-tab optional sources default to No; explicit opt-in still uses `--yes-douyin` / `--yes-youtube`.
+- **Evo supply now fills by pending waterline** — refresh loops raw candidate production against `pending_eval + evaluating` instead of accepting whatever a single discover pass yields.
+- **First Evo eval batches honor the minimum** — `min_eval_batch_size=8` now constrains the supply target, strategy budgets, and drain claim size.
+- **Duplicate candidates are filtered earlier** — pending inserts skip same-batch duplicates, historical candidates, and content already in `content_cache`.
+- **Hot-reload cancellation releases evaluating rows** — cancelled Evo batches return claimed rows to `pending_eval` so the next drain can continue.
 - **Discovery fetch diversity improves** — API runtime oversamples main raw discovery by 4x to reduce duplicate starvation and tiny eval batches.
 
 ## Community
@@ -667,7 +668,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.143 / extension v0.3.94 / desktop v0.3.143: candidate eval batching and pool diagnostics (2026-06-25)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
+Latest: **v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo supply loop and init default fixes (2026-06-25)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

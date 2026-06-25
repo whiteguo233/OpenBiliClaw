@@ -4,7 +4,9 @@
 
 ---
 
-## Unreleased: Evo 候选供给循环（2026-06-25）
+## v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo 候选供给循环与 init 默认值修复（2026-06-25）
+
+后端源码走 `backend-v0.3.144`，浏览器插件走 `extension-v0.3.95`，桌面安装包走 `desktop-v0.3.144`。
 
 - **抖音 / YouTube init 提问默认改为跳过**：交互式 `openbiliclaw init` 的“加入抖音数据?”和“加入 YouTube 数据?”现在与小红书一致默认 No，避免回车误触发需要登录浏览器前台 tab 的 bootstrap；显式启用仍使用 `--yes-douyin` / `--yes-youtube` 或回答 yes。
 - **Evo 前供给改为按水位补肉**：`DiscoveryCandidatePipeline.ensure_pending_supply()` 会按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到接近本轮 evaluator batch、池子已满、没有新候选或达到尝试 / 时间预算；refresh path 优先调用该 supply loop，不再只跑一次 discover 后插入几个算几个。
