@@ -44,6 +44,25 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
     "video_id",
     "yt_video_id",
 )
+
+
+def _unique_clean_strings(values: Sequence[object]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _chunks(values: Sequence[str], size: int) -> list[list[str]]:
+    chunk_size = max(1, int(size))
+    return [list(values[index : index + chunk_size]) for index in range(0, len(values), chunk_size)]
+
+
 # Mirrors recommendation.delight.DEFAULT_DELIGHT_THRESHOLD. Storage stays a
 # leaf module (no openbiliclaw imports), so the value is duplicated here and
 # pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_in_sync.
@@ -1781,6 +1800,55 @@ class Database:
             """
         )
         return {str(row["status"]): int(row["count"]) for row in cursor.fetchall()}
+
+    def get_existing_discovery_candidate_keys(self, candidate_keys: Sequence[str]) -> set[str]:
+        """Return candidate keys already present in the raw evaluation queue."""
+
+        clean = _unique_clean_strings(candidate_keys)
+        if not clean:
+            return set()
+        self._ensure_fresh_read()
+        existing: set[str] = set()
+        for chunk in _chunks(clean, 900):
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = self.conn.execute(
+                f"""
+                SELECT candidate_key
+                FROM discovery_candidates
+                WHERE candidate_key IN ({placeholders})
+                """,
+                chunk,
+            )
+            existing.update(str(row["candidate_key"]) for row in cursor.fetchall())
+        return existing
+
+    def get_existing_content_cache_ids(self, content_ids: Sequence[str]) -> set[str]:
+        """Return BVID/content ids that already exist in the evaluated content cache."""
+
+        clean = _unique_clean_strings(content_ids)
+        if not clean:
+            return set()
+        self._ensure_fresh_read()
+        existing: set[str] = set()
+        for chunk in _chunks(clean, 450):
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = self.conn.execute(
+                f"""
+                SELECT bvid, content_id
+                FROM content_cache
+                WHERE bvid IN ({placeholders})
+                   OR content_id IN ({placeholders})
+                """,
+                [*chunk, *chunk],
+            )
+            for row in cursor.fetchall():
+                bvid = str(row["bvid"] or "").strip()
+                content_id = str(row["content_id"] or "").strip()
+                if bvid:
+                    existing.add(bvid)
+                if content_id:
+                    existing.add(content_id)
+        return existing
 
     def count_discovery_candidates_by_source_status(self) -> dict[str, dict[str, int]]:
         """Return candidate queue counts grouped by source and lifecycle status."""

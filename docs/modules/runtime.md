@@ -9,9 +9,9 @@
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 统一补货请求入口 | ✅ | `ContinuousRefreshController.request_replenishment(reason, force=False)` 收束补货触发：普通事件和反馈只排队 reason；初始化完成、用户手动刷新或推荐刷新后低库存用 `force=True` 进入手动补货。 |
-| 后台刷新控制 | ✅ | `ContinuousRefreshController` 按 scheduler 配置补充候选池，并通过 source policy 计算各平台有效配比；注入 `DiscoveryCandidatePipeline` 后，B 站主补货先生产 raw candidates，再进入统一待评估池。 |
+| 后台刷新控制 | ✅ | `ContinuousRefreshController` 按 scheduler 配置补充候选池，并通过 source policy 计算各平台有效配比；注入 `DiscoveryCandidatePipeline` 后，B 站主补货会在现有 `_refresh_lock` 内按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到待评估供给接近目标 batch 或达到预算。 |
 | 低可用池补货防死锁 | ✅ | `_source_requested_count()` 仍用 raw headroom 限制正常补货规模，但当 `pool_available_count < pool_target_count` 且 raw ceiling 已满时，不再把 source deficit 直接压成 0；低于 target 时 `_enforce_pool_cap()` 会跳过 source overflow trim，只用 raw ceiling 总量 trim 收敛素材，避免大量不可换 raw material 或 over-quota source suppression 让 Search / producer 永久停摆。 |
-| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube、X discovery raw candidates 先写入 `discovery_candidates`；runtime 既会在 refresh plan 发现新 raw 后即时调用共享 drain，也会由独立 `_loop_candidate_eval()` 周期性 drain 已有 pending raw 并在 admission 后触发 `precompute_pool_copy()`。API runtime 会先攒到 8 条 `pending_eval` 或等待 120 秒再跑 evaluator，controller 层 `_discovery_drain_lock` 与 `DiscoveryCandidatePipeline` 内部 lock 串行化所有入口；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
+| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube、X discovery raw candidates 先写入 `discovery_candidates`；runtime 既会在 refresh plan 发现新 raw 后即时调用共享 drain，也会由独立 `_loop_candidate_eval()` 周期性 drain 已有 pending raw 并在 admission 后触发 `precompute_pool_copy()`。API runtime 会先过滤历史候选 / 已缓存内容并补足待评估供给，再攒到 8 条 `pending_eval` 或等待 120 秒跑 evaluator；controller 层 `_discovery_drain_lock` 与 `DiscoveryCandidatePipeline` 内部 lock 串行化所有入口；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
 | B 站扩展搜索兜底 producer | ✅ | `BilibiliExtensionSearchProducer` 在 B 站平台族低于 quota、`BilibiliAPIClient.search_cooldown_remaining()>0`、扩展 presence 在线且候选池未满时入队 `bili_tasks(type="search")`；扩展回传后仍进入 `DiscoveryCandidatePipeline` 统一评估。 |
 | 候选池文案预计算状态同步 | ✅ | 独立 `_loop_pool_precompute()` 将 fresh 候选补齐 `pool_expression` / `pool_topic_label` 后，会同步更新 `last_replenished_count` 并推送 `refresh.pool_updated`；`GET /api/recommendations` bootstrap、`reshuffle` 和 `append` 消费可换池后也会发布同一池子快照。前端消费该事件时只刷新池子状态和相关提示，不全量替换推荐列表，避免覆盖已 append 的历史内容。 |
 | 候选池真实可换计数 | ✅ | `pool_available_count` 现在只表示后端当前可立即 `serve()` 的候选，并按默认每 `topic_group` 最多 3 条的候选窗口计数；runtime status / runtime stream 另带 `pool_raw_count`、`pool_pending_count`、`pool_pending_eval_count`、`pool_evaluated_pending_count` 区分素材库存、待评估和已评估待入池内容。 |
@@ -37,7 +37,7 @@
 | Soul 画像自动 bootstrap | ✅ | `AccountSyncService` 首次成功写入账号行为并完成 `analyze_events()` 后，若 soul 画像仍为空，会自动调用 `build_initial_profile([])`；每进程生命周期最多尝试一次。 |
 | 降级模式启动 | ✅ | 生产 `create_app()` 遇到 `RegistryBuildError` 时构造 degraded `RuntimeContext`，保留健康检查、配置读取/保存、runtime status、runtime stream、`/m` 移动静态壳与 `/favicon.ico`，方便用户从 popup 或手机入口识别并修复错误配置。 |
 | 配置热重载 LLM override | ✅ | `RuntimeContext._rebuild_components()` 从 config 构造 `module_overrides`，同时注入主 `LLMService` 与 `SoulEngine` 内部 service；热重载后的正向兴趣和避雷 speculator tick 都 detached 到 `BackgroundTaskRegistry`，不阻塞 `/api/config` 响应。 |
-| 运行日志降噪 | ✅ | 全局 logging 初始化会把 `httpx` / `httpcore` logger 提升到 WARNING，避免文件日志在 DEBUG 模式下被连接细节刷屏；业务模块仍按 `logging.file_level` 输出。 |
+| 运行日志降噪 | ✅ | 全局 logging 初始化会把 `httpx` / `httpcore` / `openai` / `openai._base_client` logger 提升到 WARNING，避免文件日志在 DEBUG 模式下被连接细节和完整 LLM 请求体刷屏；业务模块仍按 `logging.file_level` 输出。 |
 
 ## 公开 API
 
@@ -69,8 +69,8 @@ result = await controller.drain_discovery_candidates_once(batch_size=30)
 核心调用：
 
 - `request_replenishment(reason=..., force=False)`：补货请求的统一入口。`force=False` 只记录触发原因，等待定时 `refresh_if_needed()` 统一检查池子缺口；`force=True` 用于初始化完成、用户手动刷新和推荐刷新后低库存路径，会启动手动补货并消费已排队的 reason。
-- `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。池子低于 target 但 plan 为空时会打 INFO 诊断，包含 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`。
-- `drain_discovery_candidates_once(batch_size=..., reason="manual")`：由 XHS task-result / 被动采集等外部来源入队后触发；refresh path 和 `_loop_candidate_eval()` 走同一套 controller drain helper。它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube / periodic loop 多入口并发 admission。API runtime 的 pipeline 少于 8 条 pending eval 时会返回 `waiting` 并记录 `reason=batch_waiting`，最多等待 120 秒后放行小 batch；周期 loop 的 drain 如果缓存了新候选，会立即补调 `precompute_pool_copy()` 并发布补货后的池子状态。
+- `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。注入 `DiscoveryCandidatePipeline` 后，refresh 会优先调用 `ensure_pending_supply()`，按实际新增 `pending_eval` 数补足 Evo 供给，而不是只跑一次 discover；API runtime 会把 supply target / strategy budget / drain batch 抬到 `min_eval_batch_size=8`，避免接近满池时 first drain 被缺口算法压成小批次。当待评估水位已足够时不会再 claim B 站搜索关键词，避免空跑关键词被误标失败。池子低于 target 但 plan 为空时会打 INFO 诊断，包含 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`。
+- `drain_discovery_candidates_once(batch_size=..., reason="manual")`：由 XHS task-result / 被动采集等外部来源入队后触发；refresh path 和 `_loop_candidate_eval()` 走同一套 controller drain helper。它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube / periodic loop 多入口并发 admission。API runtime 的 pipeline 少于 8 条 pending eval 时会返回 `waiting` 并记录 `reason=batch_waiting`，最多等待 120 秒后放行小 batch；调用方传入的 `batch_size` 小于 8 时会先抬到 8 再 claim。周期 loop 的 drain 如果缓存了新候选，会立即补调 `precompute_pool_copy()` 并发布补货后的池子状态。
 - `run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`：图形化引导初始化（gui-init）stage 4 的发现补池。持 `_refresh_lock` 与连续 refresh 串行，绝不与之争 `content_cache`；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
 - `_pool_count_payload()`：统一生成 runtime status / runtime stream 的池子字段，包含 pending eval 与 evaluated pending 拆分。
 

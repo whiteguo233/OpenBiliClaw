@@ -4399,7 +4399,7 @@ def _ask_dy_inclusion() -> bool:
          HTTP 200 + empty body (design-doc Risk #7) which we can only
          detect after the bootstrap runs. Better to require explicit
          opt-in for Douyin than auto-fire it on every CI run.
-      3. Interactive terminal → ask the user with default Y, then
+      3. Interactive terminal → ask the user with default N, then
          (if Y) walk them through a prep checklist.
     """
     if os.environ.get("OPENBILICLAW_NO_DOUYIN", "").strip() == "1":
@@ -4430,7 +4430,7 @@ def _ask_dy_inclusion() -> bool:
     )
     console.print()
 
-    if not typer.confirm("加入抖音数据?", default=True):
+    if not typer.confirm("加入抖音数据?", default=False):
         console.print("[dim]  已选择跳过,本次 init 不会请求抖音数据。[/dim]")
         return False
 
@@ -4475,7 +4475,7 @@ def _ask_yt_inclusion() -> bool:
       1. ``OPENBILICLAW_NO_YOUTUBE=1`` env var → False, silent
       2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
          Conservative default — YouTube requires browser login and focus.
-      3. Interactive terminal → ask the user with default Y, then
+      3. Interactive terminal → ask the user with default N, then
          (if Y) walk them through a prep checklist.
     """
     if os.environ.get("OPENBILICLAW_NO_YOUTUBE", "").strip() == "1":
@@ -4506,7 +4506,7 @@ def _ask_yt_inclusion() -> bool:
     )
     console.print()
 
-    if not typer.confirm("加入 YouTube 数据?", default=True):
+    if not typer.confirm("加入 YouTube 数据?", default=False):
         console.print("[dim]  已选择跳过,本次 init 不会请求 YouTube 数据。[/dim]")
         return False
 

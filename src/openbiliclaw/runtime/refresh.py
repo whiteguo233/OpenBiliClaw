@@ -1947,6 +1947,7 @@ class ContinuousRefreshController:
                 "search" in strategies
                 and coordinator is not None
                 and bool(getattr(coordinator, "should_claim", lambda: False)())
+                and int(current_pool_counts.get("pending_eval", 0) or 0) < effective_limit
             ):
                 claimed_search = coordinator.claim(_KW_PLATFORM_BILIBILI)
             injected_keywords = (
@@ -1978,7 +1979,19 @@ class ContinuousRefreshController:
                         produce_kwargs["keywords"] = injected_keywords
                     if injected_keyword_ids:
                         produce_kwargs["keyword_ids"] = injected_keyword_ids
-                    produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
+                    ensure_supply = getattr(pipeline, "ensure_pending_supply", None)
+                    if callable(ensure_supply):
+                        supply_result = await ensure_supply(
+                            **produce_kwargs,
+                            target_pending=effective_limit,
+                        )
+                        produced_count = int(
+                            dict(supply_result).get("inserted", 0)
+                            if isinstance(supply_result, dict)
+                            else 0
+                        )
+                    else:
+                        produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
                     drain_result = await self._drain_discovery_candidates_and_precompute(
                         reason="refresh",
                         profile=profile,
@@ -2751,9 +2764,22 @@ class ContinuousRefreshController:
             # Cap at discovery_limit to preserve original behaviour
             # when the gap is huge (e.g. fresh init, just-trimmed pool).
             effective_limit = min(self.discovery_limit, per_strategy_target)
+            min_eval_batch = self._candidate_eval_batch_floor()
+            if min_eval_batch > 1:
+                effective_limit = max(effective_limit, min_eval_batch)
         else:
             effective_limit = max(self.discovery_limit, requested_limit)
         return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, effective_limit))
+
+    def _candidate_eval_batch_floor(self) -> int:
+        pipeline = self.discovery_candidate_pipeline
+        if pipeline is None:
+            return 1
+        try:
+            configured = int(getattr(pipeline, "min_eval_batch_size", 1) or 1)
+        except (TypeError, ValueError):
+            configured = 1
+        return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, configured))
 
     def _requested_strategy_limits(
         self,
@@ -2770,8 +2796,13 @@ class ContinuousRefreshController:
         if not all(strategy in _BILIBILI_DISCOVERY_SOURCES for strategy in strategies):
             return None
         total_gap = max(1, self.pool_target_count - current_pool_count)
+        requested_budget = max(1, int(requested_limit))
+        if pool_below_target:
+            min_eval_batch = self._candidate_eval_batch_floor()
+            total_gap = max(total_gap, min_eval_batch)
+            requested_budget = max(requested_budget, min_eval_batch)
         shared_budget = min(
-            max(1, int(requested_limit)),
+            requested_budget,
             max(1, int(effective_limit)),
             total_gap,
         )

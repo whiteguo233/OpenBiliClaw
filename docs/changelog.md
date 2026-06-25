@@ -4,6 +4,16 @@
 
 ---
 
+## Unreleased: Evo 候选供给循环（2026-06-25）
+
+- **抖音 / YouTube init 提问默认改为跳过**：交互式 `openbiliclaw init` 的“加入抖音数据?”和“加入 YouTube 数据?”现在与小红书一致默认 No，避免回车误触发需要登录浏览器前台 tab 的 bootstrap；显式启用仍使用 `--yes-douyin` / `--yes-youtube` 或回答 yes。
+- **Evo 前供给改为按水位补肉**：`DiscoveryCandidatePipeline.ensure_pending_supply()` 会按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到接近本轮 evaluator batch、池子已满、没有新候选或达到尝试 / 时间预算；refresh path 优先调用该 supply loop，不再只跑一次 discover 后插入几个算几个。
+- **Evo 首批评估强制使用批量下限**：API runtime 配置的 `min_eval_batch_size=8` 现在会同时约束 refresh 的 supply target、策略预算和 drain claim size；即使池子只差 1-7 条，首次 evaluator 也会先攒到 8 条或等待超时，不再因缺口算法把 first drain 压成 6 条。
+- **入待评估池前过滤历史重复**：候选入库前会先过滤同批重复、历史 `discovery_candidates` 任意状态和已进入 `content_cache` 的 BVID/content_id，减少重复 discovery 占住 raw 前排后被 `INSERT OR IGNORE` 静默吞掉导致 Evo 只拿到 1-3 条。
+- **热重载取消不再卡住 evaluating**：真实端到端测试发现插件 cookie 同步触发 hot-reload 时，正在跑的 Evo batch 可能在模型返回后被取消，导致候选停在 `evaluating`；pipeline 现在捕获 `CancelledError` 并即时释放 claim 回 `pending_eval`，后续 drain 可继续处理。
+- **搜索关键词 claim 接入供给水位**：B 站 search 关键词只有在待评估水位不足时才 claim；如果 `pending_eval + evaluating` 已经足够，本轮不会空 claim 后又因 supply loop 不抓内容而误标 failed。
+- **相关推荐 seed 优先正反馈**：`RelatedChainStrategy` 的事件种子现在优先使用 `favorite` / `like` / `coin` / `share` / positive feedback，普通 `view` 降为 fallback，减少 related_chain 从弱浏览信号继续挖窄内容圈。
+
 ## v0.3.143 / extension v0.3.94 / desktop v0.3.143: 候选评估蓄水与补池诊断（2026-06-25）
 
 后端源码走 `backend-v0.3.143`，浏览器插件沿用 `extension-v0.3.94`，桌面安装包走 `desktop-v0.3.143`。
@@ -13,6 +23,8 @@
 - **低可用池不再被 source overflow 压掉**：`_enforce_pool_cap()` 在 `pool_available < pool_target_count` 时跳过 `trim_pool_source_overflow()`，避免 raw/source 配额把当前可用候选继续 suppress；总 raw ceiling 仍由 `trim_pool_to_target_count()` 收敛。
 - **空补货计划可诊断**：`_build_refresh_plan()` 在池子低于 target 但 plan 为空时会输出 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`，方便直接定位是来源配额、raw headroom、非 B 站 producer 还是其它 gating 导致不补。
 - **减少重复 discovery 导致的小批 eval**：API runtime 的主 discovery raw 生产改为 4 倍 oversample，并同步放大 strategy limits；重复候选仍由 `candidate_key` 去重，但新候选更容易把 `pending_eval` 攒到有效 batch。
+- **画像整理日志区分 run 与 batch**：`ProfileConsolidator` 每次逻辑运行结束会输出一条 `profile consolidation run completed` 汇总，包含 `run_id`、候选簇数、LLM batch 数、合并 / 归档数量和前后库存，避免把同一轮拆批 LLM 调用误判为短时间重复合并。
+- **OpenAI SDK DEBUG 降噪**：全局 logging 初始化现在把 `openai` / `openai._base_client` 提升到 WARNING，避免 `logging.file_level=DEBUG` 时把完整 LLM prompt / 用户画像写进文件日志；业务侧 `[llm-cost]` 与模块 INFO 日志不受影响。
 
 ## v0.3.142 / extension v0.3.94 / desktop v0.3.142: 知乎后台 discovery 与发布包同步（2026-06-25）
 

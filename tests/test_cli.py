@@ -3605,6 +3605,46 @@ def test_ask_xhs_inclusion_prompt_defaults_no(
     assert defaults == [False]
 
 
+def test_ask_dy_inclusion_prompt_defaults_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _ask_dy_inclusion
+
+    defaults: list[bool | None] = []
+
+    def fake_confirm(prompt: str, *args: object, **kwargs: object) -> bool:
+        assert prompt == "加入抖音数据?"
+        defaults.append(cast("bool | None", kwargs.get("default")))
+        return False
+
+    monkeypatch.delenv("OPENBILICLAW_NO_DOUYIN", raising=False)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
+
+    assert _ask_dy_inclusion() is False
+    assert defaults == [False]
+
+
+def test_ask_yt_inclusion_prompt_defaults_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _ask_yt_inclusion
+
+    defaults: list[bool | None] = []
+
+    def fake_confirm(prompt: str, *args: object, **kwargs: object) -> bool:
+        assert prompt == "加入 YouTube 数据?"
+        defaults.append(cast("bool | None", kwargs.get("default")))
+        return False
+
+    monkeypatch.delenv("OPENBILICLAW_NO_YOUTUBE", raising=False)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True)
+    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
+
+    assert _ask_yt_inclusion() is False
+    assert defaults == [False]
+
+
 def test_ask_xhs_inclusion_env_var_returns_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

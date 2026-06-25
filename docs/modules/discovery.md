@@ -621,7 +621,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 5.4 跨领域探索策略 | ✅ | 远域探索领域生成 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
-| 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎的原始候选先写入 `discovery_candidates(pending_eval)`，`DiscoveryCandidatePipeline` 再混源 claim、batch 评估、按阈值入 `content_cache`；API runtime 会先蓄到 8 条或等待 120 秒再跑 batch evaluator，refresh path 和独立 candidate eval loop 共用同一 drain helper |
+| 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎的原始候选先写入 `discovery_candidates(pending_eval)`，`DiscoveryCandidatePipeline` 再混源 claim、batch 评估、按阈值入 `content_cache`；API runtime 会先通过 supply fill loop 按 `pending_eval + evaluating` 补足有效待评估水位，入库前过滤历史候选和已缓存内容，再蓄到 8 条或等待 120 秒跑 batch evaluator；refresh path 和独立 candidate eval loop 共用同一 drain helper |
 | M120 多事件循环并发控制修复 | ✅ | `DiscoveryConcurrencyController` 现在会按当前 event loop 重新绑定 semaphore，CLI `init` 的分阶段补货不会再在第二轮触发跨 loop `RuntimeError` |
 | 候选供给升级 | ✅ | 主发现不足时触发 backfill，并把相关性 / 候选层级写入缓存 |
 | M118 topic_key 与池子层压缩 | ✅ | Search / Related 现在会给候选带稳定 `topic_key`，发现引擎会先压缩同 topic 重复项，再写入 discovery pool |
@@ -750,16 +750,23 @@ produced = await pipeline.produce_and_enqueue(
     strategies=["search", "trending", "related_chain", "explore"],
     limit=30,
 )
+supply = await pipeline.ensure_pending_supply(
+    profile=profile,
+    strategies=["search", "trending", "related_chain", "explore"],
+    limit=30,
+    target_pending=30,
+)
 drained = await pipeline.drain_pending(profile=profile, batch_size=30)
 ```
 
 行为说明：
 
-- `enqueue_candidates()` 把任意来源的 `DiscoveredContent` 规范化为 `DiscoveryCandidateWrite`，通过 `Database.enqueue_discovery_candidates()` 写入 `discovery_candidates`。
-- `produce_and_enqueue()` 负责 B 站主 refresh 路径：用 `ContentDiscoveryEngine.produce_candidates()` 拉 raw candidates，再入待评估池。
-- `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，调用 `evaluate_content_batch()`，完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 只释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`。
+- `enqueue_candidates()` 把任意来源的 `DiscoveredContent` 规范化为 `DiscoveryCandidateWrite`，并在入库前过滤同批重复、历史 `discovery_candidates` 和已经进入 `content_cache` 的内容，再通过 `Database.enqueue_discovery_candidates()` 写入 `discovery_candidates`。
+- `produce_and_enqueue()` 负责单次 raw 生产：用 `ContentDiscoveryEngine.produce_candidates()` 拉 raw candidates，再入待评估池。
+- `ensure_pending_supply()` 是 runtime 主补货路径：按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到达到目标 batch、池子已满、没有新候选或达到尝试 / 时间预算；API runtime 的目标 batch 会受 `min_eval_batch_size=8` 下限约束，它看实际 inserted 数，不再把 raw fetched 数当成 Evo 可评估供给。
+- `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，调用 `evaluate_content_batch()`，完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 或 runtime hot-reload / shutdown cancellation 会释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`，避免候选长期卡在 `evaluating`。
 - `drain_pending()` 会读取 evaluator 的 `_EVALUATE_BATCH_HARD_CAP` 并 clamp claim size，避免配置把 batch_size 调到 evaluator hard-cap 之上时，尾部候选被当作 0 分低相关永久拒绝。
-- API runtime 构造 pipeline 时会启用 `min_eval_batch_size=8`、`max_eval_wait_seconds=120` 和 `candidate_fetch_oversample=4`：少于 8 条 `pending_eval` 先等待，超时才跑小 batch；主 B 站 refresh 会多抓 raw candidates 后再靠 `candidate_key` 去重入队，降低重复 discovery 让 evaluator 只拿到 1-3 条的概率。CLI 手动路径保留默认立即执行语义。
+- API runtime 构造 pipeline 时会启用 `min_eval_batch_size=8`、`max_eval_wait_seconds=120` 和 `candidate_fetch_oversample=4`：少于 8 条 `pending_eval` 先等待，超时才跑小 batch；即使 refresh 缺口算法给出的 `batch_size` 小于 8，pipeline 也会把 claim size 抬到 8（仍受 evaluator hard cap 约束）。主 B 站 refresh 会先通过 `ensure_pending_supply()` 把待评估队列补到有效水位，再由 evaluator 消费，降低重复 discovery 让 evaluator 只拿到 1-3 条的概率。CLI 手动路径保留默认立即执行语义。
 - `drain_pending()` 自带共享 async lock；`ContinuousRefreshController.drain_discovery_candidates_once()` 与周期 `_loop_candidate_eval()` 也会在 controller 层串行化外部触发。所有入口都会先检查 `count_pool_candidates() >= pool_target_count`；正式可换推荐池满时不再评估 / 入池。周期 loop 在 admission 后会触发 `precompute_pool_copy()`，把刚入 `content_cache` 但缺文案的候选整理成可换库存。
 - 普通入池兜底阈值是 `[discovery].admission_min_score=0.60`；候选行可携带更严格的 strategy 阈值，explore 默认 `0.58`（backfill 最低 `0.55`）作为探索鼓励，普通 backfill 最低不低于 `0.60`。来源 / 平台标签不参与降阈值。
 
@@ -986,7 +993,7 @@ items = await strategy.discover(profile, limit=20)
 
 行为说明：
 
-- 优先从事件层的 `view` / `favorite` / `like` 视频中挑选种子
+- 优先从事件层的明确正反馈视频中挑选种子：`favorite` / `like` / `coin` / `share` / positive feedback 优先，`view` 只作为后备或在 `inferred_satisfaction=positive` 时提高优先级
 - 种子不足时，会先用偏好线索补种子，再回退到 Search/Trending 的高分结果
 - 对每个种子调用 `get_related_videos()`，沿相关推荐链最多扩展 2 层
 - 全局按 `bvid` 去重，并排除原始种子本身

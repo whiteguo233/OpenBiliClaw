@@ -246,11 +246,42 @@ async def test_related_chain_uses_event_seeds_first() -> None:
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    assert client.related_calls == ["BV1SEED", "BV1SEED2"]
-    assert [item.bvid for item in results] == ["BV1A", "BV1B"]
-    assert results[0].topic_key == "科技前沿"
-    assert results[1].topic_key == "音乐推荐"
-    assert memory.calls[0]["event_types"] == ["view", "favorite", "like"]
+    assert client.related_calls == ["BV1SEED2", "BV1SEED"]
+    assert [item.bvid for item in results] == ["BV1B", "BV1A"]
+    assert results[0].topic_key == "音乐推荐"
+    assert results[1].topic_key == "科技前沿"
+    assert memory.calls[0]["event_types"] == [
+        "favorite",
+        "like",
+        "coin",
+        "share",
+        "feedback",
+        "view",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_related_chain_prioritizes_positive_event_seeds_over_plain_views() -> None:
+    from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
+
+    memory = FakeMemoryManager(
+        events=[
+            _event("BVVIEW", event_type="view", title="普通浏览"),
+            _event("BVFAV", event_type="favorite", title="明确收藏"),
+            _event("BVLIKE", event_type="like", title="明确点赞"),
+        ]
+    )
+    strategy = RelatedChainStrategy(
+        bilibili_client=FakeRelatedClient({}),
+        llm_service=FakeLLMService([]),
+        memory_manager=memory,
+        max_seeds=5,
+        llm_evaluation=False,
+    )
+
+    seeds = await strategy._select_seed_descriptors(_build_profile())
+
+    assert [bvid for bvid, _ in seeds[:2]] == ["BVFAV", "BVLIKE"]
 
 
 def test_related_chain_maps_bilibili_publish_time() -> None:

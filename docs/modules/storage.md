@@ -19,6 +19,8 @@
 | 来源 raw material 统计 | ✅ | `count_pool_raw_material_by_source()` 合并 `content_cache` raw rows 和 `discovery_candidates` 待评估候选，供 raw ceiling headroom 使用。 |
 | discovery 待评估池 | ✅ | 新增 `discovery_candidates` 表，支持 mixed-source enqueue / claim / evaluation update / cached mark / rejection status，并持久化 `score_threshold`、`published_at`、`eval_attempts` 与 batch 级 `batch_eval_attempts`。 |
 | 内容发布时间持久化 | ✅ | `discovery_candidates.published_at` 与 `content_cache.published_at` 保存来源内容发布时间；重复发现或重复缓存时优先保留已有非空值，避免后续空 payload 覆盖发布时间 |
+| discovery 待评估池 | ✅ | 新增 `discovery_candidates` 表，支持 mixed-source enqueue / claim / evaluation update / cached mark / rejection status，并持久化 `score_threshold`、`eval_attempts` 与 batch 级 `batch_eval_attempts`。 |
+| discovery 历史候选查询 | ✅ | `get_existing_discovery_candidate_keys()` 与 `get_existing_content_cache_ids()` 支持 pipeline 在 enqueue 前过滤历史候选和已缓存内容，避免重复 raw 占住 Evo 前供给窗口。 |
 | discovery 状态恢复 | ✅ | 启动初始化会释放过期 `evaluating` 行；terminal 状态有 status guard，避免 stale update 改写 cached / rejected 结果。 |
 | 最近已看过滤 | ✅ | 可换、raw 和评估路径复用 `source_platform:content_id` 与旧 BVID key，避免已看内容重复入池。 |
 | 统一 admission 分数门 | ✅ | 推荐池读取、raw/headroom 统计、topic/franchise 分布、suppressed 复活、delight 候选和历史推荐读取都会应用统一最低分；初始化会清理旧低分 `content_cache` / `recommendations` 脏数据。 |
@@ -64,6 +66,8 @@ if ready:
 
 db.reset_discovery_candidates_to_pending([rows[0]["id"]], reason="temporary LLM outage")
 db.reset_stale_discovery_candidate_evaluations(max_age_minutes=30)
+known_candidate_keys = db.get_existing_discovery_candidate_keys(["youtube:abc123"])
+known_content_ids = db.get_existing_content_cache_ids(["BV1xx411c7mD"])
 ```
 
 行为说明：
@@ -76,6 +80,7 @@ db.reset_stale_discovery_candidate_evaluations(max_age_minutes=30)
 - `reset_stale_discovery_candidate_evaluations(max_age_minutes=...)` 将崩溃遗留的旧 `evaluating` 行释放回 `pending_eval`。
 - `mark_discovery_candidate_cached()` / `reject_discovery_candidate(..., status=...)` 只改写 `evaluating` / `evaluated` 行；terminal rows 不会被 stale caller 复活或覆盖。常见 rejection status 包括 `rejected_low_score`、`rejected_duplicate`、`rejected_cache_admission`、`rejected_recently_viewed`、`rejected_franchise_quota`。
 - `count_discovery_candidates_by_status()` 与 `count_discovery_candidates_by_source_status()` 用于诊断待评估池生命周期分布。
+- `get_existing_discovery_candidate_keys(keys)` 返回任意 lifecycle status 下已经出现过的 `candidate_key`；`get_existing_content_cache_ids(ids)` 返回已经进入正式 `content_cache` 的 BVID / `content_id`。两者用于 `DiscoveryCandidatePipeline` 在 enqueue 前过滤历史重复，而不是等 SQLite `INSERT OR IGNORE` 静默吞掉后才发现供给不足。
 
 ### Pool Readiness
 

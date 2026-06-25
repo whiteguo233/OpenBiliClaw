@@ -1572,6 +1572,85 @@ async def test_run_refresh_plan_passes_pool_snapshot() -> None:
     assert discovery.pool_snapshot_calls[0] is not None
 
 
+async def test_run_refresh_plan_uses_supply_loop_when_pipeline_supports_it() -> None:
+    class SupplyPipeline:
+        last_admitted_items: list[object] = []
+
+        def __init__(self) -> None:
+            self.supply_calls: list[dict[str, object]] = []
+            self.drain_calls: list[dict[str, object]] = []
+
+        async def ensure_pending_supply(self, **kwargs: object) -> dict[str, int]:
+            self.supply_calls.append(dict(kwargs))
+            return {"inserted": 6, "pending_eval": 6, "evaluating": 0, "attempts": 2}
+
+        async def drain_pending(self, **kwargs: object) -> dict[str, int]:
+            self.drain_calls.append(dict(kwargs))
+            return {"evaluated": 6, "cached": 0, "rejected": 0}
+
+    pipeline = SupplyPipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=20, source_counts={"bilibili": 12}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=_FakeMemoryManager().load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search", "explore"], 10)],
+        reason="test",
+    )
+
+    assert pipeline.supply_calls
+    assert pipeline.supply_calls[0]["target_pending"] == pipeline.drain_calls[0]["batch_size"]
+    assert pipeline.supply_calls[0]["strategies"] == ["search", "explore"]
+
+
+async def test_run_refresh_plan_respects_candidate_eval_batch_floor() -> None:
+    class SupplyPipeline:
+        min_eval_batch_size = 8
+        last_admitted_items: list[object] = []
+
+        def __init__(self) -> None:
+            self.supply_calls: list[dict[str, object]] = []
+            self.drain_calls: list[dict[str, object]] = []
+
+        async def ensure_pending_supply(self, **kwargs: object) -> dict[str, int]:
+            self.supply_calls.append(dict(kwargs))
+            return {"inserted": 8, "pending_eval": 8, "evaluating": 0, "attempts": 1}
+
+        async def drain_pending(self, **kwargs: object) -> dict[str, int]:
+            self.drain_calls.append(dict(kwargs))
+            return {"evaluated": 8, "cached": 0, "rejected": 0}
+
+    pipeline = SupplyPipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=24, source_counts={"bilibili": 20}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=_FakeMemoryManager().load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search", "explore"], 6)],
+        reason="test",
+    )
+
+    assert pipeline.supply_calls[0]["target_pending"] == 8
+    assert pipeline.drain_calls[0]["batch_size"] == 8
+    assert pipeline.supply_calls[0]["strategy_limits"] == {"search": 4, "explore": 4}
+
+
 async def test_refresh_controller_caps_single_discovery_backfill_request() -> None:
     discovery = _FakeDiscoveryEngine()
     now = datetime.now().isoformat()
@@ -3779,3 +3858,33 @@ async def test_bili_search_flag_on_injects_and_marks_used(tmp_path: Path) -> Non
     assert search_calls[0]["keywords"] == ["kw1", "kw2"]
     # Inline-admit success (discovered > 0) → both words USED.
     assert _bili_kw_statuses(kw_db) == {"kw1": "used", "kw2": "used"}
+
+
+async def test_bili_search_does_not_claim_when_eval_supply_is_full(tmp_path: Path) -> None:
+    kw_db = Database(tmp_path / "bili_supply_full.db")
+    kw_db.initialize()
+    kw_db.insert_pending_keywords("bilibili", ["kw1"], "dig")
+    pipeline = _CapturingPipeline(cached=0)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_KeywordStoreFakeDatabase(
+            [{"id": 1, "event_type": "view"}],
+            pool_count=0,
+            kw_db=kw_db,
+            discovery_status_counts={"pending_eval": 30},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=kw_db, discovery_config=_BiliKwCfg(True, fetch_batch=5)
+        ),
+    )
+
+    await controller.force_refresh()
+
+    assert all("keywords" not in kwargs for kwargs in pipeline.produce_kwargs)
+    assert _bili_kw_statuses(kw_db) == {"kw1": "pending"}

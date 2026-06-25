@@ -59,6 +59,8 @@ class DiscoveryCandidatePipeline:
     min_eval_batch_size: int = 1
     max_eval_wait_seconds: float = 0.0
     candidate_fetch_oversample: int = 1
+    max_supply_fill_attempts: int = 3
+    max_supply_fill_seconds: float = 240.0
     time_fn: Callable[[], float] = field(default=time.monotonic, repr=False)
     _drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
@@ -88,6 +90,19 @@ class DiscoveryCandidatePipeline:
             discovered_content_to_candidate_write(item, source_context=source_context)
             for item in items
         ]
+        writes, diagnostics = self._filter_known_writes(writes)
+        if diagnostics["input"] != diagnostics["kept"]:
+            logger.info(
+                "candidate enqueue prefilter: input=%s kept=%s duplicate_in_batch=%s "
+                "known_candidate=%s known_cache=%s",
+                diagnostics["input"],
+                diagnostics["kept"],
+                diagnostics["duplicate_in_batch"],
+                diagnostics["known_candidate"],
+                diagnostics["known_cache"],
+            )
+        if not writes:
+            return 0
         enqueue = self.database.enqueue_discovery_candidates
         cap = self._max_pending_per_source()
         if cap is None:
@@ -96,6 +111,123 @@ class DiscoveryCandidatePipeline:
             return int(enqueue(writes, max_pending_per_source=cap))
         except TypeError:
             return int(enqueue(writes))
+
+    async def ensure_pending_supply(
+        self,
+        *,
+        profile: Any,
+        strategies: list[str],
+        limit: int,
+        target_pending: int | None = None,
+        strategy_limits: dict[str, int] | None = None,
+        pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+        max_attempts: int | None = None,
+        max_seconds: float | None = None,
+    ) -> dict[str, int | str]:
+        """Produce raw candidates until the Evo input queue reaches a waterline."""
+
+        requested = max(0, int(limit))
+        target = max(0, int(target_pending if target_pending is not None else requested))
+        if requested <= 0 or target <= 0:
+            pending, evaluating = self._eval_supply_counts()
+            return {
+                "inserted": 0,
+                "attempts": 0,
+                "pending_eval": pending,
+                "evaluating": evaluating,
+                "reason": "no_target",
+            }
+        if self.pool_full():
+            pending, evaluating = self._eval_supply_counts()
+            return {
+                "inserted": 0,
+                "attempts": 0,
+                "pending_eval": pending,
+                "evaluating": evaluating,
+                "reason": "pool_full",
+            }
+
+        attempts_limit = max(
+            1,
+            int(max_attempts if max_attempts is not None else self.max_supply_fill_attempts),
+        )
+        seconds_limit = max(
+            0.0,
+            float(max_seconds if max_seconds is not None else self.max_supply_fill_seconds),
+        )
+        started = float(self.time_fn())
+        inserted_total = 0
+        attempts = 0
+        stop_reason = "attempts_exhausted"
+
+        while attempts < attempts_limit:
+            pending, evaluating = self._eval_supply_counts()
+            active = pending + evaluating
+            if active >= target:
+                stop_reason = "target_reached"
+                break
+            if self.pool_full():
+                stop_reason = "pool_full"
+                break
+            elapsed = max(0.0, float(self.time_fn()) - started)
+            if seconds_limit > 0 and elapsed >= seconds_limit:
+                stop_reason = "time_budget_exhausted"
+                break
+
+            missing = max(1, target - active)
+            base_limit = max(requested, missing)
+            request_limit = min(base_limit * (attempts + 1), max(base_limit, 120))
+            logger.info(
+                "candidate supply fill attempt: attempt=%s target=%s pending=%s "
+                "evaluating=%s request_limit=%s strategies=%s",
+                attempts + 1,
+                target,
+                pending,
+                evaluating,
+                request_limit,
+                ",".join(strategies),
+            )
+            inserted = await self.produce_and_enqueue(
+                profile=profile,
+                strategies=strategies,
+                limit=request_limit,
+                strategy_limits=strategy_limits,
+                pool_snapshot=pool_snapshot,
+                keywords=keywords,
+                keyword_ids=keyword_ids,
+            )
+            attempts += 1
+            inserted_total += int(inserted or 0)
+            after_pending, after_evaluating = self._eval_supply_counts()
+            logger.info(
+                "candidate supply fill result: attempt=%s inserted=%s pending=%s evaluating=%s",
+                attempts,
+                inserted,
+                after_pending,
+                after_evaluating,
+            )
+        pending, evaluating = self._eval_supply_counts()
+        if pending + evaluating >= target:
+            stop_reason = "target_reached"
+        logger.info(
+            "candidate supply fill done: reason=%s attempts=%s inserted=%s "
+            "pending=%s evaluating=%s target=%s",
+            stop_reason,
+            attempts,
+            inserted_total,
+            pending,
+            evaluating,
+            target,
+        )
+        return {
+            "inserted": inserted_total,
+            "attempts": attempts,
+            "pending_eval": pending,
+            "evaluating": evaluating,
+            "reason": stop_reason,
+        }
 
     async def produce_and_enqueue(
         self,
@@ -217,6 +349,11 @@ class DiscoveryCandidatePipeline:
                 source_context="mixed",
                 batch_size=batch_size,
             )
+        except asyncio.CancelledError:
+            logger.info("discovery candidate batch evaluation cancelled; releasing claims")
+            self._release_eval_claims(rows, reason="evaluation cancelled", increment_attempts=False)
+            self.last_admitted_items = list(admitted_items)
+            raise
         except Exception as exc:
             logger.exception("discovery candidate batch evaluation failed")
             self._release_eval_claims(rows, reason=str(exc), increment_attempts=False)
@@ -254,6 +391,15 @@ class DiscoveryCandidatePipeline:
                     continue
                 accepted.append((row, item))
             self._persist_evaluations(rows, items, scores, recently_viewed=recently_viewed)
+        except asyncio.CancelledError:
+            logger.info("discovery candidate post-evaluation cancelled; releasing claims")
+            self._release_eval_claims(
+                rows,
+                reason="post-evaluation cancelled",
+                increment_attempts=False,
+            )
+            self.last_admitted_items = list(admitted_items)
+            raise
         except Exception as exc:
             logger.exception("discovery candidate post-evaluation processing failed")
             self._release_eval_claims(rows, reason=str(exc), increment_attempts=False)
@@ -466,10 +612,98 @@ class DiscoveryCandidatePipeline:
     def _max_pending_per_source(self) -> int | None:
         return discovery_candidate_pending_cap(int(self.pool_target_count))
 
+    def _filter_known_writes(
+        self,
+        writes: list[DiscoveryCandidateWrite],
+    ) -> tuple[list[DiscoveryCandidateWrite], dict[str, int]]:
+        diagnostics = {
+            "input": len(writes),
+            "kept": 0,
+            "duplicate_in_batch": 0,
+            "known_candidate": 0,
+            "known_cache": 0,
+        }
+        if not writes:
+            return [], diagnostics
+
+        candidate_keys = [write.candidate_key for write in writes if write.candidate_key]
+        known_candidate_keys = self._existing_candidate_keys(candidate_keys)
+        content_ids = [
+            value
+            for write in writes
+            for value in (write.bvid, write.content_id)
+            if str(value or "").strip()
+        ]
+        known_cache_ids = self._existing_content_cache_ids(content_ids)
+
+        seen: set[str] = set()
+        kept: list[DiscoveryCandidateWrite] = []
+        for write in writes:
+            key = str(write.candidate_key or "").strip()
+            if not key:
+                continue
+            if key in seen:
+                diagnostics["duplicate_in_batch"] += 1
+                continue
+            seen.add(key)
+            if key in known_candidate_keys:
+                diagnostics["known_candidate"] += 1
+                continue
+            identifiers = {
+                str(value or "").strip()
+                for value in (write.bvid, write.content_id)
+                if str(value or "").strip()
+            }
+            if identifiers & known_cache_ids:
+                diagnostics["known_cache"] += 1
+                continue
+            kept.append(write)
+        diagnostics["kept"] = len(kept)
+        return kept, diagnostics
+
+    def _existing_candidate_keys(self, candidate_keys: list[str]) -> set[str]:
+        getter = getattr(self.database, "get_existing_discovery_candidate_keys", None)
+        if not callable(getter) or not candidate_keys:
+            return set()
+        try:
+            return {str(key) for key in getter(candidate_keys)}
+        except Exception:
+            logger.debug("existing discovery candidate key lookup failed", exc_info=True)
+            return set()
+
+    def _existing_content_cache_ids(self, content_ids: list[str]) -> set[str]:
+        getter = getattr(self.database, "get_existing_content_cache_ids", None)
+        if not callable(getter) or not content_ids:
+            return set()
+        try:
+            return {str(key) for key in getter(content_ids)}
+        except Exception:
+            logger.debug("existing content-cache id lookup failed", exc_info=True)
+            return set()
+
+    def _eval_supply_counts(self) -> tuple[int, int]:
+        count_fn = getattr(self.database, "count_discovery_candidates_by_status", None)
+        if not callable(count_fn):
+            return 0, 0
+        try:
+            counts = dict(count_fn())
+        except Exception:
+            logger.debug("discovery candidate supply count unavailable", exc_info=True)
+            return 0, 0
+        return (
+            int(counts.get("pending_eval", 0) or 0),
+            int(counts.get("evaluating", 0) or 0),
+        )
+
     def _effective_batch_size(self, batch_size: int) -> int:
         requested = max(0, int(batch_size))
         if requested <= 0:
             return 0
+        try:
+            min_batch = max(1, int(self.min_eval_batch_size))
+        except (TypeError, ValueError):
+            min_batch = 1
+        requested = max(requested, min_batch)
         hard_cap = int(getattr(self.discovery_engine, "_EVALUATE_BATCH_HARD_CAP", 0) or 0)
         if hard_cap > 0:
             return min(requested, hard_cap)
