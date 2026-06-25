@@ -197,7 +197,8 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
 8. 每条事件都自带一个 `context` 字段（v0.3.22+ 起所有源都统一填充），它是该事件的中文自然语言摘要（如"在 B 站收藏了《讲透历史叙事》,作者:历史实验室"或"小红书点赞:手冲咖啡入门 作者:豆子老师"）。**优先把 context 作为人类可读的事件描述**来理解用户行为；同时用 metadata 里的结构化字段（up_name、bvid、folder、source_platform 等）做精确匹配 / 复制。
 9. 用户的兴趣信号可能跨平台（B 站 / 小红书 / 等）；通过 metadata.source_platform 区分来源，但兴趣分析本身要把所有平台的信号一视同仁，不要因为来自小红书就降权。
 10. 如果事件的 inferred_satisfaction 是 negative，或 metadata.feedback_type 是 dislike / metadata.reaction 是 thumbs_down，表示负向证据。不要把负向事件提取为 interests / favorite_up_users；只能用于 disliked_topics、风格避让或降低相关偏好置信度。
-11. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
+11. metadata.signal_strength 表示该事件作为偏好证据的强度，不是最终 interest.weight。如果存在该字段，优先用它判断证据强弱；最终 weight 仍要结合重复次数、内容一致性、最近性、负向反馈和跨来源一致性。没有 signal_strength 时按事件类型粗略理解：favorite / bookmark / save / collect 是强正向；coin / share 是强正向；like 是明确正向；comment 是主动参与但要看语义；follow / subscription 是长期兴趣信号但偏创作者/频道维度，不能直接等同于每个题材都喜欢；view / history 是弱到中等信号，单条不能推出高权重兴趣，重复出现或与强信号同向时才提高；click 只有足够停留、完播或 positive inferred_satisfaction 时才增强；search 是意图信号不是喜欢信号；hover / scroll / snapshot 只作被动上下文辅助；dialogue 是用户主动聊到，按表达强度判断。负向反馈、dislike、thumbs_down 或 inferred_satisfaction=negative 优先级最高，不能被 signal_strength 抵消。
+12. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
 </rules>
 
 <output_schema>
@@ -1931,9 +1932,12 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n"
     '   同名异类成员必须用 {"name": 原名, "category": 原分类} 精确引用。\n'
     "3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n"
-    "4. merge 至少 2 个 members。canonical 是合并后的规范名：优先从 members 里选\n"
-    "   最准确的一个；只有当所有 members 都不够准确时才起新名，新名必须与\n"
-    "   members 同等具体，不得更宽泛。\n"
+    "4. merge 至少 2 个 members。canonical 是合并后的代表性 item 名：如果某个\n"
+    "   member 已能准确代表整个合并组，可以选它；如果 members 分别只覆盖一部分，\n"
+    "   应起一个更准确的组合概念名，让它能代表所有 members。新名必须与 members\n"
+    "   同等具体或更精确，不得更宽泛。\n"
+    "   不要默认选择第一个 member 或最短 member；只有当旧 member 能覆盖所有被合并成员时才可作为 canonical。\n"
+    "   如果旧 member 只是上位词、短词或只覆盖一个侧面，必须起一个组合概念名。\n"
     "5. 「合并」只适用于同一概念的措辞变体（如「智能体开发」vs「智能体开发与实现」）。\n"
     "   子集/包含关系不是同义（如「篮球」vs「NBA」、「游戏」vs「手机游戏」），必须分别 keep。\n"
     "6. dislikes 组的标准更严：只合并语义几乎相同的真同义项；【严禁向上泛化】——\n"
@@ -1952,8 +1956,8 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "<output_schema>\n"
     "{\n"
     '  "likes": [\n'
-    '    {"cluster_id": "L1", "op": "merge", "members": ["智能体开发", "智能体开发与实现"],\n'
-    '     "canonical": "智能体开发", "reason": "同一概念的措辞变体"},\n'
+    '    {"cluster_id": "L1", "op": "merge", "members": ["AI工具与技术", "AI工具与工程实践"],\n'
+    '     "canonical": "AI工程工具链", "reason": "新 item 能同时代表工具和工程实践"},\n'
     '    {"cluster_id": "L2", "op": "keep", "name": "篮球", "reason": "NBA 是其子集而非同义"},\n'
     '    {"cluster_id": "H1", "op": "merge",\n'
     '     "members": [{"name": "苹果", "category": "科技"}, {"name": "苹果", "category": "资讯"}],\n'

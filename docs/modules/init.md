@@ -39,14 +39,14 @@
 | 启动 reconcile | `reconcile_on_boot()`（API startup 调用）把崩溃残留的 `starting/running` 行判 `failed(interrupted)`，避免 `/api/init-status` 永远报 running。 |
 | bootstrap 归属 | `register_enqueued_task` / `is_owned_bootstrap_task` 给写者门控判断某 task-result 是否属于本 init run。 |
 
-前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）：`chat_ready()`（provider health，TTL 30s，超时乐观）、`bilibili_check()`（`validate_cookie`，ok 60s / fail 10s TTL）、`enabled_platforms()`；全部 TTL 缓存 + 单飞，避免轮询打爆。v0.3.118+：B 站登录不再硬性拦截 `GET /api/init-status` 的 `can_start`（是否拦截取决于客户端勾选了哪些来源，只有 `POST /api/init` 知道）——`bilibili_logged_in` 仍在 `prerequisites` 里下发，前端在勾选了 B 站时自行拦截；`POST /api/init` 也只在所选来源包含 bilibili 时做登录 409 复验。显式 `sources` 为空或没有任何合法平台 key 时返回 409 `no_sources_selected`；合法勾选会作为本轮显式 opt-in 生效，并 best-effort 写回 `sources.<platform>.enabled=true`。
+前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）：`chat_ready()`（provider health，TTL 30s，超时乐观）、`bilibili_check()`（`validate_cookie`，ok 60s / fail 10s TTL）、`enabled_platforms()`；embedding readiness 复用 `/api/health` 的 `_health_embedding_ready()`，绕过缓存真实调用一次 `EmbeddingService.probe()`。全部探测都 TTL 缓存 + 单飞，避免轮询打爆。v0.3.137+：`/api/init-status.prerequisites.embedding_required` 表示 `[llm.embedding].provider` 是否已配置；已配置时 `can_start` 会硬性等待 `embedding_ready=true`，`POST /api/init` 临界区也会复验，失败返回 `409 embedding_not_ready` 并把刚预约的 run 回滚为 idle。provider 为空代表用户明确关闭 embedding，仍允许降级初始化。v0.3.118+：B 站登录不再硬性拦截 `GET /api/init-status` 的 `can_start`（是否拦截取决于客户端勾选了哪些来源，只有 `POST /api/init` 知道）——`bilibili_logged_in` 仍在 `prerequisites` 里下发，前端在勾选了 B 站时自行拦截；`POST /api/init` 也只在所选来源包含 bilibili 时做登录 409 复验。显式 `sources` 为空或没有任何合法平台 key 时返回 409 `no_sources_selected`；合法勾选会作为本轮显式 opt-in 生效，并 best-effort 写回 `sources.<platform>.enabled=true`。
 
 ## API 端点
 
 | 端点 | 方法 | 访问 | 说明 |
 |---|---|---|---|
-| `/api/init-status` | GET | 远程可读 / 降级可读 | 权威进度 + 前置清单 + `can_start`（trusted-local && 硬前置 && 非 running && supported）/ `can_manage`（trusted-local）。远程不 403、`can_manage=false`。 |
-| `/api/init` | POST | 仅本机 | 占坑前廉价拒绝（403 local_only / 409 unsupported_runtime / 409 already_initialized）→ `try_start`（409 already_running）→ 临界区复验前置（缺则复位 idle + 409，不留 stuck `starting` 行）→ 后台跑 wrapper → 202 + 初始 status。可选 body `sources`（平台来源数组）：传入时按合法平台 key 直接作为本轮显式 opt-in，并 best-effort 写回 `sources.<platform>.enabled=true`；不传则用全部已开启平台（CLI / 旧客户端行为）。 |
+| `/api/init-status` | GET | 远程可读 / 降级可读 | 权威进度 + 前置清单 + `can_start`（trusted-local && 硬前置 && 非 running && supported）/ `can_manage`（trusted-local）。前置清单包含 `embedding_ready` 与 `embedding_required`；远程不 403、`can_manage=false`。 |
+| `/api/init` | POST | 仅本机 | 占坑前廉价拒绝（403 local_only / 409 unsupported_runtime / 409 already_initialized）→ `try_start`（409 already_running）→ 临界区复验前置（缺则复位 idle + 409，不留 stuck `starting` 行；包括已配置 embedding provider 时的 `embedding_not_ready`）→ 后台跑 wrapper → 202 + 初始 status。可选 body `sources`（平台来源数组）：传入时按合法平台 key 直接作为本轮显式 opt-in，并 best-effort 写回 `sources.<platform>.enabled=true`；不传则用全部已开启平台（CLI / 旧客户端行为）。 |
 | `/api/init/cancel` | POST | 仅本机 | 协作取消在跑的 run；无运行中 → 409 not_running。 |
 
 `_init_wrapper`（`api/app.py`）是某次 API run 的**唯一**状态 / 事件写者：`mark_running` → `run_guided_init(coordinator=...)` → `complete(partial_success=...)`；`CancelledError` → shield `cancel`，`GuidedInitError` → `fail(reason)`，其它异常 → `fail("internal_error")`。三个 path 都在 `auth.py` 公共集 + 降级白名单。
@@ -66,7 +66,7 @@
 
 ## 图形 UI（extension / web）
 
-推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（v0.3.118+ B 站默认勾选但可取消，与小红书 / 抖音 / YouTube / X 一样可选，至少保留一个；配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，一个来源都没勾 → 提示「至少勾选一个数据来源」，勾选的小红书 / 抖音 / YouTube / X 会作为本轮 opt-in 并自动开启对应来源，勾了 B 站但未登录 → 提示登录或取消勾选，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
+推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（v0.3.118+ B 站默认勾选但可取消，与小红书 / 抖音 / YouTube / X 一样可选，至少保留一个；配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，一个来源都没勾 → 提示「至少勾选一个数据来源」，勾选的小红书 / 抖音 / YouTube / X 会作为本轮 opt-in 并自动开启对应来源，勾了 B 站但未登录 → 提示登录或取消勾选，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。桌面 `/setup` 与 `/web` 会按 `embedding_required` 把向量模型显示为硬前置或可降级项。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
 
 桌面 Web 对齐同一套交互：安装包首启 `/setup/` 从「连接 AI → 连接 B站」后进入第 3 步「初始化画像和推荐池」。第一步把 provider、API Key、Base URL 和模型名作为普通字段保存，只热重载配置，不启动画像 / 探针 / 补池；第二步展示同款来源勾选、前置清单、`POST /api/init` 启动和 `runtime-stream`/轮询进度，用户点击「开始初始化」后才真正进入四阶段流水线。PC 侧完成态不是单纯的 `init-status.initialized=true`：`/setup/` 和 `/web` 收到 `init_completed` 后还会读取 `/api/runtime-status`，只有 `pool_available_count>0` 或已有推荐数时才进入完成 / 推荐体验；画像已生成但首批内容尚未入池时会继续停在「整理首轮内容池」进度态。用户跳过或后来直接打开 `/web` 时，推荐网格仅在 `runtime-status.initialized=false` 且没有插件同款“初始化后信号”（推荐数、候选池可用数、待整理数、最近发现 / 补货数）时渲染同款「开始初始化」面板，不再提示去命令行跑 init，也不展示示例推荐卡。
 

@@ -38,6 +38,12 @@ import {
   pollYtTaskNow,
 } from "./yt-task-dispatcher.js";
 import {
+  startZhihuTaskPolling,
+  handleZhihuTaskAlarm,
+  handleZhihuTaskResult,
+  pollZhihuTaskNow,
+} from "./zhihu-task-dispatcher.js";
+import {
   startBiliTaskPolling,
   handleBiliTaskAlarm,
   handleBiliTaskResult,
@@ -45,6 +51,7 @@ import {
   type BiliTaskResult,
 } from "./bili-task-dispatcher.js";
 import type { YtScopeResult } from "../content/yt/task-executor.js";
+import type { ZhihuTaskResult } from "../content/zhihu/task-executor.js";
 import {
   openExtensionUi,
   parseDelightBvid,
@@ -219,6 +226,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
   }
   if (eventType === "yt_task_available") {
     pollYtTaskNow();
+    return;
+  }
+  if (eventType === "zhihu_task_available") {
+    pollZhihuTaskNow();
     return;
   }
   if (eventType === "bili_task_available") {
@@ -431,6 +442,7 @@ chrome.runtime.onInstalled.addListener(() => {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
+  startZhihuTaskPolling();
   startBiliTaskPolling();
   startCookieSync();
 });
@@ -441,6 +453,7 @@ chrome.runtime.onStartup.addListener(() => {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
+  startZhihuTaskPolling();
   startBiliTaskPolling();
   startCookieSync();
 });
@@ -560,6 +573,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "ZHIHU_TASK_RESULT") {
+    void handleZhihuTaskResult(message.data as ZhihuTaskResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
   if (message.action === "BILI_TASK_RESULT") {
     void handleBiliTaskResult(message.data as BiliTaskResult)
       .then(() => {
@@ -583,6 +606,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   handleXhsTaskAlarm(alarm.name);
   handleDyTaskAlarm(alarm.name);
   handleYtTaskAlarm(alarm.name);
+  handleZhihuTaskAlarm(alarm.name);
   handleBiliTaskAlarm(alarm.name);
   if (handleCookieSyncAlarm(alarm.name)) {
     return;

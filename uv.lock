@@ -1362,7 +1362,7 @@ wheels = [
 
 [[package]]
 name = "openbiliclaw"
-version = "0.3.135"
+version = "0.3.143"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1375,6 +1375,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "scrapetube" },
+    { name = "twitter-cli" },
     { name = "typer" },
     { name = "uvicorn" },
     { name = "yt-dlp" },
@@ -1390,6 +1391,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "websockets" },
 ]
 eval = [
     { name = "claude-agent-sdk" },
@@ -1433,9 +1435,11 @@ requires-dist = [
     { name = "rich", specifier = ">=13" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "scrapetube", specifier = ">=2.1" },
+    { name = "twitter-cli", specifier = ">=0.8.5" },
     { name = "twitter-cli", marker = "extra == 'x'", specifier = ">=0.8.5" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.32" },
+    { name = "websockets", marker = "extra == 'dev'", specifier = ">=13" },
     { name = "yt-dlp", specifier = ">=2024.1.0" },
 ]
 provides-extras = ["dev", "local-llm", "x", "eval", "browser", "packaging"]

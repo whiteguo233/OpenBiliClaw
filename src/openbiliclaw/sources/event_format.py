@@ -165,8 +165,10 @@ def _classify_click_dwell(
         duration = _read_dwell_field(event, metadata, "duration")
 
     meets_seconds = watch_seconds >= _MEANINGFUL_DWELL_MIN_SECONDS
-    meets_ratio = duration is not None and duration > 0 and (
-        watch_seconds / duration >= _MEANINGFUL_DWELL_MIN_RATIO
+    meets_ratio = (
+        duration is not None
+        and duration > 0
+        and (watch_seconds / duration >= _MEANINGFUL_DWELL_MIN_RATIO)
     )
 
     if meets_seconds and (duration is None or meets_ratio):
@@ -195,6 +197,7 @@ def _read_dwell_field(
     except (TypeError, ValueError):
         return None
 
+
 # Source platform constants — kept stable for analyzer mix calculations.
 SOURCE_BILIBILI = "bilibili"
 SOURCE_XIAOHONGSHU = "xiaohongshu"
@@ -202,6 +205,7 @@ SOURCE_DOUYIN = "douyin"
 SOURCE_WEB = "web"
 SOURCE_YOUTUBE = "youtube"
 SOURCE_TWITTER = "twitter"
+SOURCE_ZHIHU = "zhihu"
 
 # Human-readable platform labels used to render the context string.
 # Keys must match the source_platform values stored in event metadata.
@@ -212,6 +216,7 @@ _PLATFORM_LABELS: dict[str, str] = {
     SOURCE_WEB: "网页",
     SOURCE_YOUTUBE: "YouTube",
     SOURCE_TWITTER: "X",
+    SOURCE_ZHIHU: "知乎",
 }
 
 # Action verbs per event_type. Designed so the rendered sentence reads
@@ -229,6 +234,52 @@ _EVENT_TYPE_LABELS: dict[str, str] = {
     "comment": "评论过",
     "share": "分享了",
 }
+
+_DEFAULT_SIGNAL_STRENGTH_BY_EVENT_TYPE: dict[str, float] = {
+    "favorite": 1.0,
+    "coin": 0.95,
+    "share": 0.85,
+    "like": 0.85,
+    "comment": 0.75,
+    "dialogue": 0.65,
+    "follow": 0.6,
+    "view": 0.35,
+    "click": 0.3,
+    "search": 0.25,
+    "hover": 0.1,
+    "scroll": 0.1,
+    "snapshot": 0.1,
+    "dislike": 1.0,
+}
+
+
+def default_signal_strength_for_event(
+    event_type: str,
+    metadata: dict[str, Any] | None = None,
+) -> float | None:
+    """Return a cross-source fallback evidence strength for an event.
+
+    Platform adapters may pass a more precise ``metadata.signal_strength``.
+    This fallback only fills missing values; it describes evidence strength,
+    not sentiment polarity or the final interest weight.
+    """
+    normalized_event_type = event_type.strip().lower()
+    metadata = metadata or {}
+
+    if normalized_event_type == "feedback":
+        feedback_type = str(metadata.get("feedback_type") or "").strip().lower()
+        reaction = str(metadata.get("reaction") or "").strip().lower()
+        if feedback_type == "dislike" or reaction == "thumbs_down":
+            return 1.0
+        if feedback_type == "like" or reaction == "thumbs_up":
+            return 1.0
+        if feedback_type == "comment":
+            return 0.8
+        if feedback_type == "dismiss":
+            return 0.5
+        return 0.5
+
+    return _DEFAULT_SIGNAL_STRENGTH_BY_EVENT_TYPE.get(normalized_event_type)
 
 
 def format_event_context(
@@ -342,6 +393,10 @@ def build_event(
     final_metadata.setdefault("source_platform", source_platform)
     if author and "author" not in final_metadata:
         final_metadata["author"] = author
+    if "signal_strength" not in final_metadata:
+        signal_strength = default_signal_strength_for_event(event_type, final_metadata)
+        if signal_strength is not None:
+            final_metadata["signal_strength"] = signal_strength
 
     # Reuse the author from metadata if the caller didn't pass one
     # explicitly — handles producers that set author only inside metadata.

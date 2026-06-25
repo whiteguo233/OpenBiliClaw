@@ -323,6 +323,21 @@ daily_creator_budget = 0                # 账号订阅每日抓取上限
 request_interval_seconds = 3            # 两次请求最小间隔（抗检测）
 min_interval_minutes = 60               # producer 两次执行最小间隔
 
+# ── 知乎（Zhihu）专用配置 ──
+# 事件拉取和 discovery 都走浏览器插件登录态任务：后端只入队 zhihu_tasks，
+# 插件在已登录 zhihu.com 标签页中执行 bootstrap_events 或 search / hot / feed / creator / related。
+# enabled=false 时 pool_source_shares 中的 zhihu 配额会被丢弃。
+[sources.zhihu]
+enabled = false
+source_modes = ["search", "hot", "feed", "creator", "related"]
+daily_search_budget = 0                 # 搜索 discovery 每日任务上限，0 = 不设每日上限
+daily_hot_budget = 0                    # 热榜 discovery 每日任务上限，0 = 不设每日上限
+daily_feed_budget = 0                   # 首页推荐 discovery 每日任务上限，0 = 不设每日上限
+daily_creator_budget = 0                # 作者页 discovery 每日任务上限，0 = 不设每日上限
+daily_related_budget = 0                # 相关扩展 discovery 每日任务上限，0 = 不设每日上限
+request_interval_seconds = 3            # 后端等待任务时的轮询间隔 / 插件搜索节奏提示
+min_interval_minutes = 60               # ZhihuDiscoveryProducer 两次执行最小间隔
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -351,6 +366,14 @@ discovery_limit = 30                     # Per discovery wave limit; allowed ran
 delight_queue_limit = 20                 # Surprise queue load size for desktop/mobile/extension; 1..100
 proactive_push_interval_seconds = 120    # Delight/probe push loop interval; values <30 fallback
 speculator_idle_interval_minutes = 30    # Idle interval before checking speculation lifecycle
+# --- 画像整理（ProfileConsolidator）库存水位 ---
+profile_consolidation_enabled = true
+profile_consolidation_interval_hours = 12
+# active likes 超过 upper 时，定时整理会临时开 full boundary，并在合并后把低权重长尾
+# 归档到 archived_interests，直到 active likes 降到 soft（或至少低于 upper）。
+profile_consolidation_like_target_upper = 512
+profile_consolidation_like_target_soft = 450
+profile_consolidation_archive_enabled = true
 # --- 猜测兴趣（Speculative Interest）调度 ---
 # speculation_interval_minutes = 10   # 猜测推测运行间隔（分钟）
 # speculation_ttl_days = 3            # 猜测兴趣默认存活天数
@@ -375,7 +398,7 @@ auto_update_allowed_remotes = [
 ] # 只有 origin 精确匹配这些远端时才允许自动快进；带凭据的 URL 一律拒绝
 
 [scheduler.pool_source_shares]
-# Candidate-pool source mix by platform family. The saved default 5:1:1:1:1
+# Candidate-pool source mix by platform family. The saved default 5:1:1:1:1:1
 # keeps B 站 as the main source when optional platforms are enabled.
 # 关掉的源（[sources.<name>].enabled = false）的配额会被自动剔除，剩余
 # 源按比例重新归一化吃满 pool_target_count——所以这里写多少不重要，重要的
@@ -385,6 +408,7 @@ xiaohongshu = 1
 douyin = 1
 youtube = 1
 twitter = 1
+zhihu = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──
 # 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词

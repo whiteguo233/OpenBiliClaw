@@ -128,6 +128,24 @@ def _favorite_folder_with_items(folder_id: int, *bvids: str) -> FavoriteFolderWi
     )
 
 
+def test_account_sync_event_builders_include_signal_strength() -> None:
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    service = AccountSyncService(
+        memory_manager=_FakeMemoryManager(),
+        bilibili_client=_FakeClient(history_items=[], favorites=[], following=[]),
+        soul_engine=_FakeSoulEngine(),
+    )
+
+    history_event = service._history_events([_history_item("BV1", 100)])[0]
+    favorite_event = service._favorite_events([_favorite_folder_with_items(1, "BVF1")])[0]
+    follow_event = service._following_events([FollowingUser(mid=1, uname="某 UP")])[0]
+
+    assert history_event["metadata"]["signal_strength"] == 0.35
+    assert favorite_event["metadata"]["signal_strength"] == 1.0
+    assert follow_event["metadata"]["signal_strength"] == 0.6
+
+
 @pytest.mark.asyncio
 async def test_account_sync_imports_incremental_history_only() -> None:
     from openbiliclaw.runtime.account_sync import AccountSyncService

@@ -1255,7 +1255,7 @@
       align-items: flex-start;
       justify-content: flex-start;
       text-align: left;
-      padding: 12px 14px;
+      padding: 12px 74px 34px 14px;
     }
 
     .recommendation-cover-text {
@@ -1344,6 +1344,16 @@
     .recommendation-cover.is-fallback .recommendation-source-corner {
       background: rgba(18, 22, 32, 0.08);
       color: var(--text-muted);
+    }
+
+    .recommendation-source-corner.source-platform-zhihu {
+      background: rgba(15, 136, 235, 0.78);
+      color: #fff;
+    }
+
+    .recommendation-cover.is-fallback .recommendation-source-corner.source-platform-zhihu {
+      background: rgba(15, 136, 235, 0.12);
+      color: #0f88eb;
     }
 
     .recommendation-title {
@@ -5149,6 +5159,67 @@
         <p class="settings-hint">X 通过后端 cookie 回放独立调度；登录 x.com 后扩展会自动同步 auth_token / ct0。</p>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="zhihu">
+        <h3><span class="section-icon">&#x77E5;</span> 知乎</h3>
+        <div class="settings-field-row">
+          <input id="cfgZhihuEnabled" type="checkbox">
+          <label for="cfgZhihuEnabled">启用知乎 discovery</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgZhihuStatus" data-source-status="zhihu"><span class="src-dot">●</span> <span class="src-detail">知乎来源状态加载中…</span></p>
+        <div class="settings-field">
+          <label>知乎 discovery 分支</label>
+          <div class="settings-field-row">
+            <input id="cfgZhihuModeSearch" type="checkbox">
+            <label for="cfgZhihuModeSearch">搜索</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgZhihuModeHot" type="checkbox">
+            <label for="cfgZhihuModeHot">热榜</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgZhihuModeFeed" type="checkbox">
+            <label for="cfgZhihuModeFeed">首页</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgZhihuModeCreator" type="checkbox">
+            <label for="cfgZhihuModeCreator">作者</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgZhihuModeRelated" type="checkbox">
+            <label for="cfgZhihuModeRelated">相关</label>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuDailySearchBudget">知乎每日搜索任务</label>
+          <input id="cfgZhihuDailySearchBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuDailyHotBudget">知乎每日热榜任务</label>
+          <input id="cfgZhihuDailyHotBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuDailyFeedBudget">知乎每日首页任务</label>
+          <input id="cfgZhihuDailyFeedBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuDailyCreatorBudget">知乎每日作者任务</label>
+          <input id="cfgZhihuDailyCreatorBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuDailyRelatedBudget">知乎每日相关扩展</label>
+          <input id="cfgZhihuDailyRelatedBudget" type="number" min="0" step="1" placeholder="0 = 不限">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuRequestInterval">知乎请求间隔秒数</label>
+          <input id="cfgZhihuRequestInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgZhihuMinInterval">知乎最小调度间隔分钟数</label>
+          <input id="cfgZhihuMinInterval" type="number" min="0" step="1" placeholder="60">
+        </div>
+        <p class="settings-hint">知乎通过已登录浏览器插件执行搜索 / 热榜 / 首页 / 作者 / 相关任务；后端只入队任务并接收结果。</p>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="browser">
         <h3><span class="section-icon">&#x1F310;</span> 通用网页源</h3>
         <div class="settings-field">
@@ -5165,7 +5236,7 @@
         <h3><span class="section-icon">&#x1F4E6;</span> 候选池来源占比</h3>
         <div class="settings-field">
           <label for="cfgPoolShareBilibili">候选池 B 站占比</label>
-          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="8">
+          <input id="cfgPoolShareBilibili" type="number" min="1" step="1" placeholder="5">
         </div>
         <div class="settings-field">
           <label for="cfgPoolShareXhs">候选池小红书占比</label>
@@ -5182,6 +5253,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareTwitter">候选池 X 占比</label>
           <input id="cfgPoolShareTwitter" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareZhihu">候选池知乎占比</label>
+          <input id="cfgPoolShareZhihu" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>
@@ -5265,10 +5340,11 @@
             <strong id="backendUpdateLastCheck">—</strong>
           </div>
         </div>
-        <p class="settings-hint">自动更新只作用于后端源码：开启并保存后，后台定时检查可信 backend tag，满足安全条件才会快进、同步依赖并重启后端；浏览器扩展由商店自动更新或由 GitHub zip 用户手动重载。</p>
+        <p class="settings-hint">自动更新只作用于 git / AI 安装的后端源码：开启并保存后，后台定时检查可信 backend tag，满足安全条件才会快进、同步依赖并重启后端；安装包版本会提示下载新版安装包；浏览器扩展由商店自动更新或由 GitHub zip 用户手动重载。</p>
         <div class="settings-actions">
           <button id="backendUpdateCheck" type="button" class="settings-secondary-btn">立即检查</button>
           <button id="backendUpdateApply" type="button" class="settings-secondary-btn" hidden>立即应用</button>
+          <a id="backendUpdateDownload" class="settings-secondary-btn" href="https://github.com/whiteguo233/OpenBiliClaw/releases" target="_blank" rel="noopener" hidden>前往下载新安装包</a>
         </div>
         <p class="settings-hint">最近错误：<span id="backendUpdateError">—</span></p>
         <div class="settings-status-cell">

@@ -9,8 +9,9 @@ Design contract (see ``docs/plans/2026-06-08-x-twitter-source-plan.md`` Task 6):
 
 * **Lazy import.** ``twitter_cli`` (and its ``curl_cffi`` transitive dep) is
   imported *inside* the network seam, never at module top. Importing this
-  module on a non-X install (where the ``openbiliclaw[x]`` extra is absent)
-  must not fail. ``tests/test_x_client.py`` regresses this.
+  module while the X source is disabled must not touch the dependency or fail;
+  ``openbiliclaw[x]`` remains only as a backwards-compatible install alias.
+  ``tests/test_x_client.py`` regresses this.
 * **Async wrapper.** ``twitter_cli`` reads are synchronous (curl_cffi), so the
   public ``search`` / ``for_you`` / ``user_tweets`` (discovery) and ``likes`` /
   ``bookmarks`` (init preference backfill) coroutines run them via
@@ -47,7 +48,7 @@ class XMissingCookieError(XClientError):
     """No usable cookie (``auth_token`` and/or ``ct0`` missing).
 
     Raised lazily on first use — before any ``twitter_cli`` import — so the
-    disabled / unconfigured path never touches the optional dependency.
+    disabled / unconfigured path never touches the X dependency.
     """
 
 

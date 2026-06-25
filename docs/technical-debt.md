@@ -98,14 +98,14 @@ last-write-wins，丢失刚新增的兴趣、避雷方向或 cognition update。
 
 - 用户以为“所有平台点赞 / 收藏 / 浏览都会持续影响 Soul”，但实际只有部分来源进入画像更新。
 - 跨平台用户偏好长期偏向 B 站和初始化样本，外站后续行为难以持续修正画像。
-- `/api/events` 名义上是行为入口，但实际只落日志 / 触发发现刷新，容易误导后续开发把它当成画像学习闭环。
+- `/api/events` 已接入 `ProfileUpdatePipeline`，但仍需要继续梳理各平台实时事件、bootstrap 任务和账号同步之间的画像更新边界。
 - 不同平台的“账号同步、实时采集、发现补池、初始化 bootstrap”边界不清，后续扩平台时容易重复造入口或漏接 Soul。
 
 **建议方向**
 
 - 明确定义事件分层：账号行为同步、实时页面行为、初始化 bootstrap、发现候选补池四类入口分别是否影响 Soul。
 - 为小红书 / 抖音 / YouTube / X 设计统一 account sync abstraction，支持可配置周期、游标、去重和平台能力降级。
-- 若实时插件事件应影响画像，则让 `/api/events` 在满足过滤条件后进入 `ProfileUpdatePipeline`；若不应影响画像，则在 API / 文档 / 架构图中明确标注为“日志 + refresh trigger”。
+- 继续把实时插件事件、bootstrap 任务和账号同步的画像更新契约写成统一矩阵，明确哪些入口进入 `ProfileUpdatePipeline`、哪些入口只产生发现候选或任务结果。
 - 为 Douyin / YouTube 评估接入通用 `startCollector()` 的可行性，或明确只支持任务型采集。
 - 补端到端测试，分别断言：B 站 account sync 目前更新到哪一层；外站 account sync 未实现前不会被误报为已启用；`/api/events` 的实时事件是否进入 pipeline 与产品定义一致。
 

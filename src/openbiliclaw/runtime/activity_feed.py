@@ -113,7 +113,7 @@ class ActivityFeedBuilder:
             return manual_message
         pending_events = _as_int(runtime_status.get("pending_signal_events", 0))
         if pending_events > 0:
-            return f"阿B 还在盯着你刚刚的新动作，已经记下 {pending_events} 个信号。"
+            return f"阿B 已记下 {pending_events} 个新动作，下一轮补货会拿来参考。"
         pool_count = _as_int(runtime_status.get("pool_available_count", 0))
         return f"这会儿池子里还有 {pool_count} 条能换，阿B 先替你盯着。"
 

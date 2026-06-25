@@ -61,6 +61,8 @@ logger = logging.getLogger(__name__)
 # meaningful store; only the deep <0.5-weight tail is left to decay.
 _LIKES_BOUNDARY = 512
 _SIMILARITY_THRESHOLD = 0.85
+_OVER_TARGET_SIMILARITY_FLOOR = 0.75
+_OVER_TARGET_SIMILARITY_MAX_DROP = 0.10
 _DEFAULT_MIN_INTERVAL_SECONDS = 12 * 3600
 _STATE_FILENAME = "consolidation_state.json"
 _RUNS_DIRNAME = "consolidation_runs"
@@ -148,6 +150,12 @@ class ConsolidationReport:
     likes_after: int = 0
     dislikes_before: int = 0
     dislikes_after: int = 0
+    likes_target_upper: int = _LIKES_BOUNDARY
+    likes_target_soft: int = 450
+    like_similarity_threshold: float = _SIMILARITY_THRESHOLD
+    archived_interests: list[str] = field(default_factory=list)
+    protected_interests: list[str] = field(default_factory=list)
+    inventory_reason: str = ""
     errors: list[str] = field(default_factory=list)
 
 
@@ -228,6 +236,9 @@ class ProfileConsolidator:
         min_interval_seconds: int = _DEFAULT_MIN_INTERVAL_SECONDS,
         likes_boundary: int = _LIKES_BOUNDARY,
         similarity_threshold: float = _SIMILARITY_THRESHOLD,
+        like_target_upper: int = _LIKES_BOUNDARY,
+        like_target_soft: int = 450,
+        archive_enabled: bool = True,
     ) -> None:
         self._memory = memory
         self._llm_service = llm_service
@@ -237,6 +248,9 @@ class ProfileConsolidator:
         self._min_interval_seconds = int(min_interval_seconds)
         self._likes_boundary = int(likes_boundary)
         self._similarity_threshold = float(similarity_threshold)
+        self._like_target_upper = max(1, int(like_target_upper))
+        self._like_target_soft = max(1, int(like_target_soft))
+        self._archive_enabled = bool(archive_enabled)
 
     # -- Public API -----------------------------------------------------------
 
@@ -261,7 +275,11 @@ class ProfileConsolidator:
             return ConsolidationReport(throttled=True)
 
         digest = self._input_digest()
-        if digest and digest == state.get("last_input_digest"):
+        if (
+            digest
+            and digest == state.get("last_input_digest")
+            and not self._is_like_inventory_over_target()
+        ):
             state["last_run_at"] = current.isoformat()
             self._save_state(state)
             return ConsolidationReport(skipped_clean=True)
@@ -275,6 +293,8 @@ class ProfileConsolidator:
             ran=True,
             dry_run=dry_run,
             run_id=current.strftime("%Y%m%d-%H%M%S"),
+            likes_target_upper=self._like_target_upper,
+            likes_target_soft=min(self._like_target_soft, self._like_target_upper),
         )
 
         preference_layer = self._memory.get_layer("preference")
@@ -288,11 +308,17 @@ class ProfileConsolidator:
             for item in preference_layer.data.get("disliked_topics", [])
             if str(item).strip()
         ]
+        archived_raw = [
+            dict(item)
+            for item in preference_layer.data.get("archived_interests", [])
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        ]
         report.likes_before = len(interests_raw)
         report.dislikes_before = len(dislikes_raw)
 
         before_snapshot = {
             "interests": [dict(item) for item in interests_raw],
+            "archived_interests": [dict(item) for item in archived_raw],
             "disliked_topics": list(dislikes_raw),
         }
 
@@ -302,7 +328,12 @@ class ProfileConsolidator:
 
         # ── Boundary slice ─────────────────────────────────────────────────
         ranked = sorted(interests, key=lambda item: _coerce_float(item.get("weight")), reverse=True)
-        like_slice_names = [str(item["name"]) for item in ranked[: self._likes_boundary]]
+        likes_boundary = (
+            len(ranked) if len(ranked) > self._like_target_upper else self._likes_boundary
+        )
+        like_similarity_threshold = self._effective_like_similarity_threshold(len(ranked))
+        report.like_similarity_threshold = like_similarity_threshold
+        like_slice_names = [str(item["name"]) for item in ranked[:likes_boundary]]
 
         # ── Stage 1: clustering ────────────────────────────────────────────
         state = self._load_state()
@@ -316,7 +347,11 @@ class ProfileConsolidator:
             )
             for idx, group in enumerate(homonym_groups)
         ]
-        like_clusters = await self._cluster(like_slice_names, scope="likes")
+        like_clusters = await self._cluster(
+            like_slice_names,
+            scope="likes",
+            similarity_threshold=like_similarity_threshold,
+        )
         dislike_clusters = await self._cluster(dislikes_raw, scope="dislikes")
         clusters = [
             cluster
@@ -376,15 +411,18 @@ class ProfileConsolidator:
                 }
             )
 
+        interests, archived_raw = self._apply_inventory_target(interests, archived_raw, report)
+
         report.likes_after = len(interests)
         report.dislikes_after = len(dislikes_raw)
 
         if dry_run:
             return report
 
-        changed = bool(rule_merges or valid_ops)
+        changed = bool(rule_merges or valid_ops or report.archived_interests)
         if changed:
             preference_layer.data["interests"] = interests
+            preference_layer.data["archived_interests"] = archived_raw
             preference_layer.data["disliked_topics"] = dislikes_raw
             preference_layer.save()
             self._rebuild_profile_tree(preference_layer.data)
@@ -415,6 +453,100 @@ class ProfileConsolidator:
         return report
 
     # -- Stage 0: rule merges ---------------------------------------------------
+
+    def _is_like_inventory_over_target(self) -> bool:
+        preference_layer = self._memory.get_layer("preference")
+        interests = [
+            item
+            for item in preference_layer.data.get("interests", [])
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        ]
+        return len(interests) > self._like_target_upper
+
+    def _apply_inventory_target(
+        self,
+        interests: list[dict[str, Any]],
+        archived: list[dict[str, Any]],
+        report: ConsolidationReport,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Archive low-value active likes until the active inventory is under target."""
+        report.likes_target_upper = self._like_target_upper
+        report.likes_target_soft = min(self._like_target_soft, self._like_target_upper)
+        if not self._archive_enabled:
+            if len(interests) > self._like_target_upper:
+                report.inventory_reason = "archive_disabled"
+            return interests, archived
+        if len(interests) <= self._like_target_upper:
+            return interests, archived
+
+        protected_keys = self._protected_like_keys()
+        protected_names = [
+            str(item.get("name", "")).strip()
+            for item in interests
+            if _normalize_name(str(item.get("name", ""))) in protected_keys
+        ]
+        report.protected_interests = list(dict.fromkeys(name for name in protected_names if name))
+
+        target = report.likes_target_soft
+        protected_count = len(report.protected_interests)
+        if protected_count > self._like_target_upper:
+            report.inventory_reason = "protected_inventory_exceeds_target"
+            target = protected_count
+
+        archive_count = max(0, len(interests) - target)
+        if archive_count <= 0:
+            return interests, archived
+
+        candidates = [
+            item
+            for item in interests
+            if _normalize_name(str(item.get("name", ""))) not in protected_keys
+        ]
+        candidates.sort(key=_archive_rank_key)
+        to_archive = candidates[:archive_count]
+        if len(to_archive) < archive_count and not report.inventory_reason:
+            report.inventory_reason = "no_archive_candidates"
+
+        archive_keys = {_interest_member_key(item) for item in to_archive}
+        active = [item for item in interests if _interest_member_key(item) not in archive_keys]
+        new_archived = [dict(item) for item in to_archive]
+        report.archived_interests = [str(item.get("name", "")) for item in new_archived]
+        return active, [*new_archived, *archived]
+
+    def _protected_like_keys(self) -> set[str]:
+        loader = getattr(self._memory, "load_profile_overrides", None)
+        if not callable(loader):
+            return set()
+        try:
+            overrides = loader()
+            interest_edits = getattr(overrides, "interest_edits", {})
+            likes = interest_edits.get("likes") if isinstance(interest_edits, dict) else None
+            if likes is None:
+                return set()
+            names: list[str] = []
+            names.extend(
+                str(add.domain)
+                for add in getattr(likes, "add_domains", [])
+                if str(getattr(add, "domain", "")).strip()
+            )
+            names.extend(str(name) for name in getattr(likes, "weight_pins", {}) if str(name))
+            names.extend(str(name) for name in getattr(likes, "specific_edits", {}) if str(name))
+            return {_normalize_name(name) for name in names if _normalize_name(name)}
+        except Exception:
+            logger.debug("Failed to load profile overrides for archive protection", exc_info=True)
+            return set()
+
+    def _effective_like_similarity_threshold(self, active_like_count: int) -> float:
+        if active_like_count <= self._like_target_upper:
+            return round(self._similarity_threshold, 4)
+        target_span = max(
+            self._like_target_upper - min(self._like_target_soft, self._like_target_upper),
+            1,
+        )
+        pressure = min(1.0, (active_like_count - self._like_target_upper) / target_span)
+        floor = min(self._similarity_threshold, _OVER_TARGET_SIMILARITY_FLOOR)
+        threshold = self._similarity_threshold - (_OVER_TARGET_SIMILARITY_MAX_DROP * pressure)
+        return round(max(floor, threshold), 4)
 
     def _rule_merge_exact_names(
         self, interests: list[dict[str, Any]]
@@ -454,11 +586,20 @@ class ProfileConsolidator:
 
     # -- Stage 1: clustering ------------------------------------------------------
 
-    async def _cluster(self, names: list[str], *, scope: str) -> list[_Cluster]:
+    async def _cluster(
+        self,
+        names: list[str],
+        *,
+        scope: str,
+        similarity_threshold: float | None = None,
+    ) -> list[_Cluster]:
         unique_names = list(dict.fromkeys(name for name in names if name))
         if len(unique_names) < 2:
             return []
         prefix = "L" if scope == "likes" else "D"
+        threshold = (
+            self._similarity_threshold if similarity_threshold is None else similarity_threshold
+        )
 
         groups: list[list[str]] = []
         if self._embedding_service is not None:
@@ -480,7 +621,7 @@ class ProfileConsolidator:
                 for other in embeddable[i + 1 :]:
                     if other in assigned:
                         continue
-                    if _cosine(vectors[name], vectors[other]) >= self._similarity_threshold:
+                    if _cosine(vectors[name], vectors[other]) >= threshold:
                         group.append(other)
                         assigned.add(other)
                 if len(group) >= 2:
@@ -718,12 +859,13 @@ class ProfileConsolidator:
         if _normalize_name(canonical) in {_normalize_name(b) for b in _BANNED_GENERIC_CANONICALS}:
             return f"canonical is a banned umbrella term: {canonical!r}"
         shortest = min(len(m) for m in members)
+        member_norms = {_normalize_name(member) for member in members}
         # A canonical dramatically shorter than every member is the
         # signature of upward generalization ("低质内容" <- long specific
         # avoid-patterns). Members themselves are exempt (picking the
         # shortest member as canonical is fine for likes).
-        if canonical not in members and scope == "dislikes" and len(canonical) < shortest * 0.5:
-            return f"canonical looks over-generalized for dislikes: {canonical!r}"
+        if _normalize_name(canonical) not in member_norms and len(canonical) < shortest * 0.5:
+            return f"canonical looks over-generalized for {scope}: {canonical!r}"
         return ""
 
     @staticmethod
@@ -787,6 +929,11 @@ class ProfileConsolidator:
         merged["weight"] = max(_coerce_float(item.get("weight")) for item in involved)
         merged["first_seen"] = _earliest(*(item.get("first_seen") for item in involved))
         merged["last_seen"] = _latest(*(item.get("last_seen") for item in involved))
+        aliases = _merged_aliases(involved, canonical)
+        if aliases:
+            merged["aliases"] = aliases
+        else:
+            merged.pop("aliases", None)
 
         result: list[dict[str, Any]] = []
         inserted = False
@@ -877,6 +1024,9 @@ class ProfileConsolidator:
         preference_layer = self._memory.get_layer("preference")
         preference_layer.data["interests"] = [
             dict(item) for item in before.get("interests", []) if isinstance(item, dict)
+        ]
+        preference_layer.data["archived_interests"] = [
+            dict(item) for item in before.get("archived_interests", []) if isinstance(item, dict)
         ]
         preference_layer.data["disliked_topics"] = _as_str_list(before.get("disliked_topics"))
         preference_layer.save()
@@ -978,6 +1128,7 @@ class ProfileConsolidator:
                 "run_id": report.run_id,
                 "kind": "consolidation",
                 "before": before_snapshot,
+                "like_similarity_threshold": report.like_similarity_threshold,
                 "rule_merges": report.rule_merges,
                 "merges": report.merges,
                 "rename_map": rename_map,
@@ -998,6 +1149,10 @@ class ProfileConsolidator:
             f"- 兴趣 {report.likes_before} → {report.likes_after}，"
             f"避雷 {report.dislikes_before} → {report.dislikes_after}\n",
         ]
+        if report.archived_interests:
+            lines.append(f"- [归档] {len(report.archived_interests)} 个低权重长尾兴趣\n")
+        if report.inventory_reason:
+            lines.append(f"- [库存] {report.inventory_reason}\n")
         for merge in report.merges:
             members = " / ".join(_as_str_list(merge.get("members")))
             lines.append(f"- [{merge.get('scope')}] {members} → {merge.get('canonical')}\n")
@@ -1015,6 +1170,34 @@ def _coerce_float(value: object, default: float = 0.0) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _archive_rank_key(item: dict[str, Any]) -> tuple[float, str, str, str]:
+    return (
+        _coerce_float(item.get("weight")),
+        str(item.get("last_seen", "")),
+        str(item.get("first_seen", "")),
+        str(item.get("name", "")),
+    )
+
+
+def _merged_aliases(items: list[dict[str, Any]], canonical: str) -> list[str]:
+    aliases: list[str] = []
+    seen: set[str] = set()
+    canonical_norm = _normalize_name(canonical)
+    for item in items:
+        raw_terms: list[object] = [item.get("name", "")]
+        existing_aliases = item.get("aliases", [])
+        if isinstance(existing_aliases, list):
+            raw_terms.extend(existing_aliases)
+        for raw in raw_terms:
+            alias = str(raw).strip()
+            alias_norm = _normalize_name(alias)
+            if not alias or not alias_norm or alias_norm == canonical_norm or alias_norm in seen:
+                continue
+            aliases.append(alias)
+            seen.add(alias_norm)
+    return aliases
 
 
 def _parse_iso(raw: str) -> datetime | None:

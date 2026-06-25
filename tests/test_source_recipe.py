@@ -45,14 +45,16 @@ class TestSourceRecipeCRUD:
 
     def test_save_and_get_all(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1",
-            "source_type": "bilibili",
-            "name": "B站搜索",
-            "strategy": "search",
-            "config": {"query": "rust"},
-            "target_share": 4,
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "B站搜索",
+                "strategy": "search",
+                "config": {"query": "rust"},
+                "target_share": 4,
+            }
+        )
         recipes = db.get_all_recipes()
         assert len(recipes) == 1
         assert recipes[0]["id"] == "r1"
@@ -66,24 +68,38 @@ class TestSourceRecipeCRUD:
 
     def test_get_enabled_filters_disabled(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "启用的", "strategy": "search",
-        })
-        db.save_source_recipe({
-            "id": "r2", "source_type": "bilibili",
-            "name": "禁用的", "strategy": "trending", "enabled": False,
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "启用的",
+                "strategy": "search",
+            }
+        )
+        db.save_source_recipe(
+            {
+                "id": "r2",
+                "source_type": "bilibili",
+                "name": "禁用的",
+                "strategy": "trending",
+                "enabled": False,
+            }
+        )
         enabled = db.get_enabled_recipes()
         assert len(enabled) == 1
         assert enabled[0]["id"] == "r1"
 
     def test_update_recipe(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "原名", "strategy": "search", "target_share": 4,
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "原名",
+                "strategy": "search",
+                "target_share": 4,
+            }
+        )
         updated = db.update_recipe("r1", name="新名", target_share=8)
         assert updated is True
         recipes = db.get_all_recipes()
@@ -96,10 +112,14 @@ class TestSourceRecipeCRUD:
 
     def test_delete_recipe(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "待删", "strategy": "search",
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "待删",
+                "strategy": "search",
+            }
+        )
         deleted = db.delete_recipe("r1")
         assert deleted is True
         assert db.get_all_recipes() == []
@@ -110,14 +130,22 @@ class TestSourceRecipeCRUD:
 
     def test_upsert_on_conflict(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "原名", "strategy": "search",
-        })
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "覆盖名", "strategy": "trending",
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "原名",
+                "strategy": "search",
+            }
+        )
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "覆盖名",
+                "strategy": "trending",
+            }
+        )
         recipes = db.get_all_recipes()
         assert len(recipes) == 1
         assert recipes[0]["name"] == "覆盖名"
@@ -125,10 +153,14 @@ class TestSourceRecipeCRUD:
 
     def test_toggle_enabled(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
-        db.save_source_recipe({
-            "id": "r1", "source_type": "bilibili",
-            "name": "测试", "strategy": "search",
-        })
+        db.save_source_recipe(
+            {
+                "id": "r1",
+                "source_type": "bilibili",
+                "name": "测试",
+                "strategy": "search",
+            }
+        )
         db.update_recipe("r1", enabled=False)
         assert db.get_enabled_recipes() == []
 
@@ -161,13 +193,16 @@ class TestSourceRecipeAPI:
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)
 
-        response = client.post("/api/sources", json={
-            "source_type": "xiaohongshu",
-            "name": "小红书-机械键盘",
-            "strategy": "search",
-            "config": {"query": "机械键盘"},
-            "created_by": "agent",
-        })
+        response = client.post(
+            "/api/sources",
+            json={
+                "source_type": "xiaohongshu",
+                "name": "小红书-机械键盘",
+                "strategy": "search",
+                "config": {"query": "机械键盘"},
+                "created_by": "agent",
+            },
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["ok"] is True
@@ -200,12 +235,15 @@ class TestSourceRecipeAPI:
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)
 
-        client.post("/api/sources", json={
-            "id": "test-id",
-            "source_type": "web",
-            "name": "原名",
-            "strategy": "feed",
-        })
+        client.post(
+            "/api/sources",
+            json={
+                "id": "test-id",
+                "source_type": "web",
+                "name": "原名",
+                "strategy": "feed",
+            },
+        )
 
         response = client.put("/api/sources/test-id", json={"name": "新名", "enabled": False})
         assert response.status_code == 200
@@ -223,13 +261,16 @@ class TestSourceRecipeAPI:
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)
 
-        client.post("/api/sources", json={
-            "id": "del-me",
-            "source_type": "web",
-            "name": "待删",
-            "strategy": "feed",
-            "created_by": "user",
-        })
+        client.post(
+            "/api/sources",
+            json={
+                "id": "del-me",
+                "source_type": "web",
+                "name": "待删",
+                "strategy": "feed",
+                "created_by": "user",
+            },
+        )
 
         response = client.delete("/api/sources/del-me")
         assert response.status_code == 200
@@ -241,13 +282,15 @@ class TestSourceRecipeAPI:
         from openbiliclaw.api.app import create_app
 
         db = _make_cross_thread_db(tmp_path)
-        db.save_source_recipe({
-            "id": "sys-recipe",
-            "source_type": "bilibili",
-            "name": "系统内置",
-            "strategy": "search",
-            "created_by": "system",
-        })
+        db.save_source_recipe(
+            {
+                "id": "sys-recipe",
+                "source_type": "bilibili",
+                "name": "系统内置",
+                "strategy": "search",
+                "created_by": "system",
+            }
+        )
 
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)

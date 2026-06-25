@@ -34,6 +34,7 @@
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
         "*://*.youtube.com/*",
+        "*://*.zhihu.com/*",
         "*://*.x.com/*",
         "*://*.twitter.com/*",
         "http://127.0.0.1/*",
@@ -89,6 +90,15 @@
             ],
             "js": [
                 "content/youtube.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.zhihu.com/*"
+            ],
+            "js": [
+                "content/zhihu.js"
             ],
             "run_at": "document_idle"
         },

@@ -146,9 +146,7 @@ class TestWebSourceAdapterURLBackfill:
 
         monkeypatch.setattr(web_adapter_module, "extract_content_from_page", fake_extract)
 
-        adapter = WebSourceAdapter(
-            llm_service=None, browser_cdp_url="http://127.0.0.1:9222"
-        )
+        adapter = WebSourceAdapter(llm_service=None, browser_cdp_url="http://127.0.0.1:9222")
         recipe = SourceRecipe(
             id="r3",
             source_type="xiaohongshu",
@@ -190,11 +188,12 @@ class TestWebSourceAdapterURLBackfill:
 
         monkeypatch.setattr(web_adapter_module, "extract_content_from_page", fake_extract)
 
-        adapter = WebSourceAdapter(
-            llm_service=None, browser_cdp_url="http://127.0.0.1:9222"
-        )
+        adapter = WebSourceAdapter(llm_service=None, browser_cdp_url="http://127.0.0.1:9222")
         recipe = SourceRecipe(
-            id="r4", source_type="xiaohongshu", name="x", strategy="web_extract",
+            id="r4",
+            source_type="xiaohongshu",
+            name="x",
+            strategy="web_extract",
             config={"url": "https://www.xiaohongshu.com/explore/preset999"},
         )
 

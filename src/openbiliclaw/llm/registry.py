@@ -381,9 +381,8 @@ def _embedding_cache_model(
     model: str,
     output_dimensionality: int,
 ) -> str:
-    if (
-        output_dimensionality > 0
-        and _embedding_provider_honors_output_dimensionality(provider_name, model)
+    if output_dimensionality > 0 and _embedding_provider_honors_output_dimensionality(
+        provider_name, model
     ):
         return f"{model}#dim={output_dimensionality}"
     return model

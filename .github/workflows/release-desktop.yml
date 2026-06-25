@@ -38,8 +38,15 @@ jobs:
           # [packaging] pulls pyinstaller + pystray + Pillow + pyobjc (menu-bar tray).
           pip install -e ".[packaging]"
 
-      - name: Install Ollama (bundled into the app for local bge-m3 embedding)
-        run: brew install ollama
+      - name: Download official Ollama.app runtime
+        run: |
+          curl -L https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip -o Ollama-darwin.zip
+          unzip -q Ollama-darwin.zip -d ollama-app
+          test -x ollama-app/Ollama.app/Contents/Resources/ollama
+          test -x ollama-app/Ollama.app/Contents/Resources/llama-server
+          test -f ollama-app/Ollama.app/Contents/Resources/libllama-server-impl.dylib
+          test -f ollama-app/Ollama.app/Contents/Resources/libggml.dylib
+          echo "OPENBILICLAW_OLLAMA_BIN=$PWD/ollama-app/Ollama.app/Contents/Resources/ollama" >> "$GITHUB_ENV"
 
       - name: Resolve version
         id: ver

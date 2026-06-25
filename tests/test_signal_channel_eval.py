@@ -100,8 +100,7 @@ _CORE_RESP = json.dumps(
 _PORTRAIT_RESP = json.dumps(
     {
         "personality_portrait": (
-            "这是一个热爱技术探索的用户，"
-            "对知识有深度渴望，习惯系统化地理解新领域。"
+            "这是一个热爱技术探索的用户，对知识有深度渴望，习惯系统化地理解新领域。"
         ),
         "core_traits": ["好奇心强", "逻辑严谨"],
         "cognitive_style": ["系统化思考，偏好结构化信息"],
@@ -139,9 +138,7 @@ class SmartFakeService:
         max_tokens: int = 4096,
         caller: str = "",
     ) -> LLMResponse:
-        self.calls.append(
-            {"system_instruction": system_instruction, "user_input": user_input}
-        )
+        self.calls.append({"system_instruction": system_instruction, "user_input": user_input})
         if "生活阶段" in system_instruction:
             content = _ROLE_RESP
         elif "价值观" in system_instruction:
@@ -332,9 +329,7 @@ async def test_ch3_feedback_triggers_values_update(tmp_path: object) -> None:
 async def test_ch4_dialogue_turn_routing(tmp_path: object) -> None:
     """DIALOGUE_TURN should buffer to both surface and interest (explicit user intent)."""
     pipeline = _make_pipeline(tmp_path)
-    result = await pipeline.ingest(
-        signal_from_dialogue_turn("推荐个科技视频", "好的，这是推荐...")
-    )
+    result = await pipeline.ingest(signal_from_dialogue_turn("推荐个科技视频", "好的，这是推荐..."))
 
     assert "surface" in result.layers_buffered
     assert "interest" in result.layers_buffered, (
@@ -401,8 +396,7 @@ async def test_ch5_dialogue_insight_routing(
     result = await pipeline.ingest(signals[0])
 
     assert expected_layer.value in result.layers_buffered, (
-        f"kind={kind!r} should buffer {expected_layer.value}. "
-        f"Got: {result.layers_buffered}"
+        f"kind={kind!r} should buffer {expected_layer.value}. Got: {result.layers_buffered}"
     )
 
 
@@ -628,12 +622,9 @@ async def test_ch7_recommendation_click_changes_interest_content(
     assert OnionLayer.INTEREST in changed_layers, (
         f"Click should actually change INTEREST. Changed: {changed_layers}"
     )
-    interest_result = next(
-        r for r in result.layers_updated if r.layer == OnionLayer.INTEREST
-    )
+    interest_result = next(r for r in result.layers_updated if r.layer == OnionLayer.INTEREST)
     assert any("科技" in c or "AI" in c for c in interest_result.changes), (
-        f"Click-induced interest changes should reflect AI/tech. "
-        f"Got: {interest_result.changes}"
+        f"Click-induced interest changes should reflect AI/tech. Got: {interest_result.changes}"
     )
 
 
@@ -746,11 +737,13 @@ async def test_channel_eval_report(tmp_path: object, capsys: object) -> None:
 
         routing_score = (
             len(expected_buffered & actual_buffered) / len(expected_buffered)
-            if expected_buffered else 1.0
+            if expected_buffered
+            else 1.0
         )
         update_score = (
             len(expected_changed & actual_changed) / len(expected_changed)
-            if expected_changed else 1.0
+            if expected_changed
+            else 1.0
         )
 
         passed = routing_score == 1.0 and update_score == 1.0

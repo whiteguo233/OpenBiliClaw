@@ -54,7 +54,7 @@ Either command:
    - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses** its LLM API keys and Bilibili cookie so the user never has to retype them
 3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source
-4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`
+4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`; X/Twitter discovery's `twitter-cli` package is part of the default dependency set, so AI one-line installs do not need an extra flag for it
 5. Starts the backend and runs a health check against `/api/health`. One-line installs default to `--host 0.0.0.0 --port 8420` so the Mobile Web `/m/` is reachable from phones on the same LAN; the status block's `Health URL` still uses a concrete local URL such as `http://127.0.0.1:8420/api/health` for curl verification
    - **Optional LAN password gate**: exposing `0.0.0.0` makes the UI reachable by any device on the network. To require a login for LAN/remote devices (the local machine and the browser extension stay password-free), run `openbiliclaw set-password` (or answer "yes" to the init prompt), or set `OPENBILICLAW_API_AUTH_ENABLED=true` + `OPENBILICLAW_API_AUTH_PASSWORD=…` for unattended/Docker installs. See [`docs/modules/api-auth.md`](modules/api-auth.md). Behind a same-host reverse proxy, also set `[api.auth].trusted_proxies` or have the proxy enforce auth.
 6. Verifies the configured LLM provider and embedding service with real lightweight calls before init; if either fails, it blocks init with `status=service_check_failed`
@@ -834,8 +834,8 @@ This is a **post-install opt-in**, not part of the install contract. Mention
 it to the user only if they ask about offline operation, embedding-quota
 errors, or a no-API-key setup. Steps:
 
-1. User installs Ollama: Mac `brew install ollama && ollama serve &`,
-   Windows from `https://ollama.com/download`, Linux
+1. User installs the official Ollama app: macOS / Windows from
+   `https://ollama.com/download` (start the app so `localhost:11434` is live), Linux
    `curl -fsSL https://ollama.com/install.sh | sh && ollama serve &`.
 2. User runs `cd <INSTALL_DIR> && uv run openbiliclaw setup-embedding`.
 3. The wizard probes `localhost:11434`, pulls `bge-m3` if missing, and

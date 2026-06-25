@@ -22,6 +22,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "douyin": False,
         "youtube": False,
         "twitter": False,
+        "zhihu": False,
     }
 
 
@@ -34,6 +35,7 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "douyin": False,
         "youtube": False,
         "twitter": False,
+        "zhihu": False,
     }
     assert effective_pool_source_shares(config) == {"bilibili": 5}
 
@@ -86,6 +88,49 @@ def test_effective_pool_source_shares_keep_enabled_youtube() -> None:
     }
 
 
+def test_effective_pool_source_shares_keep_enabled_zhihu() -> None:
+    config = Config()
+    config.scheduler.pool_source_shares = {
+        "bilibili": 6,
+        "xiaohongshu": 1,
+        "douyin": 1,
+        "youtube": 1,
+        "twitter": 1,
+        "zhihu": 2,
+    }
+    config.sources.xiaohongshu.enabled = False
+    config.sources.douyin.enabled = False
+    config.sources.youtube.enabled = False
+    config.sources.twitter.enabled = False
+    config.sources.zhihu.enabled = True
+
+    assert effective_pool_source_shares(config) == {
+        "bilibili": 6,
+        "zhihu": 2,
+    }
+
+
+def test_effective_pool_source_shares_backfills_enabled_zhihu_default() -> None:
+    config = Config()
+    config.scheduler.pool_source_shares = {
+        "bilibili": 6,
+        "xiaohongshu": 1,
+        "douyin": 1,
+        "youtube": 1,
+        "twitter": 1,
+    }
+    config.sources.xiaohongshu.enabled = False
+    config.sources.douyin.enabled = False
+    config.sources.youtube.enabled = False
+    config.sources.twitter.enabled = False
+    config.sources.zhihu.enabled = True
+
+    assert effective_pool_source_shares(config) == {
+        "bilibili": 6,
+        "zhihu": 1,
+    }
+
+
 def test_effective_pool_source_shares_fall_back_to_defaults() -> None:
     config = Config()
     config.scheduler.pool_source_shares = {}
@@ -108,6 +153,7 @@ def test_suggest_pool_source_shares_uses_damped_event_counts() -> None:
             "xiaohongshu": True,
             "douyin": True,
             "youtube": True,
+            "zhihu": True,
         },
     )
 
@@ -116,6 +162,7 @@ def test_suggest_pool_source_shares_uses_damped_event_counts() -> None:
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "zhihu": 1,
     }
 
 
@@ -141,12 +188,14 @@ def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:
             "xiaohongshu": True,
             "douyin": False,
             "youtube": True,
+            "zhihu": True,
         },
         configured_shares={
             "bilibili": 7,
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 3,
+            "zhihu": 4,
         },
     )
 
@@ -154,4 +203,5 @@ def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:
         "bilibili": 7,
         "xiaohongshu": 2,
         "youtube": 3,
+        "zhihu": 4,
     }

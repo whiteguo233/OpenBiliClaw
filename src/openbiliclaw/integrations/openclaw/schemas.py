@@ -202,9 +202,7 @@ class AvoidanceProbeFeedbackRequest:
             raise AdapterValidationError("avoidance probe domain must not be empty.")
         if self.response not in _VALID_AVOIDANCE_RESPONSES:
             allowed = ", ".join(sorted(_VALID_AVOIDANCE_RESPONSES))
-            raise AdapterValidationError(
-                f"avoidance probe response must be one of: {allowed}."
-            )
+            raise AdapterValidationError(f"avoidance probe response must be one of: {allowed}.")
 
 
 @dataclass(slots=True)

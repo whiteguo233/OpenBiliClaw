@@ -107,6 +107,7 @@ class TestConfigDefaults:
             "douyin": 1,
             "youtube": 1,
             "twitter": 1,
+            "zhihu": 1,
         }
 
     def test_bilibili_source_enabled_defaults_true(self) -> None:
@@ -869,7 +870,28 @@ youtube = 3
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "twitter": 1,
+        "zhihu": 1,
     }
+
+
+def test_scheduler_pool_source_shares_backfills_new_source_defaults(tmp_path: Path) -> None:
+    toml_path = tmp_path / "legacy.toml"
+    toml_path.write_text(
+        """
+[scheduler.pool_source_shares]
+bilibili = 5
+xiaohongshu = 1
+douyin = 1
+youtube = 1
+twitter = 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.pool_source_shares["zhihu"] == 1
 
 
 def test_build_config_supports_sources_browser_cdp_url() -> None:
@@ -1052,6 +1074,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "douyin": 2,
         "youtube": 1,
         "twitter": 3,
+        "zhihu": 1,
     }
 
     save_config(config, config_path)
@@ -1063,6 +1086,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "douyin": 2,
         "youtube": 1,
         "twitter": 3,
+        "zhihu": 1,
     }
 
 
@@ -1738,6 +1762,44 @@ def test_pool_source_shares_twitter_round_trips(tmp_path: Path) -> None:
     assert loaded.scheduler.pool_source_shares["twitter"] == 2
 
 
+def test_zhihu_source_round_trips_through_save_load(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.sources.zhihu.enabled = True
+    config.sources.zhihu.source_modes = ("search", "hot", "feed", "creator", "related")
+    config.sources.zhihu.daily_search_budget = 9
+    config.sources.zhihu.daily_hot_budget = 3
+    config.sources.zhihu.daily_feed_budget = 4
+    config.sources.zhihu.daily_creator_budget = 5
+    config.sources.zhihu.daily_related_budget = 6
+    config.sources.zhihu.request_interval_seconds = 4
+    config.sources.zhihu.min_interval_minutes = 30
+    config.scheduler.pool_source_shares["zhihu"] = 2
+
+    save_config(config, config_path)
+    rendered = config_path.read_text(encoding="utf-8")
+    assert "[sources.zhihu]" in rendered
+    assert 'source_modes = ["search", "hot", "feed", "creator", "related"]' in rendered
+    assert "daily_search_budget = 9" in rendered
+    assert "daily_hot_budget = 3" in rendered
+    assert "daily_feed_budget = 4" in rendered
+    assert "daily_creator_budget = 5" in rendered
+    assert "daily_related_budget = 6" in rendered
+    assert "zhihu = 2" in rendered
+
+    loaded = load_config(config_path)
+    assert loaded.sources.zhihu.enabled is True
+    assert loaded.sources.zhihu.source_modes == ("search", "hot", "feed", "creator", "related")
+    assert loaded.sources.zhihu.daily_search_budget == 9
+    assert loaded.sources.zhihu.daily_hot_budget == 3
+    assert loaded.sources.zhihu.daily_feed_budget == 4
+    assert loaded.sources.zhihu.daily_creator_budget == 5
+    assert loaded.sources.zhihu.daily_related_budget == 6
+    assert loaded.sources.zhihu.request_interval_seconds == 4
+    assert loaded.sources.zhihu.min_interval_minutes == 30
+    assert loaded.scheduler.pool_source_shares["zhihu"] == 2
+
+
 def test_twitter_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     toml_path = tmp_path / "c.toml"
     toml_path.write_text(
@@ -1752,6 +1814,22 @@ enabled = false
     config = load_config(toml_path)
 
     assert config.sources.twitter.enabled is True
+
+
+def test_zhihu_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[sources.zhihu]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBILICLAW_SOURCES_ZHIHU_ENABLED", "true")
+
+    config = load_config(toml_path)
+
+    assert config.sources.zhihu.enabled is True
 
 
 def test_disabling_twitter_drops_its_pool_quota() -> None:

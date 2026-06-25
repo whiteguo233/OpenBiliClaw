@@ -96,6 +96,7 @@ export const INIT_SOURCE_OPTIONS = [
   { key: "douyin", label: "抖音" },
   { key: "youtube", label: "YouTube" },
   { key: "twitter", label: "X" },
+  { key: "zhihu", label: "知乎" },
 ];
 
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH

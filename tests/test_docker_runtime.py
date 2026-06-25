@@ -62,7 +62,7 @@ def test_resolve_optional_proxy_env_returns_empty_when_host_proxy_is_unreachable
 def test_bootstrap_runtime_root_creates_default_config_and_directories(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     template = tmp_path / "config.example.toml"
-    template.write_text("[general]\nlanguage = \"zh\"\n", encoding="utf-8")
+    template.write_text('[general]\nlanguage = "zh"\n', encoding="utf-8")
 
     bootstrap_runtime_root(runtime_root=runtime_root, template_path=template)
 
@@ -77,13 +77,13 @@ def test_bootstrap_runtime_root_keeps_existing_config(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     existing = runtime_root / "config.toml"
-    existing.write_text("[general]\nlanguage = \"en\"\n", encoding="utf-8")
+    existing.write_text('[general]\nlanguage = "en"\n', encoding="utf-8")
     template = tmp_path / "config.example.toml"
-    template.write_text("[general]\nlanguage = \"zh\"\n", encoding="utf-8")
+    template.write_text('[general]\nlanguage = "zh"\n', encoding="utf-8")
 
     bootstrap_runtime_root(runtime_root=runtime_root, template_path=template)
 
-    assert existing.read_text(encoding="utf-8") == "[general]\nlanguage = \"en\"\n"
+    assert existing.read_text(encoding="utf-8") == '[general]\nlanguage = "en"\n'
 
 
 def test_bootstrap_runtime_root_seeds_embedding_base_url_for_ollama_sidecar(
@@ -117,7 +117,7 @@ def test_bootstrap_runtime_root_seeds_embedding_base_url_for_ollama_sidecar(
     )
 
     text = (runtime_root / "config.toml").read_text(encoding="utf-8")
-    assert '[llm.embedding]' in text
+    assert "[llm.embedding]" in text
     assert 'provider = "ollama"' in text
     assert 'model = "bge-m3"' in text
     assert 'base_url = "http://ollama:11434/v1"' in text
@@ -126,7 +126,7 @@ def test_bootstrap_runtime_root_seeds_embedding_base_url_for_ollama_sidecar(
 def test_bootstrap_runtime_environment_prepares_runtime_root_and_proxy(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     template = tmp_path / "config.example.toml"
-    template.write_text("[general]\nlanguage = \"zh\"\n", encoding="utf-8")
+    template.write_text('[general]\nlanguage = "zh"\n', encoding="utf-8")
     env = {
         "OPENBILICLAW_PROJECT_ROOT": str(runtime_root),
         "OPENBILICLAW_CONFIG_TEMPLATE": str(template),
@@ -157,7 +157,7 @@ def test_bootstrap_runtime_environment_skips_proxy_outside_container(tmp_path: P
     """
     runtime_root = tmp_path / "runtime"
     template = tmp_path / "config.example.toml"
-    template.write_text("[general]\nlanguage = \"zh\"\n", encoding="utf-8")
+    template.write_text('[general]\nlanguage = "zh"\n', encoding="utf-8")
     env = {
         "OPENBILICLAW_PROJECT_ROOT": str(runtime_root),
         "OPENBILICLAW_CONFIG_TEMPLATE": str(template),

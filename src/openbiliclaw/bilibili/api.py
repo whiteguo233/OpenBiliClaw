@@ -629,7 +629,7 @@ class BilibiliAPIClient:
         Requires valid authentication cookie.
 
         Args:
-            max_items: Maximum number of history items to fetch.
+            max_items: Maximum number of history items to fetch. 0 means fetch all.
 
         Returns:
             List of history item dicts.
@@ -640,7 +640,7 @@ class BilibiliAPIClient:
 
         items: list[dict[str, Any]] = []
         cursor_params: dict[str, Any] = {"type": "archive"}
-        while len(items) < max_items:
+        while max_items == 0 or len(items) < max_items:
             data = await self._get_json(
                 "/x/web-interface/history/cursor",
                 params=cursor_params,
@@ -659,7 +659,7 @@ class BilibiliAPIClient:
                 "max": next_max,
                 "view_at": next_view_at,
             }
-        return items[:max_items]
+        return items if max_items == 0 else items[:max_items]
 
     async def get_favorites(
         self,

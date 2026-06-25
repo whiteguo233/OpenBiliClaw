@@ -44,6 +44,10 @@ const entrypoints = [
     outfile: resolve(root, `${outDir}/content/youtube.js`),
   },
   {
+    entry: resolve(root, "src/content/zhihu.ts"),
+    outfile: resolve(root, `${outDir}/content/zhihu.js`),
+  },
+  {
     entry: resolve(root, "src/content/x.ts"),
     outfile: resolve(root, `${outDir}/content/x.js`),
   },

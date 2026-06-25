@@ -18,11 +18,12 @@ import os
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -31,10 +32,12 @@ import openbiliclaw
 logger = logging.getLogger(__name__)
 
 _GITHUB_TAGS = "https://api.github.com/repos/whiteguo233/OpenBiliClaw/tags"
+_GITHUB_TAGS_ATOM = "https://github.com/whiteguo233/OpenBiliClaw/tags.atom"
 _BACKEND_TAG_PREFIX = "backend-v"
 _DESKTOP_TAG_PREFIX = "desktop-v"
 _MAX_TAG_PAGES = 5
 _TAGS_PER_PAGE = 100
+_ATOM_NS = "{http://www.w3.org/2005/Atom}"
 _VERSION_RE = re.compile(
     r"^(?P<version>\d+(?:\.\d+)*)(?P<prerelease>-[0-9A-Za-z][0-9A-Za-z.-]*)?"
     r"(?:\+[0-9A-Za-z.-]+)?$"
@@ -200,6 +203,88 @@ def _is_tls_verification_error(exc: Exception) -> bool:
         return False
     text = repr(exc).lower()
     return "certificate" in text or "cert_verify" in text or "tls" in text or "ssl" in text
+
+
+def _is_github_rate_limited_response(resp: httpx.Response) -> bool:
+    remaining = str(resp.headers.get("x-ratelimit-remaining", "")).strip()
+    if remaining == "0":
+        return True
+    if resp.status_code == 429:
+        return True
+    if resp.status_code != 403:
+        return False
+    try:
+        payload = resp.json()
+    except Exception:
+        return False
+    if not isinstance(payload, Mapping):
+        return False
+    message = _string_from_mapping_field(payload, "message").lower()
+    return "rate limit" in message
+
+
+def _tag_from_release_url(url: str) -> str:
+    path = urlparse(url).path
+    marker = "/releases/tag/"
+    if marker not in path:
+        return ""
+    return unquote(path.rsplit(marker, maxsplit=1)[1]).strip()
+
+
+def _tag_names_from_atom(text: str) -> list[str]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    tags: list[str] = []
+    for entry in root.findall(f"{_ATOM_NS}entry"):
+        for link in entry.findall(f"{_ATOM_NS}link"):
+            tag = _tag_from_release_url(link.attrib.get("href", ""))
+            if tag:
+                tags.append(tag)
+                break
+    return tags
+
+
+def _select_latest_candidate_from_tag_names(
+    tag_names: Sequence[str],
+    *,
+    allow_prerelease: bool,
+    channel: str,
+) -> _BackendTagSelection:
+    parse = _parse_desktop_candidate if channel == "desktop" else _parse_backend_candidate
+    canonical: list[_BackendTagCandidate] = []
+    legacy: list[_BackendTagCandidate] = []
+    ignored_prereleases: list[_BackendTagCandidate] = []
+    for tag in tag_names:
+        candidate = parse(tag, include_prerelease=True)
+        if candidate is None:
+            continue
+        if candidate.prerelease and not allow_prerelease:
+            ignored_prereleases.append(candidate)
+            continue
+        if candidate.canonical:
+            canonical.append(candidate)
+        else:
+            legacy.append(candidate)
+
+    candidates = canonical or legacy
+    ignored = max(
+        ignored_prereleases,
+        key=lambda item: item.version,
+        default=None,
+    )
+    if candidates:
+        latest = max(candidates, key=lambda item: item.version)
+        return _BackendTagSelection(
+            tag=latest.tag,
+            version=latest.version,
+            version_text=latest.version_text,
+            ignored_prerelease_version=ignored.version if ignored else None,
+        )
+    return _BackendTagSelection(
+        ignored_prerelease_version=ignored.version if ignored else None,
+    )
 
 
 def _decode_process_output(data: bytes | str | None) -> str:
@@ -554,11 +639,8 @@ class AutoUpdateService:
         channel: str,
         verify_tls: bool,
     ) -> _BackendTagSelection:
-        parse = _parse_desktop_candidate if channel == "desktop" else _parse_backend_candidate
         async with httpx.AsyncClient(timeout=30, verify=verify_tls) as client:
-            canonical: list[_BackendTagCandidate] = []
-            legacy: list[_BackendTagCandidate] = []
-            ignored_prereleases: list[_BackendTagCandidate] = []
+            tag_names: list[str] = []
             for page in range(1, _MAX_TAG_PAGES + 1):
                 try:
                     resp = await client.get(
@@ -572,8 +654,25 @@ class AutoUpdateService:
                     logger.warning("Auto-update tag check failed: %s", exc)
                     return _BackendTagSelection(error_reason="github_unreachable")
                 if resp.status_code != 200:
-                    logger.warning("Auto-update tag check failed: HTTP %s", resp.status_code)
-                    return _BackendTagSelection(error_reason="github_unreachable")
+                    reason = (
+                        "github_rate_limited"
+                        if _is_github_rate_limited_response(resp)
+                        else "github_unreachable"
+                    )
+                    logger.warning(
+                        "Auto-update tag check failed: HTTP %s (%s)",
+                        resp.status_code,
+                        reason,
+                    )
+                    if reason == "github_rate_limited":
+                        atom_selection = await self._fetch_latest_candidate_from_atom(
+                            client,
+                            channel=channel,
+                        )
+                        if not atom_selection.error_reason:
+                            logger.info("Auto-update tag check recovered via GitHub tags Atom feed")
+                            return atom_selection
+                    return _BackendTagSelection(error_reason=reason)
                 tags = resp.json()
                 if not tags:
                     break
@@ -584,32 +683,39 @@ class AutoUpdateService:
                     if not isinstance(tag_payload, Mapping):
                         continue
                     tag = _string_from_mapping_field(tag_payload, "name")
-                    candidate = parse(tag, include_prerelease=True)
-                    if candidate is None:
-                        continue
-                    if candidate.prerelease and not self.allow_prerelease:
-                        ignored_prereleases.append(candidate)
-                        continue
-                    if candidate.canonical:
-                        canonical.append(candidate)
-                    else:
-                        legacy.append(candidate)
-            candidates = canonical or legacy
-            ignored = max(
-                ignored_prereleases,
-                key=lambda item: item.version,
-                default=None,
+                    if tag:
+                        tag_names.append(tag)
+        return _select_latest_candidate_from_tag_names(
+            tag_names,
+            allow_prerelease=self.allow_prerelease,
+            channel=channel,
+        )
+
+    async def _fetch_latest_candidate_from_atom(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        channel: str,
+    ) -> _BackendTagSelection:
+        try:
+            resp = await client.get(
+                _GITHUB_TAGS_ATOM,
+                headers={"Accept": "application/atom+xml"},
             )
-            if candidates:
-                latest = max(candidates, key=lambda item: item.version)
-                return _BackendTagSelection(
-                    tag=latest.tag,
-                    version=latest.version,
-                    version_text=latest.version_text,
-                    ignored_prerelease_version=ignored.version if ignored else None,
-                )
-        return _BackendTagSelection(
-            ignored_prerelease_version=ignored.version if ignored else None,
+        except Exception as exc:
+            logger.warning("Auto-update Atom tag fallback failed: %s", exc)
+            return _BackendTagSelection(error_reason="github_unreachable")
+        if resp.status_code != 200:
+            logger.warning("Auto-update Atom tag fallback failed: HTTP %s", resp.status_code)
+            return _BackendTagSelection(error_reason="github_unreachable")
+        tag_names = _tag_names_from_atom(resp.text)
+        if not tag_names:
+            logger.warning("Auto-update Atom tag fallback failed: unexpected tags payload")
+            return _BackendTagSelection(error_reason="github_unreachable")
+        return _select_latest_candidate_from_tag_names(
+            tag_names,
+            allow_prerelease=self.allow_prerelease,
+            channel=channel,
         )
 
     async def _fetch_latest_version(self) -> str:

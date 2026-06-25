@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.135"
-description = "Your AI friend on Bilibili — understands who you are and finds content you'll love."
+version = "0.3.143"
+description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
     { name = "OpenBiliClaw Contributors" },
 ]
-keywords = ["bilibili", "ai", "agent", "recommendation", "llm"]
+keywords = ["bilibili", "zhihu", "ai", "agent", "recommendation", "content-discovery", "cross-platform", "llm"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: End Users/Desktop",
@@ -32,6 +32,9 @@ dependencies = [
     "openai>=1.0",
     "anthropic>=0.40",
     "google-genai>=1.66",
+    # X (Twitter) discovery uses the import package ``twitter_cli``. Keep it in
+    # the default install so enabling [sources.twitter] never fails at runtime.
+    "twitter-cli>=0.8.5",
     "fastapi>=0.115",
     "rich>=13",
     "typer>=0.12",
@@ -47,14 +50,14 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.8",
     "mypy>=1.13",
+    "websockets>=13",
 ]
 local-llm = [
     "ollama>=0.4",
 ]
 x = [
-    # X (Twitter) discovery via server-side cookie replay. Lazily imported on the
-    # [sources.twitter].enabled path only (openbiliclaw.sources.x_client); plain
-    # `pip install openbiliclaw` stays X-free. Apache-2.0, ships its own curl_cffi.
+    # Backwards-compatible alias for users/scripts that already install
+    # ``openbiliclaw[x]``. The dependency is also part of the default runtime set.
     "twitter-cli>=0.8.5",
 ]
 eval = [

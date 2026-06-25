@@ -1,8 +1,7 @@
-"""Packaging-metadata tests for optional dependency extras.
+"""Packaging-metadata tests for dependency metadata.
 
-Guards that the ``openbiliclaw[x]`` extra is declared and pins
-``twitter-cli``. Without this extra, :mod:`openbiliclaw.sources.x_client`
-would have nothing to lazily import on the X-enabled path.
+Guards that the default package install includes the X discovery dependency.
+The ``openbiliclaw[x]`` extra remains as a backwards-compatible alias.
 """
 
 from __future__ import annotations
@@ -13,9 +12,25 @@ from pathlib import Path
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 
+def _project_data() -> dict[str, object]:
+    return tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
+
+
+def _runtime_dependencies() -> list[str]:
+    return list(_project_data()["dependencies"])  # type: ignore[index]
+
+
 def _optional_dependencies() -> dict[str, list[str]]:
-    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    return data["project"]["optional-dependencies"]
+    return _project_data()["optional-dependencies"]  # type: ignore[index]
+
+
+def test_default_dependencies_include_twitter_cli() -> None:
+    requirements = _runtime_dependencies()
+    twitter_reqs = [r for r in requirements if r.replace("_", "-").startswith("twitter-cli")]
+    assert twitter_reqs, f"default install must require twitter-cli, got {requirements!r}"
+    assert any(">=" in r for r in twitter_reqs), (
+        f"twitter-cli requirement must pin a minimum version, got {twitter_reqs!r}"
+    )
 
 
 def test_x_extra_is_declared() -> None:

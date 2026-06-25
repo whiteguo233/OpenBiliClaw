@@ -24,15 +24,15 @@ version_file = (
     else None
 )
 
-# --- Optional X (Twitter) discovery extra (openbiliclaw[x]) ---
-# packaging/build.py installs the `x` extra and sets OPENBILICLAW_BUNDLE_X=1 when
+# --- X (Twitter) discovery dependency collection ---
+# packaging/build.py ensures twitter-cli is installed and sets OPENBILICLAW_BUNDLE_X=1 when
 # the desktop bundle should ship X discovery (the default; spec §8 = always
 # bundle). Because XClient lazy-imports `twitter_cli` / `curl_cffi` only on the
 # enabled path, PyInstaller's static analysis never sees them — so we explicitly
 # collect_all() both packages here. collect_all() pulls submodules + data + the
 # per-OS·arch native binaries (curl_cffi's compiled `_wrapper` extension and any
 # bundled libcurl), which is exactly what's missing from a plain analysis. When
-# the flag is off (or the extra failed to install) we collect nothing and the
+# the flag is off (or the dependency failed to install) we collect nothing and the
 # bundle is X-free, identical to before.
 _x_datas = []
 _x_binaries = []
@@ -41,14 +41,14 @@ if os.environ.get("OPENBILICLAW_BUNDLE_X", "") == "1":
     for _x_pkg in ("twitter_cli", "curl_cffi"):
         try:
             _d, _b, _h = collect_all(_x_pkg)
-        except Exception as exc:  # noqa: BLE001 — never let an optional extra break the build
-            print(f"[spec] X extra: could not collect {_x_pkg}: {exc}")
+        except Exception as exc:  # noqa: BLE001 — never let X collection break the build
+            print(f"[spec] X dependency: could not collect {_x_pkg}: {exc}")
             continue
         _x_datas += _d
         _x_binaries += _b
         _x_hiddenimports += _h
     print(
-        f"[spec] X extra bundled: +{len(_x_binaries)} binaries, "
+        f"[spec] X dependency bundled: +{len(_x_binaries)} binaries, "
         f"+{len(_x_datas)} datas, +{len(_x_hiddenimports)} hiddenimports"
     )
 

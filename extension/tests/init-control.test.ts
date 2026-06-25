@@ -222,7 +222,7 @@ test("init source options: bilibili is default-checked but deselectable, others 
   assert.ok(bili && bili.defaultChecked === true);
   assert.ok(!("required" in bili), "bilibili must no longer be marked required");
   const optional = INIT_SOURCE_OPTIONS.filter((o) => !o.defaultChecked).map((o) => o.key);
-  assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube", "twitter"]);
+  assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube", "twitter", "zhihu"]);
   // The login reminder copy mentions logging in on this browser.
   assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
 });
@@ -234,10 +234,18 @@ test("init source options: X (twitter) is present, opt-in, labelled X", () => {
   assert.equal(x?.label, "X");
 });
 
+test("init source options: Zhihu is present, opt-in, labelled 知乎", () => {
+  const zhihu = INIT_SOURCE_OPTIONS.find((o) => o.key === "zhihu");
+  assert.ok(zhihu, "zhihu option must exist");
+  assert.ok(!zhihu?.defaultChecked);
+  assert.equal(zhihu?.label, "知乎");
+});
+
 test("initSourceLabels maps known keys and passes unknowns through", () => {
-  assert.deepEqual(initSourceLabels(["bilibili", "xiaohongshu", "weibo"]), [
+  assert.deepEqual(initSourceLabels(["bilibili", "xiaohongshu", "zhihu", "weibo"]), [
     "B 站",
     "小红书",
+    "知乎",
     "weibo",
   ]);
   assert.deepEqual(initSourceLabels(undefined as unknown as string[]), []);

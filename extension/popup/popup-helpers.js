@@ -35,6 +35,8 @@ function normalizeSourcePlatform(value, url = "") {
     youtube: "youtube",
     x: "twitter",
     twitter: "twitter",
+    zh: "zhihu",
+    zhihu: "zhihu",
   };
   if (aliases[key]) return aliases[key];
   if (key) return key;
@@ -44,6 +46,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (lowerUrl.includes("douyin.com")) return "douyin";
   if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
   if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+  if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
   return "";
 }
 
@@ -154,6 +157,7 @@ export function buildContentUrl(item) {
   const vid = normalizeText(item?.content_id || item?.bvid);
   if (!vid) return "";
   if (platform === "youtube") return buildYouTubeUrl(vid);
+  if (platform === "zhihu") return "";
   return buildVideoUrl(vid);
 }
 
@@ -233,7 +237,7 @@ export function normalizeRecommendation(item) {
   };
 }
 
-const TEXT_CARD_CONTENT_TYPES = new Set(["tweet", "thread"]);
+const TEXT_CARD_CONTENT_TYPES = new Set(["tweet", "thread", "answer", "article", "question"]);
 
 /**
  * Decide how a recommendation card should render its media slot.

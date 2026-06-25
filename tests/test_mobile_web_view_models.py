@@ -216,6 +216,64 @@ class TestMobileWebViewModels:
         """)
         )
 
+    def test_zhihu_recommendation_source_platform_url_and_text_card_are_source_aware(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              buildContentUrl,
+              buildRecommendationClickPayload,
+              getRecommendationCardKind,
+              getSourceLabel,
+              normalizeRecommendation,
+              normalizeSourcePlatform,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const answer = normalizeRecommendation({
+              id: 43,
+              content_id: "answer:123",
+              content_url: "https://www.zhihu.com/question/1/answer/123",
+              title: "一个知乎回答",
+              source_platform: "",
+              content_type: "answer",
+              body_text: "知乎回答正文",
+              cover_url: "https://static.zhihu.com/cover.jpg",
+            });
+            const answerUrl = buildContentUrl(answer);
+            const answerCard = getRecommendationCardKind(answer);
+
+            assert.equal(answer.source_platform, "zhihu");
+            assert.equal(getSourceLabel(answer.source_platform), "知乎");
+            assert.equal(answerUrl, "https://www.zhihu.com/question/1/answer/123");
+            assert.equal(answerCard.kind, "text");
+            assert.equal(answerCard.coverUrl, "");
+            assert.equal(answerCard.text, "知乎回答正文");
+            assert.deepEqual(buildRecommendationClickPayload(answer, answerUrl), {
+              bvid: "answer:123",
+              content_id: "answer:123",
+              content_url: "https://www.zhihu.com/question/1/answer/123",
+              source_platform: "zhihu",
+              title: "一个知乎回答",
+              recommendation_id: 43,
+              topic_label: "",
+              up_name: "这位 UP 还没认出来",
+            });
+
+            const missingUrl = normalizeRecommendation({
+              content_id: "answer:456",
+              title: "缺 URL 的知乎回答",
+              source_platform: "zh",
+              content_type: "answer",
+            });
+            assert.equal(missingUrl.source_platform, "zhihu");
+            assert.equal(buildContentUrl(missingUrl), "");
+            assert.equal(
+              normalizeSourcePlatform({ content_url: "https://zhuanlan.zhihu.com/p/123" }),
+              "zhihu",
+            );
+          """)
+        )
+
     def test_mobile_cover_templates_use_wrapper_fallbacks(self) -> None:
         recommend_js = Path("src/openbiliclaw/web/js/views/recommend.js").read_text()
         chat_js = Path("src/openbiliclaw/web/js/views/chat.js").read_text()

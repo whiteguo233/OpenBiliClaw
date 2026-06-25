@@ -163,7 +163,7 @@ async def test_navigate_retries_once_on_err_aborted(
     responses = [
         _FakeProcess(
             returncode=1,
-            stderr='page.goto: net::ERR_ABORTED at https://www.bilibili.com/',
+            stderr="page.goto: net::ERR_ABORTED at https://www.bilibili.com/",
         ),
         _FakeProcess(stdout='{"success": true}'),
     ]

@@ -65,6 +65,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "douyin": 1,
     "youtube": 1,
     "twitter": 1,
+    "zhihu": 1,
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -232,6 +233,9 @@ class SchedulerConfig:
     # and no-merge pair memory make steady-state runs nearly free.
     profile_consolidation_enabled: bool = True
     profile_consolidation_interval_hours: int = 12
+    profile_consolidation_like_target_upper: int = 512
+    profile_consolidation_like_target_soft: int = 450
+    profile_consolidation_archive_enabled: bool = True
     speculation_interval_minutes: int = 10
     speculation_ttl_days: int = 3
     speculation_cooldown_days: int = 7
@@ -397,6 +401,26 @@ class TwitterSourceConfig:
 
 
 @dataclass
+class ZhihuSourceConfig:
+    """Zhihu plugin-backed discovery configuration.
+
+    Zhihu discovery runs in the browser extension so it can reuse the user's
+    logged-in browser session. The backend only enqueues search tasks and stores
+    returned candidates in the unified discovery pool.
+    """
+
+    enabled: bool = False
+    source_modes: tuple[str, ...] = ("search", "hot", "feed", "creator", "related")
+    daily_search_budget: int = 0
+    daily_hot_budget: int = 0
+    daily_feed_budget: int = 0
+    daily_creator_budget: int = 0
+    daily_related_budget: int = 0
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
+@dataclass
 class BilibiliSourceConfig:
     """Bilibili discovery source switch."""
 
@@ -425,6 +449,7 @@ class SourcesConfig:
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
+    zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
 
 
 @dataclass
@@ -732,6 +757,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
     twitter_raw = sources_raw.get("twitter", {})
+    zhihu_raw = sources_raw.get("zhihu", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -770,6 +796,24 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_creator_budget=int(twitter_raw.get("daily_creator_budget", 0)),
             request_interval_seconds=int(twitter_raw.get("request_interval_seconds", 3)),
             min_interval_minutes=max(0, int(twitter_raw.get("min_interval_minutes", 60))),
+        ),
+        zhihu=ZhihuSourceConfig(
+            enabled=bool(zhihu_raw.get("enabled", False)),
+            source_modes=tuple(
+                mode
+                for mode in _coerce_str_list(
+                    zhihu_raw.get("source_modes", ["search", "hot", "feed", "creator", "related"])
+                )
+                if mode in {"search", "hot", "feed", "creator", "related"}
+            )
+            or ("search",),
+            daily_search_budget=int(zhihu_raw.get("daily_search_budget", 0)),
+            daily_hot_budget=int(zhihu_raw.get("daily_hot_budget", 0)),
+            daily_feed_budget=int(zhihu_raw.get("daily_feed_budget", 0)),
+            daily_creator_budget=int(zhihu_raw.get("daily_creator_budget", 0)),
+            daily_related_budget=int(zhihu_raw.get("daily_related_budget", 0)),
+            request_interval_seconds=int(zhihu_raw.get("request_interval_seconds", 3)),
+            min_interval_minutes=max(0, int(zhihu_raw.get("min_interval_minutes", 60))),
         ),
     )
 
@@ -853,6 +897,20 @@ def _build_config(raw: dict[str, Any]) -> Config:
                     sched_raw.get("profile_consolidation_interval_hours"),
                     default=12,
                     min_value=1,
+                ),
+                "profile_consolidation_like_target_upper": _normalize_scheduler_int(
+                    sched_raw.get("profile_consolidation_like_target_upper"),
+                    default=512,
+                    min_value=1,
+                ),
+                "profile_consolidation_like_target_soft": _normalize_scheduler_int(
+                    sched_raw.get("profile_consolidation_like_target_soft"),
+                    default=450,
+                    min_value=1,
+                ),
+                "profile_consolidation_archive_enabled": _coerce_bool(
+                    sched_raw.get("profile_consolidation_archive_enabled"),
+                    default=True,
                 ),
                 "avoidance_speculation_interval_minutes": _normalize_scheduler_int(
                     sched_raw.get("avoidance_speculation_interval_minutes"),
@@ -1273,7 +1331,7 @@ def _normalize_pool_source_shares(value: object) -> dict[str, int]:
     if not isinstance(value, dict):
         return dict(_DEFAULT_POOL_SOURCE_SHARES)
 
-    shares: dict[str, int] = {}
+    shares: dict[str, int] = dict(_DEFAULT_POOL_SOURCE_SHARES)
     for key, raw_share in value.items():
         source = str(key).strip().lower()
         if not source:
@@ -1894,6 +1952,17 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.twitter.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.twitter.min_interval_minutes}",
             "",
+            "[sources.zhihu]",
+            f"enabled = {_toml_bool(config.sources.zhihu.enabled)}",
+            f"source_modes = {_toml_str_list(list(config.sources.zhihu.source_modes))}",
+            f"daily_search_budget = {config.sources.zhihu.daily_search_budget}",
+            f"daily_hot_budget = {config.sources.zhihu.daily_hot_budget}",
+            f"daily_feed_budget = {config.sources.zhihu.daily_feed_budget}",
+            f"daily_creator_budget = {config.sources.zhihu.daily_creator_budget}",
+            f"daily_related_budget = {config.sources.zhihu.daily_related_budget}",
+            f"request_interval_seconds = {config.sources.zhihu.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.zhihu.min_interval_minutes}",
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             "pause_on_extension_disconnect = "
@@ -1940,11 +2009,12 @@ def _render_config_toml(
             f"{_toml_str_list(config.scheduler.auto_update_allowed_remotes)}",
             "",
             "[scheduler.pool_source_shares]",
-            f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 8))}",
+            f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 5))}",
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
+            f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             "",
             "[discovery]",
             "unified_keyword_planner_enabled = "

@@ -36,7 +36,7 @@ from .dialogue_insight_analyzer import (
 from .insight_analyzer import InsightAnalyzer
 from .overrides import ProfileOverrides, apply_edit, apply_overrides
 from .pipeline import ProfileUpdatePipeline
-from .preference_analyzer import PreferenceAnalyzer
+from .preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE, PreferenceAnalyzer
 from .profile import (
     AwarenessNote,
     InsightHypothesis,
@@ -77,6 +77,26 @@ _MANUAL_EDIT_LABELS = {
     "surface.style.humor_preference": "幽默偏好",
     "surface.style.depth_preference": "深度偏好",
 }
+
+_FEEDBACK_ANALYSIS_METADATA_KEYS = frozenset(
+    {
+        "recommendation_id",
+        "bvid",
+        "aid",
+        "content_id",
+        "content_url",
+        "source_platform",
+        "feedback_type",
+        "feedback_note",
+        "reaction",
+        "up_name",
+        "author",
+        "topic_label",
+        "watch_seconds",
+        "video_duration_seconds",
+        "signal_strength",
+    }
+)
 
 
 class SoulProfileNotInitializedError(Exception):
@@ -124,12 +144,16 @@ class SoulEngine:
         speculator_idle_interval_minutes: int = 30,
         profile_consolidation_enabled: bool = True,
         profile_consolidation_interval_hours: int = 12,
+        profile_consolidation_like_target_upper: int = 512,
+        profile_consolidation_like_target_soft: int = 450,
+        profile_consolidation_archive_enabled: bool = True,
         feedback_batch_threshold: int = 3,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._satisfaction_filter_enabled = satisfaction_filter_enabled
         self._feedback_batch_threshold = max(1, feedback_batch_threshold)
+        self._feedback_batch_lock = asyncio.Lock()
         self._module_overrides = dict(module_overrides or {})
         self._llm_concurrency = llm_concurrency
         # Pass usage_recorder through so internal LLM calls
@@ -195,6 +219,9 @@ class SoulEngine:
                 embedding_service=embedding_service,
                 data_dir=data_dir,
                 min_interval_seconds=profile_consolidation_interval_hours * 3600,
+                like_target_upper=profile_consolidation_like_target_upper,
+                like_target_soft=profile_consolidation_like_target_soft,
+                archive_enabled=profile_consolidation_archive_enabled,
             )
         self._pipeline = ProfileUpdatePipeline(
             memory=memory,
@@ -848,14 +875,29 @@ class SoulEngine:
 
     async def process_feedback_batch_if_needed(self) -> dict[str, object]:
         """Reanalyze preference/profile after enough new feedback has accumulated."""
+        if self._feedback_batch_lock.locked():
+            return {
+                "triggered": False,
+                "feedback_count": 0,
+                "preference_updated": False,
+                "profile_rebuilt": False,
+                "skipped": True,
+                "reason": "feedback_batch_in_progress",
+            }
+        async with self._feedback_batch_lock:
+            return await self._process_feedback_batch_if_needed_locked()
+
+    async def _process_feedback_batch_if_needed_locked(self) -> dict[str, object]:
+        """Feedback batch implementation guarded by ``_feedback_batch_lock``."""
         state = self._memory.load_feedback_state()
         last_processed_id = self._to_int(state.get("last_processed_feedback_event_id", 0))
         feedback_events = [
             self._deserialize_event(event)
-            for event in self._memory.query_events(event_types=["feedback"], limit=500)
-            if int(event.get("id", 0) or 0) > last_processed_id
+            for event in self._memory.query_events_since(
+                after_event_id=last_processed_id,
+                event_types=["feedback"],
+            )
         ]
-        feedback_events.sort(key=lambda item: int(item.get("id", 0) or 0))
         feedback_count = len(feedback_events)
         if feedback_count < self._feedback_batch_threshold:
             return {
@@ -869,9 +911,9 @@ class SoulEngine:
         existing_preference = dict(preference_layer.data)
         existing_profile = dict(self._memory.get_layer("soul").data)
         updated_preference = await self._preference_analyzer.analyze_events(
-            events=feedback_events,
+            events=[self._compact_feedback_event_for_analysis(event) for event in feedback_events],
             existing_preference=existing_preference,
-            event_chunk_size=200,
+            event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
         )
         old_disliked = {
             str(item).strip()
@@ -941,6 +983,37 @@ class SoulEngine:
             "preference_updated": True,
             "profile_rebuilt": profile_rebuilt,
         }
+
+    def _compact_feedback_event_for_analysis(
+        self,
+        event: dict[str, object],
+    ) -> dict[str, object]:
+        """Keep only preference-relevant feedback fields before LLM analysis."""
+        compact: dict[str, object] = {}
+        for key in (
+            "id",
+            "event_type",
+            "url",
+            "title",
+            "context",
+            "inferred_satisfaction",
+            "satisfaction_reason",
+            "created_at",
+        ):
+            value = event.get(key)
+            if value not in (None, ""):
+                compact[key] = value
+
+        metadata = event.get("metadata")
+        if isinstance(metadata, dict):
+            compact_metadata = {
+                key: value
+                for key, value in metadata.items()
+                if key in _FEEDBACK_ANALYSIS_METADATA_KEYS and value not in (None, "")
+            }
+            if compact_metadata:
+                compact["metadata"] = compact_metadata
+        return compact
 
     def record_immediate_feedback_cognition(
         self,

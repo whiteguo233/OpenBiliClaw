@@ -105,6 +105,8 @@ test("settings page exposes advanced config fields from backend schema", () => {
     popupJs,
     /refresh_check_interval_seconds: getInt\("cfgRefreshCheckInterval", 60\)/,
   );
+  assert.match(popupJs, /function formatBackendUpdateError/);
+  assert.match(popupJs, /github_rate_limited:\s*"GitHub API 限流，请稍后再试"/);
 });
 
 test("settings source tab separates every platform into its own block", () => {
@@ -181,10 +183,14 @@ test("settings page exposes backend-only update controls and plugin release fall
   assert.match(popupHtml, /id="cfgAutoUpdate"/);
   assert.match(popupHtml, /自动更新后端/);
   assert.match(popupHtml, /此开关不会更新浏览器插件/);
+  assert.match(popupHtml, /id="backendUpdateDownload"/);
   assert.match(popupHtml, /href="https:\/\/github\.com\/whiteguo233\/OpenBiliClaw\/releases"/);
   assert.match(popupJs, /fetchUpdateStatus/);
   assert.match(popupJs, /checkBackendUpdate/);
   assert.match(popupJs, /applyBackendUpdate/);
+  assert.match(popupJs, /install_mode/);
+  assert.match(popupJs, /backendUpdateDownload/);
+  assert.match(popupJs, /releases\/tag/);
   assert.doesNotMatch(popupJs, /extension_auto_apply|extension_update_available/);
 });
 
@@ -229,6 +235,25 @@ test("settings page round-trips YouTube source budgets", () => {
   ]) {
     assert.match(popupHtml, new RegExp(`id="${id}"`));
   }
+});
+
+test("settings page round-trips Zhihu discovery source modes", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  for (const id of [
+    "cfgZhihuModeSearch",
+    "cfgZhihuModeHot",
+    "cfgZhihuModeFeed",
+    "cfgZhihuModeCreator",
+    "cfgZhihuModeRelated",
+  ]) {
+    assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
+    assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
+  }
+
+  assert.match(popupJs, /setZhihuSourceModes\(cfg\.sources\?\.zhihu\?\.source_modes\)/);
+  assert.match(popupJs, /source_modes: collectZhihuSourceModes\(\)/);
 });
 
 test("settings page round-trips multimodal discovery evaluation controls", () => {

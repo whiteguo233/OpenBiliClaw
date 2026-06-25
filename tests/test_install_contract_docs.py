@@ -14,8 +14,7 @@ def test_shell_installers_recommend_same_default_llm_provider() -> None:
 
     expected_default = "Choose your LLM provider (default: deepseek):"
     expected_supported = (
-        "Supported: deepseek | openai | gemini | claude | openrouter | ollama | "
-        "openai_compatible"
+        "Supported: deepseek | openai | gemini | claude | openrouter | ollama | openai_compatible"
     )
 
     assert expected_default in install_sh

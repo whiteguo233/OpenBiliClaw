@@ -50,6 +50,7 @@ PLATFORM_XIAOHONGSHU = "xiaohongshu"
 PLATFORM_DOUYIN = "douyin"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TWITTER = "twitter"
+PLATFORM_ZHIHU = "zhihu"
 
 
 @dataclass(frozen=True)

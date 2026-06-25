@@ -35,9 +35,18 @@ def test_parse_backend_version_filters_non_backend_tags(
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload: object) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        payload: object,
+        *,
+        headers: Mapping[str, str] | None = None,
+        text: str = "",
+    ) -> None:
         self.status_code = status_code
         self._payload = payload
+        self.headers = dict(headers or {})
+        self.text = text
 
     def json(self) -> object:
         return self._payload
@@ -47,6 +56,8 @@ class _FakeAsyncClient:
     calls: list[tuple[str, dict[str, object] | None]] = []
     init_kwargs: list[dict[str, object]] = []
     pages: dict[int, object] = {}
+    responses: dict[int, _FakeResponse] = {}
+    responses_by_url: dict[str, _FakeResponse] = {}
     error: Exception | None = None
     error_by_verify: dict[bool, Exception] = {}
 
@@ -72,7 +83,11 @@ class _FakeAsyncClient:
             raise self.error_by_verify[self.verify]
         if self.error is not None:
             raise self.error
+        if url in self.responses_by_url:
+            return self.responses_by_url[url]
         page = int(params.get("page", 1)) if params else 1
+        if page in self.responses:
+            return self.responses[page]
         return _FakeResponse(200, self.pages.get(page, []))
 
 
@@ -81,6 +96,8 @@ def _reset_fake_client(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeAsyncClient.calls = []
     _FakeAsyncClient.init_kwargs = []
     _FakeAsyncClient.pages = {}
+    _FakeAsyncClient.responses = {}
+    _FakeAsyncClient.responses_by_url = {}
     _FakeAsyncClient.error = None
     _FakeAsyncClient.error_by_verify = {}
     monkeypatch.setattr(updater.httpx, "AsyncClient", _FakeAsyncClient)
@@ -222,6 +239,72 @@ async def test_manual_check_reports_update_available_when_auto_apply_disabled(
     assert backend["latest_version"] == "0.3.92"
     assert backend["latest_tag"] == "backend-v0.3.92"
     assert backend["reason"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_manual_check_reports_github_rate_limited_when_tags_api_quota_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeAsyncClient.responses = {
+        1: _FakeResponse(
+            403,
+            {"message": "API rate limit exceeded for 203.0.113.10."},
+            headers={
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1782291614",
+            },
+        )
+    }
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.138")
+    service = updater.AutoUpdateService(enabled=False)
+
+    backend = await service.check_now()
+
+    assert backend["state"] == "error"
+    assert backend["reason"] == "github_rate_limited"
+    assert backend["last_error"] == "github_rate_limited"
+    assert backend["current_version"] == "0.3.138"
+
+
+@pytest.mark.asyncio
+async def test_manual_check_uses_atom_fallback_when_tags_api_quota_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeAsyncClient.responses = {
+        1: _FakeResponse(
+            403,
+            {"message": "API rate limit exceeded for 203.0.113.10."},
+            headers={"x-ratelimit-remaining": "0"},
+        )
+    }
+    _FakeAsyncClient.responses_by_url = {
+        updater._GITHUB_TAGS_ATOM: _FakeResponse(
+            200,
+            None,
+            text="""
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <entry>
+                <link rel="alternate" href="https://github.com/whiteguo233/OpenBiliClaw/releases/tag/extension-v0.3.91"/>
+                <title>extension-v0.3.91</title>
+              </entry>
+              <entry>
+                <link rel="alternate" href="https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.139"/>
+                <title>backend-v0.3.139</title>
+              </entry>
+            </feed>
+            """,
+        )
+    }
+    monkeypatch.setattr(openbiliclaw, "__version__", "0.3.138")
+    service = updater.AutoUpdateService(enabled=False)
+
+    backend = await service.check_now()
+
+    assert backend["state"] == "update_available"
+    assert backend["reason"] == "none"
+    assert backend["last_error"] == ""
+    assert backend["latest_version"] == "0.3.139"
+    assert backend["latest_tag"] == "backend-v0.3.139"
 
 
 @pytest.mark.asyncio

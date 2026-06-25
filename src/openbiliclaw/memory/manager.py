@@ -10,6 +10,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.sources.event_format import default_signal_strength_for_event
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
@@ -831,6 +832,15 @@ class MemoryManager:
         if event_type not in _EVENT_TYPES:
             raise ValueError(f"Unsupported event type: {event_type or 'unknown'}")
 
+        metadata_raw = event.get("metadata", {})
+        metadata: Any = metadata_raw
+        if isinstance(metadata_raw, dict):
+            metadata = dict(metadata_raw)
+            if "signal_strength" not in metadata:
+                signal_strength = default_signal_strength_for_event(event_type, metadata)
+                if signal_strength is not None:
+                    metadata["signal_strength"] = signal_strength
+
         self._database.insert_event(
             event_type,
             url=event.get("url", ""),
@@ -841,7 +851,7 @@ class MemoryManager:
             # smart encoder stores raw text instead of double-quoting
             # the empty dict literal.
             context=event.get("context", ""),
-            metadata=event.get("metadata", {}),
+            metadata=metadata,
         )
         # TODO: Check if preference layer needs updating
         # TODO: Check if this triggers awareness observations
@@ -868,6 +878,18 @@ class MemoryManager:
             limit=limit,
             satisfaction_modes=satisfaction_modes,
             after_event_id=after_event_id,
+        )
+
+    def query_events_since(
+        self,
+        *,
+        after_event_id: int,
+        event_types: list[str],
+    ) -> list[dict[str, Any]]:
+        """Query events newer than a cursor in ascending id order."""
+        return self._database.query_events_since(
+            after_event_id=after_event_id,
+            event_types=event_types,
         )
 
     def get_event_stats(

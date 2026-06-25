@@ -6,13 +6,14 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
+SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
 DEFAULT_SOURCE_ENABLED = {
     "bilibili": True,
     "xiaohongshu": False,
     "douyin": False,
     "youtube": False,
     "twitter": False,
+    "zhihu": False,
 }
 DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 5,
@@ -20,6 +21,7 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "douyin": 1,
     "youtube": 1,
     "twitter": 1,
+    "zhihu": 1,
 }
 
 
@@ -105,7 +107,7 @@ def _normalize_shares(value: Mapping[str, int] | Any) -> dict[str, int]:
     if not isinstance(value, Mapping):
         return dict(DEFAULT_POOL_SOURCE_SHARES)
 
-    shares: dict[str, int] = {}
+    shares: dict[str, int] = dict(DEFAULT_POOL_SOURCE_SHARES)
     for raw_source, raw_share in value.items():
         source = str(raw_source).strip().lower()
         if source not in SOURCE_ORDER:

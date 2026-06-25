@@ -77,6 +77,42 @@ test("buildContentUrl and click payload keep YouTube items source-aware", () => 
   });
 });
 
+test("normalizeRecommendation keeps Zhihu items source-aware", () => {
+  const item = normalizeRecommendation({
+    id: 43,
+    content_id: "answer:123",
+    content_url: "https://www.zhihu.com/question/1/answer/123",
+    title: "一个知乎回答",
+    source_platform: "",
+    content_type: "answer",
+    body_text: "回答正文摘要",
+  });
+
+  assert.equal(item.source_platform, "zhihu");
+  assert.equal(buildContentUrl(item), "https://www.zhihu.com/question/1/answer/123");
+  assert.deepEqual(buildRecommendationClickPayload(item, buildContentUrl(item)), {
+    bvid: "answer:123",
+    content_id: "answer:123",
+    content_url: "https://www.zhihu.com/question/1/answer/123",
+    source_platform: "zhihu",
+    title: "一个知乎回答",
+    recommendation_id: 43,
+    topic_label: "",
+    up_name: "这位 UP 还没认出来",
+  });
+});
+
+test("buildContentUrl does not fabricate Bilibili links for Zhihu ids", () => {
+  const item = normalizeRecommendation({
+    content_id: "answer:123",
+    title: "缺 URL 的知乎回答",
+    source_platform: "zhihu",
+    content_type: "answer",
+  });
+
+  assert.equal(buildContentUrl(item), "");
+});
+
 test("probeMessageKey normalizes type and domain", () => {
   assert.equal(normalizeProbeType("avoidance.probe"), "avoidance.probe");
   assert.equal(normalizeProbeType("unknown"), "interest.probe");
@@ -248,6 +284,19 @@ test("getRecommendationCardKind renders a text card for tweet/thread items", () 
   assert.equal(thread.kind, "text");
   // Falls back to title when body_text is empty.
   assert.equal(thread.text, "thread fallback title");
+});
+
+test("getRecommendationCardKind renders a text card for Zhihu text content", () => {
+  const answer = getRecommendationCardKind({
+    content_type: "answer",
+    cover_url: "https://static.zhihu.com/cover.jpg",
+    body_text: "知乎回答正文",
+    title: "回答标题",
+  });
+
+  assert.equal(answer.kind, "text");
+  assert.equal(answer.coverUrl, "");
+  assert.equal(answer.text, "知乎回答正文");
 });
 
 test("getRecommendationCardKind renders a text card when cover_url is empty", () => {

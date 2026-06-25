@@ -243,6 +243,14 @@ function rerenderHeaderOnly() {
   renderInto(slot, renderRecommendationHeader);
 }
 
+function rerenderRuntimeDependentChrome() {
+  rerenderHeaderOnly();
+  const emptyText = document.querySelector(".empty-state .empty-state-text");
+  if (emptyText) {
+    emptyText.textContent = getReadyRecommendationHint(state.runtimeStatus).message;
+  }
+}
+
 async function loadMoreActivity() {
   const feed = normalizeActivityFeed(state.activityFeed);
   if (!feed.next_cursor) return;
@@ -1301,7 +1309,7 @@ function hydrateRecommendSideChannels() {
     .then((status) => {
       if (!status) return;
       patchState({ runtimeStatus: normalizeRuntimeStatus(status) });
-      rerenderHeaderOnly();
+      rerenderRuntimeDependentChrome();
     })
     .catch(() => {});
 
@@ -1346,10 +1354,10 @@ export function onStreamEvent(payload) {
     patchState({
       runtimeStatus: mergeRuntimeStatusEvent(state.runtimeStatus, payload.data || payload),
     });
-    rerenderHeaderOnly();
+    rerenderRuntimeDependentChrome();
   } else if (type === "refresh.started" || type === "refresh.strategy") {
     patchState({ runtimeEvent: payload.data || payload });
-    rerenderHeaderOnly();
+    rerenderRuntimeDependentChrome();
   } else if (type === "activity.added") {
     // Prepend to activity feed
     const item = payload.data || payload;

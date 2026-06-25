@@ -639,7 +639,7 @@ PY
     echo ""
     echo "Optional: enable local Ollama as the embedding fallback"
     echo "  (no extra API key needed; useful when your remote embedding quota runs out)"
-    echo "      Mac:     brew install ollama && ollama serve &"
+    echo "      Mac:     install and launch official Ollama.app: https://ollama.com/download/mac"
     echo "      Windows: install from https://ollama.com/download then start the app"
     echo "      Linux:   curl -fsSL https://ollama.com/install.sh | sh && ollama serve &"
     echo "  Then:"

@@ -39,12 +39,114 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "openbiliclaw_discovery_raw_candidate_mode",
     default=False,
 )
+_EVAL_PROFILE_CORE_CAP = 20
+_EVAL_PROFILE_INTEREST_CAP = 64
+_EVAL_PROFILE_DOMAIN_CAP = 32
+_EVAL_PROFILE_SPECIFICS_PER_DOMAIN_CAP = 12
+_EVAL_PROFILE_RECENT_CAP = 12
+_EVAL_PROFILE_EVIDENCE_CAP = 8
+_EVAL_PROFILE_SPECULATION_CAP = 12
 
 
 def discovery_raw_candidate_mode_enabled() -> bool:
     """Return whether the current coroutine should fetch without LLM evaluation."""
 
     return bool(_RAW_CANDIDATE_MODE.get())
+
+
+def compact_evaluation_profile_summary(profile_summary: dict[str, object]) -> dict[str, object]:
+    """Return a smaller profile summary for high-volume candidate evaluation.
+
+    Discovery evaluation pays the full profile prompt on every batch. Keep the
+    highest-signal interests plus the newest awareness/insight windows, while
+    preserving hard negatives such as ``disliked_topics`` unchanged.
+    """
+
+    compacted = dict(profile_summary)
+    for key in ("core_traits", "cognitive_style", "values", "motivational_drivers", "deep_needs"):
+        compacted[key] = _cap_profile_sequence(
+            profile_summary.get(key),
+            _EVAL_PROFILE_CORE_CAP,
+        )
+    compacted["interests"] = _cap_weighted_profile_dicts(
+        profile_summary.get("interests"),
+        _EVAL_PROFILE_INTEREST_CAP,
+    )
+    compacted["interest_domains"] = _compact_interest_domains(
+        profile_summary.get("interest_domains"),
+    )
+    compacted["recent_awareness"] = _cap_profile_sequence(
+        profile_summary.get("recent_awareness"),
+        _EVAL_PROFILE_RECENT_CAP,
+        newest=True,
+    )
+    compacted["active_insights"] = _compact_active_insights(
+        profile_summary.get("active_insights"),
+    )
+    compacted["speculative_interests"] = _cap_profile_sequence(
+        profile_summary.get("speculative_interests"),
+        _EVAL_PROFILE_SPECULATION_CAP,
+    )
+    return compacted
+
+
+def _cap_profile_sequence(value: object, cap: int, *, newest: bool = False) -> object:
+    if not isinstance(value, list):
+        return value if value is not None else []
+    if len(value) <= cap:
+        return list(value)
+    return list(value[-cap:] if newest else value[:cap])
+
+
+def _profile_weight(value: object) -> float:
+    if not isinstance(value, dict):
+        return 0.0
+    try:
+        return float(value.get("weight", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cap_weighted_profile_dicts(value: object, cap: int) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    return sorted(list(value), key=_profile_weight, reverse=True)[:cap]
+
+
+def _compact_interest_domains(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    domains = _cap_weighted_profile_dicts(value, _EVAL_PROFILE_DOMAIN_CAP)
+    compacted: list[object] = []
+    for domain in domains:
+        if not isinstance(domain, dict):
+            compacted.append(domain)
+            continue
+        item = dict(domain)
+        specifics = item.get("specifics")
+        item["specifics"] = _cap_weighted_profile_dicts(
+            specifics,
+            _EVAL_PROFILE_SPECIFICS_PER_DOMAIN_CAP,
+        )
+        compacted.append(item)
+    return compacted
+
+
+def _compact_active_insights(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    insights = list(value[-_EVAL_PROFILE_RECENT_CAP:])
+    compacted: list[object] = []
+    for insight in insights:
+        if not isinstance(insight, dict):
+            compacted.append(insight)
+            continue
+        item = dict(insight)
+        evidence = item.get("evidence")
+        if isinstance(evidence, list):
+            item["evidence"] = list(evidence[:_EVAL_PROFILE_EVIDENCE_CAP])
+        compacted.append(item)
+    return compacted
 
 
 @dataclass
@@ -1442,7 +1544,7 @@ class ContentDiscoveryEngine:
         from openbiliclaw.discovery.candidate_pool import resolve_content_type
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
-        profile_data = build_profile_summary(profile)
+        profile_data = compact_evaluation_profile_summary(build_profile_summary(profile))
         content_items: list[dict[str, object]] = []
         for c in batch:
             platform = (c.source_platform or ("bilibili" if c.bvid else "")).strip().lower()

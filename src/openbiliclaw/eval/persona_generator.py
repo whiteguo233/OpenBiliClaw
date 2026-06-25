@@ -34,13 +34,15 @@ def _sample_constraints(count: int) -> list[dict[str, str]]:
     for mbti in PERSONA_DIMENSIONS["mbti"]:
         for breadth in PERSONA_DIMENSIONS["interest_breadth"]:
             for depth in PERSONA_DIMENSIONS["depth"]:
-                all_combos.append({
-                    "mbti": mbti,
-                    "interest_breadth": breadth,
-                    "depth": depth,
-                    "age_group": random.choice(PERSONA_DIMENSIONS["age_group"]),
-                    "usage": random.choice(PERSONA_DIMENSIONS["usage"]),
-                })
+                all_combos.append(
+                    {
+                        "mbti": mbti,
+                        "interest_breadth": breadth,
+                        "depth": depth,
+                        "age_group": random.choice(PERSONA_DIMENSIONS["age_group"]),
+                        "usage": random.choice(PERSONA_DIMENSIONS["usage"]),
+                    }
+                )
     random.shuffle(all_combos)
     return all_combos[:count]
 
@@ -143,7 +145,10 @@ class PersonaGenerator:
         # Fallback: direct LLM call
         messages = build_persona_prompt(constraints)
         response: LLMResponse = await self._llm.complete(
-            messages, temperature=0.9, max_tokens=4096, json_mode=True,
+            messages,
+            temperature=0.9,
+            max_tokens=4096,
+            json_mode=True,
         )
         return self._parse_response(response.content, constraints)
 
@@ -160,7 +165,9 @@ class PersonaGenerator:
         return personas
 
     def _parse_response(
-        self, content: str, constraints: dict[str, str],
+        self,
+        content: str,
+        constraints: dict[str, str],
     ) -> OnionProfile:
         """Parse LLM response into OnionProfile."""
         text = content.strip()

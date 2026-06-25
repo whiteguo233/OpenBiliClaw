@@ -122,7 +122,9 @@ from openbiliclaw.api.models import (
     XiaohongshuSourceConfigOut,
     XStatusResponse,
     YoutubeSourceConfigOut,
+    ZhihuSourceConfigOut,
 )
+from openbiliclaw.runtime.feedback_scheduler import FeedbackBatchScheduler
 from openbiliclaw.runtime.image_cache import (
     CoverFetchError,
     cleanup_image_cache,
@@ -172,6 +174,17 @@ _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
 _LAN_IP_TTL_SECONDS = 30.0
 _AUTO_REPLENISH_DEBOUNCE_SECONDS = 30.0
+_FEEDBACK_BATCH_DEBOUNCE_SECONDS = 5.0
+_PROFILE_UPDATE_BACKFILL_LIMIT = 200
+_PROFILE_UPDATE_BACKFILL_EVENT_TYPES = [
+    "view",
+    "search",
+    "favorite",
+    "like",
+    "coin",
+    "comment",
+    "feedback",
+]
 
 # Canonical home is openbiliclaw.sources.x_auth (mirrors douyin_auth);
 # re-exported here because callers historically imported from api.app.
@@ -189,8 +202,8 @@ SOURCE_LABELS = {
     "profile_refresh": "聚合观察",
 }
 
-_SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
-_INIT_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
+_SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
+_INIT_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -466,6 +479,8 @@ def _normalize_source_platform(source: object) -> str:
         return "youtube"
     if source_key in {"douyin", "tiktok"}:
         return "douyin"
+    if source_key in {"zhihu", "知乎"}:
+        return "zhihu"
     if source_key in {"bilibili", "bili", ""}:
         return "bilibili"
     return source_key
@@ -482,6 +497,8 @@ def _infer_source_platform_from_url(url: object) -> str:
         return "xiaohongshu"
     if "douyin.com" in text:
         return "douyin"
+    if "zhihu.com" in text:
+        return "zhihu"
     if "bilibili.com" in text or "b23.tv" in text:
         return "bilibili"
     return ""
@@ -1038,6 +1055,11 @@ def create_app(
     app.state.degraded = bool(getattr(ctx, "degraded", False))
     app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
     app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
+    feedback_batch_scheduler = FeedbackBatchScheduler(
+        getattr(ctx, "soul_engine", None),
+        debounce_seconds=_FEEDBACK_BATCH_DEBOUNCE_SECONDS,
+    )
+    app.state.feedback_batch_scheduler = feedback_batch_scheduler
 
     # ── Password gate (LAN/remote auth) ─────────────────────────────
     app.state.auth_gate = AuthGate(_auth_cfg, getattr(ctx, "database", None))
@@ -1344,46 +1366,160 @@ def create_app(
     # downstream handling. CORS stays inner; 401/403 echo a permissive header.
     app.middleware("http")(make_auth_middleware(_get_auth_gate))
 
-    async def _run_post_feedback_tasks() -> None:
+    def _schedule_post_feedback_tasks() -> None:
         with suppress(Exception):
-            await ctx.soul_engine.process_feedback_batch_if_needed()
+            feedback_batch_scheduler.schedule()
 
-    async def _ingest_profile_update_events(events: list[dict[str, Any]]) -> None:
-        """Feed source task events into the profile-update pipeline when ready.
+    async def _ingest_profile_update_events(events: list[dict[str, Any]]) -> int:
+        """Feed events into the profile-update pipeline when ready.
 
         Init handles first-run analysis explicitly via ``analyze_events`` +
-        ``build_initial_profile``. After a profile exists, extension task
-        results should also affect the incremental update buffers instead of
-        only being persisted to event memory.
+        ``build_initial_profile``. After a profile exists, ordinary browser
+        events and extension task results should also affect the incremental
+        update buffers instead of only being persisted to event memory.
         """
         if not events or ctx.soul_engine is None:
-            return
+            return 0
         is_ready = getattr(ctx.soul_engine, "is_profile_ready", None)
         if callable(is_ready):
             with suppress(Exception):
                 if not bool(is_ready()):
-                    return
+                    return 0
 
         pipeline = getattr(ctx.soul_engine, "pipeline", None)
         if pipeline is None:
-            return
+            return 0
 
         from openbiliclaw.soul.pipeline import signals_from_events
 
         signals = signals_from_events(events)
         if not signals:
-            return
+            return 0
         try:
             ingest_batch = getattr(pipeline, "ingest_batch", None)
             if callable(ingest_batch):
                 await ingest_batch(signals)
-                return
+                return len(signals)
             ingest = getattr(pipeline, "ingest", None)
             if callable(ingest):
                 for signal in signals:
                     await ingest(signal)
+                return len(signals)
         except Exception:
-            logger.exception("Failed to ingest source task events into profile pipeline")
+            logger.exception("Failed to ingest events into profile pipeline")
+        return 0
+
+    def _event_cursor_value(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if not isinstance(value, int | float | str | bytes | bytearray):
+            return 0
+        try:
+            event_id = int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, event_id)
+
+    def _runtime_state_value(state: dict[str, object], key: str) -> int:
+        return _event_cursor_value(state.get(key, 0))
+
+    def _query_profile_update_backfill_events(
+        *,
+        after_event_id: int,
+        max_event_id: int,
+    ) -> list[dict[str, Any]]:
+        query_events_since = getattr(ctx.database, "query_events_since", None)
+        if not callable(query_events_since):
+            query_events_since = getattr(ctx.memory_manager, "query_events_since", None)
+        if not callable(query_events_since):
+            return []
+        try:
+            rows = query_events_since(
+                after_event_id=after_event_id,
+                event_types=list(_PROFILE_UPDATE_BACKFILL_EVENT_TYPES),
+            )
+        except Exception:
+            logger.exception("Failed to query profile pipeline backfill events")
+            return []
+        if not isinstance(rows, list | tuple):
+            return []
+
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                with suppress(Exception):
+                    row = dict(row)
+            if not isinstance(row, dict):
+                continue
+            event_id = _event_row_id(row)
+            if event_id is None:
+                continue
+            if max_event_id > 0 and event_id > max_event_id:
+                continue
+            event = dict(row)
+            event["metadata"] = _event_row_metadata(event)
+            events.append(event)
+            if len(events) >= _PROFILE_UPDATE_BACKFILL_LIMIT:
+                break
+        return events
+
+    async def _backfill_pending_discovery_events_to_profile_pipeline(
+        *,
+        max_event_id: int,
+    ) -> int:
+        """Feed discovery-pending event rows that predate the current request.
+
+        Older versions only used ``pending_signal_events`` as a discovery
+        refresh watermark. If such rows already exist on disk, this backfill
+        lets the next successful ordinary event ingest catch them up without
+        advancing the discovery cursor itself.
+        """
+        if max_event_id <= 0:
+            return 0
+        load_state = getattr(ctx.memory_manager, "load_discovery_runtime_state", None)
+        update_state = getattr(ctx.memory_manager, "update_discovery_runtime_state", None)
+        if not callable(load_state) or not callable(update_state):
+            return 0
+        try:
+            state = load_state()
+        except Exception:
+            logger.exception("Failed to load discovery runtime state for profile backfill")
+            return 0
+        if not isinstance(state, dict):
+            return 0
+
+        discovery_cursor = _runtime_state_value(state, "last_processed_event_id")
+        if "last_profile_pipeline_event_id" in state:
+            cursor = _runtime_state_value(state, "last_profile_pipeline_event_id")
+        elif discovery_cursor > 0 and discovery_cursor < max_event_id:
+            cursor = discovery_cursor
+        else:
+            cursor = max(0, max_event_id - _PROFILE_UPDATE_BACKFILL_LIMIT)
+        if cursor >= max_event_id:
+            return 0
+
+        events = _query_profile_update_backfill_events(
+            after_event_id=cursor,
+            max_event_id=max_event_id,
+        )
+        if not events:
+            return 0
+
+        ingested = await _ingest_profile_update_events(events)
+        if ingested <= 0:
+            return 0
+
+        latest_backfilled_id = max(_event_row_id(event) or 0 for event in events)
+        if latest_backfilled_id <= 0:
+            return ingested
+
+        def _advance(runtime_state: dict[str, object]) -> None:
+            current = _runtime_state_value(runtime_state, "last_profile_pipeline_event_id")
+            runtime_state["last_profile_pipeline_event_id"] = max(current, latest_backfilled_id)
+
+        with suppress(Exception):
+            update_state(_advance)
+        return ingested
 
     def _load_source_bootstrap_state() -> dict[str, object]:
         from openbiliclaw.sources.bootstrap_state import (
@@ -1677,6 +1813,13 @@ def create_app(
             _embedding_ready_checked_at = time.monotonic()
             return ready
 
+    def _embedding_required_for_init() -> bool:
+        """Whether guided init must wait for a configured embedding provider."""
+        cfg = getattr(ctx, "config", None)
+        emb = getattr(getattr(cfg, "llm", None), "embedding", None)
+        provider = str(getattr(emb, "provider", "") or "").strip()
+        return bool(provider)
+
     @app.get("/api/ping")
     async def ping() -> JSONResponse:
         """Pure liveness probe: no DB, no provider round-trips.
@@ -1746,7 +1889,8 @@ def create_app(
         # which only POST /api/init sees. ``bilibili_logged_in`` stays in the
         # prerequisites payload so clients gate the start button themselves
         # when B站 is among the checked sources; POST revalidates regardless.
-        hard_ok = chat
+        embedding_required = _embedding_required_for_init()
+        hard_ok = chat and (embedding or not embedding_required)
         # Mirror POST /api/init's guards: an already-initialized profile blocks
         # a (non-force) start, so can_start must reflect that too — otherwise E1
         # and E2 disagree and a client could offer "start" that E2 rejects.
@@ -1760,6 +1904,8 @@ def create_app(
             reason, detail = "already_initialized", "已经初始化过了；如需重建请用 force"
         elif not chat:
             reason, detail = "llm_not_ready", "AI 服务还没配好或当前不可用"
+        elif embedding_required and not embedding:
+            reason, detail = "embedding_not_ready", "向量模型还没就绪"
         elif bili != "ok":
             # Informational (does not flip can_start): blocks only if the
             # client keeps bilibili selected, which the UI enforces.
@@ -1789,6 +1935,7 @@ def create_app(
                 bilibili_check=bili,
                 llm_ready=chat,
                 embedding_ready=embedding,
+                embedding_required=embedding_required,
                 enabled_platforms=platforms,
             ),
             reason=reason,
@@ -1912,6 +2059,7 @@ def create_app(
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
                 include_x="twitter" in effective,
+                include_zhihu="zhihu" in effective,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_api_discover_backfill,
                 coordinator=coord,
@@ -2001,6 +2149,9 @@ def create_app(
         if not chat:
             coord.reset_to_idle(run_id, reason="llm_not_ready")
             return JSONResponse({"error": "llm_not_ready"}, status_code=409)
+        if _embedding_required_for_init() and not await _health_embedding_ready():
+            coord.reset_to_idle(run_id, reason="embedding_not_ready")
+            return JSONResponse({"error": "embedding_not_ready"}, status_code=409)
 
         registry = getattr(ctx, "task_registry", None)
         if registry is not None:
@@ -2344,9 +2495,8 @@ def create_app(
         Called by the CLI at the end of a successful init.  The handler
         broadcasts an ``init_completed`` event via WebSocket so the
         browser extension can immediately re-fetch profile, recommendations
-        and activity data.  It also kicks the continuous-refresh controller
-        so the discovery pool is picked up without waiting for the next
-        60-second tick.
+        and activity data.  It also starts a replenishment refresh so the
+        discovery pool is picked up without waiting for the next scheduler tick.
         """
         # Broadcast to extension
         with suppress(Exception):
@@ -2356,16 +2506,7 @@ def create_app(
                     "message": "初始化完成，画像与发现池已就绪。",
                 }
             )
-        # Kick refresh controller immediately. v0.3.63+: route through
-        # the registry so a hot-reload mid-init can cancel this task.
-        trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
-        if callable(trigger):
-            with suppress(Exception):
-                registry = getattr(ctx, "task_registry", None)
-                if registry is not None:
-                    registry.track("init_completed_trigger", trigger())
-                else:
-                    asyncio.create_task(trigger())
+        await _request_runtime_replenishment(reason="init_completed", force=True)
         return {"ok": True}
 
     def _serialize_recommendation_items(items: list[Any]) -> list[RecommendationOut]:
@@ -2574,6 +2715,10 @@ def create_app(
 
     @app.on_event("shutdown")
     async def shutdown_refresh_loop() -> None:
+        feedback_scheduler = getattr(app.state, "feedback_batch_scheduler", None)
+        if feedback_scheduler is not None:
+            with suppress(Exception):
+                await feedback_scheduler.close()
         refresh_task = getattr(app.state, "refresh_task", None)
         if refresh_task is not None:
             refresh_task.cancel()
@@ -2951,7 +3096,14 @@ def create_app(
                 ],
             )
 
+        latest_event_id_before_ingest = 0
+        get_latest_event_id = getattr(ctx.database, "get_latest_event_id", None)
+        if callable(get_latest_event_id):
+            with suppress(Exception):
+                latest_event_id_before_ingest = _event_cursor_value(get_latest_event_id())
+
         accepted = 0
+        accepted_events: list[dict[str, Any]] = []
         rejected: list[EventRejectedOut] = []
         for index, item in enumerate(payload.events):
             source_platform = (item.source_platform or "bilibili").strip() or "bilibili"
@@ -3011,12 +3163,14 @@ def create_app(
                 )
                 continue
             accepted += 1
-        refresh_after_event_ingest = getattr(
-            ctx.runtime_controller, "refresh_after_event_ingest", None
-        )
-        if callable(refresh_after_event_ingest):
-            with suppress(Exception):
-                await refresh_after_event_ingest()
+            accepted_events.append(event)
+        if accepted_events:
+            await _backfill_pending_discovery_events_to_profile_pipeline(
+                max_event_id=latest_event_id_before_ingest
+            )
+            await _ingest_profile_update_events(accepted_events)
+        if accepted > 0:
+            await _request_runtime_replenishment(reason="event_ingest")
         # Notify popup that the activity feed has new entries so it can
         # refresh its UI without polling. Throttled naturally to once per
         # ingest call (extension batches 10+ events into a single POST).
@@ -3099,6 +3253,7 @@ def create_app(
                     rows = _filter_low_confidence(
                         ctx.database.get_recommendations(limit=40, exclude_processed=True)
                     )
+                    await _publish_pool_status_snapshot()
                     logger.info(
                         "GET /api/recommendations bootstrap: served from "
                         "empty history (pool_count=%d → wrote %d to history)",
@@ -3336,17 +3491,127 @@ def create_app(
                 return max(0, int(count_pool()))
         return None
 
+    def _runtime_pool_status_payload() -> dict[str, object]:
+        """Return frontend runtime fields needed to resync pool status."""
+        status: dict[str, object] = {}
+        get_runtime_status = getattr(ctx.runtime_controller, "get_runtime_status", None)
+        if callable(get_runtime_status):
+            with suppress(Exception):
+                runtime_status = get_runtime_status()
+                if isinstance(runtime_status, dict):
+                    status.update(runtime_status)
+
+        if "pool_available_count" not in status:
+            readiness = getattr(ctx.database, "count_pool_readiness", None)
+            if callable(readiness):
+                with suppress(Exception):
+                    counts = readiness()
+                    if isinstance(counts, dict):
+                        status.update(
+                            {
+                                "pool_available_count": counts.get("available", 0),
+                                "pool_raw_count": counts.get("raw", counts.get("available", 0)),
+                                "pool_pending_count": counts.get("pending", 0),
+                                "pool_pending_eval_count": counts.get("pending_eval", 0),
+                                "pool_evaluated_pending_count": counts.get(
+                                    "evaluated_pending", 0
+                                ),
+                            }
+                        )
+            else:
+                count_pool = getattr(ctx.database, "count_pool_candidates", None)
+                if callable(count_pool):
+                    with suppress(Exception):
+                        status["pool_available_count"] = int(count_pool())
+
+        int_fields = (
+            "pool_available_count",
+            "pool_raw_count",
+            "pool_pending_count",
+            "pool_pending_eval_count",
+            "pool_evaluated_pending_count",
+            "pool_target_count",
+            "last_replenished_count",
+            "last_discovered_count",
+        )
+        payload: dict[str, object] = {}
+        for field in int_fields:
+            if field not in status:
+                continue
+            raw_value = status.get(field)
+            if raw_value is None:
+                raw_value = 0
+            with suppress(TypeError, ValueError):
+                payload[field] = max(0, int(cast("Any", raw_value)))
+        recent_pool_topics = status.get("recent_pool_topics")
+        if isinstance(recent_pool_topics, list):
+            payload["recent_pool_topics"] = [
+                str(item) for item in recent_pool_topics if str(item).strip()
+            ]
+        return payload
+
+    async def _publish_pool_status_snapshot(message: str = "推荐池已同步") -> None:
+        """Broadcast pool counts after recommendation endpoints consume inventory."""
+        event_hub = getattr(ctx, "event_hub", None) or getattr(
+            ctx.runtime_controller, "event_hub", None
+        )
+        publish = getattr(event_hub, "publish", None)
+        if not callable(publish):
+            return
+        event = {
+            "type": "refresh.pool_updated",
+            "phase": "done",
+            "message": message,
+            **_runtime_pool_status_payload(),
+        }
+        with suppress(Exception):
+            result = publish(event)
+            if asyncio.iscoroutine(result):
+                await result
+
     async def _run_auto_replenishment(trigger: Callable[[], Any]) -> None:
         try:
             await trigger()
         except Exception:
             logger.exception("Automatic pool replenishment failed")
 
+    async def _request_runtime_replenishment(
+        *,
+        reason: str,
+        force: bool = False,
+    ) -> dict[str, object] | None:
+        request = getattr(ctx.runtime_controller, "request_replenishment", None)
+        if callable(request):
+            with suppress(Exception):
+                result = await request(reason=reason, force=force)
+                if isinstance(result, dict):
+                    return cast("dict[str, object]", result)
+            return None
+        if force:
+            trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
+            if callable(trigger):
+                with suppress(Exception):
+                    result = await trigger()
+                    if isinstance(result, dict):
+                        return cast("dict[str, object]", result)
+            return None
+
+        legacy_name = {
+            "event_ingest": "refresh_after_event_ingest",
+            "feedback": "refresh_after_feedback",
+            "init_completed": "refresh_after_init",
+        }.get(reason)
+        if legacy_name:
+            legacy = getattr(ctx.runtime_controller, legacy_name, None)
+            if callable(legacy):
+                with suppress(Exception):
+                    result = await legacy()
+                    if isinstance(result, dict):
+                        return cast("dict[str, object]", result)
+        return None
+
     async def _trigger_replenishment_if_needed(*, force: bool = False) -> None:
         """Fire a background Discovery refresh when the pool runs low."""
-        trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
-        if not callable(trigger):
-            return
         if not force:
             curator = getattr(ctx.recommendation_engine, "_curator", None)
             if curator is None or not hasattr(curator, "needs_replenishment"):
@@ -3365,7 +3630,12 @@ def create_app(
 
         auto_replenishment_started_at = now
         logger.info("Pool low - triggering automatic replenishment")
-        task = asyncio.create_task(_run_auto_replenishment(trigger))
+        reason = "pool_empty" if force else "pool_low_after_recommendation_refresh"
+        task = asyncio.create_task(
+            _run_auto_replenishment(
+                lambda: _request_runtime_replenishment(reason=reason, force=True)
+            )
+        )
         auto_replenishment_task = task
         _fire_and_forget_tasks.add(task)
         task.add_done_callback(_fire_and_forget_tasks.discard)
@@ -3382,6 +3652,7 @@ def create_app(
         except Exception:
             return RecommendationReshuffleResponse(items=[])
         items = await ctx.recommendation_engine.reshuffle_recommendations(profile=profile, limit=10)
+        await _publish_pool_status_snapshot()
         await _trigger_replenishment_if_needed()
         return RecommendationReshuffleResponse(items=_serialize_recommendation_items(items))
 
@@ -3403,21 +3674,20 @@ def create_app(
             excluded_bvids=payload.excluded_bvids,
             limit=10,
         )
+        await _publish_pool_status_snapshot()
         await _trigger_replenishment_if_needed()
         return RecommendationReshuffleResponse(items=_serialize_recommendation_items(items))
 
     @app.post("/api/recommendations/refresh", response_model=RecommendationRefreshResponse)
     async def refresh_recommendations() -> RecommendationRefreshResponse:
-        trigger_manual_refresh = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
-        if not callable(trigger_manual_refresh):
+        result = await _request_runtime_replenishment(reason="manual", force=True)
+        if not isinstance(result, dict):
             return RecommendationRefreshResponse(
                 ok=True,
                 accepted=False,
                 state="idle",
                 reason="runtime_unavailable",
             )
-
-        result = await trigger_manual_refresh()
         return RecommendationRefreshResponse(
             ok=True,
             accepted=bool(result.get("accepted", False)),
@@ -5151,7 +5421,7 @@ def create_app(
                     title=str(recommendation.get("title", "")),
                     note=note,
                 )
-        asyncio.create_task(_run_post_feedback_tasks())
+        _schedule_post_feedback_tasks()
         return FeedbackResponse(
             ok=True,
             recommendation_id=payload.recommendation_id,
@@ -6572,12 +6842,83 @@ def create_app(
             feed_paused=tw_feed_paused,
         )
 
+        zh_cfg = getattr(srcs, "zhihu", None)
+        zh_enabled = bool(getattr(zh_cfg, "enabled", False))
+        zhihu = SourceStatusItem(
+            enabled=zh_enabled,
+            state="unverified",
+            detail=(
+                "浏览器插件登录态源 · 尚未看到知乎任务结果，"
+                "保存后可运行 init 或 discover 验证登录态。"
+            ),
+            logged_in=False,
+        )
+        if hasattr(ctx.database, "conn"):
+            try:
+                row = ctx.database.conn.execute(
+                    """
+                    SELECT type, status, result_json, created_at, completed_at
+                    FROM zhihu_tasks
+                    WHERE status IN ('pending', 'in_progress', 'completed', 'failed')
+                    ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            except Exception:
+                row = None
+            if row is not None:
+                task_type = str(row["type"] if hasattr(row, "keys") else row[0])
+                status = str(row["status"] if hasattr(row, "keys") else row[1])
+                result_json = row["result_json"] if hasattr(row, "keys") else row[2]
+                payload: dict[str, Any] = {}
+                with suppress(Exception):
+                    parsed = json.loads(str(result_json or "{}"))
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                items = payload.get("items")
+                item_count = len(items) if isinstance(items, list) else 0
+                error_code = str(payload.get("error", "") or "").strip()
+                debug = payload.get("debug")
+                login_required = error_code == "zhihu_login_required" or (
+                    isinstance(debug, dict) and bool(debug.get("login_required"))
+                )
+                if status == "completed":
+                    zhihu = SourceStatusItem(
+                        enabled=zh_enabled,
+                        state="ready",
+                        detail=f"最近任务完成（{task_type}，{item_count} 条）。",
+                        logged_in=True,
+                    )
+                elif login_required:
+                    zhihu = SourceStatusItem(
+                        enabled=zh_enabled,
+                        state="missing",
+                        detail="最近知乎任务提示需要登录知乎。请在当前浏览器登录知乎后重试。",
+                        logged_in=False,
+                    )
+                elif status == "failed":
+                    suffix = f"：{error_code}" if error_code else ""
+                    zhihu = SourceStatusItem(
+                        enabled=zh_enabled,
+                        state="partial",
+                        detail=f"最近知乎任务失败{suffix}。可在浏览器登录态正常后重试。",
+                        logged_in=False,
+                    )
+                elif status in {"pending", "in_progress"}:
+                    zhihu = SourceStatusItem(
+                        enabled=zh_enabled,
+                        state="unverified",
+                        detail=f"知乎任务正在等待插件执行（{task_type} / {status}）。",
+                        logged_in=False,
+                    )
+
         return SourcesStatusResponse(
             bilibili=bilibili,
             xiaohongshu=xiaohongshu,
             douyin=douyin,
             youtube=youtube,
             twitter=twitter,
+            zhihu=zhihu,
         )
 
     # ── Douyin task queue endpoints (extension dispatcher) ──────────
@@ -6745,6 +7086,121 @@ def create_app(
         yt_bootstrap_item_key,
         yt_bootstrap_items_to_events,
     )
+    from openbiliclaw.sources.zhihu_tasks import (
+        ZhihuTaskQueue,
+        zhihu_bootstrap_item_key,
+        zhihu_bootstrap_items_to_events,
+    )
+
+    _zhihu_task_queue: ZhihuTaskQueue | None = None
+    db_conn = getattr(ctx.database, "conn", None)
+    if hasattr(db_conn, "executescript"):
+        _zhihu_task_queue = ZhihuTaskQueue(ctx.database)
+
+    @app.get("/api/sources/zhihu/next-task")
+    def zhihu_next_task(response: Any = None) -> Any:
+        """Return the oldest pending Zhihu task, or 204 if none."""
+        from starlette.responses import Response
+
+        if _zhihu_task_queue is None:
+            return Response(status_code=204)
+        task = _zhihu_task_queue.next_pending(only_ids=_init_owned_ids_filter())
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/zhihu/task-result")
+    async def zhihu_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a Zhihu task result from the extension dispatcher.
+
+        Plain ``fetch-zhihu`` smoke tasks only record the task payload. Tasks
+        explicitly marked ``profile_update`` also propagate bootstrap events to
+        memory and, once a profile exists, into the incremental profile-update
+        pipeline.
+        """
+        task_id = str(payload.get("task_id", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip()
+        items = [v for v in payload.get("items", []) if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        if not task_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=422, detail="task_id is required")
+
+        if _zhihu_task_queue is None:
+            return {"ok": True}
+
+        task = _zhihu_task_queue.get(task_id)
+        task_type = str(task.get("type", "")).strip() if task else ""
+        task_payload: dict[str, Any] = {}
+        if task and task.get("payload_json"):
+            with suppress(Exception):
+                parsed_payload = json.loads(str(task.get("payload_json") or "{}"))
+                if isinstance(parsed_payload, dict):
+                    task_payload = parsed_payload
+        profile_update = bool(task_payload.get("profile_update"))
+
+        if status in {"partial", "ok"} or status == "empty":
+            is_final = status in {"ok", "empty"}
+            added_items = _zhihu_task_queue.merge_result(
+                task_id,
+                items=items if items else None,
+                scope_counts=scope_counts,
+                debug=debug,
+                complete=is_final,
+            )
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if (
+                task_type == "bootstrap_events"
+                and profile_update
+                and added_items
+                and not _skip_profile
+            ):
+                fresh_items, item_keys_by_index = _filter_new_source_bootstrap_items(
+                    "zhihu",
+                    added_items,
+                    zhihu_bootstrap_item_key,
+                )
+                profile_events: list[dict[str, Any]] = []
+                propagated_keys: list[str] = []
+                for index, item in enumerate(fresh_items):
+                    for event in zhihu_bootstrap_items_to_events([item]):
+                        await ctx.memory_manager.propagate_event(event)
+                        profile_events.append(event)
+                        key = item_keys_by_index.get(index, "")
+                        if key:
+                            propagated_keys.append(key)
+                if not _init_busy:
+                    await _ingest_profile_update_events(profile_events)
+                _mark_source_bootstrap_keys("zhihu", propagated_keys)
+        else:
+            _zhihu_task_queue.fail(task_id, error=str(payload.get("error", "") or ""), debug=debug)
+
+        return {"ok": True}
+
+    @app.post("/api/sources/zhihu/kick")
+    async def zhihu_task_kick() -> dict[str, Any]:
+        """Broadcast `zhihu_task_available` over runtime-stream."""
+        publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "zhihu_task_available", "source": "task_kick"})
+        return {"ok": True}
 
     _yt_task_queue: YtTaskQueue | None = None
     if hasattr(ctx.database, "conn"):
@@ -7338,6 +7794,17 @@ def create_app(
                     request_interval_seconds=cfg.sources.twitter.request_interval_seconds,
                     min_interval_minutes=cfg.sources.twitter.min_interval_minutes,
                 ),
+                zhihu=ZhihuSourceConfigOut(
+                    enabled=cfg.sources.zhihu.enabled,
+                    source_modes=list(cfg.sources.zhihu.source_modes),
+                    daily_search_budget=cfg.sources.zhihu.daily_search_budget,
+                    daily_hot_budget=cfg.sources.zhihu.daily_hot_budget,
+                    daily_feed_budget=cfg.sources.zhihu.daily_feed_budget,
+                    daily_creator_budget=cfg.sources.zhihu.daily_creator_budget,
+                    daily_related_budget=cfg.sources.zhihu.daily_related_budget,
+                    request_interval_seconds=cfg.sources.zhihu.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.zhihu.min_interval_minutes,
+                ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
@@ -7904,6 +8371,37 @@ def create_app(
                     ):
                         if key in tw_data:
                             setattr(cfg.sources.twitter, key, int(tw_data[key]))
+
+                zh_data = sources_data.get("zhihu")
+                if isinstance(zh_data, dict):
+                    if "enabled" in zh_data:
+                        cfg.sources.zhihu.enabled = _as_bool(zh_data["enabled"])
+                    if "source_modes" in zh_data:
+                        raw_modes = zh_data["source_modes"]
+                        if isinstance(raw_modes, str):
+                            modes = [part.strip() for part in raw_modes.split(",")]
+                        elif isinstance(raw_modes, list):
+                            modes = [str(part).strip() for part in raw_modes]
+                        else:
+                            modes = []
+                        selected = [
+                            mode
+                            for mode in modes
+                            if mode in {"search", "hot", "feed", "creator", "related"}
+                        ]
+                        if selected:
+                            cfg.sources.zhihu.source_modes = tuple(dict.fromkeys(selected))
+                    for key in (
+                        "daily_search_budget",
+                        "daily_hot_budget",
+                        "daily_feed_budget",
+                        "daily_creator_budget",
+                        "daily_related_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in zh_data:
+                            setattr(cfg.sources.zhihu, key, int(zh_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:

@@ -15,6 +15,7 @@ from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
+    compact_evaluation_profile_summary,
     discovery_raw_candidate_mode_enabled,
     llm_eval_candidate_limit,
 )
@@ -135,6 +136,57 @@ class _RecordingMultimodalBatchLLMService(_DynamicBatchLLMService):
             caller=caller,
             reasoning_effort=reasoning_effort,
         )
+
+
+def test_compact_evaluation_profile_summary_keeps_high_signal_context() -> None:
+    profile_summary = {
+        "core_traits": [f"trait-{index}" for index in range(30)],
+        "cognitive_style": [f"style-{index}" for index in range(30)],
+        "values": [f"value-{index}" for index in range(30)],
+        "motivational_drivers": [f"driver-{index}" for index in range(30)],
+        "interest_domains": [
+            {
+                "domain": f"domain-{index}",
+                "weight": 1.0 - index / 100,
+                "specifics": [
+                    {"name": f"specific-{index}-{item}", "weight": 1.0 - item / 100}
+                    for item in range(20)
+                ],
+            }
+            for index in range(40)
+        ],
+        "interests": [
+            {"name": f"interest-{index}", "weight": 1.0 - index / 100} for index in range(100)
+        ],
+        "disliked_topics": [f"avoid-{index}" for index in range(20)],
+        "recent_awareness": [{"observation": f"awareness-{index}"} for index in range(20)],
+        "active_insights": [
+            {
+                "hypothesis": f"insight-{index}",
+                "evidence": [f"evidence-{index}-{item}" for item in range(20)],
+            }
+            for index in range(20)
+        ],
+        "speculative_interests": [
+            {"domain": f"spec-{index}", "reason": "maybe"} for index in range(20)
+        ],
+    }
+
+    compacted = compact_evaluation_profile_summary(profile_summary)
+
+    assert len(compacted["core_traits"]) == 20
+    assert len(compacted["interests"]) == 64
+    assert compacted["interests"][0]["name"] == "interest-0"
+    assert compacted["disliked_topics"] == profile_summary["disliked_topics"]
+    assert len(compacted["interest_domains"]) == 32
+    assert len(compacted["interest_domains"][0]["specifics"]) == 12
+    assert [item["observation"] for item in compacted["recent_awareness"][:2]] == [
+        "awareness-8",
+        "awareness-9",
+    ]
+    assert len(compacted["active_insights"]) == 12
+    assert len(compacted["active_insights"][0]["evidence"]) == 8
+    assert len(compacted["speculative_interests"]) == 12
 
 
 class _RecentViewedDatabase:

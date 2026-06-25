@@ -29,7 +29,7 @@
 | 自动格式迁移 | ✅ | `from_legacy()` 支持将 v1 flat SoulProfile 自动迁移到 v2 OnionProfile，SoulEngine 透明处理版本升级 |
 | SoulEngine.analyze_events() | ✅ | 事件 → PreferenceAnalyzer → 偏好层更新 |
 | SoulEngine module overrides | ✅ | 构造时可接收 `module_overrides` 并注入内部 `LLMService`，确保 preference / awareness / insight / profile_builder / speculator / dialogue_insight 都遵循 `[llm.soul]` 路由 |
-| PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；偏好分析 system prompt 注入 `CATEGORY_VOCAB`（静态常量、缓存安全），代码侧在 `(name, category)` 合并键生成前执行 `resolve_category()`：词表外 → embedding 最近邻（≥0.55）→「其他」，任何路径都不会把词表外一级分类写入 preference 层；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据；偏好分析调用前有 prompt 预算保护，超长 chunk 会递归二分，单条超长事件会 compact，`n_keep >= n_ctx` / `context length` 等上下文错误会用更小 chunk 重试 |
+| PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；偏好分析 system prompt 注入 `CATEGORY_VOCAB`（静态常量、缓存安全），代码侧在 `(name, category)` 合并键生成前执行 `resolve_category()`：词表外 → embedding 最近邻（≥0.55）→「其他」，任何路径都不会把词表外一级分类写入 preference 层；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据；偏好分析调用前有 prompt 预算保护，超长 chunk 会递归二分，单条超长事件会 compact，`n_keep >= n_ctx` / `context length` 等上下文错误会用更小 chunk 重试；chunked 分析遇到 LLM 拒答 / 非 JSON 时会对单条事件追加 title / URL / source-only 安全压缩重试，避免长网页 context 触发安全拒答后直接丢失该条画像信号 |
 | filter_events_by_satisfaction | ✅ | `soul/event_filters.py` 中的纯函数，按 `inferred_satisfaction` 过滤事件，`"unknown"` 同时匹配缺失 / `None`，使 pre-migration 老行可被显式 opt-in 保留 |
 | recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 16 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像 |
@@ -39,7 +39,7 @@
 | SoulEngine.get_raw_profile() / get_overrides() | ✅ | 返回不叠加覆盖的纯 AI 画像 / 当前 `ProfileOverrides`，供编辑态与 AI 漂移比对 |
 | 用户画像覆盖层 (`soul/overrides.py`) | ✅ | `ProfileOverrides` + 纯函数 `apply_overrides`（文本/标量固定、列表增删、兴趣树增删/权重）+ 带校验的 `apply_edit` 归约器 + `build_edit_state`；用户手动编辑存独立 `profile_overrides.json`，读时叠加到 AI 画像之上，画像重建不覆盖；列表 remove 持续抑制 AI 再次推断出的同项 |
 | 分类词表 + 一次性迁移 | ✅ | `soul/taxonomy.py` 定义 19 项固定一级分类词表 `CATEGORY_VOCAB`（含「其他」，代码常量非 config），`resolve_category()` 按精确命中 → embedding 最近邻（≥0.55）→「其他」解析；`CategoryMigrator` 用一次 LLM 映射把存量自由分类迁移到词表，代码校验完整覆盖且目标必须在词表内，失败零写入；应用前写 `consolidation_runs/<run_id>.json`（`kind=category_migration`）并追加 `soul_changelog.md`，复用 `profile-consolidate --revert` 回滚 |
-| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类不再规则合并，而是构造强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 记忆用 `name::category` 限定键）→ embedding 聚类（≥0.85，无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → 分批 LLM 裁决输出 merge/keep 操作（每批 32 簇，单批失败只丢本批、其余照常应用）→ 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、避雷严禁向上泛化）。覆盖范围为 likes 权重 top-512 + 全量避雷主题；`profile-consolidate --full` 可把 likes 边界开到全量标签库；likes judge payload 带 `category`，system prompt 含同名异义 keep 规则，并支持用 `{name, category}` 精确引用同名异类成员。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
+| ProfileConsolidator（12h 画像整理） | ✅ | LLM 整理合并重复的喜欢 / 讨厌主题：规则层同名同类合并（零成本）；同名异类不再规则合并，而是构造强制嫌疑簇送 LLM 裁决（同名异义防护，no-merge 记忆用 `name::category` 限定键）→ embedding 聚类（默认 ≥0.85；active likes 超过上限时按 `upper -> soft` 水位压力动态降到最低 0.75；无 embedding 退子串聚类）→ no-merge 记忆过滤已判簇 → 分批 LLM 裁决输出 merge/keep 操作（每批 32 簇，单批失败只丢本批、其余照常应用）→ 代码校验执行（members 逐字存在、簇内全覆盖、canonical 禁裸大词、likes / dislikes 均拒绝明显过泛的新 canonical，避雷严禁向上泛化）→ active likes 库存水位归档。LLM canonical 是合并后的代表性 item 名：可选最准确成员，也可为多个部分兴趣起一个更能覆盖整组的具体组合概念；写回 active interest 时保留原成员词到 `aliases`，后续增量偏好命中 alias 会强化 canonical item 而不是重新生成重复兴趣。覆盖范围默认为 likes 权重 top-512 + 全量避雷主题；当 active likes 超过 `profile_consolidation_like_target_upper` 时，定时路径会临时开 full boundary，并用动态阈值召回更多候选；合并后仍超上限则把低权重且非用户保护的长尾兴趣移入 `archived_interests`，后续新信号命中同名同类时自动复活；`profile-consolidate --full` 仍可手动把 likes 边界开到全量标签库。likes judge payload 带 `category`，system prompt 含同名异义 keep 规则，并支持用 `{name, category}` 精确引用同名异类成员。改 flat preference 后经 `populate_from_flat_preference` 重建 Onion 树；rename map 穿透 `profile_overrides.json`；应用即备份 `consolidation_runs/<run_id>.json` + 追加 `soul_changelog.md`；`revert(run_id)` 整体回滚 active / archived inventory，并把被回滚合并对记入 no-merge。由 pipeline tick 调度（默认 12h，`[scheduler].profile_consolidation_*`），应用后发 `profile_consolidation` 认知更新卡片 |
 | SoulEngine.get_effective_disliked_topics() | ✅ | base（raw soul.interest.dislikes ∪ raw preference.disliked_topics）再套覆盖层 remove/add（remove 最后生效），供 delight 硬过滤，用户移除项不被 raw 反向打穿 |
 | SoulEngine.apply_user_edit() | ✅ | 折叠一次确定性编辑：存覆盖层 → 同步正向/避雷两套 speculator → 记 `source=manual` cognition → 重渲染有效画像镜像并通知两端 → 新增 dislike 按编辑前后差集把 `purge_pool_for_new_dislikes` 清池**调度为 `asyncio` 后台 detached 任务**（embedding 召回 + LLM 分类耗时数十秒，绝不能阻塞编辑响应，否则前端看着像「加了没保存」；`_schedule_dislike_purge` 派发，`wait_for_pending_edits()` 供测试 / 优雅关闭等待） |
 | AwarenessAnalyzer | ✅ | 近期事件 → `AwarenessNote` 列表，支持同日去重；解析 LLM 响应时复用 `llm.json_utils.extract_llm_json_list()`，兼容 `results/items/notes/data/observations/recent_observations/latest/latest_observations` 等 object-wrapped array、reasoning 模型 bare singular-note dict、wrapper-key 下单 note、fenced JSON、JSONL 和 MiMo malformed `{ [ ... ] }`；prompt 按画像 → 偏好 → 近期事件排序以保留缓存前缀，并把近期 `dislike` / `thumbs_down` / negative 事件视为“最近开始避开 X”的保守观察信号 |
@@ -49,7 +49,7 @@
 | SoulEngine.generate_awareness_note() | ✅ | 生成并持久化 `awareness.json` |
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
 | SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并校准匹配的洞察假设——确认→`validated=True`+置信度抬到 ≥0.75；推翻→`validated=False`+压到 ≤0.35（软作废：不删除、靠 delight 置信度加权降权）。**已接线**到 `POST /api/insights/feedback`（插件 + web/桌面三端洞察卡片「准/不准」按钮驱动），返回 `{matched, validated, confidence}`；此前实现但无生产调用方。命中后经 `_sync_insight_to_soul_snapshot` **同步把校准写回 soul 层 `active_insights` 快照**（`get_profile` / profile-summary / delight 读的是该快照，不是 insight 层），否则校准要等下一次 12h 认知 sync 才对 UI / 推荐生效 |
-| SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像；若本批新增 `disliked_topics`，会按新旧差集调度 `purge_pool_for_new_dislikes` 后台清理 fresh 候选池，保持普通推荐卡片 `dislike` 学到长期避雷项后的清池行为与手动编辑 / 避雷探针一致 |
+| SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像；批处理入口带 single-flight 锁，已有任务在跑时直接返回 `feedback_batch_in_progress`，避免多个 `/api/feedback` 后台任务用同一旧游标重复分析未处理反馈；传给 LLM 前会瘦身 feedback 事件，只保留标题、上下文和偏好相关 metadata；若本批新增 `disliked_topics`，会按新旧差集调度 `purge_pool_for_new_dislikes` 后台清理 fresh 候选池，保持普通推荐卡片 `dislike` 学到长期避雷项后的清池行为与手动编辑 / 避雷探针一致 |
 | SoulEngine.record_immediate_feedback_cognition() | ✅ | 单条 `dislike/comment` 可即时写入结构化 cognition card，供插件画像页展示；评论类更新会带上对应内容标题，并以中性直接反馈记录，不预设正负向 |
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
 | SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate；单条 `interest/value/goal/dislike` 聊天信号到中高置信度时会先写入轻量 cognition update，高置信度或重复出现达阈值后再驱动偏好/画像更新 |
@@ -57,7 +57,9 @@
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
 | 抖音初始化画像信号 | ✅ | `openbiliclaw init --yes-douyin` 会把插件解析到的抖音 `dy_post/dy_collect/dy_like/dy_follow` 转成 `view/favorite/like/follow` 事件，并进入偏好分析和初始画像 history |
-| 小红书 / 抖音增量画像事件 | ✅ | profile 已存在时，`/api/sources/xhs/task-result` 和 `/api/sources/dy/task-result` 的 bootstrap 新增事件会在落 memory 后进入 `ProfileUpdatePipeline`，参与后续分层画像更新 |
+| 普通行为事件增量画像 | ✅ | profile 已存在时，`POST /api/events` accepted 的浏览器行为事件会先落 memory，再通过 `signals_from_events()` 进入 `ProfileUpdatePipeline.ingest_batch()`；rejected / not_initialized 事件不进入 pipeline |
+| 小红书 / 抖音 / YouTube / 知乎增量画像事件 | ✅ | profile 已存在时，带画像更新语义的 bootstrap task-result 新增事件会在落 memory 后进入 `ProfileUpdatePipeline`，参与后续分层画像更新；知乎任务需在 payload 中显式设置 `profile_update=true`，普通 `fetch-zhihu` smoke 不触发 |
+| 普通行为事件增量画像 | ✅ | profile 已存在时，`POST /api/events` accepted 的浏览器行为事件会先落 memory，再通过 `signals_from_events()` 进入 `ProfileUpdatePipeline.ingest_batch()`；rejected / not_initialized 事件不进入 pipeline |
 | ToneProfile | ✅ | 从 `OnionProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
@@ -404,7 +406,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 4. 返回结果会进入 `merge_preferences()`，与旧偏好合并。
 5. 合并后的偏好写回 `preference.json`。
 
-初始化这类大批量事件会按分片并发分析。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
+初始化这类大批量事件会按分片并发分析，但初始 chunk 调度会按最多 16 个一批推进；一批处理完再处理下一批，避免拉全量历史时一次性创建所有 prompt 任务和等待队列。真实 provider 并发仍由 `LLMService` 控制，不通过这里调高。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
 
 若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 仍会递归拆小该分片；最终只有仍失败的单条事件会被跳过。若 provider 返回明确的 context-window 错误（例如 `n_keep >= n_ctx`、`context length`、`prompt is too long`），偏好分析会按同一套拆分 / compact 逻辑重试；认证、网络、限流、模型不存在等非上下文错误仍会让调用失败，避免把服务不可用伪装成成功。
 
@@ -436,7 +438,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 
 这意味着行为事件对画像的第一影响，通常不是直接改 `personality_portrait`，而是先慢慢把偏好层往一个更稳定的方向推。
 
-小红书 / 抖音插件任务还有一条增量路径：当 `soul_engine.is_profile_ready()` 已经为真时，bootstrap task-result 新增的事件会先写入 memory，再通过 `signals_from_events()` 转成 `ProfileSignal` 进入 `ProfileUpdatePipeline.ingest_batch()`。首次 init 期间不会走这条增量更新，避免同一批初始化事件同时被 `analyze_events()` 和 pipeline 重复学习。
+普通浏览器事件和插件 bootstrap 任务结果都有一条增量路径：当 `soul_engine.is_profile_ready()` 已经为真时，`POST /api/events` 中 accepted 的事件，以及小红书 / 抖音 / YouTube / 知乎等 task-result 新增事件，会先写入 memory，再通过 `signals_from_events()` 转成 `ProfileSignal` 进入 `ProfileUpdatePipeline.ingest_batch()`。`/api/events` 会先用独立 `last_profile_pipeline_event_id` 游标补喂旧版本遗留在 discovery 水位后的行为事件，再喂当前 accepted 事件，随后通过 `request_replenishment(reason="event_ingest")` 只提交补货需求；真正补货由定时 tick 或用户刷新后的低库存检查统一触发。这个画像 backfill 游标不推进 discovery 的 `last_processed_event_id`。rejected / not_initialized 事件不会进入 pipeline。首次 init 期间不会走这条增量更新，避免同一批初始化事件同时被 `analyze_events()` 和 pipeline 重复学习。知乎为了保留 `fetch-zhihu` 的 smoke 语义，只有任务 payload 显式带 `profile_update=true` 时才走 API 自动传播路径；CLI 手动回填使用 `fetch-zhihu --write-memory` / `--rebuild-profile`。
 
 ### 3. 推荐反馈路径：分成“即时记住”和“批量学习”两档
 
@@ -476,15 +478,19 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 
 真正会动到偏好层和画像的是 `process_feedback_batch_if_needed()`：
 
-1. 读取 `feedback_state.json` 中的 `last_processed_feedback_event_id`
-2. 从事件层找出这个游标之后的新 `feedback` 事件
-3. 如果新增反馈少于 `3` 条，直接返回，不做重分析
-4. 达到阈值后，调用 `PreferenceAnalyzer.analyze_events()` 用这批反馈重跑偏好提取
-5. 偏好写回 `preference.json`
-6. 再比较“这次偏好变化是否足够明显”
-7. 如果明显，才调用 `ProfileBuilder.build()` 重建画像并写回 `soul.json`
-8. 同时生成聚合层的 cognition updates
-9. 最后更新 `feedback_state.json` 的游标和处理时间
+生产 API 入口不会每条反馈都立即新起画像重分析任务；`/api/feedback` 会先交给 runtime 的 `FeedbackBatchScheduler` 做短窗口 debounce / coalesce，再进入这里的批量学习。
+
+1. 如果已有反馈批处理在跑，立即返回 `skipped=true, reason="feedback_batch_in_progress"`
+2. 读取 `feedback_state.json` 中的 `last_processed_feedback_event_id`
+3. 从事件层按 `id ASC` 找出这个游标之后的全部新 `feedback` 事件；不再用 newest-first `limit=500` 截断，避免大积压时跳过较早但未处理的 feedback
+4. 如果新增反馈少于 `3` 条，直接返回，不做重分析
+5. 达到阈值后，先把反馈事件瘦身为偏好分析需要的字段：`id/event_type/url/title/context/inferred_satisfaction/satisfaction_reason/created_at`，以及 `recommendation_id/bvid/content_id/source_platform/feedback_type/feedback_note/reaction/topic_label/signal_strength` 等白名单 metadata；插件原始字段如 `targetText`、`raw_context`、`href` 不进入 LLM prompt
+6. 调用 `PreferenceAnalyzer.analyze_events()` 用这批瘦身后的反馈重跑偏好提取
+7. 偏好写回 `preference.json`
+8. 再比较“这次偏好变化是否足够明显”
+9. 如果明显，才调用 `ProfileBuilder.build()` 重建画像并写回 `soul.json`
+10. 同时生成聚合层的 cognition updates
+11. 最后更新 `feedback_state.json` 的游标和处理时间
 
 #### 什么叫“变化明显”
 
@@ -698,7 +704,7 @@ system prompt 的核心约束是：
 
 为了避免画像抖动过快，当前实现刻意保守：
 
-- `propagate_event()` 只落事件，不自动全链路刷新
+- `propagate_event()` 只落事件；普通 `/api/events` 的增量画像由 API 层在 accepted 后显式喂给 `ProfileUpdatePipeline`，不会由 memory 层隐式触发全链路刷新
 - 单条反馈只做即时认知记录，不直接重建画像
 - 聊天信号必须高置信且重复出现，才能进入长期学习
 - 画像重建必须跨过“显著变化阈值”
@@ -788,7 +794,11 @@ dialogue.clear_history()
 ### PreferenceAnalyzer
 
 ```python
-from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+from openbiliclaw.soul.preference_analyzer import (
+    DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    MAX_CONCURRENT_PREFERENCE_CHUNKS,
+    PreferenceAnalyzer,
+)
 
 analyzer = PreferenceAnalyzer(
     registry=llm_registry,
@@ -797,8 +807,11 @@ analyzer = PreferenceAnalyzer(
 updated_pref = await analyzer.analyze_events(
     events=[...],
     existing_preference=current_pref,
-    event_chunk_size=200,  # 可选：先按条数粗分片，再由 prompt 预算继续拆
+    event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,  # 默认初始化粗分片：200 条
 )
+# 初始化路径每批最多推进 200 * 16 = 3200 条事件的粗分片；
+# 单个 chunk 超过 max_prompt_chars 时仍会继续按 prompt 预算拆小。
+assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE * MAX_CONCURRENT_PREFERENCE_CHUNKS == 3200
 # 返回:
 # {
 #   "interests": [{"name": "历史", "category": "知识", "weight": 0.82, ...}],

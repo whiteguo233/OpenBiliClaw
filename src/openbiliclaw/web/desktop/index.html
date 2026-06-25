@@ -62,14 +62,14 @@
         <section class="side-section side-runtime-panel" aria-label="实时运行摘要">
           <p class="eyebrow">Runtime</p>
           <h3>推荐池实时看板</h3>
-          <p id="runtimeSummary">连接 FastAPI 后，这里会显示候选池、补货和待处理行为信号。</p>
+          <p id="runtimeSummary">连接 FastAPI 后，这里会显示候选池、补货和新动作记录。</p>
           <div class="hero-status-grid" aria-label="推荐池实时状态">
-            <div><span>可换库存</span><strong id="poolAvailable">—</strong></div>
-            <div><span>最近补货</span><strong id="poolReplenished">—</strong></div>
+            <div><span>当前可换库存</span><strong id="poolAvailable">—</strong></div>
+            <div><span>上次成功补货</span><strong id="poolReplenished">—</strong></div>
             <div><span>补货状态</span><strong id="poolRefreshState">—</strong></div>
           </div>
           <div class="metric-row">
-            <div class="metric"><strong id="metricPool">—</strong><span>候选池</span></div>
+            <div class="metric"><strong id="metricPool">—</strong><span>当前可换</span></div>
             <div class="metric"><strong id="metricUnread">—</strong><span>通知数</span></div>
             <div class="metric"><strong id="metricSources">—</strong><span>内容源</span></div>
           </div>
@@ -303,6 +303,7 @@
             <label class="settings-field"><span>抖音</span><select id="douyinEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field"><span>YouTube</span><select id="youtubeEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field"><span>X (Twitter)</span><select id="twitterEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+            <label class="settings-field"><span>知乎</span><select id="zhihuEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
           </div>
           <p class="settings-section-title">来源接入状态</p>
           <p class="settings-note-inline">各来源的登录 / cookie 接入状态(仅 X 为实时校验,其余按本地 cookie / 令牌是否就绪)。</p>
@@ -312,6 +313,7 @@
             <p class="settings-note-inline source-status-row" data-source-status="douyin"><span class="src-dot">●</span> <strong>抖音</strong> · <span class="src-detail">加载中…</span></p>
             <p class="settings-note-inline source-status-row" data-source-status="youtube"><span class="src-dot">●</span> <strong>YouTube</strong> · <span class="src-detail">加载中…</span></p>
             <p class="settings-note-inline source-status-row" data-source-status="twitter"><span class="src-dot">●</span> <strong>X (Twitter)</strong> · <span class="src-detail">加载中…</span></p>
+            <p class="settings-note-inline source-status-row" data-source-status="zhihu"><span class="src-dot">●</span> <strong>知乎</strong> · <span class="src-detail">加载中…</span></p>
           </div>
           <label class="settings-field"><span>B 站认证</span><select id="biliAuth"><option value="cookie">Cookie</option><option value="qrcode">二维码</option><option value="none">无</option></select></label>
           <label class="settings-field full"><span>B 站 Cookie</span><textarea id="biliCookie" rows="2" placeholder="保留空值表示不覆盖现有 cookie"></textarea></label>
@@ -351,14 +353,33 @@
             <label class="settings-field"><span>X 请求间隔秒数</span><input id="twitterRequestInterval" inputmode="numeric" placeholder="3"></label>
           </div>
           <label class="settings-field"><span>X 最小调度间隔分钟</span><input id="twitterMinInterval" inputmode="numeric" placeholder="60"></label>
-          <p class="settings-section-title">候选池来源占比</p>
-          <p class="settings-note-inline">下面是候选池来源占比/权重，不是每日抓取任务数。例如 8 / 1 / 1 / 1 表示 B 站候选约占 8 份，其余来源各 1 份。</p>
+          <p class="settings-section-title">知乎</p>
+          <p class="settings-note-inline">知乎 discovery 由已登录浏览器插件执行搜索 / 热榜 / 首页 / 作者 / 相关任务，后端只入队任务并接收结果。</p>
           <div class="inline-row">
-            <label class="settings-field"><span>B 站占比</span><input id="shareBilibili" value="8" inputmode="numeric"></label>
+            <label class="settings-field"><span>搜索分支</span><input id="zhihuModeSearch" type="checkbox"></label>
+            <label class="settings-field"><span>热榜分支</span><input id="zhihuModeHot" type="checkbox"></label>
+            <label class="settings-field"><span>首页分支</span><input id="zhihuModeFeed" type="checkbox"></label>
+            <label class="settings-field"><span>作者分支</span><input id="zhihuModeCreator" type="checkbox"></label>
+            <label class="settings-field"><span>相关分支</span><input id="zhihuModeRelated" type="checkbox"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>知乎每日搜索</span><input id="zhihuDailySearchBudget" inputmode="numeric" placeholder="0 = 不限"></label>
+            <label class="settings-field"><span>知乎每日热榜</span><input id="zhihuDailyHotBudget" inputmode="numeric" placeholder="0 = 不限"></label>
+            <label class="settings-field"><span>知乎每日首页</span><input id="zhihuDailyFeedBudget" inputmode="numeric" placeholder="0 = 不限"></label>
+            <label class="settings-field"><span>知乎每日作者</span><input id="zhihuDailyCreatorBudget" inputmode="numeric" placeholder="0 = 不限"></label>
+            <label class="settings-field"><span>知乎每日相关</span><input id="zhihuDailyRelatedBudget" inputmode="numeric" placeholder="0 = 不限"></label>
+            <label class="settings-field"><span>知乎请求间隔秒数</span><input id="zhihuRequestInterval" inputmode="numeric" placeholder="3"></label>
+            <label class="settings-field"><span>知乎最小调度间隔分钟</span><input id="zhihuMinInterval" inputmode="numeric" placeholder="60"></label>
+          </div>
+          <p class="settings-section-title">候选池来源占比</p>
+          <p class="settings-note-inline">下面是候选池来源占比/权重，不是每日抓取任务数。例如 5 / 1 / 1 / 1 / 1 / 1 表示 B 站候选约占 5 份，其余来源各 1 份。</p>
+          <div class="inline-row">
+            <label class="settings-field"><span>B 站占比</span><input id="shareBilibili" value="5" inputmode="numeric"></label>
             <label class="settings-field"><span>小红书占比</span><input id="shareXhs" value="1" inputmode="numeric"></label>
             <label class="settings-field"><span>抖音占比</span><input id="shareDouyin" value="1" inputmode="numeric"></label>
             <label class="settings-field"><span>YouTube 占比</span><input id="shareYoutube" value="1" inputmode="numeric"></label>
             <label class="settings-field"><span>X 占比</span><input id="shareTwitter" value="1" inputmode="numeric"></label>
+            <label class="settings-field"><span>知乎占比</span><input id="shareZhihu" value="1" inputmode="numeric"></label>
           </div>
           <div class="drawer-actions" style="grid-column: 1 / -1"><button class="pill-btn" id="suggestSharesBtn" type="button">按历史行为建议占比</button></div>
         </div>

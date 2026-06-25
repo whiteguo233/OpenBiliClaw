@@ -87,6 +87,8 @@ def _canonical_platform(raw_platform: object) -> str:
         return "youtube"
     if raw in {"x", "twitter"}:
         return "twitter"
+    if raw in {"zhihu", "知乎"}:
+        return "zhihu"
     return raw or "unknown"
 
 
@@ -144,7 +146,11 @@ def resolve_content_type(item_content_type: object, platform: str) -> str:
     explicit = str(item_content_type or "").strip()
     if explicit and explicit != "video":
         return explicit
-    return "note" if platform == "xiaohongshu" else "video"
+    if platform == "xiaohongshu":
+        return "note"
+    if platform == "zhihu":
+        return "answer"
+    return "video"
 
 
 def discovered_content_to_candidate_write(

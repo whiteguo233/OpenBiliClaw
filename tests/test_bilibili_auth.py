@@ -105,6 +105,5 @@ def test_resolve_runtime_cookie_falls_back_to_saved_cookie(tmp_path: Path) -> No
     manager.set_cookie("SESSDATA=saved_cookie")
 
     assert (
-        resolve_runtime_cookie(data_dir=tmp_path, configured_cookie="")
-        == "SESSDATA=saved_cookie"
+        resolve_runtime_cookie(data_dir=tmp_path, configured_cookie="") == "SESSDATA=saved_cookie"
     )

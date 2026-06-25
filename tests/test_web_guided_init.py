@@ -65,10 +65,14 @@ def test_setup_llm_model_is_visible_and_save_suppresses_background_llm_work() ->
 def test_setup_init_sources_are_explicit_opt_in_without_settings_enable_block() -> None:
     """Checked setup sources are this-run opt-ins, not a filter over settings toggles."""
     setup_html = Path("src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
 
     assert "勾选会同时开启该来源" in setup_html
     assert "selectedSourcesNeedingEnable" not in setup_html
     assert "还没在设置里开启" not in setup_html
+    for source in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"):
+        assert f'key: "{source}"' in setup_html
+        assert f'key: "{source}"' in app_js
 
 
 def test_guided_init_web_docs_belong_to_v03110_release_block() -> None:

@@ -40,6 +40,8 @@ const DEFAULT_POLL_INTERVAL_MS = 45_000;
 const TASK_TIMEOUT_MS = 90_000;
 const POLL_ALARM_NAME = "openbiliclaw-bili-task-poll";
 const TAB_READY_FALLBACK_MS = 10_000;
+const CONTENT_SCRIPT_RETRY_INTERVAL_MS = 250;
+const CONTENT_SCRIPT_READY_TIMEOUT_MS = 8_000;
 
 export interface BiliTask {
   id: string;
@@ -63,6 +65,7 @@ export interface BiliTaskResult {
 let taskInFlight = false;
 let taskTabId: number | null = null;
 let taskTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let messageRetryTimeoutId: ReturnType<typeof setTimeout> | null = null;
 let currentTaskId: string | null = null;
 let taskUpdateListener: ((tabId: number, changeInfo: { status?: string }) => void) | null = null;
 
@@ -151,6 +154,10 @@ function cleanupTask(): void {
     clearTimeout(taskTimeoutId);
     taskTimeoutId = null;
   }
+  if (messageRetryTimeoutId !== null) {
+    clearTimeout(messageRetryTimeoutId);
+    messageRetryTimeoutId = null;
+  }
   if (taskUpdateListener !== null) {
     chrome.tabs.onUpdated.removeListener(taskUpdateListener);
     taskUpdateListener = null;
@@ -206,7 +213,15 @@ function onTabReady(tabId: number, callback: () => void): void {
     .catch(() => {});
 }
 
-function sendExecuteMessage(task: BiliTask): void {
+function scheduleExecuteMessageRetry(task: BiliTask, startedAt: number): void {
+  if (messageRetryTimeoutId !== null) clearTimeout(messageRetryTimeoutId);
+  messageRetryTimeoutId = setTimeout(() => {
+    messageRetryTimeoutId = null;
+    sendExecuteMessage(task, startedAt);
+  }, CONTENT_SCRIPT_RETRY_INTERVAL_MS);
+}
+
+function sendExecuteMessage(task: BiliTask, startedAt: number = Date.now()): void {
   if (taskTabId === null || currentTaskId !== task.id) return;
   void chrome.tabs
     .sendMessage(taskTabId, {
@@ -215,6 +230,10 @@ function sendExecuteMessage(task: BiliTask): void {
     })
     .catch(() => {
       if (currentTaskId !== task.id) return;
+      if (Date.now() - startedAt < CONTENT_SCRIPT_READY_TIMEOUT_MS) {
+        scheduleExecuteMessageRetry(task, startedAt);
+        return;
+      }
       void postTaskResult({
         task_id: task.id,
         status: "failed",

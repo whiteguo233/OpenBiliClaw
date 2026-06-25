@@ -466,6 +466,15 @@ class RuntimeContext:
             profile_consolidation_interval_hours=int(
                 getattr(new_config.scheduler, "profile_consolidation_interval_hours", 12)
             ),
+            profile_consolidation_like_target_upper=int(
+                getattr(new_config.scheduler, "profile_consolidation_like_target_upper", 512)
+            ),
+            profile_consolidation_like_target_soft=int(
+                getattr(new_config.scheduler, "profile_consolidation_like_target_soft", 450)
+            ),
+            profile_consolidation_archive_enabled=bool(
+                getattr(new_config.scheduler, "profile_consolidation_archive_enabled", True)
+            ),
             feedback_batch_threshold=int(
                 getattr(new_config.scheduler, "feedback_batch_threshold", 3)
             ),
@@ -614,6 +623,9 @@ class RuntimeContext:
             discovery_engine=new_discovery_engine,
             pool_target_count=new_config.scheduler.pool_target_count,
             admission_min_score=admission_min_score,
+            min_eval_batch_size=8,
+            max_eval_wait_seconds=120,
+            candidate_fetch_oversample=4,
             xhs_self_nickname_provider=lambda: str(
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
@@ -640,6 +652,7 @@ class RuntimeContext:
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
         new_x_producer: Any = None
+        new_zhihu_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -721,6 +734,22 @@ class RuntimeContext:
                 llm_service=new_llm_service,
                 keyword_fetch=new_keyword_fetch,
             )
+            from openbiliclaw.runtime.zhihu_producer import build_zhihu_discovery_producer
+
+            async def _kick_zhihu_extension() -> None:
+                publish = getattr(getattr(self, "event_hub", None), "publish", None)
+                if callable(publish):
+                    with suppress(Exception):
+                        await publish({"type": "zhihu_task_available", "source": "task_kick"})
+
+            new_zhihu_producer = build_zhihu_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+                kick=_kick_zhihu_extension,
+            )
 
         # P1.6: unified keyword planner — deficit-pulled merged keyword
         # generation. Built as its OWN object (the controller has no
@@ -766,6 +795,7 @@ class RuntimeContext:
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
             x_producer=new_x_producer,
+            zhihu_producer=new_zhihu_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided

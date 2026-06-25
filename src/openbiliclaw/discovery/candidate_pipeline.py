@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -55,8 +56,17 @@ class DiscoveryCandidatePipeline:
     xhs_self_nickname_provider: Callable[[], str] | None = None
     max_eval_attempts: int = 5
     max_batch_eval_attempts: int = 50
+    min_eval_batch_size: int = 1
+    max_eval_wait_seconds: float = 0.0
+    candidate_fetch_oversample: int = 1
+    time_fn: Callable[[], float] = field(default=time.monotonic, repr=False)
     _drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
+        init=False,
+        repr=False,
+    )
+    _first_pending_eval_seen_at: float | None = field(
+        default=None,
         init=False,
         repr=False,
     )
@@ -120,13 +130,20 @@ class DiscoveryCandidatePipeline:
         if keyword_ids:
             extra["keyword_ids"] = keyword_ids
 
+        produce_limit = self._oversampled_produce_limit(limit)
+        produce_strategy_limits = self._oversampled_strategy_limits(
+            strategy_limits,
+            requested_limit=limit,
+            produce_limit=produce_limit,
+        )
+
         produce_fn = getattr(self.discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
             items = await produce_fn(
                 profile,
                 strategies=strategies,
-                limit=limit,
-                strategy_limits=strategy_limits,
+                limit=produce_limit,
+                strategy_limits=produce_strategy_limits,
                 pool_snapshot=pool_snapshot,
                 **extra,
             )
@@ -134,8 +151,8 @@ class DiscoveryCandidatePipeline:
             items = await self.discovery_engine.discover(
                 profile,
                 strategies=strategies,
-                limit=limit,
-                strategy_limits=strategy_limits,
+                limit=produce_limit,
+                strategy_limits=produce_strategy_limits,
                 pool_snapshot=pool_snapshot,
                 **extra,
             )
@@ -176,8 +193,19 @@ class DiscoveryCandidatePipeline:
             self.last_admitted_items = list(admitted_items)
             return {"evaluated": 0, "cached": retry_cached, "rejected": retry_rejected}
 
+        waiting_pending = self._waiting_pending_eval_count(batch_size)
+        if waiting_pending is not None:
+            self.last_admitted_items = list(admitted_items)
+            return {
+                "evaluated": 0,
+                "cached": retry_cached,
+                "rejected": retry_rejected,
+                "waiting": waiting_pending,
+            }
+
         rows = self.database.claim_discovery_candidates_for_eval(limit=batch_size)
         if not rows:
+            self._first_pending_eval_seen_at = None
             self.last_admitted_items = list(admitted_items)
             return {"evaluated": 0, "cached": retry_cached, "rejected": retry_rejected}
 
@@ -446,6 +474,86 @@ class DiscoveryCandidatePipeline:
         if hard_cap > 0:
             return min(requested, hard_cap)
         return requested
+
+    def _oversampled_produce_limit(self, limit: int) -> int:
+        requested = max(0, int(limit))
+        if requested <= 0:
+            return 0
+        try:
+            factor = int(self.candidate_fetch_oversample)
+        except (TypeError, ValueError):
+            factor = 1
+        if factor <= 1:
+            return requested
+        return min(requested * factor, max(requested, 120))
+
+    def _oversampled_strategy_limits(
+        self,
+        strategy_limits: dict[str, int] | None,
+        *,
+        requested_limit: int,
+        produce_limit: int,
+    ) -> dict[str, int] | None:
+        if not strategy_limits or produce_limit <= requested_limit:
+            return strategy_limits
+        requested = max(1, int(requested_limit))
+        scaled: dict[str, int] = {}
+        for strategy, raw_value in strategy_limits.items():
+            value = max(0, int(raw_value))
+            if value <= 0:
+                scaled[strategy] = 0
+                continue
+            scaled[strategy] = max(value, (value * produce_limit + requested - 1) // requested)
+        return scaled
+
+    def _waiting_pending_eval_count(self, batch_size: int) -> int | None:
+        min_batch = min(max(1, int(self.min_eval_batch_size)), max(1, int(batch_size)))
+        if min_batch <= 1:
+            self._first_pending_eval_seen_at = None
+            return None
+
+        pending_count = self._pending_eval_count()
+        if pending_count is None:
+            return None
+        if pending_count <= 0:
+            self._first_pending_eval_seen_at = None
+            return None
+        if pending_count >= min_batch:
+            self._first_pending_eval_seen_at = None
+            return None
+
+        now = float(self.time_fn())
+        first_seen = self._first_pending_eval_seen_at
+        if first_seen is None:
+            self._first_pending_eval_seen_at = now
+            first_seen = now
+        max_wait = max(0.0, float(self.max_eval_wait_seconds or 0.0))
+        waited = max(0.0, now - first_seen)
+        if max_wait > 0 and waited >= max_wait:
+            self._first_pending_eval_seen_at = None
+            return None
+        if max_wait <= 0:
+            return None
+
+        logger.info(
+            "candidate eval drain waiting: pending=%s min_batch=%s waited=%.1fs max_wait=%.1fs",
+            pending_count,
+            min_batch,
+            waited,
+            max_wait,
+        )
+        return pending_count
+
+    def _pending_eval_count(self) -> int | None:
+        count_fn = getattr(self.database, "count_discovery_candidates_by_status", None)
+        if not callable(count_fn):
+            return None
+        try:
+            counts = dict(count_fn())
+        except Exception:
+            logger.debug("pending discovery candidate count unavailable", exc_info=True)
+            return None
+        return int(counts.get("pending_eval", 0) or 0)
 
     @staticmethod
     def _raw_payload(row: dict[str, Any]) -> dict[str, Any]:

@@ -11,6 +11,8 @@ SOURCE_BOOTSTRAP_STATE_KEYS: dict[str, str] = {
     "douyin": "dy_seen_video_keys",
     "yt": "yt_seen_item_keys",
     "youtube": "yt_seen_item_keys",
+    "zhihu": "zhihu_seen_item_keys",
+    "zh": "zhihu_seen_item_keys",
 }
 
 
@@ -20,6 +22,7 @@ def default_source_bootstrap_state() -> dict[str, object]:
         "xhs_seen_note_keys": [],
         "dy_seen_video_keys": [],
         "yt_seen_item_keys": [],
+        "zhihu_seen_item_keys": [],
         "last_source_bootstrap_sync_at": "",
     }
 
@@ -57,5 +60,6 @@ def normalize_source_bootstrap_state(loaded: Any) -> dict[str, object]:
         "xhs_seen_note_keys": as_string_list(loaded.get("xhs_seen_note_keys", [])),
         "dy_seen_video_keys": as_string_list(loaded.get("dy_seen_video_keys", [])),
         "yt_seen_item_keys": as_string_list(loaded.get("yt_seen_item_keys", [])),
+        "zhihu_seen_item_keys": as_string_list(loaded.get("zhihu_seen_item_keys", [])),
         "last_source_bootstrap_sync_at": str(loaded.get("last_source_bootstrap_sync_at", "")),
     }

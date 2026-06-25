@@ -179,9 +179,7 @@ class TestXhsSelfContentFilterE2E:
         # Self-authored XHS rows (will be caught by different columns)
         _seed_xhs_row(db, "self_by_up", up_name="屎屎", title="自发-up_name")
         _seed_xhs_row(db, "self_by_author", author_name="屎屎", title="自发-author_name")
-        _seed_xhs_row(
-            db, "self_by_both", up_name="屎屎", author_name="屎屎", title="自发-两列"
-        )
+        _seed_xhs_row(db, "self_by_both", up_name="屎屎", author_name="屎屎", title="自发-两列")
         # Other people's XHS rows
         _seed_xhs_row(db, "friend_xhs", up_name="好朋友", title="好朋友的笔记")
         # Bilibili row whose up_name happens to match — must NOT be excluded
@@ -195,9 +193,7 @@ class TestXhsSelfContentFilterE2E:
         response = client.post(
             "/api/sources/xhs/observed-urls",
             json={
-                "urls": [
-                    "https://www.xiaohongshu.com/explore/harmless?xsec_token=OK"
-                ],
+                "urls": ["https://www.xiaohongshu.com/explore/harmless?xsec_token=OK"],
                 "page_type": "explore",
                 "self_info": {"user_id": "uid_self", "nickname": "屎屎"},
             },
@@ -234,9 +230,7 @@ class TestXhsSelfContentFilterE2E:
         # won't be purged (purge is one-shot), but the SQL guard must block.
         _seed_xhs_row(db, "self_late_arrival", up_name="屎屎", title="后来的自发")
 
-        candidates = db.get_pool_candidates(
-            limit=50, xhs_self_nickname="屎屎"
-        )
+        candidates = db.get_pool_candidates(limit=50, xhs_self_nickname="屎屎")
         candidate_bvids = {r["bvid"] for r in candidates}
 
         assert "self_late_arrival" not in candidate_bvids, (
@@ -249,9 +243,7 @@ class TestXhsSelfContentFilterE2E:
         assert "self_by_author" not in candidate_bvids
 
         # ── Phase 6: Verify count and readiness consistency ──────────────
-        count = db.count_pool_candidates(
-            max_per_topic_group=0, xhs_self_nickname="屎屎"
-        )
+        count = db.count_pool_candidates(max_per_topic_group=0, xhs_self_nickname="屎屎")
         readiness = db.count_pool_readiness(xhs_self_nickname="屎屎")
 
         # Should only count: friend_xhs + BV_bili_same + harmless (from API)
@@ -264,28 +256,20 @@ class TestXhsSelfContentFilterE2E:
 
         # ── Phase 7: Verify backlog queries skip self-authored rows ──────
         # Seed an unclassified self-authored row
-        _seed_xhs_row(
-            db, "self_unclassified", author_name="屎屎", classified=False
-        )
-        eval_rows = db.get_pool_candidates_needing_evaluation(
-            limit=50, xhs_self_nickname="屎屎"
-        )
+        _seed_xhs_row(db, "self_unclassified", author_name="屎屎", classified=False)
+        eval_rows = db.get_pool_candidates_needing_evaluation(limit=50, xhs_self_nickname="屎屎")
         eval_bvids = {r["bvid"] for r in eval_rows}
         assert "self_unclassified" not in eval_bvids, (
             "Unclassified self-authored row must not enter evaluation queue"
         )
 
         # ── Phase 8: Empty nickname is a safe no-op ──────────────────────
-        all_count = db.count_pool_candidates(
-            max_per_topic_group=0, xhs_self_nickname=""
-        )
+        all_count = db.count_pool_candidates(max_per_topic_group=0, xhs_self_nickname="")
         # With empty nickname, the late-arrival self row is also counted
         # (suppressed ones still excluded by pool_status, but late_arrival
         # and self_unclassified have pool_status='fresh').
         # self_late_arrival is classified → visible. self_unclassified is not.
-        assert all_count > count, (
-            f"Empty nickname should include more rows: {all_count} vs {count}"
-        )
+        assert all_count > count, f"Empty nickname should include more rows: {all_count} vs {count}"
 
     def test_case_insensitive_matching(
         self,
@@ -296,9 +280,7 @@ class TestXhsSelfContentFilterE2E:
 
         _seed_xhs_row(db, "xhs_mixed_case", up_name="TestUser", title="mixed case")
 
-        candidates = db.get_pool_candidates(
-            limit=50, xhs_self_nickname="testuser"
-        )
+        candidates = db.get_pool_candidates(limit=50, xhs_self_nickname="testuser")
         assert not any(r["bvid"] == "xhs_mixed_case" for r in candidates), (
             "Case-insensitive match should exclude 'TestUser' when nickname is 'testuser'"
         )

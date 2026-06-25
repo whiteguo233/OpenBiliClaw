@@ -211,8 +211,7 @@ class ProfileBuilder:
 
         if defaulted:
             logger.warning(
-                "LLM soul profile response missing/invalid optional fields; "
-                "defaulted fields: %s",
+                "LLM soul profile response missing/invalid optional fields; defaulted fields: %s",
                 ", ".join(defaulted),
             )
         return payload

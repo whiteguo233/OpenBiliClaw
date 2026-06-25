@@ -35,10 +35,50 @@ def test_desktop_backend_hydration_clears_empty_recommendations() -> None:
 def test_desktop_pool_status_shows_available_count() -> None:
     """Desktop web UI displays pool_available_count for inventory status."""
     app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+    index_html = Path("src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
 
     assert "pool_available_count" in app_js
     assert "还有 ${runtime.pool_available_count} 条可换" in app_js
     assert "暂无可换库存" in app_js
+    assert "当前可换库存" in index_html
+    assert "当前可换" in index_html
+
+
+def test_desktop_hydration_refetches_runtime_after_recommendation_bootstrap() -> None:
+    """GET /recommendations may bootstrap-serve, so runtime is refreshed afterwards."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    hydrate = re.search(
+        r"async function hydrateFromBackend\(\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert hydrate is not None, "desktop hydrateFromBackend not found"
+    body = hydrate.group("body")
+    assert (
+        "await requestJson(ENDPOINTS.runtimeStatus).catch(() => runtime?.status || runtime)"
+        in body
+    )
+    assert "applyRuntimeStatus(effectiveRuntime?.status || effectiveRuntime);" in body
+
+
+def test_desktop_pool_status_labels_pending_signals_as_discovery_context() -> None:
+    """Pending runtime signals are discovery context, not unprocessed profile events."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+    index_html = Path("src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
+
+    assert "待处理 ${runtime.pending_signal_events} 条行为信号" not in app_js
+    assert "已记下 ${runtime.pending_signal_events} 个新动作" in app_js
+    assert "待处理行为信号" not in index_html
+    assert "新动作" in index_html
+
+
+def test_desktop_replenished_label_distinguishes_previous_success_from_current_status() -> None:
+    """The replenish count is historical, so its label must not read as this round."""
+    index_html = Path("src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
+
+    assert "上次成功补货" in index_html
+    assert "最近补货" not in index_html
 
 
 def test_desktop_source_metric_uses_configured_source_count() -> None:

@@ -26,7 +26,7 @@ class FakeLLMService:
 
 class TestLLMExtractor:
     def test_extracts_items_from_valid_json(self) -> None:
-        response = '''[
+        response = """[
             {
                 "title": "机械键盘评测",
                 "author": "键盘侠",
@@ -41,7 +41,7 @@ class TestLLMExtractor:
                 "url": "https://example.com/p/2",
                 "content_id": "2"
             }
-        ]'''
+        ]"""
         service = FakeLLMService(response)
         items = asyncio.run(
             extract_content_from_page(

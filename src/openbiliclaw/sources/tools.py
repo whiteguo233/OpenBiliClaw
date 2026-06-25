@@ -18,10 +18,7 @@ logger = logging.getLogger(__name__)
 SOURCE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "create_source",
-        "description": (
-            "创建新的内容源订阅。"
-            "当用户说想关注某个平台的某类内容时调用。"
-        ),
+        "description": ("创建新的内容源订阅。当用户说想关注某个平台的某类内容时调用。"),
         "parameters": {
             "source_type": "平台类型，如 xiaohongshu / web / v2ex / zhihu",
             "name": "人类可读的订阅名，如 '小红书-机械键盘'",

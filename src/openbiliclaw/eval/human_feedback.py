@@ -59,12 +59,14 @@ def collect_human_feedback() -> dict[str, Any] | None:
         if score < 1.0:
             deviation = input("  哪里不对？简要描述: ").strip()
 
-        feedback_layers.append({
-            "layer": key,
-            "label": label,
-            "score": score,
-            "deviation": deviation,
-        })
+        feedback_layers.append(
+            {
+                "layer": key,
+                "label": label,
+                "score": score,
+                "deviation": deviation,
+            }
+        )
 
     overall = sum(f["score"] for f in feedback_layers) / len(feedback_layers)
     print(f"\n  总分: {overall:.2f}")
@@ -99,12 +101,14 @@ def feedback_to_optimizer_report(
             "portrait": ["personality_portrait"],
         }
         for field in field_map.get(layer_key, [layer_key]):
-            worst_fields.append({
-                "layer": layer_key.replace("_layer", ""),
-                "field": field,
-                "score": layer_fb["score"],
-                "deviation": layer_fb["deviation"] or f"{layer_fb['label']}不准确",
-            })
+            worst_fields.append(
+                {
+                    "layer": layer_key.replace("_layer", ""),
+                    "field": field,
+                    "score": layer_fb["score"],
+                    "deviation": layer_fb["deviation"] or f"{layer_fb['label']}不准确",
+                }
+            )
 
     # Sort by score ascending (worst first)
     worst_fields.sort(key=lambda f: f["score"])
@@ -116,9 +120,7 @@ def feedback_to_optimizer_report(
         "worst_fields": worst_fields[:5],
         "action": "EXPLOIT",
         "pipeline_hints": {
-            f"{f['layer']}.{f['field']}": FIELD_TO_PIPELINE.get(
-                f"{f['layer']}.{f['field']}", ""
-            )
+            f"{f['layer']}.{f['field']}": FIELD_TO_PIPELINE.get(f"{f['layer']}.{f['field']}", "")
             for f in worst_fields
             if FIELD_TO_PIPELINE.get(f"{f['layer']}.{f['field']}")
         },
@@ -148,8 +150,10 @@ async def run_optimization_cycle(
 
     print("\n" + "=" * 60)
     print("运行 Optimizer Agent...")
-    print(f"  最大偏差: {report['worst_fields'][0]['layer']}.{report['worst_fields'][0]['field']}"
-          f" ({report['worst_fields'][0]['score']:.1f})")
+    print(
+        f"  最大偏差: {report['worst_fields'][0]['layer']}.{report['worst_fields'][0]['field']}"
+        f" ({report['worst_fields'][0]['score']:.1f})"
+    )
     print("=" * 60)
 
     # Log input
@@ -226,9 +230,10 @@ async def run_optimization_cycle(
     print(f"\n  ✅ 修改已提交 ({applied_count} 处)")
 
     if run_logger:
-        opt_step.save_json("applied_changes.json", [
-            {"file": c.file_path, "desc": c.description} for c in param_changes
-        ])
+        opt_step.save_json(
+            "applied_changes.json",
+            [{"file": c.file_path, "desc": c.description} for c in param_changes],
+        )
 
     return {
         "optimized": True,

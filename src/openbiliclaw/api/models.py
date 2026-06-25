@@ -61,6 +61,7 @@ class InitPrerequisitesOut(BaseModel):
     bilibili_check: str = "checking"  # ok | failed | checking
     llm_ready: bool = False
     embedding_ready: bool = False
+    embedding_required: bool = False
     enabled_platforms: list[str] = Field(default_factory=list)
 
 
@@ -376,6 +377,8 @@ class SourceStatusItem(BaseModel):
     - ``stale``      — credential synced before but not recently, likely
       expired (小红书 tokens older than the freshness window).
     - ``missing``    — source enabled but no usable credential.
+    - ``unverified`` — plugin-backed source is enabled but local task history
+      does not prove a recent successful or failed login-state run yet.
     - ``expired`` / ``rate_limited`` / ``blocked`` — X live-health states.
     - ``no_auth``    — source needs no login (YouTube, public).
 
@@ -404,6 +407,7 @@ class SourcesStatusResponse(BaseModel):
     douyin: SourceStatusItem = Field(default_factory=SourceStatusItem)
     youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
     twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -1004,6 +1008,20 @@ class TwitterSourceConfigOut(BaseModel):
     min_interval_minutes: int = 60
 
 
+class ZhihuSourceConfigOut(BaseModel):
+    enabled: bool = False
+    source_modes: list[str] = Field(
+        default_factory=lambda: ["search", "hot", "feed", "creator", "related"]
+    )
+    daily_search_budget: int = 0
+    daily_hot_budget: int = 0
+    daily_feed_budget: int = 0
+    daily_creator_budget: int = 0
+    daily_related_budget: int = 0
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
@@ -1011,6 +1029,7 @@ class SourcesConfigOut(BaseModel):
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
     twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
+    zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):

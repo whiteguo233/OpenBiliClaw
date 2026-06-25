@@ -24,6 +24,8 @@ def test_desktop_web_settings_wires_update_status_line() -> None:
     # The blocking reasons users actually hit are localized.
     assert "dirty_worktree" in js
     assert "branch_not_fast_forwardable" in js
+    assert "github_rate_limited" in js
+    assert "GitHub API 限流，请稍后再试" in js
 
     # Status refreshes when the settings page opens AND after a config save.
     assert js.count("void refreshUpdateStatus();") >= 2

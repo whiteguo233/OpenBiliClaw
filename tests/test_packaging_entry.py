@@ -162,9 +162,7 @@ def test_resolve_runtime_paths_honors_project_root_override(monkeypatch, tmp_pat
 def _seed_legacy_install(install_dir: Path) -> None:
     install_dir.mkdir(parents=True, exist_ok=True)
     (install_dir / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
-    (install_dir / "config.local.toml").write_text(
-        "[api]\nport = 18420\n", encoding="utf-8"
-    )
+    (install_dir / "config.local.toml").write_text("[api]\nport = 18420\n", encoding="utf-8")
     (install_dir / "data").mkdir()
     (install_dir / "data" / "openbiliclaw.db").write_bytes(b"SQLite format 3\x00payload")
     (install_dir / "logs").mkdir()
@@ -310,9 +308,7 @@ def test_copy_legacy_packaged_user_data_copies_without_removing_source(tmp_path:
     entry._copy_legacy_packaged_user_data(old_root, new_root)
 
     assert (new_root / "config.toml").read_text(encoding="utf-8") == "language = 'zh'\n"
-    assert (new_root / "config.local.toml").read_text(encoding="utf-8") == (
-        "[api]\nport = 18420\n"
-    )
+    assert (new_root / "config.local.toml").read_text(encoding="utf-8") == ("[api]\nport = 18420\n")
     assert (new_root / "data" / "openbiliclaw.db").read_bytes() == original_db
     assert (new_root / "logs" / "openbiliclaw.log").read_text(encoding="utf-8") == "hello\n"
     assert (old_root / "config.toml").exists()

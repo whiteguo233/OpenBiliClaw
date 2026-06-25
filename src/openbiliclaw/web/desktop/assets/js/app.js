@@ -80,12 +80,13 @@
       { key: "xiaohongshu", label: "小红书" },
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
-      { key: "twitter", label: "X (Twitter)" }
+      { key: "twitter", label: "X (Twitter)" },
+      { key: "zhihu", label: "知乎" }
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter" };
-    const textCardContentTypes = new Set(["tweet", "thread"]);
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu" };
+    const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -94,7 +95,8 @@
       { key: "xiaohongshu", label: "小红书" },
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
-      { key: "twitter", label: "X" }
+      { key: "twitter", label: "X" },
+      { key: "zhihu", label: "知乎" }
     ];
     const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_REASON_TEXT = {
@@ -102,6 +104,7 @@
       already_running: "初始化正在进行中。",
       bilibili_not_logged_in: "还没检测到 B 站登录。",
       llm_not_ready: "AI 服务还没配好或当前不可用。",
+      embedding_not_ready: "向量模型还没就绪，请等待 bge-m3 下载完成或修复 Ollama 后重试。",
       already_initialized: "已经初始化过了；如需重建，请到设置页。",
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
@@ -604,6 +607,7 @@
         if (url.includes("douyin.com")) return "douyin";
         if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
         if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+        if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
         return "web";
       }
       if (String(item?.bvid ?? "").trim()) return "bilibili";
@@ -729,6 +733,7 @@
       const selectedSources = Array.isArray(selected) ? selected : null;
       // B 站登录只在勾选了 B 站时才是硬前置。
       const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
+      const embeddingRequired = Boolean(prereq.embedding_required);
       return [
         {
           key: "bilibili",
@@ -746,10 +751,12 @@
         },
         {
           key: "embedding",
-          label: "向量模型可用（推荐，非必须）",
+          label: embeddingRequired ? "向量模型可用" : "向量模型可用（推荐，非必须）",
           ok: Boolean(prereq.embedding_ready),
-          hard: false,
-          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但语义检索会弱一些。"
+          hard: embeddingRequired,
+          hint: embeddingRequired
+            ? "本地 Ollama + bge-m3 需要完成一次真实向量请求；模型仍在下载或服务异常时请稍后重试。"
+            : "未配置 embedding 时可以先初始化；推荐去重和语义检索会弱一些。"
         },
         {
           key: "platforms",
@@ -3346,7 +3353,7 @@
       if (runtime.manual_refresh_state === "running") return runtime.pool_available_count > 0 ? "后台继续补货中" : "正在补货";
       if (runtime.manual_refresh_state === "success") return "刚同步完成";
       if (runtime.manual_refresh_state === "failed") return "刷新失败";
-      if (runtime.pending_signal_events > 0) return `待处理 ${runtime.pending_signal_events} 条行为信号`;
+      if (runtime.pending_signal_events > 0) return `已记下 ${runtime.pending_signal_events} 个新动作`;
       if (runtime.runtime_event_type === "refresh.pool_updated") return "刚同步推荐池";
       return runtime.pool_available_count > 0 ? "可直接换一批" : "等待后台补货";
     }
@@ -3391,6 +3398,34 @@
       return Number.isFinite(value) ? value : fallback;
     }
 
+    const ZHIHU_SOURCE_MODE_FIELDS = [
+      ["search", "zhihuModeSearch"],
+      ["hot", "zhihuModeHot"],
+      ["feed", "zhihuModeFeed"],
+      ["creator", "zhihuModeCreator"],
+      ["related", "zhihuModeRelated"],
+    ];
+
+    function setZhihuSourceModes(rawModes) {
+      const fallbackModes = ZHIHU_SOURCE_MODE_FIELDS.map(([mode]) => mode);
+      const selected = new Set(
+        (Array.isArray(rawModes) && rawModes.length > 0 ? rawModes : fallbackModes)
+          .map((mode) => String(mode).trim())
+          .filter(Boolean),
+      );
+      for (const [mode, id] of ZHIHU_SOURCE_MODE_FIELDS) {
+        const el = document.getElementById(id);
+        if (el) el.checked = selected.has(mode);
+      }
+    }
+
+    function collectZhihuSourceModes() {
+      const selected = ZHIHU_SOURCE_MODE_FIELDS
+        .filter(([, id]) => document.getElementById(id)?.checked === true)
+        .map(([mode]) => mode);
+      return selected.length > 0 ? selected : ["search"];
+    }
+
     function joinPath(directory, filename) {
       const dir = String(directory || "").trim();
       const name = String(filename || "").trim();
@@ -3430,7 +3465,7 @@
       partial: "#e0a800", stale: "#e0a800",
       expired_cookie: "#e74c3c", blocked: "#e74c3c"
     };
-    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter"];
+    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
 
     async function renderSourcesStatus() {
       const list = $("#sourceStatusList");
@@ -3618,6 +3653,7 @@
       setInput("shareDouyin", scheduler.pool_source_shares?.douyin);
       setInput("shareYoutube", scheduler.pool_source_shares?.youtube);
       setInput("shareTwitter", scheduler.pool_source_shares?.twitter);
+      setInput("shareZhihu", scheduler.pool_source_shares?.zhihu);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -3726,6 +3762,15 @@
       setInput("twitterDailyCreatorBudget", config.sources?.twitter?.daily_creator_budget);
       setInput("twitterRequestInterval", config.sources?.twitter?.request_interval_seconds);
       setInput("twitterMinInterval", config.sources?.twitter?.min_interval_minutes);
+      setSelect("zhihuEnabled", config.sources?.zhihu?.enabled === true ? "on" : "off");
+      setZhihuSourceModes(config.sources?.zhihu?.source_modes);
+      setInput("zhihuDailySearchBudget", config.sources?.zhihu?.daily_search_budget);
+      setInput("zhihuDailyHotBudget", config.sources?.zhihu?.daily_hot_budget);
+      setInput("zhihuDailyFeedBudget", config.sources?.zhihu?.daily_feed_budget);
+      setInput("zhihuDailyCreatorBudget", config.sources?.zhihu?.daily_creator_budget);
+      setInput("zhihuDailyRelatedBudget", config.sources?.zhihu?.daily_related_budget);
+      setInput("zhihuRequestInterval", config.sources?.zhihu?.request_interval_seconds);
+      setInput("zhihuMinInterval", config.sources?.zhihu?.min_interval_minutes);
       void renderSourcesStatus();
 
       setSelect("logLevel", config.logging?.level || "INFO");
@@ -4002,7 +4047,8 @@
           { role: "agent", text: turn.reply || turn.assistant_message || turn.status || "等待后端回复中。" }
         ]).filter((item) => item.text);
       }
-      applyRuntimeStatus(runtime?.status || runtime);
+      const effectiveRuntime = await requestJson(ENDPOINTS.runtimeStatus).catch(() => runtime?.status || runtime);
+      applyRuntimeStatus(effectiveRuntime?.status || effectiveRuntime);
       applyDelights(delights);
       const delightChatItems = Array.isArray(delightChatTurns) ? delightChatTurns : asArray(delightChatTurns?.items);
       for (const turn of delightChatItems.filter(Boolean)) applyTurnToDelight({ ...turn, scope: turn.scope || "delight" });
@@ -4138,6 +4184,17 @@
             daily_creator_budget: getIntInput("twitterDailyCreatorBudget", 0),
             request_interval_seconds: getIntInput("twitterRequestInterval", 3),
             min_interval_minutes: getIntInput("twitterMinInterval", 60)
+          },
+          zhihu: {
+            enabled: $("#zhihuEnabled").value === "on",
+            source_modes: collectZhihuSourceModes(),
+            daily_search_budget: getIntInput("zhihuDailySearchBudget", 0),
+            daily_hot_budget: getIntInput("zhihuDailyHotBudget", 0),
+            daily_feed_budget: getIntInput("zhihuDailyFeedBudget", 0),
+            daily_creator_budget: getIntInput("zhihuDailyCreatorBudget", 0),
+            daily_related_budget: getIntInput("zhihuDailyRelatedBudget", 0),
+            request_interval_seconds: getIntInput("zhihuRequestInterval", 3),
+            min_interval_minutes: getIntInput("zhihuMinInterval", 60)
           }
         },
         scheduler: {
@@ -4156,11 +4213,12 @@
           proactive_push_interval_seconds: getIntInput("proactivePushInterval", 120),
           speculator_idle_interval_minutes: getIntInput("speculatorIdleInterval", 30),
           pool_source_shares: {
-            bilibili: getIntInput("shareBilibili", 8),
+            bilibili: getIntInput("shareBilibili", 5),
             xiaohongshu: getIntInput("shareXhs", 1),
             douyin: getIntInput("shareDouyin", 1),
             youtube: getIntInput("shareYoutube", 1),
-            twitter: getIntInput("shareTwitter", 1)
+            twitter: getIntInput("shareTwitter", 1),
+            zhihu: getIntInput("shareZhihu", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -4202,6 +4260,7 @@
       untrusted_remote: "git 远端不在允许列表，更新被阻止",
       branch_not_fast_forwardable: "本地代码与发布版本分叉，无法快进更新",
       merge_or_rebase_in_progress: "代码目录正在合并 / 变基，更新暂缓",
+      github_rate_limited: "GitHub API 限流，请稍后再试",
       github_unreachable: "无法访问 GitHub 检查更新",
       missing_target_tag: "远端未找到目标版本标签",
       dependency_sync_failed: "更新后依赖安装失败",
@@ -4611,7 +4670,7 @@
     lanAuthControl = initLanAuthControl();
     bootAutostartControl = initBootAutostartControl();
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
@@ -4619,6 +4678,7 @@
         setInput("shareDouyin", shares.douyin);
         setInput("shareYoutube", shares.youtube);
         if (shares.twitter !== undefined) setInput("shareTwitter", shares.twitter);
+        if (shares.zhihu !== undefined) setInput("shareZhihu", shares.zhihu);
         showToast("已应用来源占比建议");
       } else {
         showToast("没有拿到占比建议");

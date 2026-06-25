@@ -230,6 +230,34 @@ async def test_get_user_history_uses_cursor_pagination() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_user_history_zero_fetches_all_available_history() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = FakeAsyncClient(
+        [
+            {
+                "code": 0,
+                "data": {
+                    "list": [{"title": "v1"}, {"title": "v2"}],
+                    "cursor": {"max": 111, "view_at": 222},
+                },
+            },
+            {
+                "code": 0,
+                "data": {
+                    "list": [{"title": "v3"}, {"title": "v4"}],
+                    "cursor": {"max": 0, "view_at": 0},
+                },
+            },
+        ]
+    )
+
+    history = await client.get_user_history(max_items=0)
+
+    assert [item["title"] for item in history] == ["v1", "v2", "v3", "v4"]
+    assert len(client._client.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_search_passes_order_parameter() -> None:
     client = BilibiliAPIClient(cookie="SESSDATA=abc")
     client._client = RouteAsyncClient(

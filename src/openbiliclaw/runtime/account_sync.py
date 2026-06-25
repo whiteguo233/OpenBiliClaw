@@ -326,6 +326,7 @@ class AccountSyncService:
                             history_meta.get("view_at", item.get("view_at", 0))
                         ),
                         "source": "account_sync",
+                        "signal_strength": 0.35,
                     },
                 }
             )
@@ -432,6 +433,7 @@ class AccountSyncService:
                             "folder_title": folder_title,
                             "up_name": str(upper.get("name", "")).strip(),
                             "source": "account_sync",
+                            "signal_strength": 1.0,
                         },
                     }
                 )
@@ -483,6 +485,7 @@ class AccountSyncService:
                         "up_name": uname,
                         "sign": str(getattr(user, "sign", "")).strip(),
                         "source": "account_sync",
+                        "signal_strength": 0.6,
                     },
                 }
             )

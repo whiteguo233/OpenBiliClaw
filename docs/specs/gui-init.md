@@ -26,7 +26,7 @@
 - 构建对象:`_prepare_init_runtime()`(`cli.py:2011`)、`_build_bilibili_client()`、`_build_memory_manager()`、`_build_soul_engine()`。常量:历史 300 / 收藏 300 / 关注 100(`cli.py:168-170`)。**注:本 spec 的行号在 R1 校正了几处明显错位(见 Interview Log),实现计划须对全部引用再 grep 核一遍。**
 - **混入大量 CLI 专属交互**:网络绑定 `_ask_network_binding`、`_maybe_setup_password_in_init`、收藏/关注上限、xhs/dy/yt 的 y/n、`_persist_init_source_enabled_flags`。**这些是安装期设置,不属于 init 核心四阶段**,GUI 路径不复刻(网络绑定/密码已由 `/setup` 或设置页单独管)。
 
-**没有触发 init 的 API**:只有 `POST /api/init-completed`(`api/app.py:1416`),它**广播 `init_completed` 事件 _并_ 触发 `runtime_controller.trigger_manual_refresh`**(`~1429/1435`),**不执行 init**——GUI init 故意不复用它(避免 stage 4 已发现后再 manual refresh 重复发现)。
+**没有触发 init 的 API**:只有 `POST /api/init-completed`,它**广播 `init_completed` 事件 _并_ 通过 `request_replenishment(reason="init_completed", force=True)` 触发补货**，**不执行 init**——GUI init 故意不复用它(避免 stage 4 已发现后再跑一轮重复补货)。
 
 **后台任务模式**(本 spec 直接复用):`@app.on_event("startup")`(`api/app.py:1613`)→ `await ctx.restart_background_tasks(app)`(`api/runtime_context.py:636`)→ `task_registry.track(name, coro)`(**registry 内部自建 task**,~651/658/665)。`ContinuousRefreshController.run_forever`(`runtime/refresh.py`)是常驻循环;**一次性 init 任务照此 `track(name, coro)`**(registry 自建 task,不另 `create_task`)。
 
@@ -135,10 +135,10 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
   - **放行 init 自己的 bootstrap 任务结果(绑定 run + 喂 init,不走 live drain)**:stage 1 enqueue xhs/dy/yt bootstrap 任务,结果经 `POST /api/sources/{xhs,dy,yt}/task-result`(`app.py:4805/4899/4958/5079/5089`)回来。payload 只带 `task_id` 不带 `run_id`(`app.py:4735`、`extension/src/background/xhs-task-dispatcher.ts`),故 **`InitCoordinator` 记下本 run enqueue 的 `task_id` 集合**,仅当 `task_id ∈ 该集合 且 该 run 仍 active` 才放行;**否则按无关 source 写处理(gate/忽略)——杜绝 cancel/重启后迟到的旧 task 污染新状态**(cancel/reconciliation 时退役该集合)。
   - **不与 stage 4 抢 `content_cache`**:正常 task-result 会 schedule drain(`app.py:4784`)→ `refresh.py:1291` **不持 `_refresh_lock` 直接 drain** → `candidate_pipeline.py:122` admit 进 `content_cache`,会和 §5d stage 4(持 `_refresh_lock`)竞争。故 `init_active` 时 init-owned task-result **只把结果喂进 init 的 stage 1 收集缓冲(复刻 CLI `_collect_*_bootstrap_events`)、不触发 live drain/admission**;发现池统一由 stage 4 经 `_refresh_lock` 写。
   - **cookie 同值 no-op(先比对后校验)**:`init_active` 时 `/api/bilibili/cookie` **先比 effective cookie 再说**(现有 handler 是「先 validate 后比对」`app.py:1278-1343`,init 期要反过来):同 cookie 直接 `200`、**不 validate 不 rebuild**(扩展重复同步不打断 init);不同 cookie → `409 init_running`。
-- **后台循环 → 跳过本 tick + log**(它们是循环不是 handler,**不能返回 409**):连续 refresh tick、account_sync tick、soul pipeline tick、事件摄入 refresh,在 `init_active` 时检 coordinator flag 直接 skip。
+- **后台循环 → 跳过本 tick + log**(它们是循环不是 handler,**不能返回 409**):连续 refresh tick、account_sync tick、soul pipeline tick、事件摄入补货排队,在 `init_active` 时检 coordinator flag 直接 skip。
 - **统一封装 + 防御纵深**:soul/preference 写经 `InitCoordinator` 的运行期写锁/包装,**枚举全部写者**(含 source-task 摄入 `app.py:4804/4956/5088`、推荐点击信号、probe 提升),不留漏网;**且** init 后台任务对 `rebuild_from_config` 的取消逻辑(`runtime_context.py:286`)**豁免**——即便某热重载写者漏网,也不把 init 任务 cancel 掉(双保险)。
 
-**(d) Stage 4 发现** — **新增** `ContinuousRefreshController.run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`,**自身持 `_refresh_lock`**,复刻 CLI backfill(draft profile + 目标池 + 并行)。现有 `refresh_after_init()` 只做阈值 `refresh_if_needed`,**复刻不了**,故新建。**CLI init 的 stage 4 也改走 `run_init_backfill`**(替换 `cli.py:2058` 直接 `discovery_engine.discover`),CLI/API 走同一持锁路径,锁纪律一致。**不引入单独的 refresh「暂停」态**:连续 refresh tick 在 `init_active` 时自然 skip(见 c),stage 4 持 `_refresh_lock` 串行化;init 崩溃时 `init_active` 经 (a) 启动 reconciliation 自动清除,refresh 自然恢复,无「暂停卡死」。
+**(d) Stage 4 发现** — **新增** `ContinuousRefreshController.run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`,**自身持 `_refresh_lock`**,复刻 CLI backfill(draft profile + 目标池 + 并行)。现有 `refresh_after_init()` 是兼容强制补货 shim,**复刻不了 stage 4 的目标池 backfill**,故新建。**CLI init 的 stage 4 也改走 `run_init_backfill`**(替换 `cli.py:2058` 直接 `discovery_engine.discover`),CLI/API 走同一持锁路径,锁纪律一致。**不引入单独的 refresh「暂停」态**:连续 refresh tick 在 `init_active` 时自然 skip(见 c),stage 4 持 `_refresh_lock` 串行化;init 崩溃时 `init_active` 经 (a) 启动 reconciliation 自动清除,refresh 自然恢复,无「暂停卡死」。
 
 **(e) `run_guided_init` 纯异步 + 无*编排*副作用** — 全程 API 事件循环内,内部零 `asyncio.run`;**它当然会做领域写**(拉数据 / 写 preference / soul / 发现池——那本就是它的活),但**不做编排副作用**:不自己 publish 事件、不写 `init_runs` 状态库、`on_progress` 之外不旁路。完成/失败经**终态 `on_progress`**(`done=True` / `error=...`)上报,**由调用方 wrapper 落地**——API wrapper 把进度/终态翻成 `init_progress`/`init_completed`/`init_failed` 事件 + 落 `init_runs`;CLI wrapper 打印 console。**stages 3+4 保持并行**(复刻 CLI `_run_p3_p4_parallel`,`cli.py:4564/4576`),勿退化成串行。**并行进度契约**:`stages[]` 为权威(3、4 可同时 `running`);标量 `current_stage` = 仍在跑的**最小** stage 号;两并发阶段的进度 / `sequence` / `init_runs` 写经 InitCoordinator 内**单一 per-run 串行点**原子更新,杜绝并发写状态库与 `sequence` 乱序。CLI 保留唯一外层 `asyncio.run` 包装(见 §1)。
 
@@ -193,7 +193,7 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
 
 进度(WebSocket `/api/runtime-stream`,**仅通知,不权威**):`{"type":"init_progress","run_id":...,"sequence":n,"stage":1..4,"label":...,"detail":...}` → `{"type":"init_completed"}` 或 `{"type":"init_failed","reason":...}`。
 
-**不复用 `POST /api/init-completed` 的副作用**:该端点除广播事件外还会 `runtime_controller.trigger_manual_refresh`(`app.py` ~1435);GUI init 的 stage 4 已经做过发现,再触发 manual refresh 会**重复发现**。所以由 **API wrapper** 在终态 publish `init_completed`(`run_guided_init` 只回调 `on_progress`,见 §5e),**不调**旧端点。
+**不复用 `POST /api/init-completed` 的副作用**:该端点除广播事件外还会通过 `request_replenishment(reason="init_completed", force=True)` 触发补货；GUI init 的 stage 4 已经做过发现,再触发补货会制造重复补货。所以由 **API wrapper** 在终态 publish `init_completed`(`run_guided_init` 只回调 `on_progress`,见 §5e),**不调**旧端点。
 
 ## Status Values & Reasons（契约的一部分）
 
@@ -226,7 +226,7 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
 - 进度事件不含敏感字段;错误只给稳定 reason,详细 stderr 仅本地日志。
 - 两端点都进 `_is_public` + degraded 白名单(否则核心未起来时被 401/503,用户没法初始化)。
 - `run_guided_init` 抽取**不得回归** `openbiliclaw init` 的现有行为/退出码/文案;CLI 既有测试纳入更新范围。
-- 复用既有 `init_completed` 事件类型,不另造完成信号(Web/插件已监听);但 GUI init **自己 publish**,不调带 manual-refresh 副作用的 `/api/init-completed` 端点。
+- 复用既有 `init_completed` 事件类型,不另造完成信号(Web/插件已监听);但 GUI init **自己 publish**,不调带 forced-replenishment 副作用的 `/api/init-completed` 端点。
 - **init 运行中锁写(分流,见 §5c)**:`init_active` 时——**HTTP 写端**(`PUT /api/config`、source 开关、`POST /api/profile/edit`、手动 refresh、cookie 异值)返回 `409 init_running`;**后台循环**(连续 refresh / account-sync / soul pipeline tick / 事件摄入)**跳过本 tick + log**(它们不是 HTTP handler,**不能**返回 409)。例外:init 自己的 bootstrap task-result 按 `task_id ∈ 本 run enqueue 集合` 放行(非 run_id)、同值 cookie no-op，以及 `POST /api/init` 在占用 run 前对本轮勾选来源做 best-effort enable 写回。
 - **Stage 4 经 `_refresh_lock`**:绝不直接 `discovery_engine.discover`;init 期间让位连续 refresh,二者不并发写 `content_cache`。
 - **Docker/不可写**:复用 `docker_runtime.is_running_in_container()` 判 Docker,另查 data/config 可写性,不支持 `unsupported_runtime`。

@@ -66,9 +66,7 @@ def test_estimate_cost_applies_deepseek_cache_discount() -> None:
     Total: ¥0.0074 (vs ¥0.011 without cache discount = 33% saved)
     """
     cost_no_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000)
-    cost_with_cache = estimate_cost(
-        "deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000
-    )
+    cost_with_cache = estimate_cost("deepseek", "deepseek-v4-flash", 5000, 3000, cached_tokens=4000)
     assert cost_no_cache == pytest.approx(0.011, rel=1e-9)
     assert cost_with_cache == pytest.approx(0.0074, rel=1e-9)
     # Save ratio sanity check

@@ -235,12 +235,14 @@
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" },
+      { key: "zhihu", label: "知乎" },
     ];
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
       already_running: "初始化正在进行中。",
       bilibili_not_logged_in: "还没检测到 B站 登录。",
       llm_not_ready: "AI 服务还没配好或当前不可用。",
+      embedding_not_ready: "向量模型还没就绪，请等待 bge-m3 下载完成或修复 Ollama 后重试。",
       already_initialized: "已经初始化过了。",
       local_only: "只能在本机发起初始化。",
       no_sources_selected: "至少勾选一个数据来源。",
@@ -361,6 +363,7 @@
       const selectedSources = Array.isArray(selected) ? selected : null;
       // B站 login only blocks when bilibili is among the checked sources.
       const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
+      const embeddingRequired = Boolean(prereq.embedding_required);
       return [
         {
           key: "bilibili",
@@ -378,10 +381,12 @@
         },
         {
           key: "embedding",
-          label: "向量模型可用（推荐，非必须）",
+          label: embeddingRequired ? "向量模型可用" : "向量模型可用（推荐，非必须）",
           ok: Boolean(prereq.embedding_ready),
-          hard: false,
-          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但推荐去重和语义检索会弱一些。",
+          hard: embeddingRequired,
+          hint: embeddingRequired
+            ? "本地 Ollama + bge-m3 需要完成一次真实向量请求；模型仍在下载或服务异常时请稍后重试。"
+            : "未配置 embedding 时可以先初始化；推荐去重和语义检索会弱一些。",
         },
         {
           key: "platforms",

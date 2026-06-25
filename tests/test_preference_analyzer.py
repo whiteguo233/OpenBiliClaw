@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 
@@ -8,6 +9,11 @@ import pytest
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.prompts import build_preference_analysis_prompt
 from openbiliclaw.llm.service import LLMServiceError
+from openbiliclaw.soul.preference_analyzer import (
+    DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    MAX_CONCURRENT_PREFERENCE_CHUNKS,
+    PreferenceAnalyzer,
+)
 
 
 class FakeRegistry:
@@ -113,6 +119,47 @@ def test_preference_prompt_treats_comment_feedback_as_direct_neutral_feedback() 
     assert "不喜欢" in system_prompt
 
 
+def test_preference_chunk_defaults_bound_initial_batch_events() -> None:
+    assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE == 200
+    assert MAX_CONCURRENT_PREFERENCE_CHUNKS == 16
+    assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE * MAX_CONCURRENT_PREFERENCE_CHUNKS == 3200
+
+
+def test_preference_prompt_explains_cross_platform_signal_strength() -> None:
+    messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    system_prompt = messages[0]["content"]
+
+    assert "metadata.signal_strength" in system_prompt
+    assert "不是最终 interest.weight" in system_prompt
+    assert "favorite / bookmark / save / collect" in system_prompt
+    assert "follow / subscription" in system_prompt
+    assert "view / history" in system_prompt
+    assert "hover / scroll / snapshot" in system_prompt
+    assert "负向反馈" in system_prompt
+    assert "不能被 signal_strength 抵消" in system_prompt
+
+
+def test_compact_event_for_prompt_preserves_signal_strength() -> None:
+    analyzer = PreferenceAnalyzer(registry=ContextOverflowOnceStructuredService())
+
+    compact = analyzer._compact_event_for_prompt(
+        {
+            "event_type": "view",
+            "title": "浏览历史",
+            "metadata": {
+                "source_platform": "bilibili",
+                "signal_strength": 0.35,
+                "unused": "drop me",
+            },
+        }
+    )
+
+    assert compact["metadata"] == {
+        "signal_strength": 0.35,
+        "source_platform": "bilibili",
+    }
+
+
 class ServiceContextOverflowOnceStructuredService(ContextOverflowOnceStructuredService):
     async def complete_structured_task(
         self,
@@ -197,6 +244,61 @@ class RejectingChunkStructuredService:
                 content="The request was rejected because it was considered high risk",
                 provider="openai",
             )
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
+
+
+class RejectingContextStructuredService:
+    """Reject long/context-heavy prompts, accept title-only safe prompts."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        if "FORBIDDEN_CONTEXT" in user_input:
+            return LLMResponse(content="你好，我无法给到相关内容。", provider="deepseek")
+        return LLMResponse(
+            content='{"interests": [{"name": "AI Agent", "category": "科技", "weight": 0.9}]}',
+            provider="deepseek",
+        )
+
+
+class ConcurrentChunkStructuredService:
+    def __init__(self, *, delay_seconds: float = 0.01) -> None:
+        self.delay_seconds = delay_seconds
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(self.delay_seconds)
+        finally:
+            self.active_calls -= 1
         return LLMResponse(
             content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
             provider="openai",
@@ -293,6 +395,91 @@ def test_merge_preferences_applies_decay_and_deduplicates_tags() -> None:
     assert 0.7 <= history_tag["weight"] <= 1.0
     assert history_tag["first_seen"] == "2026-02-01T00:00:00"
     assert set(merged["favorite_up_users"]) == {"旧UP", "新UP"}
+
+
+def test_merge_preferences_reactivates_matching_archived_interest() -> None:
+    analyzer = PreferenceAnalyzer(FakeStructuredService())
+    merged = analyzer.merge_preferences(
+        existing_preference={
+            "interests": [
+                {
+                    "name": "活跃兴趣",
+                    "category": "知识",
+                    "weight": 0.8,
+                    "first_seen": "2026-01-01T00:00:00",
+                    "last_seen": "2026-06-01T00:00:00",
+                    "source": "old",
+                }
+            ],
+            "archived_interests": [
+                {
+                    "name": "归档兴趣",
+                    "category": "科技",
+                    "weight": 0.2,
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "archive",
+                },
+                {
+                    "name": "仍归档兴趣",
+                    "category": "生活",
+                    "weight": 0.1,
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "archive",
+                },
+            ],
+        },
+        new_preference={
+            "interests": [
+                {"name": "归档兴趣", "category": "科技", "weight": 0.7, "source": "new"},
+            ],
+        },
+        now=datetime(2026, 6, 24, 0, 0, 0),
+    )
+
+    active_names = {str(item["name"]) for item in merged["interests"]}
+    archived_names = {str(item["name"]) for item in merged["archived_interests"]}
+    revived = next(item for item in merged["interests"] if item["name"] == "归档兴趣")
+    assert "归档兴趣" in active_names
+    assert "归档兴趣" not in archived_names
+    assert archived_names == {"仍归档兴趣"}
+    assert revived["first_seen"] == "2026-02-01T00:00:00"
+    assert revived["last_seen"] == "2026-06-24T00:00:00"
+    assert revived["weight"] == 0.7
+
+
+def test_merge_preferences_matches_active_interest_alias() -> None:
+    analyzer = PreferenceAnalyzer(FakeStructuredService())
+    merged = analyzer.merge_preferences(
+        existing_preference={
+            "interests": [
+                {
+                    "name": "AI工程工具链",
+                    "category": "科技",
+                    "weight": 0.6,
+                    "aliases": ["AI工具与技术", "AI工具与工程实践"],
+                    "first_seen": "2026-02-01T00:00:00",
+                    "last_seen": "2026-03-01T00:00:00",
+                    "source": "consolidation",
+                }
+            ],
+        },
+        new_preference={
+            "interests": [
+                {"name": "AI工具与技术", "category": "科技", "weight": 0.8, "source": "new"},
+            ],
+        },
+        now=datetime(2026, 6, 24, 0, 0, 0),
+    )
+
+    assert len(merged["interests"]) == 1
+    interest = merged["interests"][0]
+    assert interest["name"] == "AI工程工具链"
+    assert interest["weight"] == 0.8
+    assert interest["first_seen"] == "2026-02-01T00:00:00"
+    assert interest["last_seen"] == "2026-06-24T00:00:00"
+    assert interest["aliases"] == ["AI工具与技术", "AI工具与工程实践"]
 
 
 @pytest.mark.asyncio
@@ -608,6 +795,25 @@ async def test_analyze_events_count_chunking_avoids_whole_batch_prompt_build(
 
 
 @pytest.mark.asyncio
+async def test_chunked_analysis_batches_initial_chunk_fanout() -> None:
+    service = ConcurrentChunkStructuredService()
+    events = [
+        {"event_type": "view", "title": f"事件 {idx}", "metadata": {"source_platform": "bilibili"}}
+        for idx in range(20)
+    ]
+
+    preference = await PreferenceAnalyzer(service).analyze_events(
+        events=events,
+        existing_preference={},
+        event_chunk_size=1,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert len(service.calls) == 20
+    assert service.max_active_calls <= 16
+
+
+@pytest.mark.asyncio
 async def test_chunked_analysis_splits_by_prompt_budget_before_llm_call() -> None:
     from openbiliclaw.llm.prompts import build_preference_analysis_prompt
     from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
@@ -798,6 +1004,38 @@ async def test_service_context_overflow_splits_chunk_and_retries() -> None:
 
     assert preference["interests"][0]["name"] == "科技"
     assert len(service.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_single_event_retries_with_safe_compact_prompt() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = RejectingContextStructuredService()
+    analyzer = PreferenceAnalyzer(service, max_prompt_chars=0)
+
+    preference = await analyzer.analyze_events(
+        events=[
+            {
+                "event_type": "view",
+                "title": "如何评价新的 AI Agent 编程框架？",
+                "context": "FORBIDDEN_CONTEXT " * 50,
+                "metadata": {
+                    "source_platform": "zhihu",
+                    "content_id": "answer-1",
+                    "author": "知乎作者",
+                },
+            }
+        ],
+        existing_preference={},
+        event_chunk_size=1,
+    )
+
+    assert preference["interests"][0]["name"] == "AI Agent"
+    assert len(service.calls) == 2
+    assert "FORBIDDEN_CONTEXT" in service.calls[0]
+    assert "如何评价新的 AI Agent 编程框架？" in service.calls[1]
+    assert "zhihu" in service.calls[1]
+    assert "FORBIDDEN_CONTEXT" not in service.calls[1]
 
 
 @pytest.mark.asyncio

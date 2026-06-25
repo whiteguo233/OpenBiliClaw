@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +51,166 @@ def _isolate_runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
 class TestBackendAPI:
     """Route-level tests for the plugin backend API."""
+
+    def test_feedback_api_persists_strong_card_feedback_signal_strength(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.memory.manager import MemoryManager
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.updated: list[tuple[int, str, str]] = []
+
+            def get_recommendation_by_id(self, recommendation_id: int) -> dict[str, object]:
+                return {
+                    "id": recommendation_id,
+                    "bvid": "BV1REC",
+                    "title": "讲透城市与建筑",
+                    "topic_label": "建筑",
+                    "up_name": "建筑师",
+                }
+
+            def update_recommendation_feedback(
+                self,
+                recommendation_id: int,
+                *,
+                feedback_type: str,
+                feedback_note: str = "",
+            ) -> None:
+                self.updated.append((recommendation_id, feedback_type, feedback_note))
+
+        class FakeSoulEngine:
+            def record_immediate_feedback_cognition(
+                self,
+                *,
+                feedback_type: str,
+                title: str,
+                note: str,
+            ) -> None:
+                pass
+
+            async def process_feedback_batch_if_needed(self) -> dict[str, object]:
+                return {"triggered": False}
+
+        memory = MemoryManager(tmp_path)
+        memory.initialize()
+        database = FakeDatabase()
+        app = create_app(
+            memory_manager=memory,
+            database=database,
+            soul_engine=FakeSoulEngine(),
+        )
+        client = TestClient(app)
+
+        comment = client.post(
+            "/api/feedback",
+            json={
+                "recommendation_id": 7,
+                "feedback_type": "comment",
+                "note": "方向对，但我想看更深一点。",
+            },
+        )
+        dismiss = client.post(
+            "/api/feedback",
+            json={"recommendation_id": 8, "feedback_type": "dismiss", "note": ""},
+        )
+
+        assert comment.status_code == 200
+        assert dismiss.status_code == 200
+        assert database.updated == [
+            (7, "comment", "方向对，但我想看更深一点。"),
+            (8, "dismiss", ""),
+        ]
+
+        events = memory.query_events(event_types=["feedback"], limit=10)
+        metadata_by_type = {
+            json.loads(str(event["metadata"]))["feedback_type"]: json.loads(str(event["metadata"]))
+            for event in events
+        }
+        assert metadata_by_type["comment"]["signal_strength"] == 0.8
+        assert metadata_by_type["dismiss"]["signal_strength"] == 0.5
+
+    def test_feedback_api_schedules_post_feedback_batch_without_inline_processing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api import app as api_app
+        from openbiliclaw.memory.manager import MemoryManager
+
+        schedules = 0
+
+        class FakeFeedbackBatchScheduler:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def schedule(self) -> None:
+                nonlocal schedules
+                schedules += 1
+
+            async def close(self) -> None:
+                pass
+
+        class FakeDatabase:
+            def get_recommendation_by_id(self, recommendation_id: int) -> dict[str, object]:
+                return {
+                    "id": recommendation_id,
+                    "bvid": "BV1REC",
+                    "title": "讲透城市与建筑",
+                    "topic_label": "建筑",
+                    "up_name": "建筑师",
+                }
+
+            def update_recommendation_feedback(
+                self,
+                recommendation_id: int,
+                *,
+                feedback_type: str,
+                feedback_note: str = "",
+            ) -> None:
+                pass
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.batch_calls = 0
+
+            def record_immediate_feedback_cognition(
+                self,
+                *,
+                feedback_type: str,
+                title: str,
+                note: str,
+            ) -> None:
+                pass
+
+            async def process_feedback_batch_if_needed(self) -> dict[str, object]:
+                self.batch_calls += 1
+                return {"triggered": False}
+
+        monkeypatch.setattr(api_app, "FeedbackBatchScheduler", FakeFeedbackBatchScheduler)
+        memory = MemoryManager(tmp_path)
+        memory.initialize()
+        soul = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/feedback",
+            json={"recommendation_id": 7, "feedback_type": "like", "note": ""},
+        )
+
+        assert response.status_code == 200
+        assert schedules == 1
+        assert soul.batch_calls == 0
 
     def test_desktop_web_index_cache_busts_static_assets(self) -> None:
         from fastapi.testclient import TestClient
@@ -801,6 +962,7 @@ class TestBackendAPI:
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
+        import openbiliclaw.sources.zhihu_tasks as zhihu_tasks_module
         import openbiliclaw.storage.database as database_module
 
         captured: dict[str, object] = {}
@@ -935,6 +1097,10 @@ class TestBackendAPI:
             def __init__(self, database: object) -> None:
                 self.database = database
 
+        class FakeZhihuTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
         class FakeXCreatorStore:
             def __init__(self, database: object) -> None:
                 self.database = database
@@ -1030,6 +1196,7 @@ class TestBackendAPI:
         monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
         monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
         monkeypatch.setattr(yt_tasks_module, "YtTaskQueue", FakeYtTaskQueue)
+        monkeypatch.setattr(zhihu_tasks_module, "ZhihuTaskQueue", FakeZhihuTaskQueue)
         monkeypatch.setattr(
             bilibili_producer_module,
             "BilibiliExtensionSearchProducer",
@@ -1146,7 +1313,7 @@ class TestBackendAPI:
         assert response.status_code == 200
         body = response.json()
         # One status item per source, each with the unified shape.
-        for key in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter"):
+        for key in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"):
             assert key in body, f"{key} missing from sources status"
             item = body[key]
             assert set(item) >= {"enabled", "state", "detail", "logged_in"}
@@ -1155,6 +1322,7 @@ class TestBackendAPI:
         # YouTube needs no login -> always no_auth.
         assert body["youtube"]["state"] == "no_auth"
         assert body["youtube"]["logged_in"] is True
+        assert body["zhihu"]["state"] in {"unverified", "ready", "missing"}
 
     def test_sources_status_xhs_old_tokens_report_stale_not_ready(self, tmp_path: Path) -> None:
         """小红书 token rows outside the freshness window degrade to ``stale``.
@@ -1228,6 +1396,83 @@ class TestBackendAPI:
 
         item = client.get("/api/sources/status").json()["xiaohongshu"]
         assert item["state"] == "ready"
+
+    def test_sources_status_zhihu_login_required_reports_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config
+        from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+        from openbiliclaw.storage.database import Database
+
+        cfg = Config()
+        cfg.sources.zhihu.enabled = True
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+        db = Database(tmp_path / "status.db")
+        db.initialize()
+        queue = ZhihuTaskQueue(db)
+        task_id = queue.enqueue_with_id("bootstrap_events", {"scopes": ["zhihu_read_history"]})
+        assert task_id is not None
+        queue.fail(
+            task_id,
+            error="zhihu_login_required",
+            debug={"current_url": "https://www.zhihu.com/signin"},
+        )
+
+        app = create_app(memory_manager=object(), database=db, soul_engine=object())
+        client = TestClient(app)
+
+        item = client.get("/api/sources/status").json()["zhihu"]
+        assert item["enabled"] is True
+        assert item["state"] == "missing"
+        assert item["logged_in"] is False
+        assert "登录知乎" in item["detail"]
+
+    def test_sources_status_zhihu_recent_completed_reports_ready(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config
+        from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+        from openbiliclaw.storage.database import Database
+
+        cfg = Config()
+        cfg.sources.zhihu.enabled = True
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+
+        db = Database(tmp_path / "status.db")
+        db.initialize()
+        queue = ZhihuTaskQueue(db)
+        task_id = queue.enqueue_with_id("bootstrap_events", {"scopes": ["zhihu_read_history"]})
+        assert task_id is not None
+        queue.merge_result(
+            task_id,
+            items=[
+                {
+                    "scope": "zhihu_read_history",
+                    "title": "知乎阅读",
+                    "url": "https://www.zhihu.com/question/1/answer/2",
+                }
+            ],
+            scope_counts={"zhihu_read_history": 1},
+            complete=True,
+        )
+
+        app = create_app(memory_manager=object(), database=db, soul_engine=object())
+        client = TestClient(app)
+
+        item = client.get("/api/sources/status").json()["zhihu"]
+        assert item["enabled"] is True
+        assert item["state"] == "ready"
+        assert item["logged_in"] is True
+        assert "最近任务完成" in item["detail"]
 
     def test_sources_status_bilibili_incomplete_cookie_reports_partial(
         self,
@@ -2064,6 +2309,281 @@ class TestBackendAPI:
             }
         ]
         assert [event["event_type"] for event in memory.events] == ["click"]
+
+    def test_events_endpoint_feeds_accepted_events_to_profile_pipeline_before_replenishment_request(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.soul.pipeline import SignalType
+
+        calls: list[str] = []
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                if event["event_type"] == "unsupported":
+                    raise ValueError("Unsupported event type: unsupported")
+                self.events.append(event)
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.batches: list[list[object]] = []
+
+            async def ingest_batch(self, signals: list[object]) -> object:
+                calls.append("pipeline")
+                self.batches.append(signals)
+                return object()
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+            def is_profile_ready(self) -> bool:
+                return True
+
+        class FakeRuntimeController:
+            async def request_replenishment(
+                self,
+                *,
+                reason: str,
+                force: bool = False,
+            ) -> dict[str, object]:
+                calls.append(f"request:{reason}:{force}")
+                return {"accepted": True, "state": "queued", "reason": reason}
+
+            async def refresh_after_event_ingest(self) -> dict[str, object]:
+                raise AssertionError("/api/events should not directly refresh after ingest")
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=memory,
+            soul_engine=soul_engine,
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/events",
+            json={
+                "events": [
+                    {
+                        "type": "click",
+                        "url": "https://www.bilibili.com/video/BV1OK",
+                        "title": "正常事件",
+                        "timestamp": 1710000000000,
+                    },
+                    {
+                        "type": "unsupported",
+                        "url": "https://www.bilibili.com/video/BV1BAD",
+                        "title": "未知事件",
+                        "timestamp": 1710000000001,
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["accepted"] == 1
+        assert calls == ["pipeline", "request:event_ingest:False"]
+        assert len(soul_engine.pipeline.batches) == 1
+        [signal] = soul_engine.pipeline.batches[0]
+        assert signal.signal_type == SignalType.BEHAVIOR_EVENT
+        assert signal.payload["event_type"] == "click"
+        assert signal.payload["title"] == "正常事件"
+
+    def test_events_endpoint_backfills_pending_discovery_events_to_profile_pipeline(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        calls: list[str] = []
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+                self.runtime_state: dict[str, object] = {"last_processed_event_id": 10}
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def update_discovery_runtime_state(self, mutator: object) -> dict[str, object]:
+                result = mutator(self.runtime_state)  # type: ignore[operator]
+                if isinstance(result, dict):
+                    self.runtime_state = result
+                return dict(self.runtime_state)
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_latest_event_id(self) -> int:
+                return 11
+
+            def query_events_since(
+                self,
+                *,
+                after_event_id: int,
+                event_types: list[str],
+            ) -> list[dict[str, object]]:
+                assert after_event_id == 10
+                assert "favorite" in event_types
+                return [
+                    {
+                        "id": 11,
+                        "event_type": "favorite",
+                        "title": "旧 pending 收藏",
+                        "metadata": "{}",
+                    }
+                ]
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.titles_by_batch: list[list[object]] = []
+
+            async def ingest_batch(self, signals: list[object]) -> object:
+                calls.append("pipeline")
+                self.titles_by_batch.append([signal.payload["title"] for signal in signals])
+                return object()
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+            def is_profile_ready(self) -> bool:
+                return True
+
+        class FakeRuntimeController:
+            async def refresh_after_event_ingest(self) -> dict[str, object]:
+                calls.append("refresh")
+                return {"refreshed": False}
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+            runtime_controller=FakeRuntimeController(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/events",
+            json={
+                "events": [
+                    {
+                        "type": "click",
+                        "url": "https://www.bilibili.com/video/BV1NOW",
+                        "title": "当前点击",
+                        "timestamp": 1710000000000,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["accepted"] == 1
+        assert calls == ["pipeline", "pipeline", "refresh"]
+        assert soul_engine.pipeline.titles_by_batch == [["旧 pending 收藏"], ["当前点击"]]
+        assert memory.runtime_state["last_profile_pipeline_event_id"] == 11
+
+    def test_events_endpoint_backfill_uses_profile_cursor_when_discovery_advanced(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        queried_after: list[int] = []
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.runtime_state: dict[str, object] = {
+                    "last_processed_event_id": 15,
+                    "last_profile_pipeline_event_id": 10,
+                }
+
+            def load_discovery_runtime_state(self) -> dict[str, object]:
+                return dict(self.runtime_state)
+
+            def update_discovery_runtime_state(self, mutator: object) -> dict[str, object]:
+                result = mutator(self.runtime_state)  # type: ignore[operator]
+                if isinstance(result, dict):
+                    self.runtime_state = result
+                return dict(self.runtime_state)
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                return None
+
+        class FakeDatabase:
+            def get_latest_event_id(self) -> int:
+                return 15
+
+            def query_events_since(
+                self,
+                *,
+                after_event_id: int,
+                event_types: list[str],
+            ) -> list[dict[str, object]]:
+                queried_after.append(after_event_id)
+                return [
+                    {
+                        "id": 11,
+                        "event_type": "like",
+                        "title": "discovery 已推进但画像未补",
+                    }
+                ]
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.titles: list[object] = []
+
+            async def ingest_batch(self, signals: list[object]) -> object:
+                self.titles.extend(signal.payload["title"] for signal in signals)
+                return object()
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+            def is_profile_ready(self) -> bool:
+                return True
+
+        class FakeRuntimeController:
+            async def refresh_after_event_ingest(self) -> dict[str, object]:
+                return {"refreshed": False}
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+            runtime_controller=FakeRuntimeController(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/events",
+            json={
+                "events": [
+                    {
+                        "type": "click",
+                        "url": "https://www.bilibili.com/video/BV1NOW",
+                        "title": "当前点击",
+                        "timestamp": 1710000000000,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert queried_after == [10]
+        assert "discovery 已推进但画像未补" in soul_engine.pipeline.titles
+        assert memory.runtime_state["last_profile_pipeline_event_id"] == 11
 
     def test_extension_e2e_rejects_state_changing_action_without_opt_in(self) -> None:
         from fastapi.testclient import TestClient
@@ -3091,6 +3611,48 @@ class TestBackendAPI:
         assert "219" not in data["live_summary"]
         assert "记下" not in data["live_summary"]
 
+    def test_activity_feed_pending_signals_are_described_as_discovery_context(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def get_recommendations(
+                self, limit: int = 20, *, exclude_processed: bool = False
+            ) -> list[dict[str, object]]:
+                return []
+
+        class FakeMemoryManager:
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return []
+
+        class FakeRuntimeController:
+            def get_runtime_status(self) -> dict[str, object]:
+                return {
+                    "initialized": True,
+                    "recommendation_count": 5,
+                    "pending_signal_events": 7,
+                    "pool_available_count": 42,
+                    "pool_pending_count": 0,
+                    "last_replenished_count": 0,
+                    "last_discovered_count": 0,
+                    "manual_refresh_state": "idle",
+                    "manual_refresh_message": "",
+                }
+
+        app = create_app(
+            memory_manager=FakeMemoryManager(),
+            database=FakeDatabase(),
+            soul_engine=object(),
+            runtime_controller=FakeRuntimeController(),
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/activity-feed")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["live_summary"] == "阿B 已记下 7 个新动作，下一轮补货会拿来参考。"
+        assert "待处理" not in data["live_summary"]
+
     def test_refresh_recommendations_endpoint_triggers_runtime_refresh(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -3149,7 +3711,7 @@ class TestBackendAPI:
             "reason": "not_initialized",
         }
 
-    def test_refresh_recommendations_endpoint_uses_force_refresh(self) -> None:
+    def test_refresh_recommendations_endpoint_uses_force_replenishment_request(self) -> None:
         from fastapi.testclient import TestClient
 
         class FakeRuntimeController:
@@ -3165,13 +3727,21 @@ class TestBackendAPI:
                     "recommendation_count": 0,
                 }
 
-            async def trigger_manual_refresh(self) -> dict[str, object]:
-                self.called.append("trigger")
+            async def request_replenishment(
+                self,
+                *,
+                reason: str,
+                force: bool = False,
+            ) -> dict[str, object]:
+                self.called.append(f"request:{reason}:{force}")
                 return {
                     "accepted": True,
                     "state": "running",
-                    "reason": "started",
+                    "reason": reason,
                 }
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                raise AssertionError("new runtimes should use request_replenishment")
 
         runtime = FakeRuntimeController()
         app = create_app(
@@ -3189,18 +3759,77 @@ class TestBackendAPI:
             "ok": True,
             "accepted": True,
             "state": "running",
-            "reason": "started",
+            "reason": "manual",
         }
-        assert runtime.called == ["trigger"]
+        assert runtime.called == ["request:manual:True"]
+
+    def test_init_completed_runs_forced_replenishment(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeRuntimeController:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            async def request_replenishment(
+                self,
+                *,
+                reason: str,
+                force: bool = False,
+            ) -> dict[str, object]:
+                self.calls.append((reason, force))
+                return {"accepted": True, "state": "running", "reason": reason}
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                raise AssertionError("new runtimes should use request_replenishment")
+
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/init-completed", json={})
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        assert runtime.calls == [("init_completed", True)]
 
     def test_reshuffle_recommendations_endpoint_returns_immediate_items(self) -> None:
         from fastapi.testclient import TestClient
+
+        class FakeEventHub:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def publish(self, event: dict[str, object]) -> bool:
+                self.events.append(event)
+                return True
+
+        class FakeRuntimeController:
+            def __init__(self, hub: FakeEventHub) -> None:
+                self.event_hub = hub
+                self.pool_available_count = 3
+
+            def get_runtime_status(self) -> dict[str, object]:
+                return {
+                    "initialized": True,
+                    "pool_available_count": self.pool_available_count,
+                    "pool_pending_count": 5,
+                    "last_replenished_count": 0,
+                    "last_discovered_count": 0,
+                }
 
         class FakeSoulEngine:
             async def get_profile(self) -> dict[str, object]:
                 return {"profile": "ok"}
 
         class FakeRecommendationEngine:
+            def __init__(self, runtime: FakeRuntimeController) -> None:
+                self.runtime = runtime
+
             async def reshuffle_recommendations(
                 self,
                 *,
@@ -3209,6 +3838,7 @@ class TestBackendAPI:
             ) -> list[object]:
                 assert profile == {"profile": "ok"}
                 assert limit == 10
+                self.runtime.pool_available_count = 0
                 from openbiliclaw.discovery.engine import DiscoveredContent
                 from openbiliclaw.recommendation.engine import Recommendation
 
@@ -3228,11 +3858,14 @@ class TestBackendAPI:
                     )
                 ]
 
+        hub = FakeEventHub()
+        runtime = FakeRuntimeController(hub)
         app = create_app(
             memory_manager=object(),
             database=object(),
             soul_engine=FakeSoulEngine(),
-            recommendation_engine=FakeRecommendationEngine(),
+            recommendation_engine=FakeRecommendationEngine(runtime),
+            runtime_controller=runtime,
         )
         client = TestClient(app)
 
@@ -3259,16 +3892,43 @@ class TestBackendAPI:
                 }
             ]
         }
+        assert hub.events[-1]["type"] == "refresh.pool_updated"
+        assert hub.events[-1]["message"] == "推荐池已同步"
+        assert hub.events[-1]["pool_available_count"] == 0
+        assert hub.events[-1]["pool_pending_count"] == 5
 
     def test_append_recommendations_endpoint_excludes_existing_bvids(self) -> None:
         from fastapi.testclient import TestClient
+
+        class FakeEventHub:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def publish(self, event: dict[str, object]) -> bool:
+                self.events.append(event)
+                return True
+
+        class FakeRuntimeController:
+            def __init__(self, hub: FakeEventHub) -> None:
+                self.event_hub = hub
+                self.pool_available_count = 4
+
+            def get_runtime_status(self) -> dict[str, object]:
+                return {
+                    "initialized": True,
+                    "pool_available_count": self.pool_available_count,
+                    "pool_pending_count": 2,
+                    "last_replenished_count": 0,
+                    "last_discovered_count": 0,
+                }
 
         class FakeSoulEngine:
             async def get_profile(self) -> dict[str, object]:
                 return {"profile": "ok"}
 
         class FakeRecommendationEngine:
-            def __init__(self) -> None:
+            def __init__(self, runtime: FakeRuntimeController) -> None:
+                self.runtime = runtime
                 self.calls: list[tuple[object, list[str], int]] = []
 
             async def append_recommendations(
@@ -3279,6 +3939,7 @@ class TestBackendAPI:
                 limit: int = 10,
             ) -> list[object]:
                 self.calls.append((profile, excluded_bvids, limit))
+                self.runtime.pool_available_count = 1
                 from openbiliclaw.discovery.engine import DiscoveredContent
                 from openbiliclaw.recommendation.engine import Recommendation
 
@@ -3298,12 +3959,15 @@ class TestBackendAPI:
                     )
                 ]
 
-        recommendation_engine = FakeRecommendationEngine()
+        hub = FakeEventHub()
+        runtime = FakeRuntimeController(hub)
+        recommendation_engine = FakeRecommendationEngine(runtime)
         app = create_app(
             memory_manager=object(),
             database=object(),
             soul_engine=FakeSoulEngine(),
             recommendation_engine=recommendation_engine,
+            runtime_controller=runtime,
         )
         client = TestClient(app)
 
@@ -3334,6 +3998,10 @@ class TestBackendAPI:
                 }
             ]
         }
+        assert hub.events[-1]["type"] == "refresh.pool_updated"
+        assert hub.events[-1]["message"] == "推荐池已同步"
+        assert hub.events[-1]["pool_available_count"] == 1
+        assert hub.events[-1]["pool_pending_count"] == 2
 
     def test_empty_pool_append_and_reshuffle_skip_recommendation_path_and_debounce_refresh(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3374,14 +4042,22 @@ class TestBackendAPI:
 
         class FakeRuntimeController:
             def __init__(self) -> None:
-                self.trigger_calls = 0
+                self.requests: list[tuple[str, bool]] = []
 
             def get_runtime_status(self) -> dict[str, object]:
                 return {"pool_available_count": 0}
 
+            async def request_replenishment(
+                self,
+                *,
+                reason: str,
+                force: bool = False,
+            ) -> dict[str, object]:
+                self.requests.append((reason, force))
+                return {"accepted": True, "state": "running", "reason": reason}
+
             async def trigger_manual_refresh(self) -> dict[str, object]:
-                self.trigger_calls += 1
-                return {"accepted": True, "state": "running", "reason": "started"}
+                raise AssertionError("new runtimes should use request_replenishment")
 
         soul = FakeSoulEngine()
         rec = FakeRecommendationEngine()
@@ -3407,7 +4083,7 @@ class TestBackendAPI:
         assert append.json() == {"items": []}
         assert soul.profile_calls == 0
         assert rec.calls == 0
-        assert runtime.trigger_calls == 1
+        assert runtime.requests == [("pool_empty", True)]
 
     def test_pending_notification_endpoint_returns_single_candidate(self) -> None:
         from fastapi.testclient import TestClient
@@ -3633,8 +4309,26 @@ class TestBackendAPI:
 
         assert response.status_code == 404
 
-    def test_feedback_endpoint_triggers_profile_refresh_check(self) -> None:
+    def test_feedback_endpoint_schedules_profile_refresh_check(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from fastapi.testclient import TestClient
+
+        from openbiliclaw.api import app as api_app
+
+        schedules = 0
+
+        class FakeFeedbackBatchScheduler:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def schedule(self) -> None:
+                nonlocal schedules
+                schedules += 1
+
+            async def close(self) -> None:
+                pass
 
         class FakeMemoryManager:
             async def propagate_event(self, event: dict[str, object]) -> None:
@@ -3671,6 +4365,7 @@ class TestBackendAPI:
                 self.called = True
                 return {"triggered": False}
 
+        monkeypatch.setattr(api_app, "FeedbackBatchScheduler", FakeFeedbackBatchScheduler)
         fake_soul_engine = FakeSoulEngine()
         app = create_app(
             memory_manager=FakeMemoryManager(),
@@ -3689,7 +4384,8 @@ class TestBackendAPI:
         )
 
         assert response.status_code == 200
-        assert fake_soul_engine.called is True
+        assert schedules == 1
+        assert fake_soul_engine.called is False
         assert fake_soul_engine.immediate_calls == [("like", "讲透城市与建筑", "")]
 
     def test_feedback_endpoint_does_not_block_on_post_feedback_refresh(self) -> None:
@@ -7898,6 +8594,8 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "twitter": 1,
+            "zhihu": 1,
         }
         assert cfg.scheduler.refresh_check_interval_seconds == 75
         assert cfg.scheduler.signal_event_threshold == 9
@@ -8031,6 +8729,8 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "twitter": 0,
+                "zhihu": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -8038,6 +8738,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "douyin": True,
                 "youtube": True,
                 "twitter": False,
+                "zhihu": False,
             },
             "suggested_shares": {
                 "bilibili": 8,
@@ -8109,12 +8810,16 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "twitter": 0,
+                "zhihu": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
                 "xiaohongshu": False,
                 "douyin": False,
                 "youtube": True,
+                "twitter": False,
+                "zhihu": False,
             },
             "suggested_shares": {
                 "bilibili": 6,
@@ -8553,7 +9258,14 @@ def test_select_init_platforms_empty_selection_yields_empty() -> None:
 class TestGuidedInitEndpoints:
     """E2: POST /api/init + POST /api/init/cancel (local-only, gui-init §2/§5b)."""
 
-    def _make_app(self, tmp_path, *, profile_ready=False, prereqs=None):
+    def _make_app(
+        self,
+        tmp_path,
+        *,
+        profile_ready=False,
+        prereqs=None,
+        embedding_provider: str | None = None,
+    ):
         from openbiliclaw.storage.database import Database
 
         db = Database(tmp_path / "e2.db")
@@ -8561,6 +9273,14 @@ class TestGuidedInitEndpoints:
         soul = SimpleNamespace(is_profile_ready=lambda: profile_ready)
         app = create_app(memory_manager=object(), database=db, soul_engine=soul)
         app.state.auth_gate.is_trusted_local = lambda request: True
+        if embedding_provider is not None:
+            from openbiliclaw.config import Config
+
+            app.state.runtime_context.config = Config()
+            data_dir = tmp_path / "data"
+            data_dir.mkdir()
+            app.state.runtime_context.config.data_dir = str(data_dir)
+            app.state.runtime_context.config.llm.embedding.provider = embedding_provider
         if prereqs is not None:
             app.state.runtime_context._init_prereqs = prereqs
         return app, db
@@ -8580,9 +9300,7 @@ class TestGuidedInitEndpoints:
     ) -> None:
         from fastapi.testclient import TestClient
 
-        monkeypatch.setattr(
-            "openbiliclaw.docker_runtime.is_running_in_container", lambda *a, **k: True
-        )
+        monkeypatch.setenv("OPENBILICLAW_IN_CONTAINER", "1")
         app, db = self._make_app(tmp_path)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={})
@@ -8638,6 +9356,34 @@ class TestGuidedInitEndpoints:
         assert resp.status_code == 409
         assert resp.json()["error"] == "llm_not_ready"
         assert db.get_latest_init_run()["status"] == "idle"
+        assert app.state.runtime_context.init_coordinator.init_active() is False
+
+    def test_init_missing_configured_embedding_resets_to_idle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        real_exists = Path.exists
+
+        def _exists_without_container_markers(path: Path) -> bool:
+            if str(path) in {"/.dockerenv", "/run/.containerenv"}:
+                return False
+            return real_exists(path)
+
+        monkeypatch.delenv("OPENBILICLAW_IN_CONTAINER", raising=False)
+        monkeypatch.setattr(Path, "exists", _exists_without_container_markers)
+        from openbiliclaw.docker_runtime import is_running_in_container
+
+        assert is_running_in_container() is False
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["xiaohongshu"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs, embedding_provider="ollama")
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["xiaohongshu"]})
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "embedding_not_ready"
+        latest = db.get_latest_init_run()
+        assert latest["status"] == "idle"
+        assert latest["error_reason"] == "embedding_not_ready"
         assert app.state.runtime_context.init_coordinator.init_active() is False
 
     def test_init_skips_bilibili_login_check_when_deselected(
@@ -8702,11 +9448,13 @@ class TestGuidedInitEndpoints:
 
         captured = self._capture_run_guided_init(monkeypatch)
         prereqs = _FakeInitPrereqs(
-            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin", "youtube"]
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "xiaohongshu", "douyin", "youtube", "zhihu"],
         )
         app, _ = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
-            resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu"]})
+            resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu", "zhihu"]})
             assert resp.status_code == 202
             self._drive_until(client, captured)
         # Only the selected sources are included, even though all 4 are
@@ -8715,6 +9463,7 @@ class TestGuidedInitEndpoints:
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is False
         assert captured["include_yt"] is False
+        assert captured["include_zhihu"] is True
 
     def test_init_without_sources_uses_all_enabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -8723,7 +9472,7 @@ class TestGuidedInitEndpoints:
 
         captured = self._capture_run_guided_init(monkeypatch)
         prereqs = _FakeInitPrereqs(
-            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin"]
+            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin", "zhihu"]
         )
         app, _ = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
@@ -8735,6 +9484,7 @@ class TestGuidedInitEndpoints:
         assert captured["include_xhs"] is True
         assert captured["include_dy"] is True
         assert captured["include_yt"] is False  # youtube not enabled in config
+        assert captured["include_zhihu"] is True
 
     def test_init_keeps_selected_source_not_enabled_in_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -9005,6 +9755,32 @@ class TestGuidedInitEndpoints:
         body = resp.json()
         assert body["can_start"] is False
         assert body["reason"] == "llm_not_ready"
+
+    def test_init_status_configured_embedding_hard_gates_can_start(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["xiaohongshu"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs, embedding_provider="ollama")
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is False
+        assert body["reason"] == "embedding_not_ready"
+        assert body["prerequisites"]["embedding_ready"] is False
+        assert body["prerequisites"]["embedding_required"] is True
+
+    def test_init_status_disabled_embedding_does_not_gate_can_start(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["xiaohongshu"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs, embedding_provider="")
+        with TestClient(app) as client:
+            resp = client.get("/api/init-status")
+        body = resp.json()
+        assert body["can_start"] is True
+        assert body["reason"] == "none"
+        assert body["prerequisites"]["embedding_ready"] is False
+        assert body["prerequisites"]["embedding_required"] is False
 
     def test_task_result_not_gated_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

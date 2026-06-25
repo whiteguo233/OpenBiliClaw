@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from contextlib import suppress
 from datetime import datetime
 from types import SimpleNamespace
@@ -8,11 +10,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
+from openbiliclaw.discovery.candidate_pool import DiscoveryCandidateWrite
+from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.runtime.events import RuntimeEventHub
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
 from openbiliclaw.storage.database import Database
+
+from .test_search_strategy import _build_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -274,6 +281,36 @@ class _FakeSoulEngine:
         return list(self._disliked)
 
 
+class _ProfileSoulEngine(_FakeSoulEngine):
+    async def get_profile(self) -> object:
+        return _build_profile()
+
+
+class _StructuredResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _StructuredScoringLLM:
+    def __init__(self, payload: list[dict[str, object]]) -> None:
+        self.payload = payload
+        self.calls = 0
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.calls += 1
+        return _StructuredResponse(json.dumps(self.payload, ensure_ascii=False))
+
+
 class _NoProfileSoulEngine:
     async def get_profile(self) -> None:
         return None
@@ -433,6 +470,28 @@ class _FakeRecommendationEngine:
         return 0
 
 
+class _RealDatabasePrecomputeEngine(_FakeRecommendationEngine):
+    def __init__(self, database: Database) -> None:
+        super().__init__()
+        self.database = database
+
+    async def precompute_pool_copy(
+        self,
+        *,
+        profile: object,
+        limit: int,
+    ) -> int:
+        self.pool_copy_calls.append((profile, limit))
+        rows = self.database.get_pool_candidates_needing_copy(limit=limit)
+        for row in rows:
+            self.database.update_pool_copy(
+                str(row["bvid"]),
+                expression="端到端推荐文案",
+                topic_label="端到端主题",
+            )
+        return len(rows)
+
+
 class _FakeEventHub:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
@@ -444,6 +503,7 @@ class _FakeEventHub:
 _LOOP_BODY_ATTRS = [
     ("_loop_refresh", ("_on_profile_ready_if_first_time", "refresh_if_needed")),
     ("_loop_pool_precompute", ("_drain_pool_precompute_backlog",)),
+    ("_loop_candidate_eval", ("_drain_discovery_candidates_and_precompute",)),
     ("_loop_soul_pipeline", ("_tick_soul_pipeline",)),
     ("_loop_bilibili_producer", ("_tick_bilibili_producer",)),
     ("_loop_xhs_producer", ("_tick_xhs_producer",)),
@@ -1244,6 +1304,164 @@ async def test_refresh_plan_uses_candidate_pipeline_when_available() -> None:
     assert discovery.calls == []
     assert memory.state["last_discovered_count"] == pipeline.enqueued[0][1]
     assert memory.state["recent_pool_topics"][:1] == ["pipeline-topic"]
+
+
+async def test_refresh_pipeline_drain_uses_shared_candidate_lock() -> None:
+    pipeline = _FakeCandidatePipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([{"id": 1, "event_type": "view"}], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    async with controller._discovery_drain_lock:
+        await controller._run_refresh_plan(
+            state=_FakeMemoryManager().load_discovery_runtime_state(),
+            profile={"profile": "ok"},
+            plan=[(["search"], 10)],
+            reason="test",
+        )
+
+    assert pipeline.enqueued == [(["search"], 7)]
+    assert pipeline.drains == []
+
+
+async def test_candidate_eval_drain_runs_when_refresh_plan_empty() -> None:
+    pipeline = _FakeCandidatePipeline()
+    recommendations = _FakeRecommendationEngine()
+    memory = _FakeMemoryManager()
+    database = _FakeDatabase(
+        [],
+        pool_count=0,
+        source_available_counts={"bilibili": 30},
+        source_raw_counts={"bilibili": 60},
+        discovery_status_counts={"pending_eval": 5},
+    )
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares={"bilibili": 1},
+    )
+
+    assert controller._build_refresh_plan(memory.load_discovery_runtime_state()) == []
+
+    result = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=30,
+    )
+
+    assert result["cached"] == 3
+    assert pipeline.drains == [30]
+    assert recommendations.pool_copy_calls == [({"profile": "ok"}, 60)]
+
+
+async def test_candidate_eval_releases_drain_lock_before_precompute() -> None:
+    pipeline = _FakeCandidatePipeline()
+
+    class _LockInspectingRecommendationEngine(_FakeRecommendationEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.controller: ContinuousRefreshController | None = None
+            self.locked_during_precompute: bool | None = None
+
+        async def precompute_pool_copy(
+            self,
+            *,
+            profile: object,
+            limit: int,
+        ) -> int:
+            if self.controller is None:
+                raise AssertionError("controller not attached")
+            self.locked_during_precompute = self.controller._discovery_drain_lock.locked()
+            return await super().precompute_pool_copy(profile=profile, limit=limit)
+
+    recommendations = _LockInspectingRecommendationEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=recommendations,
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+    recommendations.controller = controller
+
+    await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=30,
+    )
+
+    assert recommendations.locked_during_precompute is False
+
+
+async def test_candidate_eval_drain_with_real_database_makes_raw_candidate_available(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "candidate-eval-e2e.db")
+    database.initialize()
+    database.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVperiodic001",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVperiodic001",
+                content_url="https://www.bilibili.com/video/BVperiodic001",
+                title="周期评估端到端候选",
+            )
+        ]
+    )
+    llm = _StructuredScoringLLM(
+        [
+            {
+                "content_id": "BVperiodic001",
+                "score": 0.91,
+                "reason": "fit",
+                "topic_group": "tech",
+                "style_key": "deep_dive",
+            }
+        ]
+    )
+    discovery_engine = ContentDiscoveryEngine(llm_service=llm, database=database)
+    pipeline = DiscoveryCandidatePipeline(
+        database=database,
+        discovery_engine=discovery_engine,
+        pool_target_count=30,
+    )
+    recommendations = _RealDatabasePrecomputeEngine(database)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_ProfileSoulEngine(),
+        discovery_engine=discovery_engine,
+        recommendation_engine=recommendations,
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares={"bilibili": 1},
+    )
+
+    assert database.count_pool_candidates() == 0
+
+    result = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=30,
+    )
+
+    assert result == {"evaluated": 1, "cached": 1, "rejected": 0}
+    assert llm.calls == 1
+    assert database.count_discovery_candidates_by_status()["cached"] == 1
+    assert database.count_pool_candidates() == 1
+    assert [call[1] for call in recommendations.pool_copy_calls] == [60]
 
 
 async def test_refresh_pipeline_does_not_use_stale_topics_when_drain_skips() -> None:
@@ -2189,6 +2407,32 @@ def test_source_requested_count_is_bounded_by_global_available_deficit() -> None
     assert controller._source_requested_count("bilibili") == 2
 
 
+async def test_refresh_replenishes_when_raw_ceiling_is_full_but_available_pool_is_low() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=104,
+            source_available_counts={"bilibili": 104},
+            source_raw_counts={"bilibili": 600},
+            pool_raw_count=600,
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        pool_source_shares={"bilibili": 1},
+        discovery_limit=30,
+    )
+
+    result = await controller.refresh_if_needed()
+
+    assert result["refreshed"] is True
+    assert discovery.calls, "raw-ceiling pressure must not strand a low available pool"
+    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+
+
 async def test_non_bili_producer_not_called_when_global_pool_is_full() -> None:
     xhs = _FakeXhsProducer()
     controller = ContinuousRefreshController(
@@ -2322,7 +2566,7 @@ def test_source_replenishment_plan_clamps_requested_count_by_raw_headroom() -> N
     ]
 
 
-def test_source_replenishment_plan_stops_when_raw_headroom_is_zero() -> None:
+def test_source_replenishment_plan_escapes_raw_headroom_deadlock() -> None:
     controller = ContinuousRefreshController(
         memory_manager=_FakeMemoryManager(),
         database=_FakeDatabase(
@@ -2337,8 +2581,10 @@ def test_source_replenishment_plan_stops_when_raw_headroom_is_zero() -> None:
         pool_target_count=300,
     )
 
-    assert controller._build_source_replenishment_plan() == []
-    assert controller._source_deficit("bilibili") == 0
+    assert controller._build_source_replenishment_plan() == [
+        (["search", "related_chain", "trending", "explore"], 30)
+    ]
+    assert controller._source_deficit("bilibili") == 30
 
 
 def test_real_database_enforce_then_replenish_reaches_available_target(
@@ -2413,6 +2659,45 @@ def test_disabled_bilibili_share_skips_bilibili_refresh_strategies() -> None:
     )
 
     assert controller._build_refresh_plan(_FakeMemoryManager().load_discovery_runtime_state()) == []
+
+
+def test_refresh_plan_logs_diagnostics_when_pool_below_target_but_no_plan(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=33,
+            source_available_counts={"youtube": 33},
+            source_raw_counts={"youtube": 600},
+            pool_raw_count=600,
+            pool_pending_count=9,
+            discovery_status_counts={"pending_eval": 4, "evaluated": 2},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        pool_source_shares={"youtube": 1},
+    )
+    caplog.set_level(logging.INFO, logger="openbiliclaw.runtime.refresh")
+
+    plan = controller._build_refresh_plan(_FakeMemoryManager().load_discovery_runtime_state())
+
+    assert plan == []
+    assert "refresh plan empty" in caplog.text
+    for key in (
+        "pool_available",
+        "raw",
+        "pending",
+        "source_available",
+        "source_raw",
+        "source_targets",
+        "raw_targets",
+        "requested_by_source",
+    ):
+        assert key in caplog.text
 
 
 async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() -> None:
@@ -2757,7 +3042,7 @@ def test_pool_cap_total_trim_receives_raw_ceiling_source_quotas() -> None:
     assert database.pool_raw_count == 1200
 
 
-def test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target() -> None:
+def test_pool_cap_skips_platform_overflow_when_ready_pool_below_target() -> None:
     database = _FakeDatabase([], pool_count=580)
     controller = ContinuousRefreshController(
         memory_manager=_FakeMemoryManager(),
@@ -2770,11 +3055,7 @@ def test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target() -> 
     )
 
     assert controller._enforce_pool_cap() is False
-    assert database.trim_overflow_source_share_quotas == {
-        "bilibili": 960,
-        "xiaohongshu": 120,
-        "douyin": 120,
-    }
+    assert database.trim_overflow_source_share_quotas is None
 
 
 def test_pool_cap_reactivates_under_quota_sources_before_trim() -> None:
@@ -3308,7 +3589,31 @@ async def test_refresh_after_event_ingest_skips_when_scheduler_disabled() -> Non
     result = await controller.refresh_after_event_ingest()
 
     assert result["refreshed"] is False
-    assert result["reason"] == "llm_paused"
+    assert result["reason"] == "queued"
+    assert result["queued_reason"] == "event_ingest"
+
+
+async def test_refresh_after_event_ingest_queues_without_running_discovery() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([{"id": 1, "event_type": "view"}], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+        signal_event_threshold=1,
+    )
+
+    result = await controller.refresh_after_event_ingest()
+
+    assert result == {
+        "refreshed": False,
+        "strategies": [],
+        "reason": "queued",
+        "queued_reason": "event_ingest",
+    }
+    assert discovery.calls == []
 
 
 async def test_refresh_after_feedback_skips_when_scheduler_disabled() -> None:
@@ -3319,7 +3624,50 @@ async def test_refresh_after_feedback_skips_when_scheduler_disabled() -> None:
     result = await controller.refresh_after_feedback()
 
     assert result["refreshed"] is False
-    assert result["reason"] == "llm_paused"
+    assert result["reason"] == "queued"
+    assert result["queued_reason"] == "feedback"
+
+
+async def test_force_refresh_consumes_queued_replenishment_reasons() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([{"id": 1, "event_type": "view"}], pool_count=20),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    await controller.refresh_after_event_ingest()
+    await controller.refresh_after_feedback()
+
+    result = await controller.force_refresh()
+
+    assert result["refreshed"] is True
+    assert result["queued_reasons"] == ["event_ingest", "feedback"]
+    assert controller._pending_replenishment_reasons == set()
+
+
+async def test_refresh_after_init_triggers_replenishment_now() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([{"id": 1, "event_type": "view"}], pool_count=20),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    result = await controller.refresh_after_init()
+
+    assert result["accepted"] is True
+    assert result["state"] == "running"
+    await asyncio.sleep(0.05)
+    assert controller.get_runtime_status()["manual_refresh_state"] == "success"
 
 
 # ── P1.7 B站 search inline-admit keyword lifecycle ───────────────────────

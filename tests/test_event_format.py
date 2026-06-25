@@ -126,6 +126,38 @@ def test_build_event_metadata_source_platform_explicit_wins() -> None:
     assert event["metadata"]["source_platform"] == "web"
 
 
+def test_build_event_adds_default_signal_strength_without_overriding_source_value() -> None:
+    favorite = build_event(
+        event_type="favorite",
+        source_platform=SOURCE_BILIBILI,
+        title="收藏视频",
+    )
+    assert favorite["metadata"]["signal_strength"] == 1.0
+
+    passive_view = build_event(
+        event_type="view",
+        source_platform=SOURCE_BILIBILI,
+        title="浏览历史",
+    )
+    assert passive_view["metadata"]["signal_strength"] == 0.35
+
+    youtube_subscription = build_event(
+        event_type="follow",
+        source_platform="youtube",
+        title="某频道",
+        metadata={"signal_strength": 1.0},
+    )
+    assert youtube_subscription["metadata"]["signal_strength"] == 1.0
+
+    negative_feedback = build_event(
+        event_type="feedback",
+        source_platform=SOURCE_BILIBILI,
+        title="不合口味的视频",
+        metadata={"feedback_type": "dislike"},
+    )
+    assert negative_feedback["metadata"]["signal_strength"] == 1.0
+
+
 # ---------------------------------------------------------------------------
 # Producers all converge on the unified shape
 

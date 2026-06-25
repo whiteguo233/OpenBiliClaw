@@ -23,7 +23,7 @@
 - 后端源码版本用 `backend-vX.Y.Z` tag 标记，`.github/workflows/release-backend.yml` 目前只校验 tag 与 `pyproject.toml` 版本一致，不发布后端桌面包。
 - 浏览器插件用 `extension-vX.Y.Z` tag 发布 GitHub Release，`.github/workflows/release-extension.yml` 会上传 `openbiliclaw-extension-vX.Y.Z.zip` 和 `openbiliclaw-extension-vX.Y.Z-firefox.zip`。
 - Chrome Web Store 上传已独立为手动 workflow：`.github/workflows/publish-chrome-webstore.yml`。它可以用 GitHub Secrets 上传 Chrome-compatible zip，并在显式 `publish=true` 时提交审核。
-- 后端已有 `src/openbiliclaw/runtime/updater.py`：周期性查询 GitHub `/tags`，过滤 `backend-v*`，忽略 `extension-v*`，发现新版本后执行 `git pull --ff-only`、依赖同步和进程重启。
+- 后端已有 `src/openbiliclaw/runtime/updater.py`：周期性查询 GitHub `/tags`，过滤 `backend-v*`，忽略 `extension-v*`，REST API 限流时通过 GitHub tags Atom feed 兜底，发现新版本后执行 `git pull --ff-only`、依赖同步和进程重启。
 - 配置已有 `scheduler.auto_update_enabled=false` 和 `scheduler.auto_update_check_interval_hours=6`，默认关闭。
 
 插件更新不再由后端查询 `extension-v*` release 或由 side panel 维护更新横幅：
@@ -65,7 +65,7 @@ OpenBiliClaw 后端和插件 UI 不实现插件自动更新检测。插件更新
    - Acceptance: 响应不依赖任何插件 metadata，固定返回 `backend` 对象且不包含 `extension` 对象；旧客户端发送的扩展版本 / 浏览器族 headers 或 query params 必须被忽略，不能改变响应或报错。
 
 2. **后端版本发现**
-   - Current: `AutoUpdateService._fetch_latest_version()` 查询 `/tags` 并过滤 backend-like tag；当前实现把 `backend-v*`、legacy `v*` 和裸 semver 放进同一个候选池，且 `_parse_backend_version("backend-v0.3.100-rc1")` 会解析成 `(0, 3, 100)`。远端历史里 `v0.3.90` 与 `backend-v0.3.89` 并存时，当前 `max()` 会选择裸 `v0.3.90`，而不是 canonical backend tag。
+   - Current: `AutoUpdateService._fetch_latest_version()` 查询 `/tags` 并过滤 backend-like tag；REST API quota 耗尽时会读取 GitHub tags Atom feed 继续选择同一批 release tag。当前实现把 `backend-v*`、legacy `v*` 和裸 semver 放进同一个候选池，且 `_parse_backend_version("backend-v0.3.100-rc1")` 会解析成 `(0, 3, 100)`。远端历史里 `v0.3.90` 与 `backend-v0.3.89` 并存时，当前 `max()` 会选择裸 `v0.3.90`，而不是 canonical backend tag。
    - Target: 保留 `backend-vX.Y.Z` 为唯一 canonical 后端 tag，并执行明确优先级：只要存在稳定 `backend-v*` 候选，就完全忽略 legacy `v*` / 裸 semver；只有没有任何稳定 `backend-v*` 时才 fallback 到 legacy tags。默认不自动应用 `-rc` / `-beta` / `-dev` 后缀。
    - Target config: 新增 `[scheduler] auto_update_allow_prerelease = false`；实现时必须同步 `config.example.toml`、`docs/modules/config.md` 和配置 API schema。
    - Acceptance: `extension-v*` 永远不会进入 backend candidate；`backend-v0.3.100-rc1` 在默认配置下不会被自动应用；当 `backend-v0.3.89` 和 `v0.3.90` 同时存在时，选择 `backend-v0.3.89`。
@@ -207,7 +207,7 @@ Backend state-to-reason mapping for `GET /api/update-status` and `POST /api/upda
 | `applying` | `none`, `already_applying` |
 | `restart_pending` | `none` |
 | `blocked` | `dirty_worktree`, `untrusted_remote`, `missing_target_tag`, `branch_not_fast_forwardable`, `merge_or_rebase_in_progress` |
-| `error` | `dependency_sync_failed`, `restart_failed`, `github_unreachable`, `no_backend_tag_yet` |
+| `error` | `dependency_sync_failed`, `restart_failed`, `github_rate_limited`, `github_unreachable`, `no_backend_tag_yet` |
 | `unsupported` | `unsupported_install_mode`, `unsupported_docker_runtime` |
 
 ## Backend State Reasons
@@ -226,6 +226,7 @@ Stable backend `reason` values are part of the contract and must not overlap wit
 - `merge_or_rebase_in_progress`
 - `dependency_sync_failed`
 - `restart_failed`
+- `github_rate_limited`
 - `github_unreachable`
 - `no_backend_tag_yet`
 - `prerelease_ignored`

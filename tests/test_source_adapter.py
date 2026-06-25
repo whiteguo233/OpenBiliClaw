@@ -55,7 +55,10 @@ class TestBilibiliAdapter:
         adapter = BilibiliAdapter(search=search, trending=trending)
 
         recipe = SourceRecipe(
-            id="r1", source_type="bilibili", name="搜索", strategy="search",
+            id="r1",
+            source_type="bilibili",
+            name="搜索",
+            strategy="search",
         )
         result = asyncio.run(
             adapter.fetch(recipe, profile=object(), limit=15),
@@ -73,7 +76,10 @@ class TestBilibiliAdapter:
         adapter = BilibiliAdapter(search=search)
 
         recipe = SourceRecipe(
-            id="r1", source_type="bilibili", name="搜索", strategy="search",
+            id="r1",
+            source_type="bilibili",
+            name="搜索",
+            strategy="search",
         )
         result = asyncio.run(
             adapter.fetch(recipe, profile=object()),
@@ -88,7 +94,10 @@ class TestBilibiliAdapter:
     def test_fetch_unknown_strategy_returns_empty(self) -> None:
         adapter = BilibiliAdapter()
         recipe = SourceRecipe(
-            id="r1", source_type="bilibili", name="???", strategy="nonexistent",
+            id="r1",
+            source_type="bilibili",
+            name="???",
+            strategy="nonexistent",
         )
         result = asyncio.run(
             adapter.fetch(recipe, profile=object()),
@@ -106,14 +115,20 @@ class TestAdapterRegistry:
         registry.register(adapter)
 
         recipe = SourceRecipe(
-            id="r1", source_type="bilibili", name="搜索", strategy="search",
+            id="r1",
+            source_type="bilibili",
+            name="搜索",
+            strategy="search",
         )
         assert registry.resolve(recipe) is adapter
 
     def test_resolve_unknown_returns_none(self) -> None:
         registry = AdapterRegistry()
         recipe = SourceRecipe(
-            id="r1", source_type="youtube", name="YT", strategy="search",
+            id="r1",
+            source_type="youtube",
+            name="YT",
+            strategy="search",
         )
         assert registry.resolve(recipe) is None
 

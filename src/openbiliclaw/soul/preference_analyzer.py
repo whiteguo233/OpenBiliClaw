@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.json_utils import (
@@ -18,6 +18,9 @@ from openbiliclaw.llm.service import LLMServiceError
 from openbiliclaw.soul.event_filters import filter_events_by_satisfaction
 from openbiliclaw.soul.taxonomy import SupportsEmbed, resolve_category
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +31,9 @@ logger = logging.getLogger(__name__)
 # avoid-topic reaches LLM prompts; the stalest topics decay out past
 # this when re-flagged entries keep bubbling to the front.
 _DISLIKED_TOPICS_STORE_CAP = 128
+
+DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE = 200
+MAX_CONCURRENT_PREFERENCE_CHUNKS = 16
 
 _COMPACT_METADATA_KEYS = frozenset(
     {
@@ -43,6 +49,7 @@ _COMPACT_METADATA_KEYS = frozenset(
         "video_duration_seconds",
         "feedback_type",
         "reaction",
+        "signal_strength",
     }
 )
 
@@ -298,6 +305,20 @@ class PreferenceAnalyzer:
                 compact["metadata"] = compact_metadata
         return compact
 
+    def _safe_compact_event_for_invalid_json_retry(
+        self,
+        event: dict[str, object],
+    ) -> dict[str, object]:
+        """Build a lower-risk prompt event for retrying model refusals.
+
+        Long natural-language page context can trigger provider safety refusals
+        even though preference extraction is benign. A title/URL/source retry
+        keeps useful preference signal while removing the likely offending body.
+        """
+        compact = self._compact_event_for_prompt(event)
+        compact.pop("context", None)
+        return compact
+
     @staticmethod
     def _truncate_for_prompt(value: object, max_chars: int) -> str:
         if max_chars <= 0:
@@ -316,7 +337,7 @@ class PreferenceAnalyzer:
         existing_preference: dict[str, object],
         chunk_size: int,
     ) -> dict[str, object]:
-        """Split events into chunks, analyse each concurrently, then fold."""
+        """Split events into bounded concurrent chunk batches, then fold."""
         import asyncio as _asyncio
 
         chunk_size = max(1, chunk_size)
@@ -350,8 +371,40 @@ class PreferenceAnalyzer:
                 )
             except (LLMProviderError, LLMServiceError) as exc:
                 raise PreferenceAnalysisError(str(exc)) from exc
-            raw = self._parse_response(response.content)
+            raw = self._parse_response(response.content, log_error=False)
             return raw, await self._normalize_and_resolve(raw)
+
+        async def _retry_single_event_without_context(
+            event: dict[str, object],
+        ) -> tuple[dict[str, object], dict[str, object]] | None:
+            safe_event = self._safe_compact_event_for_invalid_json_retry(event)
+            if not safe_event:
+                return None
+            safe_messages = build_preference_analysis_prompt(
+                events=[safe_event],
+                existing_preference={},
+            )
+            if not self._prompt_fits_budget(safe_messages):
+                logger.warning(
+                    "preference event skipped because safe compact prompt still exceeds "
+                    "budget: title=%r prompt_chars=%d budget=%d",
+                    str(event.get("title", "")),
+                    self._prompt_char_count(safe_messages),
+                    self.max_prompt_chars,
+                )
+                return None
+            try:
+                return await _run_chunk_once([safe_event])
+            except PreferenceAnalysisError as retry_exc:
+                if retry_exc.__cause__ is not None and not self._is_context_overflow_error(
+                    retry_exc
+                ):
+                    raise
+                logger.warning(
+                    "preference chunk skipped after safe compact retry failed: title=%r",
+                    str(event.get("title", "")),
+                )
+                return None
 
         async def _split_or_compact_chunk(
             chunk: list[dict[str, object]],
@@ -402,9 +455,14 @@ class PreferenceAnalyzer:
                     raise
                 # Invalid JSON / model refusal is often content-local: split
                 # the batch to isolate the offending event, then skip only
-                # that final single event if it still refuses.
+                # that final single event if a title/source-only retry still
+                # refuses.
                 if len(chunk) <= 1:
                     event = chunk[0] if chunk else {}
+                    if isinstance(event, dict):
+                        retry_outcome = await _retry_single_event_without_context(event)
+                        if retry_outcome is not None:
+                            return [retry_outcome]
                     logger.warning(
                         "preference chunk skipped after invalid LLM response: title=%r",
                         str(event.get("title", "")) if isinstance(event, dict) else "",
@@ -412,7 +470,12 @@ class PreferenceAnalyzer:
                     return []
                 return await _split_or_compact_chunk(chunk)
 
-        outcome_groups = await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in chunks))
+        outcome_groups: list[list[tuple[dict[str, object], dict[str, object]]]] = []
+        for batch_start in range(0, len(chunks), MAX_CONCURRENT_PREFERENCE_CHUNKS):
+            batch = chunks[batch_start : batch_start + MAX_CONCURRENT_PREFERENCE_CHUNKS]
+            outcome_groups.extend(
+                await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in batch))
+            )
         outcomes = [item for group in outcome_groups for item in group]
 
         # Fold each chunk's normalized preference into the running merge
@@ -513,31 +576,57 @@ class PreferenceAnalyzer:
         merged_interests: dict[tuple[str, str], dict[str, object]] = {
             (str(item["name"]), str(item["category"])): item for item in existing_interests
         }
+        active_aliases = self._alias_key_map(merged_interests.values())
+        archived_interests = [
+            dict(item)
+            for item in self._as_list(existing_preference.get("archived_interests", []))
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        ]
+        archived_by_key: dict[tuple[str, str], dict[str, object]] = {
+            (str(item.get("name", "")), str(item.get("category", ""))): item
+            for item in archived_interests
+        }
+        archived_aliases = self._alias_key_map(archived_interests)
+        reactivated_archive_keys: set[tuple[str, str]] = set()
 
         for item in self._as_list(new_preference.get("interests", [])):
             if not isinstance(item, dict):
                 continue
-            key = (str(item["name"]), str(item["category"]))
+            raw_key = (str(item["name"]), str(item["category"]))
+            key = raw_key
             existing = merged_interests.get(key)
             if existing is None:
+                alias_key = active_aliases.get(raw_key)
+                if alias_key is not None:
+                    key = alias_key
+                    existing = merged_interests.get(key)
+            if existing is None:
+                archived_key = key if key in archived_by_key else archived_aliases.get(raw_key)
+                archived = archived_by_key.get(archived_key) if archived_key is not None else None
+                if archived is not None:
+                    reactivated_archive_keys.add(archived_key)  # type: ignore[arg-type]
+                    canonical_key = (
+                        str(archived.get("name", "")),
+                        str(archived.get("category", "")),
+                    )
+                    merged_interests[canonical_key] = self._merge_interest_record(
+                        archived,
+                        item,
+                        now=now,
+                    )
+                    active_aliases = self._alias_key_map(merged_interests.values())
+                    continue
                 merged_interests[key] = {
                     **item,
                     "first_seen": now.isoformat(),
                     "last_seen": now.isoformat(),
                 }
+                active_aliases = self._alias_key_map(merged_interests.values())
                 continue
-            merged_interests[key] = {
-                **existing,
-                **item,
-                "first_seen": existing.get("first_seen") or now.isoformat(),
-                "last_seen": now.isoformat(),
-                "weight": self._clamp_weight(
-                    max(
-                        self._to_float(existing.get("weight", 0.0)),
-                        self._to_float(item.get("weight", 0.0)),
-                    )
-                ),
-            }
+            if key in archived_by_key:
+                reactivated_archive_keys.add(key)
+            merged_interests[key] = self._merge_interest_record(existing, item, now=now)
+            active_aliases = self._alias_key_map(merged_interests.values())
 
         # Union old and new UP users to accumulate across batches.
         # Individual batches may only mention a subset; replacing would lose
@@ -594,6 +683,12 @@ class PreferenceAnalyzer:
             "disliked_topics": disliked_topics,
             "favorite_up_users": favorite_up_users,
             "speculative_interests": speculative,
+            "archived_interests": [
+                item
+                for item in archived_interests
+                if (str(item.get("name", "")), str(item.get("category", "")))
+                not in reactivated_archive_keys
+            ],
         }
         return merged
 
@@ -626,14 +721,15 @@ class PreferenceAnalyzer:
             decayed.append(item)
         return decayed
 
-    def _parse_response(self, content: str) -> dict[str, object]:
+    def _parse_response(self, content: str, *, log_error: bool = True) -> dict[str, object]:
         parsed = parse_llm_json_tolerant(content)
         if parsed is None:
             exc = ValueError("unrecoverable JSON")
-            logger.error(
-                "%s",
-                format_parse_failure(content, exc, label="preference analysis"),
-            )
+            if log_error:
+                logger.error(
+                    "%s",
+                    format_parse_failure(content, exc, label="preference analysis"),
+                )
             raise PreferenceAnalysisError(
                 f"LLM returned invalid JSON for preference analysis "
                 f"(raw_len={len(content.strip())})"
@@ -691,7 +787,8 @@ class PreferenceAnalyzer:
         return normalized
 
     def _normalize_interest(self, raw_item: dict[str, object]) -> dict[str, object]:
-        return {
+        name = str(raw_item.get("name", "")).strip()
+        normalized = {
             "name": str(raw_item.get("name", "")).strip(),
             "category": str(raw_item.get("category", "")).strip(),
             "weight": self._clamp_weight(self._to_float(raw_item.get("weight", 0.0))),
@@ -699,6 +796,89 @@ class PreferenceAnalyzer:
             "last_seen": raw_item.get("last_seen", ""),
             "source": str(raw_item.get("source", "")).strip(),
         }
+        aliases = self._interest_aliases(raw_item, canonical_name=name)
+        if aliases:
+            normalized["aliases"] = aliases
+        return normalized
+
+    def _merge_interest_record(
+        self,
+        existing: dict[str, object],
+        incoming: dict[str, object],
+        *,
+        now: datetime,
+    ) -> dict[str, object]:
+        canonical_name = str(existing.get("name", "")).strip()
+        canonical_category = str(existing.get("category", "")).strip()
+        merged = {
+            **existing,
+            **incoming,
+            "name": canonical_name,
+            "category": canonical_category,
+            "first_seen": existing.get("first_seen") or now.isoformat(),
+            "last_seen": now.isoformat(),
+            "weight": self._clamp_weight(
+                max(
+                    self._to_float(existing.get("weight", 0.0)),
+                    self._to_float(incoming.get("weight", 0.0)),
+                )
+            ),
+        }
+        aliases = self._merged_interest_aliases(existing, incoming, canonical_name)
+        if aliases:
+            merged["aliases"] = aliases
+        else:
+            merged.pop("aliases", None)
+        return merged
+
+    def _alias_key_map(self, interests: Iterable[object]) -> dict[tuple[str, str], tuple[str, str]]:
+        result: dict[tuple[str, str], tuple[str, str]] = {}
+        for item in interests:
+            if not isinstance(item, dict):
+                continue
+            canonical_name = str(item.get("name", "")).strip()
+            category = str(item.get("category", "")).strip()
+            canonical_key = (canonical_name, category)
+            for alias in self._interest_aliases(item, canonical_name=canonical_name):
+                result.setdefault((alias, category), canonical_key)
+        return result
+
+    def _merged_interest_aliases(
+        self,
+        existing: dict[str, object],
+        incoming: dict[str, object],
+        canonical_name: str,
+    ) -> list[str]:
+        raw_terms: list[object] = [*self._interest_aliases(existing, canonical_name=canonical_name)]
+        incoming_name = str(incoming.get("name", "")).strip()
+        if incoming_name:
+            raw_terms.append(incoming_name)
+        raw_terms.extend(self._interest_aliases(incoming, canonical_name=canonical_name))
+        return self._clean_aliases(raw_terms, canonical_name=canonical_name)
+
+    def _interest_aliases(
+        self,
+        item: dict[str, object],
+        *,
+        canonical_name: str,
+    ) -> list[str]:
+        return self._clean_aliases(
+            self._as_list(item.get("aliases", [])),
+            canonical_name=canonical_name,
+        )
+
+    def _clean_aliases(self, raw_aliases: object, *, canonical_name: str) -> list[str]:
+        aliases: list[str] = []
+        seen: set[str] = set()
+        canonical_norm = canonical_name.strip().casefold()
+        for raw_alias in self._as_list(raw_aliases):
+            alias = str(raw_alias).strip()
+            alias_norm = alias.casefold()
+            if not alias or not alias_norm or alias_norm == canonical_norm or alias_norm in seen:
+                continue
+            aliases.append(alias)
+            seen.add(alias_norm)
+        return aliases
 
     @staticmethod
     def _as_dict(raw_value: object) -> dict[str, object]:

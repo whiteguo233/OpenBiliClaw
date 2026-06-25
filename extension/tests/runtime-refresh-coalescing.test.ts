@@ -29,6 +29,18 @@ test("runtime stream refresh handlers coalesce expensive frontend reloads", () =
     popupJs,
     /if \(event\.type === "refresh\.pool_updated"\) \{[\s\S]*?scheduleRecommendationsRefresh\(/,
   );
+  assert.match(popupJs, /function renderReadyRecommendationHint\(\)/);
+  assert.match(
+    popupJs,
+    /renderPoolStatus\(state\.runtimeStatus\);\s*if \(runtimeEventCarriesPoolCounts\(event\)\) \{\s*renderReadyRecommendationHint\(\);\s*\}/,
+  );
+  const initializeBlock =
+    popupJs.match(/async function initializeRecommendations\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.notEqual(initializeBlock, "", "popup should initialize recommendations through one function");
+  assert.match(
+    initializeBlock,
+    /state\.runtimeStatus = await fetchRuntimeStatus\(\)\.catch\(\(\) => state\.runtimeStatus\);[\s\S]*?renderPoolStatus\(state\.runtimeStatus\);[\s\S]*?renderRecommendationState\(/,
+  );
 
   assert.match(desktopJs, /function scheduleBackendHydration/);
   assert.match(desktopJs, /function scheduleActivityPageRefresh/);
@@ -64,7 +76,7 @@ test("runtime stream refresh handlers coalesce expensive frontend reloads", () =
     mobileRecommendJs.match(/if \(type === "refresh\.pool_updated"\) \{[\s\S]*?\} else if/)?.[0] ?? "";
   assert.notEqual(poolUpdatedBlock, "", "mobile recommend stream handler should handle pool updates");
   assert.match(poolUpdatedBlock, /mergeRuntimeStatusEvent/);
-  assert.match(poolUpdatedBlock, /rerenderHeaderOnly\(\);/);
+  assert.match(poolUpdatedBlock, /rerenderRuntimeDependentChrome\(\);/);
   assert.doesNotMatch(poolUpdatedBlock, /scheduleRecommendationItemsRefresh/);
   assert.doesNotMatch(poolUpdatedBlock, /fetchRecommendations|loadData/);
   assert.doesNotMatch(poolUpdatedBlock, /loadData\(/);

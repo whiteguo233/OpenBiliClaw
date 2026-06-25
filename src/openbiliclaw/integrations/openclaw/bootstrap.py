@@ -101,6 +101,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         profile_consolidation_interval_hours=int(
             getattr(config.scheduler, "profile_consolidation_interval_hours", 12)
         ),
+        profile_consolidation_like_target_upper=int(
+            getattr(config.scheduler, "profile_consolidation_like_target_upper", 512)
+        ),
+        profile_consolidation_like_target_soft=int(
+            getattr(config.scheduler, "profile_consolidation_like_target_soft", 450)
+        ),
+        profile_consolidation_archive_enabled=bool(
+            getattr(config.scheduler, "profile_consolidation_archive_enabled", True)
+        ),
     )
     llm_service = LLMService(
         registry=llm_registry,

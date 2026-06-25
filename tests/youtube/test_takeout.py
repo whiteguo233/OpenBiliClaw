@@ -193,9 +193,7 @@ def test_liked_csv(tmp_path: Path) -> None:
 def test_watch_html_fallback(tmp_path: Path) -> None:
     yt_dir = tmp_path / "YouTube and YouTube Music"
     (yt_dir / "history").mkdir(parents=True)
-    (yt_dir / "history" / "watch-history.html").write_text(
-        _WATCH_HISTORY_HTML, encoding="utf-8"
-    )
+    (yt_dir / "history" / "watch-history.html").write_text(_WATCH_HISTORY_HTML, encoding="utf-8")
 
     result = parse_takeout(yt_dir)
 
@@ -208,9 +206,7 @@ def test_watch_html_fallback(tmp_path: Path) -> None:
 def test_watch_html_channel_extraction(tmp_path: Path) -> None:
     yt_dir = tmp_path / "YouTube and YouTube Music"
     (yt_dir / "history").mkdir(parents=True)
-    (yt_dir / "history" / "watch-history.html").write_text(
-        _WATCH_HISTORY_HTML, encoding="utf-8"
-    )
+    (yt_dir / "history" / "watch-history.html").write_text(_WATCH_HISTORY_HTML, encoding="utf-8")
 
     result = parse_takeout(yt_dir)
     ev = next(e for e in result.events if e["title"] == "HTML Video One")
@@ -304,11 +300,7 @@ def test_source_platform_mix_is_youtube(tmp_path: Path) -> None:
 
 
 def test_liked_csv_no_title_uses_video_id(tmp_path: Path) -> None:
-    csv_content = (
-        "# Liked videos\n# \n# \n# \n"
-        "Video ID,Video URL,Video Title\n"
-        "noid001,,\n"
-    )
+    csv_content = "# Liked videos\n# \n# \n# \nVideo ID,Video URL,Video Title\nnoid001,,\n"
     yt_dir = tmp_path / "YouTube and YouTube Music"
     (yt_dir / "playlists").mkdir(parents=True)
     (yt_dir / "playlists" / "Liked videos.csv").write_text(csv_content, encoding="utf-8")

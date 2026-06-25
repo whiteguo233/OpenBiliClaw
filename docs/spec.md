@@ -1,21 +1,21 @@
 # OpenBiliClaw — 项目规格说明书 (SPEC) v0.3
 
-> *你的 B 站专属 AI 朋友，比你更懂你想看什么* 🎯
+> *你的跨平台 AI 内容朋友，比你更懂你想看什么* 🎯
 
 ---
 
 ## 1. 项目定位
 
-OpenBiliClaw 是一个**通用开源的 Bilibili 个性化内容推荐 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动在 B 站上帮你发现那些你会喜欢但自己找不到的内容。
+OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
 
 **核心理念**：
 - 不是冷冰冰的推荐算法，而是一个**有温度的 AI 朋友**
 - 不是被动过滤推荐流，而是**主动探索发现**
 - 不是浅层兴趣匹配，而是**深层理解人格与需求**
 
-### 与 B 站官方推荐的区别
+### 与单平台官方推荐的区别
 
-| 维度 | B 站官方推荐 | OpenBiliClaw |
+| 维度 | 单平台官方推荐 | OpenBiliClaw |
 |------|------------|--------------|
 | 推荐逻辑 | 协同过滤 + 热度，容易信息茧房 | LLM 深层理解 + 探索式发现 |
 | 用户理解 | 隐式标签，用户不可见 | 深度人格画像，像朋友一样理解你 |
@@ -34,11 +34,11 @@ OpenBiliClaw 是一个**通用开源的 Bilibili 个性化内容推荐 AI Agent*
 #### 2.1.1 行为数据采集
 
 **浏览器插件（核心采集入口）**：
-- 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X 的交互行为：点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
+- 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎的交互行为：点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
 - 记录行为发生时的**完整上下文**：对应的 DOM 页面快照、当前浏览路径、时间戳、平台内容 ID
 - 捕捉用户的**微行为**：鼠标悬停、视频进度条跳转、视频暂停 / 继续、页面导航等
 - 记录用户的**主动反馈**：`dislike` 类动作统一规范成 `feedback` 事件，避免各平台负反馈语义分叉
-- 本机调试可通过 `/api/extension/e2e/run` 驱动已安装插件在抖音 / 小红书 / X 真实页面执行白名单 DOM 操作，再由后端校验 `/api/events` 是否自然入库；runner 会把复用 tab 归位到平台入口并在回传结果前 flush 捕捉 buffer，该链路不伪造行为事件，用于验证捕捉层本身。`/api/events` 在画像明确未初始化时会拒收普通行为事件，首轮画像信号只由点击「开始初始化」后的 guided init 来源任务拉取。
+- 本机调试可通过 `/api/extension/e2e/run` 驱动已安装插件在抖音 / 小红书 / X 真实页面执行白名单 DOM 操作，再由后端校验 `/api/events` 是否自然入库；runner 会把复用 tab 归位到平台入口并在回传结果前 flush 捕捉 buffer，该链路不伪造行为事件，用于验证捕捉层本身。`/api/events` 在画像明确未初始化时会拒收普通行为事件，首轮画像信号只由点击「开始初始化」后的 guided init 来源任务拉取；初始化后 accepted 普通事件会先写入 memory，再进入 `ProfileUpdatePipeline`，随后通过 `request_replenishment(reason="event_ingest")` 排队补货需求。旧版本已经停在 discovery 水位后的普通行为事件由独立 `last_profile_pipeline_event_id` 补喂画像 pipeline，而 `pending_signal_events` 仍只是 search / related_chain refresh 的触发水位，不是画像待处理数。
 
 **B 站数据接口**：
 - 通过 B 站 API 获取结构化数据（历史记录、收藏夹、关注列表等）
@@ -128,7 +128,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 
 ### 2.2 🔍 内容发现引擎 (Content Discovery Engine)
 
-**目标**：像一个资深 B 站用户 + 专业编辑一样，通过多种方式主动发现好内容。
+**目标**：像一个熟悉多个内容社区的专业编辑一样，通过多种方式主动发现好内容。
 
 #### 发现策略
 
@@ -148,7 +148,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 
 - **核心评估**：这个内容是否匹配这个用户的深层兴趣和当前状态？
 - **可选辅助指标**：播放量/点赞/弹幕质量等——由用户画像决定是否参考（有些用户在意质量指标，有些人不在意）
-- **统一待评估池**：不同来源先产出 raw candidates 并进入 `discovery_candidates`，再由统一 evaluator 混合 batch 评估；来源只影响取数方式、配额和 prompt 上下文，不单独决定一套喜好判断流程。评估输入包含正文 / 标签 / 互动指标；开启 `[discovery].multimodal_evaluation_enabled` 且模型支持图像时，还会优先从运行时图片缓存读取封面，未命中才白名单抓取，并把压缩后的封面图送入同一评估器。
+- **统一待评估池**：不同来源先产出 raw candidates 并进入 `discovery_candidates`，再由统一 evaluator 混合 batch 评估；refresh plan 发现新 raw 后会即时触发一次 drain，独立 candidate eval loop 也会周期性处理已有 pending raw，避免评估被来源补货计划是否为空卡住。来源只影响取数方式、配额和 prompt 上下文，不单独决定一套喜好判断流程。评估输入包含正文 / 标签 / 互动指标；开启 `[discovery].multimodal_evaluation_enabled` 且模型支持图像时，还会优先从运行时图片缓存读取封面，未命中才白名单抓取，并把压缩后的封面图送入同一评估器。
 
 ---
 
@@ -195,7 +195,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 **目标**：支持自定义扩展能力，让用户和社区可以为 Agent 增加新技能。
 
 - **Skill 定义**：每个 Skill 是一个独立模块，包含说明文档 + 执行逻辑
-- **内置 Skill**：B 站搜索、B 站浏览、评论区分析、UP 主追踪等
+- **内置 Skill**：B 站 / 知乎等来源搜索、内容浏览、评论区分析、作者追踪等
 - **自定义 Skill**：用户可以创建新 Skill 扩展 Agent 的能力
   - 例如：新平台接入、特定领域的内容评估策略、新的推荐呈现方式
 - **Skill 注册**：Agent 自动发现可用 Skill，根据任务需要选择调用
@@ -209,18 +209,21 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │                  用户交互层 (浏览器插件)                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐    │
 │  │ 统一行为采集   │  │ 推荐展示 UI   │  │ 对话/反馈/探针   │    │
-│  │ Adapter: B/x │  │ (LUI 界面)   │  │ (durable turn) │    │
-│  │ +yt+x(推文)  │  │ +真实可换数   │  │                │    │
+│  │ Adapter: B/XHS│  │ (LUI 界面)   │  │ (durable turn) │    │
+│  │ +DY/YT/X/ZH   │  │ +真实可换数   │  │                │    │
 │  │ +停留满意度   │  │ +文字卡渲染   │  │                │    │
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ bili/xhs/dy/yt 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ bili/xhs/dy/yt/zhihu 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ B 站 / 抖音 / X Cookie 同步（runtime-stream 请求 + 扩展回传）│   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 扩展捕捉 E2E：run -> runtime-stream -> 入口归位 -> DOM 操作 -> /api/events │ │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ 普通 /api/events：accepted -> memory -> ProfileUpdatePipeline -> request_replenishment │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ delight / interest.probe / avoidance.probe 主动推送（含probe_mode）│ │
@@ -245,8 +248,12 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ 推荐点击：content_id/url/source_platform -> source-aware click signal │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ 推荐反馈：/api/feedback -> 5s 合并 -> feedback 批学习单飞 │ │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
 │  │ runtime status：available/raw/pending 库存 -> 插件/移动/桌面 │   │
 │  │ 补池：available-by-source deficit + raw-material headroom     │   │
+│  │ 推荐消费池后：refresh.pool_updated 快照 -> 三端库存提示收敛   │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ 画像编辑：编辑面板 -> /api/profile/edit -> 覆盖层（插件/移动/桌面三端） │ │
@@ -267,18 +274,18 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  └──────────────┘ └──────────────┘ └────────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │     PoolCurator + 双轴 fatigue + per-group 窗口 + 新兴趣放大保护 │ │
-│  │     ContinuousRefreshController + B/XHS/DY/YT/X=8/1/1/1/1 │ │
-│  │     DiscoveryCandidatePipeline: raw candidates -> mixed batch eval -> pool │ │
+│  │     request_replenishment + 定时/手动补货 + B/XHS/DY/YT/X/Zhihu=5/1/1/1/1/1 │ │
+│  │     DiscoveryCandidatePipeline: raw candidates -> periodic/refresh eval -> pool │ │
 │  │     LLM gate: scheduler + extension presence          │   │
 │  │     Soul taxonomy: CATEGORY_VOCAB + category migration + homonym-aware consolidation │ │
-│  │     Autostart: user login item + Ollama preflight/self-heal │ │
-│  │     Bili DOM fallback + XHS/Douyin/YouTube/X producers: 按平台缺口独立补池 │ │
+│  │     Autostart: user login item + Ollama preflight/self-heal + Ollama.app runtime 校验 │ │
+│  │     Bili DOM fallback + XHS/Douyin/YouTube/X/Zhihu producers: 按平台缺口独立补池 │ │
 │  │     Hot reload one-shots: interest/avoidance force_tick │   │
 │  │     Probe arbiter: interest / avoidance 每轮最多推送一条   │   │
 │  │     Interest probes: near 5 + challenge 3 独立 active 额度 │   │
 │  │     Probe memory: domain / axis / distance + exploration buffer │ │
 │  │     AccountSync: B 站账号增量 -> Memory/Soul bootstrap     │   │
-│  │     Guided init: selected sources -> run_guided_init + InitCoordinator + /api/init* + init 期写者门控 │ │
+│  │     Guided init: selected sources + LLM/embedding live probe -> run_guided_init + InitCoordinator │ │
 │  │     Pool readiness: servable/raw/pending 统一库存口径       │   │
 │  │     Source bootstrap seen-key guard -> Memory/Profile      │   │
 │  │     Profile overrides overlay: 用户编辑 -> profile_overrides.json │ │
@@ -291,9 +298,9 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 ├──────────────────────────────────────────────────────────────┤
 │           多源适配层 (SourceAdapter Protocol, v0.3.0+)         │
 │  ┌──────────────┐  ┌──────────────────┐  ┌─────────────┐    │
-│  │ B 站 Adapter  │  │ Bili/小红书/抖音/YouTube任务桥│ │ Web Adapter │  │
+│  │ B 站 Adapter  │  │ Bili/小红书/抖音/YouTube/知乎任务桥│ │ Web Adapter │  │
 │  │ (WBI API+DOM兜底)│ │ (扩展代理 + DOM-first)│  │ (Playwright │    │
-│  │              │  │ + profile/search/feed/yt)│ │ + LLM 抽取)│    │
+│  │              │  │ + profile/search/feed/yt/zhihu)│ │ + LLM 抽取)│    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ DouyinDiscoveryService: 首页 DOM 触发 search / 热点 seed-related / feed │ │
@@ -307,6 +314,10 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │   行为采集: 扩展 MAIN-world GraphQL tap + generic collector   │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
+│  │ ZhihuDiscoveryProducer: 插件登录态 search/hot/feed/creator/related -> pending eval │ │
+│  │   fetch-zhihu 只做 smoke；guided init 勾选知乎才进首版画像       │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
 │  │ Cookie/登录态、runtime-stream presence、任务持久化/claim、seen-key 去重 │ │
 │  └──────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
@@ -316,6 +327,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │ DeepSeek / Ollama /      │  │ L1 内存 + L2 SQLite    │   │
 │  │ OpenRouter + Codex OAuth │  │ Ollama bge-m3 兜底可选  │   │
 │  └──────────────────────────┘  └────────────────────────┘   │
+│  Desktop bundle: official Ollama.app runtime (ollama + runner dylibs/assets) │
 │  LLMService caller bucket → per-module provider/model override │
 │  discovery evaluator: text + metrics + optional compressed cover image input │
 │  OpenAI auth_mode: api_key / experimental Codex CLI OAuth      │
@@ -345,7 +357,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 | 浏览器插件 | **Chrome Extension** (Manifest V3) | 行为采集 + 交互 UI + LUI |
 | Agent 框架 | **自研轻量框架**，按需扩展 | 灵活可控，支持 Skill 系统 |
 | 记忆存储 | **SQLite** + **向量索引** + **JSON** | 分层存储，匹配不同记忆类型需求 |
-| 任务调度 | **asyncio runtime loops** + `[scheduler]` 配置 | 按前端可换候选缺口、raw-material headroom、行为阈值和策略间隔执行内容发现；不依赖 cron |
+| 任务调度 | **asyncio runtime loops** + `[scheduler]` 配置 | 按前端可换候选缺口、raw-material headroom、行为阈值和策略间隔执行内容发现；pending raw 评估有独立 loop；不依赖 cron |
 | 运行模式 | **本地运行** | 用户自己的电脑上执行 |
 
 ---
@@ -391,7 +403,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 - [ ] 完善的安装和使用文档
 - [ ] 插件商店发布
 - [ ] 社区 Skill 市场
-- [ ] 跨平台内容发现（可选：YouTube、小红书等）
+- [x] 跨平台内容发现（已落地 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / 通用 Web，后续继续扩展更多 adapter）
 
 ---
 
@@ -406,4 +418,4 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 
 ---
 
-*文档版本: v0.3 | 日期: 2026-03-07 | 状态: 讨论中*
+*文档版本: v0.3 | 日期: 2026-06-25 | 状态: 持续更新*

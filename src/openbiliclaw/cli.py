@@ -27,6 +27,7 @@ from openbiliclaw.runtime.ollama_supervisor import (
     is_loopback,
     ollama_required,
 )
+from openbiliclaw.soul.preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE
 
 
 def _force_utf8_stdout_on_windows() -> None:
@@ -86,6 +87,18 @@ _DISCOVER_STRATEGIES_OPTION = typer.Option(
         "search / trending / explore / related_chain。"
         "仅在 --source=bilibili 时生效。"
     ),
+)
+_ZHIHU_DISCOVER_KEYWORDS_ARGUMENT = typer.Argument(
+    ...,
+    help="知乎搜索关键词，可传多个；单个参数里也可以用逗号分隔。",
+)
+_ZHIHU_CREATOR_URLS_ARGUMENT = typer.Argument(
+    ...,
+    help="知乎作者主页 URL 或 people slug，可传多个。",
+)
+_ZHIHU_RELATED_URLS_ARGUMENT = typer.Argument(
+    ...,
+    help="知乎问题 / 回答 / 文章 URL，可传多个。",
 )
 _DOUYIN_DISCOVERY_KEYWORDS_OPTION = typer.Option(
     None,
@@ -177,9 +190,11 @@ _INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE = 300
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
+_DEFAULT_ZHIHU_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _DEFAULT_DY_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS = 6.0
+_DEFAULT_ZHIHU_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _EXTENSION_PRESENCE_REQUIRED_WARNING = (
     "WARN extension presence required; backend will pause background LLM work "
     "after grace period if no extension client connects"
@@ -507,6 +522,11 @@ def _build_soul_engine() -> Any:
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
         profile_consolidation_enabled=cfg.scheduler.profile_consolidation_enabled,
         profile_consolidation_interval_hours=(cfg.scheduler.profile_consolidation_interval_hours),
+        profile_consolidation_like_target_upper=(
+            cfg.scheduler.profile_consolidation_like_target_upper
+        ),
+        profile_consolidation_like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+        profile_consolidation_archive_enabled=(cfg.scheduler.profile_consolidation_archive_enabled),
     )
 
 
@@ -2226,6 +2246,17 @@ def _yt_bootstrap_dedupe_hours() -> float:
         return _DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS
 
 
+def _zhihu_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_ZHIHU_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_ZHIHU_BOOTSTRAP_DEDUPE_HOURS
+
+
 def _enqueue_xhs_bootstrap_task(*, force: bool = False, kick: bool = True) -> str | None:
     """Fire-and-forget enqueue of the bootstrap_profile task.
 
@@ -2313,7 +2344,7 @@ def _kick_task_dispatcher(source: str) -> None:
     Failures are silent: if the daemon isn't running the existing
     chrome.alarms 60s poll fallback still picks the task up.
     """
-    if source not in {"xhs", "dy", "yt"}:
+    if source not in {"xhs", "dy", "yt", "zhihu"}:
         return
     import urllib.error
     import urllib.request
@@ -2747,6 +2778,518 @@ def _collect_yt_bootstrap_events(
     return events, scope_counts, status_label
 
 
+def _enqueue_zhihu_bootstrap_task(
+    *,
+    profile_slug: str = "",
+    kick: bool = True,
+    profile_update: bool = False,
+) -> str | None:
+    """Enqueue a Zhihu bootstrap_events task for the browser extension.
+
+    The extension executes same-origin Zhihu session fetches in the logged-in
+    browser. This command is fetch-only; it does not trigger profile generation.
+    """
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]知乎事件未拉取: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    max_items = int(
+        os.environ.get(
+            "OPENBILICLAW_ZHIHU_BOOTSTRAP_MAX_ITEMS",
+            str(_INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE),
+        )
+    )
+    max_collections = int(os.environ.get("OPENBILICLAW_ZHIHU_BOOTSTRAP_MAX_COLLECTIONS", "20"))
+    task_id: str | None = None
+
+    try:
+        queue = ZhihuTaskQueue(database)
+        dedupe_hours = _zhihu_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_events",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的知乎 bootstrap 任务"
+                        f"({status})；需要重新拉取可设 "
+                        "OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
+                    )
+                    return task_id
+
+        scopes = ["zhihu_read_history", "zhihu_collection", "zhihu_activity"]
+        if not profile_slug.strip():
+            console.print(
+                "  [dim]未传 --profile-slug，扩展会尝试从知乎登录态识别当前用户；"
+                "识别失败时只返回浏览记录和收藏夹。[/dim]"
+            )
+        task_id = queue.enqueue_with_id(
+            "bootstrap_events",
+            {
+                "scopes": scopes,
+                "profile_slug": profile_slug.strip(),
+                "max_items_per_scope": max(1, max_items),
+                "max_collections": max(1, max_collections),
+                "profile_update": bool(profile_update),
+            },
+            daily_budget=10,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]知乎事件未拉取: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]知乎事件未拉取: 今日任务预算已用完。[/yellow]")
+        return None
+    if kick:
+        _kick_task_dispatcher("zhihu")
+    return task_id
+
+
+def _collect_zhihu_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and harvest a previously-enqueued Zhihu bootstrap task."""
+    import json
+    import time
+
+    from openbiliclaw.sources.zhihu_tasks import (
+        ZhihuTaskQueue,
+        zhihu_bootstrap_items_to_events,
+    )
+
+    empty_counts = {
+        "zhihu_read_history": 0,
+        "zhihu_collection": 0,
+        "zhihu_activity_like": 0,
+        "zhihu_activity_favorite": 0,
+    }
+    if not task_id:
+        return [], empty_counts, "skipped"
+
+    if max_wait_seconds is None:
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_ZHIHU_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_ZHIHU_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], empty_counts, "skipped"
+    if not hasattr(database, "conn"):
+        return [], empty_counts, "skipped"
+
+    queue = ZhihuTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], empty_counts, "timeout"
+    if task.get("status") == "failed":
+        try:
+            result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        debug = result.get("debug", {}) if isinstance(result, dict) else {}
+        error = str(result.get("error", "") if isinstance(result, dict) else "")
+        if error == "zhihu_login_required" or (
+            isinstance(debug, dict) and debug.get("login_required") is True
+        ):
+            return [], empty_counts, "login_required"
+        return [], empty_counts, "failed"
+    if task.get("status") != "completed":
+        if str(task.get("status", "")).strip() in {"pending", "in_progress"}:
+            with suppress(Exception):
+                queue.fail(
+                    task_id,
+                    error="extension_result_timeout",
+                    debug={
+                        "wait_seconds": max_wait_seconds,
+                        "last_status": str(task.get("status", "")),
+                    },
+                )
+        return [], empty_counts, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], empty_counts, "failed"
+
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    events = zhihu_bootstrap_items_to_events(items)
+    scope_counts = dict(empty_counts)
+    raw_counts = result.get("scope_counts", {})
+    if isinstance(raw_counts, dict):
+        for key in scope_counts:
+            with suppress(Exception):
+                scope_counts[key] = int(raw_counts.get(key, 0) or 0)
+    if not any(scope_counts.values()):
+        for event in events:
+            event_type = str(event.get("event_type", ""))
+            metadata = event.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            source = str(metadata.get("import_source", ""))
+            if source == "zhihu_bootstrap_read_history":
+                scope_counts["zhihu_read_history"] += 1
+            elif source == "zhihu_bootstrap_collection":
+                scope_counts["zhihu_collection"] += 1
+            elif event_type == "like":
+                scope_counts["zhihu_activity_like"] += 1
+            elif event_type == "favorite":
+                scope_counts["zhihu_activity_favorite"] += 1
+    status_label = "ok" if events else "empty"
+    return events, scope_counts, status_label
+
+
+def _event_memory_key(event: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    metadata = event.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    source = str(metadata.get("source_platform") or "").strip()
+    event_type = str(event.get("event_type") or event.get("type") or "").strip()
+    url = str(event.get("url") or "").strip()
+    content_id = str(metadata.get("content_id") or "").strip()
+    import_source = str(metadata.get("import_source") or "").strip()
+    title = str(event.get("title") or "").strip()
+    identity = content_id or url or title
+    return source, event_type, identity, import_source, url
+
+
+def _load_existing_event_keys(memory: Any, *, limit: int) -> set[tuple[str, str, str, str, str]]:
+    query_events = getattr(memory, "query_events", None)
+    if not callable(query_events):
+        return set()
+    try:
+        rows = query_events(limit=limit)
+    except Exception:
+        return set()
+
+    import json as _json
+
+    keys: set[tuple[str, str, str, str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        event = dict(row)
+        metadata = event.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                parsed = _json.loads(metadata)
+                event["metadata"] = parsed if isinstance(parsed, dict) else {}
+            except _json.JSONDecodeError:
+                event["metadata"] = {}
+        keys.add(_event_memory_key(event))
+    return keys
+
+
+def _write_events_to_memory(events: list[dict[str, Any]], *, source: str = "") -> tuple[int, int]:
+    """Persist collected source events to memory with a lightweight duplicate guard."""
+    if not events:
+        return 0, 0
+
+    memory = _build_memory_manager()
+    existing_keys = _load_existing_event_keys(memory, limit=max(10_000, len(events) * 4))
+    batch_keys: set[tuple[str, str, str, str, str]] = set()
+    fresh: list[dict[str, Any]] = []
+    for event in events:
+        key = _event_memory_key(event)
+        if key in existing_keys or key in batch_keys:
+            continue
+        if source:
+            metadata = event.get("metadata")
+            if isinstance(metadata, dict):
+                metadata.setdefault("source_platform", source)
+        batch_keys.add(key)
+        fresh.append(event)
+
+    async def _propagate() -> None:
+        for event in fresh:
+            await memory.propagate_event(event)
+
+    asyncio.run(_propagate())
+    return len(fresh), len(events) - len(fresh)
+
+
+def _enqueue_zhihu_search_task(
+    keywords: tuple[str, ...],
+    *,
+    max_items_per_keyword: int = 20,
+) -> str | None:
+    """Enqueue a Zhihu plugin search task for the browser extension."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    normalized_keywords: list[str] = []
+    seen: set[str] = set()
+    for keyword in keywords:
+        value = str(keyword).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized_keywords.append(value)
+    if not normalized_keywords:
+        console.print("  [yellow]知乎搜索任务未入队: 关键词为空。[/yellow]")
+        return None
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]知乎搜索任务未入队: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    try:
+        cfg = load_config()
+        budget = int(getattr(getattr(cfg.sources, "zhihu", None), "daily_search_budget", 0))
+    except Exception:
+        budget = 0
+
+    try:
+        queue = ZhihuTaskQueue(database)
+        task_id = queue.enqueue_with_id(
+            "search",
+            {
+                "keywords": normalized_keywords,
+                "max_items_per_keyword": max(1, int(max_items_per_keyword)),
+            },
+            daily_budget=budget,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]知乎搜索任务未入队: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]知乎搜索任务未入队: 今日任务预算已用完。[/yellow]")
+        return None
+    _kick_task_dispatcher("zhihu")
+    return task_id
+
+
+def _collect_zhihu_search_results(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a plugin search task and return raw Zhihu candidates."""
+    import json
+    import time
+
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    if not task_id:
+        return [], {}, "skipped"
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = ZhihuTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        try:
+            result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        debug = result.get("debug", {}) if isinstance(result, dict) else {}
+        error = str(result.get("error", "") if isinstance(result, dict) else "")
+        if error == "zhihu_login_required" or (
+            isinstance(debug, dict) and debug.get("login_required") is True
+        ):
+            return [], {}, "login_required"
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        if str(task.get("status", "")).strip() in {"pending", "in_progress"}:
+            with suppress(Exception):
+                queue.fail(
+                    task_id,
+                    error="extension_result_timeout",
+                    debug={
+                        "wait_seconds": max_wait_seconds,
+                        "last_status": str(task.get("status", "")),
+                    },
+                )
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    raw_counts = result.get("scope_counts", {})
+    count = len(items)
+    if isinstance(raw_counts, dict):
+        with suppress(Exception):
+            count = int(raw_counts.get("zhihu_search", count) or count)
+    status_label = "ok" if items else "empty"
+    return items, {"zhihu_search": count}, status_label
+
+
+def _enqueue_zhihu_discovery_task(
+    task_type: str,
+    payload: dict[str, object],
+    *,
+    daily_budget_key: str,
+) -> str | None:
+    """Enqueue a non-search Zhihu plugin discovery task."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]知乎 {task_type} 任务未入队: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    try:
+        cfg = load_config()
+        budget = int(getattr(getattr(cfg.sources, "zhihu", None), daily_budget_key, 0))
+    except Exception:
+        budget = 0
+
+    try:
+        queue = ZhihuTaskQueue(database)
+        task_id = queue.enqueue_with_id(task_type, payload, daily_budget=budget)
+    except Exception as exc:
+        console.print(f"  [yellow]知乎 {task_type} 任务未入队: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print(f"  [yellow]知乎 {task_type} 任务未入队: 今日任务预算已用完。[/yellow]")
+        return None
+    _kick_task_dispatcher("zhihu")
+    return task_id
+
+
+def _collect_zhihu_discovery_results(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a plugin Zhihu discovery task and return raw candidates."""
+    import json
+    import time
+
+    from openbiliclaw.sources.zhihu_tasks import ZhihuTaskQueue
+
+    if not task_id:
+        return [], {}, "skipped"
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = ZhihuTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        try:
+            result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        debug = result.get("debug", {}) if isinstance(result, dict) else {}
+        error = str(result.get("error", "") if isinstance(result, dict) else "")
+        if error == "zhihu_login_required" or (
+            isinstance(debug, dict) and debug.get("login_required") is True
+        ):
+            return [], {}, "login_required"
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        if str(task.get("status", "")).strip() in {"pending", "in_progress"}:
+            with suppress(Exception):
+                queue.fail(
+                    task_id,
+                    error="extension_result_timeout",
+                    debug={
+                        "wait_seconds": max_wait_seconds,
+                        "last_status": str(task.get("status", "")),
+                    },
+                )
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    raw_counts = result.get("scope_counts", {})
+    scope_counts = (
+        {str(k): int(v) for k, v in raw_counts.items()} if isinstance(raw_counts, dict) else {}
+    )
+    return items, scope_counts, "ok" if items else "empty"
+
+
+def _enqueue_zhihu_discovery_candidates(items: list[dict[str, Any]]) -> tuple[int, list[Any]]:
+    """Convert Zhihu search result rows and enqueue them into discovery_candidates."""
+    from openbiliclaw.discovery.candidate_pool import discovered_content_to_candidate_write
+    from openbiliclaw.sources.zhihu_tasks import zhihu_discovery_items_to_contents
+
+    contents = zhihu_discovery_items_to_contents(items)
+    if not contents:
+        return 0, []
+    database = _get_runtime_database()
+    writes = [
+        discovered_content_to_candidate_write(item, source_context=item.source_strategy)
+        for item in contents
+    ]
+    enqueued = int(database.enqueue_discovery_candidates(writes))
+    return enqueued, contents
+
+
 def _enqueue_dy_search_task(
     keywords: tuple[str, ...],
     *,
@@ -2954,6 +3497,27 @@ def _x_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, A
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "twitter",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _zhihu_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Zhihu bootstrap events into profile-builder history rows."""
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "zhihu",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -4027,6 +4591,37 @@ def _ask_x_inclusion() -> bool:
     return True
 
 
+def _ask_zhihu_inclusion() -> bool:
+    """Decide whether to enqueue the Zhihu bootstrap task on this init."""
+    if os.environ.get("OPENBILICLAW_NO_ZHIHU", "").strip() == "1":
+        console.print("[dim]  跳过知乎数据接入(OPENBILICLAW_NO_ZHIHU=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]知乎数据接入(可选)[/bold]")
+    console.print(
+        "把你的知乎[bold cyan]浏览 / 收藏 / 点赞[/bold cyan]混进画像，"
+        "知识类回答、文章和关注领域会参与首次偏好分析。"
+    )
+    console.print()
+    console.print("启用需要:")
+    console.print("  1. 装好 OpenBiliClaw 浏览器扩展")
+    console.print("  2. 浏览器登录 [link=https://www.zhihu.com]https://www.zhihu.com[/link]")
+    console.print()
+    console.print(
+        "[dim]知乎通过浏览器插件使用当前登录态抓取；说 N 也没关系，"
+        "以后可在设置页开启知乎来源，或重新运行 init。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("加入知乎数据?", default=False):
+        console.print("[dim]  已选择跳过，本次 init 不会请求知乎数据。[/dim]")
+        return False
+    return True
+
+
 def _ask_network_binding() -> bool:
     """Ask whether the backend should listen on all interfaces (0.0.0.0).
 
@@ -4112,6 +4707,7 @@ def _persist_init_source_enabled_flags(
     include_dy: bool,
     include_yt: bool,
     include_x: bool = False,
+    include_zhihu: bool = False,
 ) -> None:
     """Persist init source choices so background discovery obeys them."""
 
@@ -4139,6 +4735,10 @@ def _persist_init_source_enabled_flags(
         twitter_cfg = getattr(cfg.sources, "twitter", None)
         if twitter_cfg is not None and bool(getattr(twitter_cfg, "enabled", False)) != include_x:
             twitter_cfg.enabled = include_x
+            changed = True
+        zhihu_cfg = getattr(cfg.sources, "zhihu", None)
+        if zhihu_cfg is not None and bool(getattr(zhihu_cfg, "enabled", False)) != include_zhihu:
+            zhihu_cfg.enabled = include_zhihu
             changed = True
         if changed:
             save_config(cfg)
@@ -4281,7 +4881,11 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
 
 
 def _normalize_init_bilibili_limit(value: int | None, *, default: int) -> int:
-    """Normalize user-facing init signal limits; 0 means skip that signal."""
+    """Normalize user-facing init signal limits.
+
+    Callers own the meaning of 0: history treats it as "fetch all",
+    while favorite/follow keep the existing "skip this signal" meaning.
+    """
     if value is None:
         return default
     return max(0, int(value))
@@ -4289,10 +4893,15 @@ def _normalize_init_bilibili_limit(value: int | None, *, default: int) -> int:
 
 def _ask_init_bilibili_limits(
     *,
+    history_limit: int | None,
     favorite_limit: int | None,
     follow_limit: int | None,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Ask interactive users to confirm Bilibili init signal caps."""
+    history = _normalize_init_bilibili_limit(
+        history_limit,
+        default=_INIT_BILIBILI_HISTORY_LIMIT,
+    )
     favorite = _normalize_init_bilibili_limit(
         favorite_limit,
         default=_INIT_BILIBILI_FAVORITE_LIMIT,
@@ -4302,13 +4911,23 @@ def _ask_init_bilibili_limits(
         default=_INIT_BILIBILI_FOLLOW_LIMIT,
     )
     if not _is_interactive_terminal():
-        return favorite, follow
-    if favorite_limit is not None and follow_limit is not None:
-        return favorite, follow
+        return history, favorite, follow
+    if history_limit is not None and favorite_limit is not None and follow_limit is not None:
+        return history, favorite, follow
 
     console.print(
-        "\n[bold]B 站初始化信号上限[/bold]\n[dim]回车使用默认值；输入 0 可跳过对应信号。[/dim]"
+        "\n[bold]B 站初始化信号上限[/bold]\n"
+        "[dim]回车使用默认值；历史输入 0 表示拉全部，收藏 / 关注输入 0 表示跳过。[/dim]"
     )
+    if history_limit is None:
+        raw = typer.prompt(
+            "B 站历史最多导入多少条",
+            default=str(_INIT_BILIBILI_HISTORY_LIMIT),
+        )
+        try:
+            history = max(0, int(str(raw).strip()))
+        except ValueError:
+            history = _INIT_BILIBILI_HISTORY_LIMIT
     if favorite_limit is None:
         raw = typer.prompt(
             "B 站收藏最多导入多少条",
@@ -4327,7 +4946,7 @@ def _ask_init_bilibili_limits(
             follow = max(0, int(str(raw).strip()))
         except ValueError:
             follow = _INIT_BILIBILI_FOLLOW_LIMIT
-    return favorite, follow
+    return history, favorite, follow
 
 
 @dataclass
@@ -4349,6 +4968,9 @@ class InitResult:
     yt_events: list[dict[str, Any]]
     yt_scope_counts: dict[str, Any]
     yt_status: str
+    zhihu_events: list[dict[str, Any]]
+    zhihu_scope_counts: dict[str, Any]
+    zhihu_status: str
     profile_data: Any
     discovered_count: int
     discovery_error: bool
@@ -4372,17 +4994,18 @@ class GuidedInitError(Exception):
 async def _fetch_bilibili_init_data(
     client: Any,
     *,
+    history_limit: int = _INIT_BILIBILI_HISTORY_LIMIT,
     favorite_limit: int,
     follow_limit: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Fetch B站 history / favorites / following in one event loop.
 
     Extracted from the old ``init`` closure so the CLI and the API
-    guided-init paths share a single B站 fetch (gui-init spec §1). Uses
-    ``_INIT_BILIBILI_HISTORY_LIMIT`` for history; favorites/following
-    limits are resolved by the caller.
+    guided-init paths share a single B站 fetch (gui-init spec §1).
+    Favorites/following limits are resolved by the caller; history uses
+    ``_INIT_BILIBILI_HISTORY_LIMIT`` unless a caller passes an override.
     """
-    hist = await client.get_user_history(max_items=_INIT_BILIBILI_HISTORY_LIMIT)
+    hist = await client.get_user_history(max_items=history_limit)
 
     favs: list[dict[str, Any]] = []
     try:
@@ -4497,11 +5120,13 @@ async def run_guided_init(
     soul_engine: Any,
     favorite_limit: int,
     follow_limit: int,
+    history_limit: int = _INIT_BILIBILI_HISTORY_LIMIT,
     include_bili: bool = True,
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
     include_x: bool = False,
+    include_zhihu: bool = False,
     target_pool_count: int,
     discover_backfill: Callable[..., Coroutine[Any, Any, int]],
     coordinator: Any = None,
@@ -4581,7 +5206,10 @@ async def run_guided_init(
     following_data: list[dict[str, Any]] = []
     if include_bili:
         history, favorites_data, following_data = await _fetch_bilibili_init_data(
-            client, favorite_limit=favorite_limit, follow_limit=follow_limit
+            client,
+            history_limit=history_limit,
+            favorite_limit=favorite_limit,
+            follow_limit=follow_limit,
         )
         if not history:
             raise GuidedInitError("empty_history", "当前无法从 B 站历史中生成初始画像。")
@@ -4687,6 +5315,45 @@ async def run_guided_init(
     elif yt_status == "failed":
         console.print("  [yellow]YouTube 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
 
+    # Zhihu is also plugin-backed and uses the browser's logged-in zhihu.com
+    # session. Keep it serial with the other tab-driving sources.
+    zhihu_task_id = (
+        (await _enqueue_register_kick(_enqueue_zhihu_bootstrap_task, "zhihu"))
+        if include_zhihu
+        else None
+    )
+    if zhihu_task_id:
+        console.print(
+            "  [dim]已请求扩展拉知乎浏览 / 收藏 / 点赞(使用当前浏览器登录态,~30-90 秒)。[/dim]"
+        )
+    zhihu_events, zhihu_scope_counts, zhihu_status = await asyncio.to_thread(
+        _collect_zhihu_bootstrap_events, zhihu_task_id
+    )
+    if zhihu_status == "ok":
+        zhihu_activity_favorites = int(zhihu_scope_counts.get("zhihu_activity_favorite", 0))
+        zhihu_favorites = (
+            int(zhihu_scope_counts.get("zhihu_collection", 0)) + zhihu_activity_favorites
+        )
+        console.print(
+            "  知乎 "
+            f"浏览 [green]{zhihu_scope_counts.get('zhihu_read_history', 0)}[/green] 条"
+            f" / 收藏 [green]{zhihu_favorites}[/green] 条"
+            f" / 点赞 [green]{zhihu_scope_counts.get('zhihu_activity_like', 0)}[/green] 条"
+        )
+    elif zhihu_status == "empty":
+        console.print(
+            "  [yellow]知乎任务跑通但 0 条记录 —— 可能未登录知乎，或页面数据为空。[/yellow]"
+        )
+    elif zhihu_status == "login_required":
+        console.print("  [yellow]知乎需要登录 —— 请先在当前浏览器登录知乎后重试 init。[/yellow]")
+    elif zhihu_status == "timeout":
+        console.print(
+            "  [dim]知乎初始化信号未导入:扩展未连接或任务仍在后台跑。"
+            "可设 OPENBILICLAW_ZHIHU_BOOTSTRAP_WAIT_SECONDS=180 延长等待。[/dim]"
+        )
+    elif zhihu_status == "failed":
+        console.print("  [yellow]知乎任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
+
     # X (Twitter): server-side cookie replay (no extension bootstrap task), so —
     # like B站 — fetch the user's own likes + bookmarks directly here. Skips
     # cleanly when X is disabled or the cookie isn't synced yet.
@@ -4766,9 +5433,11 @@ async def run_guided_init(
     # below; memory persistence is owned by the handler on both CLI and API
     # paths (gui-init review §5e).
     events_to_persist = list(events)
+    events_to_persist.extend(zhihu_events)
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
+    events.extend(zhihu_events)
     # With bilibili now optional, the floor is "at least one selected source
     # produced signals" — an all-empty run can't build a meaningful profile.
     if not events:
@@ -4790,6 +5459,7 @@ async def run_guided_init(
                 "douyin": len(dy_events),
                 "youtube": len(yt_events),
                 "twitter": x_event_count,
+                "zhihu": len(zhihu_events),
             }
         )
     for event in events_to_persist:
@@ -4800,11 +5470,14 @@ async def run_guided_init(
     await _stage_started(2)
     _print_section_title("2/4 分析偏好")
     console.print(f"  总信号量: [green]{len(events)}[/green] 条事件")
-    # Chunk the event list so multiple analysis calls run concurrently
-    # instead of serialising one max-thinking call over ~800 events.
+    # Chunk the event list so bootstrap does bounded batch processing
+    # instead of serialising one max-thinking call over hundreds of events.
     await _run_with_progress(
-        soul_engine.analyze_events(events, event_chunk_size=200),
-        label="分析偏好(4 个并发分片)",
+        soul_engine.analyze_events(
+            events,
+            event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+        ),
+        label="分析偏好（分片批处理）",
         eta_seconds=180,
     )
     await _stage_done(2)
@@ -4842,6 +5515,8 @@ async def run_guided_init(
         combined_history.extend(_dy_events_to_history_items(dy_events))
     if yt_events:
         combined_history.extend(_yt_events_to_history_items(yt_events))
+    if zhihu_events:
+        combined_history.extend(_zhihu_events_to_history_items(zhihu_events))
     # X likes/bookmarks previously only fed the analyze stage; feeding the
     # profile builder too keeps cross-source flow uniform AND guarantees a
     # non-empty profile input when X is the only selected source.
@@ -4922,6 +5597,9 @@ async def run_guided_init(
         yt_events=yt_events,
         yt_scope_counts=yt_scope_counts,
         yt_status=yt_status,
+        zhihu_events=zhihu_events,
+        zhihu_scope_counts=zhihu_scope_counts,
+        zhihu_status=zhihu_status,
         profile_data=profile_data,
         discovered_count=discovered_count,
         discovery_error=discover_exc is not None,
@@ -4976,11 +5654,27 @@ def init(
         "--yes-x",
         help="跳过 X 的 y/n 提问,直接启用 X 来源(适合脚本化场景)。",
     ),
+    no_zhihu: bool = typer.Option(
+        False,
+        "--no-zhihu",
+        help="跳过知乎数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_zhihu_prompt: bool = typer.Option(
+        False,
+        "--yes-zhihu",
+        help="跳过知乎的 y/n 提问,直接启用知乎来源(适合脚本化场景)。",
+    ),
+    bilibili_history_limit: int | None = typer.Option(
+        None,
+        "--bilibili-history-limit",
+        min=0,
+        help="B 站历史初始化信号上限；默认 500，0 表示拉全部历史。",
+    ),
     bilibili_favorite_limit: int | None = typer.Option(
         None,
         "--bilibili-favorite-limit",
         min=0,
-        help="B 站收藏初始化信号上限；默认 300，0 表示跳过收藏。",
+        help="B 站收藏初始化信号上限；默认 500，0 表示跳过收藏。",
     ),
     bilibili_follow_limit: int | None = typer.Option(
         None,
@@ -5041,14 +5735,19 @@ def init(
     _maybe_setup_password_in_init(allow_lan=allow_lan)
 
     if include_bili:
-        resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = (
-            _ask_init_bilibili_limits(
-                favorite_limit=bilibili_favorite_limit,
-                follow_limit=bilibili_follow_limit,
-            )
+        (
+            resolved_bilibili_history_limit,
+            resolved_bilibili_favorite_limit,
+            resolved_bilibili_follow_limit,
+        ) = _ask_init_bilibili_limits(
+            history_limit=bilibili_history_limit,
+            favorite_limit=bilibili_favorite_limit,
+            follow_limit=bilibili_follow_limit,
         )
     else:
-        resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = 0, 0
+        resolved_bilibili_history_limit = 0
+        resolved_bilibili_favorite_limit = 0
+        resolved_bilibili_follow_limit = 0
 
     # v0.3.27+: ask the user whether to include xhs data, with a prep
     # checklist when they opt in. Defaults stay off unless the user
@@ -5100,12 +5799,24 @@ def init(
     else:
         include_x = _ask_x_inclusion()
 
-    if not any((include_bili, include_xhs, include_dy, include_yt, include_x)):
+    if no_zhihu:
+        include_zhihu = False
+        console.print("[dim]  跳过知乎数据接入(命令行 --no-zhihu)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_ZHIHU", "").strip() == "1":
+        include_zhihu = False
+        console.print("[dim]  跳过知乎数据接入(OPENBILICLAW_NO_ZHIHU=1)。[/dim]")
+    elif skip_zhihu_prompt:
+        include_zhihu = True
+    else:
+        include_zhihu = _ask_zhihu_inclusion()
+
+    if not any((include_bili, include_xhs, include_dy, include_yt, include_x, include_zhihu)):
         _print_status_panel(
             "error",
             "没有可用的数据来源",
             "已跳过 B 站且未启用任何其他平台——init 至少需要一个数据来源。"
-            "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / --yes-youtube / --yes-x "
+            "去掉 --no-bilibili，或配合 --yes-xhs / --yes-douyin / "
+            "--yes-youtube / --yes-x / --yes-zhihu "
             "启用其他来源。",
         )
         raise typer.Exit(code=1)
@@ -5116,6 +5827,7 @@ def init(
         include_dy=include_dy,
         include_yt=include_yt,
         include_x=include_x,
+        include_zhihu=include_zhihu,
     )
 
     # gui-init (B2): the four init stages now run inside the shared async
@@ -5128,6 +5840,7 @@ def init(
                 client=client,
                 memory=memory,
                 soul_engine=soul_engine,
+                history_limit=resolved_bilibili_history_limit,
                 favorite_limit=resolved_bilibili_favorite_limit,
                 follow_limit=resolved_bilibili_follow_limit,
                 include_bili=include_bili,
@@ -5135,6 +5848,7 @@ def init(
                 include_dy=include_dy,
                 include_yt=include_yt,
                 include_x=include_x,
+                include_zhihu=include_zhihu,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
             )
@@ -5440,7 +6154,10 @@ def rebuild_profile(
         console.print(f"  总信号量: [green]{len(events)}[/green] 条")
         asyncio.run(
             _run_with_progress(
-                soul_engine.analyze_events(events, event_chunk_size=200),
+                soul_engine.analyze_events(
+                    events,
+                    event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+                ),
                 label="分析偏好（分片并发）",
                 eta_seconds=180,
             )
@@ -5590,12 +6307,18 @@ def profile_consolidate(
             llm_service=llm_service,
             embedding_service=embedding_service,
             likes_boundary=likes_boundary,
+            like_target_upper=cfg.scheduler.profile_consolidation_like_target_upper,
+            like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+            archive_enabled=cfg.scheduler.profile_consolidation_archive_enabled,
         )
     else:
         consolidator = ProfileConsolidator(
             memory=memory,
             llm_service=llm_service,
             embedding_service=embedding_service,
+            like_target_upper=cfg.scheduler.profile_consolidation_like_target_upper,
+            like_target_soft=cfg.scheduler.profile_consolidation_like_target_soft,
+            archive_enabled=cfg.scheduler.profile_consolidation_archive_enabled,
         )
 
     if revert.strip():
@@ -5649,6 +6372,10 @@ def profile_consolidate(
     if report.errors:
         for err in report.errors:
             console.print(f"[yellow]  ⚠ {err}[/yellow]")
+    if report.likes_before > report.likes_target_upper:
+        console.print(
+            f"  [cyan]likes 动态聚类阈值:[/cyan] cosine ≥ {report.like_similarity_threshold:.2f}"
+        )
     console.print(f"  嫌疑簇送审: {report.clusters_sent} 个")
     for rule_merge in report.rule_merges:
         console.print(f"  [cyan][规则][/cyan] {rule_merge}")
@@ -5666,9 +6393,16 @@ def profile_consolidate(
         f"\n  兴趣: {report.likes_before} → {report.likes_after}"
         f"    避雷: {report.dislikes_before} → {report.dislikes_after}"
     )
+    if report.archived_interests:
+        console.print(
+            f"  [cyan]归档低权重兴趣:[/cyan] {len(report.archived_interests)} 个"
+            f"（目标 ≤ {report.likes_target_upper}，整理水位 {report.likes_target_soft}）"
+        )
+    if report.inventory_reason:
+        console.print(f"  [yellow]库存说明:[/yellow] {report.inventory_reason}")
     if not apply and (report.merges or report.rule_merges):
         console.print("\n  [dim]满意的话用 --apply 真正写入。[/dim]")
-    if apply and (report.merges or report.rule_merges):
+    if apply and (report.merges or report.rule_merges or report.archived_interests):
         console.print(f"\n  [dim]已备份，run_id={report.run_id}[/dim]")
 
 
@@ -5894,6 +6628,400 @@ def fetch_youtube(
     )
 
 
+@app.command("fetch-zhihu")
+def fetch_zhihu(
+    profile_slug: str = typer.Option(
+        "",
+        "--profile-slug",
+        help=(
+            "知乎个人主页 slug，例如 https://www.zhihu.com/people/<slug>。"
+            "不提供时扩展会尝试从当前知乎登录态自动识别。"
+        ),
+    ),
+    wait_seconds: float = typer.Option(
+        _DEFAULT_ZHIHU_BOOTSTRAP_WAIT_SECONDS,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回结果的最大秒数(默认 180s)。",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="忽略近期知乎 bootstrap 任务，强制重新拉取事件。",
+    ),
+    write_memory: bool = typer.Option(
+        False,
+        "--write-memory",
+        help="将本次抓到的知乎事件写入 memory；默认只做抓取 smoke。",
+    ),
+    rebuild_profile: bool = typer.Option(
+        False,
+        "--rebuild-profile",
+        help="写入 memory 后用本次知乎事件重建画像（会触发真实 LLM 调用）。",
+    ),
+) -> None:
+    """单独测试知乎事件拉取(默认独立于 ``init``，不生成画像)。
+
+    需要 daemon + 扩展 + 浏览器登录 https://www.zhihu.com。扩展会在知乎
+    页面内用当前登录态拉取最近浏览、收藏夹内容和个人动态中的点赞 / 收藏。
+    传 ``--profile-slug`` 可手动指定用户主页；不传时扩展会尝试自动识别。
+    默认只读取任务结果并打印统计；传 ``--write-memory`` 才写入 memory，
+    传 ``--rebuild-profile`` 会继续触发画像生成。
+    """
+    write_memory = write_memory or rebuild_profile
+
+    def _render(scope_counts: dict[str, int], status_label: str, event_count: int) -> None:
+        if status_label == "ok":
+            activity_favorites = scope_counts.get("zhihu_activity_favorite", 0)
+            total_favorites = scope_counts.get("zhihu_collection", 0) + activity_favorites
+            console.print(
+                "  知乎 "
+                f"浏览 [green]{scope_counts.get('zhihu_read_history', 0)}[/green] 条"
+                f" / 收藏 [green]{total_favorites}[/green] 条"
+                f" / 点赞 [green]{scope_counts.get('zhihu_activity_like', 0)}[/green] 条"
+            )
+            if rebuild_profile:
+                suffix = "将写入 memory 并重建画像。"
+            elif write_memory:
+                suffix = "将写入 memory。"
+            else:
+                suffix = "未触发画像生成。"
+            console.print(f"  共抓取并转换 [green]{event_count}[/green] 条事件；{suffix}")
+        elif status_label == "empty":
+            console.print(
+                "  [yellow]知乎任务跑通但 0 条数据 —— "
+                "可能未登录知乎 / 浏览历史关闭 / 收藏夹为空 / 接口字段漂移。[/yellow]"
+            )
+        elif status_label == "timeout":
+            console.print(
+                "  [dim]知乎任务超时:扩展未连接 / 任务还在跑。可加 --wait-seconds 240 重试。[/dim]"
+            )
+        elif status_label == "failed":
+            console.print("  [yellow]知乎任务失败 —— 检查扩展日志。[/yellow]")
+        elif status_label == "login_required":
+            console.print(
+                "  [yellow]知乎任务已到达浏览器，但当前知乎页面未登录。"
+                "请先在当前浏览器登录知乎，再用 --force 重试。[/yellow]"
+            )
+
+    def _enqueue() -> str | None:
+        # A write/rebuild run must not silently reuse a previous smoke task that
+        # was already collected without persistence.
+        dedupe_disabled = force or write_memory
+        previous = os.environ.get("OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS")
+        if dedupe_disabled:
+            os.environ["OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS"] = "0"
+        try:
+            return _enqueue_zhihu_bootstrap_task(
+                profile_slug=profile_slug,
+                profile_update=False,
+            )
+        finally:
+            if dedupe_disabled:
+                if previous is None:
+                    os.environ.pop("OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS", None)
+                else:
+                    os.environ["OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS"] = previous
+
+    _print_page_title("知乎 数据拉取", "扩展任务 → 后端入库")
+    console.print(f"[dim]入队 知乎 bootstrap 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
+
+    task_id = _enqueue()
+    if not task_id:
+        console.print(
+            "[bold red]无法入队 知乎 任务[/bold red] — 看上面的提示(数据库 / 预算 / 任务表问题)。"
+        )
+        raise typer.Exit(code=1)
+
+    events, scope_counts, status_label = _collect_zhihu_bootstrap_events(
+        task_id,
+        max_wait_seconds=wait_seconds,
+    )
+    _render(scope_counts, status_label, len(events))
+    if status_label != "ok":
+        return
+
+    if write_memory:
+        written, skipped = _write_events_to_memory(events, source="zhihu")
+        console.print(
+            f"  [green]已写入 memory: {written} 条知乎事件"
+            f"[/green]{f'，跳过重复 {skipped} 条。' if skipped else '。'}"
+        )
+
+    if rebuild_profile:
+        _prepare_init_runtime()
+        soul_engine = _build_soul_engine()
+        _print_section_title("1/2 分析知乎偏好")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.analyze_events(events, event_chunk_size=200),
+                label="分析知乎偏好",
+                eta_seconds=180,
+            )
+        )
+        _print_section_title("2/2 生成画像")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.build_initial_profile(_zhihu_events_to_history_items(events)),
+                label="生成灵魂画像",
+                eta_seconds=70,
+            )
+        )
+        _print_status_panel("success", "完成", "知乎事件已写入并完成画像重建")
+
+
+@app.command("discover-zhihu")
+def discover_zhihu(
+    keywords: list[str] = _ZHIHU_DISCOVER_KEYWORDS_ARGUMENT,
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        min=1,
+        help="每个关键词最多抓取的搜索结果数。",
+    ),
+    wait_seconds: float = typer.Option(
+        180.0,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回结果的最大秒数。",
+    ),
+    no_enqueue: bool = typer.Option(
+        False,
+        "--no-enqueue",
+        help="只预览插件搜索结果，不写入 discovery_candidates。",
+    ),
+) -> None:
+    """通过浏览器插件触发一次知乎搜索 discovery。"""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected_keywords = split_csv_values(keywords)
+    _print_page_title("知乎内容发现", "插件搜索 → discovery_candidates")
+    console.print(f"[dim]入队知乎 search 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
+    task_id = _enqueue_zhihu_search_task(
+        tuple(selected_keywords),
+        max_items_per_keyword=limit,
+    )
+    if not task_id:
+        raise typer.Exit(code=1)
+
+    items, scope_counts, status_label = _collect_zhihu_search_results(
+        task_id,
+        max_wait_seconds=wait_seconds,
+    )
+    if status_label == "login_required":
+        console.print(
+            "  [yellow]知乎任务已到达浏览器，但当前知乎页面未登录。"
+            "请先在当前浏览器登录知乎后重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "timeout":
+        console.print(
+            "  [yellow]知乎搜索任务超时:扩展未连接 / 任务还在跑。"
+            "可加 --wait-seconds 240 重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "failed":
+        console.print("  [yellow]知乎搜索任务失败 —— 检查扩展日志。[/yellow]")
+        raise typer.Exit(code=1)
+    if status_label == "empty" or not items:
+        _print_status_panel(
+            "info",
+            "没有发现到知乎内容",
+            "可能是搜索接口返回空、知乎未登录，或关键词没有结果。",
+        )
+        return
+
+    enqueued = 0
+    contents: list[Any] = []
+    if no_enqueue:
+        from openbiliclaw.sources.zhihu_tasks import zhihu_discovery_items_to_contents
+
+        contents = zhihu_discovery_items_to_contents(items)
+    else:
+        enqueued, contents = _enqueue_zhihu_discovery_candidates(items)
+
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("搜索结果", str(scope_counts.get("zhihu_search", len(items)))),
+            ("转换候选", str(len(contents))),
+            ("入池候选", "跳过（--no-enqueue）" if no_enqueue else str(enqueued)),
+            ("来源", "zhihu"),
+            ("策略", "zhihu-search"),
+        ],
+    )
+    for index, item in enumerate(contents[:5], start=1):
+        _print_discovered_content_preview(item, index)
+
+
+def _run_zhihu_discovery_smoke(
+    *,
+    title: str,
+    task_type: str,
+    strategy: str,
+    scope_key: str,
+    payload: dict[str, object],
+    daily_budget_key: str,
+    wait_seconds: float,
+    no_enqueue: bool,
+) -> None:
+    _print_page_title(title, f"插件 {strategy} → discovery_candidates")
+    console.print(f"[dim]入队知乎 {task_type} 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
+    task_id = _enqueue_zhihu_discovery_task(
+        task_type,
+        payload,
+        daily_budget_key=daily_budget_key,
+    )
+    if not task_id:
+        raise typer.Exit(code=1)
+
+    items, scope_counts, status_label = _collect_zhihu_discovery_results(
+        task_id,
+        max_wait_seconds=wait_seconds,
+    )
+    if status_label == "login_required":
+        console.print(
+            "  [yellow]知乎任务已到达浏览器，但当前知乎页面未登录。"
+            "请先在当前浏览器登录知乎后重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "timeout":
+        console.print(
+            "  [yellow]知乎 discovery 任务超时:扩展未连接 / 任务还在跑。"
+            "可加 --wait-seconds 240 重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "failed":
+        console.print("  [yellow]知乎 discovery 任务失败 —— 检查扩展日志。[/yellow]")
+        raise typer.Exit(code=1)
+    if status_label == "empty" or not items:
+        _print_status_panel("info", "没有发现到知乎内容", f"{strategy} 返回为空。")
+        return
+
+    enqueued = 0
+    contents: list[Any] = []
+    if no_enqueue:
+        from openbiliclaw.sources.zhihu_tasks import zhihu_discovery_items_to_contents
+
+        contents = zhihu_discovery_items_to_contents(items)
+    else:
+        enqueued, contents = _enqueue_zhihu_discovery_candidates(items)
+
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("抓取结果", str(scope_counts.get(scope_key, len(items)))),
+            ("转换候选", str(len(contents))),
+            ("入池候选", "跳过（--no-enqueue）" if no_enqueue else str(enqueued)),
+            ("来源", "zhihu"),
+            ("策略", strategy),
+        ],
+    )
+    for index, item in enumerate(contents[:5], start=1):
+        _print_discovered_content_preview(item, index)
+
+
+@app.command("discover-zhihu-hot")
+def discover_zhihu_hot(
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="最多抓取的热榜条数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次知乎热榜 discovery。"""
+    _run_zhihu_discovery_smoke(
+        title="知乎热榜发现",
+        task_type="hot",
+        strategy="zhihu-hot",
+        scope_key="zhihu_hot",
+        payload={"max_items": max(1, int(limit))},
+        daily_budget_key="daily_hot_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
+@app.command("discover-zhihu-feed")
+def discover_zhihu_feed(
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="最多抓取的首页推荐条数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次知乎首页推荐 discovery。"""
+    _run_zhihu_discovery_smoke(
+        title="知乎首页发现",
+        task_type="feed",
+        strategy="zhihu-feed",
+        scope_key="zhihu_feed",
+        payload={"max_items": max(1, int(limit))},
+        daily_budget_key="daily_feed_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
+@app.command("discover-zhihu-creator")
+def discover_zhihu_creator(
+    creator_urls: list[str] = _ZHIHU_CREATOR_URLS_ARGUMENT,
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个作者最多抓取的内容数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次知乎作者 discovery。"""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected = split_csv_values(creator_urls)
+    _run_zhihu_discovery_smoke(
+        title="知乎作者发现",
+        task_type="creator",
+        strategy="zhihu-creator",
+        scope_key="zhihu_creator",
+        payload={"creator_urls": selected, "max_items_per_creator": max(1, int(limit))},
+        daily_budget_key="daily_creator_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
+@app.command("discover-zhihu-related")
+def discover_zhihu_related(
+    related_urls: list[str] = _ZHIHU_RELATED_URLS_ARGUMENT,
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个种子最多扩展的相关内容数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次知乎相关内容 discovery。"""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected = split_csv_values(related_urls)
+    _run_zhihu_discovery_smoke(
+        title="知乎相关发现",
+        task_type="related",
+        strategy="zhihu-related",
+        scope_key="zhihu_related",
+        payload={"related_urls": selected, "max_items_per_seed": max(1, int(limit))},
+        daily_budget_key="daily_related_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
 @app.command("fetch-x")
 def fetch_x(
     limit: int = typer.Option(
@@ -6040,10 +7168,15 @@ def import_youtube(
     console.print("  [green]✓ 记忆层写入完成[/green]")
 
     _print_section_title("2/2 更新偏好画像")
-    console.print(f"  分析 {stats.total} 条 YouTube 信号（并发分片 200 条）…")
+    console.print(
+        f"  分析 {stats.total} 条 YouTube 信号（分片 {DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE} 条）…"
+    )
     asyncio.run(
         _run_with_progress(
-            soul_engine.analyze_events(result.events, event_chunk_size=200),
+            soul_engine.analyze_events(
+                result.events,
+                event_chunk_size=DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+            ),
             label="分析偏好（YouTube 信号）",
             eta_seconds=90,
         )
@@ -6569,6 +7702,151 @@ def _run_douyin_discovery(
         _print_discovered_content_preview(item, index)
 
 
+def _build_discovery_candidate_pipeline(
+    *,
+    config: Any,
+    database: Any,
+    discovery_engine: Any,
+) -> Any:
+    """Build the shared raw-candidate evaluator for manual producer runs."""
+    from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
+
+    discovery_cfg = getattr(config, "discovery", None)
+    admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.60) or 0.60)
+    set_admission_min_score = getattr(database, "set_admission_min_score", None)
+    if callable(set_admission_min_score):
+        with suppress(Exception):
+            set_admission_min_score(admission_min_score)
+    return DiscoveryCandidatePipeline(
+        database=database,
+        discovery_engine=discovery_engine,
+        pool_target_count=int(getattr(config.scheduler, "pool_target_count", 300)),
+        admission_min_score=admission_min_score,
+    )
+
+
+def _run_zhihu_discovery(*, limit: int) -> None:
+    """Run one formal Zhihu discovery cycle through the runtime producer."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.runtime.zhihu_producer import build_zhihu_discovery_producer
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    _require_runtime_config()
+    config = load_config()
+    zh_cfg = getattr(getattr(config, "sources", None), "zhihu", None)
+    if zh_cfg is None or not bool(getattr(zh_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "知乎 discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.zhihu].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    if not hasattr(database, "conn"):
+        _print_status_panel("warning", "知乎任务表不可用", "当前数据库不支持 zhihu_tasks。")
+        raise typer.Exit(code=1)
+
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    producer = build_zhihu_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+    )
+    if producer is None:
+        _print_status_panel(
+            "warning",
+            "知乎 discovery producer 未启动",
+            "请确认知乎来源和 scheduler 均已启用。",
+        )
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(producer.produce_if_due(limit=limit))
+    reason = str(result.get("reason", ""))
+    discovered_raw = result.get("discovered", 0)
+    enqueued_raw = result.get("enqueued", 0)
+    discovered = int(cast("int | float | str | bool", discovered_raw) if discovered_raw else 0)
+    enqueued = int(cast("int | float | str | bool", enqueued_raw) if enqueued_raw else 0)
+    source_counts_raw = result.get("source_counts", {})
+    source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+    source_counts_text = ", ".join(
+        f"{source}:{count}" for source, count in sorted(source_counts.items())
+    )
+    source_modes = ", ".join(str(mode) for mode in getattr(zh_cfg, "source_modes", ()) or ())
+
+    _print_page_title("知乎内容发现", f"正式 discover · {source_modes or 'search'}")
+    if reason == "ok":
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "zhihu"),
+                ("来源分布", source_counts_text or "（无）"),
+                ("分支", source_modes or "search"),
+            ],
+        )
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "disabled": ("info", "知乎 discovery 已禁用", "请启用知乎来源后重试。"),
+        "throttled": (
+            "info",
+            "距离上次知乎 discovery 不足最小调度间隔",
+            "可在配置页调整知乎最小调度间隔分钟数。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需继续补充知乎候选。"),
+        "no_profile": ("warning", "尚未初始化 Soul 画像", "请先执行 `openbiliclaw init`。"),
+        "no_keywords": ("info", "没有可用搜索词", "画像兴趣或统一关键词池为空。"),
+        "no_creator_seeds": (
+            "info",
+            "没有作者分支 seed",
+            "先跑 search/hot/feed 或手动 `discover-zhihu-creator` 积累作者 URL。",
+        ),
+        "no_related_seeds": (
+            "info",
+            "没有相关分支 seed",
+            "先跑 search/hot/feed 或手动 `discover-zhihu-related` 积累内容 URL。",
+        ),
+        "budget_exhausted": (
+            "info",
+            "知乎 discovery 今日预算已用完",
+            "可在配置页调整对应分支预算。",
+        ),
+        "empty": ("info", "知乎 discovery 返回为空", "插件任务完成但没有可转换的候选。"),
+    }
+    kind, title, body = messages.get(
+        reason,
+        ("info", "知乎 discovery 未产出内容", reason or "无详细信息"),
+    )
+    _print_status_panel(kind, title, body)
+
+
 @app.command("discover-douyin")
 def discover_douyin(
     keywords: list[str] | None = _DOUYIN_DISCOVERY_KEYWORDS_OPTION,
@@ -6608,7 +7886,7 @@ def discover(
         "bilibili",
         "--source",
         "-s",
-        help="触发发现的内容源：bilibili、xiaohongshu 或 douyin。",
+        help="触发发现的内容源：bilibili、xiaohongshu、douyin 或 zhihu。",
         case_sensitive=False,
     ),
     strategies: list[str] | None = _DISCOVER_STRATEGIES_OPTION,
@@ -6643,9 +7921,19 @@ def discover(
         _run_douyin_discovery(limit=limit)
         return
 
+    if source_normalized == "zhihu":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "zhihu 渠道走配置页 source_modes 选择的插件 discovery 分支，已忽略策略过滤。",
+            )
+        _run_zhihu_discovery(limit=limit)
+        return
+
     if source_normalized != "bilibili":
         raise typer.BadParameter(
-            f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu、douyin。"
+            f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu、douyin、zhihu。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)

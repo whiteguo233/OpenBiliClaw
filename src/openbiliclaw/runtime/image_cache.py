@@ -60,6 +60,7 @@ def _resolve_cache_dir() -> Path:
 
         return _project_root() / "data" / "image-cache"
 
+
 # XHS CDN signed URL: https://sns-webpic-qc.xhscdn.com/{ts:12}/{token:hex}/{path}
 # The {ts}/{token} prefix rotates on every regeneration; {path} is stable.
 _XHS_TOKEN_RE = re.compile(r"(https?://[^/]*xhscdn\.com)/\d{12}/[0-9a-f]+/(.*)")

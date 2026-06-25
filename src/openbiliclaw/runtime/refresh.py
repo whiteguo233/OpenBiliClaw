@@ -51,7 +51,7 @@ _COVER_PREFETCH_MAX_FETCH = 40
 _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "bilibili": 5,
 }
-_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
+_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -274,6 +274,7 @@ class ContinuousRefreshController:
     douyin_producer: Any | None = None
     youtube_producer: Any | None = None
     x_producer: Any | None = None
+    zhihu_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
     presence: PresenceTracker = field(default_factory=PresenceTracker)
     # gui-init D1: optional init-aware gate. When it returns True (a guided init
@@ -338,9 +339,10 @@ class ContinuousRefreshController:
         init=False,
         repr=False,
     )
-    # v0.3.62+ global "skip-if-busy" gate. Four entry points
-    # (_loop_refresh, _complete_manual_refresh, refresh_after_event_ingest,
-    # refresh_after_feedback) all funnel through ``refresh_if_needed``.
+    # v0.3.62+ global "skip-if-busy" gate. Direct refresh execution is
+    # intentionally centralized: periodic ticks call ``refresh_if_needed``;
+    # user/manual replenishment calls ``force_refresh``. Event/feedback/init
+    # paths only queue a reason and wait for the unified scheduler.
     # Without this lock, a slow periodic tick (10+ minutes when WBI
     # rate-limits) can run concurrently with manual refresh + per-event
     # opportunistic refresh, amplifying load on Bilibili and causing
@@ -352,6 +354,7 @@ class ContinuousRefreshController:
     _manual_refresh_message: str = ""
     _manual_refresh_started_at: str = ""
     _manual_refresh_finished_at: str = ""
+    _pending_replenishment_reasons: set[str] = field(default_factory=set, init=False)
     # Last-tick fingerprint of pool maintenance state, used to demote
     # the per-minute "reactivated=N" / "trim dropped=N top=X" log lines
     # to DEBUG when nothing actually changed since the previous tick.
@@ -494,19 +497,14 @@ class ContinuousRefreshController:
     async def refresh_if_needed(self) -> dict[str, object]:
         """Refresh discovery candidates when thresholds are met.
 
-        v0.3.62+ semantics — this is the single global gate for all
-        four refresh entry points (``_loop_refresh``,
-        ``_complete_manual_refresh``, ``refresh_after_event_ingest``,
-        ``refresh_after_feedback``). A module-level
-        ``_refresh_lock`` (an ``asyncio.Lock``) is checked at the very
-        top: if another refresh is already in progress, this call
-        returns ``{"skipped": True, "reason": "another refresh holds
-        lock"}`` immediately rather than queueing. The "skip if locked"
-        rather than "wait in queue" pattern is deliberate — manual
-        refresh requests should not stack up behind a slow periodic
-        tick (which can take 10+ minutes when Bilibili WBI rate-limits
-        every request). The remaining body runs inside ``async with
-        self._refresh_lock:``, so the lock is released even on
+        Runtime replenishment now has one deciding path: the periodic scheduler
+        calls this method, while event / feedback / init hooks only queue a
+        reason through ``request_replenishment``. A module-level
+        ``_refresh_lock`` (an ``asyncio.Lock``) is checked at the very top: if
+        another refresh is already in progress, this call returns
+        ``{"skipped": True, "reason": "another refresh holds lock"}``
+        immediately rather than queueing. The remaining body runs inside
+        ``async with self._refresh_lock:``, so the lock is released even on
         exception paths.
 
         Internal helpers (``_run_refresh_plan``, ``force_refresh``)
@@ -523,18 +521,25 @@ class ContinuousRefreshController:
 
         async with self._refresh_lock:
             state = self.memory_manager.load_discovery_runtime_state()
+            queued_reasons = self._consume_replenishment_reasons()
+
+            def _result(payload: dict[str, object]) -> dict[str, object]:
+                if queued_reasons:
+                    payload["queued_reasons"] = queued_reasons
+                return payload
+
             if not self._is_initialized():
-                return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
+                return _result({"refreshed": False, "strategies": [], "reason": "not_initialized"})
 
             pool_at_cap = self._enforce_pool_cap()
             await self._publish_pool_status_if_changed()
             if pool_at_cap:
-                return {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
+                return _result({"refreshed": False, "strategies": [], "reason": "pool_at_cap"})
 
             profile = await self.soul_engine.get_profile()
             plan = self._build_refresh_plan(state)
             if not plan:
-                return {"refreshed": False, "strategies": [], "reason": "below_threshold"}
+                return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
 
             return await self._run_refresh_plan(
                 state=state,
@@ -615,8 +620,8 @@ class ContinuousRefreshController:
         v0.3.62+: also acquires ``_refresh_lock`` so manual refresh
         (which calls ``force_refresh`` rather than ``refresh_if_needed``)
         respects the global skip-if-busy gate. Without this, periodic
-        + event-ingest refresh could run concurrently with a manual
-        refresh, amplifying Bilibili API load and SQLite write contention.
+        + manual / pool-low refresh used to run through different code paths,
+        amplifying Bilibili API load and SQLite write contention.
         Skip semantics match ``refresh_if_needed``: return immediately
         with ``{"refreshed": False, "reason": "another refresh holds lock"}``
         instead of queueing.
@@ -633,24 +638,32 @@ class ContinuousRefreshController:
 
     async def _force_refresh_locked(self) -> dict[str, object]:
         state = self.memory_manager.load_discovery_runtime_state()
+        queued_reasons = self._consume_replenishment_reasons()
+
+        def _result(payload: dict[str, object]) -> dict[str, object]:
+            if queued_reasons:
+                payload["queued_reasons"] = queued_reasons
+            return payload
+
         if not self._is_initialized():
-            return {"refreshed": False, "strategies": [], "reason": "not_initialized"}
+            return _result({"refreshed": False, "strategies": [], "reason": "not_initialized"})
 
         pool_at_cap = self._enforce_pool_cap()
         await self._publish_pool_status_if_changed()
         if pool_at_cap:
-            return {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
+            return _result({"refreshed": False, "strategies": [], "reason": "pool_at_cap"})
 
         profile = await self.soul_engine.get_profile()
         plan = self._build_source_replenishment_plan()
         if not plan:
-            return {"refreshed": False, "strategies": [], "reason": "below_threshold"}
-        return await self._run_refresh_plan(
+            return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
+        refresh_result = await self._run_refresh_plan(
             state=state,
             profile=profile,
             plan=plan,
             reason="manual",
         )
+        return _result(refresh_result)
 
     def _enforce_pool_cap(self) -> bool:
         """Run pool maintenance and report whether frontend availability is at target.
@@ -705,8 +718,12 @@ class ContinuousRefreshController:
             except Exception:
                 logger.exception("reactivate_under_quota_pool_sources failed")
 
+        pool_available = self.database.count_pool_candidates(
+            xhs_self_nickname=self._xhs_self_nickname()
+        )
+
         trim_source_overflow_fn = getattr(self.database, "trim_pool_source_overflow", None)
-        if callable(trim_source_overflow_fn):
+        if callable(trim_source_overflow_fn) and pool_available >= self.pool_target_count:
             try:
                 source_overflow_suppressed = trim_source_overflow_fn(
                     source_share_quotas=raw_source_targets,
@@ -721,10 +738,13 @@ class ContinuousRefreshController:
                     )
             except Exception:
                 logger.exception("trim_pool_source_overflow failed")
-
-        pool_available = self.database.count_pool_candidates(
-            xhs_self_nickname=self._xhs_self_nickname()
-        )
+        elif callable(trim_source_overflow_fn):
+            logger.debug(
+                "enforce_pool_cap: skipped source overflow trim below target "
+                "pool_available=%s target=%s",
+                pool_available,
+                self.pool_target_count,
+            )
         raw_ceiling = self._raw_material_ceiling()
         trimmed = 0
         try:
@@ -755,8 +775,9 @@ class ContinuousRefreshController:
             )
         return pool_available >= self.pool_target_count
 
-    async def trigger_manual_refresh(self) -> dict[str, object]:
+    async def trigger_manual_refresh(self, *, reason: str = "manual") -> dict[str, object]:
         """Schedule one background manual refresh without blocking the caller."""
+        normalized_reason = self._normalize_replenishment_reason(reason)
         if not self._is_initialized():
             return {"accepted": False, "state": "idle", "reason": "not_initialized"}
         if self._manual_refresh_task is not None and not self._manual_refresh_task.done():
@@ -766,6 +787,7 @@ class ContinuousRefreshController:
         self._manual_refresh_message = "正在补货…"
         self._manual_refresh_started_at = self._now().isoformat()
         self._manual_refresh_finished_at = ""
+        logger.info("Manual replenishment requested: reason=%s", normalized_reason)
         self._manual_refresh_task = self._track_task(
             "manual_refresh",
             self._complete_manual_refresh(),
@@ -925,6 +947,49 @@ class ContinuousRefreshController:
             limit=0,
         )
 
+    @staticmethod
+    def _normalize_replenishment_reason(reason: str) -> str:
+        normalized = str(reason or "").strip().lower().replace("-", "_").replace(" ", "_")
+        return normalized or "unknown"
+
+    def _queue_replenishment_reason(self, reason: str) -> dict[str, object]:
+        normalized = self._normalize_replenishment_reason(reason)
+        self._pending_replenishment_reasons.add(normalized)
+        return {
+            "refreshed": False,
+            "strategies": [],
+            "reason": "queued",
+            "queued_reason": normalized,
+        }
+
+    def _consume_replenishment_reasons(self) -> list[str]:
+        reasons = sorted(self._pending_replenishment_reasons)
+        self._pending_replenishment_reasons.clear()
+        return reasons
+
+    async def request_replenishment(
+        self,
+        *,
+        reason: str,
+        force: bool = False,
+    ) -> dict[str, object]:
+        """Single public ingress for replenishment requests.
+
+        Non-force requests only record why the next scheduler pass should
+        re-check the pool. Force requests are reserved for explicit user actions
+        or UI paths that just consumed the visible pool.
+        """
+        normalized = self._normalize_replenishment_reason(reason)
+        if force:
+            return await self.trigger_manual_refresh(reason=normalized)
+        queued = self._queue_replenishment_reason(normalized)
+        return {
+            "accepted": True,
+            "state": "queued",
+            "reason": normalized,
+            "refresh": queued,
+        }
+
     async def _safe_precompute_pool_copy(self, *, profile: Any) -> int:
         """Run ``precompute_pool_copy`` swallowing any exception.
 
@@ -973,12 +1038,14 @@ class ContinuousRefreshController:
 
             ┌─ _loop_refresh()           60s   LLM-heavy, may take minutes
             ├─ _loop_pool_precompute()   60s   v0.3.60+ — drain pool_expression
+            ├─ _loop_candidate_eval()    60s   drain pending raw candidates
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
             ├─ _loop_bilibili_producer() 60s   Bili extension search fallback under cooldown
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
             ├─ _loop_x_producer()        60s   X (Twitter) discovery when under quota
+            ├─ _loop_zhihu_producer()    60s   Zhihu discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
             ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_image_cache_cleanup() 6h  prune consumed+unsaved covers
@@ -1001,12 +1068,14 @@ class ContinuousRefreshController:
         tasks = [
             asyncio.create_task(self._loop_refresh()),
             asyncio.create_task(self._loop_pool_precompute()),
+            asyncio.create_task(self._loop_candidate_eval()),
             asyncio.create_task(self._loop_soul_pipeline()),
             asyncio.create_task(self._loop_bilibili_producer()),
             asyncio.create_task(self._loop_xhs_producer()),
             asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_x_producer()),
+            asyncio.create_task(self._loop_zhihu_producer()),
             asyncio.create_task(self._loop_proactive_push()),
             asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
@@ -1068,6 +1137,20 @@ class ContinuousRefreshController:
                 continue
             with suppress(Exception):
                 await self._drain_pool_precompute_backlog()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_candidate_eval(self) -> None:
+        """Drain pending discovery-candidate raw rows independently of refresh plans."""
+        while True:
+            if not self._llm_work_allowed():
+                logger.debug("candidate eval drain skipped: reason=llm_paused")
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._drain_discovery_candidates_and_precompute(
+                    reason="periodic",
+                    batch_size=self.discovery_limit,
+                )
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _drain_pool_precompute_backlog(self) -> None:
@@ -1245,6 +1328,16 @@ class ContinuousRefreshController:
                 continue
             with suppress(Exception):
                 await self._tick_x_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_zhihu_producer(self) -> None:
+        """Zhihu production — plugin-backed discovery when under quota."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_zhihu_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_keyword_planner(self) -> None:
@@ -1482,6 +1575,25 @@ class ContinuousRefreshController:
         else:
             await produce_fn()
 
+    async def _tick_zhihu_producer(self) -> None:
+        """Invoke the Zhihu discovery producer if Zhihu is under quota."""
+        producer = self.zhihu_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("zhihu")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
     async def _tick_soul_pipeline(self) -> None:
         """Invoke ProfileUpdatePipeline.tick() if the soul engine exposes one.
 
@@ -1522,6 +1634,7 @@ class ContinuousRefreshController:
             # capacity belongs to enabled non-Bilibili platform producers.
             # Running the Bilibili fallback here would immediately violate
             # the configured pool-source ratio.
+            self._log_empty_refresh_plan_diagnostics(pool_available=pool_available)
             return []
 
         if "bilibili" not in self._normalized_pool_source_shares():
@@ -1542,29 +1655,105 @@ class ContinuousRefreshController:
             plan.append((["explore"], self.discovery_limit))
         return plan
 
+    def _log_empty_refresh_plan_diagnostics(self, *, pool_available: int) -> None:
+        try:
+            readiness = self._pool_readiness_counts()
+        except Exception:
+            logger.debug("refresh plan empty readiness diagnostics failed", exc_info=True)
+            readiness = {}
+        try:
+            source_available = self._count_pool_available_candidates_by_source()
+        except Exception:
+            logger.debug("refresh plan empty source available diagnostics failed", exc_info=True)
+            source_available = {}
+        try:
+            source_raw = self._count_pool_raw_material_by_source()
+        except Exception:
+            logger.debug("refresh plan empty source raw diagnostics failed", exc_info=True)
+            source_raw = {}
+        source_targets = self._source_target_counts()
+        raw_targets = self._raw_source_target_counts()
+        requested_by_source: dict[str, int] = {}
+        sources = sorted(
+            set(source_targets)
+            | set(raw_targets)
+            | set(source_available)
+            | set(source_raw)
+            | set(_PLATFORM_SOURCE_ORDER)
+        )
+        for source in sources:
+            try:
+                requested_by_source[source] = self._source_requested_count(
+                    source,
+                    source_available_counts=source_available,
+                    source_raw_counts=source_raw,
+                    target_counts=source_targets,
+                    raw_target_counts=raw_targets,
+                )
+            except Exception:
+                logger.debug(
+                    "refresh plan empty requested_by_source diagnostics failed for %s",
+                    source,
+                    exc_info=True,
+                )
+                requested_by_source[source] = -1
+
+        logger.info(
+            "refresh plan empty: pool_available=%s raw=%s pending=%s "
+            "source_available=%s source_raw=%s source_targets=%s raw_targets=%s "
+            "requested_by_source=%s",
+            pool_available,
+            readiness.get("raw", "?"),
+            readiness.get("pending", "?"),
+            source_available,
+            source_raw,
+            source_targets,
+            raw_targets,
+            requested_by_source,
+        )
+
     async def refresh_after_event_ingest(self) -> dict[str, object]:
-        """Opportunistically refresh after new events arrive."""
-        return await self.refresh_if_needed()
+        """Compatibility shim: event ingest marks demand, scheduler refreshes later."""
+        return self._queue_replenishment_reason("event_ingest")
 
     async def refresh_after_feedback(self) -> dict[str, object]:
-        """Opportunistically refresh after explicit feedback."""
-        return await self.refresh_if_needed()
+        """Compatibility shim: feedback marks demand, scheduler refreshes later."""
+        return self._queue_replenishment_reason("feedback")
 
     async def refresh_after_init(self) -> dict[str, object]:
-        """Allow callers to trigger a refresh immediately after initialization."""
-        return await self.refresh_if_needed()
+        """Compatibility shim: init completion should kick replenishment now."""
+        return await self.request_replenishment(reason="init_completed", force=True)
 
     async def drain_discovery_candidates_once(
         self,
         *,
         batch_size: int | None = None,
+        reason: str = "manual",
     ) -> dict[str, int]:
         """Drain one pending discovery-candidate batch through the shared evaluator."""
 
+        return await self._drain_discovery_candidates_and_precompute(
+            reason=reason,
+            batch_size=batch_size,
+            precompute=False,
+        )
+
+    async def _drain_discovery_candidates_and_precompute(
+        self,
+        *,
+        reason: str,
+        batch_size: int | None = None,
+        profile: Any | None = None,
+        precompute: bool = True,
+    ) -> dict[str, int]:
+        """Drain one pending raw-candidate batch and optionally precompute it."""
+
         pipeline = self.discovery_candidate_pipeline
         if pipeline is None:
+            logger.debug("candidate eval drain skipped: reason=no_pipeline caller=%s", reason)
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         if self._discovery_drain_lock.locked():
+            logger.debug("candidate eval drain skipped: reason=locked caller=%s", reason)
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         async with self._discovery_drain_lock:
             try:
@@ -1573,21 +1762,62 @@ class ContinuousRefreshController:
                 )
             except TypeError:
                 pool_available = self.database.count_pool_candidates()
+            before_pool_count = int(pool_available)
             if int(pool_available) >= self.pool_target_count:
-                return {"evaluated": 0, "cached": 0, "rejected": 0}
-            try:
-                profile = await self.soul_engine.get_profile()
-            except Exception as exc:
-                logger.info("discovery candidate drain skipped: soul profile unavailable: %s", exc)
+                logger.debug(
+                    "candidate eval drain skipped: reason=pool_at_cap "
+                    "pool_available=%s target=%s caller=%s",
+                    pool_available,
+                    self.pool_target_count,
+                    reason,
+                )
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             if profile is None:
-                logger.info("discovery candidate drain skipped: soul profile unavailable")
+                try:
+                    profile = await self.soul_engine.get_profile()
+                except Exception as exc:
+                    logger.info(
+                        "candidate eval drain skipped: reason=no_profile caller=%s error=%s",
+                        reason,
+                        exc,
+                    )
+                    return {"evaluated": 0, "cached": 0, "rejected": 0}
+            if profile is None:
+                logger.info("candidate eval drain skipped: reason=no_profile caller=%s", reason)
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             result = await pipeline.drain_pending(
                 profile=profile,
                 batch_size=batch_size or self.discovery_limit,
             )
-            return cast("dict[str, int]", result)
+            drain_result = cast("dict[str, int]", result)
+            evaluated = int(drain_result.get("evaluated", 0) or 0)
+            cached = int(drain_result.get("cached", 0) or 0)
+            rejected = int(drain_result.get("rejected", 0) or 0)
+            failed = int(drain_result.get("failed", 0) or 0)
+            waiting = int(drain_result.get("waiting", 0) or 0)
+        if cached > 0 and precompute:
+            await self._safe_precompute_pool_copy(profile=profile)
+            await self._publish_precompute_replenishment_if_needed(
+                before_pool_count=before_pool_count,
+            )
+        if evaluated or cached or rejected or failed:
+            logger.info(
+                "candidate eval drain done: caller=%s evaluated=%s cached=%s rejected=%s failed=%s",
+                reason,
+                evaluated,
+                cached,
+                rejected,
+                failed,
+            )
+        elif waiting:
+            logger.info(
+                "candidate eval drain skipped: reason=batch_waiting pending=%s caller=%s",
+                waiting,
+                reason,
+            )
+        else:
+            logger.debug("candidate eval drain skipped: reason=no_pending caller=%s", reason)
+        return drain_result
 
     async def _complete_manual_refresh(self) -> None:
         try:
@@ -1749,9 +1979,11 @@ class ContinuousRefreshController:
                     if injected_keyword_ids:
                         produce_kwargs["keyword_ids"] = injected_keyword_ids
                     produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
-                    drain_result = await pipeline.drain_pending(
+                    drain_result = await self._drain_discovery_candidates_and_precompute(
+                        reason="refresh",
                         profile=profile,
                         batch_size=effective_limit,
+                        precompute=False,
                     )
                     discovered_count = int(produced_count or 0)
                     admitted_count = int(drain_result.get("cached", 0) or 0)
@@ -2291,16 +2523,16 @@ class ContinuousRefreshController:
 
     # ── keyword planner deficit / catalyst口径 (P1.6) ─────────────────────
     # The unified keyword planner reuses these so its "real deficit" shares the
-    # exact in-flight + raw-headroom accounting that drives pool replenishment,
-    # instead of naively counting visible pool rows.
+    # exact available-pool deficit口径 that drives pool replenishment, instead of
+    # naively counting visible pool rows. Raw headroom still caps normal request
+    # size, but cannot turn an under-target available pool into "no deficit".
 
     def keyword_planner_real_deficit(self, platform: str) -> int:
-        """Real search deficit for one platform (in-flight + raw headroom).
+        """Real search deficit for one platform.
 
         Wraps ``_source_requested_count`` — the same口径 used by
-        ``_build_source_replenishment_plan`` (available_deficit ∧ raw_headroom
-        ∧ global_available_deficit). ``> 0`` means the platform genuinely needs
-        more search supply.
+        ``_build_source_replenishment_plan``. ``> 0`` means the platform
+        genuinely needs more search supply.
         """
         try:
             return int(self._source_requested_count(str(platform).strip()))
@@ -2366,7 +2598,18 @@ class ContinuousRefreshController:
         raw_target = int(raw_target_counts.get(source_family, 0))
         current_raw = self._platform_source_count(source_raw_counts, source_family)
         raw_headroom = max(0, raw_target - current_raw)
-        return max(0, min(available_deficit, raw_headroom, global_available_deficit))
+        requested_by_available = max(0, min(available_deficit, global_available_deficit))
+        if requested_by_available <= 0:
+            return 0
+        if raw_headroom > 0:
+            return min(requested_by_available, raw_headroom)
+        # Raw ceiling is a trimming guard, not a hard stop for replenishment.
+        # A pool can have enough raw material but still be far below the
+        # frontend-servable target because existing rows are blocked by topic
+        # windows, linkability, copied text/category readiness, or recommendation
+        # history. In that state, returning 0 strands pending keywords and leaves
+        # the scheduler alive but unable to search.
+        return requested_by_available
 
     def _count_pool_available_candidates_by_source(self) -> dict[str, int]:
         count_fn = getattr(self.database, "count_pool_available_candidates_by_source", None)
@@ -2430,7 +2673,16 @@ class ContinuousRefreshController:
                 stranded.append("youtube")
             elif source == "twitter" and self.x_producer is None:
                 stranded.append("twitter")
-            elif source not in {"bilibili", "xiaohongshu", "douyin", "youtube", "twitter"}:
+            elif source == "zhihu" and self.zhihu_producer is None:
+                stranded.append("zhihu")
+            elif source not in {
+                "bilibili",
+                "xiaohongshu",
+                "douyin",
+                "youtube",
+                "twitter",
+                "zhihu",
+            }:
                 # Unknown source family with an explicit share.
                 stranded.append(source)
         if stranded:
