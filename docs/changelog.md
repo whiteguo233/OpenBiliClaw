@@ -4,6 +4,12 @@
 
 ---
 
+## v0.3.146 / extension v0.3.97 / desktop v0.3.146: 知乎长 ID 链接保真（2026-06-26）
+
+后端源码走 `backend-v0.3.146`，浏览器插件走 `extension-v0.3.97`，桌面安装包走 `desktop-v0.3.146`。
+
+- **知乎长 ID 链接不再被 JS 舍入**：插件知乎 task executor 对站内 API 响应做 lossless JSON 解析，把超过 `Number.MAX_SAFE_INTEGER` 的裸整数先转成字符串；归一化时也会优先从 URL 字符串解析 question / answer / article ID，修复 19 位 question id 被舍入成错误知乎链接的问题。真实后端 + 已连接浏览器插件 E2E 覆盖 `discover-zhihu-hot` 和指定 `2053435015258804659` 的 `discover-zhihu-related`，确认入库 URL 不再出现舍入后的 `2053435015258804700`。
+
 ## v0.3.145 / extension v0.3.96 / desktop v0.3.145.1: Eval 缓存与推荐理由并发优化（2026-06-26）
 
 后端源码走 `backend-v0.3.145`，浏览器插件走 `extension-v0.3.96`，桌面安装包走 `desktop-v0.3.145.1`。

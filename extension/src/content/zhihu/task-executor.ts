@@ -83,6 +83,7 @@ const DEFAULT_SCOPES: readonly ZhihuScope[] = [
   "zhihu_collection",
 ];
 const ZHIHU_FETCH_TIMEOUT_MS = 30_000;
+const MAX_SAFE_INTEGER_TEXT = String(Number.MAX_SAFE_INTEGER);
 
 class ZhihuHttpError extends Error {
   readonly status: number;
@@ -118,11 +119,89 @@ function num(value: unknown): number | undefined {
   return undefined;
 }
 
+function isUnsafeJsonIntegerDigits(digits: string): boolean {
+  const normalized = digits.replace(/^0+/, "") || "0";
+  if (normalized.length > MAX_SAFE_INTEGER_TEXT.length) return true;
+  return normalized.length === MAX_SAFE_INTEGER_TEXT.length && normalized > MAX_SAFE_INTEGER_TEXT;
+}
+
+function quoteUnsafeJsonIntegers(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      const start = i;
+      i++;
+      while (i < text.length) {
+        if (text[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (text[i] === '"') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      out += text.slice(start, i);
+      continue;
+    }
+
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      const start = i;
+      if (text[i] === "-") i++;
+      const digitStart = i;
+      while (i < text.length && text[i]! >= "0" && text[i]! <= "9") i++;
+      const digits = text.slice(digitStart, i);
+      if (digits && text[i] !== "." && text[i] !== "e" && text[i] !== "E") {
+        const token = text.slice(start, i);
+        out += isUnsafeJsonIntegerDigits(digits) ? `"${token}"` : token;
+        continue;
+      }
+      while (i < text.length && /[0-9eE+\-.]/.test(text[i]!)) i++;
+      out += text.slice(start, i);
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+function parseJsonPreservingLargeIntegers(text: string): unknown {
+  return JSON.parse(quoteUnsafeJsonIntegers(text));
+}
+
 function absoluteZhihuUrl(url: string): string {
   if (!url) return "";
   if (url.startsWith("//")) return `https:${url}`;
   if (url.startsWith("/")) return `https://www.zhihu.com${url}`;
   return url;
+}
+
+function answerUrlParts(url: string): { questionId: string; answerId: string } | null {
+  const match = url.match(/\/question\/(\d+)\/answer\/(\d+)(?:[/?#]|$)/);
+  if (!match?.[1] || !match[2]) return null;
+  return { questionId: match[1], answerId: match[2] };
+}
+
+function questionIdFromUrl(url: string): string {
+  const match = url.match(/\/question\/(\d+)(?:[/?#]|$)/);
+  return match?.[1] ?? "";
+}
+
+function articleIdFromUrl(url: string): string {
+  const match = url.match(/(?:zhuanlan\.zhihu\.com\/p\/|\/p\/)(\d+)(?:[/?#]|$)/);
+  return match?.[1] ?? "";
+}
+
+function contentIdFromUrl(contentType: string, url: string): string {
+  if (contentType === "answer") return answerUrlParts(url)?.answerId ?? "";
+  if (contentType === "article") return articleIdFromUrl(url);
+  if (contentType === "question") return questionIdFromUrl(url);
+  return "";
 }
 
 function currentUrl(): string {
@@ -144,18 +223,25 @@ function isLoginRequiredError(error: unknown): error is ZhihuHttpError {
   return error.status === 400 && error.body.includes("BadRequestError");
 }
 
-function answerUrl(questionId: string, answerId: string): string {
+function answerUrl(questionId: string, answerId: string, fallback = ""): string {
+  const fallbackParts = answerUrlParts(fallback);
+  if (fallbackParts) {
+    return `https://www.zhihu.com/question/${fallbackParts.questionId}/answer/${fallbackParts.answerId}`;
+  }
   return questionId && answerId
     ? `https://www.zhihu.com/question/${questionId}/answer/${answerId}`
     : "";
 }
 
 function articleUrl(articleId: string, fallback = ""): string {
-  if (fallback.includes("zhuanlan.zhihu.com/p/")) return fallback.split("?")[0]!;
+  const fallbackArticleId = articleIdFromUrl(fallback);
+  if (fallbackArticleId) return `https://zhuanlan.zhihu.com/p/${fallbackArticleId}`;
   return articleId ? `https://zhuanlan.zhihu.com/p/${articleId}` : fallback;
 }
 
 function questionUrl(questionId: string, fallback = ""): string {
+  const fallbackQuestionId = questionIdFromUrl(fallback);
+  if (fallbackQuestionId) return `https://www.zhihu.com/question/${fallbackQuestionId}`;
   return questionId ? `https://www.zhihu.com/question/${questionId}` : fallback;
 }
 
@@ -235,15 +321,15 @@ export function normalizeZhihuActivity(raw: unknown): ZhihuBootstrapItem | null 
   const target = asRecord(activity.target);
   const contentType = str(target.type);
   if (contentType !== "answer" && contentType !== "article") return null;
-  const contentId = str(target.id);
+  const fallbackUrl = absoluteZhihuUrl(str(target.url));
+  const contentId = contentIdFromUrl(contentType, fallbackUrl) || str(target.id);
   if (!contentId) return null;
 
   const question = asRecord(target.question);
-  const questionId = str(question.id);
-  const fallbackUrl = absoluteZhihuUrl(str(target.url));
+  const questionId = questionIdFromUrl(fallbackUrl) || str(question.id);
   const url =
     contentType === "answer"
-      ? answerUrl(questionId, contentId)
+      ? answerUrl(questionId, contentId, fallbackUrl)
       : articleUrl(contentId, fallbackUrl);
   if (!url) return null;
 
@@ -278,15 +364,15 @@ export function normalizeZhihuCollectionItem(
   const content = asRecord(row.content || raw);
   const contentType = str(content.type);
   if (contentType !== "answer" && contentType !== "article") return null;
-  const contentId = str(content.id);
+  const fallbackUrl = absoluteZhihuUrl(str(content.url));
+  const contentId = contentIdFromUrl(contentType, fallbackUrl) || str(content.id);
   if (!contentId) return null;
 
   const question = asRecord(content.question);
-  const questionId = str(question.id);
-  const fallbackUrl = absoluteZhihuUrl(str(content.url));
+  const questionId = questionIdFromUrl(fallbackUrl) || str(question.id);
   const url =
     contentType === "answer"
-      ? answerUrl(questionId, contentId) || fallbackUrl
+      ? answerUrl(questionId, contentId, fallbackUrl) || fallbackUrl
       : articleUrl(contentId, fallbackUrl);
   if (!url) return null;
 
@@ -342,14 +428,16 @@ function normalizeZhihuDiscoveryObject(
     return null;
   }
 
-  const contentId = str(object.id) || str(row.id);
+  const fallbackUrl = absoluteZhihuUrl(str(object.url) || str(row.url));
+  const contentId =
+    contentIdFromUrl(contentType, fallbackUrl) || str(object.id) || str(row.id);
   if (!contentId) return null;
   const question = asRecord(object.question);
-  const questionId = contentType === "question" ? contentId : str(question.id);
-  const fallbackUrl = absoluteZhihuUrl(str(object.url) || str(row.url));
+  const questionId =
+    contentType === "question" ? contentId : questionIdFromUrl(fallbackUrl) || str(question.id);
   const url =
     contentType === "answer"
-      ? answerUrl(questionId, contentId) || fallbackUrl
+      ? answerUrl(questionId, contentId, fallbackUrl) || fallbackUrl
       : contentType === "article"
         ? articleUrl(contentId, fallbackUrl)
         : questionUrl(contentId, fallbackUrl);
@@ -423,7 +511,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 async function fetchJson(url: string): Promise<Record<string, unknown>> {
   const response = await fetchWithTimeout(url);
   if (!response.ok) throw new ZhihuHttpError(response.status, await response.text(), url);
-  return asRecord(await response.json());
+  return asRecord(parseJsonPreservingLargeIntegers(await response.text()));
 }
 
 async function fetchText(url: string): Promise<string> {
@@ -548,11 +636,6 @@ async function fetchCreatorItems(
     }
   }
   return out.slice(0, creatorUrls.length * maxItemsPerCreator);
-}
-
-function questionIdFromUrl(url: string): string {
-  const match = url.match(/\/question\/(\d+)/);
-  return match?.[1] ?? "";
 }
 
 async function fetchRelatedItems(
