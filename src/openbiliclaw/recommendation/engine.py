@@ -7,6 +7,7 @@ to the user in a warm, friend-like manner with deep personal insights.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+_DEFAULT_EXPRESSION_BATCH_SIZE = 30
+_DEFAULT_EXPRESSION_BATCH_CONCURRENCY = 2
 
 
 def _interests_by_weight(profile: SoulProfile) -> list[InterestTag]:
@@ -105,6 +108,19 @@ def _batch_results_by_content_key(
     return matched if saw_identifier else None
 
 
+def _call_accepts_keyword(fn: Any, name: str) -> bool:
+    """Return whether a callable accepts a keyword argument."""
+
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    for param in signature.parameters.values():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+    return name in signature.parameters
+
+
 class SupportsCoreMemoryTask(Protocol):
     """Protocol for a core-memory-aware structured LLM task executor."""
 
@@ -118,6 +134,7 @@ class SupportsCoreMemoryTask(Protocol):
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse: ...
 
 
@@ -174,12 +191,14 @@ class RecommendationEngine:
         embedding_service: SupportsEmbeddingService | None = None,
         task_registry: BackgroundTaskRegistry | None = None,
         xhs_self_info_provider: Callable[[], dict[str, object] | None] | None = None,
+        expression_batch_concurrency: int = _DEFAULT_EXPRESSION_BATCH_CONCURRENCY,
     ) -> None:
         self._llm = llm
         self._database = database
         self._curator = curator
         self._embedding_service = embedding_service
         self._xhs_self_info_provider = xhs_self_info_provider
+        self._expression_batch_concurrency = max(1, min(16, int(expression_batch_concurrency)))
         # v0.3.63+: optional registry for detached fire-and-forget tasks
         # (classify_pool_backlog_detached, precompute_delight_scores_detached).
         # When provided, those tasks register here so RuntimeContext's
@@ -746,12 +765,16 @@ class RecommendationEngine:
         profile: SoulProfile,
         limit: int = 20,
         delight_limit: int = 30,
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EXPRESSION_BATCH_SIZE,
     ) -> int:
         """Precompute fast-path popup copy for fresh pool candidates.
 
         v0.3.47+: batches dispatched in parallel via ``asyncio.gather``,
-        and ``batch_size`` defaults to 30 (matches discovery's eval batch).
+        bounded by ``expression_batch_concurrency`` (default 2), and
+        ``batch_size`` defaults to 30. Real-provider concurrency testing
+        showed 45 can occasionally produce malformed batch JSON on
+        recommendation copy, so this path stays conservative while
+        discovery eval uses the larger text batch.
         With the previous serial × ``batch_size=8`` shape, a 60-item
         backlog needed 8 LLM calls and 8 sequential round trips. The new
         shape needs 2 LLM calls running concurrently — popup copy
@@ -833,7 +856,7 @@ class RecommendationEngine:
         *,
         profile: SoulProfile,
         limit: int,
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EXPRESSION_BATCH_SIZE,
     ) -> int:
         """Generate popup copy for classified-but-uncopied pool candidates.
 
@@ -854,13 +877,29 @@ class RecommendationEngine:
             batches = [
                 candidates[i : i + batch_size] for i in range(0, len(candidates), batch_size)
             ]
-            results = await asyncio.gather(
-                *(self._precompute_batch(batch, profile) for batch in batches),
-                return_exceptions=True,
-            )
+            results: list[int | Exception | None] = [None] * len(batches)
+            next_batch_index = 0
+            worker_count = min(self._expression_batch_concurrency, len(batches))
+
+            async def _worker() -> None:
+                nonlocal next_batch_index
+                while next_batch_index < len(batches):
+                    batch_index = next_batch_index
+                    next_batch_index += 1
+                    try:
+                        results[batch_index] = await self._precompute_batch_with_split_retry(
+                            batches[batch_index],
+                            profile,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        results[batch_index] = exc
+
+            await asyncio.gather(*(_worker() for _ in range(worker_count)))
             completed = 0
             for r in results:
-                if isinstance(r, BaseException):
+                if isinstance(r, Exception):
                     logger.warning("Expression batch failed: %s", r)
                     continue
                 completed += int(r or 0)
@@ -1308,10 +1347,15 @@ class RecommendationEngine:
             source_platform=content.source_platform or "bilibili",
         )
         try:
-            response = await self._llm.complete_structured_task(
+            complete_structured = self._llm.complete_structured_task
+            kwargs: dict[str, Any] = {}
+            if _call_accepts_keyword(complete_structured, "inject_core_memory"):
+                kwargs["inject_core_memory"] = False
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 caller="recommendation.delight_reason",
+                **kwargs,
             )
             payload = extract_llm_json_object(
                 str(response.content),
@@ -1336,6 +1380,8 @@ class RecommendationEngine:
         self,
         batch: list[DiscoveredContent],
         profile: SoulProfile,
+        *,
+        fallback_to_single: bool = True,
     ) -> int:
         """Generate expressions for a batch via one LLM call."""
         from openbiliclaw.llm.prompts import build_batch_expression_prompt
@@ -1371,7 +1417,11 @@ class RecommendationEngine:
         )
 
         try:
-            response = await self._llm.complete_structured_task(
+            complete_structured = self._llm.complete_structured_task
+            kwargs: dict[str, Any] = {}
+            if _call_accepts_keyword(complete_structured, "inject_core_memory"):
+                kwargs["inject_core_memory"] = False
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=8192,
@@ -1381,6 +1431,7 @@ class RecommendationEngine:
                 # vs without, no quality difference).
                 reasoning_effort="",
                 caller="recommendation.write_expression",
+                **kwargs,
             )
             payload = extract_llm_json_list(
                 str(response.content),
@@ -1399,6 +1450,12 @@ class RecommendationEngine:
                     exc,
                 )
                 return 0
+            if not fallback_to_single:
+                logger.warning(
+                    "Batch expression generation failed for %d items; will split retry",
+                    len(batch),
+                )
+                raise
             logger.warning(
                 "Batch expression generation failed for %d items, falling back to single",
                 len(batch),
@@ -1418,6 +1475,15 @@ class RecommendationEngine:
             # instead — each single call carries exactly one content item and
             # cannot be misaligned. (A 1-item batch has no ordering ambiguity,
             # so positional matching below stays safe for it.)
+            if not fallback_to_single:
+                logger.warning(
+                    "Batch expression response carried no bvid/content_id for %d "
+                    "items; positional matching is unreliable, will split retry",
+                    len(batch),
+                )
+                raise ValueError(
+                    f"Batch expression response carried no bvid/content_id for {len(batch)} items"
+                )
             logger.warning(
                 "Batch expression response carried no bvid/content_id for %d "
                 "items; positional matching is unreliable, falling back to "
@@ -1460,6 +1526,15 @@ class RecommendationEngine:
             expression for expression, bvids in bvids_by_expression.items() if len(bvids) > 1
         }
         if duplicated:
+            if not fallback_to_single and len(batch) > 1:
+                logger.warning(
+                    "Batch expression produced %d expression(s) shared across "
+                    "distinct videos (model likely repeating itself); will split retry",
+                    len(duplicated),
+                )
+                raise ValueError(
+                    f"Batch expression produced duplicate expressions for {len(batch)} items"
+                )
             logger.warning(
                 "Batch expression produced %d expression(s) shared across "
                 "distinct videos (model likely repeating itself); dropping them",
@@ -1479,6 +1554,35 @@ class RecommendationEngine:
             item.pool_topic_label = topic_label
             completed += 1
         return completed
+
+    async def _precompute_batch_with_split_retry(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+    ) -> int:
+        """Try a batch, split failed large batches, then fall back to singles.
+
+        Split retries run inside the current expression worker. They do not
+        create nested tasks, so ``expression_batch_concurrency`` remains the
+        single concurrency control point.
+        """
+        if len(batch) <= 1:
+            return await self._precompute_batch(batch, profile, fallback_to_single=True)
+        try:
+            return await self._precompute_batch(batch, profile, fallback_to_single=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            midpoint = max(1, len(batch) // 2)
+            logger.warning(
+                "Expression batch split retry: size=%d -> %d/%d",
+                len(batch),
+                midpoint,
+                len(batch) - midpoint,
+            )
+            left = await self._precompute_batch_with_split_retry(batch[:midpoint], profile)
+            right = await self._precompute_batch_with_split_retry(batch[midpoint:], profile)
+            return left + right
 
     async def _precompute_single_fallback(
         self,
@@ -1622,10 +1726,15 @@ class RecommendationEngine:
             source_platform=content.source_platform or "bilibili",
         )
         try:
-            response = await self._llm.complete_structured_task(
+            complete_structured = self._llm.complete_structured_task
+            kwargs: dict[str, Any] = {}
+            if _call_accepts_keyword(complete_structured, "inject_core_memory"):
+                kwargs["inject_core_memory"] = False
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 caller="recommendation.expression",
+                **kwargs,
             )
             payload = extract_llm_json_object(
                 str(response.content),

@@ -187,6 +187,25 @@ async def test_complete_with_core_memory_injects_core_memory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_with_core_memory_can_skip_core_memory_for_cacheable_eval() -> None:
+    registry = FakeRegistry(LLMResponse(content="ok", provider="openai"))
+    memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
+    service = LLMService(registry=registry, memory=memory)  # type: ignore[arg-type]
+
+    await service.complete_with_core_memory(
+        system_instruction="你是内容评估助手。",
+        user_input="请评估这个视频。",
+        caller="discovery.evaluate_batch",
+        inject_core_memory=False,
+    )
+
+    system_content = str(registry.calls[0][0]["content"])
+    assert "你是内容评估助手。" in system_content
+    assert "## 用户画像" not in system_content
+    assert registry.calls[0][1]["content"] == "请评估这个视频。"
+
+
+@pytest.mark.asyncio
 async def test_complete_structured_task_enables_json_mode() -> None:
     registry = FakeRegistry(LLMResponse(content='{"ok": true}', provider="openai"))
     memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")

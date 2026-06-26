@@ -350,6 +350,7 @@ class LLMService:
         caller: str = "",
         reasoning_effort: str | None = None,
         bypass_semaphore: bool = False,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a task with automatically injected core memory context.
 
@@ -365,9 +366,14 @@ class LLMService:
         ``bypass_semaphore`` (v0.3.64+) skips the global concurrency
         gate entirely. Use for user-initiated interactive requests
         (e.g. chat dialogue) that must never queue behind background work.
+
+        ``inject_core_memory`` lets hot-path evaluators opt out when
+        they already pass a task-specific structured profile in
+        ``user_input``. This keeps provider-side prompt-cache prefixes
+        stable without changing the information available to the task.
         """
         core_memory_block = ""
-        if self.memory is not None:
+        if inject_core_memory and self.memory is not None:
             with suppress(Exception):
                 core_memory_block = self.memory.render_core_memory_prompt()
         parts = [system_instruction.strip()]
@@ -433,6 +439,7 @@ class LLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a JSON-mode task with core memory injection.
 
@@ -451,6 +458,7 @@ class LLMService:
             json_mode=True,
             caller=caller,
             reasoning_effort=reasoning_effort,
+            inject_core_memory=inject_core_memory,
         )
 
     def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
@@ -502,10 +510,11 @@ class LLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a JSON-mode task with user text plus image inputs."""
         core_memory_block = ""
-        if self.memory is not None:
+        if inject_core_memory and self.memory is not None:
             with suppress(Exception):
                 core_memory_block = self.memory.render_core_memory_prompt()
         parts = [system_instruction.strip()]

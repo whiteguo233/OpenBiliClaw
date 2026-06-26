@@ -506,12 +506,12 @@
   <rect x="420" y="184" width="300" height="150" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
   <text x="570" y="206" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="700">_precompute_batch() (_expression_lock)</text>
   <text x="440" y="228" fill="#8b949e" font-size="9.5">get_pool_candidates_needing_copy</text>
-  <text x="440" y="243" fill="#8b949e" font-size="9.5">batch_size=30，asyncio.gather 并发</text>
+  <text x="440" y="243" fill="#8b949e" font-size="9.5">batch_size=30，2 worker 并发</text>
   <text x="440" y="258" fill="#8b949e" font-size="9.5">build_batch_expression_prompt</text>
   <text x="440" y="273" fill="#3fb950" font-size="9.5">→ update_pool_copy: pool_expression</text>
   <text x="440" y="288" fill="#3fb950" font-size="9.5">/ pool_topic_label</text>
   <text x="440" y="306" fill="#da3633" font-size="9.5">限流 → return 0，留空，下轮重试</text>
-  <text x="440" y="324" fill="#6e7681" font-size="9">跨 bvid 重复文案会被丢弃</text>
+  <text x="440" y="324" fill="#6e7681" font-size="9">解析失败先拆半重试；重复文案拆分后兜底</text>
 
   <!-- delight -->
   <rect x="740" y="184" width="360" height="150" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
@@ -720,7 +720,7 @@
   <div class="src-head" style="color:#f0883e">B. 后台预计算 &mdash; 分类 / 文案 / 惊喜</div>
   <div class="src-body"><ol>
     <li><b>源无关分类</b> <code>classify_pool_backlog</code>：给跨源（小红书 / 抖音扩展）那些没分类的内容补上 风格 / 话题 / 相关度，用的是和发现侧一样的评估提示（含「近期反例」）。每批 10 条。<span class="sub">补完之后，推荐层就只看内容特征、对来源平台透明。</span></li>
-    <li><b>预生成文案</b> <code>precompute_pool_copy</code>：后台批量写「推荐语 / 话题标签」，每批 30 条并发；遇到限流就<b>留空、下一轮重试</b>，不卡住。</li>
+    <li><b>预生成文案</b> <code>precompute_pool_copy</code>：后台批量写「推荐语 / 话题标签」，默认每批 30 条、2 worker 并发；解析失败先拆半重试，遇到限流就<b>留空、下一轮重试</b>，不卡住。</li>
     <li><b>惊喜打分</b> <code>precompute_delight_scores</code>：先免费粗筛相关度≥0.55 取前 50，再用 <code>LLMDelightScorer</code> 按「跨域惊喜 / 戳隐藏需求」的标准打分，过阈值（0.70；探索开放度低则 0.80）才留下理由和钩子。</li>
     <li><span class="sub">三者各自独立加锁，互不阻塞 —— 文案队列短不会饿死惊喜打分。</span></li>
   </ol></div>

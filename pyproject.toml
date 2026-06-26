@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.144"
+version = "0.3.145"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }

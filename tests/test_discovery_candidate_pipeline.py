@@ -290,6 +290,36 @@ def test_pipeline_pool_count_uses_dynamic_xhs_self_nickname() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_claims_two_eval_batches_by_default(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key=f"bilibili:BV_DEFAULT_CONCURRENCY_{index}",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id=f"BV_DEFAULT_CONCURRENCY_{index}",
+                content_url=f"https://www.bilibili.com/video/BV_DEFAULT_CONCURRENCY_{index}",
+                title=f"Candidate {index}",
+            )
+            for index in range(5)
+        ]
+    )
+    engine = _BatchRecordingEvalEngine()
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=2)
+
+    assert result["evaluated"] == 4
+    assert engine.batch_lengths == [4]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_evaluates_mixed_pending_and_caches_accepted(tmp_path: Path) -> None:
     db = Database(tmp_path / "test.db")
     db.initialize()

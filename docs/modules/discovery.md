@@ -105,11 +105,13 @@
    这一步的作用，是把不同来源的原始线索先汇入同一个 `pending_eval` 队列；从这里往后，来源差异只作为 prompt 上下文和配额统计信号存在，不再决定一套单独评估流程。
 
 4. **混源 batch 评估**
-   `DiscoveryCandidatePipeline.drain_pending()` 会从 `discovery_candidates` claim 一批 `pending_eval` 行，并按来源 round-robin 混合取样，避免单个平台把整批 evaluator 占满。runtime 有两类入口会触发它：refresh plan 发现新 raw 后即时 drain，以及独立 `_loop_candidate_eval()` 周期性 drain 已存在的 pending raw；两者共用 controller drain lock 和 pipeline lock，所以不会并发评估同一批行。这里就是 agent 判断“结合画像看用户喜不喜欢”的环节：pipeline 把候选转回 `DiscoveredContent`，调用 `ContentDiscoveryEngine.evaluate_content_batch()`，把画像摘要、候选字段、`source_platform`、`source_strategy`、`source_context`、`content_url`、`author_name` 和近期负样本一起交给 LLM 评分。
+   `DiscoveryCandidatePipeline.drain_pending()` 会从 `discovery_candidates` claim 一批 `pending_eval` 行，并按来源 round-robin 混合取样，避免单个平台把整批 evaluator 占满。runtime 有两类入口会触发它：refresh plan 发现新 raw 后即时 drain，以及独立 `_loop_candidate_eval()` 周期性 drain 已存在的 pending raw；两者共用 controller drain lock 和 pipeline lock，所以不会并发评估同一批行。文本 eval batch 默认 45，单次 drain 默认最多 claim 两个 LLM batch（90 条，仍受 evaluator hard cap 约束）；`evaluate_content_batch()` 内部也默认只开 2 个 batch worker，外层 `DiscoveryConcurrencyController.run_llm()` 继续作为全局 LLM 并发总闸。多模态封面评估仍使用独立的小 batch。这里就是 agent 判断“结合画像看用户喜不喜欢”的环节：pipeline 把候选转回 `DiscoveredContent`，调用 `ContentDiscoveryEngine.evaluate_content_batch()`，把画像摘要、候选字段、`source_platform`、`source_strategy`、`source_context`、`content_url`、`author_name` 和近期负样本一起交给 LLM 评分。
 
    进入批量 LLM 评估前，`evaluate_content_batch()` 会读取 `Database.get_recent_viewed_content_keys()`，用 `source_platform:content_id` 判断最近看过的 B 站 / 小红书 / 抖音 / YouTube / X / 知乎候选；命中项直接记为 0 分并从 prompt 中剔除，避免为已看内容消耗 discovery token。老 BVID 也保留 raw key 兼容旧数据。
 
    evaluator 的候选输入不再只依赖标题：各来源会尽量映射 `view_count`、`like_count`、`favorite_count` / `collect_count`、`comment_count` / `reply_count`、`share_count`、`danmaku_count`、`retweet_count`、`bookmark_count`、`tags`、`body_text` 等字段。prompt 明确把互动指标当辅助信号，不能用高热度替代内容与画像的真实匹配，也不能因为低热度惩罚小众但高度匹配的内容。
+
+   `evaluate_content_batch()` 的进程内评分缓存按“候选身份 + full eval profile digest + negative_examples digest + evaluator cache version”命中，不再使用 Python `id(profile)` 或全局最新事件水位作为 key。这样同一画像内容在 profile 对象重建后仍能复用精确评分；普通非负向事件推进 event id 时不会冲掉缓存，但近期负样本内容发生变化仍会强制重新评估。批量 eval 调用 `LLMService` 时还会在服务支持的情况下关闭额外 core memory 注入，因为 batch prompt 已经携带完整结构化画像；这能稳定 provider-side prompt-cache 前缀，同时不减少 evaluator 可见的画像信号。
 
    batch evaluator 的 LLM 输出优先使用顶层 JSON object：`{"results": [...]}`，以匹配 OpenAI-compatible provider 的 `json_object` 约束；解析器仍兼容旧的根数组、fenced JSON、JSONL，以及 provider 偶发返回的 `{"content_id": {"score": ...}}` 映射对象。解析失败或结果数量无法可靠对齐时，直接 discovery 兼容路径会降级为逐条 `evaluate_content()`，runtime 待评估池路径则按 batch 级 transient 失败释放回队列等待后续重试。
 
@@ -634,6 +636,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时降级逐条评估 |
 | eval-batch 互动指标与封面图输入 | ✅ | `DiscoveredContent` / `discovery_candidates` / `content_cache` 透传观看、点赞、收藏、评论、分享、弹幕、转推、书签等指标；batch prompt 会带 `tags/body_text` 和互动指标，但画像摘要会先压缩到高权重兴趣、最新 awareness / insight 与完整避雷项。`[discovery].multimodal_evaluation_enabled=true` 且 evaluation 模型支持图像时，封面图经运行时图片缓存命中或白名单抓取后压缩为 image input 一并评估，并用 `cover_image_ref="cover:<content_id>"` 和图片前置文字锚点稳定绑定候选，自动使用更小 batch |
 | v0.3.x eval-batch 限流保护 | ✅ | batch LLM 调用若失败原因为 provider rate limit / cooldown / quota，不再降级到逐条 `evaluate_content()`；本批候选返回 0 分并等待下一轮补货重试，避免一次 Gemini 429 放大成整批 traceback |
+| v0.3.144 eval 双 worker + 默认 45 | ✅ | `DiscoveryCandidatePipeline.drain_pending()` 文本 batch 默认 45，默认一次最多领取 `batch_size * 2` 个候选（90 条，仍 clamp evaluator hard cap），`ContentDiscoveryEngine.evaluate_content_batch()` 默认用 2 个 worker 跑 LLM batch；多模态 eval 继续使用独立小 batch；外层 drain lock 和全局 LLM semaphore 仍负责多入口 / provider 级并发控制 |
 | B 站 search 风控冷却 | ✅ | `BilibiliAPIClient.search()` 连续 `v_voucher` 重试耗尽或 412 后会设置共享 cooldown；Search / Explore / RelatedChain 的搜索路径在冷却期直接跳过，不再继续生成 query/domain 或逐 query 撞风控 |
 | M126 explore 高风险子簇压缩 | ✅ | refresh 结束后会温和压一轮 `explore` 内部的高风险相邻簇，例如制造 / 工艺 / 材料、博弈 / 桌游 / 机制，避免单簇继续堆满 fresh pool |
 | v0.3.0 trending 按 rid 交错 | ✅ | `TrendingStrategy` 拉 5 个分区排行榜后做 round-robin 交错再送 LLM 评估，避免下游 30 条 hard-cap 把 rid=0/36 的顶部全吃掉 |
@@ -755,7 +758,7 @@ supply = await pipeline.ensure_pending_supply(
     limit=30,
     target_pending=30,
 )
-drained = await pipeline.drain_pending(profile=profile, batch_size=30)
+drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 ```
 
 行为说明：
@@ -763,7 +766,7 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=30)
 - `enqueue_candidates()` 把任意来源的 `DiscoveredContent` 规范化为 `DiscoveryCandidateWrite`，并在入库前过滤同批重复、历史 `discovery_candidates` 和已经进入 `content_cache` 的内容，再通过 `Database.enqueue_discovery_candidates()` 写入 `discovery_candidates`。
 - `produce_and_enqueue()` 负责单次 raw 生产：用 `ContentDiscoveryEngine.produce_candidates()` 拉 raw candidates，再入待评估池。
 - `ensure_pending_supply()` 是 runtime 主补货路径：按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到达到目标 batch、池子已满、没有新候选或达到尝试 / 时间预算；API runtime 的目标 batch 会受 `min_eval_batch_size=8` 下限约束，它看实际 inserted 数，不再把 raw fetched 数当成 Evo 可评估供给。
-- `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，调用 `evaluate_content_batch()`，完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 或 runtime hot-reload / shutdown cancellation 会释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`，避免候选长期卡在 `evaluating`。
+- `drain_pending()` 是统一 evaluator：从 `pending_eval` mixed-source batch claim，文本 batch 默认 45，并默认最多领取两个 `batch_size` 的候选交给 `evaluate_content_batch()` 以 2 个 worker 并发处理；完成 topic normalization 后将低分、重复、cache admission fallback、franchise quota 和已缓存候选写回不同 lifecycle status；batch 级 transient 或 runtime hot-reload / shutdown cancellation 会释放 claim 回 `pending_eval` 并递增高阈值 `batch_eval_attempts`，避免候选长期卡在 `evaluating`。
 - `drain_pending()` 会读取 evaluator 的 `_EVALUATE_BATCH_HARD_CAP` 并 clamp claim size，避免配置把 batch_size 调到 evaluator hard-cap 之上时，尾部候选被当作 0 分低相关永久拒绝。
 - API runtime 构造 pipeline 时会启用 `min_eval_batch_size=8`、`max_eval_wait_seconds=120` 和 `candidate_fetch_oversample=4`：少于 8 条 `pending_eval` 先等待，超时才跑小 batch；即使 refresh 缺口算法给出的 `batch_size` 小于 8，pipeline 也会把 claim size 抬到 8（仍受 evaluator hard cap 约束）。主 B 站 refresh 会先通过 `ensure_pending_supply()` 把待评估队列补到有效水位，再由 evaluator 消费，降低重复 discovery 让 evaluator 只拿到 1-3 条的概率。CLI 手动路径保留默认立即执行语义。
 - `drain_pending()` 自带共享 async lock；`ContinuousRefreshController.drain_discovery_candidates_once()` 与周期 `_loop_candidate_eval()` 也会在 controller 层串行化外部触发。所有入口都会先检查 `count_pool_candidates() >= pool_target_count`；正式可换推荐池满时不再评估 / 入池。周期 loop 在 admission 后会触发 `precompute_pool_copy()`，把刚入 `content_cache` 但缺文案的候选整理成可换库存。

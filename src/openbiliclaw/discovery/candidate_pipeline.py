@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
 
 logger = logging.getLogger(__name__)
+_DEFAULT_EVAL_BATCH_SIZE = 45
 
 
 def _default_score_thresholds() -> dict[str, float]:
@@ -61,6 +62,7 @@ class DiscoveryCandidatePipeline:
     candidate_fetch_oversample: int = 1
     max_supply_fill_attempts: int = 3
     max_supply_fill_seconds: float = 240.0
+    eval_batch_concurrency: int = 2
     time_fn: Callable[[], float] = field(default=time.monotonic, repr=False)
     _drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
@@ -290,7 +292,12 @@ class DiscoveryCandidatePipeline:
             )
         return self.enqueue_candidates(list(items), source_context="mixed")
 
-    async def drain_pending(self, *, profile: Any, batch_size: int = 30) -> dict[str, int]:
+    async def drain_pending(
+        self,
+        *,
+        profile: Any,
+        batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
+    ) -> dict[str, int]:
         """Evaluate one pending batch and admit accepted items into content_cache."""
 
         if self._drain_lock.locked():
@@ -303,12 +310,13 @@ class DiscoveryCandidatePipeline:
         self,
         *,
         profile: Any,
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
     ) -> dict[str, int]:
         """Evaluate one pending batch while the shared drain lock is held."""
 
         self.last_admitted_items = []
         batch_size = self._effective_batch_size(batch_size)
+        claim_limit = self._effective_eval_claim_limit(batch_size)
         if batch_size <= 0:
             return {"evaluated": 0, "cached": 0, "rejected": 0}
         if self._pool_full():
@@ -317,7 +325,7 @@ class DiscoveryCandidatePipeline:
         recently_viewed = self._recent_viewed_content_keys()
         admitted_items: list[DiscoveredContent] = []
         retry_cached, retry_rejected = self._admit_evaluated_candidates(
-            limit=batch_size,
+            limit=claim_limit,
             recently_viewed=recently_viewed,
             admitted_items=admitted_items,
         )
@@ -335,7 +343,7 @@ class DiscoveryCandidatePipeline:
                 "waiting": waiting_pending,
             }
 
-        rows = self.database.claim_discovery_candidates_for_eval(limit=batch_size)
+        rows = self.database.claim_discovery_candidates_for_eval(limit=claim_limit)
         if not rows:
             self._first_pending_eval_seen_at = None
             self.last_admitted_items = list(admitted_items)
@@ -421,6 +429,20 @@ class DiscoveryCandidatePipeline:
             "cached": retry_cached + cached,
             "rejected": retry_rejected + rejected + admission_rejected,
         }
+
+    def _effective_eval_batch_concurrency(self) -> int:
+        try:
+            configured = int(self.eval_batch_concurrency)
+        except (TypeError, ValueError):
+            configured = 2
+        return max(1, min(16, configured))
+
+    def _effective_eval_claim_limit(self, batch_size: int) -> int:
+        claim_limit = max(0, int(batch_size)) * self._effective_eval_batch_concurrency()
+        hard_cap = int(getattr(self.discovery_engine, "_EVALUATE_BATCH_HARD_CAP", 0) or 0)
+        if hard_cap > 0:
+            return min(claim_limit, hard_cap)
+        return claim_limit
 
     def pool_full(self) -> bool:
         """Return whether the visible recommendation pool is at target."""

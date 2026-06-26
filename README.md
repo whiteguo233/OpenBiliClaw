@@ -210,13 +210,12 @@
 
 ## 最近更新
 
-最新版本：**v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo 候选供给循环与 init 默认值修复（2026-06-25）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.145 / extension v0.3.96 / desktop v0.3.145: Eval 缓存与推荐理由并发优化（2026-06-26）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **抖音 / YouTube 初始化默认跳过** —— 交互式 `init` 里两个需要浏览器前台 tab 的可选来源现在默认 No，避免回车误触发账号数据拉取；显式启用仍用 `--yes-douyin` / `--yes-youtube`。
-- **Evo 前供给改为按水位补肉** —— refresh 会按 `pending_eval + evaluating` 水位循环生产 raw candidates，不再只跑一次 discover 后插入几个算几个。
-- **Evo 首批评估强制使用批量下限** —— `min_eval_batch_size=8` 同时约束 supply target、策略预算和 drain claim size，减少首轮小批量评估。
-- **重复候选更早过滤** —— 入待评估池前过滤同批重复、历史候选和已入 `content_cache` 内容，减少无效 raw 前排占位。
-- **热重载取消释放 evaluating** —— 模型返回前后被取消的 Evo batch 会即时释放 claim 回 `pending_eval`，后续 drain 可继续处理。
+- **候选 eval 缓存更稳** —— 评分缓存按候选身份、完整画像 digest 和近期负样本 digest 命中，不再被 profile 对象重建或无关事件水位打穿。
+- **eval 默认大 batch + 双 worker** —— 文本 `discovery.evaluate_batch` 默认 batch 提到 45，周期 drain 默认可并发跑两个 batch；多模态仍保留独立小 batch。
+- **推荐理由生成更稳** —— 文案生成默认 2 worker、batch 保守为 30，并在批量响应异常时先拆半重试，避免一次坏输出放大全量逐条请求。
+- **prompt-cache 前缀更稳定** —— eval 和推荐理由批量调用关闭重复 core memory 注入，prompt 内仍保留完整结构化画像。
 
 ## 安装与部署详情
 
@@ -681,7 +680,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo 候选供给循环与 init 默认值修复（2026-06-25）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
+最新版本：**v0.3.145 / extension v0.3.96 / desktop v0.3.145: Eval 缓存与推荐理由并发优化（2026-06-26）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
 
 ## 🗺️ 后续规划
 

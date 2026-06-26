@@ -190,14 +190,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-Latest: **v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo supply loop and init default fixes (2026-06-25)**. Full changelog: [docs/changelog.md](docs/changelog.md).
+Latest: **v0.3.145 / extension v0.3.96 / desktop v0.3.145: Eval cache and recommendation-copy concurrency improvements (2026-06-26)**. Full changelog: [docs/changelog.md](docs/changelog.md).
 
-- **Douyin / YouTube init now default to skip** — the interactive `init` prompts for browser-front-tab optional sources default to No; explicit opt-in still uses `--yes-douyin` / `--yes-youtube`.
-- **Evo supply now fills by pending waterline** — refresh loops raw candidate production against `pending_eval + evaluating` instead of accepting whatever a single discover pass yields.
-- **First Evo eval batches honor the minimum** — `min_eval_batch_size=8` now constrains the supply target, strategy budgets, and drain claim size.
-- **Duplicate candidates are filtered earlier** — pending inserts skip same-batch duplicates, historical candidates, and content already in `content_cache`.
-- **Hot-reload cancellation releases evaluating rows** — cancelled Evo batches return claimed rows to `pending_eval` so the next drain can continue.
-- **Discovery fetch diversity improves** — API runtime oversamples main raw discovery by 4x to reduce duplicate starvation and tiny eval batches.
+- **Candidate eval cache is more stable** — scoring cache keys now use candidate identity, full profile digest, and recent negative-example digest instead of object identity or unrelated event waterlines.
+- **Eval uses larger default batches with two workers** — text `discovery.evaluate_batch` defaults to 45 items, and periodic drains can run two batches concurrently; multimodal eval keeps its smaller image batch.
+- **Recommendation copy is steadier** — copy generation uses two workers, keeps a conservative batch size of 30, and split-retries malformed batch responses before falling back to single-item generation.
+- **Prompt-cache prefixes are cleaner** — eval and recommendation-copy batch calls skip duplicate core-memory injection while still carrying the full structured profile in the prompt.
 
 ## Community
 
@@ -668,7 +666,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.144 / extension v0.3.95 / desktop v0.3.144: Evo supply loop and init default fixes (2026-06-25)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
+Latest: **v0.3.145 / extension v0.3.96 / desktop v0.3.145: Eval cache and recommendation-copy concurrency improvements (2026-06-26)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and available desktop installers; automation-channel releases remain available as `backend-v*`, `extension-v*`, and `desktop-v*`.
 
 ## 🗺️ Roadmap
 

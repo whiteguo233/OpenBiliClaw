@@ -20,6 +20,7 @@
 | 2.2 Provider Registry | ✅ | 自动注册 + 可配置 fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
+| v0.3.144 缓存前缀保护 | ✅ | `LLMService.complete_with_core_memory()` / `complete_structured_task()` / `complete_multimodal_structured_task()` 支持 `inject_core_memory=False`，供候选 eval、推荐理由生成这类已自带完整结构化 profile 的热路径跳过重复 memory 注入，稳定 provider prompt-cache 前缀 |
 | v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=1024`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应 |
 | v0.3.75 Per-module LLM 路由生效 | ✅ | `LLMService` 按 caller bucket 路由 `[llm.soul/discovery/recommendation/evaluation]`，通过 `LLMRegistry.complete_provider()` 精确调用 chat-capable provider；provider 错误不 spill 到 default，拼错 provider INFO 一次后降级 |
 | v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
@@ -182,6 +183,16 @@ response = await service.complete_structured_task(
     user_input='{"events": [...]}',
 )
 # 自动注入 core memory，并以 json_mode 调用 provider
+
+response = await service.complete_structured_task(
+    system_instruction="你要批量评估候选内容。",
+    user_input="<profile_summary>...<content_batch>...",
+    caller="discovery.evaluate_batch",
+    inject_core_memory=False,
+)
+# 已在 user_input 携带完整结构化 profile 的高频结构化任务
+# (如候选 eval / 推荐理由生成) 可关闭额外 core memory 注入，
+# 让 provider-side prompt cache 前缀更稳定。
 
 from openbiliclaw.llm import is_llm_rate_limit_error
 

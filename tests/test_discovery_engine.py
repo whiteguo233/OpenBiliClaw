@@ -21,7 +21,7 @@ from openbiliclaw.discovery.engine import (
 )
 from openbiliclaw.discovery.pool_snapshot import PoolDistributionSnapshot
 from openbiliclaw.llm.service import LLMProviderExecutionError
-from openbiliclaw.soul.profile import SoulProfile
+from openbiliclaw.soul.profile import InterestTag, SoulProfile
 from openbiliclaw.storage.database import Database
 
 from .test_explore_strategy import (
@@ -102,6 +102,41 @@ class _DynamicBatchLLMService:
             for index, item in enumerate(items)
         ]
         return _SlowResponse(json.dumps(payload, ensure_ascii=False))
+
+
+class _ConcurrentBatchLLMService(_DynamicBatchLLMService):
+    def __init__(self, delay: float = 0.01) -> None:
+        super().__init__()
+        self.delay = delay
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(self.delay)
+            return await super().complete_structured_task(
+                system_instruction=system_instruction,
+                user_input=user_input,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                reasoning_effort=reasoning_effort,
+            )
+        finally:
+            self.active_calls -= 1
 
 
 class _RecordingMultimodalBatchLLMService(_DynamicBatchLLMService):
@@ -473,6 +508,26 @@ async def test_evaluate_content_batch_skips_recently_viewed_before_llm() -> None
     assert "BV1FRESH" in user_input
     assert "BV1VIEWED" not in user_input
     assert "已经看过" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_batch_limits_llm_batch_concurrency_to_two_by_default() -> None:
+    llm_service = _ConcurrentBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    contents = [
+        DiscoveredContent(
+            bvid=f"BV_BATCH_CONCURRENCY_{index}",
+            title=f"候选 {index}",
+            up_name="UP",
+            source_strategy="search",
+        )
+        for index in range(4)
+    ]
+
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=1)
+
+    assert scores == [0.8, 0.8, 0.8, 0.8]
+    assert llm_service.max_active_calls == 2
 
 
 @pytest.mark.asyncio
@@ -2524,6 +2579,38 @@ class _RecordingBatchLLMService:
         return _SlowResponse(self.response)
 
 
+class _RecordingBatchKwargsLLMService(_RecordingBatchLLMService):
+    def __init__(
+        self,
+        response: str = '[{"score": 0.7, "reason": "ok", "style_key": "deep_dive"}]',
+    ) -> None:
+        super().__init__(response)
+        self.call_kwargs: list[dict[str, object]] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+        **kwargs: object,
+    ) -> object:
+        self.call_kwargs.append(dict(kwargs))
+        return await super().complete_structured_task(
+            system_instruction=system_instruction,
+            user_input=user_input,
+            history=history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+        )
+
+
 @pytest.mark.asyncio
 async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     llm = _RecordingBatchLLMService(
@@ -2574,6 +2661,45 @@ async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     assert '"source_strategy": "xhs-extension-search"' in user
     assert '"content_type": "note"' in user
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_requests_no_core_memory_injection_when_supported() -> None:
+    llm = _RecordingBatchKwargsLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVx", title="候选", up_name="u", source_strategy="search")],
+        _build_profile(),
+    )
+
+    assert llm.call_kwargs == [{"inject_core_memory": False}]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_uses_full_profile_summary() -> None:
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+    profile = _build_profile()
+    profile.preferences.interests = [
+        InterestTag(name=f"兴趣{index}", category="测试", weight=1.0 - index / 1000)
+        for index in range(80)
+    ]
+
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVx", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+
+    user_input = llm.user_inputs[0]
+    profile_json = user_input.split("<profile_summary>", 1)[1].split(
+        "</profile_summary>",
+        1,
+    )[0]
+    profile_summary = json.loads(profile_json.strip())
+
+    assert len(profile_summary["interests"]) == 80
+    assert profile_summary["interests"][-1]["name"] == "兴趣79"
 
 
 @pytest.mark.asyncio
@@ -2716,3 +2842,61 @@ async def test_eval_cache_rechecks_content_when_negative_exemplars_change() -> N
 
     assert len(llm.user_inputs) == 2, "negative-anchor revision must invalidate eval cache"
     assert "<negative_examples>" in llm.user_inputs[1]
+
+
+@pytest.mark.asyncio
+async def test_eval_cache_hits_for_equivalent_profile_objects() -> None:
+    """Equivalent profile content should reuse the same local eval result.
+
+    The cache key must not depend on Python object identity, or every profile
+    reload/rebuild turns into a cache miss.
+    """
+    db = _StubNegativeExemplarsDatabase(rows=[])
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    content = DiscoveredContent(
+        bvid="BVstable",
+        title="候选",
+        up_name="u",
+        source_strategy="search",
+    )
+
+    await engine.evaluate_content_batch([content], _build_profile())
+    await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                bvid="BVstable",
+                title="候选",
+                up_name="u",
+                source_strategy="search",
+            )
+        ],
+        _build_profile(),
+    )
+
+    assert len(llm.user_inputs) == 1
+
+
+@pytest.mark.asyncio
+async def test_eval_cache_survives_unrelated_event_id_change() -> None:
+    """A non-negative event should not invalidate exact eval results.
+
+    Negative exemplar content changes still invalidate the cache; merely moving
+    the global event waterline should not.
+    """
+    db = _StubNegativeExemplarsDatabase(rows=[])
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    profile = _build_profile()
+
+    await engine.evaluate_content_batch(
+        [DiscoveredContent(bvid="BVsame", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+    db.bump_latest_event_id()
+    await engine.evaluate_content_batch(
+        [DiscoveredContent(bvid="BVsame", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+
+    assert len(llm.user_inputs) == 1

@@ -1364,6 +1364,26 @@ async def test_candidate_eval_drain_runs_when_refresh_plan_empty() -> None:
     assert recommendations.pool_copy_calls == [({"profile": "ok"}, 60)]
 
 
+async def test_candidate_eval_drain_defaults_to_larger_eval_batch() -> None:
+    pipeline = _FakeCandidatePipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    result = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+    )
+
+    assert result["cached"] == 3
+    assert pipeline.drains == [45]
+
+
 async def test_candidate_eval_releases_drain_lock_before_precompute() -> None:
     pipeline = _FakeCandidatePipeline()
 

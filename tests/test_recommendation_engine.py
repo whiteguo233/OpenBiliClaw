@@ -68,6 +68,13 @@ def _build_profile() -> SoulProfile:
     )
 
 
+def _content_batch_from_prompt(user_input: str) -> list[dict[str, object]]:
+    batch_json = user_input.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0]
+    payload = json.loads(batch_json.strip())
+    assert isinstance(payload, list)
+    return [dict(item) for item in payload if isinstance(item, dict)]
+
+
 def test_recommendation_profile_summary_includes_disliked_topics() -> None:
     profile = _build_profile()
     profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 141)]
@@ -839,6 +846,68 @@ async def test_generate_expression_passes_body_text_for_text_items() -> None:
         assert '"body_text"' in user_input
         # body_text must never leak into the cached system prompt.
         assert "BODY_MARKER" not in str(llm.calls[0]["system_instruction"])
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_requests_no_core_memory_injection_when_supported() -> None:
+    class _CoreMemoryRecordingLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.calls.append(
+                {
+                    "caller": caller,
+                    "inject_core_memory": inject_core_memory,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "expression": "这条会接上你最近想把系统拆明白的状态。",
+                        "topic_label": "系统拆解",
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _CoreMemoryRecordingLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV_EXPR_NO_CORE",
+                title="系统拆解方法",
+                up_name="系统笔记",
+                description="把复杂问题拆成可执行结构。",
+                relevance_score=0.9,
+            ),
+            _build_profile(),
+        )
+
+        assert llm.calls == [
+            {
+                "caller": "recommendation.expression",
+                "inject_core_memory": False,
+            }
+        ]
 
 
 @pytest.mark.asyncio
@@ -2329,6 +2398,281 @@ async def test_precompute_batch_accepts_items_wrapper_without_single_fallback(
 
 
 @pytest.mark.asyncio
+async def test_precompute_batch_requests_no_core_memory_injection_when_supported() -> None:
+    class _CoreMemoryRecordingBatchLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.calls.append(
+                {
+                    "caller": caller,
+                    "inject_core_memory": inject_core_memory,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV_BATCH_NO_CORE",
+                            "expression": "这条能接住你最近想拆流程的劲头。",
+                            "topic_label": "流程拆解",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        item = DiscoveredContent(
+            bvid="BV_BATCH_NO_CORE",
+            title="自动化流程怎么拆",
+            up_name="效率实验室",
+            description="把一个复杂流程拆成可执行的小步骤。",
+            relevance_score=0.88,
+        )
+        _seed_pool(db, [item], precomputed=False)
+        llm = _CoreMemoryRecordingBatchLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._precompute_batch([item], _build_profile())
+
+        assert completed == 1
+        assert llm.calls == [
+            {
+                "caller": "recommendation.write_expression",
+                "inject_core_memory": False,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_limits_batch_concurrency_to_two_by_default() -> None:
+    class _ConcurrencyRecordingExpressionLLM:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                return LLMResponse(
+                    content=json.dumps(
+                        [
+                            {
+                                "expression": "这条会接上你最近想拆流程的状态。",
+                                "topic_label": "流程拆解",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    provider="test",
+                    model="dummy",
+                    usage={},
+                )
+            finally:
+                self.active -= 1
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_CONCURRENCY_{index}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(4)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _ConcurrencyRecordingExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=4,
+            batch_size=1,
+        )
+
+        assert completed == 4
+        assert llm.max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_default_batch_size_is_30() -> None:
+    class _BatchSizeRecordingExpressionLLM:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            batch = _content_batch_from_prompt(user_input)
+            self.batch_sizes.append(len(batch))
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": item["bvid"],
+                            "expression": f"{item['bvid']} 的专属推荐文案。",
+                            "topic_label": "流程拆解",
+                        }
+                        for item in batch
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_DEFAULT_BATCH_{index:02d}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(46)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _BatchSizeRecordingExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=46,
+        )
+
+        assert completed == 46
+        assert sorted(llm.batch_sizes, reverse=True) == [30, 16]
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_splits_failed_batch_before_single_fallback() -> None:
+    class _SplitRetryExpressionLLM:
+        def __init__(self) -> None:
+            self.write_batch_sizes: list[int] = []
+            self.single_calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            if caller != "recommendation.write_expression":
+                self.single_calls += 1
+                raise AssertionError("split retry should avoid single fallback while halves pass")
+            batch = _content_batch_from_prompt(user_input)
+            self.write_batch_sizes.append(len(batch))
+            if len(batch) > 2:
+                return LLMResponse(content="not json", provider="test", model="dummy", usage={})
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": item["bvid"],
+                            "expression": f"{item['bvid']} 拆半后生成的推荐文案。",
+                            "topic_label": "流程拆解",
+                        }
+                        for item in batch
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_SPLIT_{index}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(4)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _SplitRetryExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=4,
+            batch_size=4,
+        )
+
+        rows = {row["bvid"]: dict(row) for row in db.get_cached_content(limit=10)}
+        assert completed == 4
+        assert llm.write_batch_sizes == [4, 2, 2]
+        assert llm.single_calls == 0
+        assert rows["BV_EXPR_SPLIT_0"]["pool_expression"].startswith("BV_EXPR_SPLIT_0")
+        assert rows["BV_EXPR_SPLIT_3"]["pool_expression"].startswith("BV_EXPR_SPLIT_3")
+
+
+@pytest.mark.asyncio
 async def test_precompute_batch_skips_single_fallback_during_provider_cooldown() -> None:
     class _CooldownExpressionLLM:
         def __init__(self) -> None:
@@ -2715,6 +3059,69 @@ async def test_generate_delight_reason_accepts_result_wrapper() -> None:
 
         assert reason == "这条会把你对系统结构的好奇心接住。"
         assert hook == "结构上头"
+
+
+@pytest.mark.asyncio
+async def test_generate_delight_reason_requests_no_core_memory_injection_when_supported() -> None:
+    class _CoreMemoryRecordingDelightReasonLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.calls.append(
+                {
+                    "caller": caller,
+                    "inject_core_memory": inject_core_memory,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "delight_reason": "这条会把你对系统结构的好奇心接住。",
+                        "delight_hook": "结构上头",
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _CoreMemoryRecordingDelightReasonLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine._generate_delight_reason(
+            DiscoveredContent(
+                bvid="BV_DELIGHT_NO_CORE",
+                title="复杂系统入门",
+                up_name="系统观察者",
+                description="从连接关系理解复杂系统。",
+                relevance_score=0.93,
+            ),
+            _build_profile(),
+            "系统结构",
+        )
+
+        assert llm.calls == [
+            {
+                "caller": "recommendation.delight_reason",
+                "inject_core_memory": False,
+            }
+        ]
 
 
 def test_re_ingest_does_not_overwrite_classified_fields() -> None:

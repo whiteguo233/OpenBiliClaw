@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
+_DEFAULT_CANDIDATE_EVAL_BATCH_SIZE = 45
 # How often the cover-image disk cache is pruned of consumed + unsaved covers.
 # The bulk one-shot prune runs at API startup; this is the steady-state sweep.
 _IMAGE_CACHE_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
@@ -1149,7 +1150,6 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self._drain_discovery_candidates_and_precompute(
                     reason="periodic",
-                    batch_size=self.discovery_limit,
                 )
             await asyncio.sleep(self.check_interval_seconds)
 
@@ -1787,7 +1787,7 @@ class ContinuousRefreshController:
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             result = await pipeline.drain_pending(
                 profile=profile,
-                batch_size=batch_size or self.discovery_limit,
+                batch_size=self._candidate_eval_drain_batch_size(batch_size),
             )
             drain_result = cast("dict[str, int]", result)
             evaluated = int(drain_result.get("evaluated", 0) or 0)
@@ -2780,6 +2780,21 @@ class ContinuousRefreshController:
         except (TypeError, ValueError):
             configured = 1
         return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, configured))
+
+    def _candidate_eval_drain_batch_size(self, batch_size: int | None) -> int:
+        default = min(
+            _MAX_DISCOVERY_BACKFILL_PER_REFRESH,
+            max(self.discovery_limit, _DEFAULT_CANDIDATE_EVAL_BATCH_SIZE),
+        )
+        if batch_size is None:
+            return default
+        try:
+            requested = int(batch_size)
+        except (TypeError, ValueError):
+            return default
+        if requested <= 0:
+            return default
+        return requested
 
     def _requested_strategy_limits(
         self,
