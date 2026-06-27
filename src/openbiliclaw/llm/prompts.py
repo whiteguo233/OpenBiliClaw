@@ -212,6 +212,10 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
 10. 如果事件的 inferred_satisfaction 是 negative，或 metadata.feedback_type 是 dislike / metadata.reaction 是 thumbs_down，表示负向证据。不要把负向事件提取为 interests / favorite_up_users；只能用于 disliked_topics、风格避让或降低相关偏好置信度。
 11. metadata.signal_strength 表示该事件作为偏好证据的强度，不是最终 interest.weight。如果存在该字段，优先用它判断证据强弱；最终 weight 仍要结合重复次数、内容一致性、最近性、负向反馈和跨来源一致性。没有 signal_strength 时按事件类型粗略理解：favorite / bookmark / save / collect 是强正向；coin / share 是强正向；like 是明确正向；comment 是主动参与但要看语义；follow / subscription 是长期兴趣信号但偏创作者/频道维度，不能直接等同于每个题材都喜欢；view / history 是弱到中等信号，单条不能推出高权重兴趣，重复出现或与强信号同向时才提高；click 只有足够停留、完播或 positive inferred_satisfaction 时才增强；search 是意图信号不是喜欢信号；hover / scroll / snapshot 只作被动上下文辅助；dialogue 是用户主动聊到，按表达强度判断。负向反馈、dislike、thumbs_down 或 inferred_satisfaction=negative 优先级最高，不能被 signal_strength 抵消。
 12. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
+13. 初始化分片时，可顺手输出少量 awareness_candidates / insight_candidates：
+    - awareness_candidates 是对本批事件的直接观察，不是人格结论，最多 3 条；
+    - insight_candidates 是有证据支撑的轻量假设，最多 2 条，confidence 0~1；
+    - 它们只用于下一步初始画像生成的临时上下文，不要为了完整而编造。
 </rules>
 
 <output_schema>
@@ -233,7 +237,21 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
   "exploration_openness": 0.6,
   "disliked_topics": ["低质标题党"],
   "cognitive_style": ["偏好类比与隐喻式理解而非纯逻辑推演", "直觉优先、自上而下的全局把握"],
-  "favorite_up_users": ["某个UP主"]
+  "favorite_up_users": ["某个UP主"],
+  "awareness_candidates": [
+    {
+      "observation": "最近连续停留在高信息密度的工具链内容上",
+      "trend": "从泛泛探索转向验证具体工作流",
+      "emotion_guess": "带着掌控感需求的好奇"
+    }
+  ],
+  "insight_candidates": [
+    {
+      "hypothesis": "用户可能不只追新工具，更在意工具能否支撑长期推进",
+      "evidence": ["多条工具链和长期项目事件同向出现"],
+      "confidence": 0.68
+    }
+  ]
 }
 </output_schema>
 

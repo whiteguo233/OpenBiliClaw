@@ -35,6 +35,9 @@ _DISLIKED_TOPICS_STORE_CAP = 128
 
 DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE = 200
 MAX_CONCURRENT_PREFERENCE_CHUNKS = 16
+INIT_COGNITION_CONTEXT_KEY = "_init_cognition_context"
+_INIT_AWARENESS_CANDIDATES_CAP = 12
+_INIT_INSIGHT_CANDIDATES_CAP = 8
 
 _COMPACT_METADATA_KEYS = frozenset(
     {
@@ -220,6 +223,9 @@ class PreferenceAnalyzer:
         raw_preference = self._parse_response(response.content)
         normalized = await self._normalize_and_resolve(raw_preference)
         merged = self.merge_preferences(existing_preference, normalized, now=datetime.now())
+        init_cognition = self._extract_init_cognition_context(raw_preference)
+        if init_cognition:
+            merged[INIT_COGNITION_CONTEXT_KEY] = init_cognition
         merged["source_platform_mix"] = self._merge_source_mix(
             existing_preference.get("source_platform_mix"),
             self.compute_source_platform_mix(events),
@@ -523,6 +529,11 @@ class PreferenceAnalyzer:
             existing_cs = existing_preference.get("cognitive_style")
             if isinstance(existing_cs, list):
                 merged["cognitive_style"] = existing_cs
+        init_cognition = self._merge_init_cognition_contexts(
+            raw_preference for raw_preference, _normalized in outcomes
+        )
+        if init_cognition:
+            merged[INIT_COGNITION_CONTEXT_KEY] = init_cognition
         logger.info(
             "analyze_events chunked done: total_events=%d chunks=%d",
             len(events),
@@ -553,6 +564,112 @@ class PreferenceAnalyzer:
         if total == 0:
             return {}
         return {name: count / total for name, count in counts.items()}
+
+    def _merge_init_cognition_contexts(
+        self,
+        raw_preferences: Iterable[dict[str, object]],
+    ) -> dict[str, object]:
+        awareness: list[dict[str, object]] = []
+        insights: list[dict[str, object]] = []
+        seen_awareness: set[str] = set()
+        seen_insights: set[str] = set()
+        for raw in raw_preferences:
+            context = self._extract_init_cognition_context(raw)
+            for item in self._as_list(context.get("awareness")):
+                if not isinstance(item, dict):
+                    continue
+                key = self._normalize_context_text(str(item.get("observation", "")))
+                if not key or key in seen_awareness:
+                    continue
+                seen_awareness.add(key)
+                awareness.append(item)
+                if len(awareness) >= _INIT_AWARENESS_CANDIDATES_CAP:
+                    break
+            for item in self._as_list(context.get("insights")):
+                if not isinstance(item, dict):
+                    continue
+                key = self._normalize_context_text(str(item.get("hypothesis", "")))
+                if not key or key in seen_insights:
+                    continue
+                seen_insights.add(key)
+                insights.append(item)
+                if len(insights) >= _INIT_INSIGHT_CANDIDATES_CAP:
+                    break
+            if (
+                len(awareness) >= _INIT_AWARENESS_CANDIDATES_CAP
+                and len(insights) >= _INIT_INSIGHT_CANDIDATES_CAP
+            ):
+                break
+        result: dict[str, object] = {}
+        if awareness:
+            result["awareness"] = awareness
+        if insights:
+            result["insights"] = insights
+        return result
+
+    def _extract_init_cognition_context(
+        self, raw_preference: dict[str, object]
+    ) -> dict[str, object]:
+        awareness = self._normalize_init_awareness_candidates(
+            raw_preference.get("awareness_candidates")
+        )
+        insights = self._normalize_init_insight_candidates(raw_preference.get("insight_candidates"))
+        result: dict[str, object] = {}
+        if awareness:
+            result["awareness"] = awareness
+        if insights:
+            result["insights"] = insights
+        return result
+
+    def _normalize_init_awareness_candidates(self, raw_value: object) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw_item in self._as_list(raw_value):
+            if not isinstance(raw_item, dict):
+                continue
+            observation = str(raw_item.get("observation", "")).strip()
+            key = self._normalize_context_text(observation)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            item: dict[str, object] = {
+                "date": str(raw_item.get("date") or "init"),
+                "observation": observation,
+                "trend": str(raw_item.get("trend", "")).strip(),
+                "emotion_guess": str(raw_item.get("emotion_guess", "")).strip(),
+            }
+            candidates.append(item)
+            if len(candidates) >= _INIT_AWARENESS_CANDIDATES_CAP:
+                break
+        return candidates
+
+    def _normalize_init_insight_candidates(self, raw_value: object) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw_item in self._as_list(raw_value):
+            if not isinstance(raw_item, dict):
+                continue
+            hypothesis = str(raw_item.get("hypothesis", "")).strip()
+            key = self._normalize_context_text(hypothesis)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            evidence = self._as_str_list(raw_item.get("evidence", []))[:5]
+            item: dict[str, object] = {
+                "hypothesis": hypothesis,
+                "evidence": evidence,
+                "confidence": self._clamp_weight(self._to_float(raw_item.get("confidence", 0.5))),
+                "validated": bool(raw_item.get("validated", False)),
+                "created_at": str(raw_item.get("created_at") or "init"),
+            }
+            candidates.append(item)
+            if len(candidates) >= _INIT_INSIGHT_CANDIDATES_CAP:
+                break
+        return candidates
+
+    @staticmethod
+    def _normalize_context_text(value: str) -> str:
+        return " ".join(value.strip().lower().split())
 
     def _merge_source_mix(
         self,

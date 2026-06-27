@@ -108,6 +108,28 @@ class BudgetCapturingStructuredService:
         )
 
 
+class SequenceStructuredService:
+    def __init__(self, responses: list[dict[str, object]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, object]] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        inject_core_memory: bool = True,
+    ) -> LLMResponse:
+        del history, temperature, max_tokens, caller, inject_core_memory
+        self.calls.append({"system_instruction": system_instruction, "user_input": user_input})
+        payload = self._responses.pop(0) if self._responses else {}
+        return LLMResponse(content=json.dumps(payload, ensure_ascii=False), provider="openai")
+
+
 class ContextOverflowOnceStructuredService:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -169,6 +191,77 @@ async def test_chunked_preference_analysis_disables_core_memory_injection() -> N
 
     assert len(service.calls) == 2
     assert [call["inject_core_memory"] for call in service.calls] == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_chunked_preference_analysis_merges_init_cognition_context() -> None:
+    service = SequenceStructuredService(
+        [
+            {
+                "interests": [{"name": "AI 工具链", "category": "科技", "weight": 0.8}],
+                "awareness_candidates": [
+                    {
+                        "observation": "连续停留在高信息密度的工具链内容上。",
+                        "trend": "从泛泛浏览转向验证具体工作流。",
+                        "emotion_guess": "带着掌控感需求的好奇。",
+                    }
+                ],
+                "insight_candidates": [
+                    {
+                        "hypothesis": "用户可能在通过工具链内容寻找可落地的长期产出方式。",
+                        "evidence": ["多条 AI 工具链观看信号"],
+                        "confidence": 0.72,
+                    }
+                ],
+            },
+            {
+                "interests": [{"name": "长期项目复盘", "category": "知识", "weight": 0.7}],
+                "awareness_candidates": [
+                    {
+                        "observation": "连续停留在高信息密度的工具链内容上。",
+                        "trend": "重复候选应被去重。",
+                    },
+                    {
+                        "observation": "对长期项目拆解内容也有稳定正反馈。",
+                        "trend": "兴趣从工具扩展到执行节奏。",
+                    },
+                ],
+                "insight_candidates": [
+                    {
+                        "hypothesis": "用户可能在通过工具链内容寻找可落地的长期产出方式。",
+                        "evidence": ["重复候选应被去重"],
+                        "confidence": 0.6,
+                    },
+                    {
+                        "hypothesis": "用户不只追新工具，更在意工具能否支撑长期推进。",
+                        "evidence": ["长期项目复盘内容也被保留"],
+                        "confidence": 0.66,
+                    },
+                ],
+            },
+        ]
+    )
+    analyzer = PreferenceAnalyzer(service)
+
+    updated = await analyzer.analyze_events(
+        events=[
+            {"event_type": "view", "title": "AI 工具链实战"},
+            {"event_type": "favorite", "title": "长期项目复盘"},
+        ],
+        existing_preference={},
+        event_chunk_size=1,
+    )
+
+    context = updated["_init_cognition_context"]
+    assert [item["observation"] for item in context["awareness"]] == [
+        "连续停留在高信息密度的工具链内容上。",
+        "对长期项目拆解内容也有稳定正反馈。",
+    ]
+    assert [item["hypothesis"] for item in context["insights"]] == [
+        "用户可能在通过工具链内容寻找可落地的长期产出方式。",
+        "用户不只追新工具，更在意工具能否支撑长期推进。",
+    ]
+    assert context["insights"][0]["confidence"] == 0.72
 
 
 def test_preference_prompt_explains_cross_platform_signal_strength() -> None:

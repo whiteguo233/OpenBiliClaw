@@ -19,6 +19,7 @@ from openbiliclaw.soul.profile import (
     InterestLayer,
     InterestSpecific,
     OnionProfile,
+    SoulProfile,
 )
 
 if TYPE_CHECKING:
@@ -176,6 +177,104 @@ async def test_build_initial_profile_reads_preference_and_saves_soul(tmp_path: P
     assert saved["surface"]["cognitive_style"] == ["会先看结构", "偏好把问题讲透"]
     assert saved["interest"]["likes"][0]["domain"] == "知识"
     assert saved["interest"]["likes"][0]["specifics"][0]["name"] == "科技"
+
+
+@pytest.mark.asyncio
+async def test_init_cognition_context_is_ephemeral_and_feeds_profile_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+        event_chunk_size: int = 0,
+    ) -> dict[str, object]:
+        del events, existing_preference, event_chunk_size
+        return {
+            "interests": [{"name": "AI 工具链", "category": "科技", "weight": 0.81}],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.5,
+            "disliked_topics": [],
+            "favorite_up_users": [],
+            "_init_cognition_context": {
+                "awareness": [
+                    {
+                        "observation": "初始化 chunk 观察到用户持续停留在工具链内容。",
+                        "trend": "从泛泛探索转向工作流验证。",
+                        "emotion_guess": "对掌控感有需求。",
+                    }
+                ],
+                "insights": [
+                    {
+                        "hypothesis": "用户可能在寻找可支撑长期产出的工具化路径。",
+                        "evidence": ["多个初始化 chunk 都指向工具链和长期项目。"],
+                        "confidence": 0.73,
+                    }
+                ],
+            },
+        }
+
+    captured: dict[str, object] = {}
+
+    async def fake_build(
+        *,
+        history: list[dict[str, object]],
+        preference: dict[str, object],
+        awareness_notes: list[dict[str, object]],
+        active_insights: list[dict[str, object]],
+    ) -> SoulProfile:
+        del history, preference
+        captured["awareness_notes"] = awareness_notes
+        captured["active_insights"] = active_insights
+        return SoulProfile(
+            personality_portrait="你会在复杂信息里寻找能落地的结构。" * 8,
+            core_traits=["结构感强"],
+            cognitive_style=["先看框架"],
+            motivational_drivers=["把想法落地"],
+            current_phase="正在验证长期工作流。",
+            values=["真实有效"],
+            life_stage="自我构建阶段",
+            deep_needs=["可控的推进感"],
+        )
+
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+    monkeypatch.setattr(engine._profile_builder, "build", fake_build)
+
+    await engine.analyze_events([{"event_type": "view", "title": "AI 工具链实战"}])
+
+    preference = memory.get_layer("preference").data
+    assert "_init_cognition_context" not in preference
+    saved_preference = json.loads(
+        (tmp_path / "memory" / "preference.json").read_text(encoding="utf-8")
+    )
+    assert "_init_cognition_context" not in saved_preference
+
+    await engine.build_initial_profile(history=[{"title": "AI 工具链实战"}])
+
+    assert captured["awareness_notes"] == [
+        {
+            "date": "init",
+            "observation": "初始化 chunk 观察到用户持续停留在工具链内容。",
+            "trend": "从泛泛探索转向工作流验证。",
+            "emotion_guess": "对掌控感有需求。",
+        }
+    ]
+    assert captured["active_insights"] == [
+        {
+            "hypothesis": "用户可能在寻找可支撑长期产出的工具化路径。",
+            "evidence": ["多个初始化 chunk 都指向工具链和长期项目。"],
+            "confidence": 0.73,
+            "validated": False,
+            "created_at": "init",
+        }
+    ]
+    assert memory.get_layer("awareness").data.get("notes", []) == []
+    assert memory.get_layer("insight").data.get("hypotheses", []) == []
 
 
 @pytest.mark.asyncio

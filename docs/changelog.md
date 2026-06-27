@@ -11,6 +11,7 @@
 - **Discovery interest 丰富度保护**：query / rid / domain / keyword planner 的 compact profile summary 不再只是截取权重前 64 个兴趣；现在先取最多 128 个 interest 候选，再用 cache-only embedding 做 MMR 风格选择，在保留强兴趣的同时覆盖更多语义簇，并对贴近 `disliked_topics` 的 interest 降权。`disliked_topics` 自身也用同一缓存向量做多样性去重。没有 cached embedding 时保持原权重顺序，不新增热路径 embedding 调用。
 - **推荐出口增加 dislike 硬过滤兜底**：`RecommendationEngine.serve()` 从 discovery pool 读出候选后，会按当前 `profile.preferences.disliked_topics` 再过滤一次；主题字段精确命中，或标题 / 标签 / 简介 / 作者 / 短正文包含避雷 term 的候选不会进入排序，覆盖异步清池尚未完成或清池失败的窗口。
 - **画像增量回填增加并发 claim 保护**：`/api/events` 的 `last_profile_pipeline_event_id` backfill 现在有进程内 single-flight 保护；当前一批旧 pending 行正在喂给 `ProfileUpdatePipeline` 时，并发事件请求会跳过重复 backfill，只处理自身 accepted 事件，避免同一批 200 条画像信号被重复送进 `soul.preference.chunk`。
+- **初始化 chunk 顺带生成临时觉察 / 洞察上下文**：`soul.preference.chunk` 的结构化输出现在可包含 `awareness_candidates` / `insight_candidates`；后端会去重合并后只作为本次 `soul.profile_build` 的 prompt 上下文，不写入长期 `awareness.json` / `insight.json`，让初始人格画像在首次生成时就能利用每个 chunk 提炼出的观察和假设。
 
 ## v0.3.147 / extension v0.3.98 / desktop v0.3.147: PC Web 正向反馈与探针原地聊天（2026-06-26）
 

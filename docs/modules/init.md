@@ -7,8 +7,8 @@
 四阶段（与 CLI 完全一致）：
 
 1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`，v0.3.118+ 仅当 `include_bili=True`，B 站与其他来源一样可取消）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按本轮勾选来源）+ X 点赞 / 收藏（`_fetch_x_init_data`,服务端 twitter-cli 直拉、无扩展任务,与 B站 一样在本轮直接持久化;cookie 未同步时静默跳过）→ 统一 `build_event` → `memory.propagate_event` 入库。X 点赞 → `event_type="like"`、收藏 → `event_type="favorite"`(均为显式正向信号,v0.3.118+ 同时进画像构建的 history 行,保证 X-only 初始化也有画像输入)。
-2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发。
-3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，发现用 preference-only 草稿画像预热评估；如果正式候选池还是空的，补池会先构造 `cold_start` 的 `PoolDistributionSnapshot`，把画像中最高权重兴趣作为首批 query 的软避让方向，并优先覆盖次级兴趣 / 兴趣域，避免第一批 discovery 全部集中在同一个强 topic。
+2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发；每个初始化 chunk 除了结构化偏好，也会产出少量临时 `awareness_candidates` / `insight_candidates`，本地去重合并后只作为本次画像生成上下文。
+3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，画像生成会消费合并后的 preference、history summary，以及第 2 段生成的临时觉察 / 洞察候选；这些候选不写入长期 `awareness` / `insight` 层。发现用 preference-only 草稿画像预热评估；如果正式候选池还是空的，补池会先构造 `cold_start` 的 `PoolDistributionSnapshot`，把画像中最高权重兴趣作为首批 query 的软避让方向，并优先覆盖次级兴趣 / 兴趣域，避免第一批 discovery 全部集中在同一个强 topic。
 
 ## 共享流水线 `cli.run_guided_init`
 

@@ -30,6 +30,7 @@
 | SoulEngine.analyze_events() | ✅ | 事件 → PreferenceAnalyzer → 偏好层更新 |
 | SoulEngine module overrides | ✅ | 构造时可接收 `module_overrides` 并注入内部 `LLMService`，确保 preference / awareness / insight / profile_builder / speculator / dialogue_insight 都遵循 `[llm.soul]` 路由 |
 | PreferenceAnalyzer | ✅ | LLM structured extraction + 合并 + 衰减；偏好分析 system prompt 注入 `CATEGORY_VOCAB`（静态常量、缓存安全），代码侧在 `(name, category)` 合并键生成前执行 `resolve_category()`：词表外 → embedding 最近邻（≥0.55）→「其他」，任何路径都不会把词表外一级分类写入 preference 层；v0.3.x `satisfaction_filter_enabled=True` 默认开启，构 prompt 前会丢掉 `quick_exit` 等被动 negative 事件，保留 positive + neutral + unknown / NULL；显式 `dislike` / `thumbs_down` 负反馈会保留为 disliked_topics / 风格避让证据；偏好分析调用前有 prompt 预算保护，超长 chunk 会递归二分，单条超长事件会 compact，`n_keep >= n_ctx` / `context length` 等上下文错误会用更小 chunk 重试；chunked 分析遇到 LLM 拒答 / 非 JSON 时会对单条事件追加 title / URL / source-only 安全压缩重试，避免长网页 context 触发安全拒答后直接丢失该条画像信号 |
+| Init chunk cognition context | ✅ | 初始化偏好分片可顺带输出 `awareness_candidates` / `insight_candidates`；`PreferenceAnalyzer` 去重合并为私有 `_init_cognition_context`，`SoulEngine` 只在紧接着的 `build_initial_profile()` 中作为 prompt 上下文消费，不写入长期 `preference.json`、`awareness.json` 或 `insight.json` |
 | filter_events_by_satisfaction | ✅ | `soul/event_filters.py` 中的纯函数，按 `inferred_satisfaction` 过滤事件，`"unknown"` 同时匹配缺失 / `None`，使 pre-migration 老行可被显式 opt-in 保留 |
 | recent_negative_exemplars | ✅ | `soul/negative_exemplars.py` 中的纯函数，从事件层拉最近 negative 标题做 recency 加权（半衰期默认 14d）+ 前缀去重 + 80 字截断，最多返回 16 条 `{title, reason, age_days}`。下游消费者是 `discovery/engine.ContentDiscoveryEngine._evaluate_batch` 和 `recommendation/engine.RecommendationEngine._classify_batch`，二者都会把列表作为 `negative_examples` 透传给 batch evaluator prompt——这是 [inferred_satisfaction 信号](#) 的第二个消费方（第一个是上面的 `filter_events_by_satisfaction`） |
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像 |
@@ -354,8 +355,8 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 
 1. 先读取已有 `preference` 层。
 2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书 / 抖音 bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
-3. 再加载历史 `awareness_notes` 和 `active_insights`。
-4. `ProfileBuilder.build()` 把 `history_summary + preference_summary + awareness + insights` 一起送给 LLM。
+3. 再加载历史 `awareness_notes` 和 `active_insights`。首次新装通常为空；如果第 2 步的初始化分片输出了临时 `awareness_candidates` / `insight_candidates`，`SoulEngine` 会把它们追加到本次 profile-build prompt 的 awareness / insights 输入中。
+4. `ProfileBuilder.build()` 把 `history_summary + preference_summary + awareness + insights` 一起送给 LLM。临时 chunk cognition 只参与这次 prompt，不持久化到 awareness / insight 层。
 5. LLM 返回结构化 JSON，必须包含：
    - `personality_portrait`
    - `core_traits`
@@ -407,7 +408,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 4. 返回结果会进入 `merge_preferences()`，与旧偏好合并。
 5. 合并后的偏好写回 `preference.json`。
 
-初始化这类大批量事件会按分片并发分析，但初始 chunk 调度会按最多 16 个一批推进；一批处理完再处理下一批，避免拉全量历史时一次性创建所有 prompt 任务和等待队列。真实 provider 并发仍由 `LLMService` 控制，不通过这里调高。偏好分析的事件批次和 existing preference 已经完整放在 user prompt 中，因此单批 / 分片 LLM 调用会在 `LLMService` 支持时传 `inject_core_memory=False`，避免把动态 core memory 再拼进 system prompt、打穿 provider prompt-cache 前缀。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
+初始化这类大批量事件会按分片并发分析，但初始 chunk 调度会按最多 16 个一批推进；一批处理完再处理下一批，避免拉全量历史时一次性创建所有 prompt 任务和等待队列。真实 provider 并发仍由 `LLMService` 控制，不通过这里调高。偏好分析的事件批次和 existing preference 已经完整放在 user prompt 中，因此单批 / 分片 LLM 调用会在 `LLMService` 支持时传 `inject_core_memory=False`，避免把动态 core memory 再拼进 system prompt、打穿 provider prompt-cache 前缀。初始化 chunk 的 LLM schema 还允许返回少量 `awareness_candidates` / `insight_candidates`：它们不是长期认知层产物，只是本轮初始画像的临时上下文；`SoulEngine.analyze_events()` 会从持久化 preference 中剥离私有 `_init_cognition_context`，随后 `build_initial_profile()` 一次性消费并清空。偏好分析还会在每次 LLM 调用前检查 prompt 体积：`event_chunk_size` 只是第一层按条数粗分片；如果某个 chunk 的 `system_instruction + user_input` 超过本地保守预算，`PreferenceAnalyzer` 会继续递归二分该 chunk。若单条事件本身过长，会只保留 `event_type / title / context / inferred_satisfaction / satisfaction_reason` 和 `metadata.source_platform / up_name / bvid / feedback_type` 等偏好提取关键字段，截断长文本并丢弃 `raw_context`、字幕、评论、原始 payload 等大字段。compact 后仍超预算的单条事件会被跳过并记录 warning，其他事件继续参与合并。
 
 若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 仍会递归拆小该分片；最终只有仍失败的单条事件会被跳过。若 provider 返回明确的 context-window 错误（例如 `n_keep >= n_ctx`、`context length`、`prompt is too long`），偏好分析会按同一套拆分 / compact 逻辑重试；认证、网络、限流、模型不存在等非上下文错误仍会让调用失败，避免把服务不可用伪装成成功。
 
@@ -814,6 +815,8 @@ updated_pref = await analyzer.analyze_events(
 # 单个 chunk 超过 max_prompt_chars 时仍会继续按 prompt 预算拆小。
 # 偏好提取的 user prompt 已含事件批次和 existing_preference；
 # 使用 LLMService 时会关闭额外 core memory 注入，保护 provider prompt-cache 前缀。
+# 初始化调用的 chunk response 还可能带 `_init_cognition_context` 私有键；
+# SoulEngine 会在写 preference.json 前剥离，并只喂给紧接着的 profile build。
 assert DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE * MAX_CONCURRENT_PREFERENCE_CHUNKS == 3200
 # 返回:
 # {
