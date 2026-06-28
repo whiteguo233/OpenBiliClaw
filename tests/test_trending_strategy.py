@@ -12,6 +12,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveredContent,
     DiscoveryConcurrencyController,
 )
+from openbiliclaw.discovery.keyword_digest import profile_kw_digest
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 
 
@@ -102,6 +103,23 @@ class FakeRankingClient:
         return self.results_by_rid.get(rid, [])
 
 
+def _first_rotating_rids(max_related_rids: int = 4) -> list[int]:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+        max_related_rids=max_related_rids,
+    )
+    candidates = strategy._rotation_candidate_rids()
+    selected = strategy._shuffled_rids(
+        profile_kw_digest(_build_profile()),
+        0,
+        candidates,
+    )[:max_related_rids]
+    return [0, *selected]
+
+
 def test_trending_strategy_map_ranking_item_maps_stat_metrics() -> None:
     from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
 
@@ -178,16 +196,15 @@ async def test_trending_strategy_fetches_global_and_related_rankings() -> None:
 
     llm_service = FakeLLMService(
         [
-            '{"rids": [36, 181]}',
             '{"score": 0.82, "reason": "讲解深度和你的偏好接近。"}',
             '{"score": 0.74, "reason": "内容主题和你常看的历史纪录片相近。"}',
         ]
     )
+    rids = _first_rotating_rids()
     bilibili_client = FakeRankingClient(
         {
             0: [{"bvid": "BV1A", "title": "全站榜内容", "author": "UP1", "mid": 1}],
-            36: [{"bvid": "BV1B", "title": "知识区内容", "author": "UP2", "mid": 2}],
-            181: [],
+            rids[1]: [{"bvid": "BV1B", "title": "分区榜内容", "author": "UP2", "mid": 2}],
         }
     )
 
@@ -199,40 +216,46 @@ async def test_trending_strategy_fetches_global_and_related_rankings() -> None:
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    assert bilibili_client.calls == [0, 36, 181]
+    assert bilibili_client.calls == rids
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]
     assert all(item.source_strategy == "trending" for item in results)
+    assert all(call["caller"] != "discovery.trending.rids" for call in llm_service.calls)
 
 
 @pytest.mark.asyncio
-async def test_trending_strategy_reuses_rids_for_same_profile_day() -> None:
+async def test_trending_strategy_rotates_rids_without_llm_until_full_coverage() -> None:
     from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
 
-    llm_service = FakeLLMService(['{"rids": [36]}'])
-    bilibili_client = FakeRankingClient(
-        {
-            0: [{"bvid": "BV1A", "title": "全站榜内容", "author": "UP1", "mid": 1}],
-            36: [{"bvid": "BV1B", "title": "知识区内容", "author": "UP2", "mid": 2}],
-        }
-    )
+    llm_service = FakeLLMService(['{"unused": true}'])
     strategy = TrendingStrategy(
-        bilibili_client=bilibili_client,
+        bilibili_client=FakeRankingClient({}),
         llm_service=llm_service,
         llm_evaluation=False,
     )
+    candidate_rids = sorted(rid for rid in strategy.RID_TO_TOPIC if rid != 0)
+    seen: list[int] = []
 
-    await strategy.discover(_build_profile(), limit=20)
-    await strategy.discover(_build_profile(), limit=20)
+    while len(set(seen)) < len(candidate_rids):
+        rids = await strategy._select_rids(_build_profile())
+        assert rids[0] == 0
+        assert 1 <= len(rids[1:]) <= strategy.max_related_rids
+        assert not (set(seen) & set(rids[1:]))
+        seen.extend(rids[1:])
 
-    assert len(llm_service.calls) == 1
-    assert bilibili_client.calls == [0, 36, 0, 36]
+    assert sorted(seen) == candidate_rids
+    assert llm_service.calls == []
+
+    next_cycle = await strategy._select_rids(_build_profile())
+
+    assert next_cycle[0] == 0
+    assert len(next_cycle[1:]) == strategy.max_related_rids
 
 
 @pytest.mark.asyncio
-async def test_trending_rid_selection_uses_low_cost_structured_call() -> None:
+async def test_trending_rid_selection_is_profile_stable_but_not_llm_generated() -> None:
     from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
 
-    llm_service = FakeLLMService(['{"rids": [36]}'])
+    llm_service = FakeLLMService(['{"unused": true}'])
     strategy = TrendingStrategy(
         bilibili_client=FakeRankingClient({}),
         llm_service=llm_service,
@@ -241,10 +264,15 @@ async def test_trending_rid_selection_uses_low_cost_structured_call() -> None:
 
     rids = await strategy._select_rids(_build_profile())
 
-    assert rids == [0, 36]
-    assert llm_service.calls[0]["caller"] == "discovery.trending.rids"
-    assert llm_service.calls[0]["reasoning_effort"] == ""
-    assert llm_service.calls[0]["inject_core_memory"] is False
+    fresh_strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService(['{"unused": true}']),
+        llm_evaluation=False,
+    )
+    assert rids == await fresh_strategy._select_rids(_build_profile())
+    assert rids[0] == 0
+    assert len(rids[1:]) == strategy.max_related_rids
+    assert llm_service.calls == []
 
 
 @pytest.mark.asyncio
@@ -253,15 +281,15 @@ async def test_trending_strategy_filters_by_score_threshold() -> None:
 
     llm_service = FakeLLMService(
         [
-            '{"rids": [36]}',
             '{"score": 0.40, "reason": "相关度较弱。"}',
             '{"score": 0.79, "reason": "主题和表达方式都更贴近你的长期偏好。"}',
         ]
     )
+    rids = _first_rotating_rids()
     bilibili_client = FakeRankingClient(
         {
             0: [{"bvid": "BV1A", "title": "一般内容", "author": "UP1", "mid": 1}],
-            36: [{"bvid": "BV1B", "title": "高匹配内容", "author": "UP2", "mid": 2}],
+            rids[1]: [{"bvid": "BV1B", "title": "高匹配内容", "author": "UP2", "mid": 2}],
         }
     )
 
@@ -309,15 +337,15 @@ async def test_trending_strategy_continues_when_one_ranking_fails() -> None:
 
     llm_service = FakeLLMService(
         [
-            '{"rids": [36, 181]}',
             '{"score": 0.81, "reason": "依然匹配。"}',
         ]
     )
+    rids = _first_rotating_rids()
     bilibili_client = FakeRankingClient(
         {
-            181: [{"bvid": "BV1C", "title": "影视区内容", "author": "UP3", "mid": 3}],
+            rids[2]: [{"bvid": "BV1C", "title": "分区内容", "author": "UP3", "mid": 3}],
         },
-        failing_rids={0, 36},
+        failing_rids={0, rids[1]},
     )
 
     strategy = TrendingStrategy(
@@ -328,7 +356,7 @@ async def test_trending_strategy_continues_when_one_ranking_fails() -> None:
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    assert bilibili_client.calls == [0, 36, 181]
+    assert bilibili_client.calls == rids
     assert [item.bvid for item in results] == ["BV1C"]
 
 
@@ -359,19 +387,19 @@ async def test_trending_strategy_uses_bounded_evaluation_concurrency() -> None:
 
     llm_service = _SlowScoringLLMService(
         [
-            '{"rids": [36]}',
             '{"score": 0.82, "reason": "A"}',
             '{"score": 0.81, "reason": "B"}',
             '{"score": 0.80, "reason": "C"}',
         ]
     )
+    rids = _first_rotating_rids()
     bilibili_client = FakeRankingClient(
         {
             0: [
                 {"bvid": "BV1A", "title": "A", "author": "UP1", "mid": 1},
                 {"bvid": "BV1B", "title": "B", "author": "UP2", "mid": 2},
             ],
-            36: [{"bvid": "BV1C", "title": "C", "author": "UP3", "mid": 3}],
+            rids[1]: [{"bvid": "BV1C", "title": "C", "author": "UP3", "mid": 3}],
         }
     )
     strategy = TrendingStrategy(
@@ -387,7 +415,8 @@ async def test_trending_strategy_uses_bounded_evaluation_concurrency() -> None:
     results = await strategy.discover(_build_profile(), limit=20)
 
     assert llm_service.max_active_calls >= 1  # Batch eval sends fewer calls
-    # Round-robin interleave by rid: depth 0 → rid0[0], rid36[0]; depth 1 → rid0[1].
+    # Round-robin interleave by rid: depth 0 → rid0[0], selected-rid[0];
+    # depth 1 → rid0[1].
     assert [item.bvid for item in results] == ["BV1A", "BV1C", "BV1B"]
 
 
@@ -415,7 +444,8 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
         f'{{"score": 0.80, "reason": "r{i}", "style_key": "{styles[i % len(styles)]}"}}'
         for i in range(50)
     ]
-    llm_service = FakeLLMService(['{"rids": [36, 181, 119]}', *score_payloads])
+    llm_service = FakeLLMService([*score_payloads])
+    rids = _first_rotating_rids(max_related_rids=3)
 
     bilibili_client = FakeRankingClient(
         {
@@ -423,14 +453,13 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
                 {"bvid": f"BV0_{i:02d}", "title": f"rid0-{i}", "author": "U", "mid": i}
                 for i in range(8)
             ],
-            36: [
-                {"bvid": f"BV36_{i:02d}", "title": f"rid36-{i}", "author": "U", "mid": i}
+            rids[1]: [
+                {"bvid": f"BVA_{i:02d}", "title": f"ridA-{i}", "author": "U", "mid": i}
                 for i in range(2)
             ],
-            181: [
-                {"bvid": "BV181_00", "title": "rid181-0", "author": "U", "mid": 1},
+            rids[2]: [
+                {"bvid": "BVB_00", "title": "ridB-0", "author": "U", "mid": 1},
             ],
-            119: [],
         }
     )
 
@@ -443,12 +472,12 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
 
     results = await strategy.discover(_build_profile(), limit=20)
 
-    # Interleave order: depth 0 → rid0[0], rid36[0], rid181[0], rid119(empty);
-    # depth 1 → rid0[1], rid36[1]; depth 2+ → rid0 only.
+    # Interleave order: depth 0 → rid0[0], selectedA[0], selectedB[0];
+    # depth 1 → rid0[1], selectedA[1]; depth 2+ → rid0 only.
     bvids = [item.bvid for item in results]
-    assert bvids[:4] == ["BV0_00", "BV36_00", "BV181_00", "BV0_01"]
+    assert bvids[:4] == ["BV0_00", "BVA_00", "BVB_00", "BV0_01"]
     # The smaller rids' top items must appear before rid0 exhausts its bucket.
-    assert bvids.index("BV181_00") < bvids.index("BV0_05")
+    assert bvids.index("BVB_00") < bvids.index("BV0_05")
 
 
 @pytest.mark.asyncio
@@ -457,7 +486,6 @@ async def test_trending_strategy_caps_llm_eval_candidates_for_small_limit() -> N
 
     llm_service = FakeLLMService(
         [
-            '{"rids": [36, 181, 119]}',
             *('{"score": 0.80, "reason": "ok", "style_key": "deep_dive"}' for _ in range(40)),
         ]
     )

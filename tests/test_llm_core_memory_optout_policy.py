@@ -18,7 +18,6 @@ PROFILE_CONTEXT_CALL_SITES = [
     ),
     ("src/openbiliclaw/sources/xhs_keyword_gen.py", 'caller="sources.xhs.keyword_gen"'),
     ("src/openbiliclaw/discovery/strategies/youtube.py", 'caller="yt_search.generate_queries"'),
-    ("src/openbiliclaw/discovery/strategies/trending.py", 'caller="discovery.trending.rids"'),
     ("src/openbiliclaw/discovery/strategies/search.py", 'caller="discovery.search.queries"'),
     ("src/openbiliclaw/discovery/strategies/x.py", 'caller="discovery.x.keyword_gen"'),
     (

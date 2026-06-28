@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import re
-import time
 from dataclasses import dataclass, field, replace
-from datetime import date
 from typing import TYPE_CHECKING
 
 from openbiliclaw.discovery.engine import (
@@ -23,13 +21,10 @@ from openbiliclaw.discovery.keyword_digest import profile_kw_digest
 from openbiliclaw.discovery.strategies._utils import (
     SupportsRankingClient,
     _gather_bounded,
-    build_query_generation_profile_summary,
-    cached_embedding_lookup,
     clean_text,
     parse_duration,
     to_int,
 )
-from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
@@ -54,8 +49,7 @@ class TrendingStrategy(DiscoveryStrategy):
     # Broader default RIDs covering more top-level categories:
     # 36=科技, 188=资讯, 181=影视, 119=纪录片, 3=音乐, 129=舞蹈, 4=游戏, 160=生活
     default_rids: tuple[int, ...] = (36, 188, 181, 119, 3, 129, 4, 160)
-    rid_cache_ttl_seconds: float = 6 * 60 * 60
-    _rid_cache: dict[str, tuple[float, list[int]]] = field(
+    _rid_rotation_state: dict[str, tuple[int, int, list[int]]] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -184,55 +178,44 @@ class TrendingStrategy(DiscoveryStrategy):
         return results
 
     async def _select_rids(self, profile: SoulProfile) -> list[int]:
-        from openbiliclaw.llm.prompts import build_trending_rids_prompt
+        key = profile_kw_digest(profile)
+        selected = self._next_rotating_rids(key)
+        if selected:
+            return [0, *selected]
+        return [0]
 
-        cache_key = f"{profile_kw_digest(profile)}:{date.today().isoformat()}"
-        cached = self._cached_rids(cache_key)
-        if cached is not None:
-            return cached
-
-        messages = build_trending_rids_prompt(
-            profile_summary=build_query_generation_profile_summary(
-                profile,
-                embedding_lookup=cached_embedding_lookup(self.embedding_service),
-            )
+    def _next_rotating_rids(self, profile_key: str) -> list[int]:
+        candidates = self._rotation_candidate_rids()
+        if not candidates:
+            return []
+        batch_size = max(1, min(int(self.max_related_rids), len(candidates)))
+        cycle, offset, order = self._rid_rotation_state.get(
+            profile_key,
+            (0, 0, self._shuffled_rids(profile_key, 0, candidates)),
         )
-        try:
-            complete_structured = self.llm_service.complete_structured_task
-            response = await complete_structured(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                max_tokens=512,
-                caller="discovery.trending.rids",
-                reasoning_effort="",
-                **without_core_memory_kwargs(complete_structured),
-            )
-            parsed = json.loads(str(getattr(response, "content", "")).strip())
-            if isinstance(parsed, dict) and isinstance(parsed.get("rids"), list):
-                selected = [to_int(item) for item in parsed["rids"] if to_int(item) > 0]
-                selected = self._dedupe_ints(selected)[: self.max_related_rids]
-                rids = [0, *selected]
-                self._store_rids(cache_key, rids)
-                return rids
-        except Exception:
-            logger.exception("Trending rid selection failed; using defaults.")
-        return [0, *list(self.default_rids[: self.max_related_rids])]
+        if offset >= len(order):
+            cycle += 1
+            offset = 0
+            order = self._shuffled_rids(profile_key, cycle, candidates)
+        selected = order[offset : offset + batch_size]
+        offset += len(selected)
+        self._rid_rotation_state[profile_key] = (cycle, offset, order)
+        return selected
 
-    def _cached_rids(self, cache_key: str) -> list[int] | None:
-        cached = self._rid_cache.get(cache_key)
-        if cached is None:
-            return None
-        expires_at, rids = cached
-        if time.monotonic() >= expires_at:
-            self._rid_cache.pop(cache_key, None)
-            return None
-        return list(rids)
+    def _rotation_candidate_rids(self) -> list[int]:
+        candidates = [rid for rid in sorted(self.RID_TO_TOPIC) if rid > 0]
+        if candidates:
+            return candidates
+        return [rid for rid in self.default_rids if rid > 0]
 
-    def _store_rids(self, cache_key: str, rids: list[int]) -> None:
-        ttl = max(0.0, float(self.rid_cache_ttl_seconds))
-        if ttl <= 0:
-            return
-        self._rid_cache[cache_key] = (time.monotonic() + ttl, list(rids))
+    @staticmethod
+    def _shuffled_rids(profile_key: str, cycle: int, candidates: list[int]) -> list[int]:
+        return sorted(
+            candidates,
+            key=lambda rid: hashlib.sha256(
+                f"{profile_key}:{cycle}:{rid}".encode()
+            ).hexdigest(),
+        )
 
     def _map_ranking_item(
         self,

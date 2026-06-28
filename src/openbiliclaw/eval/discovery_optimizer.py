@@ -41,11 +41,6 @@ DISCOVERY_PROMPT_PARAMS: list[PromptParam] = [
         function_name="build_search_queries_prompt",
     ),
     PromptParam(
-        name="trending_rids_prompt",
-        file_path=f"{_SRC}/llm/prompts.py",
-        function_name="build_trending_rids_prompt",
-    ),
-    PromptParam(
         name="content_evaluation_prompt",
         file_path=f"{_SRC}/llm/prompts.py",
         function_name="build_content_evaluation_prompt",

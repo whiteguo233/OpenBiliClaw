@@ -39,8 +39,13 @@ from .test_related_chain_strategy import (
     _event,
 )
 from .test_search_strategy import FakeBilibiliClient, FakeLLMService, _build_profile
-from .test_trending_strategy import FakeLLMService as FakeTrendingLLMService
-from .test_trending_strategy import FakeRankingClient
+from .test_trending_strategy import (
+    FakeLLMService as FakeTrendingLLMService,
+)
+from .test_trending_strategy import (
+    FakeRankingClient,
+    _first_rotating_rids,
+)
 
 
 @dataclass
@@ -948,17 +953,17 @@ async def test_discovery_engine_runs_registered_trending_strategy() -> None:
     engine = ContentDiscoveryEngine(
         llm_service=FakeTrendingLLMService(
             [
-                '{"rids": [36]}',
                 '{"score": 0.83, "reason": "符合你的深度内容偏好。"}',
             ]
         )
     )
+    rids = _first_rotating_rids()
     engine.register_strategy(
         TrendingStrategy(
             bilibili_client=FakeRankingClient(
                 {
                     0: [{"bvid": "BV1A", "title": "全站榜", "author": "UP1", "mid": 1}],
-                    36: [],
+                    rids[1]: [],
                 }
             ),
             llm_service=engine._llm_service,

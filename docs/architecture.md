@@ -54,7 +54,7 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 - `DiscoveredContent` 全形态：新增 `body_text`（推文 / thread / 知乎回答摘要全文）+ `content_type`（`video`/`note`/`tweet`/`thread`/`answer`/`article`/`question`，复用候选池既有 shape 字段），让 X / 知乎这类文字为主的来源能正确流过统一待评估池并渲染成文字卡。
 - 统一待评估池：各来源 raw candidates 先持久化到 `discovery_candidates(status='pending_eval')`；`DiscoveryCandidatePipeline` 按来源混合 claim batch，再调用 `ContentDiscoveryEngine.evaluate_content_batch()` 结合 Soul 画像、来源上下文、近期 negative exemplars、正文 / 标签 / 互动指标做统一 LLM 打分。文本 eval 默认 batch_size=45、2 worker；单次 drain 默认最多 claim 90 条并受 evaluator hard cap 约束。runtime refresh path 会在发现新 raw 后即时 drain，独立 `_loop_candidate_eval()` 也会周期性 drain 已有 pending raw，因此评估不再依赖 refresh plan 非空。开启 `[discovery].multimodal_evaluation_enabled` 且 evaluation 模型支持图像时，候选封面会经 `discovery.multimodal` 通过运行时图片缓存优先读取（未命中才白名单抓取）并压缩后作为 image input 参与同一 evaluator，模型不支持则自动回退纯文本。
 - 候选分层、去重和缓存写入：达标候选通过 `cache_evaluated_results()` admission 到正式推荐池 `content_cache`；写入时 `pool_status='suppressed'` 的旧候选在重新发现时自动复活成 `'fresh'`。`content_cache` 是 recommendation serve 的唯一正式池，`discovery_candidates` 是 discovery 阶段的待评估 / 已评估队列。
-- v0.3.0+ 多样性栈：trending 按 rid 交错 / explore 按 domain 交错 / `_compress_topic_repeats` 单次压缩 / `trim_topic_group_overflow` 跨源跨轮配额（任意 topic_group ≤ 池子 10%）/ deficit-source 合并 + 并行 fan-out
+- v0.3.0+ 多样性栈：trending 固定 `rid=0` + 非 0 rid 本地洗牌轮转覆盖，并按 rid 交错 / explore 按 domain 交错 / `_compress_topic_repeats` 单次压缩 / `trim_topic_group_overflow` 跨源跨轮配额（任意 topic_group ≤ 池子 10%）/ deficit-source 合并 + 并行 fan-out
 
 ### Sources (`sources/`) — 多源适配层 (v0.3.0+)
 - `SourceAdapter` Protocol：每个内容源实现统一接口

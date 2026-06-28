@@ -920,45 +920,6 @@ def build_dialogue_insight_prompt(
     ]
 
 
-def build_trending_rids_prompt(
-    *,
-    profile_summary: dict[str, object],
-) -> list[dict[str, str]]:
-    """Build a structured prompt for selecting relevant Bilibili ranking rids."""
-    system_prompt = """
-<task>
-你要从用户画像中推断最值得关注的 B 站排行榜分区 rid。
-</task>
-
-<rules>
-1. 输出必须是严格 JSON，不要附带解释。
-2. 只返回 3 到 5 个最相关的分区 rid，不包含 0。
-3. 选出的 rid 必须横跨至少 3 个不同的一级分区大类（如知识、科技、影视、生活、游戏等），
-   避免全部落在同一大类下，以保证热门内容来源的多样性。
-4. 至少 1 个 rid 必须来自用户画像中未出现的兴趣领域（即用户没有直接关注但可能因热度而感兴趣的分区），
-   以引入新鲜感。
-5. 如果不确定，优先选择知识、科技、影视、纪录片相关分区。
-</rules>
-
-<output_schema>
-{
-  "rids": [36, 188, 181, 119]
-}
-</output_schema>
-""".strip()
-    user_prompt = "\n\n".join(
-        [
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2),
-            "</profile_summary>",
-        ]
-    )
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
 # 100% static system prompt for single-item content evaluation.
 # All variables (source_context, source_platform, profile, content)
 # go in user_prompt — see ``build_content_evaluation_prompt``.

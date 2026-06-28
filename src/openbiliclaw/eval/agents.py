@@ -815,7 +815,6 @@ async def run_discovery_optimizer_agent(
         "可优化的 prompt（按策略归因）:\n"
         "  - build_search_queries_prompt(): 搜索词生成（影响 query_quality / diversity）\n"
         "  - build_content_evaluation_prompt(): 内容匹配度评估（影响 relevance / specificity）\n"
-        "  - build_trending_rids_prompt(): 排行榜分区选择\n"
         "  - build_explore_domains_prompt(): 跨域探索方向生成\n"
         "</discovery_architecture>\n\n"
         "原则：最小化修改，不破坏函数签名和导入，每次只改 1-2 处。\n"
