@@ -21,6 +21,7 @@
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
 - [后端自动更新 SPEC](specs/auto-update.md) — 后端源码自动应用、默认关闭的更新开关、git 安全边界与插件商店原生更新边界
+- [新平台来源接入指南](platform-source-integration.md) — 按知乎接入经验沉淀的端到端来源开发、验证和发布检查清单
 
 ## 可视化架构图
 
