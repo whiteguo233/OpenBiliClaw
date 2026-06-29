@@ -226,7 +226,7 @@ body {
   align-items: flex-start;
   aspect-ratio: auto;
   min-height: 96px;
-  padding: 12px 96px 12px 14px;
+  padding: 12px 114px 12px 14px;
   background: var(--surface-soft);
 }
 
@@ -286,6 +286,7 @@ body {
 .card-source[data-source="youtube"] { background: rgba(255, 0, 0, 0.08); color: #ff0000; }
 .card-source[data-source="twitter"] { background: rgba(15, 23, 42, 0.08); color: #0f172a; }
 .card-source[data-source="zhihu"] { background: rgba(15, 136, 235, 0.1); color: #0f88eb; }
+.card-source[data-source="reddit"] { background: rgba(255, 69, 0, 0.1); color: #d93f00; }
 
 .card-expression {
   margin-top: 8px;
@@ -1867,8 +1868,15 @@ body {
   color: var(--text-muted);
   min-height: 44px;
   display: flex; align-items: center; justify-content: center;
+  gap: 6px;
   transition: background 0.15s, color 0.15s;
   border-right: 1px solid rgba(225, 232, 241, 0.6);
+}
+
+.card-action-btn svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .card-action-btn:last-child { border-right: none; }
@@ -2085,8 +2093,8 @@ body {
   z-index: 2;
 }
 .cover-chip {
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2101,7 +2109,7 @@ body {
   backdrop-filter: blur(6px);
   transition: background 0.15s ease, transform 0.15s ease;
 }
-.cover-chip svg { width: 16px; height: 16px; }
+.cover-chip svg { width: 18px; height: 18px; }
 .cover-chip:active { transform: scale(0.92); }
 /* 稍后再看 = 时钟（选中变 accent 底）；收藏 = 星星（选中金色底 + 填充）。 */
 .cover-chip.watch-later-btn[aria-pressed="true"] { background: var(--brand, #c8553d); color: #fff; }

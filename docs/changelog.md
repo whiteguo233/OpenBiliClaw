@@ -4,6 +4,18 @@
 
 ---
 
+## v0.3.149 / extension v0.3.100 / desktop v0.3.149: Reddit 来源接入（2026-06-30）
+
+后端源码走 `backend-v0.3.149`，浏览器插件走 `extension-v0.3.100`，桌面安装包走 `desktop-v0.3.149`。
+
+- **Reddit 插件登录态 discovery 源**：新增 `reddit_tasks`、`RedditDiscoveryProducer`、`fetch-reddit`、`discover-reddit*` 和 `discover --source reddit`；默认后端为 OpenBiliClaw 浏览器插件，支持 search / hot / subreddit / related 四个独立分支，每个分支默认每日 300 条预算。
+- **Reddit 正式 discover 接入统一候选池**：插件任务回传的帖子 / 评论会转换为 `source_platform="reddit"` 的 `DiscoveredContent`，以 fetch-only 方式写入 `discovery_candidates`，后续由统一 evaluator 混源评估，避免真实 E2E 被单次 LLM 批量评估阻塞。
+- **知乎 / Reddit search query generation 复用统一 planner**：`zhihu-search` 和 `reddit-search` 都进入 `KeywordPlanner` 合并关键词生成和静态 `<supply_advantage>` 表，search 分支通过 `KeywordFetchCoordinator.claim(<platform>)` 消费并透传 `source_keyword_id`；关键词池为空时仍回退画像关键词。
+- **三端配置页与推荐卡适配**：插件 side panel、桌面 Web 和移动 Web 支持 Reddit 来源开关、source modes、四分支预算、候选池占比、来源状态和文字卡 fallback；配置保存后进入 `runtime.source_policy` 与 candidate pool 配额。
+- **Reddit guided init 画像信号**：Reddit 不再是 discovery-only 来源；`init --yes-reddit` / 图形化勾选 Reddit 会通过插件登录态读取 saved / upvoted / subscribed subreddit，分别转成 `favorite` / `like` / `follow` 事件纳入 `analyze_events()` / `build_initial_profile()`，Reddit-only 初始化只要真实拉到信号即可完成。CLI、`/api/init`、插件推荐 tab、桌面 Web 和 `/setup/` 均取消旧的 `no_profile_signal_sources` 拦截；`fetch-reddit --mode bootstrap` 可单独端到端验证事件拉取。API schema 默认值继续对齐实际 `[sources.reddit]` 的 `backend="extension"` 与四分支 discovery 预算 300。
+- **真实环境验证**：本地 worktree API + 已安装插件登录态完成 `fetch-reddit`、`discover-reddit`、`discover-reddit-hot`、`discover-reddit-subreddit`、`discover-reddit-related` 和 `discover --source reddit --limit 2`，四分支正式 producer 返回 `reddit-hot` / `reddit-related` / `reddit-search` / `reddit-subreddit` 候选并入池。
+- **新平台来源接入指南**：新增 `docs/platform-source-integration.md`，把知乎 / Reddit 接入经验沉淀为后续新增来源的标准 checklist。
+
 ## v0.3.148 / extension v0.3.99 / desktop v0.3.148: LLM 余额熔断与推荐避雷兜底（2026-06-28）
 
 后端源码走 `backend-v0.3.148`，浏览器插件走 `extension-v0.3.99`，桌面安装包走 `desktop-v0.3.148`。

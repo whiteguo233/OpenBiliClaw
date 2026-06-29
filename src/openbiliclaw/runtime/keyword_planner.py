@@ -79,6 +79,8 @@ _PLANNER_PLATFORMS: tuple[str, ...] = (
     "douyin",
     "youtube",
     "twitter",
+    "zhihu",
+    "reddit",
 )
 _BILIBILI = "bilibili"
 # The planner reclaims in-flight rows that leaked past the claim lease before

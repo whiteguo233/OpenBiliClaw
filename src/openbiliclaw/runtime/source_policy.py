@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
+SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit")
 DEFAULT_SOURCE_ENABLED = {
     "bilibili": True,
     "xiaohongshu": False,
@@ -14,6 +14,7 @@ DEFAULT_SOURCE_ENABLED = {
     "youtube": False,
     "twitter": False,
     "zhihu": False,
+    "reddit": False,
 }
 DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 5,
@@ -22,6 +23,7 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "youtube": 1,
     "twitter": 1,
     "zhihu": 1,
+    "reddit": 1,
 }
 
 

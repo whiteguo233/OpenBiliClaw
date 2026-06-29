@@ -44,6 +44,12 @@ import {
   pollZhihuTaskNow,
 } from "./zhihu-task-dispatcher.js";
 import {
+  startRedditTaskPolling,
+  handleRedditTaskAlarm,
+  handleRedditTaskResult,
+  pollRedditTaskNow,
+} from "./reddit-task-dispatcher.ts";
+import {
   startBiliTaskPolling,
   handleBiliTaskAlarm,
   handleBiliTaskResult,
@@ -52,6 +58,7 @@ import {
 } from "./bili-task-dispatcher.js";
 import type { YtScopeResult } from "../content/yt/task-executor.js";
 import type { ZhihuTaskResult } from "../content/zhihu/task-executor.js";
+import type { RedditTaskResult } from "../content/reddit/task-executor.ts";
 import {
   openExtensionUi,
   parseDelightBvid,
@@ -230,6 +237,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
   }
   if (eventType === "zhihu_task_available") {
     pollZhihuTaskNow();
+    return;
+  }
+  if (eventType === "reddit_task_available") {
+    pollRedditTaskNow();
     return;
   }
   if (eventType === "bili_task_available") {
@@ -436,25 +447,26 @@ function ensureFlushAlarm(): void {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  ensureFlushAlarm();
-  void connectRuntimeStream();
+function startPlatformTaskPolling(): void {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
   startZhihuTaskPolling();
+  startRedditTaskPolling();
   startBiliTaskPolling();
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureFlushAlarm();
+  void connectRuntimeStream();
+  startPlatformTaskPolling();
   startCookieSync();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureFlushAlarm();
   void connectRuntimeStream();
-  startXhsTaskPolling();
-  startDyTaskPolling();
-  startYtTaskPolling();
-  startZhihuTaskPolling();
-  startBiliTaskPolling();
+  startPlatformTaskPolling();
   startCookieSync();
 });
 
@@ -580,6 +592,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       })
       .catch((error: unknown) => {
         sendResponse({ ok: false, error: String(error) });
+    });
+    return true;
+  }
+  if (message.action === "REDDIT_TASK_RESULT") {
+    void handleRedditTaskResult(message.data as RedditTaskResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
       });
     return true;
   }
@@ -607,6 +629,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   handleDyTaskAlarm(alarm.name);
   handleYtTaskAlarm(alarm.name);
   handleZhihuTaskAlarm(alarm.name);
+  handleRedditTaskAlarm(alarm.name);
   handleBiliTaskAlarm(alarm.name);
   if (handleCookieSyncAlarm(alarm.name)) {
     return;
@@ -648,6 +671,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 
 ensureFlushAlarm();
 void connectRuntimeStream();
+startPlatformTaskPolling();
 startCookieSync();
 
 // Popup writes a new backend port → chrome.storage.onChanged fires here.

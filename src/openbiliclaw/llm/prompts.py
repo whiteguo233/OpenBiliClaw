@@ -2018,8 +2018,8 @@ _CATEGORY_MAPPING_SYSTEM_PROMPT = (
 
 # Module-level constant: 100% static system prompt for the MERGED, multi-
 # platform search-keyword generator (Discover backpressure refactor P1.4).
-# This single call subsumes the five per-platform keyword builders (B站
-# search / 小红书 / 抖音 / YouTube / X) so the profile is sent ONCE and the
+# This single call subsumes per-platform keyword builders (B站 search /
+# 小红书 / 抖音 / YouTube / X / 知乎 / Reddit 等) so the profile is sent ONCE and the
 # provider-side prompt cache fires on the byte-identical prefix. Per
 # CLAUDE.md "LLM Prompt-Cache Convention": NOTHING per-call lives here —
 # the profile, the due-platform set, each platform's need count, recent
@@ -2051,11 +2051,15 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "搜索语言。\n"
     "  - twitter:实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,"
     "华语圈话题可用中文。\n"
+    "  - zhihu:知乎中文问答 / 深度回答 / 经验复盘 / 专业解释 / 观点辨析。适合"
+    "问题式、场景式或概念 + 经验词的中文关键词。\n"
+    "  - reddit:subreddit 经验讨论 / 技术问答 / 开源项目 / 长帖复盘 / 社区观点。"
+    "优先英文关键词,1-5 词,可带 subreddit 或社区语境词。\n"
     "</supply_advantage>\n\n"
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter),每个 key 的值是一个"
+    "(bilibili / xiaohongshu / douyin / youtube / twitter / zhihu / reddit),每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。\n"
     "3. 每个平台生成恰好该平台 need 个搜索关键词;凑不满时宁缺毋滥,数组可短于 need,"
     "但不要为了凑数编造与画像无关的词。\n"
@@ -2082,7 +2086,9 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
     '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
     '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
-    '  "twitter": ["rust async runtime", "llm agents discussion"]\n'
+    '  "twitter": ["rust async runtime", "llm agents discussion"],\n'
+    '  "zhihu": ["AI 工具 经验", "城市规划 问答"],\n'
+    '  "reddit": ["local LLM agents", "open source AI tooling"]\n'
     "}\n"
     "</output_schema>"
 )

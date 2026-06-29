@@ -408,6 +408,7 @@ class SourcesStatusResponse(BaseModel):
     youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
     twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
     zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    reddit: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
 class SourceCredentialItem(BaseModel):
@@ -428,6 +429,7 @@ class SourcesCredentialsResponse(BaseModel):
     youtube: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     twitter: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     zhihu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    reddit: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
 
 
 class NotificationAckIn(BaseModel):
@@ -625,7 +627,7 @@ class EventIngestResponse(BaseModel):
     rejected: list[EventRejectedOut] = Field(default_factory=list)
 
 
-ExtensionE2EPlatform = Literal["douyin", "xiaohongshu", "twitter"]
+ExtensionE2EPlatform = Literal["douyin", "xiaohongshu", "twitter", "reddit"]
 ExtensionE2EAction = Literal[
     "snapshot",
     "scroll",
@@ -643,7 +645,7 @@ ExtensionE2ERunStatus = Literal["ok", "partial", "failed", "timeout"]
 
 
 def _default_extension_e2e_platforms() -> list[ExtensionE2EPlatform]:
-    return ["douyin", "xiaohongshu", "twitter"]
+    return ["douyin", "xiaohongshu", "twitter", "reddit"]
 
 
 class ExtensionE2ERunIn(BaseModel):
@@ -1042,6 +1044,20 @@ class ZhihuSourceConfigOut(BaseModel):
     min_interval_minutes: int = 60
 
 
+class RedditSourceConfigOut(BaseModel):
+    enabled: bool = False
+    backend: str = "extension"
+    source_modes: list[str] = Field(
+        default_factory=lambda: ["search", "hot", "subreddit", "related"]
+    )
+    daily_search_budget: int = 300
+    daily_hot_budget: int = 300
+    daily_subreddit_budget: int = 300
+    daily_related_budget: int = 300
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
@@ -1050,6 +1066,7 @@ class SourcesConfigOut(BaseModel):
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
     twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
     zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
+    reddit: RedditSourceConfigOut = Field(default_factory=RedditSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):

@@ -100,6 +100,14 @@ _ZHIHU_RELATED_URLS_ARGUMENT = typer.Argument(
     ...,
     help="知乎问题 / 回答 / 文章 URL，可传多个。",
 )
+_REDDIT_SUBREDDITS_ARGUMENT = typer.Argument(
+    ...,
+    help="subreddit 名称，支持逗号分隔。",
+)
+_REDDIT_RELATED_URLS_ARGUMENT = typer.Argument(
+    ...,
+    help="Reddit 帖子 URL，支持逗号分隔。",
+)
 _DOUYIN_DISCOVERY_KEYWORDS_OPTION = typer.Option(
     None,
     "--keyword",
@@ -191,10 +199,12 @@ _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
 _DEFAULT_ZHIHU_BOOTSTRAP_WAIT_SECONDS = 180.0
+_DEFAULT_REDDIT_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _DEFAULT_DY_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _DEFAULT_YT_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _DEFAULT_ZHIHU_BOOTSTRAP_DEDUPE_HOURS = 6.0
+_DEFAULT_REDDIT_BOOTSTRAP_DEDUPE_HOURS = 6.0
 _EXTENSION_PRESENCE_REQUIRED_WARNING = (
     "WARN extension presence required; backend will pause background LLM work "
     "after grace period if no extension client connects"
@@ -2259,6 +2269,17 @@ def _zhihu_bootstrap_dedupe_hours() -> float:
         return _DEFAULT_ZHIHU_BOOTSTRAP_DEDUPE_HOURS
 
 
+def _reddit_bootstrap_dedupe_hours() -> float:
+    raw = os.environ.get(
+        "OPENBILICLAW_REDDIT_BOOTSTRAP_DEDUPE_HOURS",
+        str(_DEFAULT_REDDIT_BOOTSTRAP_DEDUPE_HOURS),
+    )
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_REDDIT_BOOTSTRAP_DEDUPE_HOURS
+
+
 def _enqueue_xhs_bootstrap_task(*, force: bool = False, kick: bool = True) -> str | None:
     """Fire-and-forget enqueue of the bootstrap_profile task.
 
@@ -2346,7 +2367,7 @@ def _kick_task_dispatcher(source: str) -> None:
     Failures are silent: if the daemon isn't running the existing
     chrome.alarms 60s poll fallback still picks the task up.
     """
-    if source not in {"xhs", "dy", "yt", "zhihu"}:
+    if source not in {"xhs", "dy", "yt", "zhihu", "reddit"}:
         return
     import urllib.error
     import urllib.request
@@ -3292,6 +3313,319 @@ def _enqueue_zhihu_discovery_candidates(items: list[dict[str, Any]]) -> tuple[in
     return enqueued, contents
 
 
+def _enqueue_reddit_discovery_candidates(
+    items: list[dict[str, Any]],
+    *,
+    strategy: str,
+) -> tuple[int, list[Any]]:
+    """Convert Reddit command result rows and enqueue them into discovery_candidates."""
+    from openbiliclaw.discovery.candidate_pool import discovered_content_to_candidate_write
+    from openbiliclaw.sources.reddit_tasks import reddit_items_to_contents
+
+    contents = reddit_items_to_contents(items, strategy=strategy)
+    if not contents:
+        return 0, []
+    database = _get_runtime_database()
+    writes = [
+        discovered_content_to_candidate_write(item, source_context=item.source_strategy)
+        for item in contents
+    ]
+    enqueued = int(database.enqueue_discovery_candidates(writes))
+    return enqueued, contents
+
+
+def _enqueue_reddit_bootstrap_task(
+    *,
+    kick: bool = True,
+    profile_update: bool = False,
+) -> str | None:
+    """Enqueue a Reddit bootstrap_events task for the browser extension."""
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]Reddit 初始化事件未拉取: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    max_items = int(
+        os.environ.get(
+            "OPENBILICLAW_REDDIT_BOOTSTRAP_MAX_ITEMS",
+            str(_INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE),
+        )
+    )
+    task_id: str | None = None
+    try:
+        queue = RedditTaskQueue(database)
+        dedupe_hours = _reddit_bootstrap_dedupe_hours()
+        find_recent = getattr(queue, "find_recent_task", None)
+        if dedupe_hours > 0 and callable(find_recent):
+            recent = find_recent(
+                "bootstrap_events",
+                recent_hours=dedupe_hours,
+                statuses=("pending", "in_progress", "completed", "failed"),
+            )
+            if recent is not None:
+                task_id = str(recent.get("id", "")).strip()
+                if task_id:
+                    status = str(recent.get("status", "unknown"))
+                    console.print(
+                        "  [dim]复用最近的 Reddit bootstrap 任务"
+                        f"({status})；需要重新拉取可设 "
+                        "OPENBILICLAW_REDDIT_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
+                    )
+                    return task_id
+
+        task_id = queue.enqueue_with_id(
+            "bootstrap_events",
+            {
+                "scopes": ["reddit_saved", "reddit_upvoted", "reddit_subscribed"],
+                "max_items_per_scope": max(1, max_items),
+                "profile_update": bool(profile_update),
+            },
+            daily_budget=10,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]Reddit 初始化事件未拉取: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]Reddit 初始化事件未拉取: 今日任务预算已用完。[/yellow]")
+        return None
+    if kick:
+        _kick_task_dispatcher("reddit")
+    return task_id
+
+
+def _collect_reddit_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and convert a Reddit bootstrap_events task."""
+    import json
+    import time
+
+    from openbiliclaw.sources.reddit_tasks import (
+        REDDIT_BOOTSTRAP_SCOPES,
+        RedditTaskQueue,
+        reddit_items_to_events,
+    )
+
+    empty_counts = {scope: 0 for scope in REDDIT_BOOTSTRAP_SCOPES}
+    if not task_id:
+        return [], empty_counts, "skipped"
+    if max_wait_seconds is None:
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_REDDIT_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_REDDIT_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], empty_counts, "skipped"
+    if not hasattr(database, "conn"):
+        return [], empty_counts, "skipped"
+
+    queue = RedditTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], empty_counts, "timeout"
+    if task.get("status") == "failed":
+        try:
+            result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        debug = result.get("debug", {}) if isinstance(result, dict) else {}
+        error = str(result.get("error", "") if isinstance(result, dict) else "")
+        if error == "reddit_login_required" or (
+            isinstance(debug, dict) and debug.get("login_required") is True
+        ):
+            return [], empty_counts, "login_required"
+        return [], empty_counts, "failed"
+    if task.get("status") != "completed":
+        if str(task.get("status", "")).strip() in {"pending", "in_progress"}:
+            with suppress(Exception):
+                queue.fail(
+                    task_id,
+                    error="extension_result_timeout",
+                    debug={
+                        "wait_seconds": max_wait_seconds,
+                        "last_status": str(task.get("status", "")),
+                    },
+                )
+        return [], empty_counts, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], empty_counts, "failed"
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    raw_counts = result.get("scope_counts", {})
+    scope_counts = dict(empty_counts)
+    if isinstance(raw_counts, dict):
+        for key in scope_counts:
+            with suppress(Exception):
+                scope_counts[key] = int(raw_counts.get(key, 0) or 0)
+    events = reddit_items_to_events(items, import_source="reddit_bootstrap_events")
+    if not any(scope_counts.values()):
+        for event in events:
+            metadata = event.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            scope = str(metadata.get("scope", ""))
+            if scope in scope_counts:
+                scope_counts[scope] += 1
+    status_label = "ok" if events else "empty"
+    return events, scope_counts, status_label
+
+
+def _reddit_discovery_payload(
+    mode: str,
+    target: str,
+    *,
+    limit: int,
+) -> tuple[dict[str, object], str]:
+    max_items = max(1, int(limit))
+    if mode == "search":
+        return {"keywords": [target], "max_items_per_keyword": max_items}, "daily_search_budget"
+    if mode == "hot":
+        return {"subreddit": target or "all", "max_items": max_items}, "daily_hot_budget"
+    if mode == "subreddit":
+        return (
+            {"subreddits": [target], "max_items_per_subreddit": max_items},
+            "daily_subreddit_budget",
+        )
+    if mode == "related":
+        return {"related_urls": [target], "max_items_per_seed": max_items}, "daily_related_budget"
+    raise ValueError(f"unsupported reddit mode: {mode}")
+
+
+def _enqueue_reddit_discovery_task(
+    task_type: str,
+    payload: dict[str, object],
+    *,
+    daily_budget_key: str,
+) -> str | None:
+    """Enqueue a Reddit plugin discovery/fetch task for the browser extension."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]Reddit {task_type} 任务未入队: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    try:
+        cfg = load_config()
+        budget = int(getattr(getattr(cfg.sources, "reddit", None), daily_budget_key, 0))
+    except Exception:
+        budget = 0
+
+    try:
+        queue = RedditTaskQueue(database)
+        task_id = queue.enqueue_with_id(task_type, payload, daily_budget=budget)
+    except Exception as exc:
+        console.print(f"  [yellow]Reddit {task_type} 任务未入队: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print(f"  [yellow]Reddit {task_type} 任务未入队: 今日任务预算已用完。[/yellow]")
+        return None
+    _kick_task_dispatcher("reddit")
+    return task_id
+
+
+def _collect_reddit_discovery_results(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a plugin Reddit task and return raw candidates."""
+    import json
+    import time
+
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
+
+    if not task_id:
+        return [], {}, "skipped"
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = RedditTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        try:
+            result = json.loads(str(task.get("result_json") or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        debug = result.get("debug", {}) if isinstance(result, dict) else {}
+        error = str(result.get("error", "") if isinstance(result, dict) else "")
+        if error == "reddit_login_required" or (
+            isinstance(debug, dict) and debug.get("login_required") is True
+        ):
+            return [], {}, "login_required"
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        if str(task.get("status", "")).strip() in {"pending", "in_progress"}:
+            with suppress(Exception):
+                queue.fail(
+                    task_id,
+                    error="extension_result_timeout",
+                    debug={
+                        "wait_seconds": max_wait_seconds,
+                        "last_status": str(task.get("status", "")),
+                    },
+                )
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+    items = [v for v in result.get("items", []) if isinstance(v, dict)]
+    raw_counts = result.get("scope_counts", {})
+    scope_counts = (
+        {str(k): int(v) for k, v in raw_counts.items()} if isinstance(raw_counts, dict) else {}
+    )
+    return items, scope_counts, "ok" if items else "empty"
+
+
+def _is_reddit_extension_backend(backend: str) -> bool:
+    return str(backend or "").strip().lower() in {"extension", "openbiliclaw", "plugin"}
+
+
 def _enqueue_dy_search_task(
     keywords: tuple[str, ...],
     *,
@@ -3520,6 +3854,27 @@ def _zhihu_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[st
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "zhihu",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _reddit_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Reddit bootstrap events into profile-builder history rows."""
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "reddit",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -4624,6 +4979,32 @@ def _ask_zhihu_inclusion() -> bool:
     return True
 
 
+def _ask_reddit_inclusion() -> bool:
+    """Decide whether to enable the Reddit init/discovery source."""
+    if os.environ.get("OPENBILICLAW_NO_REDDIT", "").strip() == "1":
+        console.print("[dim]  跳过 Reddit 来源启用(OPENBILICLAW_NO_REDDIT=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]Reddit 数据接入(可选)[/bold]")
+    console.print(
+        "把 Reddit [bold cyan]收藏 / 点赞 / 订阅 subreddit[/bold cyan]混进首轮画像，"
+        "同时启用后续 search / hot / subreddit / related 内容发现。"
+    )
+    console.print()
+    console.print(
+        "[dim]需要当前浏览器已登录 reddit.com；扩展会在同源页面内读取只读 JSON endpoint。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("启用 Reddit 数据接入?", default=False):
+        console.print("[dim]  已选择跳过，本次 init 不会启用 Reddit 来源。[/dim]")
+        return False
+    return True
+
+
 def _ask_network_binding() -> bool:
     """Ask whether the backend should listen on all interfaces (0.0.0.0).
 
@@ -4710,6 +5091,7 @@ def _persist_init_source_enabled_flags(
     include_yt: bool,
     include_x: bool = False,
     include_zhihu: bool = False,
+    include_reddit: bool = False,
 ) -> None:
     """Persist init source choices so background discovery obeys them."""
 
@@ -4741,6 +5123,10 @@ def _persist_init_source_enabled_flags(
         zhihu_cfg = getattr(cfg.sources, "zhihu", None)
         if zhihu_cfg is not None and bool(getattr(zhihu_cfg, "enabled", False)) != include_zhihu:
             zhihu_cfg.enabled = include_zhihu
+            changed = True
+        reddit_cfg = getattr(cfg.sources, "reddit", None)
+        if reddit_cfg is not None and bool(getattr(reddit_cfg, "enabled", False)) != include_reddit:
+            reddit_cfg.enabled = include_reddit
             changed = True
         if changed:
             save_config(cfg)
@@ -4973,6 +5359,9 @@ class InitResult:
     zhihu_events: list[dict[str, Any]]
     zhihu_scope_counts: dict[str, Any]
     zhihu_status: str
+    reddit_events: list[dict[str, Any]]
+    reddit_scope_counts: dict[str, Any]
+    reddit_status: str
     profile_data: Any
     discovered_count: int
     discovery_error: bool
@@ -5129,6 +5518,7 @@ async def run_guided_init(
     include_yt: bool,
     include_x: bool = False,
     include_zhihu: bool = False,
+    include_reddit: bool = False,
     target_pool_count: int,
     discover_backfill: Callable[..., Coroutine[Any, Any, int]],
     coordinator: Any = None,
@@ -5371,6 +5761,41 @@ async def run_guided_init(
                 f"  X 点赞 [green]{len(x_likes_data)}[/green] 条"
                 f" / 收藏 [green]{len(x_bookmarks_data)}[/green] 条"
             )
+    reddit_task_id = (
+        (await _enqueue_register_kick(_enqueue_reddit_bootstrap_task, "reddit"))
+        if include_reddit
+        else None
+    )
+    if reddit_task_id:
+        console.print(
+            "  [dim]已请求扩展拉 Reddit 收藏 / 点赞 / 订阅(使用当前浏览器登录态,~30-90 秒)。[/dim]"
+        )
+    reddit_events, reddit_scope_counts, reddit_status = await asyncio.to_thread(
+        _collect_reddit_bootstrap_events, reddit_task_id
+    )
+    if reddit_status == "ok":
+        console.print(
+            "  Reddit "
+            f"收藏 [green]{reddit_scope_counts.get('reddit_saved', 0)}[/green] 条"
+            f" / 点赞 [green]{reddit_scope_counts.get('reddit_upvoted', 0)}[/green] 条"
+            f" / 订阅 [green]{reddit_scope_counts.get('reddit_subscribed', 0)}[/green] 个"
+        )
+    elif reddit_status == "empty":
+        console.print(
+            "  [yellow]Reddit 任务跑通但 0 条记录 —— 可能未登录 Reddit，"
+            "或 saved/upvoted/subscribed 为空。[/yellow]"
+        )
+    elif reddit_status == "login_required":
+        console.print(
+            "  [yellow]Reddit 需要登录 —— 请先在当前浏览器登录 Reddit 后重试 init。[/yellow]"
+        )
+    elif reddit_status == "timeout":
+        console.print(
+            "  [dim]Reddit 初始化信号未导入:扩展未连接或任务仍在后台跑。"
+            "可设 OPENBILICLAW_REDDIT_BOOTSTRAP_WAIT_SECONDS=180 延长等待。[/dim]"
+        )
+    elif reddit_status == "failed":
+        console.print("  [yellow]Reddit 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
 
     # Build events from all data sources via the unified event_format
     # builder so B站 / 小红书 / future-source events share one shape.
@@ -5436,10 +5861,12 @@ async def run_guided_init(
     # paths (gui-init review §5e).
     events_to_persist = list(events)
     events_to_persist.extend(zhihu_events)
+    events_to_persist.extend(reddit_events)
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
     events.extend(zhihu_events)
+    events.extend(reddit_events)
     # With bilibili now optional, the floor is "at least one selected source
     # produced signals" — an all-empty run can't build a meaningful profile.
     if not events:
@@ -5462,6 +5889,7 @@ async def run_guided_init(
                 "youtube": len(yt_events),
                 "twitter": x_event_count,
                 "zhihu": len(zhihu_events),
+                "reddit": len(reddit_events),
             }
         )
     for event in events_to_persist:
@@ -5519,6 +5947,8 @@ async def run_guided_init(
         combined_history.extend(_yt_events_to_history_items(yt_events))
     if zhihu_events:
         combined_history.extend(_zhihu_events_to_history_items(zhihu_events))
+    if reddit_events:
+        combined_history.extend(_reddit_events_to_history_items(reddit_events))
     # X likes/bookmarks previously only fed the analyze stage; feeding the
     # profile builder too keeps cross-source flow uniform AND guarantees a
     # non-empty profile input when X is the only selected source.
@@ -5602,6 +6032,9 @@ async def run_guided_init(
         zhihu_events=zhihu_events,
         zhihu_scope_counts=zhihu_scope_counts,
         zhihu_status=zhihu_status,
+        reddit_events=reddit_events,
+        reddit_scope_counts=reddit_scope_counts,
+        reddit_status=reddit_status,
         profile_data=profile_data,
         discovered_count=discovered_count,
         discovery_error=discover_exc is not None,
@@ -5665,6 +6098,16 @@ def init(
         False,
         "--yes-zhihu",
         help="跳过知乎的 y/n 提问,直接启用知乎来源(适合脚本化场景)。",
+    ),
+    no_reddit: bool = typer.Option(
+        False,
+        "--no-reddit",
+        help="跳过 Reddit 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_reddit_prompt: bool = typer.Option(
+        False,
+        "--yes-reddit",
+        help="跳过 Reddit 的 y/n 提问,直接启用 Reddit 数据接入(适合脚本化场景)。",
     ),
     bilibili_history_limit: int | None = typer.Option(
         None,
@@ -5812,7 +6255,27 @@ def init(
     else:
         include_zhihu = _ask_zhihu_inclusion()
 
-    if not any((include_bili, include_xhs, include_dy, include_yt, include_x, include_zhihu)):
+    if no_reddit:
+        include_reddit = False
+        console.print("[dim]  跳过 Reddit 来源启用(命令行 --no-reddit)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_REDDIT", "").strip() == "1":
+        include_reddit = False
+        console.print("[dim]  跳过 Reddit 来源启用(OPENBILICLAW_NO_REDDIT=1)。[/dim]")
+    elif skip_reddit_prompt:
+        include_reddit = True
+    else:
+        include_reddit = _ask_reddit_inclusion()
+
+    selected_sources = (
+        include_bili,
+        include_xhs,
+        include_dy,
+        include_yt,
+        include_x,
+        include_zhihu,
+        include_reddit,
+    )
+    if not any(selected_sources):
         _print_status_panel(
             "error",
             "没有可用的数据来源",
@@ -5830,6 +6293,7 @@ def init(
         include_yt=include_yt,
         include_x=include_x,
         include_zhihu=include_zhihu,
+        include_reddit=include_reddit,
     )
 
     # gui-init (B2): the four init stages now run inside the shared async
@@ -5851,6 +6315,7 @@ def init(
                 include_yt=include_yt,
                 include_x=include_x,
                 include_zhihu=include_zhihu,
+                include_reddit=include_reddit,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
             )
@@ -5876,6 +6341,12 @@ def init(
     yt_events = result.yt_events
     yt_scope_counts = result.yt_scope_counts
     yt_status = result.yt_status
+    zhihu_events = result.zhihu_events
+    zhihu_scope_counts = result.zhihu_scope_counts
+    zhihu_status = result.zhihu_status
+    reddit_events = result.reddit_events
+    reddit_scope_counts = result.reddit_scope_counts
+    reddit_status = result.reddit_status
     discovered_count = result.discovered_count
     discovery_error = result.discovery_error
 
@@ -5915,6 +6386,14 @@ def init(
     yt_history_count = int(yt_scope_counts.get("yt_history", 0))
     yt_subs_count = int(yt_scope_counts.get("yt_subscriptions", 0))
     yt_likes_count = int(yt_scope_counts.get("yt_likes", 0))
+    zhihu_history_count = int(zhihu_scope_counts.get("zhihu_read_history", 0))
+    zhihu_favorite_count = int(zhihu_scope_counts.get("zhihu_collection", 0)) + int(
+        zhihu_scope_counts.get("zhihu_activity_favorite", 0)
+    )
+    zhihu_like_count = int(zhihu_scope_counts.get("zhihu_activity_like", 0))
+    reddit_saved_count = int(reddit_scope_counts.get("reddit_saved", 0))
+    reddit_upvoted_count = int(reddit_scope_counts.get("reddit_upvoted", 0))
+    reddit_subscribed_count = int(reddit_scope_counts.get("reddit_subscribed", 0))
     summary_rows: list[tuple[str, str]] = [
         ("📺 B 站观看历史", f"{len(history)} 条"),
         ("📺 B 站收藏夹", f"{len(favorites_data)} 条"),
@@ -5933,6 +6412,14 @@ def init(
         ("▶ YouTube 订阅频道", f"{yt_subs_count} 个"),
         ("▶ YouTube 点赞", f"{yt_likes_count} 个"),
         ("🌐 YouTube 入库事件", f"{len(yt_events)} 条"),
+        ("知乎 浏览", f"{zhihu_history_count} 条"),
+        ("知乎 收藏", f"{zhihu_favorite_count} 条"),
+        ("知乎 点赞", f"{zhihu_like_count} 条"),
+        ("🌐 知乎 入库事件", f"{len(zhihu_events)} 条"),
+        ("Reddit 收藏(saved)", f"{reddit_saved_count} 条"),
+        ("Reddit 点赞(upvoted)", f"{reddit_upvoted_count} 条"),
+        ("Reddit 订阅 subreddit", f"{reddit_subscribed_count} 个"),
+        ("🌐 Reddit 入库事件", f"{len(reddit_events)} 条"),
         ("📊 画像建模总事件", f"{len(events)} 条"),
         ("✅ 灵魂画像", "已生成"),
         ("🔍 首轮发现内容", f"{discovered_count} 条"),
@@ -5953,6 +6440,22 @@ def init(
             "https://www.youtube.com / 任务仍在后台跑。装好扩展后重新跑 "
             "[cyan]openbiliclaw init --yes-youtube[/cyan] 可补齐。[/dim]"
         )
+    if (
+        zhihu_history_count + zhihu_favorite_count + zhihu_like_count
+    ) == 0 and zhihu_status != "skipped":
+        console.print(
+            "[dim]ℹ️  知乎 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
+            "https://www.zhihu.com / 任务仍在后台跑。装好扩展后重新跑 "
+            "[cyan]openbiliclaw init --yes-zhihu[/cyan] 可补齐。[/dim]"
+        )
+    if (
+        reddit_saved_count + reddit_upvoted_count + reddit_subscribed_count
+    ) == 0 and reddit_status != "skipped":
+        console.print(
+            "[dim]ℹ️  Reddit 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
+            "https://www.reddit.com / saved、upvoted、订阅列表为空或任务仍在后台跑。"
+            "装好扩展后重新跑 [cyan]openbiliclaw init --yes-reddit[/cyan] 可补齐。[/dim]"
+        )
 
     source_parts = []
     if bilibili_events > 0:
@@ -5963,6 +6466,10 @@ def init(
         source_parts.append(f"[green]{len(dy_events)}[/green] 条抖音信号")
     if len(yt_events) > 0:
         source_parts.append(f"[green]{len(yt_events)}[/green] 条 YouTube 信号")
+    if len(zhihu_events) > 0:
+        source_parts.append(f"[green]{len(zhihu_events)}[/green] 条知乎信号")
+    if len(reddit_events) > 0:
+        source_parts.append(f"[green]{len(reddit_events)}[/green] 条 Reddit 信号")
     if len(source_parts) > 1:
         console.print(
             "[dim]ℹ️  本次画像综合了 "
@@ -6772,6 +7279,249 @@ def fetch_zhihu(
         _print_status_panel("success", "完成", "知乎事件已写入并完成画像重建")
 
 
+@app.command("fetch-reddit")
+def fetch_reddit(
+    target: str = typer.Argument(
+        "all",
+        help="Reddit 搜索关键词、subreddit 名称或 related/read URL。",
+    ),
+    mode: str = typer.Option(
+        "search",
+        "--mode",
+        help="读取模式：bootstrap / search / hot / subreddit / related。",
+        case_sensitive=False,
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="最多抓取的条目数。"),
+    backend: str = typer.Option(
+        "extension",
+        "--backend",
+        help="读取后端：extension / auto / opencli / rdt。",
+        case_sensitive=False,
+    ),
+    wait_seconds: float = typer.Option(
+        180.0,
+        "--wait-seconds",
+        "-w",
+        help="使用 extension 后端时等插件回结果的最大秒数。",
+    ),
+    write_memory: bool = typer.Option(
+        False,
+        "--write-memory",
+        help="将本次抓到的 Reddit 事件写入 memory；默认只做抓取 smoke。",
+    ),
+    rebuild_profile: bool = typer.Option(
+        False,
+        "--rebuild-profile",
+        help="写入 memory 后用本次 Reddit 事件重建画像（会触发真实 LLM 调用）。",
+    ),
+) -> None:
+    """单独测试 Reddit 数据拉取，默认使用 OpenBiliClaw 插件且不生成画像。"""
+    from openbiliclaw.sources.reddit_tasks import (
+        build_reddit_command,
+        probe_reddit_command_backend,
+        reddit_items_to_events,
+        run_reddit_command,
+    )
+
+    selected_mode = mode.strip().lower()
+    if selected_mode == "bootstrap_events":
+        selected_mode = "bootstrap"
+    if selected_mode not in {"bootstrap", "search", "hot", "subreddit", "related"}:
+        raise typer.BadParameter(
+            f"未知的 Reddit 读取模式 `{mode}`，当前支持："
+            "bootstrap、search、hot、subreddit、related。"
+        )
+    write_memory = write_memory or rebuild_profile
+
+    selected_backend_option = backend.strip().lower()
+    if _is_reddit_extension_backend(selected_backend_option):
+        if selected_mode == "bootstrap":
+            _print_page_title("Reddit 事件拉取", "OpenBiliClaw 插件 → saved/upvoted/subscribed")
+            console.print(
+                f"[dim]入队 Reddit bootstrap 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]"
+            )
+            task_id = _enqueue_reddit_bootstrap_task()
+            if not task_id:
+                raise typer.Exit(code=1)
+            events, scope_counts, status_label = _collect_reddit_bootstrap_events(
+                task_id,
+                max_wait_seconds=wait_seconds,
+            )
+            if status_label == "login_required":
+                console.print(
+                    "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
+                    "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+                )
+                raise typer.Exit(code=1)
+            if status_label == "timeout":
+                console.print(
+                    "  [yellow]Reddit 任务超时:扩展未连接 / 任务还在跑。"
+                    "可加 --wait-seconds 240 重试。[/yellow]"
+                )
+                raise typer.Exit(code=1)
+            if status_label == "failed":
+                console.print("  [yellow]Reddit 任务失败 —— 检查扩展日志。[/yellow]")
+                raise typer.Exit(code=1)
+            if not events:
+                _print_status_panel("info", "没有抓到 Reddit 事件", "插件任务执行成功但结果为空。")
+                return
+            _print_key_value_table(
+                "抓取摘要",
+                [
+                    ("后端", "extension"),
+                    ("模式", "bootstrap"),
+                    ("收藏(saved)", str(scope_counts.get("reddit_saved", 0))),
+                    ("点赞(upvoted)", str(scope_counts.get("reddit_upvoted", 0))),
+                    ("订阅 subreddit", str(scope_counts.get("reddit_subscribed", 0))),
+                    ("转换事件", str(len(events))),
+                    ("写入 memory", "将写入" if write_memory else "未写入 memory"),
+                    ("画像生成", "将重建" if rebuild_profile else "未触发画像生成"),
+                ],
+            )
+            for index, event in enumerate(events[:5], start=1):
+                title = str(event.get("title") or "（无标题）")
+                event_type = str(event.get("event_type") or "")
+                url = str(event.get("url") or "")
+                console.print(f"  {index}. [{event_type}] {title}")
+                if url:
+                    console.print(f"     [dim]{url}[/dim]")
+        else:
+            _print_page_title("Reddit 数据拉取", "OpenBiliClaw 插件 → 事件 smoke")
+            payload, budget_key = _reddit_discovery_payload(selected_mode, target, limit=limit)
+            console.print(
+                f"[dim]入队 Reddit {selected_mode} 任务,"
+                f"等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]"
+            )
+            task_id = _enqueue_reddit_discovery_task(
+                selected_mode,
+                payload,
+                daily_budget_key=budget_key,
+            )
+            if not task_id:
+                raise typer.Exit(code=1)
+            rows, scope_counts, status_label = _collect_reddit_discovery_results(
+                task_id,
+                max_wait_seconds=wait_seconds,
+            )
+            if status_label == "login_required":
+                console.print(
+                    "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
+                    "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+                )
+                raise typer.Exit(code=1)
+            if status_label == "timeout":
+                console.print(
+                    "  [yellow]Reddit 任务超时:扩展未连接 / 任务还在跑。"
+                    "可加 --wait-seconds 240 重试。[/yellow]"
+                )
+                raise typer.Exit(code=1)
+            if status_label == "failed":
+                console.print("  [yellow]Reddit 任务失败 —— 检查扩展日志。[/yellow]")
+                raise typer.Exit(code=1)
+            events = reddit_items_to_events(rows, import_source=f"reddit_fetch_{selected_mode}")
+            if not events:
+                _print_status_panel("info", "没有抓到 Reddit 事件", "插件任务执行成功但结果为空。")
+                return
+            _print_key_value_table(
+                "抓取摘要",
+                [
+                    ("后端", "extension"),
+                    ("模式", selected_mode),
+                    ("原始条目", str(len(rows))),
+                    ("转换事件", str(len(events))),
+                    ("分支计数", ", ".join(f"{k}={v}" for k, v in scope_counts.items()) or "-"),
+                    ("写入 memory", "将写入" if write_memory else "未写入 memory"),
+                    ("画像生成", "将重建" if rebuild_profile else "未触发画像生成"),
+                ],
+            )
+            for index, event in enumerate(events[:5], start=1):
+                title = str(event.get("title") or "（无标题）")
+                author = str((event.get("metadata") or {}).get("author") or "")
+                url = str(event.get("url") or "")
+                suffix = f" [dim]{author}[/dim]" if author else ""
+                console.print(f"  {index}. {title}{suffix}")
+                if url:
+                    console.print(f"     [dim]{url}[/dim]")
+    else:
+        if selected_mode == "bootstrap":
+            _print_status_panel(
+                "warning",
+                "Reddit bootstrap 需要插件后端",
+                "saved / upvoted / subscribed 只能在已登录浏览器同源页面内读取。",
+            )
+            raise typer.Exit(code=1)
+        _print_page_title("Reddit 数据拉取", "命令后端 → 事件 smoke")
+        status = probe_reddit_command_backend(backend)
+        if status.state != "ready":
+            _print_status_panel("warning", "Reddit 后端不可用", status.message)
+            raise typer.Exit(code=1)
+
+        selected_backend = status.backend or (
+            "rdt" if backend.strip().lower() == "rdt" else "opencli"
+        )
+        args = build_reddit_command(
+            selected_backend,
+            mode=selected_mode,
+            query=target,
+            subreddit=target if selected_mode in {"hot", "subreddit"} else "",
+            limit=limit,
+        )
+        rows = run_reddit_command(args, timeout=max(30.0, float(limit) * 3.0))
+        events = reddit_items_to_events(rows, import_source=f"reddit_fetch_{selected_mode}")
+
+        if not events:
+            _print_status_panel("info", "没有抓到 Reddit 事件", "命令执行成功但结果为空。")
+            return
+
+        _print_key_value_table(
+            "抓取摘要",
+            [
+                ("命令后端", selected_backend),
+                ("模式", selected_mode),
+                ("原始条目", str(len(rows))),
+                ("转换事件", str(len(events))),
+                ("写入 memory", "将写入" if write_memory else "未写入 memory"),
+                ("画像生成", "将重建" if rebuild_profile else "未触发画像生成"),
+            ],
+        )
+        for index, event in enumerate(events[:5], start=1):
+            title = str(event.get("title") or "（无标题）")
+            author = str((event.get("metadata") or {}).get("author") or "")
+            url = str(event.get("url") or "")
+            suffix = f" [dim]{author}[/dim]" if author else ""
+            console.print(f"  {index}. {title}{suffix}")
+            if url:
+                console.print(f"     [dim]{url}[/dim]")
+
+    if write_memory:
+        written, skipped = _write_events_to_memory(events, source="reddit")
+        console.print(
+            f"  [green]已写入 memory: {written} 条 Reddit 事件"
+            f"[/green]{f'，跳过重复 {skipped} 条。' if skipped else '。'}"
+        )
+
+    if rebuild_profile:
+        _prepare_init_runtime()
+        soul_engine = _build_soul_engine()
+        _print_section_title("1/2 分析 Reddit 偏好")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.analyze_events(events, event_chunk_size=200),
+                label="分析 Reddit 偏好",
+                eta_seconds=180,
+            )
+        )
+        _print_section_title("2/2 生成画像")
+        asyncio.run(
+            _run_with_progress(
+                soul_engine.build_initial_profile(_reddit_events_to_history_items(events)),
+                label="生成灵魂画像",
+                eta_seconds=70,
+            )
+        )
+        _print_status_panel("success", "完成", "Reddit 事件已写入并完成画像重建")
+
+
 @app.command("discover-zhihu")
 def discover_zhihu(
     keywords: list[str] = _ZHIHU_DISCOVER_KEYWORDS_ARGUMENT,
@@ -6855,6 +7605,260 @@ def discover_zhihu(
     )
     for index, item in enumerate(contents[:5], start=1):
         _print_discovered_content_preview(item, index)
+
+
+@app.command("discover-reddit")
+def discover_reddit(
+    query: str = typer.Argument(..., help="Reddit 搜索关键词。"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="最多抓取的搜索结果条数。"),
+    backend: str = typer.Option(
+        "extension",
+        "--backend",
+        help="读取后端：extension / auto / opencli / rdt。",
+        case_sensitive=False,
+    ),
+    wait_seconds: float = typer.Option(
+        180.0,
+        "--wait-seconds",
+        "-w",
+        help="使用 extension 后端时等插件回结果的最大秒数。",
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过 OpenBiliClaw 插件触发一次 Reddit 搜索 discovery。"""
+    from openbiliclaw.sources.reddit_tasks import (
+        build_reddit_command,
+        probe_reddit_command_backend,
+        reddit_items_to_contents,
+        run_reddit_command,
+    )
+
+    selected_backend_option = backend.strip().lower()
+    if _is_reddit_extension_backend(selected_backend_option):
+        _print_page_title("Reddit 内容发现", "OpenBiliClaw 插件搜索 → discovery_candidates")
+        console.print(f"[dim]入队 Reddit search 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
+        payload, budget_key = _reddit_discovery_payload("search", query, limit=limit)
+        task_id = _enqueue_reddit_discovery_task(
+            "search",
+            payload,
+            daily_budget_key=budget_key,
+        )
+        if not task_id:
+            raise typer.Exit(code=1)
+        rows, scope_counts, status_label = _collect_reddit_discovery_results(
+            task_id,
+            max_wait_seconds=wait_seconds,
+        )
+        if status_label == "login_required":
+            console.print(
+                "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
+                "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        if status_label == "timeout":
+            console.print(
+                "  [yellow]Reddit 搜索任务超时:扩展未连接 / 任务还在跑。"
+                "可加 --wait-seconds 240 重试。[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        if status_label == "failed":
+            console.print("  [yellow]Reddit 搜索任务失败 —— 检查扩展日志。[/yellow]")
+            raise typer.Exit(code=1)
+        if status_label == "empty" or not rows:
+            _print_status_panel("info", "没有发现到 Reddit 内容", "插件任务执行成功但结果为空。")
+            return
+        search_count = scope_counts.get("reddit_search", len(rows))
+    else:
+        _print_page_title("Reddit 内容发现", "命令后端搜索 → discovery_candidates")
+        status = probe_reddit_command_backend(backend)
+        if status.state != "ready":
+            _print_status_panel("warning", "Reddit 后端不可用", status.message)
+            raise typer.Exit(code=1)
+
+        selected_backend = status.backend or (
+            "rdt" if backend.strip().lower() == "rdt" else "opencli"
+        )
+        args = build_reddit_command(
+            selected_backend,
+            mode="search",
+            query=query,
+            limit=limit,
+        )
+        rows = run_reddit_command(args, timeout=max(30.0, float(limit) * 3.0))
+        if not rows:
+            _print_status_panel("info", "没有发现到 Reddit 内容", "命令执行成功但结果为空。")
+            return
+        search_count = len(rows)
+
+    strategy = "reddit-search"
+    enqueued = 0
+    contents: list[Any]
+    if no_enqueue:
+        contents = reddit_items_to_contents(rows, strategy=strategy)
+    else:
+        enqueued, contents = _enqueue_reddit_discovery_candidates(rows, strategy=strategy)
+
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("搜索结果", str(search_count)),
+            ("转换候选", str(len(contents))),
+            ("入池候选", "跳过（--no-enqueue）" if no_enqueue else str(enqueued)),
+            ("来源", "reddit"),
+            ("策略", strategy),
+        ],
+    )
+    for index, item in enumerate(contents[:5], start=1):
+        _print_discovered_content_preview(item, index)
+
+
+def _run_reddit_discovery_smoke(
+    *,
+    title: str,
+    task_type: str,
+    strategy: str,
+    scope_key: str,
+    payload: dict[str, object],
+    daily_budget_key: str,
+    wait_seconds: float,
+    no_enqueue: bool,
+) -> None:
+    _print_page_title(title, f"OpenBiliClaw 插件 {strategy} → discovery_candidates")
+    console.print(
+        f"[dim]入队 Reddit {task_type} 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]"
+    )
+    task_id = _enqueue_reddit_discovery_task(
+        task_type,
+        payload,
+        daily_budget_key=daily_budget_key,
+    )
+    if not task_id:
+        raise typer.Exit(code=1)
+
+    items, scope_counts, status_label = _collect_reddit_discovery_results(
+        task_id,
+        max_wait_seconds=wait_seconds,
+    )
+    if status_label == "login_required":
+        console.print(
+            "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
+            "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "timeout":
+        console.print(
+            "  [yellow]Reddit discovery 任务超时:扩展未连接 / 任务还在跑。"
+            "可加 --wait-seconds 240 重试。[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    if status_label == "failed":
+        console.print("  [yellow]Reddit discovery 任务失败 —— 检查扩展日志。[/yellow]")
+        raise typer.Exit(code=1)
+    if status_label == "empty" or not items:
+        _print_status_panel("info", "没有发现到 Reddit 内容", f"{strategy} 返回为空。")
+        return
+
+    enqueued = 0
+    contents: list[Any]
+    if no_enqueue:
+        from openbiliclaw.sources.reddit_tasks import reddit_items_to_contents
+
+        contents = reddit_items_to_contents(items, strategy=strategy)
+    else:
+        enqueued, contents = _enqueue_reddit_discovery_candidates(items, strategy=strategy)
+
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("抓取结果", str(scope_counts.get(scope_key, len(items)))),
+            ("转换候选", str(len(contents))),
+            ("入池候选", "跳过（--no-enqueue）" if no_enqueue else str(enqueued)),
+            ("来源", "reddit"),
+            ("策略", strategy),
+        ],
+    )
+    for index, item in enumerate(contents[:5], start=1):
+        _print_discovered_content_preview(item, index)
+
+
+@app.command("discover-reddit-hot")
+def discover_reddit_hot(
+    subreddit: str = typer.Option("all", "--subreddit", help="热门分支的 subreddit，默认 all。"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="最多抓取的热门条数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次 Reddit 热门 discovery。"""
+    _run_reddit_discovery_smoke(
+        title="Reddit 热门发现",
+        task_type="hot",
+        strategy="reddit-hot",
+        scope_key="reddit_hot",
+        payload={"subreddit": subreddit.strip() or "all", "max_items": max(1, int(limit))},
+        daily_budget_key="daily_hot_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
+@app.command("discover-reddit-subreddit")
+def discover_reddit_subreddit(
+    subreddits: list[str] = _REDDIT_SUBREDDITS_ARGUMENT,
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个 subreddit 最多抓取的内容数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次 Reddit subreddit discovery。"""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected = [value.removeprefix("r/") for value in split_csv_values(subreddits)]
+    _run_reddit_discovery_smoke(
+        title="Reddit Subreddit 发现",
+        task_type="subreddit",
+        strategy="reddit-subreddit",
+        scope_key="reddit_subreddit",
+        payload={"subreddits": selected, "max_items_per_subreddit": max(1, int(limit))},
+        daily_budget_key="daily_subreddit_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
+
+
+@app.command("discover-reddit-related")
+def discover_reddit_related(
+    related_urls: list[str] = _REDDIT_RELATED_URLS_ARGUMENT,
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个种子最多扩展的相关内容数。"),
+    wait_seconds: float = typer.Option(
+        180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
+    ),
+    no_enqueue: bool = typer.Option(
+        False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
+    ),
+) -> None:
+    """通过浏览器插件触发一次 Reddit 相关内容 discovery。"""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected = list(split_csv_values(related_urls))
+    _run_reddit_discovery_smoke(
+        title="Reddit 相关发现",
+        task_type="related",
+        strategy="reddit-related",
+        scope_key="reddit_related",
+        payload={"related_urls": selected, "max_items_per_seed": max(1, int(limit))},
+        daily_budget_key="daily_related_budget",
+        wait_seconds=wait_seconds,
+        no_enqueue=no_enqueue,
+    )
 
 
 def _run_zhihu_discovery_smoke(
@@ -7849,6 +8853,133 @@ def _run_zhihu_discovery(*, limit: int) -> None:
     _print_status_panel(kind, title, body)
 
 
+def _run_reddit_discovery(*, limit: int) -> None:
+    """Run one formal Reddit discovery cycle through the runtime producer."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.runtime.reddit_producer import build_reddit_discovery_producer
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    _require_runtime_config()
+    config = load_config()
+    rd_cfg = getattr(getattr(config, "sources", None), "reddit", None)
+    if rd_cfg is None or not bool(getattr(rd_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Reddit discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.reddit].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    producer = build_reddit_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+    )
+    if producer is None:
+        _print_status_panel(
+            "warning",
+            "Reddit discovery producer 未启动",
+            "请确认 Reddit 来源和 scheduler 均已启用。",
+        )
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(producer.produce_if_due(limit=limit))
+    reason = str(result.get("reason", ""))
+    discovered_raw = result.get("discovered", 0)
+    enqueued_raw = result.get("enqueued", 0)
+    discovered = int(cast("int | float | str | bool", discovered_raw) if discovered_raw else 0)
+    enqueued = int(cast("int | float | str | bool", enqueued_raw) if enqueued_raw else 0)
+    source_counts_raw = result.get("source_counts", {})
+    source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+    source_counts_text = ", ".join(
+        f"{source}:{count}" for source, count in sorted(source_counts.items())
+    )
+    source_modes = ", ".join(str(mode) for mode in getattr(rd_cfg, "source_modes", ()) or ())
+    backend = str(getattr(rd_cfg, "backend", "opencli") or "opencli")
+
+    _print_page_title("Reddit 内容发现", f"正式 discover · {source_modes or 'search'}")
+    if reason == "ok":
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "reddit"),
+                ("来源分布", source_counts_text or "（无）"),
+                ("分支", source_modes or "search"),
+                ("后端", backend),
+            ],
+        )
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "disabled": ("info", "Reddit discovery 已禁用", "请启用 Reddit 来源后重试。"),
+        "throttled": (
+            "info",
+            "距离上次 Reddit discovery 不足最小调度间隔",
+            "可在配置页调整 Reddit 最小调度间隔分钟数。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需继续补充 Reddit 候选。"),
+        "no_profile": ("warning", "尚未初始化 Soul 画像", "请先执行 `openbiliclaw init`。"),
+        "no_keywords": ("info", "没有可用搜索词", "画像兴趣或统一关键词池为空。"),
+        "no_search_seeds": ("info", "没有搜索词", "画像兴趣或统一关键词池为空。"),
+        "no_subreddit_seeds": (
+            "info",
+            "没有 subreddit seed",
+            "先跑 search/hot，或在画像兴趣中提供可搜索的 Reddit 主题。",
+        ),
+        "no_related_seeds": (
+            "info",
+            "没有 related seed",
+            "先跑 search/hot/subreddit 积累 Reddit 内容 URL。",
+        ),
+        "missing": (
+            "warning",
+            "Reddit 命令后端不可用",
+            "请安装并登录 OpenCLI extension/daemon，或安装 rdt 后重试。",
+        ),
+        "login_required": (
+            "warning",
+            "Reddit 未登录",
+            "请在 OpenCLI extension 所在浏览器登录 Reddit，或完成 rdt 登录后重试。",
+        ),
+        "error": ("warning", "Reddit discovery 执行失败", str(result.get("message", ""))),
+        "empty": ("info", "Reddit discovery 返回为空", "命令后端跑通但没有可转换的候选。"),
+    }
+    kind, title, body = messages.get(
+        reason,
+        ("info", "Reddit discovery 未产出内容", reason or "无详细信息"),
+    )
+    _print_status_panel(kind, title, body)
+
+
 @app.command("discover-douyin")
 def discover_douyin(
     keywords: list[str] | None = _DOUYIN_DISCOVERY_KEYWORDS_OPTION,
@@ -7888,7 +9019,7 @@ def discover(
         "bilibili",
         "--source",
         "-s",
-        help="触发发现的内容源：bilibili、xiaohongshu、douyin 或 zhihu。",
+        help="触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu 或 reddit。",
         case_sensitive=False,
     ),
     strategies: list[str] | None = _DISCOVER_STRATEGIES_OPTION,
@@ -7933,9 +9064,20 @@ def discover(
         _run_zhihu_discovery(limit=limit)
         return
 
+    if source_normalized == "reddit":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "reddit 渠道走配置页 source_modes 选择的插件/兼容后端 discovery 分支，"
+                "已忽略策略过滤。",
+            )
+        _run_reddit_discovery(limit=limit)
+        return
+
     if source_normalized != "bilibili":
         raise typer.BadParameter(
-            f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu、douyin、zhihu。"
+            f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu、douyin、zhihu、reddit。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)

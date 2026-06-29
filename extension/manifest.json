@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "OpenBiliClaw",
-    "version": "0.3.99",
+    "version": "0.3.100",
     "description": "跨平台内容发现 AI Agent — 行为采集、画像与智能推荐",
     "permissions": [
         "activeTab",
@@ -18,6 +18,8 @@
         "*://*.douyin.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
+        "*://*.reddit.com/*",
+        "*://*.redd.it/*",
         "*://*.x.com/*",
         "*://*.twitter.com/*",
         "http://127.0.0.1/*",
@@ -80,6 +82,16 @@
             ],
             "js": [
                 "dist/content/zhihu.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "*://*.reddit.com/*",
+                "*://*.redd.it/*"
+            ],
+            "js": [
+                "dist/content/reddit.js"
             ],
             "run_at": "document_idle"
         },

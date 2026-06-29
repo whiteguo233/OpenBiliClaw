@@ -338,6 +338,21 @@ daily_related_budget = 0                # 相关扩展 discovery 每日任务上
 request_interval_seconds = 3            # 后端等待任务时的轮询间隔 / 插件搜索节奏提示
 min_interval_minutes = 60               # ZhihuDiscoveryProducer 两次执行最小间隔
 
+# ── Reddit 专用配置 ──
+# Reddit 当前没有稳定免登录 API；初始化 saved/upvoted/subscribed 事件和 discovery 默认走 OpenBiliClaw 插件登录态。
+# backend=extension 使用本插件；opencli / rdt 为兼容 fallback。
+# enabled=false 时 pool_source_shares 中的 reddit 配额会被丢弃。
+[sources.reddit]
+enabled = false
+backend = "extension"
+source_modes = ["search", "hot", "subreddit", "related"]
+daily_search_budget = 300               # 搜索 discovery 每日条目上限
+daily_hot_budget = 300                  # 热门 discovery 每日条目上限
+daily_subreddit_budget = 300            # subreddit discovery 每日条目上限
+daily_related_budget = 300              # 相关扩展 discovery 每日条目上限
+request_interval_seconds = 3            # 插件任务轮询间隔 / 命令 fallback 超时估算
+min_interval_minutes = 60               # RedditDiscoveryProducer 两次执行最小间隔
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -409,6 +424,7 @@ douyin = 1
 youtube = 1
 twitter = 1
 zhihu = 1
+reddit = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──
 # 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词

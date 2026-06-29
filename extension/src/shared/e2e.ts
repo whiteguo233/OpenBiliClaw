@@ -1,4 +1,4 @@
-export type E2EPlatform = "douyin" | "xiaohongshu" | "twitter";
+export type E2EPlatform = "douyin" | "xiaohongshu" | "twitter" | "reddit";
 
 export type E2EAction =
   | "snapshot"
@@ -54,6 +54,7 @@ export const E2E_PLATFORM_URLS: Record<E2EPlatform, string> = {
   douyin: "https://www.douyin.com/",
   xiaohongshu: "https://www.xiaohongshu.com/explore",
   twitter: "https://x.com/home",
+  reddit: "https://www.reddit.com/",
 };
 
 export const E2E_STATE_CHANGING_ACTIONS = new Set<E2EAction>([
@@ -64,7 +65,7 @@ export const E2E_STATE_CHANGING_ACTIONS = new Set<E2EAction>([
   "bookmark",
 ]);
 
-const E2E_PLATFORMS = new Set<E2EPlatform>(["douyin", "xiaohongshu", "twitter"]);
+const E2E_PLATFORMS = new Set<E2EPlatform>(["douyin", "xiaohongshu", "twitter", "reddit"]);
 const E2E_ACTIONS = new Set<E2EAction>([
   "snapshot",
   "scroll",
@@ -80,6 +81,7 @@ const E2E_DEFAULT_ACTIONS: Record<E2EPlatform, E2EAction[]> = {
   douyin: ["snapshot", "scroll", "click", "share"],
   xiaohongshu: ["snapshot", "scroll", "click", "share"],
   twitter: ["snapshot", "scroll", "click", "share"],
+  reddit: ["snapshot", "scroll", "click", "share"],
 };
 
 function isE2EPlatform(value: unknown): value is E2EPlatform {

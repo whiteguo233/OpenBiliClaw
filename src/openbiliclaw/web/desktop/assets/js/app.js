@@ -84,12 +84,13 @@
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X (Twitter)" },
-      { key: "zhihu", label: "知乎" }
+      { key: "zhihu", label: "知乎" },
+      { key: "reddit", label: "Reddit" }
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu" };
-    const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question"]);
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎", reddit: "Reddit", rd: "Reddit" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit" };
+    const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -99,7 +100,8 @@
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" },
-      { key: "zhihu", label: "知乎" }
+      { key: "zhihu", label: "知乎" },
+      { key: "reddit", label: "Reddit" }
     ];
     const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_REASON_TEXT = {
@@ -611,6 +613,7 @@
         if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
         if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
         if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
+        if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
         return "web";
       }
       if (String(item?.bvid ?? "").trim()) return "bilibili";
@@ -1512,6 +1515,7 @@
       if (item.platform === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${encodeURIComponent(item.bvid)}`;
       if (item.platform === "youtube" && item.content_id) return `https://www.youtube.com/watch?v=${encodeURIComponent(item.content_id)}`;
       if (item.platform === "twitter" && item.content_id) return `https://x.com/i/status/${encodeURIComponent(item.content_id)}`;
+      if (item.platform === "reddit") return "";
       return "";
     }
 
@@ -3578,6 +3582,33 @@
       return selected.length > 0 ? selected : ["search"];
     }
 
+    const REDDIT_SOURCE_MODE_FIELDS = [
+      ["search", "redditModeSearch"],
+      ["hot", "redditModeHot"],
+      ["subreddit", "redditModeSubreddit"],
+      ["related", "redditModeRelated"],
+    ];
+
+    function setRedditSourceModes(rawModes) {
+      const fallbackModes = REDDIT_SOURCE_MODE_FIELDS.map(([mode]) => mode);
+      const selected = new Set(
+        (Array.isArray(rawModes) && rawModes.length > 0 ? rawModes : fallbackModes)
+          .map((mode) => String(mode).trim())
+          .filter(Boolean),
+      );
+      for (const [mode, id] of REDDIT_SOURCE_MODE_FIELDS) {
+        const el = document.getElementById(id);
+        if (el) el.checked = selected.has(mode);
+      }
+    }
+
+    function collectRedditSourceModes() {
+      const selected = REDDIT_SOURCE_MODE_FIELDS
+        .filter(([, id]) => document.getElementById(id)?.checked === true)
+        .map(([mode]) => mode);
+      return selected.length > 0 ? selected : ["search"];
+    }
+
     function joinPath(directory, filename) {
       const dir = String(directory || "").trim();
       const name = String(filename || "").trim();
@@ -3611,15 +3642,16 @@
 
     // Unified per-source login / cookie status (GET /api/sources/status),
     // rendered with separate scheduling and credential/plugin states.
-    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
-    const CURRENT_CREDENTIAL_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
+    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
+    const CURRENT_CREDENTIAL_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
     const SOURCE_ENABLE_SELECT_IDS = {
       bilibili: "bilibiliEnabled",
       xiaohongshu: "xhsEnabled",
       douyin: "douyinEnabled",
       youtube: "youtubeEnabled",
       twitter: "twitterEnabled",
-      zhihu: "zhihuEnabled"
+      zhihu: "zhihuEnabled",
+      reddit: "redditEnabled"
     };
     const SOURCE_ACCESS_STATE = {
       ok: { tone: "ready", label: "接入可用" },
@@ -3891,6 +3923,7 @@
       setInput("shareYoutube", scheduler.pool_source_shares?.youtube);
       setInput("shareTwitter", scheduler.pool_source_shares?.twitter);
       setInput("shareZhihu", scheduler.pool_source_shares?.zhihu);
+      setInput("shareReddit", scheduler.pool_source_shares?.reddit);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -4008,6 +4041,15 @@
       setInput("zhihuDailyRelatedBudget", config.sources?.zhihu?.daily_related_budget);
       setInput("zhihuRequestInterval", config.sources?.zhihu?.request_interval_seconds);
       setInput("zhihuMinInterval", config.sources?.zhihu?.min_interval_minutes);
+      setSelect("redditEnabled", config.sources?.reddit?.enabled === true ? "on" : "off");
+      setSelect("redditBackend", config.sources?.reddit?.backend || "extension");
+      setRedditSourceModes(config.sources?.reddit?.source_modes);
+      setInput("redditDailySearchBudget", config.sources?.reddit?.daily_search_budget);
+      setInput("redditDailyHotBudget", config.sources?.reddit?.daily_hot_budget);
+      setInput("redditDailySubredditBudget", config.sources?.reddit?.daily_subreddit_budget);
+      setInput("redditDailyRelatedBudget", config.sources?.reddit?.daily_related_budget);
+      setInput("redditRequestInterval", config.sources?.reddit?.request_interval_seconds);
+      setInput("redditMinInterval", config.sources?.reddit?.min_interval_minutes);
       void renderSourcesStatus();
       void renderSourceCredentials();
 
@@ -4433,6 +4475,17 @@
             daily_related_budget: getIntInput("zhihuDailyRelatedBudget", 0),
             request_interval_seconds: getIntInput("zhihuRequestInterval", 3),
             min_interval_minutes: getIntInput("zhihuMinInterval", 60)
+          },
+          reddit: {
+            enabled: $("#redditEnabled").value === "on",
+            backend: getInput("redditBackend") || "extension",
+            source_modes: collectRedditSourceModes(),
+            daily_search_budget: getIntInput("redditDailySearchBudget", 300),
+            daily_hot_budget: getIntInput("redditDailyHotBudget", 300),
+            daily_subreddit_budget: getIntInput("redditDailySubredditBudget", 300),
+            daily_related_budget: getIntInput("redditDailyRelatedBudget", 300),
+            request_interval_seconds: getIntInput("redditRequestInterval", 3),
+            min_interval_minutes: getIntInput("redditMinInterval", 60)
           }
         },
         scheduler: {
@@ -4456,7 +4509,8 @@
             douyin: getIntInput("shareDouyin", 1),
             youtube: getIntInput("shareYoutube", 1),
             twitter: getIntInput("shareTwitter", 1),
-            zhihu: getIntInput("shareZhihu", 1)
+            zhihu: getIntInput("shareZhihu", 1),
+            reddit: getIntInput("shareReddit", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -4911,7 +4965,7 @@
       safeBind(`#${id}`, "change", () => renderSourcesStatusRows(state.sourceStatus));
     });
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
@@ -4920,6 +4974,7 @@
         setInput("shareYoutube", shares.youtube);
         if (shares.twitter !== undefined) setInput("shareTwitter", shares.twitter);
         if (shares.zhihu !== undefined) setInput("shareZhihu", shares.zhihu);
+        if (shares.reddit !== undefined) setInput("shareReddit", shares.reddit);
         showToast("已应用来源占比建议");
       } else {
         showToast("没有拿到占比建议");

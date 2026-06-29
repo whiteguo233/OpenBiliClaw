@@ -91,6 +91,15 @@ export function startCollector(adapter: PlatformAdapter): void {
       snapshot: SNAPSHOT_TYPES.has(type),
     });
 
+  const buildTargetMetadata = (target: Element): Record<string, unknown> => {
+    if (typeof adapter.buildTargetMetadata !== "function") return {};
+    try {
+      return adapter.buildTargetMetadata(target, window.location.href);
+    } catch {
+      return {};
+    }
+  };
+
   const sendSnapshot = (reason: string): void => {
     sendEvent(createEvent("snapshot", { reason }));
   };
@@ -208,8 +217,10 @@ export function startCollector(adapter: PlatformAdapter): void {
       const target = event.target;
       const href = closestHref(target);
       const targetText = target.textContent?.trim().slice(0, 100) ?? null;
+      const targetMetadata = buildTargetMetadata(target);
       sendEvent(
         createEvent("click", {
+          ...targetMetadata,
           tagName: target.tagName,
           text: targetText,
           href,
@@ -222,6 +233,7 @@ export function startCollector(adapter: PlatformAdapter): void {
 
       if (!actionType) return;
       const action = normalizeActionSignal(actionType, {
+        ...targetMetadata,
         targetText: actionHint.text?.trim().slice(0, 100) ?? targetText,
         href,
         actionLabel: actionHint.ariaLabel,

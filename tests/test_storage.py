@@ -2177,6 +2177,12 @@ class TestDatabase:
             )
             db.insert_event(
                 "view",
+                title="Reddit 帖子",
+                url="https://www.reddit.com/r/LocalLLaMA/comments/abc123/title/",
+                metadata={"source_platform": "reddit", "post_id": "abc123"},
+            )
+            db.insert_event(
+                "view",
                 title="B 站视频",
                 url="https://www.bilibili.com/video/BV1SEEN",
                 metadata={"source_platform": "bilibili", "bvid": "BV1SEEN"},
@@ -2187,6 +2193,7 @@ class TestDatabase:
             assert "xiaohongshu:note-seen" in keys
             assert "douyin:7123456789012345678" in keys
             assert "youtube:abc1234defg" in keys
+            assert "reddit:t3_abc123" in keys
             assert "bilibili:BV1SEEN" in keys
             assert "BV1SEEN" in keys
 

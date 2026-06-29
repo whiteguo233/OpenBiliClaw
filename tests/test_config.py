@@ -108,6 +108,7 @@ class TestConfigDefaults:
             "youtube": 1,
             "twitter": 1,
             "zhihu": 1,
+            "reddit": 1,
         }
 
     def test_bilibili_source_enabled_defaults_true(self) -> None:
@@ -872,6 +873,7 @@ youtube = 3
         "youtube": 3,
         "twitter": 1,
         "zhihu": 1,
+        "reddit": 1,
     }
 
 
@@ -892,6 +894,7 @@ twitter = 1
     config = load_config(toml_path)
 
     assert config.scheduler.pool_source_shares["zhihu"] == 1
+    assert config.scheduler.pool_source_shares["reddit"] == 1
 
 
 def test_build_config_supports_sources_browser_cdp_url() -> None:
@@ -947,6 +950,20 @@ def test_sources_youtube_defaults() -> None:
     assert config.sources.youtube.daily_channel_budget == 0
     assert config.sources.youtube.request_interval_seconds == 2
     assert config.sources.youtube.min_interval_minutes == 60
+
+
+def test_sources_reddit_defaults() -> None:
+    config = _build_config({})
+
+    assert config.sources.reddit.enabled is False
+    assert config.sources.reddit.backend == "extension"
+    assert config.sources.reddit.source_modes == ("search", "hot", "subreddit", "related")
+    assert config.sources.reddit.daily_search_budget == 300
+    assert config.sources.reddit.daily_hot_budget == 300
+    assert config.sources.reddit.daily_subreddit_budget == 300
+    assert config.sources.reddit.daily_related_budget == 300
+    assert config.sources.reddit.request_interval_seconds == 3
+    assert config.sources.reddit.min_interval_minutes == 60
 
 
 def test_build_config_supports_sources_xiaohongshu(tmp_path: Path) -> None:
@@ -1022,6 +1039,37 @@ min_interval_minutes = 45
     assert config.sources.youtube.min_interval_minutes == 45
 
 
+def test_build_config_supports_sources_reddit(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[sources.reddit]
+enabled = true
+backend = "rdt"
+source_modes = ["search", "hot", "subreddit", "related", "unknown"]
+daily_search_budget = 4
+daily_hot_budget = 2
+daily_subreddit_budget = 3
+daily_related_budget = 5
+request_interval_seconds = 6
+min_interval_minutes = 45
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.sources.reddit.enabled is True
+    assert config.sources.reddit.backend == "rdt"
+    assert config.sources.reddit.source_modes == ("search", "hot", "subreddit", "related")
+    assert config.sources.reddit.daily_search_budget == 4
+    assert config.sources.reddit.daily_hot_budget == 2
+    assert config.sources.reddit.daily_subreddit_budget == 3
+    assert config.sources.reddit.daily_related_budget == 5
+    assert config.sources.reddit.request_interval_seconds == 6
+    assert config.sources.reddit.min_interval_minutes == 45
+
+
 def test_save_config_round_trips_sources_youtube(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config = Config()
@@ -1041,6 +1089,40 @@ def test_save_config_round_trips_sources_youtube(tmp_path: Path) -> None:
     assert loaded.sources.youtube.daily_channel_budget == 8
     assert loaded.sources.youtube.request_interval_seconds == 4
     assert loaded.sources.youtube.min_interval_minutes == 30
+
+
+def test_save_config_round_trips_sources_reddit(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.sources.reddit.enabled = True
+    config.sources.reddit.backend = "rdt"
+    config.sources.reddit.source_modes = ("search", "hot", "subreddit", "related")
+    config.sources.reddit.daily_search_budget = 7
+    config.sources.reddit.daily_hot_budget = 3
+    config.sources.reddit.daily_subreddit_budget = 4
+    config.sources.reddit.daily_related_budget = 5
+    config.sources.reddit.request_interval_seconds = 6
+    config.sources.reddit.min_interval_minutes = 30
+    config.scheduler.pool_source_shares["reddit"] = 2
+
+    save_config(config, config_path)
+    rendered = config_path.read_text(encoding="utf-8")
+
+    assert "[sources.reddit]" in rendered
+    assert 'source_modes = ["search", "hot", "subreddit", "related"]' in rendered
+    assert "daily_subreddit_budget = 4" in rendered
+    assert "reddit = 2" in rendered
+    loaded = load_config(config_path)
+    assert loaded.sources.reddit.enabled is True
+    assert loaded.sources.reddit.backend == "rdt"
+    assert loaded.sources.reddit.source_modes == ("search", "hot", "subreddit", "related")
+    assert loaded.sources.reddit.daily_search_budget == 7
+    assert loaded.sources.reddit.daily_hot_budget == 3
+    assert loaded.sources.reddit.daily_subreddit_budget == 4
+    assert loaded.sources.reddit.daily_related_budget == 5
+    assert loaded.sources.reddit.request_interval_seconds == 6
+    assert loaded.sources.reddit.min_interval_minutes == 30
+    assert loaded.scheduler.pool_source_shares["reddit"] == 2
 
 
 def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None:
@@ -1075,6 +1157,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "youtube": 1,
         "twitter": 3,
         "zhihu": 1,
+        "reddit": 2,
     }
 
     save_config(config, config_path)
@@ -1087,6 +1170,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "youtube": 1,
         "twitter": 3,
         "zhihu": 1,
+        "reddit": 2,
     }
 
 

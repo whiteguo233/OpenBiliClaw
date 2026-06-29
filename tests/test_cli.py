@@ -2490,7 +2490,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   5. "n" — skip module overrides
     #   6. "y" — allow LAN access
     #   7-9. "" — accept Bili history/favorite/follow init limits
-    #   10+. "n" — skip optional source prompts (xhs / douyin / youtube / X / zhihu)
+    #   10+. "n" — skip optional source prompts (xhs / douyin / youtube / X / zhihu / reddit)
     wizard_input = (
         "\n".join(
             [
@@ -2503,6 +2503,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "",
                 "",
                 "",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -2579,9 +2580,9 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube / X / Zhihu so this test stays focused on the
+    # to XHS / Douyin / YouTube / X / Zhihu / Reddit so this test stays focused on the
     # cookie-prompt path.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\n")
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\n\nn\nn\nn\nn\nn\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"
@@ -3753,12 +3754,14 @@ def test_persist_init_source_enabled_flags_updates_optional_sources(
         include_dy=True,
         include_yt=True,
         include_zhihu=True,
+        include_reddit=True,
     )
 
     assert config.sources.xiaohongshu.enabled is False
     assert config.sources.douyin.enabled is True
     assert config.sources.youtube.enabled is True
     assert config.sources.zhihu.enabled is True
+    assert config.sources.reddit.enabled is True
     assert saved == [config]
 
 
@@ -3795,6 +3798,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         # enabled_sources; effective_pool_source_shares drops it while disabled.
         "twitter": 1,
         "zhihu": 1,
+        "reddit": 1,
     }
 
 
@@ -3836,6 +3840,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         # later while disabled.
         "twitter": 1,
         "zhihu": 1,
+        "reddit": 1,
     }
 
 
@@ -5322,6 +5327,71 @@ def test_fetch_zhihu_command_explains_login_required(
     assert "先在当前浏览器登录知乎" in result.output
 
 
+def test_enqueue_reddit_bootstrap_requests_three_signal_scopes_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "reddit.db")
+    database.initialize()
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: database)
+    monkeypatch.setattr(cli_module, "_kick_task_dispatcher", lambda source: None)
+
+    task_id = cli_module._enqueue_reddit_bootstrap_task()
+
+    assert task_id is not None
+    task = RedditTaskQueue(database).get(task_id)
+    assert task is not None
+    payload = json.loads(str(task["payload_json"]))
+    assert payload["scopes"] == ["reddit_saved", "reddit_upvoted", "reddit_subscribed"]
+    assert payload["max_items_per_scope"] == 300
+
+
+def test_collect_reddit_bootstrap_events_converts_completed_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "reddit.db")
+    database.initialize()
+    queue = RedditTaskQueue(database)
+    task_id = queue.enqueue_with_id(
+        "bootstrap_events",
+        {"scopes": ["reddit_saved", "reddit_upvoted", "reddit_subscribed"]},
+    )
+    assert task_id is not None
+    assert queue.next_pending() is not None
+    queue.merge_result(
+        task_id,
+        items=[
+            {
+                "scope": "reddit_saved",
+                "id": "abc123",
+                "title": "Saved agent essay",
+                "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/title/",
+                "subreddit": "LocalLLaMA",
+            }
+        ],
+        scope_counts={"reddit_saved": 1, "reddit_upvoted": 0, "reddit_subscribed": 0},
+        complete=True,
+    )
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: database)
+
+    events, counts, status = cli_module._collect_reddit_bootstrap_events(
+        task_id,
+        max_wait_seconds=0,
+    )
+
+    assert status == "ok"
+    assert counts["reddit_saved"] == 1
+    assert events[0]["event_type"] == "favorite"
+    assert events[0]["metadata"]["source_platform"] == "reddit"
+
+
 def test_discover_zhihu_command_enqueues_search_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5456,6 +5526,325 @@ def test_discover_source_zhihu_runs_formal_producer(
     assert result.exit_code == 0, result.output
     assert calls == {"limit": 11}
     assert "discover-zhihu" not in result.output
+
+
+def test_discover_source_reddit_runs_formal_producer(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    calls: dict[str, int] = {}
+
+    def run_reddit_discovery(*, limit: int) -> None:
+        calls["limit"] = limit
+
+    monkeypatch.setattr(cli_module, "_run_reddit_discovery", run_reddit_discovery, raising=False)
+
+    result = runner.invoke(app, ["discover", "--source", "reddit", "--limit", "11"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == {"limit": 11}
+
+
+def test_discover_reddit_plugin_enqueues_search_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    task_payload: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: pytest.fail("default discover-reddit must use the extension backend"),
+    )
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        task_payload.update(
+            {
+                "task_type": task_type,
+                "payload": payload,
+                "daily_budget_key": daily_budget_key,
+            }
+        )
+        return "reddit-task"
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_task",
+        enqueue_task,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_reddit_discovery_results",
+        lambda task_id, *, max_wait_seconds: (
+            [
+                {
+                    "id": "abc123",
+                    "title": "Local-first agents",
+                    "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                    "subreddit": "LocalLLaMA",
+                    "author": "agent_builder",
+                    "search_keyword": "local agents",
+                }
+            ],
+            {"reddit_search": 1},
+            "ok",
+        ),
+        raising=False,
+    )
+    enqueued: dict[str, object] = {}
+
+    def enqueue(items: list[dict[str, Any]], *, strategy: str) -> tuple[int, list[Any]]:
+        enqueued["items"] = items
+        enqueued["strategy"] = strategy
+        return 1, [
+            DiscoveredContent(
+                title="Local-first agents",
+                source_platform="reddit",
+                source_strategy=strategy,
+                content_url="https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+            )
+        ]
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_candidates",
+        enqueue,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["discover-reddit", "local agents", "--limit", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert task_payload == {
+        "task_type": "search",
+        "payload": {"keywords": ["local agents"], "max_items_per_keyword": 5},
+        "daily_budget_key": "daily_search_budget",
+    }
+    assert enqueued["strategy"] == "reddit-search"
+    assert "Reddit" in result.output
+    assert "Local-first agents" in result.output
+
+
+def test_fetch_reddit_default_does_not_persist_or_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    task_payload: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: pytest.fail("default fetch-reddit must use the extension backend"),
+    )
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        task_payload.update(
+            {
+                "task_type": task_type,
+                "payload": payload,
+                "daily_budget_key": daily_budget_key,
+            }
+        )
+        return "reddit-task"
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_task",
+        enqueue_task,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_reddit_discovery_results",
+        lambda task_id, *, max_wait_seconds: (
+            [
+                {
+                    "id": "abc123",
+                    "title": "Local-first agents",
+                    "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                    "subreddit": "LocalLLaMA",
+                    "author": "agent_builder",
+                }
+            ],
+            {"reddit_search": 1},
+            "ok",
+        ),
+        raising=False,
+    )
+
+    def trip_write_memory(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("fetch-reddit must not write memory without --write-memory")
+
+    def trip_soul_engine() -> object:
+        raise AssertionError("fetch-reddit must not rebuild profile by default")
+
+    monkeypatch.setattr(cli_module, "_write_events_to_memory", trip_write_memory)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", trip_soul_engine)
+
+    result = runner.invoke(app, ["fetch-reddit", "local agents", "--limit", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert task_payload == {
+        "task_type": "search",
+        "payload": {"keywords": ["local agents"], "max_items_per_keyword": 5},
+        "daily_budget_key": "daily_search_budget",
+    }
+    assert "Reddit" in result.output
+    assert "未写入 memory" in result.output
+    assert "Local-first agents" in result.output
+
+
+def test_fetch_reddit_write_memory_persists_converted_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    written: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: SimpleNamespace(backend="rdt", state="ready", message="ok"),
+    )
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        lambda *_a, **_kw: [
+            {
+                "id": "abc123",
+                "title": "Local-first agents",
+                "permalink": "/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                "subreddit": "LocalLLaMA",
+                "author": "agent_builder",
+            }
+        ],
+    )
+
+    def write_events(events: list[dict[str, Any]], *, source: str) -> tuple[int, int]:
+        written["events"] = events
+        written["source"] = source
+        return len(events), 0
+
+    monkeypatch.setattr(cli_module, "_write_events_to_memory", write_events)
+
+    result = runner.invoke(
+        app,
+        ["fetch-reddit", "local agents", "--backend", "rdt", "--write-memory"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert written["source"] == "reddit"
+    events = cast("list[dict[str, Any]]", written["events"])
+    assert events[0]["event_type"] == "view"
+    assert events[0]["metadata"]["source_platform"] == "reddit"
+    assert events[0]["metadata"]["import_source"] == "reddit_fetch_search"
+
+
+def test_discover_reddit_hot_uses_plugin_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    task_payload: dict[str, object] = {}
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        task_payload.update(
+            {
+                "task_type": task_type,
+                "payload": payload,
+                "daily_budget_key": daily_budget_key,
+            }
+        )
+        return "reddit-hot-task"
+
+    monkeypatch.setattr(cli_module, "_enqueue_reddit_discovery_task", enqueue_task, raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_reddit_discovery_results",
+        lambda task_id, *, max_wait_seconds: (
+            [
+                {
+                    "id": "hot123",
+                    "title": "Hot Reddit topic",
+                    "permalink": "/r/all/comments/hot123/hot_reddit_topic/",
+                    "subreddit": "all",
+                }
+            ],
+            {"reddit_hot": 1},
+            "ok",
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["discover-reddit-hot", "--limit", "5", "--no-enqueue"])
+
+    assert result.exit_code == 0, result.output
+    assert task_payload == {
+        "task_type": "hot",
+        "payload": {"subreddit": "all", "max_items": 5},
+        "daily_budget_key": "daily_hot_budget",
+    }
+    assert "reddit-hot" in result.output
+
+
+def test_discover_reddit_related_uses_plugin_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    task_payload: dict[str, object] = {}
+    url = "https://www.reddit.com/r/LocalLLaMA/comments/abc123/title/"
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        task_payload.update(
+            {
+                "task_type": task_type,
+                "payload": payload,
+                "daily_budget_key": daily_budget_key,
+            }
+        )
+        return "reddit-related-task"
+
+    monkeypatch.setattr(cli_module, "_enqueue_reddit_discovery_task", enqueue_task, raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_reddit_discovery_results",
+        lambda task_id, *, max_wait_seconds: (
+            [
+                {
+                    "id": "rel123",
+                    "title": "Related Reddit topic",
+                    "permalink": "/r/LocalLLaMA/comments/rel123/related/",
+                    "subreddit": "LocalLLaMA",
+                }
+            ],
+            {"reddit_related": 1},
+            "ok",
+        ),
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["discover-reddit-related", url, "--limit", "3", "--no-enqueue"])
+
+    assert result.exit_code == 0, result.output
+    assert task_payload == {
+        "task_type": "related",
+        "payload": {"related_urls": [url], "max_items_per_seed": 3},
+        "daily_budget_key": "daily_related_budget",
+    }
+    assert "reddit-related" in result.output
 
 
 def test_fetch_douyin_does_not_rebuild_profile_cli_side(
@@ -5842,6 +6231,16 @@ def test_init_yes_x_flag_is_registered() -> None:
     assert "--yes-x" in decls
 
 
+def test_init_yes_reddit_flag_is_registered() -> None:
+    import inspect
+
+    sig = inspect.signature(cli_module.init)
+    assert "skip_reddit_prompt" in sig.parameters
+    default = sig.parameters["skip_reddit_prompt"].default
+    decls = getattr(default, "param_decls", ())
+    assert "--yes-reddit" in decls
+
+
 # ── X (Twitter) likes/bookmarks init backfill ────────────────────────
 
 
@@ -6042,6 +6441,38 @@ def _guided_init_pipeline_doubles(monkeypatch) -> dict[str, Any]:
             )
         ),
     )
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_bootstrap_task",
+        lambda **kwargs: "reddit-task-1",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_reddit_bootstrap_events",
+        lambda task_id, **kwargs: (
+            (
+                list(state.get("reddit_events", [])),
+                {
+                    "reddit_saved": 1,
+                    "reddit_upvoted": 0,
+                    "reddit_subscribed": 0,
+                },
+                "ok",
+            )
+            if task_id
+            else (
+                [],
+                {
+                    "reddit_saved": 0,
+                    "reddit_upvoted": 0,
+                    "reddit_subscribed": 0,
+                },
+                "skipped",
+            )
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(cli_module, "_maybe_update_init_source_shares", lambda counts: None)
     monkeypatch.setattr(cli_module, "_build_draft_profile_for_discover", lambda memory: object())
 
@@ -6184,6 +6615,53 @@ def test_run_guided_init_all_sources_empty_raises_empty_signals(monkeypatch) -> 
     assert excinfo.value.reason == "empty_signals"
 
 
+def test_run_guided_init_without_bilibili_builds_profile_from_reddit(monkeypatch) -> None:
+    import asyncio
+
+    state = _guided_init_pipeline_doubles(monkeypatch)
+    state["reddit_events"] = [
+        {
+            "event_type": "favorite",
+            "title": "Practical local agent notes",
+            "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/title/",
+            "context": "在Reddit收藏了《Practical local agent notes》,作者:u/agent_builder",
+            "metadata": {
+                "source_platform": "reddit",
+                "author": "u/agent_builder",
+                "scope": "reddit_saved",
+                "import_source": "reddit_bootstrap_events",
+            },
+        }
+    ]
+
+    result = asyncio.run(
+        cli_module.run_guided_init(
+            client=None,
+            memory=state["memory"],
+            soul_engine=state["soul"],
+            favorite_limit=0,
+            follow_limit=0,
+            include_bili=False,
+            include_xhs=False,
+            include_dy=False,
+            include_yt=False,
+            include_zhihu=False,
+            include_reddit=True,
+            target_pool_count=10,
+            discover_backfill=state["backfill"],
+        )
+    )
+
+    assert result.history == []
+    assert result.bilibili_event_count == 0
+    assert result.reddit_status == "ok"
+    assert result.reddit_scope_counts["reddit_saved"] == 1
+    assert state["analyzed"] == state["reddit_events"]
+    assert state["profile_history"]
+    assert state["profile_history"][0]["source_platform"] == "reddit"
+    assert state["propagated"] == state["reddit_events"]
+
+
 def test_init_command_rejects_no_sources_at_all(monkeypatch) -> None:
     """--no-bilibili plus every other source disabled must exit with guidance."""
     runner = CliRunner()
@@ -6209,3 +6687,87 @@ def test_init_command_rejects_no_sources_at_all(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "至少需要一个数据来源" in result.output
+
+
+def test_init_command_allows_reddit_as_only_profile_signal_source(monkeypatch) -> None:
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module, "_prepare_init_runtime", lambda: None)
+    monkeypatch.setattr(
+        cli_module, "_get_runtime_database", lambda: SimpleNamespace(max_llm_usage_id=lambda: None)
+    )
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: object())
+    monkeypatch.setattr(
+        cli_module,
+        "_build_bilibili_client",
+        lambda: (_ for _ in ()).throw(AssertionError("client must not be built")),
+    )
+    monkeypatch.setattr(cli_module, "_ask_network_binding", lambda: False)
+    monkeypatch.setattr(cli_module, "_persist_api_host_choice", lambda **kwargs: None)
+    monkeypatch.setattr(cli_module, "_maybe_setup_password_in_init", lambda **kwargs: None)
+    monkeypatch.setattr(cli_module, "_notify_running_server_init_completed", lambda: None)
+    monkeypatch.setattr(cli_module, "_print_init_cost_summary", lambda *args, **kwargs: None)
+
+    captured: dict[str, object] = {}
+
+    async def _fake_init(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            history=[],
+            favorites_data=[],
+            following_data=[],
+            events=[
+                {
+                    "event_type": "favorite",
+                    "title": "Reddit saved",
+                    "metadata": {"source_platform": "reddit"},
+                }
+            ],
+            bilibili_event_count=0,
+            xhs_events=[],
+            xhs_scope_counts={},
+            xhs_status="skipped",
+            dy_events=[],
+            dy_scope_counts={},
+            dy_status="skipped",
+            yt_events=[],
+            yt_scope_counts={},
+            yt_status="skipped",
+            zhihu_events=[],
+            zhihu_scope_counts={},
+            zhihu_status="skipped",
+            reddit_events=[
+                {
+                    "event_type": "favorite",
+                    "title": "Reddit saved",
+                    "metadata": {"source_platform": "reddit"},
+                }
+            ],
+            reddit_scope_counts={"reddit_saved": 1},
+            reddit_status="ok",
+            profile_data={"ok": True},
+            discovered_count=0,
+            discovery_error=False,
+            discover_exc=None,
+        )
+
+    monkeypatch.setattr(cli_module, "run_guided_init", _fake_init)
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--no-bilibili",
+            "--no-xhs",
+            "--no-douyin",
+            "--no-youtube",
+            "--no-x",
+            "--no-zhihu",
+            "--yes-reddit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["include_bili"] is False
+    assert captured["include_reddit"] is True
+    assert "Reddit" in result.output

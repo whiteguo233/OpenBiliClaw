@@ -441,6 +441,15 @@ class _FakeXProducer:
         return {"enqueued": 3, "discovered": 3, "reason": "ok"}
 
 
+class _FakeRedditProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 3, "discovered": 3, "reason": "ok"}
+
+
 class _FakeRecommendationEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, object]], dict[str, object], int]] = []
@@ -511,6 +520,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
     ("_loop_x_producer", ("_tick_x_producer",)),
+    ("_loop_reddit_producer", ("_tick_reddit_producer",)),
     (
         "_loop_proactive_push",
         (
@@ -3253,6 +3263,51 @@ async def test_x_producer_skips_when_not_configured() -> None:
 
     # No producer wired → tick is a safe no-op (does not raise).
     await controller._tick_x_producer()
+
+
+async def test_reddit_producer_runs_when_reddit_under_quota() -> None:
+    producer = _FakeRedditProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "reddit": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "reddit": 2},
+        discovery_limit=30,
+        reddit_producer=producer,
+    )
+
+    await controller._tick_reddit_producer()
+
+    assert producer.calls == [30]
+
+
+async def test_reddit_producer_skips_when_reddit_at_quota() -> None:
+    producer = _FakeRedditProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "reddit": 120},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "reddit": 2},
+        reddit_producer=producer,
+    )
+
+    await controller._tick_reddit_producer()
+
+    assert producer.calls == []
 
 
 def test_pool_cap_total_trim_receives_raw_ceiling_source_quotas() -> None:

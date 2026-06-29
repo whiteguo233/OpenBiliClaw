@@ -124,6 +124,7 @@ const SOURCE_LABEL_MAP = {
   youtube: "YouTube",
   twitter: "X (Twitter)",
   zhihu: "知乎",
+  reddit: "Reddit",
   web: "Web",
 };
 
@@ -142,6 +143,8 @@ const SOURCE_ALIAS_MAP = {
   twitter: "twitter",
   zh: "zhihu",
   zhihu: "zhihu",
+  rd: "reddit",
+  reddit: "reddit",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -175,6 +178,14 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   "zhihu-feed": "知乎首页",
   "zhihu-creator": "知乎作者",
   "zhihu-related": "知乎相关",
+  reddit_search: "Reddit 搜索",
+  reddit_hot: "Reddit 热门",
+  reddit_subreddit: "Reddit 社区",
+  reddit_related: "Reddit 相关",
+  "reddit-search": "Reddit 搜索",
+  "reddit-hot": "Reddit 热门",
+  "reddit-subreddit": "Reddit 社区",
+  "reddit-related": "Reddit 相关",
 };
 
 function urlHostMatches(url, hostnames) {
@@ -201,6 +212,7 @@ export function normalizeSourcePlatform(item) {
     if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
     if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
     if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
+    if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
     return "web";
   }
   if (normalizeText(item?.bvid)) return "bilibili";
@@ -219,6 +231,7 @@ function formatRuntimeTopicLabel(value) {
   if (key.startsWith("xhs-extension-")) return "小红书";
   if (key.startsWith("dy-plugin-") || key.startsWith("douyin-")) return "抖音";
   if (key.startsWith("yt-") || key.startsWith("youtube-")) return "YouTube";
+  if (key.startsWith("reddit-")) return "Reddit";
   return text;
 }
 
@@ -264,7 +277,7 @@ export function buildContentUrl(item) {
   if (!vid) return "";
   if (platform === "youtube") return buildYouTubeUrl(vid);
   if (platform === "twitter") return buildTwitterUrl(vid);
-  if (platform === "zhihu") return "";
+  if (platform === "zhihu" || platform === "reddit") return "";
   return buildVideoUrl(vid);
 }
 
@@ -303,7 +316,15 @@ export function normalizeRecommendation(item) {
   };
 }
 
-const TEXT_CARD_CONTENT_TYPES = new Set(["tweet", "thread", "answer", "article", "question"]);
+const TEXT_CARD_CONTENT_TYPES = new Set([
+  "tweet",
+  "thread",
+  "answer",
+  "article",
+  "question",
+  "post",
+  "comment",
+]);
 
 // Decide the media slot for a recommendation card. Text-first sources
 // (X tweet/thread, Zhihu answer/article/question) render a no-cover text card from

@@ -43,6 +43,7 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
     "aweme_id",
     "video_id",
     "yt_video_id",
+    "post_id",
 )
 
 
@@ -120,6 +121,8 @@ _YOUTUBE_SOURCE_FAMILY = "youtube"
 _YOUTUBE_SOURCE_PREFIXES = ("yt-", "yt_", "youtube")
 _TWITTER_SOURCE_FAMILY = "twitter"
 _TWITTER_SOURCE_PREFIXES = ("x-", "x_", "twitter")
+_REDDIT_SOURCE_FAMILY = "reddit"
+_REDDIT_SOURCE_PREFIXES = ("reddit-", "reddit_")
 _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "manufacturing",
@@ -337,6 +340,8 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
         return _YOUTUBE_SOURCE_FAMILY
     if platform in {_TWITTER_SOURCE_FAMILY, "x"} or source_key.startswith(_TWITTER_SOURCE_PREFIXES):
         return _TWITTER_SOURCE_FAMILY
+    if platform in {_REDDIT_SOURCE_FAMILY, "rd"} or source_key.startswith(_REDDIT_SOURCE_PREFIXES):
+        return _REDDIT_SOURCE_FAMILY
     if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
         return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
@@ -353,6 +358,8 @@ def _normalize_source_platform_key(source_platform: object) -> str:
         return _YOUTUBE_SOURCE_FAMILY
     if raw in {_TWITTER_SOURCE_FAMILY, "x"}:
         return _TWITTER_SOURCE_FAMILY
+    if raw in {_REDDIT_SOURCE_FAMILY, "rd"}:
+        return _REDDIT_SOURCE_FAMILY
     if raw in {_BILIBILI_SOURCE_FAMILY, "bili"}:
         return _BILIBILI_SOURCE_FAMILY
     return raw
@@ -5746,6 +5753,12 @@ class Database:
                 value = str(raw_value).strip()
                 if value:
                     content_ids.add(value)
+                    if (
+                        platform == _REDDIT_SOURCE_FAMILY
+                        and not value.startswith("t3_")
+                        and re.fullmatch(r"[A-Za-z0-9_]+", value)
+                    ):
+                        content_ids.add(f"t3_{value}")
 
         url_content_id = cls._extract_content_id_from_url(platform, url)
         if url_content_id:
@@ -5784,6 +5797,8 @@ class Database:
             or host.endswith(".twitter.com")
         ):
             return _TWITTER_SOURCE_FAMILY
+        if host == "reddit.com" or host.endswith(".reddit.com") or host == "redd.it":
+            return _REDDIT_SOURCE_FAMILY
         return ""
 
     @staticmethod
@@ -5816,6 +5831,12 @@ class Database:
             match = _BVID_PATTERN.search(url)
             if match:
                 return match.group(1)
+        if platform == _REDDIT_SOURCE_FAMILY:
+            host = parsed.netloc.lower()
+            if host == "redd.it" and path_parts:
+                return f"t3_{path_parts[0]}"
+            if len(path_parts) >= 4 and path_parts[0] == "r" and path_parts[2] == "comments":
+                return f"t3_{path_parts[3]}"
         return ""
 
     @staticmethod

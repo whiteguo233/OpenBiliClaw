@@ -304,6 +304,7 @@
             <label class="settings-field"><span>YouTube</span><select id="youtubeEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field"><span>X (Twitter)</span><select id="twitterEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
             <label class="settings-field"><span>知乎</span><select id="zhihuEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+            <label class="settings-field"><span>Reddit</span><select id="redditEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
           </div>
           <p class="settings-section-title">来源接入状态</p>
           <p class="settings-note-inline">来源开关决定是否进入调度；接入状态只说明 cookie、令牌或插件任务是否可用。修改开关后需保存配置才会生效。</p>
@@ -332,6 +333,10 @@
               <div class="source-status-head"><strong>知乎</strong><span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span></span></div>
               <p class="src-detail">加载中…</p>
             </div>
+            <div class="source-status-row" data-source-status="reddit">
+              <div class="source-status-head"><strong>Reddit</strong><span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span></span></div>
+              <p class="src-detail">加载中…</p>
+            </div>
           </div>
           <p class="settings-section-title">当前 Cookie / 登录凭据</p>
           <p class="settings-note-inline">默认折叠；展开后只读查看当前后端可读取的 Cookie 或令牌。手动粘贴新 Cookie 请使用下方覆盖输入框。</p>
@@ -358,6 +363,10 @@
             </details>
             <details class="source-credential-row" data-source-credential="zhihu">
               <summary><strong>知乎</strong><span class="source-credential-summary">加载中…</span></summary>
+              <textarea class="source-credential-value" rows="3" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+            </details>
+            <details class="source-credential-row" data-source-credential="reddit">
+              <summary><strong>Reddit</strong><span class="source-credential-summary">加载中…</span></summary>
               <textarea class="source-credential-value" rows="3" readonly autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
             </details>
           </div>
@@ -417,6 +426,23 @@
             <label class="settings-field"><span>知乎请求间隔秒数</span><input id="zhihuRequestInterval" inputmode="numeric" placeholder="3"></label>
             <label class="settings-field"><span>知乎最小调度间隔分钟</span><input id="zhihuMinInterval" inputmode="numeric" placeholder="60"></label>
           </div>
+          <p class="settings-section-title">Reddit</p>
+          <p class="settings-note-inline">Reddit 初始化信号和 discovery 默认通过 OpenBiliClaw 插件复用当前浏览器登录态；OpenCLI / rdt 仅作为 discovery 兼容 fallback。每个 discovery 分支默认每日 300 条。</p>
+          <label class="settings-field"><span>Reddit 后端</span><select id="redditBackend"><option value="extension">OpenBiliClaw 插件</option><option value="opencli">OpenCLI extension</option><option value="rdt">rdt</option><option value="auto">自动选择命令后端</option></select></label>
+          <div class="inline-row">
+            <label class="settings-field"><span>搜索分支</span><input id="redditModeSearch" type="checkbox"></label>
+            <label class="settings-field"><span>热门分支</span><input id="redditModeHot" type="checkbox"></label>
+            <label class="settings-field"><span>Subreddit 分支</span><input id="redditModeSubreddit" type="checkbox"></label>
+            <label class="settings-field"><span>相关分支</span><input id="redditModeRelated" type="checkbox"></label>
+          </div>
+          <div class="inline-row">
+            <label class="settings-field"><span>Reddit 每日搜索</span><input id="redditDailySearchBudget" inputmode="numeric" placeholder="300"></label>
+            <label class="settings-field"><span>Reddit 每日热门</span><input id="redditDailyHotBudget" inputmode="numeric" placeholder="300"></label>
+            <label class="settings-field"><span>Reddit 每日 subreddit</span><input id="redditDailySubredditBudget" inputmode="numeric" placeholder="300"></label>
+            <label class="settings-field"><span>Reddit 每日相关</span><input id="redditDailyRelatedBudget" inputmode="numeric" placeholder="300"></label>
+            <label class="settings-field"><span>Reddit 命令间隔秒数</span><input id="redditRequestInterval" inputmode="numeric" placeholder="3"></label>
+            <label class="settings-field"><span>Reddit 最小调度间隔分钟</span><input id="redditMinInterval" inputmode="numeric" placeholder="60"></label>
+          </div>
           <p class="settings-section-title">候选池来源占比</p>
           <p class="settings-note-inline">下面是候选池来源占比/权重，不是每日抓取任务数。例如 5 / 1 / 1 / 1 / 1 / 1 表示 B 站候选约占 5 份，其余来源各 1 份。</p>
           <div class="inline-row">
@@ -426,6 +452,7 @@
             <label class="settings-field"><span>YouTube 占比</span><input id="shareYoutube" value="1" inputmode="numeric"></label>
             <label class="settings-field"><span>X 占比</span><input id="shareTwitter" value="1" inputmode="numeric"></label>
             <label class="settings-field"><span>知乎占比</span><input id="shareZhihu" value="1" inputmode="numeric"></label>
+            <label class="settings-field"><span>Reddit 占比</span><input id="shareReddit" value="1" inputmode="numeric"></label>
           </div>
           <div class="drawer-actions" style="grid-column: 1 / -1"><button class="pill-btn" id="suggestSharesBtn" type="button">按历史行为建议占比</button></div>
         </div>

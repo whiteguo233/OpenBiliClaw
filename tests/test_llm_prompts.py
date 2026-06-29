@@ -1340,10 +1340,10 @@ def test_merged_keywords_prompt_user_message_carries_profile_once_and_due_platfo
     assert user.count("<profile_summary>") == 1
     assert user.count("</profile_summary>") == 1
     assert "<platforms>" in user
-    # Only the two due platforms appear; the three absent platforms do not.
+    # Only the two due platforms appear; absent platforms do not.
     assert "bilibili" in user
     assert "xiaohongshu" in user
-    for absent in ("douyin", "youtube", "twitter"):
+    for absent in ("douyin", "youtube", "twitter", "zhihu", "reddit"):
         assert absent not in user
     # The avoid_* hints and recent_keywords ride along in the user message.
     assert "AI 编程 盘点" in user
@@ -1481,6 +1481,10 @@ def test_merged_keywords_system_prompt_carries_supply_advantage_table() -> None:
     assert "热点" in sys_prompt and "搞笑" in sys_prompt  # douyin
     assert "英文长内容" in sys_prompt and "纪录片" in sys_prompt  # youtube
     assert "实时讨论" in sys_prompt and "英文技术" in sys_prompt  # twitter
+    assert "知乎" in sys_prompt and "回答" in sys_prompt  # zhihu
+    assert "zhihu" in sys_prompt
+    assert "subreddit" in sys_prompt and "经验讨论" in sys_prompt  # reddit
+    assert "reddit" in sys_prompt
 
 
 def test_merged_keywords_system_prompt_permits_decline() -> None:

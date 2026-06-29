@@ -46,6 +46,18 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgYoutubeDailyChannelBudget",
     "cfgYoutubeRequestInterval",
     "cfgYoutubeMinInterval",
+    "cfgRedditEnabled",
+    "cfgRedditBackend",
+    "cfgRedditModeSearch",
+    "cfgRedditModeHot",
+    "cfgRedditModeSubreddit",
+    "cfgRedditModeRelated",
+    "cfgRedditDailySearchBudget",
+    "cfgRedditDailyHotBudget",
+    "cfgRedditDailySubredditBudget",
+    "cfgRedditDailyRelatedBudget",
+    "cfgRedditRequestInterval",
+    "cfgRedditMinInterval",
     "cfgExtensionDisconnectGrace",
     "cfgRefreshCheckInterval",
     "cfgSignalEventThreshold",
@@ -73,6 +85,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgPoolShareXhs",
     "cfgPoolShareDouyin",
     "cfgPoolShareYoutube",
+    "cfgPoolShareReddit",
     "cfgSuggestPoolShares",
     "cfgSpeculationInterval",
     "cfgSpeculationTtl",
@@ -116,7 +129,17 @@ test("settings source tab separates every platform into its own block", () => {
     popupHtml.match(/<div id="settingsPanelSources"[\s\S]*?<div id="settingsPanelGeneral"/)?.[0] ??
     "";
 
-  for (const sourceKey of ["bilibili", "xiaohongshu", "douyin", "youtube", "browser", "pool"]) {
+  for (const sourceKey of [
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+    "browser",
+    "pool",
+  ]) {
     assert.match(
       sourcesPanel,
       new RegExp(`data-source-card="${sourceKey}"`),
@@ -254,6 +277,38 @@ test("settings page round-trips Zhihu discovery source modes", () => {
 
   assert.match(popupJs, /setZhihuSourceModes\(cfg\.sources\?\.zhihu\?\.source_modes\)/);
   assert.match(popupJs, /source_modes: collectZhihuSourceModes\(\)/);
+});
+
+test("settings page round-trips Reddit discovery config", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  for (const id of [
+    "cfgRedditEnabled",
+    "cfgRedditBackend",
+    "cfgRedditModeSearch",
+    "cfgRedditModeHot",
+    "cfgRedditModeSubreddit",
+    "cfgRedditModeRelated",
+    "cfgRedditDailySearchBudget",
+    "cfgRedditDailyHotBudget",
+    "cfgRedditDailySubredditBudget",
+    "cfgRedditDailyRelatedBudget",
+    "cfgRedditRequestInterval",
+    "cfgRedditMinInterval",
+    "cfgPoolShareReddit",
+  ]) {
+    assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
+    assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
+  }
+
+  assert.match(popupJs, /setRedditSourceModes\(cfg\.sources\?\.reddit\?\.source_modes\)/);
+  assert.match(popupJs, /source_modes: collectRedditSourceModes\(\)/);
+  assert.match(popupJs, /backend: getVal\("cfgRedditBackend"\) \|\| "extension"/);
+  assert.match(popupJs, /daily_search_budget: getInt\("cfgRedditDailySearchBudget", 300\)/);
+  assert.match(popupJs, /reddit: getInt\("cfgPoolShareReddit", 1\)/);
+  assert.match(popupJs, /reddit: checked\("cfgRedditEnabled"\)/);
+  assert.match(popupJs, /if \(shares\.reddit !== undefined\) setVal\("cfgPoolShareReddit", shares\.reddit\)/);
 });
 
 test("settings page round-trips multimodal discovery evaluation controls", () => {

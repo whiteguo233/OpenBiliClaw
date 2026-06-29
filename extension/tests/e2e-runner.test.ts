@@ -62,6 +62,37 @@ test("e2e background runner opens a platform tab, dispatches content execution, 
   }
 });
 
+test("e2e background runner supports reddit platform tabs", async () => {
+  const state = installChromeMock();
+  state.sendMessageImpl = async () => ({
+    status: "ok",
+    actions: [{ action: "click", status: "ok", detail: "clicked" }],
+  });
+
+  try {
+    await handleE2ERuntimeEvent({
+      type: "extension_e2e_run",
+      run_id: "e2e-reddit",
+      token: "secret",
+      platforms: ["reddit"],
+      actions: { reddit: ["click"] },
+      allow_state_changing: false,
+      timeout_seconds: 5,
+    });
+
+    assert.deepEqual(state.createdTabs, [{ active: true, url: "https://www.reddit.com/" }]);
+    assert.deepEqual(state.sentMessages[0].message, {
+      action: "OBC_E2E_EXECUTE",
+      runId: "e2e-reddit",
+      platform: "reddit",
+      actions: ["click"],
+      allowStateChanging: false,
+    });
+  } finally {
+    state.restore();
+  }
+});
+
 test("e2e background runner flushes captured events before posting backend result", async () => {
   const state = installChromeMock();
   const order: string[] = [];

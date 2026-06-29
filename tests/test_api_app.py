@@ -938,6 +938,22 @@ class TestBackendAPI:
         assert ctx.llm_service.module_overrides["discovery"].model == "llama3-discovery"
         assert ctx.soul_engine._llm_service.module_overrides["soul"].provider == "ollama"
 
+    def test_runtime_context_wires_reddit_producer_when_enabled(self, tmp_path: Path) -> None:
+        from openbiliclaw.api.runtime_context import build_runtime_context
+        from openbiliclaw.config import Config
+        from openbiliclaw.runtime.reddit_producer import RedditDiscoveryProducer
+
+        config = Config(data_dir=str(tmp_path / "data"))
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "llama3"
+        config.sources.reddit.enabled = True
+        config.scheduler.pool_source_shares["reddit"] = 2
+
+        ctx = build_runtime_context(config)
+
+        assert isinstance(ctx.runtime_controller.reddit_producer, RedditDiscoveryProducer)
+        assert ctx.runtime_controller.pool_source_shares["reddit"] == 2
+
     def test_create_app_bootstrap_wires_discovery_concurrency_controller(
         self,
         monkeypatch,
@@ -1313,7 +1329,7 @@ class TestBackendAPI:
         assert response.status_code == 200
         body = response.json()
         # One status item per source, each with the unified shape.
-        for key in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"):
+        for key in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"):
             assert key in body, f"{key} missing from sources status"
             item = body[key]
             assert set(item) >= {"enabled", "state", "detail", "logged_in"}
@@ -1323,6 +1339,7 @@ class TestBackendAPI:
         assert body["youtube"]["state"] == "no_auth"
         assert body["youtube"]["logged_in"] is True
         assert body["zhihu"]["state"] in {"unverified", "ready", "missing"}
+        assert body["reddit"]["state"] in {"unverified", "missing", "login_required", "ready"}
 
     def test_sources_credentials_returns_current_local_credentials(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -2184,16 +2201,28 @@ class TestBackendAPI:
                         "context": {"pageType": "home"},
                         "metadata": {},
                     },
+                    {
+                        "type": "favorite",
+                        "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/title/",
+                        "title": "Reddit post",
+                        "timestamp": 1710000000002,
+                        "source_platform": "reddit",
+                        "context": {"pageType": "post"},
+                        "metadata": {"content_id": "t3_abc123", "post_id": "abc123"},
+                    },
                 ]
             },
         )
 
         assert response.status_code == 200
-        assert response.json()["accepted"] == 2
+        assert response.json()["accepted"] == 3
         assert memory.events[0]["metadata"]["source_platform"] == "xiaohongshu"
         assert memory.events[0]["metadata"]["note_id"] == "69dea966000000001a0280ad"
         # Blank source_platform (whitespace only) falls back to bilibili.
         assert memory.events[1]["metadata"]["source_platform"] == "bilibili"
+        assert memory.events[2]["metadata"]["source_platform"] == "reddit"
+        assert memory.events[2]["metadata"]["content_id"] == "t3_abc123"
+        assert memory.events[2]["metadata"]["post_id"] == "abc123"
 
     def test_events_endpoint_preserves_top_level_dwell_fields(self) -> None:
         """v0.3.x event-satisfaction: top-level watch_seconds /
@@ -7033,6 +7062,68 @@ class TestBackendAPI:
         assert signal.payload["source_platform"] == "twitter"
         assert signal.payload["content_url"] == "https://x.com/h/status/1790000000000000001"
 
+    def test_recommendation_click_endpoint_builds_reddit_fallback_url(self) -> None:
+        """Reddit recommendation clicks should stay source-aware even without content_url."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self,
+                recommendation_id: int,
+            ) -> dict[str, object] | None:
+                return None
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+                from openbiliclaw.soul.pipeline import IngestResult
+
+                return IngestResult(signals_accepted=1)
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={
+                "content_id": "t3_abc123",
+                "source_platform": "reddit",
+                "title": "A Reddit post",
+            },
+        )
+
+        assert response.status_code == 200
+        assert memory.events, "Reddit click should be persisted"
+        event = memory.events[0]
+        assert event["url"] == "https://www.reddit.com/comments/abc123/"
+        assert "Reddit" in event["context"]
+        assert event["metadata"]["source_platform"] == "reddit"
+        assert event["metadata"]["content_id"] == "t3_abc123"
+        assert event["metadata"]["content_url"] == "https://www.reddit.com/comments/abc123/"
+        signal = soul_engine.pipeline.ingested[0]
+        assert signal.payload["source_platform"] == "reddit"
+        assert signal.payload["content_url"] == "https://www.reddit.com/comments/abc123/"
+
     def test_recommendation_click_endpoint_persists_dwell_fields(self) -> None:
         """When the extension reports dwell on the click-through, those
         fields flow into the persisted click event so storage can classify
@@ -7763,6 +7854,63 @@ class TestBackendAPI:
         assert data["config"]["sources"]["twitter"]["enabled"] is True
         assert data["config"]["scheduler"]["pool_source_shares"]["twitter"] == 4
 
+    def test_put_config_persists_reddit_modes_budgets_and_pool_share(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig, save_config
+
+        config_path = tmp_path / "config.toml"
+        cfg = Config(
+            llm=LLMConfig(
+                default_provider="ollama",
+                ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434"),
+            ),
+        )
+        save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+        monkeypatch.setattr(
+            "openbiliclaw.config.save_config",
+            lambda c, path=None: save_config(c, config_path),
+        )
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "sources": {
+                    "reddit": {
+                        "enabled": True,
+                        "backend": "rdt",
+                        "source_modes": ["search", "hot", "subreddit", "related"],
+                        "daily_search_budget": 8,
+                        "daily_hot_budget": 3,
+                        "daily_subreddit_budget": 4,
+                        "daily_related_budget": 5,
+                        "request_interval_seconds": 6,
+                        "min_interval_minutes": 45,
+                    }
+                },
+                "scheduler": {"pool_source_shares": {"bilibili": 8, "reddit": 3}},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["ok"] is True
+        assert cfg.sources.reddit.enabled is True
+        assert cfg.sources.reddit.backend == "rdt"
+        assert cfg.sources.reddit.source_modes == ("search", "hot", "subreddit", "related")
+        assert cfg.sources.reddit.daily_subreddit_budget == 4
+        assert cfg.scheduler.pool_source_shares["reddit"] == 3
+        assert data["config"]["sources"]["reddit"]["enabled"] is True
+        assert data["config"]["sources"]["reddit"]["daily_subreddit_budget"] == 4
+        assert data["config"]["scheduler"]["pool_source_shares"]["reddit"] == 3
+
     def test_put_config_updates_embedding_credentials(
         self,
         monkeypatch,
@@ -8447,12 +8595,21 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["sources"]["twitter"]["daily_search_budget"] == 7
         assert data["sources"]["twitter"]["daily_feed_budget"] == 14
         assert data["sources"]["twitter"]["daily_creator_budget"] == 5
+        assert data["sources"]["reddit"]["enabled"] is False
+        assert data["sources"]["reddit"]["source_modes"] == [
+            "search",
+            "hot",
+            "subreddit",
+            "related",
+        ]
         assert data["scheduler"]["pool_source_shares"] == {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
             "twitter": 3,
+            "zhihu": 1,
+            "reddit": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["refresh_check_interval_seconds"] == 75
@@ -8763,6 +8920,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "youtube": 1,
             "twitter": 1,
             "zhihu": 1,
+            "reddit": 1,
         }
         assert cfg.scheduler.refresh_check_interval_seconds == 75
         assert cfg.scheduler.signal_event_threshold == 9
@@ -8866,6 +9024,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 1,
             "douyin": 1,
             "youtube": 1,
+            "reddit": 1,
         }
         config_path = tmp_path / "config.toml"
         save_config(cfg, config_path)
@@ -8878,6 +9037,7 @@ class TestEmbeddingAndCompatProviderE2E:
                     "xiaohongshu": 100,
                     "douyin": 9,
                     "youtube": 400,
+                    "reddit": 225,
                 }
 
         app = create_app(
@@ -8898,6 +9058,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "youtube": 400,
                 "twitter": 0,
                 "zhihu": 0,
+                "reddit": 225,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -8906,6 +9067,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "youtube": True,
                 "twitter": False,
                 "zhihu": False,
+                "reddit": False,
             },
             "suggested_shares": {
                 "bilibili": 8,
@@ -8943,6 +9105,7 @@ class TestEmbeddingAndCompatProviderE2E:
                     "xiaohongshu": 100,
                     "douyin": 9,
                     "youtube": 400,
+                    "reddit": 225,
                 }
 
         app = create_app(
@@ -8960,12 +9123,14 @@ class TestEmbeddingAndCompatProviderE2E:
                     "xiaohongshu": False,
                     "douyin": False,
                     "youtube": True,
+                    "reddit": True,
                 },
                 "configured_shares": {
                     "bilibili": 6,
                     "xiaohongshu": 4,
                     "douyin": 4,
                     "youtube": 2,
+                    "reddit": 1,
                 },
             },
         )
@@ -8979,6 +9144,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "youtube": 400,
                 "twitter": 0,
                 "zhihu": 0,
+                "reddit": 225,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -8987,9 +9153,11 @@ class TestEmbeddingAndCompatProviderE2E:
                 "youtube": True,
                 "twitter": False,
                 "zhihu": False,
+                "reddit": True,
             },
             "suggested_shares": {
                 "bilibili": 6,
+                "reddit": 3,
                 "youtube": 4,
             },
         }
@@ -9383,7 +9551,7 @@ class _FakeInitPrereqs:
 def test_select_init_platforms_none_selection_uses_all_enabled() -> None:
     from openbiliclaw.api.app import _select_init_platforms
 
-    enabled = {"bilibili", "xiaohongshu", "douyin"}
+    enabled = {"bilibili", "xiaohongshu", "douyin", "reddit"}
     # None = no selection sent (CLI / legacy) → use everything enabled.
     assert _select_init_platforms(enabled, None) == enabled
 
@@ -9581,6 +9749,22 @@ class TestGuidedInitEndpoints:
         # Rejected before reserving — no run row created at all.
         assert db.get_latest_init_run() is None
 
+    def test_init_accepts_reddit_as_only_profile_signal_source(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["reddit"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["reddit"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured, key="include_reddit")
+        assert captured["include_bili"] is False
+        assert captured["include_reddit"] is True
+        assert db.get_latest_init_run() is not None
+
     def _capture_run_guided_init(self, monkeypatch):
         """Replace the shared pipeline with an async capture of its kwargs.
 
@@ -9617,11 +9801,14 @@ class TestGuidedInitEndpoints:
         prereqs = _FakeInitPrereqs(
             bili="ok",
             chat=True,
-            platforms=["bilibili", "xiaohongshu", "douyin", "youtube", "zhihu"],
+            platforms=["bilibili", "xiaohongshu", "douyin", "youtube", "zhihu", "reddit"],
         )
         app, _ = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
-            resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu", "zhihu"]})
+            resp = client.post(
+                "/api/init",
+                json={"sources": ["bilibili", "xiaohongshu", "zhihu", "reddit"]},
+            )
             assert resp.status_code == 202
             self._drive_until(client, captured)
         # Only the selected sources are included, even though all 4 are
@@ -9631,6 +9818,7 @@ class TestGuidedInitEndpoints:
         assert captured["include_dy"] is False
         assert captured["include_yt"] is False
         assert captured["include_zhihu"] is True
+        assert captured["include_reddit"] is True
 
     def test_init_without_sources_uses_all_enabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -9639,7 +9827,9 @@ class TestGuidedInitEndpoints:
 
         captured = self._capture_run_guided_init(monkeypatch)
         prereqs = _FakeInitPrereqs(
-            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin", "zhihu"]
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "xiaohongshu", "douyin", "zhihu", "reddit"],
         )
         app, _ = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
@@ -9652,6 +9842,7 @@ class TestGuidedInitEndpoints:
         assert captured["include_dy"] is True
         assert captured["include_yt"] is False  # youtube not enabled in config
         assert captured["include_zhihu"] is True
+        assert captured["include_reddit"] is True
 
     def test_init_keeps_selected_source_not_enabled_in_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -9669,6 +9860,7 @@ class TestGuidedInitEndpoints:
             self._drive_until(client, captured)
         assert captured["include_dy"] is True
         assert captured["include_xhs"] is False
+        assert captured["include_reddit"] is False
 
     def test_cancel_without_active_run_returns_409(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

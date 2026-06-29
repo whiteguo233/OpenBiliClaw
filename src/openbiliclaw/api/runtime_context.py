@@ -655,6 +655,7 @@ class RuntimeContext:
         new_youtube_producer: Any = None
         new_x_producer: Any = None
         new_zhihu_producer: Any = None
+        new_reddit_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -752,6 +753,15 @@ class RuntimeContext:
                 keyword_fetch=new_keyword_fetch,
                 kick=_kick_zhihu_extension,
             )
+            from openbiliclaw.runtime.reddit_producer import build_reddit_discovery_producer
+
+            new_reddit_producer = build_reddit_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+            )
 
         # P1.6: unified keyword planner — deficit-pulled merged keyword
         # generation. Built as its OWN object (the controller has no
@@ -799,6 +809,7 @@ class RuntimeContext:
             youtube_producer=new_youtube_producer,
             x_producer=new_x_producer,
             zhihu_producer=new_zhihu_producer,
+            reddit_producer=new_reddit_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided

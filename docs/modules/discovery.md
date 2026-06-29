@@ -1,6 +1,6 @@
 # 内容发现引擎
 
-> 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎和通用 Web 等来源主动寻找潜在会喜欢的内容。
+> 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit 和通用 Web 等来源主动寻找潜在会喜欢的内容。
 
 ## 概述
 
@@ -29,7 +29,7 @@
 - **ExploreStrategy** — 推断"高相关的远域探索方向"，寻找更有陌生感但仍可解释的内容
 - **PoolDistributionSnapshot** — runtime 在补池前构建的候选池分布快照，给 discovery 提供当前供给拥挤/缺口的软信号
 - **SourcePolicy** — 统一读取 `sources.<platform>.enabled` 与 `[scheduler.pool_source_shares]`，生成有效平台配比；关闭的平台保留配置但不占 runtime quota
-- **SourceAdapter 协议** — 多源适配层（`sources/`），在上述 4 个 B 站策略之外挂载非 B 站内容源（小红书、抖音初始化画像信号与 DOM-first search / hot / feed discovery、YouTube 初始化画像信号、知乎初始化画像信号与 search / hot / feed / creator / related discovery、V2EX 等）
+- **SourceAdapter 协议** — 多源适配层（`sources/`），在上述 4 个 B 站策略之外挂载非 B 站内容源（小红书、抖音初始化画像信号与 DOM-first search / hot / feed discovery、YouTube 初始化画像信号、知乎初始化画像信号与 search / hot / feed / creator / related discovery、Reddit 初始化画像信号与 search / hot / subreddit / related discovery、V2EX 等）
 
 ## 多源适配层
 
@@ -44,6 +44,7 @@
 - **YouTube discovery strategies / producer** — `yt_search` 由 LLM 从画像生成关键词后用 `scrapetube` 搜索，`yt_trending` 优先通过 YouTube InnerTube browse API 拉 trending feed，当前 `FEtrending` 失效时降级抓取公开 topic 页的 `ytInitialData` 视频，`yt_channel` 从 DB 中 YouTube follow 事件读取订阅频道并用 `scrapetube` / `yt-dlp` 拉最新视频；三者由后端 `YoutubeDiscoveryProducer` 在 YouTube 低于 quota 时独立调度，输出 `source_platform="youtube"` 的 `DiscoveredContent` 并入 `discovery_candidates`，再由统一候选 pipeline 评估 / 入池。
 - **DouyinDiscoveryService / DouyinDirectStrategy / DouyinDirectClient** — 抖音 discovery 走 opt-in 路径，服务层统一封装 search / hot / feed 三个公开来源；runtime 路径只拉原始候选并入 `discovery_candidates`，调试时仍可在 `openbiliclaw discover-douyin --no-cache` 下直接跑策略预览。
 - **ZhihuDiscoveryProducer** — 知乎 discovery 走浏览器插件登录态任务；runtime 和 `openbiliclaw discover --source zhihu` 都按 `pool_source_shares.zhihu` 缺口 / 手动 `--limit` 与 `[sources.zhihu].source_modes` 入队 `zhihu_tasks(type="search"|"hot"|"feed"|"creator"|"related")`。`search` claim 统一关键词；`hot` 拉热榜；`feed` 拉首页推荐；`creator` 优先用最近知乎任务中的作者主页作种子，没有历史种子时从同轮 search / hot / feed 候选的作者页兜底；`related` 优先用最近知乎候选 URL 作扩展种子，没有历史种子时从同轮已返回内容 URL 兜底。扩展回传 `zhihu_*` 后转换为 `DiscoveredContent` 进入统一待评估池。
+- **RedditTaskQueue / RedditDiscoveryProducer** — Reddit discovery 默认走浏览器插件登录态任务；runtime 和 `openbiliclaw discover --source reddit` 都按 `pool_source_shares.reddit` 缺口 / 手动 `--limit` 与 `[sources.reddit].source_modes` 入队 `reddit_tasks(type="search"|"hot"|"subreddit"|"related")`。`search` 使用统一关键词，关键词池为空时回退画像兴趣；`hot` 默认拉 `r/all`；`subreddit` 优先用最近 Reddit 候选中的 subreddit 作种子；`related` 优先用最近 Reddit 内容 URL 作扩展种子。扩展在已登录 `reddit.com` 会话里读取同源 JSON endpoint，回传 `reddit_*` 后转换为 `DiscoveredContent` 进入统一待评估池。Reddit producer 是 fetch-only：只入 `discovery_candidates`，不在同一 CLI / runtime producer 调用里同步等待 LLM 评估。
 - **DouyinPluginSearchClient** — search 子来源复用 `dy_tasks(type="search")` 插件 DOM-first 链路，结果以 `dy-plugin-search` 进入 discovery；扩展会从抖音首页搜索框输入关键词并点击搜索，任务 debug 用 `ui_triggered` 记录是否提交、`search_navigation_ok` 记录是否进入 `/jingxuan/search/<keyword>` 等真实搜索结果路由。MAIN-world tap 会兼容抖音搜索页当前的 `/general/search/stream/` chunked JSON 响应；当页面自身响应和 DOM 解析都没有候选时，search 会调用已登录页面的 search API bridge 兜底，但真实响应若带 `search_nil_info.search_nil_item="hit_shark"` 且无候选，仍按抖音反爬空结果处理。hot 子来源复用 `dy_tasks(type="hot")`，后端从 hot board 抽取 `sentence_id` 和可用的 `group_id -> seed_aweme_id`，扩展优先执行带 seed 的热词；后台 tab 从 `https://www.douyin.com/` 首页出发点击热榜 / 热点入口和目标热词，DOM / 被动监听不足时用已登录页面的 related API bridge 拉取相关视频，结果以 `dy-plugin-hot-related` 进入 discovery。feed 子来源复用 `dy_tasks(type="feed")`，由扩展在首页推荐流滚动触发加载，结果以 `dy-plugin-feed` 进入 discovery。search / hot / feed discovery 任务都会用非激活 tab 执行；content script 会按 `dy_search` / `dy_hot` / `dy_feed` 目标 scope 过滤候选，避免首页推荐流响应污染 search / hot 结果。只有 `bootstrap_profile` 这类显式账号信号导入允许前台。每次入队前会把过期的 search / hot / feed pending discovery 任务标记为 failed，避免旧任务挡住当前 producer；`ContentDiscoveryEngine.register_strategy()` 会按 strategy name 替换旧实例，避免 `DouyinDiscoveryService(cache=True)` 多轮运行后累积多个 `douyin_direct` 并重复入队 search。`openbiliclaw search-douyin` 仍保留为独立 search smoke / 诊断命令，结果不转成 memory event。
 - **XAdapter（`sources/twitter_adapter.py`）+ 三策略** — X (Twitter) 是第六个内容源，`source_type="twitter"`、显示标签 `"X"`。发现走**服务端 cookie 重放**（对标抖音 direct，但用 `twitter-cli` 取代 XBogus 签名），`XAdapter.fetch(recipe, profile, limit)` 是真实实现（不是 XHS 那种 stub），按 `recipe.strategy` 分发到三个 `discovery/strategies/x.py` 策略：
 
@@ -98,7 +99,7 @@
    这一层的核心思想是：先尽量把供给面铺开，再在后面统一收口。
 
 3. **统一入待评估池**
-   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel 的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。
+   虽然四个 B 站策略、小红书被动 / 任务结果、抖音 search / hot / feed、YouTube search / trending / channel、知乎和 Reddit 插件任务的找法不同，但产出都会被转成同一个结构：`DiscoveredContent`，再由 `DiscoveryCandidatePipeline.enqueue_candidates()` 写入 SQLite `discovery_candidates`。
 
    入队阶段只做字段归一和身份去重，不做最终“用户会不会喜欢”的判断。`candidate_key` 会优先使用 `source_platform:content_id`，没有 ID 时退到规范化 URL，再退到标题 + 作者 hash。重复发现不会插入第二行，只刷新 `last_seen_at`。
 
@@ -107,7 +108,7 @@
 4. **混源 batch 评估**
    `DiscoveryCandidatePipeline.drain_pending()` 会从 `discovery_candidates` claim 一批 `pending_eval` 行，并按来源 round-robin 混合取样，避免单个平台把整批 evaluator 占满。runtime 有两类入口会触发它：refresh plan 发现新 raw 后即时 drain，以及独立 `_loop_candidate_eval()` 周期性 drain 已存在的 pending raw；两者共用 controller drain lock 和 pipeline lock，所以不会并发评估同一批行。文本 eval batch 默认 45，单次 drain 默认最多 claim 两个 LLM batch（90 条，仍受 evaluator hard cap 约束）；`evaluate_content_batch()` 内部也默认只开 2 个 batch worker，外层 `DiscoveryConcurrencyController.run_llm()` 继续作为全局 LLM 并发总闸。多模态封面评估仍使用独立的小 batch。这里就是 agent 判断“结合画像看用户喜不喜欢”的环节：pipeline 把候选转回 `DiscoveredContent`，调用 `ContentDiscoveryEngine.evaluate_content_batch()`，把画像摘要、候选字段、`source_platform`、`source_strategy`、`source_context`、`content_url`、`author_name` 和近期负样本一起交给 LLM 评分。
 
-   进入批量 LLM 评估前，`evaluate_content_batch()` 会读取 `Database.get_recent_viewed_content_keys()`，用 `source_platform:content_id` 判断最近看过的 B 站 / 小红书 / 抖音 / YouTube / X / 知乎候选；命中项直接记为 0 分并从 prompt 中剔除，避免为已看内容消耗 discovery token。老 BVID 也保留 raw key 兼容旧数据。
+   进入批量 LLM 评估前，`evaluate_content_batch()` 会读取 `Database.get_recent_viewed_content_keys()`，用 `source_platform:content_id` 判断最近看过的 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit 候选；命中项直接记为 0 分并从 prompt 中剔除，避免为已看内容消耗 discovery token。老 BVID 也保留 raw key 兼容旧数据。
 
    evaluator 的候选输入不再只依赖标题：各来源会尽量映射 `view_count`、`like_count`、`favorite_count` / `collect_count`、`comment_count` / `reply_count`、`share_count`、`danmaku_count`、`retweet_count`、`bookmark_count`、`tags`、`body_text` 等字段。对知乎 / X 这类 text-first 来源，如果 `description` 与 `body_text` 是同一段文本或只是正文前缀，prompt 里会省略重复的 `description`，保留 `body_text` 作为内容正文，避免同一长文本在 evaluator 输入里发送两遍。prompt 明确把互动指标当辅助信号，不能用高热度替代内容与画像的真实匹配，也不能因为低热度惩罚小众但高度匹配的内容。
 
@@ -554,9 +555,9 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ## 统一关键词 planner / 背压（v0.3.124 起默认开启）
 
-> Discover 背压重构 P1。挂在 `[discovery].unified_keyword_planner_enabled` 后面，**v0.3.124 起默认 `true`**——六个 search 关键词走统一规划器 + 关键词存储；设为 `false` 可逐字回退到各自旧的逐平台 LLM 生成路径（旧路径保留、回退无副作用）。
+> Discover 背压重构 P1。挂在 `[discovery].unified_keyword_planner_enabled` 后面，**v0.3.124 起默认 `true`**——七个 search 关键词走统一规划器 + 关键词存储；设为 `false` 可逐字回退到各自旧的逐平台 LLM 生成路径（旧路径保留、回退无副作用）。
 
-此前多个 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`、知乎 `zhihu`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，只接管 **search 这一路**——`trending / explore / related / hot / feed / channel / creator` 及其各自的 budget/cadence **原样不动**。
+此前多个 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`、知乎 `zhihu-search`、Reddit `reddit-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，只接管 **search 这一路**——`trending / explore / related / hot / feed / channel / creator / subreddit` 及其各自的 budget/cadence **原样不动**。
 
 **关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`；旧画像 digest 的 `pending` 作废为 `expired`。在途三元组 `(platform, keyword, profile_kw_digest)` 部分唯一，`used/expired` 历史不挡同词再生成。
 
@@ -580,7 +581,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 **兴趣丰富度**：planner prompt 使用与 B 站 search / trending / explore 相同的 compact query profile。`interests` 不是单纯权重前 64，而是从最多 128 个候选中结合 cached embedding 多样性、类别覆盖和 `disliked_topics` 距离选出，避免多平台首批关键词都围着同一强兴趣或同义标签转；embedding cache 未命中时不额外调用 provider，按权重顺序降级。
 
-**P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里加了**平台供给优势表**（B站 学习区/梗、小红书 生活/美妆、抖音 娱乐/热点、YouTube 英文长内容、X 实时/英文），让模型把用户兴趣映射到各平台真正有货的方向；并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出），非弃权平台生成后仍低于低水位则按缺口 `recycle_oldest_used` 补足，保持多样性而不再额外调 LLM。
+**P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里加了**平台供给优势表**（B站 学习区/梗、小红书 生活/美妆、抖音 娱乐/热点、YouTube 英文长内容、X 实时/英文、知乎中文问答/深度回答/经验复盘、Reddit subreddit 经验讨论/技术问答/开源项目），让模型把用户兴趣映射到各平台真正有货的方向；并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出），非弃权平台生成后仍低于低水位则按缺口 `recycle_oldest_used` 补足，保持多样性而不再额外调 LLM。
 
 **P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints(profile)` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10 时回退到全局热门 topic 避让。若正式池整体还是空的，planner 会先用 `build_cold_start_pool_snapshot(profile)` 生成 `cold_start=true` hints：高权重兴趣进入各平台 `avoid_topics` 软预算，次级兴趣 / 兴趣域进入 `prefer_axes`，merged prompt 规则要求每个平台首批关键词保留少量强兴趣入口但至少一半覆盖其它画像相关方向。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站；而真正冷启动时，各平台不会同时把第一批关键词全部押在同一个强兴趣上。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。v0.3.124 起默认开启、flag-off 逐字回退。
 
@@ -649,7 +650,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | Discovery 评估类型边界 | ✅ | v0.3.71 起 eval scenario / evaluator 对 LLM JSON、缓存 persona、人工反馈和 ranking pool 做显式类型守卫，`mypy strict` 可覆盖评估链路而不依赖真实 Claude / Playwright / aiohttp 安装 |
 | Discovery 自动优化循环 | ✅ | SGD 风格优化循环：生成 persona → 生成 scenario → 运行发现 → 多维评估 → exploit/explore → accept/rollback |
 | Discovery 人工评估脚本 | ✅ | 交互式人工评估 + 可选触发优化 |
-| P1 统一关键词 planner / 背压（v0.3.124 起默认开） | ✅ | `[discovery].unified_keyword_planner_enabled`（v0.3.124 起默认 `true`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收、同画像/同池子需求块按 `plan_ttl_hours` 复用生成结果）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步插件任务）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。只接管六个 search 关键词，`trending/explore/related/hot/feed` 不动；flag-off 逐字回退旧逐平台生成。flag-on 时 B 站主 refresh 若暂时 claim 不到关键词，会跳过本轮 `search` 子策略而不是回落到旧 `discovery.search.queries` caller。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}}`）观测。E2E：`tests/test_keyword_backpressure_e2e.py` |
+| P1 统一关键词 planner / 背压（v0.3.124 起默认开） | ✅ | `[discovery].unified_keyword_planner_enabled`（v0.3.124 起默认 `true`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收、同画像/同池子需求块按 `plan_ttl_hours` 复用生成结果）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步插件任务）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。只接管 B站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit 七个 search 关键词，`trending/explore/related/hot/feed/subreddit` 不动；flag-off 逐字回退旧逐平台生成。flag-on 时 B 站主 refresh 若暂时 claim 不到关键词，会跳过本轮 `search` 子策略而不是回落到旧 `discovery.search.queries` caller。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}}`）观测。E2E：`tests/test_keyword_backpressure_e2e.py` |
 
 ## 公开 API
 

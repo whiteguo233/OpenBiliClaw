@@ -30,7 +30,15 @@ _BILI_OK_TTL = 60.0
 _BILI_FAIL_TTL = 10.0
 _BILI_PROBE_TIMEOUT = 12.0
 
-_PLATFORM_SOURCE_FIELDS = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
+_PLATFORM_SOURCE_FIELDS = (
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+)
 
 
 class InitPrereqs:

@@ -13,8 +13,8 @@ test("isExtensionE2ERuntimeEvent recognizes signed extension e2e runtime events"
       type: "extension_e2e_run",
       run_id: "e2e-test",
       token: "secret",
-      platforms: ["twitter"],
-      actions: { twitter: ["snapshot"] },
+      platforms: ["twitter", "reddit"],
+      actions: { twitter: ["snapshot"], reddit: ["click"] },
       allow_state_changing: false,
       timeout_seconds: 30,
     }),
@@ -58,12 +58,12 @@ test("actionsForE2EPlatform uses default safe actions when platform actions are 
       type: "extension_e2e_run",
       run_id: "e2e-test",
       token: "secret",
-      platforms: ["douyin"],
+      platforms: ["reddit"],
       actions: {},
       allow_state_changing: false,
       timeout_seconds: 30,
     },
-    "douyin",
+    "reddit",
   );
 
   assert.deepEqual(actions, ["snapshot", "scroll", "click", "share"]);

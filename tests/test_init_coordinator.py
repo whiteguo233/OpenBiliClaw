@@ -162,6 +162,28 @@ def test_runtime_context_exposes_lazy_init_coordinator(tmp_path: Path) -> None:
     assert db.get_latest_init_run()["run_id"] == "r1"
 
 
+def test_init_prereqs_enabled_platforms_include_reddit() -> None:
+    from types import SimpleNamespace
+
+    from openbiliclaw.runtime.init_prereqs import InitPrereqs
+
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            sources=SimpleNamespace(
+                bilibili=SimpleNamespace(enabled=True),
+                xiaohongshu=SimpleNamespace(enabled=False),
+                douyin=SimpleNamespace(enabled=False),
+                youtube=SimpleNamespace(enabled=False),
+                twitter=SimpleNamespace(enabled=False),
+                zhihu=SimpleNamespace(enabled=False),
+                reddit=SimpleNamespace(enabled=True),
+            )
+        )
+    )
+
+    assert InitPrereqs(ctx).enabled_platforms() == ["bilibili", "reddit"]
+
+
 def test_coordinator_reads_ctx_components_lazily_not_cached(tmp_path: Path) -> None:
     from openbiliclaw.api.runtime_context import RuntimeContext
 

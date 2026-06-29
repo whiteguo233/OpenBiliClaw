@@ -4893,7 +4893,7 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X", zhihu: "知乎" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X", zhihu: "知乎", reddit: "Reddit" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
@@ -6082,6 +6082,33 @@ function bindSettings() {
     return selected.length > 0 ? selected : ["search"];
   }
 
+  const REDDIT_SOURCE_MODE_FIELDS = [
+    ["search", "cfgRedditModeSearch"],
+    ["hot", "cfgRedditModeHot"],
+    ["subreddit", "cfgRedditModeSubreddit"],
+    ["related", "cfgRedditModeRelated"],
+  ];
+
+  function setRedditSourceModes(rawModes) {
+    const fallbackModes = REDDIT_SOURCE_MODE_FIELDS.map(([mode]) => mode);
+    const selected = new Set(
+      (Array.isArray(rawModes) && rawModes.length > 0 ? rawModes : fallbackModes)
+        .map((mode) => String(mode).trim())
+        .filter(Boolean),
+    );
+    for (const [mode, id] of REDDIT_SOURCE_MODE_FIELDS) {
+      const el = document.getElementById(id);
+      if (el) el.checked = selected.has(mode);
+    }
+  }
+
+  function collectRedditSourceModes() {
+    const selected = REDDIT_SOURCE_MODE_FIELDS
+      .filter(([, id]) => checked(id))
+      .map(([mode]) => mode);
+    return selected.length > 0 ? selected : ["search"];
+  }
+
   // Unified per-source login / cookie status from GET /api/sources/status,
   // rendered as a uniform colored-dot line inside every source card. Only X is
   // live-validated (state ok); the rest report local cookie/token readiness.
@@ -6091,13 +6118,15 @@ function bindSettings() {
     no_auth: "#9aa0a6",
     missing: "#e0a800",
     missing_cookie: "#e0a800",
+    login_required: "#e0a800",
     rate_limited: "#e0a800",
     partial: "#e0a800",
     stale: "#e0a800",
+    error: "#e74c3c",
     expired_cookie: "#e74c3c",
     blocked: "#e74c3c",
   };
-  const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
+  const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
 
   // Best-effort: when the backend is unreachable, leave a neutral hint.
   async function renderSourcesStatus() {
@@ -6242,6 +6271,16 @@ function bindSettings() {
     setVal("cfgZhihuDailyRelatedBudget", cfg.sources?.zhihu?.daily_related_budget);
     setVal("cfgZhihuRequestInterval", cfg.sources?.zhihu?.request_interval_seconds);
     setVal("cfgZhihuMinInterval", cfg.sources?.zhihu?.min_interval_minutes);
+    const redditEnabled = document.getElementById("cfgRedditEnabled");
+    if (redditEnabled) redditEnabled.checked = cfg.sources?.reddit?.enabled === true;
+    setVal("cfgRedditBackend", cfg.sources?.reddit?.backend || "extension");
+    setRedditSourceModes(cfg.sources?.reddit?.source_modes);
+    setVal("cfgRedditDailySearchBudget", cfg.sources?.reddit?.daily_search_budget);
+    setVal("cfgRedditDailyHotBudget", cfg.sources?.reddit?.daily_hot_budget);
+    setVal("cfgRedditDailySubredditBudget", cfg.sources?.reddit?.daily_subreddit_budget);
+    setVal("cfgRedditDailyRelatedBudget", cfg.sources?.reddit?.daily_related_budget);
+    setVal("cfgRedditRequestInterval", cfg.sources?.reddit?.request_interval_seconds);
+    setVal("cfgRedditMinInterval", cfg.sources?.reddit?.min_interval_minutes);
     void renderSourcesStatus();
 
     // General
@@ -6285,6 +6324,7 @@ function bindSettings() {
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
     setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgPoolShareZhihu", cfg.scheduler?.pool_source_shares?.zhihu);
+    setVal("cfgPoolShareReddit", cfg.scheduler?.pool_source_shares?.reddit);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -6450,6 +6490,17 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgZhihuRequestInterval", 3),
           min_interval_minutes: getInt("cfgZhihuMinInterval", 60),
         },
+        reddit: {
+          enabled: checked("cfgRedditEnabled"),
+          backend: getVal("cfgRedditBackend") || "extension",
+          source_modes: collectRedditSourceModes(),
+          daily_search_budget: getInt("cfgRedditDailySearchBudget", 300),
+          daily_hot_budget: getInt("cfgRedditDailyHotBudget", 300),
+          daily_subreddit_budget: getInt("cfgRedditDailySubredditBudget", 300),
+          daily_related_budget: getInt("cfgRedditDailyRelatedBudget", 300),
+          request_interval_seconds: getInt("cfgRedditRequestInterval", 3),
+          min_interval_minutes: getInt("cfgRedditMinInterval", 60),
+        },
       },
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
@@ -6480,6 +6531,7 @@ function bindSettings() {
           youtube: getInt("cfgPoolShareYoutube", 1),
           twitter: getInt("cfgPoolShareTwitter", 1),
           zhihu: getInt("cfgPoolShareZhihu", 1),
+          reddit: getInt("cfgPoolShareReddit", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -6666,6 +6718,7 @@ function bindSettings() {
             youtube: checked("cfgYoutubeEnabled"),
             twitter: checked("cfgTwitterEnabled"),
             zhihu: checked("cfgZhihuEnabled"),
+            reddit: checked("cfgRedditEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 5),
@@ -6674,6 +6727,7 @@ function bindSettings() {
             youtube: getInt("cfgPoolShareYoutube", 1),
             twitter: getInt("cfgPoolShareTwitter", 1),
             zhihu: getInt("cfgPoolShareZhihu", 1),
+            reddit: getInt("cfgPoolShareReddit", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -6683,6 +6737,7 @@ function bindSettings() {
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
         if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         if (shares.zhihu !== undefined) setVal("cfgPoolShareZhihu", shares.zhihu);
+        if (shares.reddit !== undefined) setVal("cfgPoolShareReddit", shares.reddit);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
         showToast(`生成建议失败: ${err.message}`, "error");

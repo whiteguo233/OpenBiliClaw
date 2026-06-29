@@ -66,6 +66,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "youtube": 1,
     "twitter": 1,
     "zhihu": 1,
+    "reddit": 1,
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -421,6 +422,26 @@ class ZhihuSourceConfig:
 
 
 @dataclass
+class RedditSourceConfig:
+    """Reddit discovery configuration.
+
+    Reddit currently depends on a logged-in browser session instead of a
+    reliable anonymous API. ``backend="extension"`` uses the OpenBiliClaw
+    browser plugin; ``opencli`` and ``rdt`` remain compatible fallbacks.
+    """
+
+    enabled: bool = False
+    backend: str = "extension"
+    source_modes: tuple[str, ...] = ("search", "hot", "subreddit", "related")
+    daily_search_budget: int = 300
+    daily_hot_budget: int = 300
+    daily_subreddit_budget: int = 300
+    daily_related_budget: int = 300
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
+@dataclass
 class BilibiliSourceConfig:
     """Bilibili discovery source switch."""
 
@@ -450,6 +471,7 @@ class SourcesConfig:
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
+    reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
 
 
 @dataclass
@@ -758,6 +780,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     youtube_raw = sources_raw.get("youtube", {})
     twitter_raw = sources_raw.get("twitter", {})
     zhihu_raw = sources_raw.get("zhihu", {})
+    reddit_raw = sources_raw.get("reddit", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -814,6 +837,24 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_related_budget=int(zhihu_raw.get("daily_related_budget", 0)),
             request_interval_seconds=int(zhihu_raw.get("request_interval_seconds", 3)),
             min_interval_minutes=max(0, int(zhihu_raw.get("min_interval_minutes", 60))),
+        ),
+        reddit=RedditSourceConfig(
+            enabled=bool(reddit_raw.get("enabled", False)),
+            backend=str(reddit_raw.get("backend", "extension") or "extension"),
+            source_modes=tuple(
+                mode
+                for mode in _coerce_str_list(
+                    reddit_raw.get("source_modes", ["search", "hot", "subreddit", "related"])
+                )
+                if mode in {"search", "hot", "subreddit", "related"}
+            )
+            or ("search",),
+            daily_search_budget=int(reddit_raw.get("daily_search_budget", 300)),
+            daily_hot_budget=int(reddit_raw.get("daily_hot_budget", 300)),
+            daily_subreddit_budget=int(reddit_raw.get("daily_subreddit_budget", 300)),
+            daily_related_budget=int(reddit_raw.get("daily_related_budget", 300)),
+            request_interval_seconds=int(reddit_raw.get("request_interval_seconds", 3)),
+            min_interval_minutes=max(0, int(reddit_raw.get("min_interval_minutes", 60))),
         ),
     )
 
@@ -1963,6 +2004,17 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.zhihu.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.zhihu.min_interval_minutes}",
             "",
+            "[sources.reddit]",
+            f"enabled = {_toml_bool(config.sources.reddit.enabled)}",
+            f"backend = {_toml_string(config.sources.reddit.backend)}",
+            f"source_modes = {_toml_str_list(list(config.sources.reddit.source_modes))}",
+            f"daily_search_budget = {config.sources.reddit.daily_search_budget}",
+            f"daily_hot_budget = {config.sources.reddit.daily_hot_budget}",
+            f"daily_subreddit_budget = {config.sources.reddit.daily_subreddit_budget}",
+            f"daily_related_budget = {config.sources.reddit.daily_related_budget}",
+            f"request_interval_seconds = {config.sources.reddit.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.reddit.min_interval_minutes}",
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             "pause_on_extension_disconnect = "
@@ -2015,6 +2067,7 @@ def _render_config_toml(
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
+            f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",
             "",
             "[discovery]",
             "unified_keyword_planner_enabled = "

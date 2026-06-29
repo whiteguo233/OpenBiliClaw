@@ -53,6 +53,22 @@ def test_unknown_init_reasons_remain_diagnosable() -> None:
     assert re.search(r"INIT_REASON_TEXT\[reason\]\s*\|\|\s*`未知初始化状态", app_js)
 
 
+def test_web_surfaces_no_longer_block_reddit_only_init() -> None:
+    """Reddit bootstrap events are valid init signals."""
+    setup_html = Path("src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert "no_profile_signal_sources" not in setup_html
+    assert "Reddit 当前只启用 discovery" not in setup_html
+    assert "连接你的 B站 账号" not in setup_html
+    assert "连接浏览器扩展和平台账号" in setup_html
+    assert "reddit.com" in setup_html
+    assert "先检查 B站 登录 / AI 服务 / 向量模型" not in setup_html
+    assert "所选平台的登录状态" in setup_html
+    assert "no_profile_signal_sources" not in app_js
+    assert "Reddit 当前只启用 discovery" not in app_js
+
+
 def test_setup_llm_model_is_visible_and_save_suppresses_background_llm_work() -> None:
     """Setup step 1 saves config only; model name is a normal required field."""
     setup_html = Path("src/openbiliclaw/web/setup/index.html").read_text(encoding="utf-8")
@@ -70,7 +86,7 @@ def test_setup_init_sources_are_explicit_opt_in_without_settings_enable_block() 
     assert "勾选会同时开启该来源" in setup_html
     assert "selectedSourcesNeedingEnable" not in setup_html
     assert "还没在设置里开启" not in setup_html
-    for source in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"):
+    for source in ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"):
         assert f'key: "{source}"' in setup_html
         assert f'key: "{source}"' in app_js
 

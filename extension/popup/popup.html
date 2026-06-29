@@ -1356,6 +1356,16 @@
       color: #0f88eb;
     }
 
+    .recommendation-source-corner.source-platform-reddit {
+      background: rgba(255, 69, 0, 0.78);
+      color: #fff;
+    }
+
+    .recommendation-cover.is-fallback .recommendation-source-corner.source-platform-reddit {
+      background: rgba(255, 69, 0, 0.12);
+      color: #d93f00;
+    }
+
     .recommendation-title {
       font-size: 17px;
       line-height: 1.38;
@@ -5220,6 +5230,68 @@
         <p class="settings-hint">知乎通过已登录浏览器插件执行搜索 / 热榜 / 首页 / 作者 / 相关任务；后端只入队任务并接收结果。</p>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="reddit">
+        <h3><span class="section-icon">R</span> Reddit</h3>
+        <div class="settings-field-row">
+          <input id="cfgRedditEnabled" type="checkbox">
+          <label for="cfgRedditEnabled">启用 Reddit 来源</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgRedditStatus" data-source-status="reddit"><span class="src-dot">●</span> <span class="src-detail">Reddit 来源状态加载中…</span></p>
+        <div class="settings-field">
+          <label for="cfgRedditBackend">后端</label>
+          <select id="cfgRedditBackend">
+            <option value="extension">OpenBiliClaw 插件</option>
+            <option value="opencli">OpenCLI extension</option>
+            <option value="rdt">rdt</option>
+            <option value="auto">自动选择命令后端</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label>Reddit discovery 分支</label>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeSearch" type="checkbox">
+            <label for="cfgRedditModeSearch">搜索</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeHot" type="checkbox">
+            <label for="cfgRedditModeHot">热门</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeSubreddit" type="checkbox">
+            <label for="cfgRedditModeSubreddit">Subreddit</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeRelated" type="checkbox">
+            <label for="cfgRedditModeRelated">相关</label>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailySearchBudget">Reddit 每日搜索条目</label>
+          <input id="cfgRedditDailySearchBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailyHotBudget">Reddit 每日热门条目</label>
+          <input id="cfgRedditDailyHotBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailySubredditBudget">Reddit 每日 subreddit 条目</label>
+          <input id="cfgRedditDailySubredditBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailyRelatedBudget">Reddit 每日相关条目</label>
+          <input id="cfgRedditDailyRelatedBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditRequestInterval">Reddit 任务轮询间隔秒数</label>
+          <input id="cfgRedditRequestInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditMinInterval">Reddit 最小调度间隔分钟数</label>
+          <input id="cfgRedditMinInterval" type="number" min="0" step="1" placeholder="60">
+        </div>
+        <p class="settings-hint">Reddit 默认通过 OpenBiliClaw 插件复用当前浏览器登录态；OpenCLI / rdt 仅作为兼容 fallback。默认每个分支每日 300 条。</p>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="browser">
         <h3><span class="section-icon">&#x1F310;</span> 通用网页源</h3>
         <div class="settings-field">
@@ -5257,6 +5329,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareZhihu">候选池知乎占比</label>
           <input id="cfgPoolShareZhihu" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareReddit">候选池 Reddit 占比</label>
+          <input id="cfgPoolShareReddit" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

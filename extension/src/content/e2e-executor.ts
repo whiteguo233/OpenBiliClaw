@@ -34,6 +34,10 @@ interface QueryDocument {
   querySelectorAll: (selector: string) => Iterable<ClickableElement> | ArrayLike<ClickableElement>;
 }
 
+interface DeepQueryRoot {
+  querySelectorAll?: (selector: string) => Iterable<ClickableElement> | ArrayLike<ClickableElement>;
+}
+
 interface ScrollWindow {
   innerHeight: number;
   scrollBy: (options: ScrollToOptions) => void;
@@ -113,6 +117,32 @@ const RECIPES: Record<E2EPlatform, PlatformRecipe> = {
       favorite: [/bookmark/i],
       bookmark: [/bookmark/i],
       follow: [/follow/i],
+    },
+  },
+	  reddit: {
+    clickSelectors: [
+      'shreddit-post',
+      'article[data-testid="post-container"]',
+      'div[data-testid="post-container"]',
+      'a[href*="/comments/"]',
+    ],
+	    actionSelectors: {
+	      share: [
+	        '[aria-label*="Share" i]',
+	        '[title*="Share" i]',
+	        '[data-testid*="share" i]',
+	        '[slot*="share" i]',
+	        'shreddit-share-button',
+	        'shreddit-post-share-button',
+	        'faceplate-share-button',
+	      ],
+	    },
+    textActions: {
+      share: [/share/i],
+      like: [/upvote/i],
+      favorite: [/save/i, /bookmark/i],
+      bookmark: [/save/i, /bookmark/i],
+      follow: [/join/i, /follow/i],
     },
   },
 };
@@ -230,6 +260,30 @@ function matchesSelector(element: ClickableElement, selector: string): boolean {
   }
 }
 
+function querySelectorAllDeep(documentLike: QueryDocument, selector: string): ClickableElement[] {
+  const roots: DeepQueryRoot[] = [documentLike as DeepQueryRoot];
+  const seenRoots = new Set<DeepQueryRoot>();
+  const result: ClickableElement[] = [];
+
+  while (roots.length > 0) {
+    const root = roots.shift();
+    if (!root || seenRoots.has(root) || typeof root.querySelectorAll !== "function") continue;
+    seenRoots.add(root);
+
+    const matches = Array.from(root.querySelectorAll(selector));
+    result.push(...matches);
+
+    for (const element of Array.from(root.querySelectorAll("*"))) {
+      const shadowRoot = (element as ClickableElement & { shadowRoot?: DeepQueryRoot | null }).shadowRoot;
+      if (shadowRoot && !seenRoots.has(shadowRoot)) {
+        roots.push(shadowRoot);
+      }
+    }
+  }
+
+  return result;
+}
+
 function hasContentSemanticsBeforeControl(
   target: ClickableElement,
   control: ClickableElement,
@@ -264,10 +318,10 @@ function queryClickTarget(
   selectors: readonly string[],
   viewportHeight: number,
 ): ClickableElement | null {
-  for (const selector of selectors) {
-    const elements = Array.from(documentLike.querySelectorAll(selector));
-    const target = elements.find((element) => (
-      isVisible(element, viewportHeight) &&
+	for (const selector of selectors) {
+	  const elements = querySelectorAllDeep(documentLike, selector);
+	  const target = elements.find((element) => (
+	    isVisible(element, viewportHeight) &&
       !isUnsafeClickControl(element, selectors)
     ));
     if (target) return target;
@@ -280,10 +334,10 @@ function queryActionSelectorTarget(
   selectors: readonly string[] | undefined,
   viewportHeight: number,
 ): ClickableElement | null {
-  if (!selectors || selectors.length === 0) return null;
-  for (const selector of selectors) {
-    const elements = Array.from(documentLike.querySelectorAll(selector));
-    const target = elements.find((element) => isVisible(element, viewportHeight));
+	if (!selectors || selectors.length === 0) return null;
+	for (const selector of selectors) {
+	  const elements = querySelectorAllDeep(documentLike, selector);
+	  const target = elements.find((element) => isVisible(element, viewportHeight));
     if (target) return target;
   }
   return null;
@@ -307,7 +361,7 @@ function findTextTarget(
   viewportHeight: number,
 ): ClickableElement | null {
   const activePatterns = ACTIVE_STATE_LABELS[action] ?? [];
-  const elements = Array.from(documentLike.querySelectorAll(TEXT_TARGET_SELECTOR));
+  const elements = querySelectorAllDeep(documentLike, TEXT_TARGET_SELECTOR);
   return elements.find((element) => {
     if (!isVisible(element, viewportHeight)) return false;
     const label = elementLabel(element);
@@ -345,7 +399,7 @@ function queryScrollableTarget(
   documentLike: QueryDocument,
   viewportHeight: number,
 ): ClickableElement | null {
-  const elements = Array.from(documentLike.querySelectorAll("*"));
+  const elements = querySelectorAllDeep(documentLike, "*");
   let best: { element: ClickableElement; score: number } | null = null;
 
   for (const element of elements) {
