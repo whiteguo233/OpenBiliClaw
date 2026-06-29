@@ -53,12 +53,12 @@ test("recommendation covers do not rely on native lazy loading inside the popup 
   assert.doesNotMatch(popupJs, /image\.loading = "lazy"/);
 });
 
-test("runtime stream first connect does not re-fetch recommendations after startup load", () => {
+test("runtime stream connect refreshes recommendations after an offline-to-online transition", () => {
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
-  assert.match(popupJs, /let hasRuntimeStreamConnected = false;/);
+  assert.doesNotMatch(popupJs, /let hasRuntimeStreamConnected = false;/);
   assert.match(
     popupJs,
-    /onConnect\(\) \{[\s\S]*?if \(!state\.online\) \{[\s\S]*?setStatus\(true\);[\s\S]*?if \(hasRuntimeStreamConnected\) \{[\s\S]*?scheduleRecommendationsRefresh\(\{ delayMs: 0 \}\);[\s\S]*?\}[\s\S]*?\}[\s\S]*?hasRuntimeStreamConnected = true;/,
+    /onConnect\(\) \{[\s\S]*?const wasOnline = state\.online;[\s\S]*?if \(!wasOnline\) \{[\s\S]*?state\.online = true;[\s\S]*?setStatus\(true\);[\s\S]*?setHint\("后端连上了，正在刷新。", "success"\);[\s\S]*?scheduleRecommendationsRefresh\(\{ delayMs: 0 \}\);[\s\S]*?\}/,
   );
 });
