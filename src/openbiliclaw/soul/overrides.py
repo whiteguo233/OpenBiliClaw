@@ -623,8 +623,10 @@ def _edit_interest(
             if all(_norm(existing) != key for existing in listedit.add):
                 listedit.add.append(name)
         else:  # remove
+            add_len = len(listedit.add)
             listedit.add = _drop(listedit.add, key)
-            if all(_norm(existing) != key for existing in listedit.remove):
+            removed_user_add = len(listedit.add) != add_len
+            if not removed_user_add and all(_norm(existing) != key for existing in listedit.remove):
                 listedit.remove.append(name)
         if listedit.is_empty():
             edit.specific_edits.pop(parent_key, None)
@@ -757,6 +759,10 @@ def build_edit_state(
                 for dom in domains
             ],
             "removed_domains": list(interest_edit.remove_domains) if interest_edit else [],
+            "specific_edits": {
+                domain: edit.to_dict()
+                for domain, edit in (interest_edit.specific_edits.items() if interest_edit else [])
+            },
         }
 
     return {"initialized": True, "fields": fields}

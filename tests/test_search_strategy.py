@@ -294,6 +294,45 @@ def test_query_generation_profile_summary_penalizes_interest_near_dislikes() -> 
     assert sum(name.startswith("标题党热点拆解") for name in names) < 64
 
 
+def test_query_generation_profile_summary_embedding_selector_avoids_repeated_cosine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openbiliclaw.discovery.strategies._utils as utils
+
+    calls = 0
+
+    def count_cosine(left: list[float], right: list[float]) -> float:
+        nonlocal calls
+        calls += 1
+        return 1.0 if left == right else 0.0
+
+    monkeypatch.setattr(utils, "_cosine_similarity_safe", count_cosine)
+
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(
+                    name=f"兴趣-{i}",
+                    category=f"类别-{i % 16}",
+                    weight=1.0 - i * 0.001,
+                )
+                for i in range(128)
+            ],
+            disliked_topics=[f"避雷-{i}" for i in range(128)],
+        )
+    )
+
+    def lookup(text: str) -> list[float]:
+        bucket = sum(ord(char) for char in text) % 8
+        return [1.0 if index == bucket else 0.0 for index in range(8)]
+
+    summary = utils.build_query_generation_profile_summary(profile, embedding_lookup=lookup)
+
+    assert len(summary["interests"]) == 64
+    assert len(summary["disliked_topics"]) == 64
+    assert calls < 40_000
+
+
 def test_query_generation_profile_summary_without_embedding_keeps_weight_order() -> None:
     from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
 

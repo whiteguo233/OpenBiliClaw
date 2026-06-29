@@ -2351,6 +2351,57 @@
       gap: 8px;
       margin-bottom: 10px;
     }
+    .edit-interest-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .edit-interest-domain {
+      border: 1px solid rgba(230, 236, 245, 0.96);
+      border-left: 2px solid rgba(251, 114, 153, 0.52);
+      border-radius: 12px;
+      padding: 8px 9px 8px 10px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .edit-interest-domain-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .edit-domain-chip {
+      background: rgba(255, 240, 246, 0.96);
+      color: var(--brand-strong);
+      font-weight: 700;
+    }
+    .edit-specific-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 7px 0 0;
+      padding-left: 10px;
+      border-left: 1px solid rgba(251, 114, 153, 0.24);
+    }
+    .edit-specific-chip {
+      background: rgba(248, 250, 255, 0.96);
+      color: var(--text-secondary);
+    }
+    .edit-specific-add-row {
+      margin-top: 6px;
+      padding-left: 11px;
+    }
+    .edit-specific-add-row .edit-add-input {
+      padding: 7px 10px;
+      font-size: 11px;
+    }
+    .edit-specific-add-row .edit-add-btn {
+      min-height: 32px;
+      padding: 6px 11px;
+    }
+    .edit-specific-empty {
+      margin: 0;
+    }
     .edit-chip {
       display: inline-flex;
       align-items: center;
@@ -2402,11 +2453,19 @@
       font-size: 12px;
     }
     .edit-add-btn {
+      border: 0;
+      border-radius: 12px;
       background: rgba(240, 247, 255, 0.96);
       color: #397fcb;
+      cursor: pointer;
+      font-size: 12px;
       font-weight: 700;
       min-height: 36px;
       padding: 8px 14px;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+    .edit-add-btn:hover {
+      background: rgba(222, 238, 255, 0.98);
     }
     .edit-text-input {
       margin-bottom: 8px;

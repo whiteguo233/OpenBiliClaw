@@ -93,14 +93,10 @@ const HEALTH_PROBE_TIMEOUT_MS = 2_000;
 // a live embedding probe that can take seconds when cold, so the 2s ping
 // budget would misread a healthy-but-cold backend as down.
 const HEALTH_FALLBACK_TIMEOUT_MS = 12_000;
-// v0.3.17+: exponential backoff capped at 60s. When the daemon is
-// down for minutes, the previous fixed-5s reconnect flooded console
-// with 12 ERR_CONNECTION_REFUSED per minute. Backoff doubles on each
-// failure (5s → 10s → 20s → 40s → 60s capped); resets on successful
-// onopen so transient blips stay fast-recover.
-const WS_RECONNECT_BASE_DELAY = 5_000;
-const WS_RECONNECT_MAX_DELAY = 60_000;
-let wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
+// Keep backend recovery prompt. The HTTP /api/ping gate below absorbs the
+// backend-down case without opening a failing WebSocket, so a fixed 1s cadence
+// is cheap and avoids stale "offline" extension state after the daemon starts.
+const WS_RECONNECT_DELAY = 1_000;
 type PendingNotification = import("./notifications.js").PendingNotification;
 type PendingCognitionUpdate = import("./notifications.js").PendingCognitionUpdate;
 
@@ -364,9 +360,6 @@ async function connectRuntimeStream(): Promise<void> {
     }
 
     runtimeSocket.onopen = () => {
-      // v0.3.17+: reset backoff on successful connect so a transient
-      // blip after a long outage still recovers immediately.
-      wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
       setBackendBadge(true);
     };
 
@@ -399,13 +392,10 @@ async function connectRuntimeStream(): Promise<void> {
 
 function scheduleWsReconnect(): void {
   if (wsReconnectTimer !== null) return;
-  const delay = wsReconnectDelay;
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
     void connectRuntimeStream();
-  }, delay);
-  // Double for next failure, capped. Resets in onopen above.
-  wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_DELAY);
+  }, WS_RECONNECT_DELAY);
 }
 
 // ---------------------------------------------------------------------------
@@ -686,9 +676,6 @@ onBackendEndpointChange(() => {
     // the service worker.
   }
   runtimeSocket = null;
-  // Reset backoff so the new origin gets an immediate first attempt
-  // instead of inheriting the failed-against-old-port delay.
-  wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
   if (wsReconnectTimer !== null) {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;

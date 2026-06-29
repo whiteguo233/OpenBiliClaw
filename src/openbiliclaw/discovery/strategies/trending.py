@@ -212,9 +212,7 @@ class TrendingStrategy(DiscoveryStrategy):
     def _shuffled_rids(profile_key: str, cycle: int, candidates: list[int]) -> list[int]:
         return sorted(
             candidates,
-            key=lambda rid: hashlib.sha256(
-                f"{profile_key}:{cycle}:{rid}".encode()
-            ).hexdigest(),
+            key=lambda rid: hashlib.sha256(f"{profile_key}:{cycle}:{rid}".encode()).hexdigest(),
         )
 
     def _map_ranking_item(

@@ -118,6 +118,79 @@ class _SlowScoringLLMService(FakeLLMService):
 
 
 @pytest.mark.asyncio
+async def test_explore_strategy_claims_planner_explore_queries_when_enabled(
+    tmp_path,
+) -> None:
+    from openbiliclaw.config import DiscoveryConfig
+    from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.storage.database import Database
+
+    db = Database(tmp_path / "keywords.db")
+    db.initialize()
+    db.insert_pending_keywords("bilibili", ["常规 B 站词"], "digest-a")
+    db.insert_pending_keywords(
+        "bilibili",
+        ["探索 城市 声音 纪录片", "探索 旧电脑 修复 vlog"],
+        "digest-a",
+        keyword_kind="explore",
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=db,
+        discovery_config=DiscoveryConfig(
+            unified_keyword_planner_enabled=True,
+            fetch_batch=5,
+        ),
+    )
+    llm_service = FakeLLMService(
+        [
+            """
+            {
+              "domains": [
+                {
+                  "domain": "不该调用",
+                  "queries": ["不该 搜索"]
+                }
+              ]
+            }
+            """
+        ]
+    )
+    bilibili_client = FakeBilibiliClient(
+        {
+            "探索 城市 声音 纪录片": [
+                {"bvid": "BVEXP1", "title": "城市声音", "author": "UP1", "mid": 1}
+            ],
+            "探索 旧电脑 修复 vlog": [
+                {"bvid": "BVEXP2", "title": "旧电脑修复", "author": "UP2", "mid": 2}
+            ],
+        }
+    )
+    strategy = ExploreStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+        keyword_fetch=keyword_fetch,
+    )
+
+    results = await strategy.discover(_build_profile(), limit=20)
+
+    assert bilibili_client.calls == ["探索 城市 声音 纪录片", "探索 旧电脑 修复 vlog"]
+    assert llm_service.calls == []
+    assert [item.bvid for item in results] == ["BVEXP1", "BVEXP2"]
+    assert [str(row["keyword"]) for row in db.claim_keywords("bilibili", 10)] == ["常规 B 站词"]
+    assert db.claim_keywords("bilibili", 10, keyword_kind="explore") == []
+    statuses = {
+        str(row["keyword"]): str(row["status"])
+        for row in db.conn.execute(
+            "SELECT keyword, status FROM discovery_keywords ORDER BY id"
+        ).fetchall()
+    }
+    assert statuses["探索 城市 声音 纪录片"] == "used"
+    assert statuses["探索 旧电脑 修复 vlog"] == "used"
+
+
+@pytest.mark.asyncio
 async def test_explore_strategy_generates_and_filters_domains() -> None:
     from openbiliclaw.discovery.strategies.strategies import ExploreStrategy
 

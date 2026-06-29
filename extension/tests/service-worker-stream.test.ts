@@ -33,3 +33,16 @@ test("service worker starts platform task polling during hot reload bootstrap", 
   assert.match(bootstrapBlock, /startPlatformTaskPolling\(\);/);
   assert.match(bootstrapBlock, /startCookieSync\(\);/);
 });
+
+test("background runtime stream reconnect uses a fixed high-frequency interval", () => {
+  const source = readFileSync(resolve("src", "background", "service-worker.ts"), "utf8");
+  const scheduleStart = source.indexOf("function scheduleWsReconnect");
+  const scheduleEnd = source.indexOf("// ---------------------------------------------------------------------------", scheduleStart);
+  const scheduleBlock = source.slice(scheduleStart, scheduleEnd);
+
+  assert.match(source, /const WS_RECONNECT_DELAY = 1_000;/);
+  assert.doesNotMatch(source, /WS_RECONNECT_MAX_DELAY/);
+  assert.doesNotMatch(source, /wsReconnectDelay/);
+  assert.doesNotMatch(source, /Math\.min\(wsReconnectDelay \* 2/);
+  assert.match(scheduleBlock, /}, WS_RECONNECT_DELAY\);/);
+});

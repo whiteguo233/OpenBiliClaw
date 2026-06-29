@@ -12,6 +12,7 @@ from openbiliclaw.soul.overrides import (
     TextPin,
     apply_edit,
     apply_overrides,
+    build_edit_state,
 )
 from openbiliclaw.soul.profile import (
     CoreLayer,
@@ -273,3 +274,24 @@ def test_apply_edit_feeds_apply_overrides() -> None:
     ov, _ = apply_edit(ProfileOverrides(), target="dislikes", op="add", value="营销号")
     result = apply_overrides(_sample_profile(), ov)
     assert "营销号" in result.preferences.disliked_topics
+
+
+def test_build_edit_state_marks_interest_specific_edits() -> None:
+    raw = _sample_profile()
+    ov, _ = apply_edit(ProfileOverrides(), target="likes", op="add", value="自托管", parent="科技")
+    effective = apply_overrides(raw, ov)
+
+    state = build_edit_state(raw, effective, ov)
+
+    likes = state["fields"]["likes"]
+    assert likes["specific_edits"]["科技"]["add"] == ["自托管"]
+    tech = next(item for item in likes["domains"] if item["domain"] == "科技")
+    assert "自托管" in tech["specifics"]
+
+
+def test_apply_edit_interest_specific_add_then_remove_clears_override() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="likes", op="add", value="自托管", parent="科技")
+
+    ov, _ = apply_edit(ov, target="likes", op="remove", value="自托管", parent="科技")
+
+    assert "likes" not in ov.interest_edits

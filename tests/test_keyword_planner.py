@@ -101,12 +101,24 @@ class _FakeDeficitSource:
     deficits: dict[str, int] = field(default_factory=dict)
     bili_catalyst: bool = False
     source_targets: dict[str, int] = field(default_factory=dict)
+    explore_due_soon: bool = False
+    covered_topic_groups: list[str] = field(default_factory=list)
+    explore_marked: int = 0
 
     def keyword_planner_real_deficit(self, platform: str) -> int:
         return int(self.deficits.get(platform, 0))
 
     def keyword_planner_bilibili_catalyst(self) -> bool:
         return bool(self.bili_catalyst)
+
+    def keyword_planner_explore_due_soon(self) -> bool:
+        return bool(self.explore_due_soon)
+
+    def keyword_planner_explore_covered_topic_groups(self) -> list[str]:
+        return list(self.covered_topic_groups)
+
+    def keyword_planner_mark_explore_planned(self) -> None:
+        self.explore_marked += 1
 
     def _source_target_counts(self) -> dict[str, int]:
         return dict(self.source_targets)
@@ -186,12 +198,21 @@ def db(tmp_path: Path) -> Database:
     return d
 
 
-def _pending(db: Database, platform: str, digest: str) -> list[str]:
+def _pending(
+    db: Database,
+    platform: str,
+    digest: str,
+    *,
+    keyword_kind: str = "regular",
+) -> list[str]:
     rows = db.conn.execute(
         "SELECT keyword FROM discovery_keywords "
-        "WHERE platform = ? AND status = 'pending' AND profile_kw_digest = ? "
+        "WHERE platform = ? "
+        "AND keyword_kind = ? "
+        "AND status = 'pending' "
+        "AND profile_kw_digest = ? "
         "ORDER BY id ASC",
-        (platform, digest),
+        (platform, keyword_kind, digest),
     ).fetchall()
     return [str(r["keyword"]) for r in rows]
 
@@ -344,6 +365,106 @@ async def test_planner_reuses_generation_when_profile_and_pool_snapshot_match(
     assert second == {_BILI: 2}
     assert len(llm.calls) == 1
     assert _pending(db, _BILI, digest) == ["露营 装备 盘点", "和田玉 鉴别 入门"]
+
+
+async def test_planner_appends_due_explore_domains_to_bili_query_cache(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9), ("城市观察", 0.65))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _BILI: ["人工智能 盘点"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(
+        deficits={_BILI: 40},
+        explore_due_soon=True,
+        covered_topic_groups=["人工智能"],
+    )
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert len(llm.calls) == 1
+    user = llm.calls[0]["user"]
+    assert "<explore_domains>" in user
+    assert "人工智能" in user
+    assert _pending(db, _BILI, digest) == ["人工智能 盘点"]
+    assert _pending(db, _BILI, digest, keyword_kind="explore") == [
+        "城市 声音 采样 纪录片",
+        "街头 声音 设计 vlog",
+    ]
+    assert ledger[_BILI] == 3
+    assert deficit.explore_marked == 1
+
+
+async def test_planner_does_not_request_explore_domains_when_not_due(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _BILI: ["人工智能 盘点"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(deficits={_BILI: 40}, explore_due_soon=False)
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert "<explore_domains>" not in llm.calls[0]["user"]
+    assert _pending(db, _BILI, digest) == ["人工智能 盘点"]
+    assert ledger[_BILI] == 1
+    assert deficit.explore_marked == 0
+
+
+async def test_planner_requires_bili_deficit_before_requesting_explore_domains(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9), ("城市观察", 0.65))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _XHS: ["人工智能 真实体验"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(
+        deficits={_BILI: 0, _XHS: 40},
+        explore_due_soon=True,
+    )
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert len(llm.calls) == 1
+    assert "<explore_domains>" not in llm.calls[0]["user"]
+    assert _pending(db, _BILI, digest) == []
+    assert _pending(db, _XHS, digest) == ["人工智能 真实体验"]
+    assert ledger == {_XHS: 1}
+    assert deficit.explore_marked == 0
 
 
 async def test_digest_change_expires_old_and_regenerates(db: Database) -> None:

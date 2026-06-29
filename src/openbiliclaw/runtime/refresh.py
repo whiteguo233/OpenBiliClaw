@@ -2663,6 +2663,50 @@ class ContinuousRefreshController:
             return False
         return pending_events >= self.signal_event_threshold
 
+    def keyword_planner_explore_due_soon(self) -> bool:
+        """Whether planner may piggyback B站 exploratory queries this pass.
+
+        This intentionally mirrors refresh-plan timing instead of giving the
+        planner its own clock. The small lead window lets a planner pass that
+        runs just before the refresh tick reuse the merged keyword LLM call for
+        explore, avoiding the later standalone ``discovery.explore.queries``
+        call while still respecting ``explore_refresh_hours``.
+        """
+        if "bilibili" not in self._normalized_pool_source_shares():
+            return False
+        if self.keyword_planner_real_deficit("bilibili") <= 0:
+            return False
+        try:
+            state = self.memory_manager.load_discovery_runtime_state()
+        except Exception:
+            logger.exception("keyword_planner_explore_due_soon state load failed")
+            return False
+        return self._is_due_soon(
+            str(state.get("last_explore_refresh_at", "")),
+            hours=self.explore_refresh_hours,
+            lead_seconds=max(0, int(self.check_interval_seconds)),
+        )
+
+    def keyword_planner_explore_covered_topic_groups(self) -> list[str]:
+        """Covered pool topic_groups for the planner's exploratory query block."""
+        getter = getattr(self.database, "get_active_pool_topic_groups", None)
+        if not callable(getter):
+            return []
+        try:
+            return [
+                str(item).strip() for item in getter(limit=12, min_count=2) if str(item).strip()
+            ]
+        except Exception:
+            logger.debug("keyword planner covered topic-group lookup failed", exc_info=True)
+            return []
+
+    def keyword_planner_mark_explore_planned(self) -> None:
+        """Mark explore refresh consumed after planner inserted explore queries."""
+        now = self._now().isoformat()
+        self._update_discovery_runtime_state(
+            lambda runtime_state: runtime_state.update({"last_explore_refresh_at": now})
+        )
+
     def _source_requested_count(
         self,
         source_family: str,
@@ -2973,6 +3017,15 @@ class ContinuousRefreshController:
         if last_run is None:
             return True
         return self._now() - last_run >= timedelta(hours=hours)
+
+    def _is_due_soon(self, value: str, *, hours: int, lead_seconds: int) -> bool:
+        if hours <= 0:
+            return True
+        last_run = self._parse_iso_datetime(value)
+        if last_run is None:
+            return True
+        due_at = last_run + timedelta(hours=hours)
+        return self._now() >= due_at - timedelta(seconds=max(0, int(lead_seconds)))
 
     @staticmethod
     def _now() -> datetime:

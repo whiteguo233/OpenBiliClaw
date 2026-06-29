@@ -2420,17 +2420,49 @@
         </div>`;
     }
 
+    function profileEditSpecificName(item) {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") return item.name || item.label || "";
+      return "";
+    }
+
+    function profileEditHasSpecificEdits(field) {
+      const edits = field?.specific_edits;
+      if (!edits || typeof edits !== "object") return false;
+      return Object.values(edits).some((edit) => {
+        if (!edit || typeof edit !== "object") return false;
+        return (edit.add?.length || 0) > 0 || (edit.remove?.length || 0) > 0;
+      });
+    }
+
     function profileEditInterestField(path, label, field) {
       const domains = Array.isArray(field.domains) ? field.domains : [];
-      const edited = (field.removed_domains?.length || 0) > 0 || domains.some((d) => d?.user_added);
-      const chips = domains.length
-        ? domains.map((d) => `<span class="edit-chip">${escapeHtml(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" type="button" data-edit-remove="${escapeHtml(path)}" data-edit-value="${escapeHtml(d.domain)}">✕</button></span>`).join("")
+      const edited = (field.removed_domains?.length || 0) > 0 || domains.some((d) => d?.user_added) || profileEditHasSpecificEdits(field);
+      const tree = domains.length
+        ? domains.map((d) => {
+          if (!d?.domain) return "";
+          const specifics = Array.isArray(d.specifics) ? d.specifics.map(profileEditSpecificName).filter(Boolean) : [];
+          const specificChips = specifics.length
+            ? specifics.map((specific) => `<span class="edit-chip edit-specific-chip">${escapeHtml(specific)}<button class="edit-chip-remove" type="button" data-edit-remove-specific="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}" data-edit-value="${escapeHtml(specific)}">✕</button></span>`).join("")
+            : `<p class="video-meta edit-specific-empty">还没有二级兴趣</p>`;
+          return `
+            <div class="edit-interest-domain">
+              <div class="edit-interest-domain-head">
+                <span class="edit-chip edit-domain-chip">${escapeHtml(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" type="button" data-edit-remove="${escapeHtml(path)}" data-edit-value="${escapeHtml(d.domain)}">✕</button></span>
+              </div>
+              <div class="edit-specific-list">${specificChips}</div>
+              <div class="edit-add-row edit-specific-add-row">
+                <input class="edit-add-input" data-edit-specific-input="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}" placeholder="添加二级兴趣" />
+                <button class="pill-btn" type="button" data-edit-add-specific="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}">添加</button>
+              </div>
+            </div>`;
+        }).join("")
         : `<p class="video-meta">还没有，添加一个吧</p>`;
       const placeholder = path === "dislikes" ? "添加要避开的领域" : "添加感兴趣的领域";
       return `
         <div class="edit-field">
           <div class="edit-field-head"><span class="edit-field-label">${escapeHtml(label)}</span>${edited ? `<span class="edit-badge">已编辑</span>` : ""}</div>
-          <div class="edit-chip-list">${chips}</div>
+          <div class="edit-interest-tree">${tree}</div>
           <div class="edit-add-row">
             <input class="edit-add-input" data-edit-add-input="${escapeHtml(path)}" placeholder="${escapeHtml(placeholder)}" />
             <button class="pill-btn" type="button" data-edit-add="${escapeHtml(path)}">添加</button>
@@ -2470,6 +2502,14 @@
       root.querySelectorAll("[data-edit-remove]").forEach((btn) => {
         btn.addEventListener("click", () => void applyProfileEdit({ target: btn.dataset.editRemove, op: "remove", value: btn.dataset.editValue }));
       });
+      root.querySelectorAll("[data-edit-remove-specific]").forEach((btn) => {
+        btn.addEventListener("click", () => void applyProfileEdit({
+          target: btn.dataset.editRemoveSpecific,
+          op: "remove",
+          value: btn.dataset.editValue,
+          parent: btn.dataset.editParent || ""
+        }));
+      });
       root.querySelectorAll("[data-edit-reset]").forEach((btn) => {
         btn.addEventListener("click", () => void applyProfileEdit({ target: btn.dataset.editReset, op: "reset" }));
       });
@@ -2482,6 +2522,19 @@
           void applyProfileEdit({ target: path, op: "add", value });
         });
       });
+      root.querySelectorAll("[data-edit-add-specific]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const input = btn.closest(".edit-add-row")?.querySelector("[data-edit-specific-input]");
+          const value = input?.value.trim();
+          if (!value) return;
+          void applyProfileEdit({
+            target: btn.dataset.editAddSpecific,
+            op: "add",
+            value,
+            parent: btn.dataset.editParent || ""
+          });
+        });
+      });
       root.querySelectorAll("[data-edit-add-input]").forEach((input) => {
         input.addEventListener("keydown", (event) => {
           if (event.key !== "Enter") return;
@@ -2489,6 +2542,20 @@
           const value = input.value.trim();
           if (!value) return;
           void applyProfileEdit({ target: input.dataset.editAddInput, op: "add", value });
+        });
+      });
+      root.querySelectorAll("[data-edit-specific-input]").forEach((input) => {
+        input.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const value = input.value.trim();
+          if (!value) return;
+          void applyProfileEdit({
+            target: input.dataset.editSpecificInput,
+            op: "add",
+            value,
+            parent: input.dataset.editParent || ""
+          });
         });
       });
       root.querySelectorAll("[data-edit-save]").forEach((btn) => {

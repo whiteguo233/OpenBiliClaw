@@ -922,6 +922,43 @@ body {
   gap: 8px;
   margin-bottom: 10px;
 }
+.edit-interest-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.edit-interest-domain {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(247, 250, 252, 0.72);
+}
+.edit-interest-domain-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.edit-domain-chip {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.edit-specific-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.edit-specific-chip {
+  background: var(--lime-soft);
+  color: var(--success);
+}
+.edit-specific-add-row {
+  margin-top: 8px;
+}
+.edit-specific-empty {
+  margin: 0;
+}
 .edit-chip {
   display: inline-flex;
   align-items: center;

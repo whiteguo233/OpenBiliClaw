@@ -54,6 +54,17 @@ test("edit panel covers the un-truncated editable fields", () => {
   }
 });
 
+test("edit panel renders and submits interest specifics", () => {
+  const js = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(js, /edit-specific-list/);
+  assert.match(js, /添加二级兴趣/);
+  assert.match(js, /parent:\s*dom\.domain/);
+  assert.match(js, /chip\.classList\.add\(chipClass\)/);
+  assert.match(js, /"edit-domain-chip"/);
+  assert.match(js, /"edit-specific-chip"/);
+});
+
 test("edit panel renders scalar (slider) fields committing a 0..1 float", () => {
   const js = readFileSync(resolve("popup", "popup.js"), "utf8");
   for (const path of [

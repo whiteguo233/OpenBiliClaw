@@ -892,6 +892,17 @@ class TestMobileWebViewModels:
         assert 'payload.surface = "profile"' in desktop_js
         assert 'respondToProbe(domain, action, { surface: "profile" })' in profile_js
 
+    def test_profile_edit_interest_specifics_are_editable_in_web_surfaces(self) -> None:
+        profile_js = Path("src/openbiliclaw/web/js/views/profile.js").read_text()
+        desktop_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text()
+
+        for source in (profile_js, desktop_js):
+            assert "specifics" in source
+            assert "edit-specific-list" in source
+            assert "data-edit-parent" in source
+            assert "添加二级兴趣" in source
+            assert "parent:" in source
+
     def test_normalize_profile_summary_preserves_probe_mode_metadata(self) -> None:
         _assert_js(
             dedent("""

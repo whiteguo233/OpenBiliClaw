@@ -20,6 +20,7 @@
 | discovery 待评估池 | ✅ | 新增 `discovery_candidates` 表，支持 mixed-source enqueue / claim / evaluation update / cached mark / rejection status，并持久化 `score_threshold`、`eval_attempts` 与 batch 级 `batch_eval_attempts`。 |
 | discovery 历史候选查询 | ✅ | `get_existing_discovery_candidate_keys()` 与 `get_existing_content_cache_ids()` 支持 pipeline 在 enqueue 前过滤历史候选和已缓存内容，避免重复 raw 占住 Evo 前供给窗口。 |
 | discovery 状态恢复 | ✅ | 启动初始化会释放过期 `evaluating` 行；terminal 状态有 status guard，避免 stale update 改写 cached / rejected 结果。 |
+| discovery keyword store | ✅ | `discovery_keywords` 用 `keyword_kind` 区分常规 search 词与 explore 词；默认 `regular`，`explore` 词只供 `ExploreStrategy` 专用 claim，不会被普通 B 站 search 消费。 |
 | 最近已看过滤 | ✅ | 可换、raw 和评估路径复用 `source_platform:content_id` 与旧 BVID key，避免已看内容重复入池。 |
 | 统一 admission 分数门 | ✅ | 推荐池读取、raw/headroom 统计、topic/franchise 分布、suppressed 复活、delight 候选和历史推荐读取都会应用统一最低分；初始化会清理旧低分 `content_cache` / `recommendations` 脏数据。 |
 | 惊喜通道占位排除 | ✅ | `get_pool_candidates()` / `count_pool_candidates()` 统一排除被惊喜通道认领的行（`delight_notified=1`，或 delight 分数达阈值且 reason/hook 非空即当前惊喜队列候选），普通推荐与惊喜推荐不再重复出同一条内容；阈值镜像 `DEFAULT_DELIGHT_THRESHOLD`（0.70），由测试锁定两边一致。 |
@@ -79,6 +80,29 @@ known_content_ids = db.get_existing_content_cache_ids(["BV1xx411c7mD"])
 - `count_discovery_candidates_by_status()` 与 `count_discovery_candidates_by_source_status()` 用于诊断待评估池生命周期分布。
 - `get_existing_discovery_candidate_keys(keys)` 返回任意 lifecycle status 下已经出现过的 `candidate_key`；`get_existing_content_cache_ids(ids)` 返回已经进入正式 `content_cache` 的 BVID / `content_id`。两者用于 `DiscoveryCandidatePipeline` 在 enqueue 前过滤历史重复，而不是等 SQLite `INSERT OR IGNORE` 静默吞掉后才发现供给不足。
 
+### Discovery Keywords
+
+```python
+db.insert_pending_keywords("bilibili", ["AI 科普"], digest)
+db.insert_pending_keywords(
+    "bilibili",
+    ["城市 声音 采样 纪录片"],
+    digest,
+    keyword_kind="explore",
+)
+
+regular = db.claim_keywords("bilibili", 5)
+explore = db.claim_keywords("bilibili", 5, keyword_kind="explore")
+```
+
+行为说明：
+
+- `keyword_kind="regular"` 是默认值，供普通平台 search / producer 消费。
+- `keyword_kind="explore"` 是 `KeywordPlanner` 写入的 B 站探索 query 候选池，只有 `ExploreStrategy` 的 planner-backed 分支会 claim。
+- 在途唯一约束包含 `(platform, keyword, profile_kw_digest, keyword_kind)`；同一个 query 可分别作为 regular 与 explore 生命周期存在，互不抢占。
+- `history_keywords()` 与 `recycle_oldest_used()` 也默认只读 `regular` 池；需要查看 / 回收探索池时必须显式传 `keyword_kind="explore"`。
+- `pending → claimed → used/failed/executing` 状态机保持不变；租约回收和失败回滚对两类 keyword 都生效。
+
 ### Pool Readiness
 
 ```python
@@ -136,4 +160,5 @@ db.suppress_low_confidence_recommendations()
 5. **状态机必须防 stale caller**：`evaluating` 有过期回收，terminal rows 有 status guard，避免进程 crash 或并发 caller 让候选永久卡住或复活。
 6. **pending 不是 raw 减 available**：最近已看、缺文案、缺分类、缺链接、待评估属于不同诊断含义，必须分开统计。
 7. **低分清理和展示防线都在存储层落地**：admission 仍由 discovery evaluator 决定；storage 只用统一阈值阻止旧脏数据、suppressed 低分复活和未来绕过入口继续进入可展示读取路径。
-8. **`style_key` 迁移只改已知旧值**：历史安装用户的本地 SQLite 里可能已有 `deep_dive`、`story_doc`、`lifestyle` 等旧内容风格 key。初始化迁移会把这些已知值物理改写为 `deep_focus`、`story_immersion`、`daily_wander` 等新观看模式；未知自定义值会原样保留，避免误删无法识别的历史数据。
+8. **keyword kind 是用途隔离，不是平台隔离**：`regular` 和 `explore` 共享同一张 `discovery_keywords` 表与生命周期，便于复用 claim / lease / yield 基础设施；但默认 claim / history / recycle 只读 `regular`，避免探索 query 被普通 search 提前消费或被常规补货历史污染。
+9. **`style_key` 迁移只改已知旧值**：历史安装用户的本地 SQLite 里可能已有 `deep_dive`、`story_doc`、`lifestyle` 等旧内容风格 key。初始化迁移会把这些已知值物理改写为 `deep_focus`、`story_immersion`、`daily_wander` 等新观看模式；未知自定义值会原样保留，避免误删无法识别的历史数据。

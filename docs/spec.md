@@ -139,7 +139,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 | **分区热门/排行榜** | 固定全站榜，并按本地洗牌轮转覆盖非 0 分区榜，结合用户画像筛选 |
 | **UP 主追踪** | 追踪关注的和发现的优质 UP 主的新动态 |
 | **评论区挖掘** | 从评论区发现用户推荐的其他内容/UP 主 |
-| **跨领域探索** | 刻意推荐用户从未接触过但心理画像暗示可能喜欢的领域 |
+| **跨领域探索** | 刻意推荐用户从未接触过但心理画像暗示可能喜欢的领域；当统一 `KeywordPlanner` 已有 merged keyword 调用、`explore_refresh_hours` 到期或即将到期且 B 站仍有补货空间时，会把 `explore_domains` 合并进同一次关键词生成，把探索 query 写入 B 站 `keyword_kind="explore"` query cache。`ExploreStrategy` 后续从该 explore 候选池 claim query 搜索；池为空时不再单独打一次 explore 计划 LLM |
 | **热点关联** | 追踪热点话题，判断是否与用户深层兴趣相关 |
 
 #### 内容评估

@@ -770,6 +770,35 @@
   padding: 2px 9px;
 }
 .edit-chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.edit-interest-tree { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.edit-interest-domain {
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid color-mix(in oklab, var(--accent), white 34%);
+  border-radius: 12px;
+  padding: 12px 12px 12px 14px;
+  background: color-mix(in oklab, var(--surface), var(--surface-warm) 34%);
+}
+.edit-interest-domain-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.edit-domain-chip {
+  background: color-mix(in oklab, var(--accent), white 86%);
+  color: var(--accent);
+  font-weight: 700;
+}
+.edit-specific-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding-left: 14px;
+  border-left: 2px solid color-mix(in oklab, var(--accent), white 78%);
+}
+.edit-specific-chip {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-2);
+}
+.edit-specific-add-row { margin-top: 10px; padding-left: 16px; }
+.edit-specific-empty { margin: 0; }
 .edit-chip {
   display: inline-flex;
   align-items: center;

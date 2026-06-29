@@ -125,6 +125,39 @@ test("runtime stream client resolves backend URL dynamically when no explicit ba
   client.disconnect();
 });
 
+test("runtime stream client keeps a fixed reconnect delay across repeated failures", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const delays: number[] = [];
+  const callbacks: Array<() => void> = [];
+
+  globalThis.setTimeout = ((callback: () => void, delay?: number) => {
+    delays.push(Number(delay ?? 0));
+    callbacks.push(callback);
+    return callbacks.length as never;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const client = createRuntimeStreamClient({
+      backendUrl: "http://127.0.0.1:8420/api",
+      WebSocketImpl: FakeWebSocket as never,
+      reconnectDelayMs: 750,
+    });
+
+    client.connect();
+    FakeWebSocket.latest?.onclose?.();
+    callbacks.shift()?.();
+    FakeWebSocket.latest?.onclose?.();
+
+    assert.deepEqual(delays, [750, 750]);
+    client.disconnect();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("runtime stream client resets wasConnected after disconnect so reconnect triggers onConnect again", () => {
   const events: string[] = [];
 

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -2829,6 +2829,72 @@ def test_source_replenishment_plan_escapes_raw_headroom_deadlock() -> None:
         (["search", "related_chain", "trending", "explore"], 30)
     ]
     assert controller._source_deficit("bilibili") == 30
+
+
+def test_keyword_planner_explore_due_soon_requires_bili_deficit() -> None:
+    last_explore = (datetime.now() - timedelta(hours=12) + timedelta(seconds=30)).isoformat()
+    state = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": last_explore,
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+        }
+    )
+    controller = ContinuousRefreshController(
+        memory_manager=state,
+        database=_FakeDatabase(
+            [],
+            pool_count=250,
+            source_available_counts={"bilibili": 250},
+            source_raw_counts={"bilibili": 250},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        explore_refresh_hours=12,
+        check_interval_seconds=60,
+    )
+
+    assert controller.keyword_planner_explore_due_soon() is True
+
+    no_bili_room = ContinuousRefreshController(
+        memory_manager=state,
+        database=_FakeDatabase(
+            [],
+            pool_count=300,
+            source_available_counts={"bilibili": 300},
+            source_raw_counts={"bilibili": 300},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        explore_refresh_hours=12,
+        check_interval_seconds=60,
+    )
+
+    assert no_bili_room.keyword_planner_explore_due_soon() is False
+
+
+def test_keyword_planner_mark_explore_planned_updates_refresh_state() -> None:
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase([]),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+    )
+
+    controller.keyword_planner_mark_explore_planned()
+
+    assert memory.state["last_explore_refresh_at"]
 
 
 def test_real_database_enforce_then_replenish_reaches_available_target(

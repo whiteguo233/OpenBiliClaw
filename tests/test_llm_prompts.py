@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import openbiliclaw.llm.prompts as prompt_module
 from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
@@ -12,8 +13,6 @@ from openbiliclaw.llm.prompts import (
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
     build_content_evaluation_prompt,
-    build_delight_reason_prompt,
-    build_delight_score_batch_prompt,
     build_explore_domains_prompt,
     build_merged_keywords_prompt,
     build_profile_consolidation_prompt,
@@ -24,6 +23,7 @@ from openbiliclaw.llm.prompts import (
     build_speculation_generation_prompt,
     parse_merged_keywords,
     parse_merged_keywords_with_presence,
+    parse_merged_keywords_with_presence_and_explore_domains,
 )
 from openbiliclaw.memory.manager import MemoryManager
 
@@ -164,23 +164,9 @@ def test_batch_expression_prompt_accepts_profile_blocks_first() -> None:
     assert user_prompt.index("<source_platform>") < user_prompt.index("<content_batch>")
 
 
-def test_delight_prompts_accept_profile_blocks_first() -> None:
-    score_messages = build_delight_score_batch_prompt(
-        profile_summary={"core_traits": ["fallback"]},
-        profile_blocks=_PROFILE_BLOCKS,
-        content_batch=[{"bvid": "BV1", "title": "候选"}],
-    )
-    reason_messages = build_delight_reason_prompt(
-        profile_summary={"core_traits": ["fallback"]},
-        profile_blocks=_PROFILE_BLOCKS,
-        content_summary={"title": "候选"},
-        reason_stub="因为它有跨域惊喜",
-        tone_profile=None,
-        source_platform="bilibili",
-    )
-
-    _assert_layered_profile_prefix(score_messages[1]["content"], "<content_batch>")
-    _assert_layered_profile_prefix(reason_messages[1]["content"], "<source_platform>")
+def test_delight_llm_prompt_builders_are_removed() -> None:
+    assert not hasattr(prompt_module, "build_delight_score_batch_prompt")
+    assert not hasattr(prompt_module, "build_delight_reason_prompt")
 
 
 def test_merged_keywords_prompt_accepts_profile_blocks_first() -> None:
@@ -750,28 +736,6 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
             ),
         ),
         (
-            "build_delight_reason_prompt",
-            dict(
-                profile_summary={"a": 1},
-                content_summary={"x": 1},
-                reason_stub="x",
-                tone_profile=None,
-                source_platform="bilibili",
-            ),
-            dict(
-                profile_summary={"a": 2},
-                content_summary={"x": 2},
-                reason_stub="y",
-                tone_profile={
-                    "density": "dense",
-                    "warmth": "warm",
-                    "playfulness": "medium",
-                    "directness": "balanced",
-                },
-                source_platform="xiaohongshu",
-            ),
-        ),
-        (
             "build_avoidance_generation_prompt",
             dict(
                 profile_summary={"likes": ["A"], "disliked_topics": ["X"]},
@@ -1194,17 +1158,6 @@ def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
         tone_profile=None,
         source_platform="bilibili",
     )[1]["content"]
-    delight_score = build_delight_score_batch_prompt(
-        profile_summary={"interests": ["音乐"]},
-        content_batch=[{"title": "现场演出", "style_key": "music_live"}],
-    )[1]["content"]
-    delight_reason = build_delight_reason_prompt(
-        profile_summary={"interests": ["科技"]},
-        content_summary={"title": "AI 芯片解析", "style_key": "tech_analysis"},
-        reason_stub="fit",
-        tone_profile=None,
-        source_platform="bilibili",
-    )[1]["content"]
 
     combined = "\n".join(
         [
@@ -1212,19 +1165,16 @@ def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
             batch_eval,
             single_expression,
             batch_expression,
-            delight_score,
-            delight_reason,
         ]
     )
 
-    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy", "music_live"):
+    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy"):
         assert legacy_key not in combined
     for canonical_key in (
         "deep_focus",
         "story_immersion",
         "daily_wander",
         "hands_on",
-        "live_pulse",
     ):
         assert canonical_key in combined
 
@@ -1349,6 +1299,25 @@ def test_merged_keywords_prompt_user_message_carries_profile_once_and_due_platfo
     assert "AI 编程 盘点" in user
     assert "手冲咖啡 入门" in user
     assert "原神" in user
+
+
+def test_merged_keywords_prompt_can_request_explore_domains() -> None:
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "AI", "weight": 0.9}]},
+        platform_blocks=_merged_platform_blocks(),
+        explore_domains_block={
+            "need_domains": 5,
+            "queries_per_domain": 3,
+            "covered_topic_groups": ["AI 编程", "认知科学"],
+        },
+    )
+    user = messages[1]["content"]
+
+    assert "<explore_domains>" in user
+    assert '"covered_topic_groups"' in user
+    assert "AI 编程" in user
+    assert "探索" in messages[0]["content"]
+    assert "explore_domains" in messages[0]["content"]
 
 
 def test_merged_keywords_prompt_serialization_is_deterministic() -> None:
@@ -1550,6 +1519,48 @@ def test_parse_merged_keywords_with_presence_marks_explicit_empty_as_present() -
     # bilibili (had words) and xiaohongshu (explicit []) are present; douyin
     # (absent from the JSON object) is NOT.
     assert present == {"bilibili", "xiaohongshu"}
+
+
+def test_parse_merged_keywords_with_presence_and_explore_domains() -> None:
+    content = """
+    {
+      "bilibili": ["历史 盘点"],
+      "explore_domains": [
+        {
+          "domain": "城市声音采样",
+          "novelty_level": 0.83,
+          "queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"]
+        },
+        {
+          "domain": "AI",
+          "novelty_level": "not-a-number",
+          "queries": ["", "  ", "工业 影像 解说", "工业 影像 解说"]
+        }
+      ]
+    }
+    """
+    keywords, present, explore_domains = parse_merged_keywords_with_presence_and_explore_domains(
+        content,
+        ["bilibili", "xiaohongshu"],
+        per_platform_cap=10,
+        max_explore_domains=5,
+        queries_per_domain=3,
+    )
+
+    assert keywords["bilibili"] == ["历史 盘点"]
+    assert present == {"bilibili"}
+    assert explore_domains == [
+        {
+            "domain": "城市声音采样",
+            "novelty_level": 0.83,
+            "queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"],
+        },
+        {
+            "domain": "AI",
+            "novelty_level": 0.65,
+            "queries": ["工业 影像 解说"],
+        },
+    ]
 
 
 def test_parse_merged_keywords_with_presence_non_list_is_not_present() -> None:

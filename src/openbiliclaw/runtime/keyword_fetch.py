@@ -52,6 +52,8 @@ PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TWITTER = "twitter"
 PLATFORM_ZHIHU = "zhihu"
 PLATFORM_REDDIT = "reddit"
+KEYWORD_KIND_REGULAR = "regular"
+KEYWORD_KIND_EXPLORE = "explore"
 
 
 @dataclass(frozen=True)
@@ -100,7 +102,13 @@ class KeywordFetchCoordinator:
 
     # ── claim ───────────────────────────────────────────────────────────
 
-    def claim(self, platform: str, n: int | None = None) -> list[ClaimedKeyword]:
+    def claim(
+        self,
+        platform: str,
+        n: int | None = None,
+        *,
+        keyword_kind: str = KEYWORD_KIND_REGULAR,
+    ) -> list[ClaimedKeyword]:
         """Atomically claim up to ``n`` (default ``fetch_batch``) pending words.
 
         Returns ``[]`` when the store has no claimable ``pending`` words for the
@@ -114,7 +122,15 @@ class KeywordFetchCoordinator:
         if not callable(claim_fn):
             return []
         try:
-            rows = claim_fn(platform, count)
+            rows = claim_fn(platform, count, keyword_kind=keyword_kind)
+        except TypeError:
+            if keyword_kind != KEYWORD_KIND_REGULAR:
+                return []
+            try:
+                rows = claim_fn(platform, count)
+            except Exception:
+                logger.exception("keyword fetch: claim_keywords failed for %s", platform)
+                return []
         except Exception:
             logger.exception("keyword fetch: claim_keywords failed for %s", platform)
             return []

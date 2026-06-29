@@ -26,7 +26,7 @@
 - **SearchStrategy** — 基于画像生成搜索词并调用 B 站搜索的策略
 - **TrendingStrategy** — 从全站榜和相关分区榜中筛选高匹配热点内容
 - **RelatedChainStrategy** — 从近期高价值视频种子出发，沿相关推荐链扩展候选内容
-- **ExploreStrategy** — 推断"高相关的远域探索方向"，寻找更有陌生感但仍可解释的内容
+- **ExploreStrategy** — 消费统一 `KeywordPlanner` 生成的 B 站探索 query 候选池，寻找更有陌生感但仍可解释的内容；planner 关闭时保留旧的现场 domain 生成回退路径
 - **PoolDistributionSnapshot** — runtime 在补池前构建的候选池分布快照，给 discovery 提供当前供给拥挤/缺口的软信号
 - **SourcePolicy** — 统一读取 `sources.<platform>.enabled` 与 `[scheduler.pool_source_shares]`，生成有效平台配比；关闭的平台保留配置但不占 runtime quota
 - **SourceAdapter 协议** — 多源适配层（`sources/`），在上述 4 个 B 站策略之外挂载非 B 站内容源（小红书、抖音初始化画像信号与 DOM-first search / hot / feed discovery、YouTube 初始化画像信号、知乎初始化画像信号与 search / hot / feed / creator / related discovery、Reddit 初始化画像信号与 search / hot / subreddit / related discovery、V2EX 等）
@@ -79,7 +79,7 @@
    - 来源平台分布、近期觉察和当前洞察
    - `exploration_openness`，也就是系统能不能适当推远一点
 
-   真正进入发现策略时，画像会被压缩成更容易消费的结构化摘要。query / domain / keyword planner 生成使用 `build_query_generation_profile_summary()`，只保留稳定的高权重兴趣、兴趣域、核心特质、认知风格、价值观、动机、deep needs、`disliked_topics`、观看风格和探索开放度；flat `interests` 从最多 128 个候选里选出 64 个。如果 embedding cache 已有向量，选择器会用 MMR 风格优先覆盖更多语义簇，并降低贴近 `disliked_topics` 的 interest；`disliked_topics` 自身也做 embedding 多样性去重。没有 cached embedding 时保持原来的权重顺序，不在 prompt 构建热路径新增 embedding 请求。近期觉察、当前洞察、session context、兴趣时间戳和来源 provenance 不进入这类 prompt，避免高频状态把 `discovery.search.queries` / `discovery.explore.queries` / `discovery.keyword_planner` 固定输入撑大。`TrendingStrategy` 的排行榜分区 rid 不再走 LLM，而是本地确定性洗牌轮转覆盖；内容评估仍使用自己的 eval profile 压缩口径，保留近期负样本和必要语境。
+   真正进入发现策略时，画像会被压缩成更容易消费的结构化摘要。query / domain / keyword planner 生成使用 `build_query_generation_profile_summary()`，只保留稳定的高权重兴趣、兴趣域、核心特质、认知风格、价值观、动机、deep needs、`disliked_topics`、观看风格和探索开放度；flat `interests` 从最多 128 个候选里选出 64 个。如果 embedding cache 已有向量，选择器会用 MMR 风格优先覆盖更多语义簇，并降低贴近 `disliked_topics` 的 interest；`disliked_topics` 自身也做 embedding 多样性去重。选择器会预计算 dislike 相似度并增量维护“距已选最近相似度”，避免真实 bge-m3 向量命中时在 prompt 构建阶段重复计算大量 cosine。没有 cached embedding 时保持原来的权重顺序，不在 prompt 构建热路径新增 embedding 请求。近期觉察、当前洞察、session context、兴趣时间戳和来源 provenance 不进入这类 prompt，避免高频状态把 `discovery.search.queries` / `discovery.explore.queries` / `discovery.keyword_planner` 固定输入撑大。`TrendingStrategy` 的排行榜分区 rid 不再走 LLM，而是本地确定性洗牌轮转覆盖；内容评估仍使用自己的 eval profile 压缩口径，保留近期负样本和必要语境。
 
    这一步的目标不是“把画像完整搬过去”，而是从画像里抽出对找内容最有用的信号。
 
@@ -94,7 +94,7 @@
    - `SearchStrategy` 负责把画像翻译成搜索词并调用搜索接口
    - `TrendingStrategy` 负责去排行榜里挑“适合这个人”的热点
    - `RelatedChainStrategy` 负责从已有高价值种子沿相关推荐继续扩展
-   - `ExploreStrategy` 负责故意往相邻但更陌生的方向试探
+   - `ExploreStrategy` 负责消费 planner 预生成的探索 query，故意往相邻但更陌生的方向试探
 
    这一层的核心思想是：先尽量把供给面铺开，再在后面统一收口。
 
@@ -398,7 +398,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### 4. 跨领域探索 prompt
 
-`ExploreStrategy` 用的 `build_explore_domains_prompt()`，目标不是直接让模型给视频，而是让它先提出“什么陌生方向值得搜”。这一步也使用 compact 画像，不额外注入 core memory；真实环境下 DeepSeek / OpenAI-compatible 的 thinking 会把短 JSON 任务放大成几千 completion tokens，所以 `discovery.explore.queries` 显式关闭 thinking，并把 `max_tokens` 收口到 `2048`。
+`ExploreStrategy` 的优先 query 来源是统一 `KeywordPlanner` 写入的 `discovery_keywords(keyword_kind="explore")`。当 `[discovery].unified_keyword_planner_enabled=true` 时，它会从这个 explore 候选池 claim query 并直接搜索；池里没有可 claim query 时，本轮 explore 返回空，避免重新触发旧的 `discovery.explore.queries` LLM。只有 planner 关闭或没有注入 `KeywordFetchCoordinator` 的兼容路径，才会回到旧的 `build_explore_domains_prompt()`：现场让模型提出“什么陌生方向值得搜”。这条旧路径同样使用 compact 画像，不额外注入 core memory；真实环境下 DeepSeek / OpenAI-compatible 的 thinking 会把短 JSON 任务放大成几千 completion tokens，所以 `discovery.explore.queries` 显式关闭 thinking，并把 `max_tokens` 收口到 `2048`。
 
 示例：
 
@@ -559,12 +559,12 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 此前多个 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`、知乎 `zhihu-search`、Reddit `reddit-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，只接管 **search 这一路**——`trending / explore / related / hot / feed / channel / creator / subreddit` 及其各自的 budget/cadence **原样不动**。
 
-**关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`；旧画像 digest 的 `pending` 作废为 `expired`。在途三元组 `(platform, keyword, profile_kw_digest)` 部分唯一，`used/expired` 历史不挡同词再生成。
+**关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`；旧画像 digest 的 `pending` 作废为 `expired`。`keyword_kind` 区分 `regular` 与 `explore`：普通 search 只 claim `regular`，老 B 站 `ExploreStrategy` 在 planner 开启时只 claim `explore`。在途四元组 `(platform, keyword, profile_kw_digest, keyword_kind)` 部分唯一，`used/expired` 历史不挡同词再生成。
 
 **生成（planner loop）**：`runtime/keyword_planner.py::KeywordPlanner` 作为独立后台对象（在 `api/runtime_context.py` 构造、持 `llm_service`+db+config，由 refresh controller 的 `run_forever` 拉起），每 `planner_poll_seconds` 轮一次：
 
 1. 算 `due` = 缓存 `pending` 低于 `kw_cache_low` **且** 真实缺口 > 0（复用 controller 的补池口径，含 raw headroom + 在途）；B 站额外催化（池低于目标 / ≥ `signal_event_threshold` 信号）也进 due。
-2. due 非空 → 现读最新画像 → 取**短事务单飞锁并在调用 LLM 前释放** → `build_merged_keywords_prompt`（一次合并调用、compact 画像只发一份并按 profile layer 稳定前置、按平台分块、静态 system 命中 prompt-cache；调用时关闭 thinking 和额外 core memory 注入）→ 解析 `{platform: [...]}` → 按当前 `profile_kw_digest` 写 `pending` 补到 `kw_cache_high`。
+2. due 非空 → 现读最新画像 → 取**短事务单飞锁并在调用 LLM 前释放** → `build_merged_keywords_prompt`（一次合并调用、compact 画像只发一份并按 profile layer 稳定前置、按平台分块、静态 system 命中 prompt-cache；调用时关闭 thinking 和额外 core memory 注入）→ 解析 `{platform: [...]}` → 按当前 `profile_kw_digest` 写 `regular/pending` 补到 `kw_cache_high`。如果同轮带 `<explore_domains>`，其 `queries` 写成 `keyword_kind="explore"`，供 `ExploreStrategy` 后续 claim。
 3. LLM 失败 / 缺某平台块 → 该平台回退确定性权重排序兴趣名；仍无新词（稀疏画像）→ 回收该平台最旧 `used` 词。
 
 **缺口驱动抓取 + 三种执行形态**（`runtime/keyword_fetch.py::KeywordFetchCoordinator`，每个 search 抓取点显式 flag 分支，flag-off 行为逐字不变）：距上次 ≥ 各平台自身 `min_interval`、缺口 > 0、且 store 有可领词 → 原子 `claim` `fetch_batch` 个 → 经 P1.5 注入口（`queries` / `keyword_ids`）喂进搜索：

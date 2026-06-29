@@ -507,12 +507,29 @@ class RuntimeContext:
             xhs_self_info_provider=_xhs_self_info_provider,
         )
 
+        discovery_cfg = getattr(new_config, "discovery", None)
+
+        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
+        # word-lifecycle helper shared by B站 search / explore and external
+        # search producers. Holds the keyword-store DAO (the database) +
+        # discovery config (the flag + ``fetch_batch``). With the flag off every
+        # site's ``should_claim`` returns False, so wiring it in is inert.
+        from openbiliclaw.config import DiscoveryConfig
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+
+        new_keyword_fetch = KeywordFetchCoordinator(
+            database=self.database,
+            # Real ``Config`` always carries ``discovery`` (a dataclass field);
+            # lightweight test stubs (SimpleNamespace) may not — fall back to the
+            # default (flag off) so the coordinator stays inert.
+            discovery_config=discovery_cfg or DiscoveryConfig(),
+        )
+
         # 7. Discovery engine + strategies
         concurrency = DiscoveryConcurrencyController(
             bilibili_request_concurrency=2,
             llm_evaluation_concurrency=2,
         )
-        discovery_cfg = getattr(new_config, "discovery", None)
         new_discovery_engine = ContentDiscoveryEngine(
             llm_service=new_llm_service,
             database=self.database,
@@ -557,6 +574,7 @@ class RuntimeContext:
             concurrency=concurrency,
             embedding_service=new_embedding_service,
             database=cast("Any", self.database),
+            keyword_fetch=new_keyword_fetch,
         )
         new_discovery_engine.register_strategy(search_strategy)
         new_discovery_engine.register_strategy(trending_strategy)
@@ -632,23 +650,6 @@ class RuntimeContext:
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
         )
-        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
-        # word-lifecycle helper shared by the 5 search fetch sites (4 producers
-        # + the B站 search path in the controller). Holds the keyword-store DAO
-        # (the database) + discovery config (the flag + ``fetch_batch``). With
-        # the flag off (default) every site's ``should_claim`` returns False, so
-        # wiring it in is zero behavior change.
-        from openbiliclaw.config import DiscoveryConfig
-        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
-
-        new_keyword_fetch = KeywordFetchCoordinator(
-            database=self.database,
-            # Real ``Config`` always carries ``discovery`` (a dataclass field);
-            # lightweight test stubs (SimpleNamespace) may not — fall back to the
-            # default (flag off) so the coordinator stays inert.
-            discovery_config=discovery_cfg or DiscoveryConfig(),
-        )
-
         new_bilibili_producer: Any = None
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None

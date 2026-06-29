@@ -20,6 +20,7 @@
 | 2.2 Provider Registry | ✅ | 自动注册 + 可配置 fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
+| v0.3.149+ 关键词合并 prompt 探索 block | ✅ | `build_merged_keywords_prompt()` 支持可选 `explore_domains_block`，只在 runtime 判断 B 站 explore refresh 到期 / 即将到期且有补货空间时追加；system prompt 明确这些 query 是探索性 B 站搜索方向，不应把常规兴趣关键词换皮成 explore。`parse_merged_keywords_with_presence_and_explore_domains()` 在保留平台关键词 decline / omission 语义的同时清洗 `explore_domains` |
 | v0.3.147+ Prompt layer cache | ✅ | `profile_prompt_layers()` 把结构化画像拆为 `profile_core` / `profile_life_context` / `profile_interests` / `profile_style_context` / `profile_recent_context`，从稳定到易变排序；`PromptLayerRenderCache` 按层 digest 复用已渲染 JSON prompt block，供 discovery eval、推荐分类 / 文案 / delight 和统一关键词 planner 共享，画像核心不变时 provider 看到的前缀保持 byte-stable |
 | v0.3.144+ 缓存前缀保护 | ✅ | `LLMService.complete_with_core_memory()` / `complete_structured_task()` / `complete_multimodal_structured_task()` 支持 `inject_core_memory=False`，供候选 eval、推荐分类 / delight、跨平台关键词生成、awareness / insight / speculation / profile build、初始化偏好分析这类已自带完整结构化上下文的路径跳过重复 memory 注入；`build_soul_profile_prompt()` 也保持静态 system，并把 tone / preference / awareness / insight 放在巨大 history 前，稳定 provider prompt-cache 前缀 |
 | v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=1024`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应 |
@@ -226,6 +227,33 @@ profile_delta = extract_llm_json_object(
 
 这些 helper 是 MiMo / OpenAI-compatible / reasoning 模型结构化输出的统一容错边界。调用方仍应用 predicate 限定自己真正接受的 shape，避免 schema echo 或 prompt 示例被误当作结果。
 
+### Merged keyword prompt
+
+```python
+from openbiliclaw.llm.prompts import (
+    build_merged_keywords_prompt,
+    parse_merged_keywords_with_presence_and_explore_domains,
+)
+
+messages = build_merged_keywords_prompt(
+    profile_summary=profile_summary,
+    profile_blocks=profile_blocks,
+    platform_blocks=[{"platform": "bilibili", "need": 8, "recent_keywords": []}],
+    explore_domains_block={
+        "need_domains": 5,
+        "queries_per_domain": 3,
+        "covered_topic_groups": ["人工智能", "认知科学"],
+    },
+)
+keywords, present, explore_domains = parse_merged_keywords_with_presence_and_explore_domains(
+    response.content,
+    ["bilibili"],
+    per_platform_cap=8,
+)
+```
+
+`explore_domains_block` 是可选项；未传时 prompt 与解析仍按普通多平台关键词生成运行。传入时，模型可在平台 key 之外额外返回 `explore_domains`，每个 domain 包含 `domain / novelty_level / queries`。这些 queries 会被 runtime 写入 B 站 `discovery_keywords` query cache，因此 prompt 规则要求它们保持探索性、跨域和 B 站可直接搜索，而不是普通兴趣关键词的换皮。
+
 ### Prompt layer render cache
 
 ```python
@@ -248,7 +276,6 @@ tag 解析优先级,longest-prefix 命中:
 |---|---|---|
 | `recommendation.write_expression` | 1 | popup 可见的池子表达式回填 |
 | `discovery.evaluate_batch` | 1 | 当前 discovery 批次评估 |
-| `recommendation.delight_score` | 2 | 后台批量打分 |
 | `soul.*` / `xhs.*` | 2 | 灵魂分析 / 小红书分类 |
 | 其他 / 空 | 3 | 默认 |
 
@@ -265,7 +292,7 @@ priority≤2 任务。
 |---|---|
 | `soul.*` | `soul` |
 | `discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` | `discovery` |
-| `recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
+| `recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
 | 其他 `recommendation.*` | `recommendation` |
 
 命中 override 后走 `registry.complete_provider(provider, ..., model=model)`：

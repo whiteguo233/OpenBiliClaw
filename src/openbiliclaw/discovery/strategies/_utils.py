@@ -685,22 +685,36 @@ def _select_diverse_query_interests(
     ):
         return candidates[:cap]
 
+    weights = [item.weight for item in candidates]
+    max_weight = max(weights, default=0.0)
+    min_weight = min(weights, default=0.0)
+    span = max_weight - min_weight
+    weight_scores = [
+        candidate.priority if span <= 1e-9 else (candidate.weight - min_weight) / span
+        for candidate in candidates
+    ]
+    dislike_penalties = [
+        max(
+            (_interest_to_text_similarity(candidate, topic) for topic in disliked_topics),
+            default=0.0,
+        )
+        for candidate in candidates
+    ]
+    nearest_selected = [0.0 for _ in candidates]
     selected: list[_QueryInterestCandidate] = []
-    remaining = list(candidates)
-    while remaining and len(selected) < cap:
+    remaining_indexes = list(range(len(candidates)))
+    while remaining_indexes and len(selected) < cap:
         selected_categories = {
             normalize_match_text(item.category) for item in selected if item.category.strip()
         }
 
-        def score(
-            candidate: _QueryInterestCandidate,
+        def score_index(
+            index: int,
             selected_categories: set[str] = selected_categories,
         ) -> tuple[float, float, float]:
-            weight_score = _normalized_weight(candidate, candidates)
-            dislike_penalty = max(
-                (_interest_to_text_similarity(candidate, topic) for topic in disliked_topics),
-                default=0.0,
-            )
+            candidate = candidates[index]
+            weight_score = weight_scores[index]
+            dislike_penalty = dislike_penalties[index]
             category_key = normalize_match_text(candidate.category)
             category_novelty = (
                 0.5 if not category_key else float(category_key not in selected_categories)
@@ -714,11 +728,7 @@ def _select_diverse_query_interests(
                 )
                 return (mmr, weight_score, candidate.priority)
 
-            nearest_selected = max(
-                (_interest_similarity(candidate, item) for item in selected),
-                default=0.0,
-            )
-            novelty = 1.0 - nearest_selected
+            novelty = 1.0 - nearest_selected[index]
             mmr = (
                 0.46 * novelty
                 + 0.27 * weight_score
@@ -728,9 +738,15 @@ def _select_diverse_query_interests(
             )
             return (mmr, weight_score, candidate.priority)
 
-        best = max(remaining, key=score)
+        best_index = max(remaining_indexes, key=score_index)
+        best = candidates[best_index]
         selected.append(best)
-        remaining.remove(best)
+        remaining_indexes.remove(best_index)
+        for index in remaining_indexes:
+            nearest_selected[index] = max(
+                nearest_selected[index],
+                _interest_similarity(candidates[index], best),
+            )
     return selected
 
 
@@ -745,22 +761,26 @@ def _select_diverse_query_texts(
         return candidates[:cap]
 
     selected: list[_QueryTextCandidate] = []
-    remaining = list(candidates)
-    while remaining and len(selected) < cap:
+    nearest_selected = [0.0 for _ in candidates]
+    remaining_indexes = list(range(len(candidates)))
+    while remaining_indexes and len(selected) < cap:
 
-        def score(candidate: _QueryTextCandidate) -> tuple[float, float]:
+        def score_index(index: int) -> tuple[float, float]:
+            candidate = candidates[index]
             if not selected:
                 return (candidate.priority, candidate.priority)
-            nearest_selected = max(
-                (_text_candidate_similarity(candidate, item) for item in selected),
-                default=0.0,
-            )
-            novelty = 1.0 - nearest_selected
+            novelty = 1.0 - nearest_selected[index]
             return (0.72 * novelty + 0.28 * candidate.priority, candidate.priority)
 
-        best = max(remaining, key=score)
+        best_index = max(remaining_indexes, key=score_index)
+        best = candidates[best_index]
         selected.append(best)
-        remaining.remove(best)
+        remaining_indexes.remove(best_index)
+        for index in remaining_indexes:
+            nearest_selected[index] = max(
+                nearest_selected[index],
+                _text_candidate_similarity(candidates[index], best),
+            )
     return selected
 
 

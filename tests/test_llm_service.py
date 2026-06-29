@@ -265,7 +265,10 @@ def test_resolve_priority_longest_prefix_wins() -> None:
     """write_expression beats the catch-all default; soul-level prefix matches."""
     assert LLMService._resolve_priority("recommendation.write_expression") == 1
     assert LLMService._resolve_priority("discovery.evaluate_batch") == 1
-    assert LLMService._resolve_priority("recommendation.delight_score") == 2
+    assert (
+        LLMService._resolve_priority("recommendation.background_score")
+        == LLMService._DEFAULT_PRIORITY
+    )
     assert LLMService._resolve_priority("soul.preference") == 2
     assert LLMService._resolve_priority("xhs.classify") == 2
     assert LLMService._resolve_priority("unrelated.tag") == LLMService._DEFAULT_PRIORITY
@@ -276,7 +279,7 @@ def test_route_bucket_for_caller_covers_actual_callers() -> None:
     assert LLMService._route_bucket_for_caller("soul.profile_builder") == "soul"
     assert LLMService._route_bucket_for_caller("discovery.search.query") == "discovery"
     assert LLMService._route_bucket_for_caller("discovery.evaluate_batch") == "evaluation"
-    assert LLMService._route_bucket_for_caller("recommendation.delight_score") == "evaluation"
+    assert LLMService._route_bucket_for_caller("recommendation.write_batch") == "recommendation"
     assert (
         LLMService._route_bucket_for_caller("recommendation.write_expression") == "recommendation"
     )
@@ -343,7 +346,7 @@ async def test_route_bucket_specific_prefix_beats_broad_recommendation() -> None
     await service.complete_with_core_memory(
         system_instruction="A",
         user_input="B",
-        caller="recommendation.delight_score",
+        caller="recommendation.evaluate_batch",
     )
 
     assert registry.provider_calls[0]["provider_name"] == "deepseek"

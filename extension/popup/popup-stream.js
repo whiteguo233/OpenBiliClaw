@@ -18,12 +18,7 @@ export function createRuntimeStreamClient({
   backendUrl = null,
   resolveBackendUrl = getBackendBaseUrl,
   WebSocketImpl = globalThis.WebSocket,
-  reconnectDelayMs = 2000,
-  // v0.3.14+: cap reconnect delay so popup doesn't flood console with
-  // 70+ "ERR_CONNECTION_REFUSED" lines per minute when the backend is
-  // genuinely down. Starts at ``reconnectDelayMs`` and doubles per
-  // failure up to ``maxReconnectDelayMs``; resets on successful connect.
-  maxReconnectDelayMs = 30_000,
+  reconnectDelayMs = 1000,
   onEvent = () => {},
   onConnect = () => {},
   onDisconnect = () => {},
@@ -32,7 +27,6 @@ export function createRuntimeStreamClient({
   let reconnectTimer = null;
   let stopped = false;
   let wasConnected = false;
-  let currentReconnectDelay = reconnectDelayMs;
 
   function scheduleReconnect() {
     if (stopped || reconnectTimer != null) {
@@ -41,20 +35,13 @@ export function createRuntimeStreamClient({
     reconnectTimer = globalThis.setTimeout(() => {
       reconnectTimer = null;
       connect();
-    }, currentReconnectDelay);
-    // Exponential backoff capped at maxReconnectDelayMs. Reset on
-    // successful onopen so a transient blip stays fast-recover.
-    currentReconnectDelay = Math.min(
-      Math.floor(currentReconnectDelay * 2),
-      maxReconnectDelayMs,
-    );
+    }, reconnectDelayMs);
   }
 
   function attachSocket(nextSocket) {
     socket = nextSocket;
     socket.onopen = () => {
       wasConnected = true;
-      currentReconnectDelay = reconnectDelayMs;
       onConnect();
     };
     socket.onmessage = (event) => {
