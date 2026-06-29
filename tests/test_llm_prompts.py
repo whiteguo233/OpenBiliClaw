@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import openbiliclaw.llm.prompts as prompt_module
 from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
@@ -12,8 +13,6 @@ from openbiliclaw.llm.prompts import (
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
     build_content_evaluation_prompt,
-    build_delight_reason_prompt,
-    build_delight_score_batch_prompt,
     build_explore_domains_prompt,
     build_merged_keywords_prompt,
     build_profile_consolidation_prompt,
@@ -165,23 +164,9 @@ def test_batch_expression_prompt_accepts_profile_blocks_first() -> None:
     assert user_prompt.index("<source_platform>") < user_prompt.index("<content_batch>")
 
 
-def test_delight_prompts_accept_profile_blocks_first() -> None:
-    score_messages = build_delight_score_batch_prompt(
-        profile_summary={"core_traits": ["fallback"]},
-        profile_blocks=_PROFILE_BLOCKS,
-        content_batch=[{"bvid": "BV1", "title": "候选"}],
-    )
-    reason_messages = build_delight_reason_prompt(
-        profile_summary={"core_traits": ["fallback"]},
-        profile_blocks=_PROFILE_BLOCKS,
-        content_summary={"title": "候选"},
-        reason_stub="因为它有跨域惊喜",
-        tone_profile=None,
-        source_platform="bilibili",
-    )
-
-    _assert_layered_profile_prefix(score_messages[1]["content"], "<content_batch>")
-    _assert_layered_profile_prefix(reason_messages[1]["content"], "<source_platform>")
+def test_delight_llm_prompt_builders_are_removed() -> None:
+    assert not hasattr(prompt_module, "build_delight_score_batch_prompt")
+    assert not hasattr(prompt_module, "build_delight_reason_prompt")
 
 
 def test_merged_keywords_prompt_accepts_profile_blocks_first() -> None:
@@ -751,28 +736,6 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
             ),
         ),
         (
-            "build_delight_reason_prompt",
-            dict(
-                profile_summary={"a": 1},
-                content_summary={"x": 1},
-                reason_stub="x",
-                tone_profile=None,
-                source_platform="bilibili",
-            ),
-            dict(
-                profile_summary={"a": 2},
-                content_summary={"x": 2},
-                reason_stub="y",
-                tone_profile={
-                    "density": "dense",
-                    "warmth": "warm",
-                    "playfulness": "medium",
-                    "directness": "balanced",
-                },
-                source_platform="xiaohongshu",
-            ),
-        ),
-        (
             "build_avoidance_generation_prompt",
             dict(
                 profile_summary={"likes": ["A"], "disliked_topics": ["X"]},
@@ -1195,17 +1158,6 @@ def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
         tone_profile=None,
         source_platform="bilibili",
     )[1]["content"]
-    delight_score = build_delight_score_batch_prompt(
-        profile_summary={"interests": ["音乐"]},
-        content_batch=[{"title": "现场演出", "style_key": "music_live"}],
-    )[1]["content"]
-    delight_reason = build_delight_reason_prompt(
-        profile_summary={"interests": ["科技"]},
-        content_summary={"title": "AI 芯片解析", "style_key": "tech_analysis"},
-        reason_stub="fit",
-        tone_profile=None,
-        source_platform="bilibili",
-    )[1]["content"]
 
     combined = "\n".join(
         [
@@ -1213,19 +1165,16 @@ def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
             batch_eval,
             single_expression,
             batch_expression,
-            delight_score,
-            delight_reason,
         ]
     )
 
-    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy", "music_live"):
+    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy"):
         assert legacy_key not in combined
     for canonical_key in (
         "deep_focus",
         "story_immersion",
         "daily_wander",
         "hands_on",
-        "live_pulse",
     ):
         assert canonical_key in combined
 

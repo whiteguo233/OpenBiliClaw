@@ -74,7 +74,7 @@ async def test_runtime_context_routes_configured_module_overrides(
     await ctx.llm_service.complete_structured_task(
         system_instruction="Return JSON.",
         user_input="score this",
-        caller="recommendation.delight_score",
+        caller="recommendation.evaluate_batch",
     )
     await ctx.llm_service.complete_structured_task(
         system_instruction="Return JSON.",

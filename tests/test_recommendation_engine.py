@@ -2092,7 +2092,7 @@ async def test_safe_classify_pool_backlog_drains_copy_for_newly_classified() -> 
                     content = json.dumps(
                         [
                             {
-                                "score": 0.85,
+                                "score": 0.65,
                                 "reason": "美食烹饪",
                                 "topic_group": "美食烹饪",
                                 "style_key": "lifestyle",
@@ -2172,11 +2172,11 @@ async def test_e2e_precompute_pool_copy_classifies_then_copies_in_one_pass(
                         ],
                         ensure_ascii=False,
                     )
-                else:  # classify (evaluate_batch) + any delight call (harmless)
+                else:  # classify (evaluate_batch)
                     content = json.dumps(
                         [
                             {
-                                "score": 0.85,
+                                "score": 0.65,
                                 "reason": "美食烹饪",
                                 "topic_group": "美食烹饪",
                                 "style_key": "lifestyle",
@@ -3096,117 +3096,8 @@ async def test_generate_expression_accepts_echoed_schema_before_final_fenced_obj
         assert "Failed to generate recommendation expression" not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_generate_delight_reason_accepts_result_wrapper() -> None:
-    class _WrappedDelightReasonLLM:
-        async def complete_structured_task(
-            self,
-            *,
-            system_instruction: str,
-            user_input: str,
-            history: list[dict[str, str]] | None = None,
-            temperature: float = 0.7,
-            max_tokens: int = 4096,
-            caller: str = "",
-            reasoning_effort: str | None = None,
-        ) -> LLMResponse:
-            return LLMResponse(
-                content=json.dumps(
-                    {
-                        "result": {
-                            "delight_reason": "这条会把你对系统结构的好奇心接住。",
-                            "delight_hook": "结构上头",
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                provider="test",
-                model="dummy",
-                usage={},
-            )
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db = Database(Path(tmpdir) / "test.db")
-        db.initialize()
-        engine = RecommendationEngine(llm=_WrappedDelightReasonLLM(), database=db)
-
-        reason, hook = await engine._generate_delight_reason(
-            DiscoveredContent(
-                bvid="BV_DELIGHT_WRAP",
-                title="复杂系统入门",
-                up_name="系统观察者",
-                description="从连接关系理解复杂系统。",
-                relevance_score=0.93,
-            ),
-            _build_profile(),
-            "系统结构",
-        )
-
-        assert reason == "这条会把你对系统结构的好奇心接住。"
-        assert hook == "结构上头"
-
-
-@pytest.mark.asyncio
-async def test_generate_delight_reason_requests_no_core_memory_injection_when_supported() -> None:
-    class _CoreMemoryRecordingDelightReasonLLM:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, object]] = []
-
-        async def complete_structured_task(
-            self,
-            *,
-            system_instruction: str,
-            user_input: str,
-            history: list[dict[str, str]] | None = None,
-            temperature: float = 0.7,
-            max_tokens: int = 4096,
-            caller: str = "",
-            reasoning_effort: str | None = None,
-            inject_core_memory: bool = True,
-        ) -> LLMResponse:
-            self.calls.append(
-                {
-                    "caller": caller,
-                    "inject_core_memory": inject_core_memory,
-                }
-            )
-            return LLMResponse(
-                content=json.dumps(
-                    {
-                        "delight_reason": "这条会把你对系统结构的好奇心接住。",
-                        "delight_hook": "结构上头",
-                    },
-                    ensure_ascii=False,
-                ),
-                provider="test",
-                model="dummy",
-                usage={},
-            )
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db = Database(Path(tmpdir) / "test.db")
-        db.initialize()
-        llm = _CoreMemoryRecordingDelightReasonLLM()
-        engine = RecommendationEngine(llm=llm, database=db)
-
-        await engine._generate_delight_reason(
-            DiscoveredContent(
-                bvid="BV_DELIGHT_NO_CORE",
-                title="复杂系统入门",
-                up_name="系统观察者",
-                description="从连接关系理解复杂系统。",
-                relevance_score=0.93,
-            ),
-            _build_profile(),
-            "系统结构",
-        )
-
-        assert llm.calls == [
-            {
-                "caller": "recommendation.delight_reason",
-                "inject_core_memory": False,
-            }
-        ]
+def test_recommendation_engine_no_longer_exposes_delight_reason_llm_helper() -> None:
+    assert not hasattr(RecommendationEngine, "_generate_delight_reason")
 
 
 def test_re_ingest_does_not_overwrite_classified_fields() -> None:
@@ -3264,9 +3155,9 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
-    """v0.3.34+ — delight scoring is one batched LLM call returning
-    score + rationale + hook per candidate (no separate reason call).
+async def test_precompute_delight_scores_reuses_evo_result_without_llm_call() -> None:
+    """Delight scoring should reuse Evo's relevance result instead of paying
+    another LLM scoring pass.
     """
 
     class _DelightLLM:
@@ -3280,22 +3171,7 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
             max_tokens: int = 4096,
             caller: str = "",
         ) -> LLMResponse:
-            return LLMResponse(
-                content=json.dumps(
-                    [
-                        {
-                            "bvid": "BV1BACKFILL",
-                            "score": 0.78,
-                            "rationale": "这条会把你最近那股想搞明白系统结构的劲头接住。",
-                            "hook": "结构上头",
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                provider="test",
-                model="dummy",
-                usage={},
-            )
+            raise AssertionError(f"unexpected LLM call during Evo backfill: {caller}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
@@ -3307,6 +3183,10 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
             up_name="系统观察者",
             source="explore",
             relevance_score=0.91,
+            relevance_reason="Evo 判断这条能接住你最近想拆清楚系统结构的劲头。",
+            topic_group="复杂系统",
+            pool_topic_label="系统结构",
+            pool_expression="这条会把你最近想拆清楚系统结构的劲头接住。",
             description="从复杂系统角度解释结构之间如何互相作用。",
             view_count=50000,
             like_count=3200,
@@ -3322,5 +3202,6 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
         candidate = db.get_delight_candidate(min_delight_score=0.70)
         assert candidate is not None
         assert candidate["bvid"] == "BV1BACKFILL"
-        assert candidate["delight_reason"] == "这条会把你最近那股想搞明白系统结构的劲头接住。"
-        assert candidate["delight_hook"] == "结构上头"
+        assert candidate["delight_score"] == pytest.approx(0.91)
+        assert candidate["delight_reason"] == "这条会把你最近想拆清楚系统结构的劲头接住。"
+        assert candidate["delight_hook"] == "系统结构"

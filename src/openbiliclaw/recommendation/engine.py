@@ -205,14 +205,14 @@ class RecommendationEngine:
         #
         # v0.3.62+: split the previous single ``_precompute_lock`` into
         # two independent locks. The old shared lock serialised
-        # expression generation and delight scoring — when delight
-        # scoring was slow (LLM backoff or a large un-scored backlog),
+        # expression generation and delight backfill — when the delight
+        # backlog was large,
         # the next expression batch had to wait behind it even though
         # nothing about expression touches delight state. Now expression
-        # generation holds ``_expression_lock`` while delight scoring
+        # generation holds ``_expression_lock`` while delight backfill
         # runs in a detached task guarded by ``_delight_lock``, so the
         # two flows progress independently and back-to-back precompute
-        # calls still avoid double-spending delight LLM tokens.
+        # calls still avoid duplicate delight writes.
         self._expression_lock = asyncio.Lock()
         self._delight_lock = asyncio.Lock()
         # Background-computed supergroup canonical map. Populated by
@@ -795,22 +795,22 @@ class RecommendationEngine:
         catches up minutes faster.
 
         v0.3.62+: expression generation is guarded by
-        ``self._expression_lock``; delight scoring runs in a detached
+        ``self._expression_lock``; delight backfill runs in a detached
         ``asyncio.create_task`` with its own ``self._delight_lock``. The
         previous single ``_precompute_lock`` held both flows under one
         gate, so a slow delight pass would stall the next expression
         batch even though pool items already needed ``pool_expression``.
         Splitting the locks lets expression and delight progress
         independently while the per-flow lock still prevents
-        back-to-back fires from double-spending LLM tokens on the same
-        items.
+        back-to-back fires from updating the same delight rows twice.
 
         The per-strategy fire-and-forget tasks queued from
         ``_run_refresh_plan`` therefore can't load the same
         un-precomputed candidates twice for expression generation.
 
-        Also runs delight scoring on un-scored candidates and generates
-        delight reasons for items above the delight threshold.
+        Also backfills delight fields from Evo's relevance result for
+        un-scored candidates, including card reasons for items above the
+        delight threshold.
 
         Args:
             profile: Current soul profile used for personalisation.
@@ -999,8 +999,8 @@ class RecommendationEngine:
 
         ``precompute_pool_copy`` schedules this as ``asyncio.create_task``
         instead of awaiting it inline. The previous shared
-        ``_precompute_lock`` made delight scoring stall the next
-        expression batch whenever the LLM was slow on delight calls —
+        ``_precompute_lock`` made delight backfill stall the next
+        expression batch whenever the delight queue was large —
         pool items would sit waiting for ``pool_expression`` even
         though expression generation itself was idle. Splitting the
         work into a detached task with its own ``_delight_lock`` keeps
@@ -1243,29 +1243,18 @@ class RecommendationEngine:
         profile: SoulProfile,
         limit: int = 50,
     ) -> int:
-        """Score un-scored pool candidates for proactive delight potential.
+        """Populate proactive delight fields from Evo relevance output.
 
-        Two-stage retrieval:
-          1. Coarse: ``get_pool_candidates_needing_delight_score`` filters
-             by ``relevance_score >= 0.55`` and orders by relevance DESC,
-             capped at ``limit`` (default 50). Free — uses scores already
-             computed by discovery's ``evaluate_batch``.
-          2. Fine: ``LLMDelightScorer.score_batch`` LLM-judges those 50
-             against a delight rubric (cross-domain bridge / hidden need /
-             quality, not naive similarity).
-
-        Default ``limit=50`` (raised from 30 once relevance gate landed):
-        more head-room for the LLM to find true delights without burning
-        cycles on weak-fit junk. Cost: 50/5 = 10 batches × ~¥0.01 ≈
-        ¥0.10/cycle, ¥0.80/day at 8 cycles.
+        Evo already runs the expensive candidate evaluator and the pool-copy
+        path writes user-facing ``pool_expression`` into ``content_cache``.
+        Delight reuses ``relevance_score`` for scoring and prefers
+        ``pool_expression`` for card copy instead of paying another LLM pass.
         """
-        from openbiliclaw.recommendation.delight import LLMDelightScorer
-
-        scorer = LLMDelightScorer(llm_service=self._llm)
+        from openbiliclaw.recommendation.delight import effective_delight_threshold
 
         prefs = getattr(profile, "preferences", None)
         exploration_openness = float(getattr(prefs, "exploration_openness", 0.5))
-        effective_threshold = scorer.effective_threshold(exploration_openness)
+        effective_threshold = effective_delight_threshold(exploration_openness)
         rows = self._database.get_pool_candidates_needing_delight_score(
             limit=limit,
             min_delight_score_for_reason=effective_threshold,
@@ -1276,35 +1265,10 @@ class RecommendationEngine:
 
         candidates = self._rows_to_discovered(rows)
 
-        # All ``rows`` returned here either lack a delight_score, or have
-        # a stale one from the embedding-era scorer (which we choose to
-        # re-judge with the LLM rather than trust). Send them all through
-        # one batched LLM scoring pass — no special-case backfill loop.
         scored_count = 0
-        to_score: list[Any] = list(candidates)
-
-        try:
-            scored = await scorer.score_batch(to_score, profile)
-        except Exception:
-            logger.exception("Delight LLM batch scoring failed for %d candidates", len(to_score))
-            return 0
-
-        for candidate in to_score:
-            result = scored.get(candidate.bvid)
-            if result is None:
-                # LLM dropped this one — mark with sentinel score so it's
-                # not picked again next cycle, but record nothing positive.
-                self._database.update_delight_score(
-                    candidate.bvid,
-                    delight_score=0.01,
-                    delight_reason="",
-                    delight_hook="",
-                )
-                continue
-
-            persisted_score = max(0.01, result.score)
-            if result.score < effective_threshold:
-                # Below threshold — persist score but no reason/hook
+        for candidate in candidates:
+            persisted_score = max(0.01, min(1.0, float(candidate.relevance_score or 0.0)))
+            if persisted_score < effective_threshold:
                 self._database.update_delight_score(
                     candidate.bvid,
                     delight_score=persisted_score,
@@ -1314,83 +1278,50 @@ class RecommendationEngine:
                 scored_count += 1
                 continue
 
-            # Above threshold — LLM already provided rationale + hook
-            # in the same call, no extra LLM trip needed.
+            reason = self._evo_delight_reason(candidate)
+            hook = self._evo_delight_hook(candidate)
             self._database.update_delight_score(
                 candidate.bvid,
                 delight_score=persisted_score,
-                delight_reason=result.rationale or "",
-                delight_hook=result.hook or "意外契合",
+                delight_reason=reason,
+                delight_hook=hook,
             )
             scored_count += 1
             logger.info(
-                "Delight candidate found: %s (score=%.3f, hook=%s)",
+                "Delight candidate found from Evo result: %s (score=%.3f, hook=%s)",
                 candidate.bvid,
                 persisted_score,
-                result.hook,
+                hook,
             )
 
         return scored_count
 
-    async def _generate_delight_reason(
-        self,
-        content: DiscoveredContent,
-        profile: SoulProfile,
-        reason_stub: str,
-    ) -> tuple[str, str]:
-        """Generate a delight reason explanation via LLM.
-
-        Returns:
-            (delight_reason, delight_hook) tuple.
-        """
-        from openbiliclaw.llm.prompts import build_delight_reason_prompt
-
-        tone_profile = self._expression_tone_profile(profile, content)
-        profile_summary = _recommendation_profile_summary(profile)
-        messages = build_delight_reason_prompt(
-            profile_summary=profile_summary,
-            profile_blocks=self._profile_blocks(profile_summary, cache_key="delight_reason"),
-            content_summary={
-                "title": content.title,
-                "up_name": content.up_name,
-                "description": (content.description or "")[:400],
-                "source_strategy": content.source_strategy,
-                "style_key": normalize_style_key(content.style_key),
-                "topic_group": content.topic_group,
-                "relevance_score": content.relevance_score,
-                "content_type": content.content_type,
-                "body_text": content.body_text,
-            },
-            reason_stub=reason_stub,
-            tone_profile=tone_profile,
-            source_platform=content.source_platform or "bilibili",
+    @staticmethod
+    def _evo_delight_reason(item: DiscoveredContent) -> str:
+        reason = (item.pool_expression or "").strip()
+        if reason:
+            return reason
+        reason = (item.relevance_reason or "").strip()
+        if reason:
+            return reason
+        topic = (
+            (item.pool_topic_label or "").strip()
+            or (item.topic_group or "").strip()
+            or (item.topic_key or "").strip()
         )
-        try:
-            complete_structured = self._llm.complete_structured_task
-            response = await complete_structured(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                caller="recommendation.delight_reason",
-                **without_core_memory_kwargs(complete_structured),
-            )
-            payload = extract_llm_json_object(
-                str(response.content),
-                wrapper_keys=("result", "item", "data", "output"),
-                item_predicate=lambda item: "delight_reason" in item or "delight_hook" in item,
-            )
-            if payload is None:
-                raise ValueError("Delight reason response must be a JSON object.")
-            reason = str(payload.get("delight_reason", "")).strip()
-            hook = str(payload.get("delight_hook", "")).strip()
-            if reason and hook:
-                return (reason, hook)
-        except Exception:
-            logger.exception(
-                "Failed to generate delight reason for %s",
-                content.bvid,
-            )
-        # Fallback
-        return ("这条可能会给你意外的惊喜", "意外惊喜")
+        if topic:
+            return f"这条内容和你当前画像里的「{topic}」方向匹配度很高。"
+        return "Evo 判断这条内容和你当前的兴趣画像匹配度很高。"
+
+    @staticmethod
+    def _evo_delight_hook(item: DiscoveredContent) -> str:
+        hook = (
+            (item.pool_topic_label or "").strip()
+            or (item.topic_group or "").strip()
+            or (item.topic_key or "").strip()
+            or (item.style_key or "").strip()
+        )
+        return hook or "高契合"
 
     async def _precompute_batch(
         self,

@@ -10,7 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_CONTEXT_CALL_SITES = [
     ("src/openbiliclaw/discovery/engine.py", 'caller="discovery.evaluate_single"'),
     ("src/openbiliclaw/recommendation/engine.py", 'caller="recommendation.evaluate_batch"'),
-    ("src/openbiliclaw/recommendation/delight.py", 'caller="recommendation.delight_score"'),
     ("src/openbiliclaw/runtime/keyword_planner.py", 'caller="discovery.keyword_planner"'),
     (
         "src/openbiliclaw/runtime/bilibili_producer.py",

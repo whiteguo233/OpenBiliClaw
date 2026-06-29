@@ -276,7 +276,6 @@ tag 解析优先级,longest-prefix 命中:
 |---|---|---|
 | `recommendation.write_expression` | 1 | popup 可见的池子表达式回填 |
 | `discovery.evaluate_batch` | 1 | 当前 discovery 批次评估 |
-| `recommendation.delight_score` | 2 | 后台批量打分 |
 | `soul.*` / `xhs.*` | 2 | 灵魂分析 / 小红书分类 |
 | 其他 / 空 | 3 | 默认 |
 
@@ -293,7 +292,7 @@ priority≤2 任务。
 |---|---|
 | `soul.*` | `soul` |
 | `discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` | `discovery` |
-| `recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
+| `recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
 | 其他 `recommendation.*` | `recommendation` |
 
 命中 override 后走 `registry.complete_provider(provider, ..., model=model)`：

@@ -5693,19 +5693,19 @@ class Database:
         min_relevance_score: float = 0.55,
         xhs_self_nickname: str = "",
     ) -> list[dict[str, Any]]:
-        """Return pool candidates that still need delight evaluation or copy.
+        """Return pool candidates that still need delight backfill or copy.
 
         Two-stage retrieval: ``relevance_score >= min_relevance_score``
         is the cheap pre-filter (the discovery LLM already judged user-
-        content fit during ``evaluate_batch``), then the caller runs the
-        expensive LLM delight scorer only on this shortlist.
+        content fit during ``evaluate_batch``), then the caller reuses that
+        Evo relevance result to populate delight fields only on this
+        shortlist.
 
         Default 0.55 is calibrated to the discovery rubric:
           0.6+ strong fit, 0.5-0.6 moderate, <0.5 weak fit.
-        Items below ``min_relevance_score`` skip delight scoring
+        Items below ``min_relevance_score`` skip delight backfill
         entirely — they're not going to delight anyone they don't
-        already half-fit, and burning LLM calls on weak-fit items just
-        wastes budget.
+        already half-fit.
         """
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)

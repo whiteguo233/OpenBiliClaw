@@ -646,7 +646,10 @@ class TestBackendAPI:
                 style_key="tutorial",
                 topic_group="测试分组",
                 topic_key="测试分组",
-                relevance_score=0.9,
+                # Keep this fixture below the delight threshold: this E2E
+                # verifies regular-pool copy refill, not surprise-channel
+                # claiming.
+                relevance_score=0.65,
                 pool_expression="",
                 pool_topic_label="",
             )
