@@ -310,6 +310,8 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - 配置动作：插件页和 PC Web 保存后必须回读 `/api/config`，再确认 runtime source policy / pool share 生效。
 - 推荐动作：三端截图或像素/DOM 检查要覆盖长标题、无封面、文字卡和按钮区域。
 - 画像 / eval：使用真实本地配置的 LLM provider，记录 provider、命令、候选 / 事件计数和最终 profile / candidate 状态。
+- 混合后端动作：如果默认后端会 fallback 到插件，报告时要把“默认后端成功”和“fallback 成功”拆开说；例如 CLI / SDK credential 未就绪但插件 fallback 完成 discovery，不能表述成默认后端已通。
+- Cookie / credential 同步动作：如果实现了插件同步第三方 CLI credential，要同时验证后端 endpoint、插件 runtime-stream / hot reload、浏览器 cookie 可读性和最终 credential 文件；若真实浏览器缺必要 cookie 名，要记录“不阻塞 fallback，但默认命令后端仍 login_required”。
 
 ## 10. 文档和发布
 
@@ -337,15 +339,19 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - 首页版本 / SEO：`docs/index.html` 的 `softwareVersion`、meta description、首页 source card、英文翻译都要包含新平台。
 - README / README_EN 顶部定位、核心特性、安装登录说明、架构图中的来源列表都要同步。
 - 如果新增 / 修改了本指南或 skill，确认不是未跟踪文件，并与 `origin/main` 已存在版本做 diff，避免合并时丢掉后补规则。
-- 推 tag 前先查远端是否已存在同名 tag
+- 推 tag 前先查远端是否已存在同名 tag；如果同名 tag 已经存在，不要改旧 release 对应的 changelog 语义，必须 bump 新版本并把新改动放进新的 changelog block。
 - 常规 tag：
   - `backend-vX.Y.Z`
   - `extension-vA.B.C`
   - `desktop-vX.Y.Z`
-- 确认 GitHub Actions 成功。
-- 确认聚合 release `openbiliclaw-vX.Y.Z` 只包含当前版本资产。
-- 已存在的 tag 不能复用；若远端已有同名 tag，必须 bump 新版本并同步文档 / 首页 / package 版本。
-- 构建产物、截图、`dist/`、zip/xpi/dmg/exe 等若只是本地验证，应该保持 ignored 或清理；只有被 release 或文档引用的资产才纳入提交。
+- 本地提交前跑 `git status --short --ignored` 看清楚：未跟踪设计稿、截图、`dist/`、zip/xpi/dmg/exe、临时 release 包不要误提交；只有文档引用的图片或明确要求入库的资产才纳入提交。
+- 本地可先用 `uv build` 验证后端 sdist / wheel；当前项目 venv 可能没有 `python -m build`，不要因此把 `build` 加进运行时依赖。
+- 插件本地包验证后，release 产物仍以 tag-triggered GitHub Actions 为准；本地 zip 只是验证，不提交。
+- backend release 是 source tag 校验，不一定有 GitHub Release 资产；插件和桌面安装包由对应 workflow 发布，聚合 release 再收敛当前插件 / 桌面资产。
+- 推 main 后再推 tag，确认 CI、backend source tag、extension package、desktop installers、pages build 都成功；desktop workflow 完成前聚合 release 可能暂时挂上一版桌面资产，必须等 desktop publish job 完成后再确认。
+- 确认聚合 release `openbiliclaw-vX.Y.Z` 只包含当前版本资产，尤其不要混入旧 `.dmg` / `.exe`。
+- 如果有 Chrome Web Store / Firefox AMO / 其他插件市场，按项目 workflow 触发上传或说明为什么不能发；Chrome Web Store 审核异步，成功上传不等于立刻对用户可见。
+- 发布后把 release 链接、tag、commit、workflow 结果和本地残留未提交文件一起汇报。
 
 ## 常见失败模式
 
@@ -366,3 +372,7 @@ npm run package:firefox:only -- --archive-version <extension-version>
 - 真实 E2E 用了临时自动化浏览器，没有用已安装插件的登录态浏览器。
 - 把根目录截图、`dist/`、zip 包等临时产物提交进仓库。
 - 发布时复用已存在的版本号或 tag。
+- 已经存在 release tag 后继续改旧版本 changelog / README，导致“旧 tag 说明包含新代码”。
+- 只确认插件 / 后端 workflow 成功，没等桌面 workflow 更新聚合 release，导致 Latest Release 里桌面包仍是上一版。
+- Chrome Web Store workflow 没触发，或把“GitHub 插件包已发”误当成“插件市场已提交审核”。
+- 混合后端 fallback 成功后，把默认 CLI / SDK credential 也说成已通。

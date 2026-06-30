@@ -17,3 +17,4 @@ Key constraints:
 - Verify user-facing surfaces, not only backend fetch: plugin settings, PC web settings, setup/init, source status, source share quota, and recommendation cards on PC/mobile/plugin must all agree with the real implementation.
 - Eval/profile E2E must use the user's configured local LLM/embedding providers; do not silently substitute mocks, Ollama, or another provider.
 - Do not claim completion until unit tests, extension tests/builds, and real E2E checks relevant to the source have been run.
+- For releases, verify tag uniqueness, version alignment, CI/package workflows, aggregate release assets, plugin marketplace submission, and local untracked/ignored artifacts before reporting done.
