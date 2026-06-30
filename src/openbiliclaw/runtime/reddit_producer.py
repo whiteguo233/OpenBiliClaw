@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RedditDiscoveryProducer:
-    """Throttle and invoke Reddit plugin-backed or command-backed discovery.
+    """Throttle and invoke Reddit command-backed discovery with plugin fallback.
 
     Reddit production is fetch-only: it hands raw candidates to the unified
     discovery candidate pool and lets the shared evaluator drain them later.
@@ -82,6 +82,15 @@ class RedditDiscoveryProducer:
             runner=self.runner,
         )
         if status.state != "ready":
+            if self.task_queue is not None:
+                logger.info(
+                    "reddit command backend unavailable; falling back to extension: "
+                    "backend=%s state=%s message=%s",
+                    self.backend,
+                    status.state,
+                    status.message,
+                )
+                return await self._produce_with_extension(limit=limit)
             return {"discovered": 0, "reason": status.state, "message": status.message}
 
         try:
@@ -200,6 +209,7 @@ class RedditDiscoveryProducer:
             "discovered": len(contents),
             "source_counts": dict(source_counts),
             "reason": "ok",
+            "backend": backend,
         }
         if self.candidate_pipeline is not None:
             enqueued = 0
@@ -355,6 +365,7 @@ class RedditDiscoveryProducer:
             "discovered": len(contents),
             "source_counts": dict(source_counts),
             "reason": "ok",
+            "backend": "extension",
         }
         if self.candidate_pipeline is not None:
             enqueued = 0
@@ -666,12 +677,8 @@ def build_reddit_discovery_producer(
     scheduler = getattr(config, "scheduler", None)
     if not bool(getattr(scheduler, "enabled", True)):
         return None
-    backend = str(getattr(rd_cfg, "backend", "extension") or "extension")
-    task_queue = (
-        RedditTaskQueue(database)
-        if _is_extension_backend(backend) and hasattr(database, "conn")
-        else None
-    )
+    backend = str(getattr(rd_cfg, "backend", "rdt") or "rdt")
+    task_queue = RedditTaskQueue(database) if hasattr(database, "conn") else None
     return RedditDiscoveryProducer(
         soul_engine=soul_engine,
         database=database,

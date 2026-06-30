@@ -11,4 +11,4 @@ def test_docs_homepage_mentions_reddit_source() -> None:
     assert "sourceRedditText" in html
     assert "知乎 / Reddit 登录态任务桥" in html
     assert "Zhihu, Reddit, and Web sources" in html
-    assert '"softwareVersion": "0.3.149"' in html
+    assert '"softwareVersion": "0.3.150"' in html

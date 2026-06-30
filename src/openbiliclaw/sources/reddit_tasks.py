@@ -1,21 +1,30 @@
 """Reddit source helpers.
 
 Reddit does not currently have a reliable anonymous API path for this project.
-The primary source contract therefore runs same-origin browser-extension tasks
-inside the user's logged-in Reddit session. OpenCLI / rdt command helpers remain
-available as explicit fallback backends.
+The default steady-state source contract uses rdt-cli with the user's logged-in
+session/cookies. Same-origin OpenBiliClaw browser-extension tasks remain
+available for bootstrap saved / upvoted / subscribed initialization signals and
+as an explicit browser-backed discovery backend.
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import logging
+import os
+import re
 import shutil
 import subprocess
+import sys
+import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.sources.event_format import SOURCE_REDDIT, build_event
@@ -36,6 +45,8 @@ REDDIT_SOURCE_STRATEGIES = {
     "related": "reddit-related",
 }
 REDDIT_BOOTSTRAP_SCOPES = ("reddit_saved", "reddit_upvoted", "reddit_subscribed")
+REDDIT_REQUIRED_COOKIE_NAMES = ("reddit_session",)
+_RDT_CREDENTIAL_TTL_SECONDS = 7 * 24 * 60 * 60
 _REDDIT_BOOTSTRAP_EVENT_BY_SCOPE: dict[str, tuple[str, float]] = {
     "reddit_saved": ("favorite", 0.90),
     "reddit_upvoted": ("like", 0.75),
@@ -57,6 +68,98 @@ class RedditCommandStatus:
     backend: str
     state: str
     message: str
+
+
+@dataclass(frozen=True)
+class RedditCredentialSyncResult:
+    ok: bool
+    has_cookie: bool
+    cookie_names: tuple[str, ...]
+    credential_file: Path
+    message: str
+    error_code: str = ""
+
+
+def sync_rdt_credential_from_cookie_header(
+    cookie_header: str,
+    *,
+    source: str = "extension",
+) -> RedditCredentialSyncResult:
+    """Persist a browser Reddit Cookie header in rdt-cli's credential shape."""
+
+    cookie_pairs = _parse_cookie_header(cookie_header)
+    cookie_names = tuple(sorted(cookie_pairs))
+    credential_file = _rdt_credential_file()
+    missing = [name for name in REDDIT_REQUIRED_COOKIE_NAMES if name not in cookie_pairs]
+    if not cookie_pairs:
+        return RedditCredentialSyncResult(
+            ok=False,
+            has_cookie=False,
+            cookie_names=cookie_names,
+            credential_file=credential_file,
+            message="cookie payload is empty",
+            error_code="empty_cookie",
+        )
+    if missing:
+        return RedditCredentialSyncResult(
+            ok=True,
+            has_cookie=False,
+            cookie_names=cookie_names,
+            credential_file=credential_file,
+            message="Reddit Cookie stored? no; missing reddit_session.",
+            error_code="missing_reddit_session",
+        )
+
+    now = time.time()
+    payload = {
+        "cookies": cookie_pairs,
+        "source": f"openbiliclaw:{source.strip() or 'extension'}",
+        "username": None,
+        "modhash": cookie_pairs.get("modhash") or cookie_pairs.get("csrf_token"),
+        "saved_at": now,
+        "last_verified_at": None,
+    }
+    credential_file.parent.mkdir(parents=True, exist_ok=True)
+    credential_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    with suppress(OSError):
+        credential_file.chmod(0o600)
+
+    return RedditCredentialSyncResult(
+        ok=True,
+        has_cookie=True,
+        cookie_names=cookie_names,
+        credential_file=credential_file,
+        message="Reddit Cookie synced into rdt credential store.",
+    )
+
+
+def rdt_credential_cookie_names() -> tuple[str, ...]:
+    """Return cookie names currently present in rdt-cli's credential file."""
+
+    try:
+        data = json.loads(_rdt_credential_file().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(data, dict):
+        return ()
+    cookies = data.get("cookies")
+    if not isinstance(cookies, dict):
+        return ()
+    return tuple(sorted(str(name) for name, value in cookies.items() if str(name) and value))
+
+
+def _parse_cookie_header(cookie: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for part in cookie.split(";"):
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name or not value:
+            continue
+        pairs[name] = value
+    return pairs
 
 
 def reddit_item_key(item: dict[str, Any]) -> str:
@@ -564,13 +667,14 @@ def _is_stale_pending_result(result_json: Any) -> bool:
 def probe_reddit_command_backend(
     backend: str,
     *,
-    which: Any = shutil.which,
+    which: Any = None,
     runner: CommandRunner | None = None,
     timeout: float = 10.0,
 ) -> RedditCommandStatus:
     """Probe Reddit command backend without starting browser automation."""
 
-    which_fn = which or shutil.which
+    allow_in_process = not callable(which)
+    which_fn = which if callable(which) else _default_which
     normalized = str(backend or "auto").strip().lower()
     backends = ("opencli", "rdt") if normalized == "auto" else (normalized,)
     findings: list[RedditCommandStatus] = []
@@ -578,7 +682,12 @@ def probe_reddit_command_backend(
         if candidate == "opencli":
             status = _probe_opencli(which=which_fn, runner=runner, timeout=timeout)
         elif candidate == "rdt":
-            status = _probe_rdt(which=which_fn, runner=runner, timeout=timeout)
+            status = _probe_rdt(
+                which=which_fn,
+                runner=runner,
+                timeout=timeout,
+                allow_in_process=allow_in_process,
+            )
         else:
             status = RedditCommandStatus(
                 backend=candidate,
@@ -612,14 +721,22 @@ def build_reddit_command(
     max_items = max(1, int(limit))
     if selected == "rdt":
         if mode == "search":
-            return ["rdt", "search", query, "-n", str(max_items)]
+            return ["rdt", "search", query, "-n", str(max_items), "--json"]
         if mode == "hot":
-            target = subreddit or "all"
-            return ["rdt", "subreddit", target, "--sort", "hot", "-n", str(max_items)]
+            target = (subreddit or "all").removeprefix("r/")
+            if target.lower() == "all":
+                return ["rdt", "all", "-n", str(max_items), "--json"]
+            if target.lower() == "popular":
+                return ["rdt", "popular", "-n", str(max_items), "--json"]
+            return ["rdt", "sub", target, "--sort", "hot", "-n", str(max_items), "--json"]
         if mode == "subreddit":
-            return ["rdt", "subreddit", subreddit or query, "-n", str(max_items)]
+            target = (subreddit or query).removeprefix("r/")
+            return ["rdt", "sub", target, "-n", str(max_items), "--json"]
         if mode == "related":
-            return ["rdt", "read", query]
+            target = _reddit_read_post_id(query)
+            if not target:
+                raise ValueError("reddit related mode requires a Reddit post id or URL")
+            return ["rdt", "read", target, "-n", str(max_items), "--json"]
     else:
         if mode == "search":
             return ["opencli", "reddit", "search", query, "-n", str(max_items), "-f", "yaml"]
@@ -683,17 +800,12 @@ def _parse_json_or_yaml(output: str) -> Any:
 
 def _extract_item_dicts(parsed: Any) -> list[dict[str, Any]]:
     if isinstance(parsed, list):
-        return [dict(item) for item in parsed if isinstance(item, dict)]
+        out: list[dict[str, Any]] = []
+        for item in parsed:
+            out.extend(_extract_item_dicts(item))
+        return out
     if not isinstance(parsed, dict):
         return []
-    for key in ("items", "results", "posts", "comments", "data"):
-        value = parsed.get(key)
-        if isinstance(value, list):
-            return [dict(item) for item in value if isinstance(item, dict)]
-        if isinstance(value, dict):
-            nested = _extract_item_dicts(value)
-            if nested:
-                return nested
     children = parsed.get("children")
     if isinstance(children, list):
         rows: list[dict[str, Any]] = []
@@ -701,6 +813,11 @@ def _extract_item_dicts(parsed: Any) -> list[dict[str, Any]]:
             if isinstance(child, dict) and isinstance(child.get("data"), dict):
                 rows.append(dict(child["data"]))
         return rows
+    for key in ("items", "results", "posts", "comments", "data"):
+        value = parsed.get(key)
+        nested = _extract_item_dicts(value)
+        if nested:
+            return nested
     return [dict(parsed)] if _looks_like_reddit_item(parsed) else []
 
 
@@ -740,12 +857,23 @@ def _probe_rdt(
     which: Any,
     runner: CommandRunner | None,
     timeout: float,
+    allow_in_process: bool = False,
 ) -> RedditCommandStatus:
-    if not which("rdt"):
+    if not which("rdt") and not (allow_in_process and _rdt_cli_module_available()):
         return RedditCommandStatus("rdt", "missing", "未安装 rdt。")
+    credential_state, credential_message = _rdt_saved_credential_state()
+    if credential_state != "present":
+        return RedditCommandStatus("rdt", "login_required", credential_message)
     try:
         completed = (runner or _subprocess_run)(["rdt", "status", "--json"], timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired:
+        return RedditCommandStatus(
+            "rdt",
+            "login_required",
+            "rdt 状态检查超时；"
+            "请在已连接插件的浏览器登录 Reddit 等待自动同步，或运行 `rdt login`。",
+        )
+    except OSError as exc:
         return RedditCommandStatus("rdt", "error", f"rdt 状态检查失败: {exc}")
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().splitlines()
@@ -758,17 +886,68 @@ def _probe_rdt(
         data = json.loads(completed.stdout or "{}")
     except json.JSONDecodeError:
         data = {}
-    info = data.get("data") if isinstance(data, dict) else {}
+    info = data.get("data", data) if isinstance(data, dict) else {}
     if isinstance(info, dict) and bool(info.get("authenticated")):
         username = str(info.get("username") or "").strip()
         suffix = f" ({username})" if username else ""
         return RedditCommandStatus("rdt", "ready", f"rdt 已登录{suffix}。")
-    return RedditCommandStatus("rdt", "login_required", "rdt 已安装但未登录，请运行 `rdt login`。")
+    return RedditCommandStatus(
+        "rdt",
+        "login_required",
+        "rdt 已安装但未登录；请在已连接插件的浏览器登录 Reddit 等待自动同步，或运行 `rdt login`。",
+    )
+
+
+def _rdt_saved_credential_state() -> tuple[str, str]:
+    credential_file = _rdt_credential_file()
+    if not credential_file.exists():
+        return (
+            "missing",
+            "rdt 已安装但未同步 Reddit Cookie。"
+            "请在已连接插件的浏览器登录 Reddit；插件会自动同步，也可运行 `rdt login`。",
+        )
+    try:
+        data = json.loads(credential_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "invalid", "rdt credential 文件不可读，请等待插件重新同步或运行 `rdt login`。"
+    if not isinstance(data, dict):
+        return "invalid", "rdt credential 文件格式异常，请等待插件重新同步或运行 `rdt login`。"
+    cookies = data.get("cookies")
+    if not isinstance(cookies, dict) or not cookies:
+        return (
+            "invalid",
+            "rdt credential 文件没有可用 Cookie，请等待插件重新同步或运行 `rdt login`。",
+        )
+    missing = [name for name in REDDIT_REQUIRED_COOKIE_NAMES if not cookies.get(name)]
+    if missing:
+        return (
+            "invalid",
+            "rdt credential 缺少 reddit_session，请在已连接插件的浏览器重新登录 Reddit。",
+        )
+    saved_at = _optional_float(data.get("saved_at"))
+    if saved_at is not None and time.time() - saved_at > _RDT_CREDENTIAL_TTL_SECONDS:
+        return "expired", "rdt credential 已过期，请等待插件重新同步或运行 `rdt login`。"
+    return "present", "rdt credential 就绪。"
+
+
+def _rdt_credential_file() -> Path:
+    try:
+        constants = importlib.import_module("rdt_cli.constants")
+        return Path(cast("Any", constants).CREDENTIAL_FILE)
+    except Exception:
+        return Path.home() / ".config" / "rdt-cli" / "credential.json"
 
 
 def _subprocess_run(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+    resolved_args = list(args)
+    if resolved_args:
+        resolved = _default_which(resolved_args[0])
+        if resolved:
+            resolved_args[0] = resolved
+        elif resolved_args[0] == "rdt" and _rdt_cli_module_available():
+            return _run_rdt_cli_in_process(resolved_args, timeout=timeout)
     return subprocess.run(
-        args,
+        resolved_args,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -776,6 +955,90 @@ def _subprocess_run(args: list[str], *, timeout: float) -> subprocess.CompletedP
         timeout=timeout,
         check=False,
     )
+
+
+def _run_rdt_cli_in_process(
+    args: list[str],
+    *,
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    """Run bundled rdt-cli without requiring a console-script executable.
+
+    PyInstaller desktop builds can bundle the ``rdt_cli`` Python package but do
+    not automatically expose the package's ``rdt`` console script on PATH. This
+    fallback keeps the command backend usable in frozen installers while normal
+    source / venv installs still prefer the real subprocess.
+    """
+
+    del timeout  # click commands are synchronous; caller-level timeouts apply to subprocess only.
+    from click.testing import CliRunner
+
+    try:
+        rdt_cli = importlib.import_module("rdt_cli.cli")
+        cli = cast("Any", rdt_cli).cli
+    except Exception as exc:
+        raise FileNotFoundError("rdt") from exc
+    result = CliRunner().invoke(cli, args[1:])
+    return subprocess.CompletedProcess(
+        args=args,
+        returncode=int(result.exit_code),
+        stdout=str(result.output or ""),
+        stderr=str(result.exception or "") if result.exception else "",
+    )
+
+
+def _rdt_cli_module_available() -> bool:
+    return importlib.util.find_spec("rdt_cli.cli") is not None
+
+
+def _default_which(name: str) -> str | None:
+    """Find command on PATH or next to the active Python executable.
+
+    Project installs put dependency console scripts such as ``rdt`` in the same
+    virtualenv ``bin`` directory as ``openbiliclaw``. Users often invoke
+    ``.venv/bin/openbiliclaw`` without activating the venv, so PATH alone is not
+    enough.
+    """
+
+    found = shutil.which(name)
+    if found:
+        return found
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if path.is_absolute() or path.parent != Path("."):
+        return raw if path.exists() else None
+    script_dirs = [
+        Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin"),
+        Path(sys.executable).parent,
+        Path(sys.executable).resolve().parent,
+    ]
+    candidates = [script_dir / raw for script_dir in script_dirs]
+    if os.name == "nt" and not Path(raw).suffix:
+        pathext = os.environ.get("PATHEXT", ".EXE;.BAT;.CMD").split(";")
+        for script_dir in script_dirs:
+            candidates.extend(script_dir / f"{raw}{ext.lower()}" for ext in pathext if ext)
+            candidates.extend(script_dir / f"{raw}{ext.upper()}" for ext in pathext if ext)
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _reddit_read_post_id(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("t3_"):
+        return text.removeprefix("t3_")
+    match = re.search(r"/comments/([^/?#]+)/?", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"redd\.it/([^/?#]+)/?", text)
+    if match:
+        return match.group(1)
+    return text
 
 
 def _content_id(item: dict[str, Any]) -> str:
@@ -843,5 +1106,14 @@ def _optional_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None

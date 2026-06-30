@@ -17,7 +17,9 @@
  * Backend endpoints: POST /api/bilibili/cookie validates against Bilibili
  * nav before persisting; POST /api/sources/dy/cookie stores the browser
  * Douyin cookie for direct discovery smoke / recall; POST /api/sources/x/cookie
- * stores the browser X (Twitter) cookie for server-side cookie-replay discovery.
+ * stores the browser X (Twitter) cookie for server-side cookie-replay discovery;
+ * POST /api/sources/reddit/cookie stores the browser Reddit cookie in rdt-cli's
+ * credential store for command-backed Reddit discovery.
  */
 
 // .ts extension: see service-worker.ts for the node:test resolver rationale.
@@ -29,6 +31,7 @@ import { apiUrl } from "../shared/backend-endpoint.ts";
 const BILI_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-bili";
 const DY_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-dy";
 const X_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-x";
+const REDDIT_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync-reddit";
 // Pre-split shared alarm. chrome.alarms persist across extension updates,
 // so an old install can still fire this name once after upgrading.
 const LEGACY_COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync";
@@ -79,8 +82,9 @@ const IMPORTANT_DOUYIN_COOKIE_NAMES = [
 // (auth_token) and the CSRF token (ct0). Without either, twitter-cli calls
 // 401 immediately, so we don't bother pushing partial jars to the backend.
 const REQUIRED_X_COOKIE_NAMES = ["auth_token", "ct0"];
+const REQUIRED_REDDIT_COOKIE_NAMES = ["reddit_session"];
 
-type CookieSyncPlatform = "bilibili" | "douyin" | "x";
+type CookieSyncPlatform = "bilibili" | "douyin" | "x" | "reddit";
 
 const debounceTimers: Partial<Record<CookieSyncPlatform, ReturnType<typeof setTimeout>>> = {};
 let cookieSyncStarted = false;
@@ -180,6 +184,30 @@ export async function readXCookieHeader(): Promise<string | null> {
   );
   const have = new Set(cookies.map((c) => c.name));
   for (const required of REQUIRED_X_COOKIE_NAMES) {
+    if (!have.has(required)) {
+      return null;
+    }
+  }
+  return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+/**
+ * Read all reddit.com cookies and return them as a Cookie header.
+ *
+ * rdt-cli only requires `reddit_session` for read authenticated requests, but
+ * we send the full jar so later rdt capabilities (modhash / write-only paths)
+ * can use whatever the browser already has.
+ */
+export async function readRedditCookieHeader(): Promise<string | null> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) {
+    return null;
+  }
+  const cookies = (await chromeApi.cookies.getAll({ domain: "reddit.com" })).filter(
+    (cookie) => cookie.name && cookie.value,
+  );
+  const have = new Set(cookies.map((c) => c.name));
+  for (const required of REQUIRED_REDDIT_COOKIE_NAMES) {
     if (!have.has(required)) {
       return null;
     }
@@ -353,6 +381,49 @@ export async function syncXCookieToBackend(
   }
 }
 
+export async function syncRedditCookieToBackend(
+  source: string = "extension",
+): Promise<boolean> {
+  const cookieHeader = await readRedditCookieHeader();
+  if (!cookieHeader) {
+    return false;
+  }
+  try {
+    const response = await fetch(await apiUrl("/sources/reddit/cookie"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cookie: cookieHeader,
+        source,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`[openbiliclaw] reddit cookie sync HTTP ${response.status}`);
+      scheduleCookieSyncAlarm(REDDIT_COOKIE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    const result = (await response.json()) as {
+      ok: boolean;
+      has_cookie: boolean;
+      error_code?: string;
+      message?: string;
+    };
+    if (result.ok && result.has_cookie) {
+      console.log(`[openbiliclaw] reddit cookie synced via ${source}`);
+      scheduleHourlyCookieSync(REDDIT_COOKIE_SYNC_ALARM);
+      return true;
+    }
+    const message = String(result.message || "");
+    console.warn(`[openbiliclaw] reddit cookie sync rejected (${source}): ${message}`);
+    scheduleCookieSyncAlarm(REDDIT_COOKIE_SYNC_ALARM, COOKIE_SYNC_VALIDATION_NETWORK_RETRY_MINUTES);
+    return false;
+  } catch (err) {
+    console.warn("[openbiliclaw] reddit cookie sync failed:", err);
+    scheduleCookieSyncAlarm(REDDIT_COOKIE_SYNC_ALARM, COOKIE_SYNC_RETRY_MINUTES);
+    return false;
+  }
+}
+
 /**
  * Handle backend runtime-stream events that explicitly ask the extension
  * to push the current site cookie now.
@@ -369,6 +440,10 @@ export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): bo
   }
   if (eventType === "x_cookie_sync_requested") {
     void syncXCookieToBackend("runtime-stream-request");
+    return true;
+  }
+  if (eventType === "reddit_cookie_sync_requested") {
+    void syncRedditCookieToBackend("runtime-stream-request");
     return true;
   }
   return false;
@@ -391,8 +466,10 @@ function scheduleCookieSync(platform: CookieSyncPlatform, source: string): void 
       void syncBilibiliCookieToBackend(source);
     } else if (platform === "douyin") {
       void syncDouyinCookieToBackend(source);
-    } else {
+    } else if (platform === "x") {
       void syncXCookieToBackend(source);
+    } else {
+      void syncRedditCookieToBackend(source);
     }
   }, COOKIE_SYNC_DEBOUNCE_MS);
 }
@@ -421,6 +498,7 @@ export function startCookieSync(): void {
   void syncBilibiliCookieToBackend("startup");
   void syncDouyinCookieToBackend("startup");
   void syncXCookieToBackend("startup");
+  void syncRedditCookieToBackend("startup");
 
   // React to login / logout / refresh.
   chromeApi.cookies.onChanged.addListener((changeInfo) => {
@@ -448,6 +526,16 @@ export function startCookieSync(): void {
         return;
       }
       scheduleCookieSync("x", changeInfo.removed ? "x-logout" : "x-cookies-onchange");
+      return;
+    }
+    if (domain.endsWith("reddit.com")) {
+      if (!REQUIRED_REDDIT_COOKIE_NAMES.includes(changeInfo.cookie.name)) {
+        return;
+      }
+      scheduleCookieSync(
+        "reddit",
+        changeInfo.removed ? "reddit-logout" : "reddit-cookies-onchange",
+      );
     }
   });
 
@@ -458,6 +546,7 @@ export function startCookieSync(): void {
   scheduleHourlyCookieSync(BILI_COOKIE_SYNC_ALARM);
   scheduleHourlyCookieSync(DY_COOKIE_SYNC_ALARM);
   scheduleHourlyCookieSync(X_COOKIE_SYNC_ALARM);
+  scheduleHourlyCookieSync(REDDIT_COOKIE_SYNC_ALARM);
 }
 
 /**
@@ -478,6 +567,10 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncXCookieToBackend("hourly-alarm");
     return true;
   }
+  if (alarmName === REDDIT_COOKIE_SYNC_ALARM) {
+    void syncRedditCookieToBackend("hourly-alarm");
+    return true;
+  }
   if (alarmName === LEGACY_COOKIE_SYNC_ALARM) {
     // One last full round for an alarm persisted by an older version; each
     // sync re-registers its own per-platform alarm on success/failure and
@@ -485,6 +578,7 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     void syncBilibiliCookieToBackend("hourly-alarm");
     void syncDouyinCookieToBackend("hourly-alarm");
     void syncXCookieToBackend("hourly-alarm");
+    void syncRedditCookieToBackend("hourly-alarm");
     return true;
   }
   return false;

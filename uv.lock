@@ -1362,7 +1362,7 @@ wheels = [
 
 [[package]]
 name = "openbiliclaw"
-version = "0.3.149"
+version = "0.3.150"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1373,6 +1373,7 @@ dependencies = [
     { name = "httpx" },
     { name = "openai" },
     { name = "pydantic" },
+    { name = "rdt-cli" },
     { name = "rich" },
     { name = "scrapetube" },
     { name = "twitter-cli" },
@@ -1432,6 +1433,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
+    { name = "rdt-cli", specifier = ">=0.4.1" },
     { name = "rich", specifier = ">=13" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "scrapetube", specifier = ">=2.1" },
@@ -2193,6 +2195,22 @@ dependencies = [
     { name = "qrcode" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/62/2422c088b7219db9f78c912418254db9896d1b20ab15e83aae2821419a65/qrcode-terminal-0.8.tar.gz", hash = "sha256:1e2b69e662b9346e98dd95983033e9d43cff0643d8afda12605f515428e666c0", size = 1666, upload-time = "2017-12-05T03:52:10.236Z" }
+
+[[package]]
+name = "rdt-cli"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "browser-cookie3" },
+    { name = "click" },
+    { name = "httpx" },
+    { name = "pyyaml" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/c8/a25ec69a9c51c05a46c25a651e114c1eae0f584188bc9a0563dcc4048b12/rdt_cli-0.4.1.tar.gz", hash = "sha256:1a41ce3730b00cf358bab8551cc84212503dcf74447b17ecd0ce2565a61d463a", size = 74053, upload-time = "2026-03-15T08:43:38.779Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/da/48b1883b84bf3e8afd26fcef8eef9ebf7fc1846e4e292349d35ace6a1fde/rdt_cli-0.4.1-py3-none-any.whl", hash = "sha256:fb9b8116c0cc3ecb686cf475610cb197e5324b0aae67006d2a66fb8808287d32", size = 40615, upload-time = "2026-03-15T08:43:37.508Z" },
+]
 
 [[package]]
 name = "referencing"

@@ -304,7 +304,7 @@ test("settings page round-trips Reddit discovery config", () => {
 
   assert.match(popupJs, /setRedditSourceModes\(cfg\.sources\?\.reddit\?\.source_modes\)/);
   assert.match(popupJs, /source_modes: collectRedditSourceModes\(\)/);
-  assert.match(popupJs, /backend: getVal\("cfgRedditBackend"\) \|\| "extension"/);
+  assert.match(popupJs, /backend: getVal\("cfgRedditBackend"\) \|\| "rdt"/);
   assert.match(popupJs, /daily_search_budget: getInt\("cfgRedditDailySearchBudget", 300\)/);
   assert.match(popupJs, /reddit: getInt\("cfgPoolShareReddit", 1\)/);
   assert.match(popupJs, /reddit: checked\("cfgRedditEnabled"\)/);

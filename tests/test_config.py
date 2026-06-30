@@ -956,7 +956,7 @@ def test_sources_reddit_defaults() -> None:
     config = _build_config({})
 
     assert config.sources.reddit.enabled is False
-    assert config.sources.reddit.backend == "extension"
+    assert config.sources.reddit.backend == "rdt"
     assert config.sources.reddit.source_modes == ("search", "hot", "subreddit", "related")
     assert config.sources.reddit.daily_search_budget == 300
     assert config.sources.reddit.daily_hot_budget == 300

@@ -5299,9 +5299,9 @@
         <div class="settings-field">
           <label for="cfgRedditBackend">后端</label>
           <select id="cfgRedditBackend">
+            <option value="rdt">rdt-cli</option>
             <option value="extension">OpenBiliClaw 插件</option>
             <option value="opencli">OpenCLI extension</option>
-            <option value="rdt">rdt</option>
             <option value="auto">自动选择命令后端</option>
           </select>
         </div>
@@ -5348,7 +5348,7 @@
           <label for="cfgRedditMinInterval">Reddit 最小调度间隔分钟数</label>
           <input id="cfgRedditMinInterval" type="number" min="0" step="1" placeholder="60">
         </div>
-        <p class="settings-hint">Reddit 默认通过 OpenBiliClaw 插件复用当前浏览器登录态；OpenCLI / rdt 仅作为兼容 fallback。默认每个分支每日 300 条。</p>
+        <p class="settings-hint">Reddit 日常 discovery 默认使用 rdt-cli 登录态命令后端；rdt / opencli 不可用时自动 fallback 到 OpenBiliClaw 插件任务。初始化 saved/upvoted/subscribed 信号仍通过插件复用当前浏览器登录态。默认每个分支每日 300 条。</p>
       </div>
 
       <div class="settings-section settings-source-card" data-source-card="browser">

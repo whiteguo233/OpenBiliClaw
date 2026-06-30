@@ -52,7 +52,16 @@
    - content script 读取 DOM 或同源 JSON endpoint；
    - 插件把规范化结果 POST 回后端；
    - 后端再转换为统一事件或 discover 候选。
-3. 先做最小 smoke：
+3. 如果选择第三方 CLI / SDK 作为默认后端，默认安装必须真正带上它：
+   - 把依赖加到 `pyproject.toml` 默认 `dependencies`，更新 lockfile，并用项目虚拟环境实际安装验证；
+   - 一键 AI 安装、本地脚本安装、Docker 构建若走 `pip install .` / `uv sync` 会自动吃默认依赖；如果某个安装入口绕过 `pyproject.toml`，要同步补清单；
+   - 桌面 / PyInstaller 安装包还要显式收集 lazy / subprocess 依赖；如果冻结包没有 console script，要提供 in-process fallback 或把可执行文件打进包里；
+   - 如果第三方 CLI / SDK 需要浏览器 Cookie，优先复用已连接 OpenBiliClaw 插件的 `chrome.cookies` 同步能力，把必要 Cookie 写入该工具的本地 credential store；手动 `login` 命令只能作为 fallback，不能成为有插件登录态时的唯一入口；
+   - 用真实 `--help` / 源码确认命令、参数、结构化输出格式，不要凭 README 或记忆猜子命令；
+   - smoke / producer 要输出 JSON/YAML 等机器可解析格式，并补单测锁定真实参数；
+   - 状态探测不能隐式触发登录、浏览器 Cookie 提取或其他长耗时副作用；缺本地凭据时应返回 `login_required` 并提示显式登录命令；
+   - 命令脚本通常装在虚拟环境 `bin/` / `Scripts/`，用户可能直接运行 `.venv/bin/openbiliclaw` 而没有激活 venv，`shutil.which()` 之外还要查当前 Python 环境的脚本目录。
+4. 先做最小 smoke：
    - `fetch-<slug>` 或 `discover-<slug> <keyword>`；
    - 默认不写 memory、不触发画像；
    - 终端打印分支计数和失败原因；

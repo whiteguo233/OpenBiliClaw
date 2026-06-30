@@ -156,6 +156,7 @@ items:
 
     assert result["reason"] == "ok"
     assert result["discovered"] == 1
+    assert result["backend"] == "opencli"
     assert result["enqueued"] == 1
     assert result["source_counts"] == {"reddit-search": 1}
     assert pipeline.contexts == ["reddit-search"]
@@ -198,6 +199,7 @@ items:
     result = await producer.produce_if_due(limit=5)
 
     assert result["reason"] == "ok"
+    assert result["backend"] == "opencli"
     assert result["enqueued"] == 1
     assert pipeline.contexts == ["reddit-search"]
 
@@ -268,6 +270,7 @@ async def test_reddit_producer_uses_extension_task_queue_without_command_probe()
 
     assert result["reason"] == "ok"
     assert result["discovered"] == 1
+    assert result["backend"] == "extension"
     assert kicks == 1
     assert queue.enqueued == [
         (
@@ -278,6 +281,43 @@ async def test_reddit_producer_uses_extension_task_queue_without_command_probe()
     ]
     assert pipeline.contexts == ["reddit-search"]
     assert pipeline.enqueued[0].source_platform == "reddit"
+
+
+@pytest.mark.asyncio
+async def test_reddit_producer_falls_back_to_extension_when_rdt_missing() -> None:
+    queue = _FakeRedditTaskQueue()
+    kicks = 0
+
+    async def kick() -> None:
+        nonlocal kicks
+        kicks += 1
+
+    pipeline = _FakeCandidatePipeline()
+    producer = RedditDiscoveryProducer(
+        soul_engine=_FakeSoulEngine(),
+        backend="rdt",
+        sources=("search",),
+        task_queue=queue,
+        kick=kick,
+        which=lambda _name: None,
+        runner=lambda _args, timeout: pytest.fail("missing rdt should use extension fallback"),
+        candidate_pipeline=pipeline,
+    )
+
+    result = await producer.produce_if_due(limit=5)
+
+    assert result["reason"] == "ok"
+    assert result["discovered"] == 1
+    assert result["backend"] == "extension"
+    assert kicks == 1
+    assert queue.enqueued == [
+        (
+            "search",
+            {"keywords": ["local agents"], "max_items_per_keyword": 5},
+            300,
+        )
+    ]
+    assert pipeline.contexts == ["reddit-search"]
 
 
 @pytest.mark.asyncio

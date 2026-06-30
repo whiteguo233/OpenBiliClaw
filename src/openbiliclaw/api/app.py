@@ -100,6 +100,8 @@ from openbiliclaw.api.models import (
     RecommendationOut,
     RecommendationRefreshResponse,
     RecommendationReshuffleResponse,
+    RedditCookieIn,
+    RedditCookieResponse,
     RedditSourceConfigOut,
     RuntimeStatusResponse,
     SchedulerConfigOut,
@@ -2529,6 +2531,48 @@ def create_app(
             ),
         )
 
+    @app.post("/api/sources/reddit/cookie", response_model=RedditCookieResponse)
+    async def sync_reddit_cookie(payload: RedditCookieIn) -> RedditCookieResponse:
+        """Receive a Reddit cookie from the browser extension.
+
+        Reddit steady-state discovery defaults to rdt-cli. Instead of forcing
+        users to run ``rdt login`` manually, the connected extension can read
+        reddit.com cookies with Chrome's ``cookies`` permission and persist them
+        in rdt-cli's own credential format.
+        """
+        from openbiliclaw.sources.reddit_tasks import sync_rdt_credential_from_cookie_header
+
+        cookie_value = payload.cookie.strip()
+        if not cookie_value:
+            return RedditCookieResponse(
+                ok=False,
+                has_cookie=False,
+                message="cookie payload is empty",
+                error_code="empty_cookie",
+            )
+
+        result = sync_rdt_credential_from_cookie_header(cookie_value, source=payload.source)
+
+        if result.has_cookie:
+            with suppress(Exception):
+                await ctx.event_hub.publish(
+                    {
+                        "type": "reddit_cookie_synced",
+                        "source": payload.source,
+                        "has_cookie": result.has_cookie,
+                        "cookie_names": list(result.cookie_names),
+                    }
+                )
+
+        return RedditCookieResponse(
+            ok=result.ok,
+            has_cookie=result.has_cookie,
+            cookie_names=list(result.cookie_names),
+            credential_file=str(result.credential_file),
+            message=result.message,
+            error_code=result.error_code,
+        )
+
     @app.post("/api/init-completed")
     async def init_completed() -> dict[str, object]:
         """Notify the running server that ``openbiliclaw init`` has finished.
@@ -2689,6 +2733,25 @@ def create_app(
                             await websocket.send_json(
                                 {
                                     "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
+                    from openbiliclaw.sources.reddit_tasks import _rdt_saved_credential_state
+
+                    rd_cfg = getattr(runtime_config.sources, "reddit", None)
+                    rd_backend = str(getattr(rd_cfg, "backend", "rdt") or "rdt").strip().lower()
+                    if (
+                        rd_cfg is not None
+                        and bool(getattr(rd_cfg, "enabled", False))
+                        and rd_backend == "rdt"
+                    ):
+                        state, _message = _rdt_saved_credential_state()
+                        if state != "present":
+                            await websocket.send_json(
+                                {
+                                    "type": "reddit_cookie_sync_requested",
                                     "reason": "missing_cookie",
                                     "source": "runtime-stream",
                                 }
@@ -6953,7 +7016,7 @@ def create_app(
 
         rd_cfg = getattr(srcs, "reddit", None)
         rd_enabled = bool(getattr(rd_cfg, "enabled", False))
-        rd_backend = str(getattr(rd_cfg, "backend", "extension") or "extension").strip().lower()
+        rd_backend = str(getattr(rd_cfg, "backend", "rdt") or "rdt").strip().lower()
         if rd_backend in {"extension", "openbiliclaw", "plugin"}:
             reddit = SourceStatusItem(
                 enabled=rd_enabled,
@@ -7097,6 +7160,7 @@ def create_app(
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
 
         cfg = load_config()
         srcs = cfg.sources
@@ -7114,6 +7178,7 @@ def create_app(
             cookie_env=getattr(srcs.twitter, "cookie_env", "OPENBILICLAW_X_COOKIE"),
         )
         xhs_token = _latest_xhs_token()
+        reddit_cookie_names = rdt_credential_cookie_names()
 
         def item(label: str, value: str, detail: str) -> SourceCredentialItem:
             return SourceCredentialItem(
@@ -7143,9 +7208,13 @@ def create_app(
                 detail="知乎登录态保存在浏览器站点 / 插件上下文中，后端不保存可展示 Cookie。",
             ),
             reddit=SourceCredentialItem(
-                label="Browser session",
-                available=False,
-                detail="Reddit 登录态由 OpenCLI 扩展或 rdt cookie store 持有，后端不保存 Cookie。",
+                label="rdt credential",
+                value=", ".join(reddit_cookie_names),
+                available=bool(reddit_cookie_names),
+                detail=(
+                    "Reddit Cookie 由插件同步到 rdt-cli credential store；"
+                    "这里只展示 Cookie 名称。"
+                ),
             ),
         )
 
@@ -8726,9 +8795,7 @@ def create_app(
                         if backend in {"openbiliclaw", "plugin"}:
                             backend = "extension"
                         cfg.sources.reddit.backend = (
-                            backend
-                            if backend in {"extension", "opencli", "rdt", "auto"}
-                            else "extension"
+                            backend if backend in {"extension", "opencli", "rdt", "auto"} else "rdt"
                         )
                     if "source_modes" in reddit_data:
                         raw_modes = reddit_data["source_modes"]

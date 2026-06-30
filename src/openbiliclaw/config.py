@@ -425,13 +425,15 @@ class ZhihuSourceConfig:
 class RedditSourceConfig:
     """Reddit discovery configuration.
 
-    Reddit currently depends on a logged-in browser session instead of a
-    reliable anonymous API. ``backend="extension"`` uses the OpenBiliClaw
-    browser plugin; ``opencli`` and ``rdt`` remain compatible fallbacks.
+    Reddit currently depends on a logged-in session instead of a reliable
+    anonymous API. ``backend="rdt"`` is the default steady-state discovery and
+    event-smoke backend; ``extension`` remains available for OpenBiliClaw
+    browser-plugin tasks and is still required for bootstrap saved / upvoted /
+    subscribed initialization signals.
     """
 
     enabled: bool = False
-    backend: str = "extension"
+    backend: str = "rdt"
     source_modes: tuple[str, ...] = ("search", "hot", "subreddit", "related")
     daily_search_budget: int = 300
     daily_hot_budget: int = 300
@@ -840,7 +842,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
         ),
         reddit=RedditSourceConfig(
             enabled=bool(reddit_raw.get("enabled", False)),
-            backend=str(reddit_raw.get("backend", "extension") or "extension"),
+            backend=str(reddit_raw.get("backend", "rdt") or "rdt"),
             source_modes=tuple(
                 mode
                 for mode in _coerce_str_list(

@@ -5543,7 +5543,81 @@ def test_discover_source_reddit_runs_formal_producer(monkeypatch: pytest.MonkeyP
     assert calls == {"limit": 11}
 
 
-def test_discover_reddit_plugin_enqueues_search_candidates(
+def test_discover_reddit_default_uses_rdt_command_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: SimpleNamespace(backend="rdt", state="ready", message="ok"),
+    )
+
+    def run_command(args: list[str], *, timeout: float) -> list[dict[str, Any]]:
+        calls["args"] = args
+        calls["timeout"] = timeout
+        return [
+            {
+                "id": "abc123",
+                "title": "Local-first agents",
+                "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                "subreddit": "LocalLLaMA",
+                "author": "agent_builder",
+                "search_keyword": "local agents",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        run_command,
+    )
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        raise AssertionError("default discover-reddit must use rdt-cli, not extension tasks")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_task",
+        enqueue_task,
+        raising=False,
+    )
+    enqueued: dict[str, object] = {}
+
+    def enqueue(items: list[dict[str, Any]], *, strategy: str) -> tuple[int, list[Any]]:
+        enqueued["items"] = items
+        enqueued["strategy"] = strategy
+        return 1, [
+            DiscoveredContent(
+                title="Local-first agents",
+                source_platform="reddit",
+                source_strategy=strategy,
+                content_url="https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+            )
+        ]
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_candidates",
+        enqueue,
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["discover-reddit", "local agents", "--limit", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["args"] == ["rdt", "search", "local agents", "-n", "5", "--json"]
+    assert enqueued["strategy"] == "reddit-search"
+    assert "Reddit" in result.output
+    assert "Local-first agents" in result.output
+
+
+def test_discover_reddit_default_falls_back_to_plugin_when_rdt_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = CliRunner()
@@ -5551,7 +5625,11 @@ def test_discover_reddit_plugin_enqueues_search_candidates(
 
     monkeypatch.setattr(
         "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
-        lambda backend: pytest.fail("default discover-reddit must use the extension backend"),
+        lambda backend: SimpleNamespace(backend="rdt", state="missing", message="未安装 rdt。"),
+    )
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        lambda *_a, **_kw: pytest.fail("missing rdt should fall back to plugin"),
     )
 
     def enqueue_task(
@@ -5594,24 +5672,20 @@ def test_discover_reddit_plugin_enqueues_search_candidates(
         ),
         raising=False,
     )
-    enqueued: dict[str, object] = {}
-
-    def enqueue(items: list[dict[str, Any]], *, strategy: str) -> tuple[int, list[Any]]:
-        enqueued["items"] = items
-        enqueued["strategy"] = strategy
-        return 1, [
-            DiscoveredContent(
-                title="Local-first agents",
-                source_platform="reddit",
-                source_strategy=strategy,
-                content_url="https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
-            )
-        ]
-
     monkeypatch.setattr(
         cli_module,
         "_enqueue_reddit_discovery_candidates",
-        enqueue,
+        lambda items, *, strategy: (
+            1,
+            [
+                DiscoveredContent(
+                    title="Local-first agents",
+                    source_platform="reddit",
+                    source_strategy=strategy,
+                    content_url="https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                )
+            ],
+        ),
         raising=False,
     )
 
@@ -5623,8 +5697,7 @@ def test_discover_reddit_plugin_enqueues_search_candidates(
         "payload": {"keywords": ["local agents"], "max_items_per_keyword": 5},
         "daily_budget_key": "daily_search_budget",
     }
-    assert enqueued["strategy"] == "reddit-search"
-    assert "Reddit" in result.output
+    assert "fallback" in result.output
     assert "Local-first agents" in result.output
 
 
@@ -5632,11 +5705,77 @@ def test_fetch_reddit_default_does_not_persist_or_rebuild(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = CliRunner()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: SimpleNamespace(backend="rdt", state="ready", message="ok"),
+    )
+
+    def run_command(args: list[str], *, timeout: float) -> list[dict[str, Any]]:
+        calls["args"] = args
+        calls["timeout"] = timeout
+        return [
+            {
+                "id": "abc123",
+                "title": "Local-first agents",
+                "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+                "subreddit": "LocalLLaMA",
+                "author": "agent_builder",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        run_command,
+    )
+
+    def enqueue_task(
+        task_type: str,
+        payload: dict[str, object],
+        *,
+        daily_budget_key: str,
+    ) -> str:
+        raise AssertionError("default fetch-reddit must use rdt-cli, not extension tasks")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_task",
+        enqueue_task,
+        raising=False,
+    )
+
+    def trip_write_memory(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("fetch-reddit must not write memory without --write-memory")
+
+    def trip_soul_engine() -> object:
+        raise AssertionError("fetch-reddit must not rebuild profile by default")
+
+    monkeypatch.setattr(cli_module, "_write_events_to_memory", trip_write_memory)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", trip_soul_engine)
+
+    result = runner.invoke(app, ["fetch-reddit", "local agents", "--limit", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["args"] == ["rdt", "search", "local agents", "-n", "5", "--json"]
+    assert "Reddit" in result.output
+    assert "未写入 memory" in result.output
+    assert "Local-first agents" in result.output
+
+
+def test_fetch_reddit_default_falls_back_to_plugin_when_rdt_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
     task_payload: dict[str, object] = {}
 
     monkeypatch.setattr(
         "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
-        lambda backend: pytest.fail("default fetch-reddit must use the extension backend"),
+        lambda backend: SimpleNamespace(backend="rdt", state="missing", message="未安装 rdt。"),
+    )
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        lambda *_a, **_kw: pytest.fail("missing rdt should fall back to plugin"),
     )
 
     def enqueue_task(
@@ -5678,15 +5817,16 @@ def test_fetch_reddit_default_does_not_persist_or_rebuild(
         ),
         raising=False,
     )
-
-    def trip_write_memory(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
-        raise AssertionError("fetch-reddit must not write memory without --write-memory")
-
-    def trip_soul_engine() -> object:
-        raise AssertionError("fetch-reddit must not rebuild profile by default")
-
-    monkeypatch.setattr(cli_module, "_write_events_to_memory", trip_write_memory)
-    monkeypatch.setattr(cli_module, "_build_soul_engine", trip_soul_engine)
+    monkeypatch.setattr(
+        cli_module,
+        "_write_events_to_memory",
+        lambda *_a, **_kw: pytest.fail("fetch-reddit must not write memory by default"),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_soul_engine",
+        lambda: pytest.fail("fetch-reddit must not rebuild profile by default"),
+    )
 
     result = runner.invoke(app, ["fetch-reddit", "local agents", "--limit", "5"])
 
@@ -5696,9 +5836,8 @@ def test_fetch_reddit_default_does_not_persist_or_rebuild(
         "payload": {"keywords": ["local agents"], "max_items_per_keyword": 5},
         "daily_budget_key": "daily_search_budget",
     }
-    assert "Reddit" in result.output
+    assert "fallback" in result.output
     assert "未写入 memory" in result.output
-    assert "Local-first agents" in result.output
 
 
 def test_fetch_reddit_write_memory_persists_converted_events(
@@ -5744,6 +5883,47 @@ def test_fetch_reddit_write_memory_persists_converted_events(
     assert events[0]["metadata"]["import_source"] == "reddit_fetch_search"
 
 
+def test_discover_reddit_hot_default_uses_rdt_command_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend",
+        lambda backend: SimpleNamespace(backend="rdt", state="ready", message="ok"),
+    )
+
+    def run_command(args: list[str], *, timeout: float) -> list[dict[str, Any]]:
+        calls["args"] = args
+        calls["timeout"] = timeout
+        return [
+            {
+                "id": "hot123",
+                "title": "Hot Reddit topic",
+                "permalink": "/r/all/comments/hot123/hot_reddit_topic/",
+                "subreddit": "all",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks.run_reddit_command",
+        run_command,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_enqueue_reddit_discovery_task",
+        lambda *_a, **_kw: pytest.fail("default hot discovery must use rdt-cli"),
+        raising=False,
+    )
+
+    result = runner.invoke(app, ["discover-reddit-hot", "--limit", "5", "--no-enqueue"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["args"] == ["rdt", "all", "-n", "5", "--json"]
+    assert "reddit-hot" in result.output
+
+
 def test_discover_reddit_hot_uses_plugin_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5784,7 +5964,10 @@ def test_discover_reddit_hot_uses_plugin_task(
         raising=False,
     )
 
-    result = runner.invoke(app, ["discover-reddit-hot", "--limit", "5", "--no-enqueue"])
+    result = runner.invoke(
+        app,
+        ["discover-reddit-hot", "--backend", "extension", "--limit", "5", "--no-enqueue"],
+    )
 
     assert result.exit_code == 0, result.output
     assert task_payload == {
@@ -5836,7 +6019,18 @@ def test_discover_reddit_related_uses_plugin_task(
         raising=False,
     )
 
-    result = runner.invoke(app, ["discover-reddit-related", url, "--limit", "3", "--no-enqueue"])
+    result = runner.invoke(
+        app,
+        [
+            "discover-reddit-related",
+            url,
+            "--backend",
+            "extension",
+            "--limit",
+            "3",
+            "--no-enqueue",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert task_payload == {

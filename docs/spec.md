@@ -34,7 +34,7 @@ OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 A
 #### 2.1.1 行为数据采集
 
 **浏览器插件（核心采集入口）**：
-- 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎的交互行为，并通过插件任务桥复用 Reddit 登录态做初始化 saved/upvoted/subscribed 信号和 discovery：点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
+- 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎的交互行为；Reddit 初始化 saved/upvoted/subscribed 信号复用插件登录态任务桥，日常 discovery 默认使用 rdt-cli 登录态命令后端，不可用时 fallback 到插件任务：点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
 - 记录行为发生时的**完整上下文**：对应的 DOM 页面快照、当前浏览路径、时间戳、平台内容 ID
 - 捕捉用户的**微行为**：鼠标悬停、视频进度条跳转、视频暂停 / 继续、页面导航等
 - 记录用户的**主动反馈**：`dislike` 类动作统一规范成 `feedback` 事件，避免各平台负反馈语义分叉
@@ -318,7 +318,7 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │  │   fetch-zhihu 只做 smoke；guided init 勾选知乎才进首版画像       │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ RedditDiscoveryProducer: 插件登录态 search/hot/subreddit/related -> pending eval │ │
+│  │ RedditDiscoveryProducer: rdt-cli 默认 + 插件 fallback search/hot/subreddit/related -> pending eval │ │
 │  │   Reddit bootstrap_events: saved/upvoted/subscribed -> 首版画像信号 │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │

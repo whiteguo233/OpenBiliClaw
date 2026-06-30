@@ -4109,7 +4109,7 @@
       setInput("zhihuRequestInterval", config.sources?.zhihu?.request_interval_seconds);
       setInput("zhihuMinInterval", config.sources?.zhihu?.min_interval_minutes);
       setSelect("redditEnabled", config.sources?.reddit?.enabled === true ? "on" : "off");
-      setSelect("redditBackend", config.sources?.reddit?.backend || "extension");
+      setSelect("redditBackend", config.sources?.reddit?.backend || "rdt");
       setRedditSourceModes(config.sources?.reddit?.source_modes);
       setInput("redditDailySearchBudget", config.sources?.reddit?.daily_search_budget);
       setInput("redditDailyHotBudget", config.sources?.reddit?.daily_hot_budget);
@@ -4545,7 +4545,7 @@
           },
           reddit: {
             enabled: $("#redditEnabled").value === "on",
-            backend: getInput("redditBackend") || "extension",
+            backend: getInput("redditBackend") || "rdt",
             source_modes: collectRedditSourceModes(),
             daily_search_budget: getIntInput("redditDailySearchBudget", 300),
             daily_hot_budget: getIntInput("redditDailyHotBudget", 300),

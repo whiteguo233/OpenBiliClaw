@@ -345,6 +345,31 @@ class XCookieResponse(BaseModel):
     error_code: str = ""
 
 
+class RedditCookieIn(BaseModel):
+    """Cookie sync payload for Reddit rdt-cli discovery."""
+
+    cookie: str = Field(
+        ...,
+        description="Cookie header string from reddit.com.",
+        min_length=1,
+    )
+    source: str = Field(
+        default="extension",
+        description="Where the cookie came from. Used for telemetry only.",
+    )
+
+
+class RedditCookieResponse(BaseModel):
+    """Result of syncing Reddit cookies into the rdt-cli credential store."""
+
+    ok: bool
+    has_cookie: bool
+    cookie_names: list[str] = Field(default_factory=list)
+    credential_file: str = ""
+    message: str = ""
+    error_code: str = ""
+
+
 class XStatusResponse(BaseModel):
     """Current X (Twitter) source health (spec §7).
 
@@ -1046,7 +1071,7 @@ class ZhihuSourceConfigOut(BaseModel):
 
 class RedditSourceConfigOut(BaseModel):
     enabled: bool = False
-    backend: str = "extension"
+    backend: str = "rdt"
     source_modes: list[str] = Field(
         default_factory=lambda: ["search", "hot", "subreddit", "related"]
     )

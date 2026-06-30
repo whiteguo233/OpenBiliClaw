@@ -30,10 +30,10 @@ def _make_database(tmp_path: Path) -> Database:
     return db
 
 
-def test_reddit_api_schema_defaults_match_extension_discovery_defaults() -> None:
+def test_reddit_api_schema_defaults_match_rdt_discovery_defaults() -> None:
     cfg = RedditSourceConfigOut()
 
-    assert cfg.backend == "extension"
+    assert cfg.backend == "rdt"
     assert cfg.source_modes == ["search", "hot", "subreddit", "related"]
     assert cfg.daily_search_budget == 300
     assert cfg.daily_hot_budget == 300
@@ -107,6 +107,68 @@ def test_reddit_kick_broadcasts_runtime_event(tmp_path: Path) -> None:
     assert hub.events == [{"type": "reddit_task_available", "source": "task_kick"}]
 
 
+def test_reddit_cookie_endpoint_writes_rdt_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "runtime"
+    credential_file = tmp_path / "rdt" / "credential.json"
+    save_config(Config(), project_root / "config.toml")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks._rdt_credential_file",
+        lambda: credential_file,
+    )
+
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/sources/reddit/cookie",
+        json={"cookie": "reddit_session=rs; loid=loid", "source": "extension"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["has_cookie"] is True
+    assert body["credential_file"] == str(credential_file)
+    assert body["cookie_names"] == ["loid", "reddit_session"]
+    payload = json.loads(credential_file.read_text(encoding="utf-8"))
+    assert payload["cookies"]["reddit_session"] == "rs"
+    assert payload["source"] == "openbiliclaw:extension"
+    assert "reddit_session=rs" not in (project_root / "config.toml").read_text(encoding="utf-8")
+
+
+def test_reddit_cookie_endpoint_rejects_cookie_without_reddit_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "runtime"
+    credential_file = tmp_path / "rdt" / "credential.json"
+    save_config(Config(), project_root / "config.toml")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    monkeypatch.setattr(
+        "openbiliclaw.sources.reddit_tasks._rdt_credential_file",
+        lambda: credential_file,
+    )
+
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/sources/reddit/cookie",
+        json={"cookie": "loid=loid", "source": "extension"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["has_cookie"] is False
+    assert body["error_code"] == "missing_reddit_session"
+    assert not credential_file.exists()
+
+
 def test_reddit_source_status_uses_extension_backend_without_command_probe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -138,6 +200,42 @@ def test_reddit_source_status_uses_extension_backend_without_command_probe(
     assert reddit["enabled"] is True
     assert reddit["state"] == "unverified"
     assert "OpenBiliClaw 插件" in reddit["detail"]
+
+
+def test_reddit_source_status_defaults_to_rdt_command_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "runtime"
+    cfg = Config(
+        llm=LLMConfig(
+            default_provider="ollama",
+            ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434"),
+        )
+    )
+    cfg.sources.reddit.enabled = True
+    save_config(cfg, project_root / "config.toml")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    probed: dict[str, str] = {}
+
+    def probe(backend: str) -> object:
+        probed["backend"] = backend
+        return type("Status", (), {"state": "ready", "message": "rdt ok"})()
+
+    monkeypatch.setattr("openbiliclaw.sources.reddit_tasks.probe_reddit_command_backend", probe)
+
+    db = _make_database(tmp_path)
+    app = create_app(memory_manager=object(), database=db, soul_engine=object())
+    client = TestClient(app)
+
+    resp = client.get("/api/sources/status")
+
+    assert resp.status_code == 200
+    reddit = resp.json()["reddit"]
+    assert probed == {"backend": "rdt"}
+    assert reddit["enabled"] is True
+    assert reddit["state"] == "ready"
+    assert reddit["detail"] == "rdt ok"
 
 
 def test_put_config_preserves_reddit_extension_backend(

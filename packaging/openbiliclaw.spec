@@ -52,6 +52,29 @@ if os.environ.get("OPENBILICLAW_BUNDLE_X", "") == "1":
         f"+{len(_x_datas)} datas, +{len(_x_hiddenimports)} hiddenimports"
     )
 
+# --- Reddit discovery dependency collection ---
+# packaging/build.py ensures rdt-cli is installed and sets
+# OPENBILICLAW_BUNDLE_REDDIT=1 for the default desktop bundle. The runtime can
+# call bundled rdt_cli in-process when the console-script executable is not on
+# PATH, but PyInstaller needs explicit collection because the import is dynamic.
+_reddit_datas = []
+_reddit_binaries = []
+_reddit_hiddenimports = []
+if os.environ.get("OPENBILICLAW_BUNDLE_REDDIT", "") == "1":
+    for _reddit_pkg in ("rdt_cli", "browser_cookie3"):
+        try:
+            _d, _b, _h = collect_all(_reddit_pkg)
+        except Exception as exc:  # noqa: BLE001 — Reddit can still use extension fallback
+            print(f"[spec] Reddit dependency: could not collect {_reddit_pkg}: {exc}")
+            continue
+        _reddit_datas += _d
+        _reddit_binaries += _b
+        _reddit_hiddenimports += _h
+    print(
+        f"[spec] Reddit dependency bundled: +{len(_reddit_binaries)} binaries, "
+        f"+{len(_reddit_datas)} datas, +{len(_reddit_hiddenimports)} hiddenimports"
+    )
+
 # System-tray desktop mode (packaging/entry.py): the app runs as a tray icon
 # (Windows system tray / macOS menu bar) with no console window. Bundle pystray
 # + Pillow on both; the macOS backend additionally needs pyobjc (Foundation /
@@ -78,7 +101,7 @@ else:
 a = Analysis(
     [str(project_root / "packaging" / "entry.py")],
     pathex=[str(project_root / "src")],
-    binaries=[] + _x_binaries,
+    binaries=[] + _x_binaries + _reddit_binaries,
     datas=[
         (str(project_root / "config.example.toml"), "."),
         # Web UI + first-run setup wizard. app.py serves these via StaticFiles
@@ -87,7 +110,8 @@ a = Analysis(
         # resolution (web_dir = .../openbiliclaw/web) works when frozen.
         (str(project_root / "src" / "openbiliclaw" / "web"), "openbiliclaw/web"),
     ]
-    + _x_datas,
+    + _x_datas
+    + _reddit_datas,
     hiddenimports=[
         # --- FastAPI / Uvicorn ---
         "uvicorn",
@@ -166,7 +190,8 @@ a = Analysis(
         "openbiliclaw.bilibili.auth",
     ]
     + _tray_hiddenimports
-    + _x_hiddenimports,
+    + _x_hiddenimports
+    + _reddit_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

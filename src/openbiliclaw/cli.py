@@ -7293,9 +7293,9 @@ def fetch_reddit(
     ),
     limit: int = typer.Option(10, "--limit", "-n", min=1, help="最多抓取的条目数。"),
     backend: str = typer.Option(
-        "extension",
+        "rdt",
         "--backend",
-        help="读取后端：extension / auto / opencli / rdt。",
+        help="读取后端：rdt / auto / opencli / extension；bootstrap 会使用插件后端。",
         case_sensitive=False,
     ),
     wait_seconds: float = typer.Option(
@@ -7315,7 +7315,7 @@ def fetch_reddit(
         help="写入 memory 后用本次 Reddit 事件重建画像（会触发真实 LLM 调用）。",
     ),
 ) -> None:
-    """单独测试 Reddit 数据拉取，默认使用 OpenBiliClaw 插件且不生成画像。"""
+    """单独测试 Reddit 数据拉取，默认使用 rdt-cli 且不生成画像。"""
     from openbiliclaw.sources.reddit_tasks import (
         build_reddit_command,
         probe_reddit_command_backend,
@@ -7334,6 +7334,21 @@ def fetch_reddit(
     write_memory = write_memory or rebuild_profile
 
     selected_backend_option = backend.strip().lower()
+    if selected_mode == "bootstrap" and not _is_reddit_extension_backend(selected_backend_option):
+        console.print(
+            "[dim]Reddit bootstrap 事件仍使用 OpenBiliClaw 插件；"
+            "rdt-cli 默认用于 search / hot / subreddit / related。[/dim]"
+        )
+        selected_backend_option = "extension"
+    prechecked_status: Any | None = None
+    if not _is_reddit_extension_backend(selected_backend_option):
+        prechecked_status = probe_reddit_command_backend(selected_backend_option)
+        if prechecked_status.state != "ready":
+            console.print(
+                "[dim]Reddit 命令后端不可用"
+                f"({prechecked_status.message})，自动切到 OpenBiliClaw 插件 fallback。[/dim]"
+            )
+            selected_backend_option = "extension"
     if _is_reddit_extension_backend(selected_backend_option):
         if selected_mode == "bootstrap":
             _print_page_title("Reddit 事件拉取", "OpenBiliClaw 插件 → saved/upvoted/subscribed")
@@ -7451,13 +7466,13 @@ def fetch_reddit(
             )
             raise typer.Exit(code=1)
         _print_page_title("Reddit 数据拉取", "命令后端 → 事件 smoke")
-        status = probe_reddit_command_backend(backend)
+        status = prechecked_status or probe_reddit_command_backend(selected_backend_option)
         if status.state != "ready":
             _print_status_panel("warning", "Reddit 后端不可用", status.message)
             raise typer.Exit(code=1)
 
         selected_backend = status.backend or (
-            "rdt" if backend.strip().lower() == "rdt" else "opencli"
+            "rdt" if selected_backend_option == "rdt" else "opencli"
         )
         args = build_reddit_command(
             selected_backend,
@@ -7612,9 +7627,9 @@ def discover_reddit(
     query: str = typer.Argument(..., help="Reddit 搜索关键词。"),
     limit: int = typer.Option(10, "--limit", "-n", min=1, help="最多抓取的搜索结果条数。"),
     backend: str = typer.Option(
-        "extension",
+        "rdt",
         "--backend",
-        help="读取后端：extension / auto / opencli / rdt。",
+        help="读取后端：rdt / auto / opencli / extension。",
         case_sensitive=False,
     ),
     wait_seconds: float = typer.Option(
@@ -7627,7 +7642,7 @@ def discover_reddit(
         False, "--no-enqueue", help="只预览结果，不写入 discovery_candidates。"
     ),
 ) -> None:
-    """通过 OpenBiliClaw 插件触发一次 Reddit 搜索 discovery。"""
+    """通过 rdt-cli 或 OpenBiliClaw 插件触发一次 Reddit 搜索 discovery。"""
     from openbiliclaw.sources.reddit_tasks import (
         build_reddit_command,
         probe_reddit_command_backend,
@@ -7636,6 +7651,15 @@ def discover_reddit(
     )
 
     selected_backend_option = backend.strip().lower()
+    prechecked_status: Any | None = None
+    if not _is_reddit_extension_backend(selected_backend_option):
+        prechecked_status = probe_reddit_command_backend(selected_backend_option)
+        if prechecked_status.state != "ready":
+            console.print(
+                "[dim]Reddit 命令后端不可用"
+                f"({prechecked_status.message})，自动切到 OpenBiliClaw 插件 fallback。[/dim]"
+            )
+            selected_backend_option = "extension"
     if _is_reddit_extension_backend(selected_backend_option):
         _print_page_title("Reddit 内容发现", "OpenBiliClaw 插件搜索 → discovery_candidates")
         console.print(f"[dim]入队 Reddit search 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
@@ -7672,13 +7696,13 @@ def discover_reddit(
         search_count = scope_counts.get("reddit_search", len(rows))
     else:
         _print_page_title("Reddit 内容发现", "命令后端搜索 → discovery_candidates")
-        status = probe_reddit_command_backend(backend)
+        status = prechecked_status or probe_reddit_command_backend(selected_backend_option)
         if status.state != "ready":
             _print_status_panel("warning", "Reddit 后端不可用", status.message)
             raise typer.Exit(code=1)
 
         selected_backend = status.backend or (
-            "rdt" if backend.strip().lower() == "rdt" else "opencli"
+            "rdt" if selected_backend_option == "rdt" else "opencli"
         )
         args = build_reddit_command(
             selected_backend,
@@ -7722,43 +7746,118 @@ def _run_reddit_discovery_smoke(
     scope_key: str,
     payload: dict[str, object],
     daily_budget_key: str,
+    backend: str,
     wait_seconds: float,
     no_enqueue: bool,
 ) -> None:
-    _print_page_title(title, f"OpenBiliClaw 插件 {strategy} → discovery_candidates")
-    console.print(
-        f"[dim]入队 Reddit {task_type} 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]"
-    )
-    task_id = _enqueue_reddit_discovery_task(
-        task_type,
-        payload,
-        daily_budget_key=daily_budget_key,
-    )
-    if not task_id:
-        raise typer.Exit(code=1)
+    selected_backend_option = backend.strip().lower()
+    prechecked_status: Any | None = None
+    if not _is_reddit_extension_backend(selected_backend_option):
+        from openbiliclaw.sources.reddit_tasks import probe_reddit_command_backend
 
-    items, scope_counts, status_label = _collect_reddit_discovery_results(
-        task_id,
-        max_wait_seconds=wait_seconds,
-    )
-    if status_label == "login_required":
+        prechecked_status = probe_reddit_command_backend(selected_backend_option)
+        if prechecked_status.state != "ready":
+            console.print(
+                "[dim]Reddit 命令后端不可用"
+                f"({prechecked_status.message})，自动切到 OpenBiliClaw 插件 fallback。[/dim]"
+            )
+            selected_backend_option = "extension"
+    if _is_reddit_extension_backend(selected_backend_option):
+        _print_page_title(title, f"OpenBiliClaw 插件 {strategy} → discovery_candidates")
         console.print(
-            "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
-            "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+            f"[dim]入队 Reddit {task_type} 任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]"
         )
-        raise typer.Exit(code=1)
-    if status_label == "timeout":
-        console.print(
-            "  [yellow]Reddit discovery 任务超时:扩展未连接 / 任务还在跑。"
-            "可加 --wait-seconds 240 重试。[/yellow]"
+        task_id = _enqueue_reddit_discovery_task(
+            task_type,
+            payload,
+            daily_budget_key=daily_budget_key,
         )
-        raise typer.Exit(code=1)
-    if status_label == "failed":
-        console.print("  [yellow]Reddit discovery 任务失败 —— 检查扩展日志。[/yellow]")
-        raise typer.Exit(code=1)
-    if status_label == "empty" or not items:
-        _print_status_panel("info", "没有发现到 Reddit 内容", f"{strategy} 返回为空。")
-        return
+        if not task_id:
+            raise typer.Exit(code=1)
+
+        items, scope_counts, status_label = _collect_reddit_discovery_results(
+            task_id,
+            max_wait_seconds=wait_seconds,
+        )
+        if status_label == "login_required":
+            console.print(
+                "  [yellow]Reddit 任务已到达浏览器，但当前 Reddit 页面未登录或会话不可用。"
+                "请先在当前浏览器登录 Reddit 后重试。[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        if status_label == "timeout":
+            console.print(
+                "  [yellow]Reddit discovery 任务超时:扩展未连接 / 任务还在跑。"
+                "可加 --wait-seconds 240 重试。[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        if status_label == "failed":
+            console.print("  [yellow]Reddit discovery 任务失败 —— 检查扩展日志。[/yellow]")
+            raise typer.Exit(code=1)
+        if status_label == "empty" or not items:
+            _print_status_panel("info", "没有发现到 Reddit 内容", f"{strategy} 返回为空。")
+            return
+    else:
+        from openbiliclaw.sources.reddit_tasks import (
+            build_reddit_command,
+            probe_reddit_command_backend,
+            run_reddit_command,
+        )
+
+        _print_page_title(title, f"命令后端 {strategy} → discovery_candidates")
+        status = prechecked_status or probe_reddit_command_backend(selected_backend_option)
+        if status.state != "ready":
+            _print_status_panel("warning", "Reddit 后端不可用", status.message)
+            raise typer.Exit(code=1)
+
+        selected_backend = status.backend or (
+            "rdt" if selected_backend_option == "rdt" else "opencli"
+        )
+        items = []
+        targets: list[str]
+        limit = 20
+
+        def _payload_int(key: str, default: int) -> int:
+            value = payload.get(key, default)
+            with suppress(Exception):
+                return max(1, int(cast("Any", value)))
+            return default
+
+        if task_type == "hot":
+            targets = [str(payload.get("subreddit") or "all")]
+            limit = _payload_int("max_items", 20)
+        elif task_type == "subreddit":
+            raw_targets = payload.get("subreddits")
+            if isinstance(raw_targets, list):
+                targets = [str(item).removeprefix("r/") for item in raw_targets if str(item)]
+            else:
+                targets = [str(raw_targets or "all").removeprefix("r/")]
+            limit = _payload_int("max_items_per_subreddit", 20)
+        elif task_type == "related":
+            raw_targets = payload.get("related_urls")
+            targets = (
+                [str(item) for item in raw_targets if str(item)]
+                if isinstance(raw_targets, list)
+                else []
+            )
+            limit = _payload_int("max_items_per_seed", 20)
+        else:
+            targets = [str(payload.get("query") or payload.get("keyword") or "")]
+            limit = _payload_int("max_items", 20)
+
+        for target in targets:
+            args = build_reddit_command(
+                selected_backend,
+                mode=task_type,
+                query=target,
+                subreddit=target if task_type in {"hot", "subreddit"} else "",
+                limit=limit,
+            )
+            items.extend(run_reddit_command(args, timeout=max(30.0, float(limit) * 3.0)))
+        scope_counts = {scope_key: len(items)}
+        if not items:
+            _print_status_panel("info", "没有发现到 Reddit 内容", "命令执行成功但结果为空。")
+            return
 
     enqueued = 0
     contents: list[Any]
@@ -7787,6 +7886,12 @@ def _run_reddit_discovery_smoke(
 def discover_reddit_hot(
     subreddit: str = typer.Option("all", "--subreddit", help="热门分支的 subreddit，默认 all。"),
     limit: int = typer.Option(20, "--limit", "-n", min=1, help="最多抓取的热门条数。"),
+    backend: str = typer.Option(
+        "rdt",
+        "--backend",
+        help="读取后端：rdt / auto / opencli / extension。",
+        case_sensitive=False,
+    ),
     wait_seconds: float = typer.Option(
         180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
     ),
@@ -7794,7 +7899,7 @@ def discover_reddit_hot(
         False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
     ),
 ) -> None:
-    """通过浏览器插件触发一次 Reddit 热门 discovery。"""
+    """通过 rdt-cli 或浏览器插件触发一次 Reddit 热门 discovery。"""
     _run_reddit_discovery_smoke(
         title="Reddit 热门发现",
         task_type="hot",
@@ -7802,6 +7907,7 @@ def discover_reddit_hot(
         scope_key="reddit_hot",
         payload={"subreddit": subreddit.strip() or "all", "max_items": max(1, int(limit))},
         daily_budget_key="daily_hot_budget",
+        backend=backend,
         wait_seconds=wait_seconds,
         no_enqueue=no_enqueue,
     )
@@ -7811,6 +7917,12 @@ def discover_reddit_hot(
 def discover_reddit_subreddit(
     subreddits: list[str] = _REDDIT_SUBREDDITS_ARGUMENT,
     limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个 subreddit 最多抓取的内容数。"),
+    backend: str = typer.Option(
+        "rdt",
+        "--backend",
+        help="读取后端：rdt / auto / opencli / extension。",
+        case_sensitive=False,
+    ),
     wait_seconds: float = typer.Option(
         180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
     ),
@@ -7818,7 +7930,7 @@ def discover_reddit_subreddit(
         False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
     ),
 ) -> None:
-    """通过浏览器插件触发一次 Reddit subreddit discovery。"""
+    """通过 rdt-cli 或浏览器插件触发一次 Reddit subreddit discovery。"""
     from openbiliclaw.discovery.douyin import split_csv_values
 
     selected = [value.removeprefix("r/") for value in split_csv_values(subreddits)]
@@ -7829,6 +7941,7 @@ def discover_reddit_subreddit(
         scope_key="reddit_subreddit",
         payload={"subreddits": selected, "max_items_per_subreddit": max(1, int(limit))},
         daily_budget_key="daily_subreddit_budget",
+        backend=backend,
         wait_seconds=wait_seconds,
         no_enqueue=no_enqueue,
     )
@@ -7838,6 +7951,12 @@ def discover_reddit_subreddit(
 def discover_reddit_related(
     related_urls: list[str] = _REDDIT_RELATED_URLS_ARGUMENT,
     limit: int = typer.Option(20, "--limit", "-n", min=1, help="每个种子最多扩展的相关内容数。"),
+    backend: str = typer.Option(
+        "rdt",
+        "--backend",
+        help="读取后端：rdt / auto / opencli / extension。",
+        case_sensitive=False,
+    ),
     wait_seconds: float = typer.Option(
         180.0, "--wait-seconds", "-w", help="等扩展回结果的最大秒数。"
     ),
@@ -7845,7 +7964,7 @@ def discover_reddit_related(
         False, "--no-enqueue", help="只预览插件结果，不写入 discovery_candidates。"
     ),
 ) -> None:
-    """通过浏览器插件触发一次 Reddit 相关内容 discovery。"""
+    """通过 rdt-cli 或浏览器插件触发一次 Reddit 相关内容 discovery。"""
     from openbiliclaw.discovery.douyin import split_csv_values
 
     selected = list(split_csv_values(related_urls))
@@ -7856,6 +7975,7 @@ def discover_reddit_related(
         scope_key="reddit_related",
         payload={"related_urls": selected, "max_items_per_seed": max(1, int(limit))},
         daily_budget_key="daily_related_budget",
+        backend=backend,
         wait_seconds=wait_seconds,
         no_enqueue=no_enqueue,
     )
@@ -8920,7 +9040,7 @@ def _run_reddit_discovery(*, limit: int) -> None:
         f"{source}:{count}" for source, count in sorted(source_counts.items())
     )
     source_modes = ", ".join(str(mode) for mode in getattr(rd_cfg, "source_modes", ()) or ())
-    backend = str(getattr(rd_cfg, "backend", "opencli") or "opencli")
+    backend = str(result.get("backend") or getattr(rd_cfg, "backend", "opencli") or "opencli")
 
     _print_page_title("Reddit 内容发现", f"正式 discover · {source_modes or 'search'}")
     if reason == "ok":

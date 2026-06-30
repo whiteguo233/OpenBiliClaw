@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.149"
+version = "0.3.150"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,6 +35,9 @@ dependencies = [
     # X (Twitter) discovery uses the import package ``twitter_cli``. Keep it in
     # the default install so enabling [sources.twitter] never fails at runtime.
     "twitter-cli>=0.8.5",
+    # Reddit steady-state discovery uses the ``rdt`` console command. Keep it in
+    # the default install so [sources.reddit].backend="rdt" works out of the box.
+    "rdt-cli>=0.4.1",
     "fastapi>=0.115",
     "rich>=13",
     "typer>=0.12",

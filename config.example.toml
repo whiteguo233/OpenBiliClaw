@@ -339,12 +339,16 @@ request_interval_seconds = 3            # 后端等待任务时的轮询间隔 /
 min_interval_minutes = 60               # ZhihuDiscoveryProducer 两次执行最小间隔
 
 # ── Reddit 专用配置 ──
-# Reddit 当前没有稳定免登录 API；初始化 saved/upvoted/subscribed 事件和 discovery 默认走 OpenBiliClaw 插件登录态。
-# backend=extension 使用本插件；opencli / rdt 为兼容 fallback。
+# Reddit 当前没有稳定免登录 API；日常 discovery 默认走随 OpenBiliClaw 安装的 rdt-cli 登录态命令后端。
+# 初始化 saved/upvoted/subscribed 事件仍走 OpenBiliClaw 插件登录态。
+# 已连接插件会把 reddit.com 的 reddit_session 自动同步到 rdt-cli credential store；
+# 若插件不可用，也可在已登录 Reddit 的本机浏览器环境里手动运行：rdt login
+# backend=rdt 使用 rdt-cli；extension 使用本插件；opencli / auto 为兼容选项。
+# rdt / opencli 不可用时，discovery 会自动 fallback 到已登录插件任务。
 # enabled=false 时 pool_source_shares 中的 reddit 配额会被丢弃。
 [sources.reddit]
 enabled = false
-backend = "extension"
+backend = "rdt"
 source_modes = ["search", "hot", "subreddit", "related"]
 daily_search_budget = 300               # 搜索 discovery 每日条目上限
 daily_hot_budget = 300                  # 热门 discovery 每日条目上限

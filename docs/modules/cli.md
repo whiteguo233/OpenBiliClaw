@@ -773,7 +773,7 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery、知乎插件 discovery 或 Reddit 插件 discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。知乎正式流程会复用 runtime `ZhihuDiscoveryProducer`，按配置页 / `config.toml` 的 `[sources.zhihu].source_modes` 入队 search / hot / feed / creator / related 任务并进入统一待评估池；Reddit 正式流程复用 `RedditDiscoveryProducer`，按 `[sources.reddit].source_modes` 入队 search / hot / subreddit / related 任务，只入 `discovery_candidates`，评估由后台统一 evaluator 处理。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery、知乎插件 discovery 或 Reddit discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。知乎正式流程会复用 runtime `ZhihuDiscoveryProducer`，按配置页 / `config.toml` 的 `[sources.zhihu].source_modes` 入队 search / hot / feed / creator / related 任务并进入统一待评估池；Reddit 正式流程复用 `RedditDiscoveryProducer`，默认用 `[sources.reddit].backend="rdt"` 的 rdt-cli 登录态命令后端，按 `source_modes` 抓 search / hot / subreddit / related 候选；命令后端不可用时自动 fallback 到 OpenBiliClaw 插件任务。Reddit 候选只入 `discovery_candidates`，评估由后台统一 evaluator 处理。
 
 ```bash
 # 默认：Bilibili 全策略
@@ -830,7 +830,7 @@ Reddit 内容发现
   来源: reddit
   来源分布: reddit-hot:2, reddit-related:15, reddit-search:4, reddit-subreddit:10
   分支: search, hot, subreddit, related
-  后端: extension
+  后端: rdt
 ```
 
 选项：
@@ -840,7 +840,7 @@ Reddit 内容发现
 - `--limit, -n`：发现结果条数上限，默认 `30`
 - `--force`：xiaohongshu 专用，忽略 `XhsTaskProducer` 的 4 小时节流
 
-抖音 discovery 需要 `[sources.douyin].enabled = true`。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。Reddit discovery 需要 `[sources.reddit].enabled = true`；默认 `backend="extension"`，使用已安装 OpenBiliClaw 插件所在浏览器的 Reddit 登录态，不使用 CDP/临时浏览器。
+抖音 discovery 需要 `[sources.douyin].enabled = true`。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。Reddit discovery 需要 `[sources.reddit].enabled = true`；默认 `backend="rdt"`，优先使用 rdt-cli 登录态命令后端，不使用 CDP/临时浏览器；rdt / opencli 不可用时自动复用 OpenBiliClaw 插件所在浏览器的 Reddit 登录态，也可在配置页显式切到 `extension`。
 
 `search` 子来源走浏览器插件 DOM-first 链路：CLI 入队 `dy_tasks(type="search")`，扩展后台 tab 先打开抖音首页，再在已登录页面里模拟搜索框输入 / 提交，候选以 `dy-plugin-search` 进入 discovery；fetch tap 兼容 `/general/search/single/`、`/search/item/` 和新版 `/general/search/stream/` chunked JSON。`hot` 子来源同样走插件：后端取 hot board 的 `sentence_id`，并把可用的 `group_id` 作为 `seed_aweme_id` 透传给扩展；扩展从首页点击热榜 / 热点入口和目标热词，靠页面自身加载与被动响应监听回传 `dy_hot`，不足时用已登录页面的 related API bridge 按 seed 拉相关视频，候选以 `dy-plugin-hot-related` 进入 discovery；小批量 hot 请求会展开一个小窗口并优先执行带 seed 的 hot item，在累计达到 `--limit` 后提前结束，避免串行 DOM 点击和页面加载拖到 `task_timeout`。`feed` 子来源会入队 `dy_tasks(type="feed")`，扩展在首页推荐流滚动触发加载，候选以 `dy-plugin-feed` 进入 discovery。三条链路都不主动跳 `/search/...`、`/hot/...` 快捷 URL；插件任务空 / 超时 / 失败时默认返回 0 条，direct-cookie fallback 只保留给显式诊断路径。search 若真实响应为 `search_nil_info.search_nil_item="hit_shark"` 且没有 `data/aweme_list`，属于抖音反爬空结果，CLI 会显示 0 条。
 
@@ -893,7 +893,7 @@ openbiliclaw discover-zhihu-related https://www.zhihu.com/question/<id> --limit 
 
 ### `openbiliclaw fetch-reddit`
 
-单独触发 Reddit 事件 / 搜索 smoke，用于验证 Reddit 后端任务桥、插件登录态和归一化是否联通。默认 `--backend extension`，`--mode bootstrap` 会入队 `reddit_tasks(type="bootstrap_events")` 并拉 saved / upvoted / subscribed，`--mode search|hot|subreddit|related` 则读取对应同源 JSON 候选并转换为低权重 view 事件用于终端预览。默认不会写 memory，也不会触发画像初始化或增量画像更新；需要真实落库时必须显式传 `--write-memory`，需要写入后重建画像时传 `--rebuild-profile`。`bootstrap` 只支持 extension 后端，因为它必须运行在已登录浏览器同源页面内。
+单独触发 Reddit 事件 / 搜索 smoke，用于验证 Reddit 后端、登录态和归一化是否联通。默认 `--backend rdt`，`rdt-cli` 已随后端默认安装；已连接插件会把 `reddit_session` 自动同步到 rdt-cli credential store，插件不可用时才需要在本机已登录 Reddit 的浏览器环境里运行 `rdt login`。`--mode search|hot|subreddit|related` 优先通过 rdt-cli 读取候选并转换为低权重 view 事件用于终端预览；命令后端不可用、未登录或显式 `--backend extension` 时会改走插件任务桥。`--mode bootstrap` 会自动使用插件后端，入队 `reddit_tasks(type="bootstrap_events")` 并拉 saved / upvoted / subscribed。默认不会写 memory，也不会触发画像初始化或增量画像更新；需要真实落库时必须显式传 `--write-memory`，需要写入后重建画像时传 `--rebuild-profile`。`bootstrap` 只支持 extension 后端，因为它必须运行在已登录浏览器同源页面内。
 
 ```bash
 $ openbiliclaw fetch-reddit "open source ai" --limit 10 --wait-seconds 180
@@ -909,16 +909,16 @@ Reddit 事件拉取
 
 ### `openbiliclaw discover-reddit*`
 
-Reddit discovery smoke 命令会把真实插件或兼容命令后端返回的候选转换为 `DiscoveredContent(source_platform="reddit")` 并写入 `discovery_candidates(pending_eval)`；它们只验证取数和入池，不写 memory、不重建画像、不直接写 `content_cache`。正式补池优先使用 `openbiliclaw discover --source reddit`，它会按配置页保存的 `source_modes` 和来源比例进入 runtime producer。
+Reddit discovery smoke 命令会把 rdt-cli（默认安装）、OpenCLI 或插件后端返回的候选转换为 `DiscoveredContent(source_platform="reddit")` 并写入 `discovery_candidates(pending_eval)`；rdt / opencli 不可用或未登录时会自动 fallback 到插件任务。它们只验证取数和入池，不写 memory、不重建画像、不直接写 `content_cache`。正式补池优先使用 `openbiliclaw discover --source reddit`，它会按配置页保存的 `source_modes`、后端和来源比例进入 runtime producer。
 
 ```bash
-openbiliclaw discover-reddit "open source ai" --limit 10 --wait-seconds 180
-openbiliclaw discover-reddit-hot --subreddit all --limit 10 --wait-seconds 180
-openbiliclaw discover-reddit-subreddit LocalLLaMA --limit 10 --wait-seconds 180
-openbiliclaw discover-reddit-related https://www.reddit.com/r/LocalLLaMA/comments/<id>/<slug>/ --limit 10 --wait-seconds 180
+openbiliclaw discover-reddit "open source ai" --limit 10
+openbiliclaw discover-reddit-hot --subreddit all --limit 10
+openbiliclaw discover-reddit-subreddit LocalLLaMA --limit 10
+openbiliclaw discover-reddit-related https://www.reddit.com/r/LocalLLaMA/comments/<id>/<slug>/ --limit 10
 ```
 
-`discover-reddit` 默认走 search；`discover-reddit-hot` 默认 `r/all`；`discover-reddit-subreddit` 需要一个或多个 subreddit 名；`discover-reddit-related` 需要一个或多个 Reddit 内容 URL。若返回 `login_required`，请在安装了 OpenBiliClaw 插件的浏览器里正常登录 Reddit。
+`discover-reddit` 默认走 search；`discover-reddit-hot` 默认 `r/all`，rdt 路径实际调用 `rdt all --json`；`discover-reddit-subreddit` 需要一个或多个 subreddit 名，rdt 路径实际调用 `rdt sub <name> --json`；`discover-reddit-related` 需要一个或多个 Reddit 内容 URL，rdt 路径会抽取 `/comments/<id>/` 后调用 `rdt read <id> --json`。命令默认 `--backend rdt`，优先使用插件同步的 rdt credential；插件不可用时可手动运行 `rdt login`。需要强制插件登录态链路时加 `--backend extension --wait-seconds 180`。若 rdt 路径不可用或未登录，CLI 会自动 fallback 到插件；若插件路径返回 `login_required`，请在安装了 OpenBiliClaw 插件的浏览器里正常登录 Reddit。
 
 ### `openbiliclaw search-douyin`
 

@@ -83,7 +83,7 @@
         "description": "纯本地、私有、开源的自进化跨平台内容发现 Agent。从跨平台使用、项目反馈与对话中持续深化心理画像，主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit 等来源寻找你会喜欢的内容。",
         "url": "https://whiteguo233.github.io/OpenBiliClaw/",
         "downloadUrl": "https://github.com/whiteguo233/OpenBiliClaw/releases/latest",
-        "softwareVersion": "0.3.149",
+        "softwareVersion": "0.3.150",
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
@@ -1425,7 +1425,7 @@
 	          <article class="source-card reveal">
 	            <span>Reddit</span>
 	            <h3 data-i18n="sourceRedditTitle">Reddit</h3>
-	            <p data-i18n="sourceRedditText">saved / upvoted / subscribed 初始化信号和 search / hot / subreddit / related discovery 都走已登录浏览器插件任务。</p>
+	            <p data-i18n="sourceRedditText">saved / upvoted / subscribed 初始化信号走已登录浏览器插件任务；search / hot / subreddit / related discovery 默认走随后端安装的 rdt-cli，插件自动同步 reddit_session，未登录 / 不可用时自动 fallback 到插件。</p>
 	          </article>
 	          <article class="source-card reveal">
 	            <span>Web</span>
@@ -1656,7 +1656,7 @@
 	        sourceZhihuTitle: "知乎",
 	        sourceZhihuText: "初始化信号和 search / hot / feed / creator / related discovery 都走已登录浏览器插件任务。",
 	        sourceRedditTitle: "Reddit",
-	        sourceRedditText: "saved / upvoted / subscribed 初始化信号和 search / hot / subreddit / related discovery 都走已登录浏览器插件任务。",
+	        sourceRedditText: "saved / upvoted / subscribed 初始化信号走已登录浏览器插件任务；search / hot / subreddit / related discovery 默认走随后端安装的 rdt-cli，插件自动同步 reddit_session，未登录 / 不可用时自动 fallback 到插件。",
 	        sourceWebTitle: "通用 Web",
         sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
         screensEyebrow: "Product",
@@ -1799,7 +1799,7 @@
 	        sourceZhihuTitle: "Zhihu",
 	        sourceZhihuText: "Init signals plus search / hot / feed / creator / related discovery all run through logged-in browser extension tasks.",
 	        sourceRedditTitle: "Reddit",
-	        sourceRedditText: "Saved / upvoted / subscribed init signals plus search / hot / subreddit / related discovery all run through logged-in browser extension tasks.",
+	        sourceRedditText: "Saved / upvoted / subscribed init signals run through logged-in browser extension tasks; search / hot / subreddit / related discovery defaults to backend-installed rdt-cli with extension-synced reddit_session, and falls back to extension tasks when unauthenticated or unavailable.",
 	        sourceWebTitle: "Generic Web",
         sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",
         screensEyebrow: "Product",

@@ -86,6 +86,24 @@ def test_build_pyinstaller_install_command_falls_back_to_uv_when_pip_missing() -
     ) == ["/usr/local/bin/uv", "pip", "install", "pyinstaller"]
 
 
+def test_build_reddit_dependency_install_command_uses_default_dependency_spec() -> None:
+    cmd = build_module.build_reddit_dependency_install_command(pip_available=True)
+
+    assert cmd[:4] == [build_module.sys.executable, "-m", "pip", "install"]
+    assert cmd[4].startswith("rdt-cli>=")
+
+
+def test_pyinstaller_spec_collects_reddit_dependency() -> None:
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "openbiliclaw.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "OPENBILICLAW_BUNDLE_REDDIT" in spec
+    assert "rdt_cli" in spec
+    assert "browser_cookie3" in spec
+    assert "_reddit_hiddenimports" in spec
+
+
 def test_find_packaged_root_prefers_app_bundle_on_macos(tmp_path: Path) -> None:
     app_bundle = tmp_path / "OpenBiliClaw.app"
     app_bundle.mkdir()

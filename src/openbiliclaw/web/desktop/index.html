@@ -427,8 +427,8 @@
             <label class="settings-field"><span>知乎最小调度间隔分钟</span><input id="zhihuMinInterval" inputmode="numeric" placeholder="60"></label>
           </div>
           <p class="settings-section-title">Reddit</p>
-          <p class="settings-note-inline">Reddit 初始化信号和 discovery 默认通过 OpenBiliClaw 插件复用当前浏览器登录态；OpenCLI / rdt 仅作为 discovery 兼容 fallback。每个 discovery 分支默认每日 300 条。</p>
-          <label class="settings-field"><span>Reddit 后端</span><select id="redditBackend"><option value="extension">OpenBiliClaw 插件</option><option value="opencli">OpenCLI extension</option><option value="rdt">rdt</option><option value="auto">自动选择命令后端</option></select></label>
+          <p class="settings-note-inline">Reddit 日常 discovery 默认使用 rdt-cli 登录态命令后端；rdt / opencli 不可用时自动 fallback 到 OpenBiliClaw 插件任务。初始化 saved/upvoted/subscribed 信号仍通过插件复用当前浏览器登录态。每个 discovery 分支默认每日 300 条。</p>
+          <label class="settings-field"><span>Reddit 后端</span><select id="redditBackend"><option value="rdt">rdt-cli</option><option value="extension">OpenBiliClaw 插件</option><option value="opencli">OpenCLI extension</option><option value="auto">自动选择命令后端</option></select></label>
           <div class="inline-row">
             <label class="settings-field"><span>搜索分支</span><input id="redditModeSearch" type="checkbox"></label>
             <label class="settings-field"><span>热门分支</span><input id="redditModeHot" type="checkbox"></label>

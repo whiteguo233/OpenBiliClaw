@@ -44,7 +44,10 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 - **小红书**：必须在浏览器里登录 https://www.xiaohongshu.com。后端不直接抓小红书，所有发现/详情都通过扩展以你的登录态执行——大部分任务(search / creator 抓取)在隐藏 tab 里跑;但 v0.3.22+ 起 `init` 期间的 **bootstrap_profile 滚动任务会临时打开一个前台 tab**(后台 tab 在小红书上无法触发瀑布流懒加载),会抢一次焦点 10-30 秒,完成后自动关闭。**不登录 = 完全没有小红书内容**
 - **抖音**：如果要启用 `init --yes-douyin`、`fetch-douyin` 或 `discover --source douyin`，必须在装了扩展的宿主机浏览器里登录 https://www.douyin.com。后端不直接抓抖音；初始化只接收扩展回传的发布 / 收藏 / 点赞 / 关注信号。search / hot / feed discovery 走登录浏览器插件 DOM-first 链路：后台 tab 先打开抖音首页，再模拟真实 DOM 操作触发加载，并被动收集页面响应 / 渲染结果；Cookie 可用环境变量覆盖或由扩展同步到容器 volume 的 `data/douyin_cookie.json`。不登录或触发风控时会返回 0 条并让 init 继续。
 - **YouTube**：如果要启用 `init --yes-youtube` 或 `fetch-youtube`，必须在装了扩展的宿主机浏览器里登录 https://www.youtube.com。后端不直接抓 YouTube；初始化只接收扩展回传的观看历史 / 订阅 / 点赞信号。不登录、页面布局变化或任务仍在后台跑时会返回 0 条并让 init 继续。
-- **CDP 说明**：小红书、抖音和 YouTube 当前都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
+- **X**：如果要启用 X 初始化或 discovery，必须在宿主机浏览器里登录 https://x.com；扩展同步 `auth_token` + `ct0` 到容器 volume，后端用默认安装的 `twitter-cli` 做只读服务端重放。
+- **知乎**：如果要启用知乎初始化或 discovery，必须在装了扩展的宿主机浏览器里登录 https://www.zhihu.com；事件、初始化和 search / hot / feed / creator / related discovery 都走插件任务。
+- **Reddit**：如果要启用 Reddit 初始化或 discovery，必须在装了扩展的宿主机浏览器里登录 https://www.reddit.com，插件读取 saved / upvoted / subscribed，并把 `reddit_session` 同步到容器 volume 内的 rdt-cli credential store。日常 discovery 默认使用容器内随 OpenBiliClaw 安装的 `rdt-cli`；插件不可用时可在容器里手动运行 `rdt login`，未登录或命令后端不可用时会自动 fallback 到宿主机浏览器插件任务。
+- **CDP 说明**：小红书、抖音、YouTube、知乎和 Reddit 插件 fallback 都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
 
 详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
 
@@ -76,7 +79,7 @@ $env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliCl
 
 B 站登录态推荐用浏览器扩展：扩展安装在**宿主机浏览器**里，不在容器里。你登录 bilibili.com 后，扩展会把 Cookie 自动 POST 到本机 `127.0.0.1:8420` 暴露出来的后端接口；bootstrap 会等待 Cookie 到达后继续 init。手动粘 Cookie 仍可用，但不是默认路径。
 
-小红书、抖音、YouTube 是否加入初始化画像，也在一行安装脚本的人类向导里提前询问。默认都跳过，只有你明确选择 yes 才会把对应来源加入初始化；启用时仍需在宿主机浏览器里安装扩展并登录对应站点。
+小红书、抖音、YouTube、X、知乎、Reddit 是否加入初始化画像，也在一行安装脚本的人类向导里提前询问。默认都跳过，只有你明确选择 yes 才会把对应来源加入初始化；启用时仍需在宿主机浏览器里安装扩展并登录对应站点。Docker 镜像通过 `pip install .` 安装项目，默认运行时依赖会一起进入容器，包括 X 的 `twitter-cli` 和 Reddit 的 `rdt-cli`。
 
 缺 LLM Key、缺 Cookie、缺来源确认时，bootstrap 会停在明确的 `needs_secrets` / `needs_decisions` 状态并打印继续命令；这不是最终成功状态。凭据和选择齐全后，bootstrap 会先做真实服务检查。如果返回 `service_check_failed`，说明 init 尚未运行，先修 API key / base_url / model / Ollama 后再重跑同一条安装或 bootstrap 命令。
 

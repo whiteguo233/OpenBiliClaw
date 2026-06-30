@@ -3699,6 +3699,41 @@ class TestBackendAPI:
                 "source": "runtime-stream",
             }
 
+    def test_runtime_stream_requests_reddit_cookie_sync_for_background_client(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.reddit.enabled = True
+        cfg.sources.reddit.backend = "rdt"
+        save_config(cfg, tmp_path / "config.toml")
+        monkeypatch.setattr(
+            "openbiliclaw.sources.reddit_tasks._rdt_credential_file",
+            lambda: tmp_path / "rdt" / "credential.json",
+        )
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            assert websocket.receive_json() == {
+                "type": "reddit_cookie_sync_requested",
+                "reason": "missing_cookie",
+                "source": "runtime-stream",
+            }
+
     def test_activity_feed_endpoint_returns_live_summary_headline_and_items(self) -> None:
         from fastapi.testclient import TestClient
 

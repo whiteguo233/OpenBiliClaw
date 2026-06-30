@@ -29,7 +29,7 @@ def test_desktop_web_round_trips_reddit_source_settings() -> None:
 
     assert "setRedditSourceModes(config.sources?.reddit?.source_modes)" in js
     assert "source_modes: collectRedditSourceModes()" in js
-    assert 'backend: getInput("redditBackend") || "extension"' in js
+    assert 'backend: getInput("redditBackend") || "rdt"' in js
     assert 'daily_search_budget: getIntInput("redditDailySearchBudget", 300)' in js
     assert 'reddit: getIntInput("shareReddit", 1)' in js
 

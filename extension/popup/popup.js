@@ -6343,7 +6343,7 @@ function bindSettings() {
     setVal("cfgZhihuMinInterval", cfg.sources?.zhihu?.min_interval_minutes);
     const redditEnabled = document.getElementById("cfgRedditEnabled");
     if (redditEnabled) redditEnabled.checked = cfg.sources?.reddit?.enabled === true;
-    setVal("cfgRedditBackend", cfg.sources?.reddit?.backend || "extension");
+    setVal("cfgRedditBackend", cfg.sources?.reddit?.backend || "rdt");
     setRedditSourceModes(cfg.sources?.reddit?.source_modes);
     setVal("cfgRedditDailySearchBudget", cfg.sources?.reddit?.daily_search_budget);
     setVal("cfgRedditDailyHotBudget", cfg.sources?.reddit?.daily_hot_budget);
@@ -6562,7 +6562,7 @@ function bindSettings() {
         },
         reddit: {
           enabled: checked("cfgRedditEnabled"),
-          backend: getVal("cfgRedditBackend") || "extension",
+          backend: getVal("cfgRedditBackend") || "rdt",
           source_modes: collectRedditSourceModes(),
           daily_search_budget: getInt("cfgRedditDailySearchBudget", 300),
           daily_hot_budget: getInt("cfgRedditDailyHotBudget", 300),
