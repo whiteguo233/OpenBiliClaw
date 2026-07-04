@@ -12,6 +12,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, ClassVar, cast
 from urllib.parse import quote, urlencode, urlparse
 
@@ -49,6 +50,40 @@ def _json_list(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
     return cast("list[dict[str, Any]]", value)
+
+
+def _normalize_timestamp(value: object) -> str:
+    """Return an ISO timestamp for Bilibili epoch or timestamp-like fields."""
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, int | float):
+        return _epoch_to_iso(float(value))
+    text = str(value).strip()
+    if not text:
+        return ""
+    numeric = text.replace(".", "", 1)
+    if numeric.isdigit():
+        try:
+            return _epoch_to_iso(float(text))
+        except ValueError:
+            return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00").replace(" ", "T"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _epoch_to_iso(raw_seconds: float) -> str:
+    if raw_seconds <= 0:
+        return ""
+    seconds = raw_seconds / 1000 if raw_seconds >= 10_000_000_000 else raw_seconds
+    try:
+        return datetime.fromtimestamp(seconds, UTC).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return ""
 
 
 @dataclass
@@ -453,7 +488,7 @@ class BilibiliAPIClient:
             favorite_count=stat.get("favorite", 0),
             share_count=stat.get("share", 0),
             danmaku_count=stat.get("danmaku", 0),
-            pub_date=data.get("pubdate", ""),
+            pub_date=_normalize_timestamp(data.get("pubdate", "")),
         )
 
     async def search(

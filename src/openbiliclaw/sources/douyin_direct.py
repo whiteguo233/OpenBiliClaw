@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import httpx
 
 from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.discovery.strategies._utils import normalize_published_at
 from openbiliclaw.sources.douyin_signature import XBogusSigner
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ def normalize_aweme_item(
         content_url=f"https://www.douyin.com/video/{aweme_id}",
         source_platform="douyin",
         author_name=author,
+        published_at=normalize_published_at(item.get("create_time")),
     )
 
 

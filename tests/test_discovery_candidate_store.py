@@ -97,6 +97,7 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
                 retweet_count=2,
                 bookmark_count=1,
                 tags=["tag-a", "tag-b"],
+                published_at="2026-06-01T10:00:00+00:00",
                 source_context="feed",
                 candidate_tier="backfill",
                 raw_payload={"scope": "feed"},
@@ -113,6 +114,7 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
     assert item.source_strategy == "dy-plugin-feed"
     assert item.author_name == "Creator"
     assert item.tags == ["tag-a", "tag-b"]
+    assert item.published_at == "2026-06-01T10:00:00+00:00"
     assert item.candidate_tier == "backfill"
     assert item.favorite_count == 8
     assert item.collect_count == 7
@@ -122,6 +124,38 @@ def test_discovery_candidate_row_round_trips_to_discovered_content(tmp_path: Pat
     assert item.reply_count == 3
     assert item.retweet_count == 2
     assert item.bookmark_count == 1
+
+
+def test_duplicate_discovery_candidate_can_backfill_publish_time(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BV1PUB",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BV1PUB",
+                title="Missing time",
+            )
+        ]
+    )
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BV1PUB",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BV1PUB",
+                title="Missing time",
+                published_at="2026-06-01T10:00:00+00:00",
+            )
+        ]
+    )
+
+    row = db.claim_discovery_candidates_for_eval(limit=1)[0]
+
+    assert row["published_at"] == "2026-06-01T10:00:00+00:00"
 
 
 def test_discovery_candidate_row_defaults_missing_platform_to_bilibili() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
@@ -273,6 +274,24 @@ async def test_trending_rid_selection_is_profile_stable_but_not_llm_generated() 
     assert rids[0] == 0
     assert len(rids[1:]) == strategy.max_related_rids
     assert llm_service.calls == []
+
+
+def test_trending_strategy_maps_bilibili_publish_time() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    pubdate = 1_710_000_000
+    strategy = TrendingStrategy(
+        bilibili_client=FakeRankingClient({}),
+        llm_service=FakeLLMService([]),
+    )
+
+    item = strategy._map_ranking_item(
+        {"bvid": "BV1PUB", "title": "新发布内容", "pubdate": pubdate},
+        rid=0,
+    )
+
+    assert item is not None
+    assert item.published_at == datetime.fromtimestamp(pubdate, UTC).isoformat()
 
 
 @pytest.mark.asyncio
