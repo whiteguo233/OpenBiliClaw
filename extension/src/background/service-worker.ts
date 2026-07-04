@@ -44,6 +44,12 @@ import {
   pollZhihuTaskNow,
 } from "./zhihu-task-dispatcher.js";
 import {
+  startRedditTaskPolling,
+  handleRedditTaskAlarm,
+  handleRedditTaskResult,
+  pollRedditTaskNow,
+} from "./reddit-task-dispatcher.ts";
+import {
   startBiliTaskPolling,
   handleBiliTaskAlarm,
   handleBiliTaskResult,
@@ -52,6 +58,7 @@ import {
 } from "./bili-task-dispatcher.js";
 import type { YtScopeResult } from "../content/yt/task-executor.js";
 import type { ZhihuTaskResult } from "../content/zhihu/task-executor.js";
+import type { RedditTaskResult } from "../content/reddit/task-executor.ts";
 import {
   openExtensionUi,
   parseDelightBvid,
@@ -86,14 +93,10 @@ const HEALTH_PROBE_TIMEOUT_MS = 2_000;
 // a live embedding probe that can take seconds when cold, so the 2s ping
 // budget would misread a healthy-but-cold backend as down.
 const HEALTH_FALLBACK_TIMEOUT_MS = 12_000;
-// v0.3.17+: exponential backoff capped at 60s. When the daemon is
-// down for minutes, the previous fixed-5s reconnect flooded console
-// with 12 ERR_CONNECTION_REFUSED per minute. Backoff doubles on each
-// failure (5s → 10s → 20s → 40s → 60s capped); resets on successful
-// onopen so transient blips stay fast-recover.
-const WS_RECONNECT_BASE_DELAY = 5_000;
-const WS_RECONNECT_MAX_DELAY = 60_000;
-let wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
+// Keep backend recovery prompt. The HTTP /api/ping gate below absorbs the
+// backend-down case without opening a failing WebSocket, so a fixed 1s cadence
+// is cheap and avoids stale "offline" extension state after the daemon starts.
+const WS_RECONNECT_DELAY = 1_000;
 type PendingNotification = import("./notifications.js").PendingNotification;
 type PendingCognitionUpdate = import("./notifications.js").PendingCognitionUpdate;
 
@@ -232,6 +235,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
     pollZhihuTaskNow();
     return;
   }
+  if (eventType === "reddit_task_available") {
+    pollRedditTaskNow();
+    return;
+  }
   if (eventType === "bili_task_available") {
     pollBiliTaskNow();
     return;
@@ -353,9 +360,6 @@ async function connectRuntimeStream(): Promise<void> {
     }
 
     runtimeSocket.onopen = () => {
-      // v0.3.17+: reset backoff on successful connect so a transient
-      // blip after a long outage still recovers immediately.
-      wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
       setBackendBadge(true);
     };
 
@@ -388,13 +392,10 @@ async function connectRuntimeStream(): Promise<void> {
 
 function scheduleWsReconnect(): void {
   if (wsReconnectTimer !== null) return;
-  const delay = wsReconnectDelay;
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
     void connectRuntimeStream();
-  }, delay);
-  // Double for next failure, capped. Resets in onopen above.
-  wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_DELAY);
+  }, WS_RECONNECT_DELAY);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,25 +437,26 @@ function ensureFlushAlarm(): void {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  ensureFlushAlarm();
-  void connectRuntimeStream();
+function startPlatformTaskPolling(): void {
   startXhsTaskPolling();
   startDyTaskPolling();
   startYtTaskPolling();
   startZhihuTaskPolling();
+  startRedditTaskPolling();
   startBiliTaskPolling();
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureFlushAlarm();
+  void connectRuntimeStream();
+  startPlatformTaskPolling();
   startCookieSync();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureFlushAlarm();
   void connectRuntimeStream();
-  startXhsTaskPolling();
-  startDyTaskPolling();
-  startYtTaskPolling();
-  startZhihuTaskPolling();
-  startBiliTaskPolling();
+  startPlatformTaskPolling();
   startCookieSync();
 });
 
@@ -580,6 +582,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       })
       .catch((error: unknown) => {
         sendResponse({ ok: false, error: String(error) });
+    });
+    return true;
+  }
+  if (message.action === "REDDIT_TASK_RESULT") {
+    void handleRedditTaskResult(message.data as RedditTaskResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
       });
     return true;
   }
@@ -607,6 +619,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   handleDyTaskAlarm(alarm.name);
   handleYtTaskAlarm(alarm.name);
   handleZhihuTaskAlarm(alarm.name);
+  handleRedditTaskAlarm(alarm.name);
   handleBiliTaskAlarm(alarm.name);
   if (handleCookieSyncAlarm(alarm.name)) {
     return;
@@ -648,6 +661,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 
 ensureFlushAlarm();
 void connectRuntimeStream();
+startPlatformTaskPolling();
 startCookieSync();
 
 // Popup writes a new backend port → chrome.storage.onChanged fires here.
@@ -662,9 +676,6 @@ onBackendEndpointChange(() => {
     // the service worker.
   }
   runtimeSocket = null;
-  // Reset backoff so the new origin gets an immediate first attempt
-  // instead of inheriting the failed-against-old-port delay.
-  wsReconnectDelay = WS_RECONNECT_BASE_DELAY;
   if (wsReconnectTimer !== null) {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;

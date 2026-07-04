@@ -9,15 +9,16 @@
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 统一补货请求入口 | ✅ | `ContinuousRefreshController.request_replenishment(reason, force=False)` 收束补货触发：普通事件和反馈只排队 reason；初始化完成、用户手动刷新或推荐刷新后低库存用 `force=True` 进入手动补货。 |
-| 后台刷新控制 | ✅ | `ContinuousRefreshController` 按 scheduler 配置补充候选池，并通过 source policy 计算各平台有效配比；注入 `DiscoveryCandidatePipeline` 后，B 站主补货先生产 raw candidates，再进入统一待评估池。 |
+| 后台刷新控制 | ✅ | `ContinuousRefreshController` 按 scheduler 配置补充候选池，并通过 source policy 计算各平台有效配比；后台定时 refresh 使用约 90% 的可换池低水位，库存只是略低于 `pool_target_count` 时不跑 discovery。注入 `DiscoveryCandidatePipeline` 后，B 站主补货会在现有 `_refresh_lock` 内按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到待评估供给接近目标 batch 或达到预算；小缺口阶段先给 `search + related_chain` 配额，延后 `trending/explore`。统一关键词 planner 开启但 B 站关键词 store 暂空时，本轮只剔除 `search` 子策略，保留其它 B 站策略，避免回落到旧 `discovery.search.queries` LLM 生成。v0.3.149+ 当 `explore_refresh_hours` 到期或距到期不足一个 refresh tick，且 B 站平台族仍有补货空间时，controller 会允许 `KeywordPlanner` 在同一轮 merged keyword LLM 调用里请求 `explore_domains`，成功写入 B 站 `keyword_kind="explore"` query cache 后同步推进 `last_explore_refresh_at`；后续 `ExploreStrategy` 从该 explore 池 claim query。 |
 | 低可用池补货防死锁 | ✅ | `_source_requested_count()` 仍用 raw headroom 限制正常补货规模，但当 `pool_available_count < pool_target_count` 且 raw ceiling 已满时，不再把 source deficit 直接压成 0；低于 target 时 `_enforce_pool_cap()` 会跳过 source overflow trim，只用 raw ceiling 总量 trim 收敛素材，避免大量不可换 raw material 或 over-quota source suppression 让 Search / producer 永久停摆。 |
-| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube、X discovery raw candidates 先写入 `discovery_candidates`；runtime 既会在 refresh plan 发现新 raw 后即时调用共享 drain，也会由独立 `_loop_candidate_eval()` 周期性 drain 已有 pending raw 并在 admission 后触发 `precompute_pool_copy()`。API runtime 会先攒到 8 条 `pending_eval` 或等待 120 秒再跑 evaluator，controller 层 `_discovery_drain_lock` 与 `DiscoveryCandidatePipeline` 内部 lock 串行化所有入口；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
-| B 站扩展搜索兜底 producer | ✅ | `BilibiliExtensionSearchProducer` 在 B 站平台族低于 quota、`BilibiliAPIClient.search_cooldown_remaining()>0`、扩展 presence 在线且候选池未满时入队 `bili_tasks(type="search")`；扩展回传后仍进入 `DiscoveryCandidatePipeline` 统一评估。 |
-| 候选池文案预计算状态同步 | ✅ | 独立 `_loop_pool_precompute()` 将 fresh 候选补齐 `pool_expression` / `pool_topic_label` 后，会同步更新 `last_replenished_count` 并推送 `refresh.pool_updated`；`GET /api/recommendations` bootstrap、`reshuffle` 和 `append` 消费可换池后也会发布同一池子快照。前端消费该事件时只刷新池子状态和相关提示，不全量替换推荐列表，避免覆盖已 append 的历史内容。 |
+| 统一候选待评估池调度 | ✅ | B 站、XHS、抖音、YouTube、X、知乎、Reddit discovery raw candidates 先写入 `discovery_candidates`；runtime 既会在 refresh plan 发现新 raw 后即时调用共享 drain，也会由独立 `_loop_candidate_eval()` 周期性 drain 已有 pending raw 并在 admission 后触发 `precompute_pool_copy()`。API runtime 会先过滤历史候选 / 已缓存内容并补足待评估供给，再攒到 8 条 `pending_eval` 或等待 120 秒跑 evaluator；周期 drain 未显式传参时按文本 batch 45 执行，单次默认最多领取两个 batch（90 条，仍受 hard cap 约束），并由 evaluator 以 2 个 worker 并发跑 LLM batch。controller 层 `_discovery_drain_lock` 与 `DiscoveryCandidatePipeline` 内部 lock 串行化所有入口；正式可换池达到 `pool_target_count` 时不会继续 discovery / drain。 |
+| B 站扩展搜索兜底 producer | ✅ | `BilibiliExtensionSearchProducer` 在 B 站平台族低于 quota、`BilibiliAPIClient.search_cooldown_remaining()>0`、扩展 presence 在线且候选池未满时入队 `bili_tasks(type="search")`；扩展回传后仍进入 `DiscoveryCandidatePipeline` 统一评估。兜底关键词生成 prompt 已携带结构化画像，调用 `LLMService` 时会在支持路径上关闭额外 core memory 注入；统一关键词 planner 会把画像按 core / life / interests / style / recent 分层渲染，保护 prompt-cache 前缀。 |
+| 候选池文案预计算状态同步 | ✅ | 独立 `_loop_pool_precompute()` 将 fresh 候选补齐 `pool_expression` / `pool_topic_label` 后，会同步更新 `last_replenished_count` 并推送 `refresh.pool_updated`；推荐文案 batch 默认 30 条、2 个 worker 并发生成，但仍受 `_expression_lock` 串行化多入口，避免重复消费同一批候选。批量解析失败会先在当前 worker 内拆半重试，限流则留空等下一轮。`GET /api/recommendations` bootstrap、`reshuffle` 和 `append` 消费可换池后也会发布同一池子快照。前端消费该事件时只刷新池子状态和相关提示，不全量替换推荐列表，避免覆盖已 append 的历史内容。 |
 | 候选池真实可换计数 | ✅ | `pool_available_count` 现在只表示后端当前可立即 `serve()` 的候选，并按默认每 `topic_group` 最多 3 条的候选窗口计数；runtime status / runtime stream 另带 `pool_raw_count`、`pool_pending_count`、`pool_pending_eval_count`、`pool_evaluated_pending_count` 区分素材库存、待评估和已评估待入池内容。 |
-| embedding 后台预热 | ✅ | refresh 完成前只保证候选入池与文案可用；`prewarm_supergroup_embeddings()` / `prewarm_pool_mmr_embeddings()` 作为后台 task 运行，慢本地 embedding 后端不会占住 refresh lock 或让界面长时间停在“正在补货”。v0.3.124+（lever 4）：`prewarm_pool_mmr_embeddings()` 返回值区分良性冷启动与真故障——`-1`（无 embedding service / 空池，没东西可暖）让启动重试包装器 `_safe_prewarm_pool_mmr_embeddings` 平静跳过(不再每次装机刷 5 行 `warmed=0 — retry`)，`0`（有候选但全嵌入失败＝后端不可达）才重试到底并在放弃时打 WARNING 点名 embedding 后端不可达、MMR 降级。 |
+| embedding 后台预热 | ✅ | refresh 完成前只保证候选入池与文案可用；`prewarm_supergroup_embeddings()` / `prewarm_pool_mmr_embeddings()` 作为后台 task 运行，慢本地 embedding 后端不会占住 refresh lock 或让界面长时间停在“正在补货”。v0.3.124+（lever 4）：`prewarm_pool_mmr_embeddings()` 返回值区分良性冷启动与真故障——`-1`（无 embedding service / 空池，没东西可暖）让启动重试包装器 `_safe_prewarm_pool_mmr_embeddings` 平静跳过(不再每次装机刷 5 行 `warmed=0 — retry`)，`0`（有候选但全嵌入失败＝后端不可达）才重试到底并在放弃时打 WARNING 点名 embedding 后端不可达、MMR 降级。v0.3.148+ search / trending / explore / `KeywordPlanner` 的 query profile summary 也只通过 `EmbeddingService.lookup_cached()` 读取已缓存向量来保持 interest / dislike 多样性；缺缓存时按权重顺序降级，绝不在查询生成热路径新发 embedding 请求。 |
 | YouTube 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立运行 `yt_search` / `yt_trending` / `yt_channel`，只在 YouTube 平台族低于 quota 时由 `_loop_youtube_producer()` tick，按每日 ledger 和 `min_interval_minutes` 控制执行。 |
 | X 后台 discovery producer | ✅ | `XDiscoveryProducer.produce_if_due()` 在 X 平台族低于 quota 且源健康就绪时，由独立 loop tick 触发 `search` / `feed`（For-You）/ `creator`（账号订阅）三个策略；按 `daily_*_budget` / `min_interval_minutes` / `request_interval_seconds` 节流，For-You 压到很低的每日频次并在连续失败后自动暂停。只 enqueue raw candidates 进 `discovery_candidates`，不写 `content_cache`、不调评估器。`enabled=false` 时是 no-op，不 import `twitter_cli`。 |
+| Reddit 后台 discovery producer | ✅ | `RedditDiscoveryProducer.produce_if_due()` 在 Reddit 平台族低于 quota 且 `[sources.reddit].enabled=true` 时，默认通过随 OpenBiliClaw 安装的 `rdt-cli` 登录态命令后端触发 `search` / `hot` / `subreddit` / `related` 四个分支；已连接插件会同步 `reddit_session` 到 rdt-cli credential store，命令后端不可用或未登录时 fallback 到已安装浏览器插件的真实 `reddit.com` 登录态任务。四个分支各自有独立 daily budget，默认每类 300。producer 只 enqueue raw candidates 到 `discovery_candidates`，不写 `content_cache`、不同步跑 LLM 评估，正式 admission 由共享 evaluator 异步完成。 |
 | X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
 | 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、惊喜队列加载数量、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 推荐反馈批学习调度 | ✅ | `FeedbackBatchScheduler` 挂在 FastAPI `app.state`，`/api/feedback` 每次只标记 dirty 并触发 5 秒 debounce；burst 内多条推荐反馈 coalesce 成一次 `SoulEngine.process_feedback_batch_if_needed()`，处理期间又有新反馈时会在本轮结束后再补跑一轮，避免每条反馈都启动画像重分析。 |
@@ -37,7 +38,7 @@
 | Soul 画像自动 bootstrap | ✅ | `AccountSyncService` 首次成功写入账号行为并完成 `analyze_events()` 后，若 soul 画像仍为空，会自动调用 `build_initial_profile([])`；每进程生命周期最多尝试一次。 |
 | 降级模式启动 | ✅ | 生产 `create_app()` 遇到 `RegistryBuildError` 时构造 degraded `RuntimeContext`，保留健康检查、配置读取/保存、runtime status、runtime stream、`/m` 移动静态壳与 `/favicon.ico`，方便用户从 popup 或手机入口识别并修复错误配置。 |
 | 配置热重载 LLM override | ✅ | `RuntimeContext._rebuild_components()` 从 config 构造 `module_overrides`，同时注入主 `LLMService` 与 `SoulEngine` 内部 service；热重载后的正向兴趣和避雷 speculator tick 都 detached 到 `BackgroundTaskRegistry`，不阻塞 `/api/config` 响应。 |
-| 运行日志降噪 | ✅ | 全局 logging 初始化会把 `httpx` / `httpcore` logger 提升到 WARNING，避免文件日志在 DEBUG 模式下被连接细节刷屏；业务模块仍按 `logging.file_level` 输出。 |
+| 运行日志降噪 | ✅ | 全局 logging 初始化会把 `httpx` / `httpcore` / `openai` / `openai._base_client` logger 提升到 WARNING，避免文件日志在 DEBUG 模式下被连接细节和完整 LLM 请求体刷屏；业务模块仍按 `logging.file_level` 输出。 |
 
 ## 公开 API
 
@@ -63,14 +64,14 @@ status_code, apply_payload = await service.request_apply(tag="backend-v0.3.92")
 ### ContinuousRefreshController
 
 ```python
-result = await controller.drain_discovery_candidates_once(batch_size=30)
+result = await controller.drain_discovery_candidates_once(batch_size=45)
 ```
 
 核心调用：
 
 - `request_replenishment(reason=..., force=False)`：补货请求的统一入口。`force=False` 只记录触发原因，等待定时 `refresh_if_needed()` 统一检查池子缺口；`force=True` 用于初始化完成、用户手动刷新和推荐刷新后低库存路径，会启动手动补货并消费已排队的 reason。
-- `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。池子低于 target 但 plan 为空时会打 INFO 诊断，包含 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`。
-- `drain_discovery_candidates_once(batch_size=..., reason="manual")`：由 XHS task-result / 被动采集等外部来源入队后触发；refresh path 和 `_loop_candidate_eval()` 走同一套 controller drain helper。它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube / periodic loop 多入口并发 admission。API runtime 的 pipeline 少于 8 条 pending eval 时会返回 `waiting` 并记录 `reason=batch_waiting`，最多等待 120 秒后放行小 batch；周期 loop 的 drain 如果缓存了新候选，会立即补调 `precompute_pool_copy()` 并发布补货后的池子状态。
+- `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。后台 `refresh_if_needed()` 还会应用约 90% 的 replenishment low-watermark：略低于 target 时只维护状态，不触发 discovery；`force_refresh()` 是显式用户动作，仍按 source 缺口尝试补货。注入 `DiscoveryCandidatePipeline` 后，refresh 会优先调用 `ensure_pending_supply()`，按实际新增 `pending_eval` 数补足 Evo 供给，而不是只跑一次 discover；API runtime 会把 supply target / strategy budget / drain batch 抬到 `min_eval_batch_size=8`，避免接近满池时 first drain 被缺口算法压成小批次。完整 B 站四策略补货在小缺口阶段只给 `search + related_chain` 分配预算，`trending/explore` 到更深缺口再跑。当待评估水位已足够时不会再 claim B 站搜索关键词，避免空跑关键词被误标失败；当统一关键词 planner 已启用但 B 站关键词 store 暂空时，会从本轮策略组移除 `search`，而不是传 `queries=None` 触发旧 `discovery.search.queries`。池子低于 target 但 plan 为空时会打 INFO 诊断，包含 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`。
+- `drain_discovery_candidates_once(batch_size=..., reason="manual")`：由 XHS task-result / 被动采集等外部来源入队后触发；refresh path 和 `_loop_candidate_eval()` 走同一套 controller drain helper。它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube / X / Zhihu / Reddit / periodic loop 多入口并发 admission。API runtime 的 pipeline 少于 8 条 pending eval 时会返回 `waiting` 并记录 `reason=batch_waiting`，最多等待 120 秒后放行小 batch；未显式传 `batch_size` 的周期 drain 默认使用 45（不改变 `scheduler.discovery_limit=30` 的抓取上限），调用方显式传入的较小 batch 仍会先被 pipeline 的 `min_eval_batch_size=8` 下限抬高，再默认最多 claim 两个 batch（仍受 evaluator hard cap 约束）。周期 loop 的 drain 如果缓存了新候选，会立即补调 `precompute_pool_copy()` 并发布补货后的池子状态。
 - `run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`：图形化引导初始化（gui-init）stage 4 的发现补池。持 `_refresh_lock` 与连续 refresh 串行，绝不与之争 `content_cache`；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
 - `_pool_count_payload()`：统一生成 runtime status / runtime stream 的池子字段，包含 pending eval 与 evaluated pending 拆分。
 
@@ -288,6 +289,25 @@ X (Twitter) 的 steady-state discovery 走服务端 cookie 重放（对标抖音
 
 X 客户端 `XClient`（`sources/x_client.py`）封装默认运行时依赖 `twitter-cli`，全程只读，方法用 `asyncio.to_thread` 包成 async；底层 `TwitterAPIError` / `AuthenticationError` 映射为 `XMissingCookieError` / `XAuthError`(401) / `XBlockedError`(403) / `XRateLimitError`(429)，供源健康状态机分流退避。`openbiliclaw[x]` 仍保留为兼容旧脚本的安装别名。
 
+### RedditDiscoveryProducer
+
+```python
+from openbiliclaw.runtime.reddit_producer import RedditDiscoveryProducer
+
+result = await producer.produce_if_due(limit=20)
+```
+
+Reddit 的 steady-state discovery 默认走 `rdt-cli` 登录态命令后端。`produce_if_due()` 在 `[sources.reddit].enabled=true`、Reddit 平台族低于 quota、距上次执行已过 `min_interval_minutes` 时，按 `[sources.reddit].source_modes` 调度四类分支：
+
+- `search`：优先 claim 统一关键词 store；关键词池为空时回退 Soul 画像兴趣。
+- `hot`：默认拉 `r/all` 的热门内容，也可由 smoke 命令传指定 subreddit。
+- `subreddit`：优先复用近期 Reddit 结果里的 subreddit；没有历史种子时回退画像兴趣。
+- `related`：优先复用近期 Reddit 内容 URL 或同轮 search / hot / subreddit 结果作相关扩展。
+
+默认 `backend="rdt"`：producer 先检查 `rdt-cli` 命令和 `~/.config/rdt-cli/credential.json`，避免状态探测隐式触发浏览器 Cookie 提取；已连接插件会通过 `/api/sources/reddit/cookie` 把 `reddit_session` 写入该 credential store，凭据存在时再跑 `rdt status --json`，并用 `rdt search --json` / `rdt all --json` / `rdt sub <name> --json` / `rdt read <id> --json` 拉取候选。显式 `backend="extension"`，或命令后端状态不是 `ready` 且后端可写入 `reddit_tasks` 时，后端会改入队插件任务，唤醒真实 `reddit.com` 登录态 tab 并通过同源 `.json` endpoint 读取 posts / comments，再 POST `/api/sources/reddit/task-result` 回写。init 期 `bootstrap_events` 仍固定使用插件读取 saved / upvoted / subscribed。每条内容经 `reddit_items_to_contents()` 映射为 `DiscoveredContent(source_platform="reddit", source_strategy="reddit-<mode>")`，posts / comments 会保留 `body_text` 与 `content_type ∈ {"post", "comment"}`，前端因此按无封面文字卡展示。
+
+producer **只 fetch，不写 `content_cache`、不同步调用 evaluator**。注入 `DiscoveryCandidatePipeline` 时，候选只进入 `discovery_candidates(pending_eval)`，后续由共享混源 evaluator 批量评分、admission 和文案预生成。这样 `openbiliclaw discover --source reddit` 的真实插件 E2E 只验证 Reddit 取数和入池，不会被本地 LLM 评估时延拖到超时。预算护栏是 `daily_search_budget` / `daily_hot_budget` / `daily_subreddit_budget` / `daily_related_budget` 四个独立 ledger，默认每类 300；`0` 表示不设上限，负数表示禁用该分支。
+
 ### BilibiliExtensionSearchProducer
 
 ```python
@@ -304,7 +324,7 @@ B 站扩展搜索 producer 是 API 搜索的兜底，不是常驻主发现路径
 - B 站平台族低于 source share quota，且 `DiscoveryCandidatePipeline.pool_full()` 为 false。
 - `bili_tasks` 中近期没有 pending / in-progress / completed search 任务，避免同一冷却窗口反复打开搜索页。
 
-统一关键词 planner 开启时，producer 会通过 `KeywordFetchCoordinator` claim B 站关键词并把 `source_keyword_id` 写进任务 payload；扩展收到 `bili_task_available` 后打开真实 B 站搜索页并抓渲染后的 DOM 卡片，`/api/sources/bili/task-result` 再把视频转换成 `source_platform="bilibili"`、`source_strategy="bili-extension-search"` 的 raw candidates，并触发一次候选 drain。terminal `ok` 会把关键词标记 used，失败或空结果标记 failed。
+统一关键词 planner 开启时，producer 会通过 `KeywordFetchCoordinator` claim B 站 regular 关键词并把 `source_keyword_id` 写进任务 payload；扩展收到 `bili_task_available` 后打开真实 B 站搜索页并抓渲染后的 DOM 卡片，`/api/sources/bili/task-result` 再把视频转换成 `source_platform="bilibili"`、`source_strategy="bili-extension-search"` 的 raw candidates，并触发一次候选 drain。terminal `ok` 会把关键词标记 used，失败或空结果标记 failed。关键词合并 prompt 复用共享画像分层缓存，画像核心和兴趣层没变时不会重新渲染前置 profile block。若 refresh 口径判断 explore 已到期 / 即将到期，且 B 站还有 real deficit，本轮 prompt 会额外带 `<explore_domains>`；返回的 domain queries 会作为探索性 B 站 pending keywords 写入 `keyword_kind="explore"` 池，供 `ExploreStrategy` claim 消费。只有实际插入了 query 才会把 runtime state 的 `last_explore_refresh_at` 推进，避免空响应浪费 explore 周期。
 
 ### Source Bootstrap Task Results
 
@@ -327,7 +347,7 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 | `scheduler.refresh_check_interval_seconds` | `60` | `ContinuousRefreshController` 主循环轮询间隔。 |
 | `scheduler.signal_event_threshold` | `6` | 累计多少条 discovery-trigger 新行为事件后触发 `search + related_chain`；该计数只表示 discovery refresh 水位，不表示画像待处理队列。 |
 | `scheduler.trending_refresh_hours` | `3` | `trending` 策略最小刷新间隔。 |
-| `scheduler.explore_refresh_hours` | `12` | `explore` 策略最小刷新间隔。 |
+| `scheduler.explore_refresh_hours` | `12` | `explore` 策略最小刷新间隔；统一关键词 planner 会复用这条 refresh plan 时钟，在到期或距到期不足一个 `refresh_check_interval_seconds` 且 B 站有补货空间时，把探索 query 生成合并进当轮关键词调用。 |
 | `scheduler.discovery_limit` | `30` | 单轮 discovery wave 候选上限，最大 `60`。 |
 | `scheduler.delight_queue_limit` | `20` | 惊喜推荐队列默认加载数量；桌面 Web、移动 Web 和浏览器插件默认共享，范围 `1..100`。 |
 | `scheduler.proactive_push_interval_seconds` | `120` | 主动推荐 / probe 推送循环间隔。 |
@@ -370,6 +390,6 @@ XHS / 抖音 / YouTube 的插件任务桥保留两层去重：
 
 同一后置 one-shot 还通过 `_safe_post_reload_precompute()` 调度一次 `precompute_pool_copy(profile=...)`（v0.3.124+，lever 2a）：`rebuild_from_config()` 的 `cancel_all` 会连带取消正在跑的 classify_pool_backlog / 文案预计算 / delight 评分，若不补一脚，冷启动期反复保存配置的用户会看到候选池迟迟不填（每次保存都把进度清零、最坏要等到下一个 `refresh_check_interval_seconds` tick）。`precompute_pool_copy` 内部会 detached 再启 classify 与 delight，因此一次调用即在新引擎上重启整条 classify→文案→delight drain；其自带的 `_expression_lock` 保证与 refresh loop 周期 drain 不抢同批，刷新轮询仍是兜底。helper 吞掉异常、不影响 `/api/config` 响应。
 
-刷新调度不使用 `scheduler.discovery_cron`。该字段仅保留为旧配置兼容；实际触发由 `refresh_check_interval_seconds` 轮询、候选池缺口、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours` 和 `discovery_limit` 共同决定。
+刷新调度不使用 `scheduler.discovery_cron`。该字段仅保留为旧配置兼容；实际触发由 `refresh_check_interval_seconds` 轮询、候选池低水位（约 `pool_target_count * 0.9`）、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours` 和 `discovery_limit` 共同决定。`KeywordPlanner` 的探索 query piggyback 不另起时钟：它只读取 controller 暴露的 explore 到期 / 即将到期口径，并在成功插入 B 站 query cache 后由 controller 更新同一个 `last_explore_refresh_at`。
 
-`ContinuousRefreshController.run_forever()` 当前并行启动 refresh、candidate eval、pool precompute、soul pipeline、B 站扩展兜底 producer、XHS producer、Douyin producer、YouTube producer、X producer 和 proactive push 等 loop。共享的 `background_llm_work_allowed()` gate 覆盖所有 daemon-owned LLM / embedding 工作；B 站扩展兜底、YouTube / X 与 XHS / Douyin 一样会在 gate 关闭时跳过 tick。不同点是 B 站扩展兜底只在 API search 冷却期间入队浏览器搜索任务；YouTube 和 X 都不通过扩展任务队列做 steady-state discovery，而是在后端直接调用各自 strategies（X 经 `XClient` 服务端 cookie 重放）；`yt_tasks` 只保留给 bootstrap profile 导入，X 没有 init 期 bootstrap 任务。外站 producer、B 站扩展兜底和 B 站主 refresh 都会优先把 raw candidates 交给同一个 `DiscoveryCandidatePipeline`；即使 refresh plan 因来源配额为空，独立 candidate eval loop 仍会处理已有 pending raw，后续混源 batch 评估和入池逻辑一致，并由 controller drain lock + pipeline drain lock 串行化。
+`ContinuousRefreshController.run_forever()` 当前并行启动 refresh、candidate eval、pool precompute、soul pipeline、B 站扩展兜底 producer、XHS producer、Douyin producer、YouTube producer、X producer、Zhihu producer、Reddit producer 和 proactive push 等 loop。共享的 `background_llm_work_allowed()` gate 覆盖所有 daemon-owned LLM / embedding 工作；B 站扩展兜底、YouTube / X / Zhihu / Reddit 与 XHS / Douyin 一样会在 gate 关闭时跳过 tick。不同点是 B 站扩展兜底只在 API search 冷却期间入队浏览器搜索任务；YouTube 和 X 都不通过扩展任务队列做 steady-state discovery，而是在后端直接调用各自 strategies（X 经 `XClient` 服务端 cookie 重放）；Zhihu / Reddit steady-state discovery 走浏览器插件任务队列和真实站点登录态；`yt_tasks` 只保留给 bootstrap profile 导入，Reddit 的 init 期 `bootstrap_events` 复用 `reddit_tasks` 并读取 saved / upvoted / subscribed，X 没有 init 期 bootstrap 任务。外站 producer、B 站扩展兜底和 B 站主 refresh 都会优先把 raw candidates 交给同一个 `DiscoveryCandidatePipeline`；即使 refresh plan 因来源配额为空，独立 candidate eval loop 仍会处理已有 pending raw，后续混源 batch 评估和入池逻辑一致，并由 controller drain lock + pipeline drain lock 串行化。

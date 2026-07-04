@@ -20,7 +20,12 @@
 | 2.2 Provider Registry | ✅ | 自动注册 + 可配置 fallback + health check |
 | 2.3 Prompt 管理与 Service | ✅ | Prompt 构建器 + LLMService 门面 |
 | 4.5 核心记忆加载 | ✅ | 统一 core memory 注入入口，覆盖 Soul 全链路 |
-| v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=1024`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应 |
+| v0.3.149+ 关键词合并 prompt 探索 block | ✅ | `build_merged_keywords_prompt()` 支持可选 `explore_domains_block`，只在 runtime 判断 B 站 explore refresh 到期 / 即将到期且有补货空间时追加；system prompt 明确这些 query 是探索性 B 站搜索方向，不应把常规兴趣关键词换皮成 explore。`parse_merged_keywords_with_presence_and_explore_domains()` 在保留平台关键词 decline / omission 语义的同时清洗 `explore_domains` |
+| v0.3.147+ Prompt layer cache | ✅ | `profile_prompt_layers()` 把结构化画像拆为 `profile_core` / `profile_life_context` / `profile_interests` / `profile_style_context` / `profile_recent_context`，从稳定到易变排序；`PromptLayerRenderCache` 按层 digest 复用已渲染 JSON prompt block，供 discovery eval、推荐分类 / 文案 / delight 和统一关键词 planner 共享，画像核心不变时 provider 看到的前缀保持 byte-stable |
+| v0.3.144+ 缓存前缀保护 | ✅ | `LLMService.complete_with_core_memory()` / `complete_structured_task()` / `complete_multimodal_structured_task()` 支持 `inject_core_memory=False`，供候选 eval、推荐分类 / delight、跨平台关键词生成、awareness / insight / speculation / profile build、初始化偏好分析这类已自带完整结构化上下文的路径跳过重复 memory 注入；`build_soul_profile_prompt()` 也保持静态 system，并把 tone / preference / awareness / insight 放在巨大 history 前，稳定 provider prompt-cache 前缀 |
+| v0.3.150+ DeepSeek thinking 显式关闭 | ✅ | `DeepSeekProvider.complete(..., reasoning_effort="")` 会向 DeepSeek 请求体写入 `thinking={"type":"disabled"}`。DeepSeek v4 默认开启 thinking，单纯省略字段并不会关闭 reasoning；配置页 LLM 探测和短结构化任务因此能真正避免 thinking 先耗尽输出预算后返回空 `content` |
+| v0.3.150+ reasoning-only 诊断 | ✅ | OpenAI-compatible / DeepSeek / OpenRouter / Ollama native 返回 HTTP 200 且含 `reasoning_content` / `reasoning` / `thinking`、但最终 `content` 为空时，仍判为不可用，但错误会明确提示 `returned reasoning but no final content` 并带 `finish_reason`，避免和完全空响应混淆 |
+| v0.3.117+ reasoning-first 探活 | ✅ | `LLMProvider.health_check()` 与配置页 LLM 测试探针统一使用 `max_tokens=4096`，避免 SenseNova 等 OpenAI-compatible reasoning-first 模型先产出 `message.reasoning`、尚未到 `message.content` 就被截断，从而误报空响应 |
 | v0.3.75 Per-module LLM 路由生效 | ✅ | `LLMService` 按 caller bucket 路由 `[llm.soul/discovery/recommendation/evaluation]`，通过 `LLMRegistry.complete_provider()` 精确调用 chat-capable provider；provider 错误不 spill 到 default，拼错 provider INFO 一次后降级 |
 | v0.3.75 Provider per-call model | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OpenAI-compatible 的 `complete(..., model=...)` 支持单次模型覆盖，不修改 provider 实例默认 `_model` |
 | 体验优化：B站动态语气 | ✅ | 推荐、画像总结和聊天 prompt 统一接入 `ToneProfile`，在“老B友”基础上按用户画像微调语气 |
@@ -38,13 +43,14 @@
 | v0.3.98 Ollama 作 chat fallback 识别 | ✅ | `_ollama_is_chat_capable()` 新增第四个入口：`[llm].fallback_provider = "ollama"`。此前只认 `[llm.ollama] model` / `default_provider` / 模块 override，导致用户把本地 Ollama 设为 chat 兜底、却没单独配 `[llm.ollama] model` 时，Ollama 被判为 embedding-only 并被 `_fallback_order()` 静默剔除，主 provider 失败直接 `LLMFallbackError`。现在尊重该意图（无 `model` 时用 `llama3` 默认，需本地已 `ollama pull` chat 模型；`bge-m3` 这类 embedding 模型仍无法兜底 chat）|
 | v0.3.32 OpenAI 协议兼容 provider | ✅ | 新增 `openai_compatible` 一级 provider（独立 `[llm.openai_compatible]` block），用于 Groq / Together / Azure OpenAI / vLLM / 自建等任何走 OpenAI 协议的服务。底层复用 `OpenAIProvider`，但 `provider_name="openai_compatible"`，与 `[llm.openai]` 互不干扰。`base_url` 必填（缺失会被 `_collect_config_issues` 拦下、`_maybe_openai_compatible_provider` 拒绝注册）。embedding 段也接受 `openai_compatible` |
 | v0.3.69 Gemini reasoning-first 模型适配 | ✅ | `GeminiProvider._is_reasoning_first_model` 用 prefix 识别 `gemini-3.x` / `gemini-2.5-pro*`，json_mode 下不再附加 `thinking_budget=0`（这些模型会以 `400 INVALID_ARGUMENT` 拒绝）；`gemini-2.5-flash` 等非 reasoning-first 模型继续走省钱通路。pricing 补全 `gemini-3.1-pro-preview` / `gemini-3-pro-preview` 别名，配套 CLI / config / 文档统一改用真实模型 ID |
-| v0.3.71 Prompt-cache 与 400 诊断 | ✅ | `build_awareness_prompt` / `build_batch_content_evaluation_prompt` 的 user prompt 按稳定画像在前、本次批次在后排序，并使用 `sort_keys=True` 的确定性 JSON；`OpenAIProvider._map_error()` 会把 OpenAI-compatible HTTP 400 响应体摘要写入 WARNING 和错误文本，便于定位 MiMo 等兼容服务的请求 schema 问题 |
+| v0.3.71 Prompt-cache 与 400 诊断 | ✅ | `build_awareness_prompt` / `build_batch_content_evaluation_prompt` / `build_soul_profile_prompt` 的 user prompt 按稳定画像 / tone / preference 在前、本次批次或历史在后排序，并使用 `sort_keys=True` 的确定性 JSON；`OpenAIProvider._map_error()` 会把 OpenAI-compatible HTTP 400 响应体摘要写入 WARNING 和错误文本，便于定位 MiMo 等兼容服务的请求 schema 问题 |
 | v0.3.71 Awareness 缓存形态回归锁 | ✅ | `build_awareness_prompt` 的 system 内容固定为模块级常量 `_AWARENESS_SYSTEM_PROMPT`，user 块顺序锁定为 `<soul_profile>` → `<preference_summary>` → `<recent_events>`，并通过 `tests/test_llm_prompts.py` 的 byte-equal / 末尾块 / 不同字典 key 序仍产相同字节三组回归测试保证未来改动不会再把变量数据放进 system、不把 recent_events 之后塞入稳定块、或丢掉 `sort_keys=True` |
 | v0.3.74 结构化输出共享解析 | ✅ | 新增 `llm/json_utils.py`，统一提供 `extract_llm_json_list()` / `extract_llm_json_object()` / `parse_llm_json_tolerant()`。调用方可传 item/object predicate 和 wrapper aliases，兼容 root array/object、`results/items/data/output/scores/evaluations` 等 wrapper、singleton dict、Markdown fenced JSON、JSONL、多 root echo 后最终结果，以及 MiMo 形态的 malformed `{ [ ... ] }` 数组包裹 |
 | v0.3.74 Ollama embedding 空凭据静默本地默认 | ✅ | `embedding.provider="ollama"` 且 embedding `api_key/base_url` 为空时直接构造本地 Ollama provider，默认 `http://localhost:11434/v1`；如果 chat-side `[llm.ollama].base_url` 非空，会复用并规范化到 `/v1`，不再触发 `_emit_embedding_compat_warning()`。远端 embedding provider 留空凭据时仍保留一次性向后兼容 WARNING |
 | v0.3.77 LM Studio JSON mode 兼容 | ✅ | `OpenAIProvider` 的 `json_mode=True` 对普通 OpenAI-compatible 后端默认使用 `json_object`，遇到 `response_format.type` 只允许 `json_schema/text` 时用通用 `json_schema` 重试；对本地 LM Studio（默认 `localhost/127.0.0.1:1234` 或 URL 含 `lmstudio` / `lm-studio`）首次请求即不发送 `response_format`，依赖 prompt 约束 JSON，避免 compat 层在 `json_object` / `json_schema` 下丢失 `message.content` 后再浪费一整次 LLM 调用 |
 | v0.3.78 Codex OAuth 实验认证 | ✅ | `[llm.openai].auth_mode="codex_oauth"` 时，OpenAI provider 复用 Codex CLI 的 ChatGPT OAuth 凭据；`codex_auth.py` 负责导入 `~/.codex/auth.json`、安全落盘、临期刷新，`OpenAIProvider` 在 401 时强制刷新并重试一次。该路径为非官方实验集成，只允许 OpenAI 官方 `base_url` |
 | v0.3.x LLM 限流识别 | ✅ | `is_llm_rate_limit_error()` 会沿异常链识别 `LLMRateLimitError`、cooldown、429 / quota / resource exhausted 文本；discovery / recommendation 批量调用据此跳过逐条 fallback，避免一次 provider 限流放大成 N 个必失败调用和堆栈日志 |
+| v0.3.x 余额 / 账单错误熔断 | ✅ | OpenAI-compatible provider 会把 HTTP 402、`Insufficient Balance`、`payment required`、`billing`、余额不足等 provider 余额 / 账单失败归一为 `LLMRateLimitError`，跳过 provider 内部 retry，并让 registry cooldown 与批量任务的“跳过逐条 fallback”保护生效 |
 | v0.3.x Eval-batch 负样本锚定与跨平台公平 | ✅ | `build_batch_content_evaluation_prompt` 新增可选 `negative_examples` kwarg；非空时在 user prompt `<source_context>` 与 `<content_batch>` 之间插入 `<negative_examples>` 块（`sort_keys=True` 决定性 JSON）。`None` / `[]` 退回原 user 字节形态以保留 cold-start 缓存前缀。`_BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT` 加入永久规则：按话术 / 商业意图 / 标题结构层面 pattern-match 候选与示例，不要看关键词重叠；混源 batch 中不得仅因 `source_platform` 不同而抬高或压低 preference score，只能把平台作为内容语境。规则改动一次后 system message 保持 call-invariant |
 | v0.3.x dislike-aware prompts | ✅ | `build_preference_analysis_prompt` 明确把 negative / dislike / thumbs_down 事件限制为 `disliked_topics` 与风格避让证据，禁止提取为正向兴趣；`build_awareness_prompt` 可从近期 dislike 生成“最近开始避开 X”的保守观察；单条 / 批量推荐表达 prompt 会消费 `profile_summary.disliked_topics`，命中避雷项时不得热情背书 |
 | v0.3.x 避雷探针多样性 prompt | ✅ | `build_avoidance_generation_prompt` 会携带 `existing_avoidance_details`，让 LLM 看到已有 active 的 `source_mode`、`source_signal`、体验轴和 specifics；system prompt 要求同一 `source_mode` + 同一粗主题 / 证据源只生成一个候选，已有 AI positive_boundary 时不再输出 AI 教程 / 测评 / 趋势换皮项 |
@@ -85,7 +91,7 @@ response = await provider.complete(
 
 # 健康检查
 available = await provider.health_check()  # bool
-# health_check 使用 max_tokens=1024，兼容先输出 reasoning 再输出 content 的服务。
+# health_check 使用 max_tokens=4096，兼容先输出 reasoning 再输出 content 的服务。
 # 设置页 / 插件的配置探针也使用同一个连通性探针预算。
 
 provider = OpenRouterProvider(
@@ -155,7 +161,7 @@ POST /api/config/probe-service
 
 该接口面向设置页，不写配置文件。后端会把请求中的 `config.llm` 合并到当前配置的内存副本，然后按 `kind` 真实打一次目标服务：
 
-- `kind="llm"`：构建临时 `LLMRegistry`，校验 `default_provider` 是 chat-capable，再调用 `complete_provider(provider, ..., max_tokens=1024)` 发送最小 chat completion。
+- `kind="llm"`：构建临时 `LLMRegistry`，校验 `default_provider` 是 chat-capable，再调用 `complete_provider(provider, ..., max_tokens=4096)` 发送最小 chat completion；如果 provider 只返回 reasoning / thinking 而没有最终 `content`，返回 `ok=false` 并显示明确诊断。
 - `kind="embedding"`：构建临时 `EmbeddingService`，调用 `probe()` 绕过 L1/L2 cache 获取一次真实向量。
 
 失败以 `ok=false` 的正常响应返回，前端可直接显示 provider / model / latency / error；详见 [配置参考](config.md)。
@@ -182,6 +188,16 @@ response = await service.complete_structured_task(
     user_input='{"events": [...]}',
 )
 # 自动注入 core memory，并以 json_mode 调用 provider
+
+response = await service.complete_structured_task(
+    system_instruction="你要批量评估候选内容。",
+    user_input="<profile_core>...<profile_recent_context>...<content_batch>...",
+    caller="discovery.evaluate_batch",
+    inject_core_memory=False,
+)
+# 已在 user_input 携带完整结构化上下文的高频结构化任务
+# (如候选 eval / 推荐分类与 delight / 关键词生成 / 画像分析) 可关闭额外 core memory 注入，
+# 让 provider-side prompt cache 前缀更稳定。
 
 from openbiliclaw.llm import is_llm_rate_limit_error
 
@@ -213,6 +229,45 @@ profile_delta = extract_llm_json_object(
 
 这些 helper 是 MiMo / OpenAI-compatible / reasoning 模型结构化输出的统一容错边界。调用方仍应用 predicate 限定自己真正接受的 shape，避免 schema echo 或 prompt 示例被误当作结果。
 
+### Merged keyword prompt
+
+```python
+from openbiliclaw.llm.prompts import (
+    build_merged_keywords_prompt,
+    parse_merged_keywords_with_presence_and_explore_domains,
+)
+
+messages = build_merged_keywords_prompt(
+    profile_summary=profile_summary,
+    profile_blocks=profile_blocks,
+    platform_blocks=[{"platform": "bilibili", "need": 8, "recent_keywords": []}],
+    explore_domains_block={
+        "need_domains": 5,
+        "queries_per_domain": 3,
+        "covered_topic_groups": ["人工智能", "认知科学"],
+    },
+)
+keywords, present, explore_domains = parse_merged_keywords_with_presence_and_explore_domains(
+    response.content,
+    ["bilibili"],
+    per_platform_cap=8,
+)
+```
+
+`explore_domains_block` 是可选项；未传时 prompt 与解析仍按普通多平台关键词生成运行。传入时，模型可在平台 key 之外额外返回 `explore_domains`，每个 domain 包含 `domain / novelty_level / queries`。这些 queries 会被 runtime 写入 B 站 `discovery_keywords` query cache，因此 prompt 规则要求它们保持探索性、跨域和 B 站可直接搜索，而不是普通兴趣关键词的换皮。
+
+### Prompt layer render cache
+
+```python
+from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
+
+cache = PromptLayerRenderCache()
+blocks = cache.render_json_layers(profile_prompt_layers(profile_summary))
+stats = cache.stats()
+```
+
+`profile_prompt_layers()` 只负责确定层次和顺序：core / life / interests / style / recent，未知扩展字段进入末尾 `profile_extra`。`PromptLayerRenderCache` 不缓存业务画像本身，只缓存当前层 digest 对应的 JSON prompt block。调用方仍每次从最新 profile 构造 layer payload；digest 不变时复用完全相同的字符串，digest 变化时只替换该层。
+
 #### 全局优先级队列(v0.3.63+)
 
 `LLMService` 内部用 `PrioritySemaphore`(capacity=1, heapq + monotonic
@@ -223,7 +278,6 @@ tag 解析优先级,longest-prefix 命中:
 |---|---|---|
 | `recommendation.write_expression` | 1 | popup 可见的池子表达式回填 |
 | `discovery.evaluate_batch` | 1 | 当前 discovery 批次评估 |
-| `recommendation.delight_score` | 2 | 后台批量打分 |
 | `soul.*` / `xhs.*` | 2 | 灵魂分析 / 小红书分类 |
 | 其他 / 空 | 3 | 默认 |
 
@@ -240,7 +294,7 @@ priority≤2 任务。
 |---|---|
 | `soul.*` | `soul` |
 | `discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` | `discovery` |
-| `recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
+| `recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` | `evaluation` |
 | 其他 `recommendation.*` | `recommendation` |
 
 命中 override 后走 `registry.complete_provider(provider, ..., model=model)`：
@@ -290,6 +344,8 @@ api_key = ""
 # 默认 deepseek-v4-flash;可选 deepseek-v4-pro;旧 deepseek-chat / deepseek-reasoner 将于 2026/07/24 弃用
 model = "deepseek-v4-flash"
 base_url = "https://api.deepseek.com"
+# "" = 显式关闭 thinking; "high" / "max" = 开启 DeepSeek v4 thinking
+reasoning_effort = "max"
 
 [llm.ollama]
 model = "llama3"
@@ -305,16 +361,16 @@ x_title = "OpenBiliClaw"
 
 ## 设计决策
 
-1. **retry 策略**：传输 / provider 临时错误走 3 次重试 + 线性退避（0.25s × attempt）；通用 OpenAI-compatible 的 `LLMResponseError` 默认不重试。DeepSeek 例外：线上观测到它会偶发 HTTP 200 但 `content=""`，因此 `DeepSeekProvider` 对空内容额外重试一次。HTTP 400 会记录 provider response body 摘要，避免只看到 `Error code: 400`
+1. **retry 策略**：传输 / provider 临时错误走 3 次重试 + 线性退避（0.25s × attempt）；通用 OpenAI-compatible 的 `LLMResponseError` 默认不重试。DeepSeek 例外：线上观测到它会偶发 HTTP 200 但 `content=""`，因此 `DeepSeekProvider` 对空内容额外重试一次。`reasoning_effort=""` 会显式发送 `thinking={"type":"disabled"}`，避免 DeepSeek v4 省略字段时默认开启 thinking。HTTP 400 会记录 provider response body 摘要，避免只看到 `Error code: 400`
 2. **fallback 顺序**：默认关闭。chat 只在 `[llm].fallback_provider` 非空时按默认 provider 优先、随后这个显式备选 provider 尝试；embedding 只在 `[llm.embedding].fallback_provider` 非空时按显式 provider 优先、随后这个备选 provider 尝试。Embedding provider 留空表示禁用，不再跟随默认 LLM。
 3. **Protocol DI**：`SupportsComplete` Protocol 解耦了调用方和具体实现，测试时可注入 Fake
 4. **Prompt 集中管理**：所有 prompt 在 `prompts.py` 中定义，不散落在各模块
-5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 负责把核心记忆注入到所有 Soul 相关任务里
+5. **统一上下文注入**：`complete_with_core_memory()` / `complete_structured_task()` 默认负责把核心记忆注入到 Soul 相关任务里；已在 `user_input` 自带完整结构化上下文的高频任务可传 `inject_core_memory=False`，或通过 `llm.task_options.without_core_memory_kwargs()` 在兼容旧 stub 的前提下关闭注入，避免动态 core memory 破坏 provider prompt-cache 前缀
 6. **OpenAI-compatible 复用**：DeepSeek、OpenRouter 这类兼容 OpenAI 协议的 provider 复用同一套重试、超时和错误归一化逻辑，只在子类中注入默认地址或额外请求头
 7. **Gemini 独立适配**：Gemini 走官方 `google-genai` SDK，不强行复用 OpenAI-compatible 抽象；provider 内部负责把统一 `messages` 渲染成 quickstart 风格的单文本 prompt
 8. **Gemini 可选依赖降级**：环境里缺少 `google-genai` 时，`llm` 包和 registry 仍可正常导入；只有真正实例化 Gemini provider 时才会给出明确缺依赖错误
 9. **Prompt 风格集中收口**：推荐、画像和聊天的“老B友”语气由共享 `ToneProfile` 驱动，不允许各模块各自发散成不同人格
-10. **Prompt-cache 约定**：高频结构化 builder 的 system prompt 必须保持静态；user prompt 按“画像 / 长期偏好 / 来源上下文 / 本批内容”从稳定到易变排序，并使用确定性 JSON，便于 DeepSeek / Claude / OpenAI / Gemini 的 provider-side prompt cache 复用前缀
+10. **Prompt-cache 约定**：高频结构化 builder 的 system prompt 必须保持静态；user prompt 按“tone / 画像 / 长期偏好 / 来源上下文 / 本批内容或历史”从稳定到易变排序，并使用确定性 JSON。使用完整 `profile_summary` 的高频链路优先经 `profile_prompt_layers()` 分层渲染，稳定层放前、recent 层放后；调用方不得再把同一份动态画像通过 core memory 追加进 system prompt，便于 DeepSeek / Claude / OpenAI / Gemini 的 provider-side prompt cache 复用前缀
 11. **结构化输出只在 helper 处放宽**：业务模块不再各自手写 JSON 截取逻辑；容错集中在 `json_utils.py`，模块侧用 predicate 收紧语义，避免一个 provider 的异常 shape 修复污染其他任务。
 12. **分模块 override 不隐式改意图**：`[llm.<module>]` 命中时必须精确调用用户指定的 chat provider；只有 provider 拼错或不是 chat-capable 时才降级到默认链并 INFO 一次。模型覆盖通过 per-call `model=` 完成，避免污染 provider 实例状态或影响其他模块。
 13. **Codex OAuth 只做认证层**：`auth_mode="codex_oauth"` 不注册新 provider，而是给现有 `OpenAIProvider` 注入动态 token provider。该模式只允许 OpenAI 官方 `base_url`，防止 ChatGPT OAuth token 泄露给 OpenAI-compatible 代理。

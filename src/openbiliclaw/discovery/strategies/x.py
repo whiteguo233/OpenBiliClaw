@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.discovery.x_normalize import normalize_tweet
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
@@ -220,12 +221,14 @@ class XSearchStrategy:
         if self.llm_service is None:
             return []
         try:
-            response = await self.llm_service.complete_structured_task(
+            complete_structured = self.llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=_KEYWORDS_SYSTEM_PROMPT,
                 user_input=_build_keyword_user_prompt(profile, self.keywords_per_run),
                 temperature=0.8,
                 max_tokens=512,
                 caller="discovery.x.keyword_gen",
+                **without_core_memory_kwargs(complete_structured),
             )
         except Exception as exc:  # noqa: BLE001 - degrade to fallback
             logger.warning("x keyword LLM call failed: %s", exc)

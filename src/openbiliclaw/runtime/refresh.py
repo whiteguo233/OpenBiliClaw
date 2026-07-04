@@ -15,7 +15,10 @@ from openbiliclaw.discovery.pool_snapshot import (
     build_cold_start_pool_snapshot,
     build_pool_distribution_snapshot,
 )
-from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
+from openbiliclaw.recommendation.delight import (
+    DEFAULT_DELIGHT_THRESHOLD,
+    effective_delight_threshold,
+)
 from openbiliclaw.runtime.image_cache import (
     cleanup_image_cache,
     prefetch_cover,
@@ -38,6 +41,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
+_DEFAULT_CANDIDATE_EVAL_BATCH_SIZE = 45
+_DISCOVERY_REPLENISH_LOW_WATERMARK_RATIO = 0.90
+_BILIBILI_EXPENSIVE_DISCOVERY_GAP_RATIO = 0.20
+_BILIBILI_EXPENSIVE_DISCOVERY_MIN_GAP = 20
 # How often the cover-image disk cache is pruned of consumed + unsaved covers.
 # The bulk one-shot prune runs at API startup; this is the steady-state sweep.
 _IMAGE_CACHE_CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
@@ -51,7 +58,15 @@ _COVER_PREFETCH_MAX_FETCH = 40
 _DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
     "bilibili": 5,
 }
-_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
+_PLATFORM_SOURCE_ORDER = (
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+)
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -275,6 +290,7 @@ class ContinuousRefreshController:
     youtube_producer: Any | None = None
     x_producer: Any | None = None
     zhihu_producer: Any | None = None
+    reddit_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
     presence: PresenceTracker = field(default_factory=PresenceTracker)
     # gui-init D1: optional init-aware gate. When it returns True (a guided init
@@ -456,6 +472,23 @@ class ContinuousRefreshController:
             "pool_evaluated_pending_count": int(counts.get("evaluated_pending", 0)),
         }
 
+    def _profile_delight_default_threshold(self) -> float:
+        exploration_openness = 0.5
+        with suppress(Exception):
+            preference_layer = self.memory_manager.get_layer("preference")
+            preference_data = getattr(preference_layer, "data", {})
+            if isinstance(preference_data, dict):
+                exploration_openness = float(preference_data.get("exploration_openness", 0.5))
+        return effective_delight_threshold(exploration_openness)
+
+    def _dynamic_delight_threshold(self) -> float:
+        default_threshold = self._profile_delight_default_threshold()
+        threshold_fn = getattr(self.database, "dynamic_delight_threshold", None)
+        if callable(threshold_fn):
+            with suppress(Exception):
+                return float(threshold_fn(default_threshold=default_threshold))
+        return default_threshold
+
     def get_runtime_status(self) -> dict[str, object]:
         """Build a lightweight runtime summary for popup or diagnostics."""
         state = self.memory_manager.load_discovery_runtime_state()
@@ -473,7 +506,7 @@ class ContinuousRefreshController:
         pending_delight_count = 0
         with suppress(Exception):
             pending_delight_count = self.database.count_delight_candidates(
-                min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
+                min_delight_score=self._dynamic_delight_threshold(),
             )
         pool_counts = self._pool_readiness_counts()
         return {
@@ -872,7 +905,7 @@ class ContinuousRefreshController:
         # are typically only a handful of high-score candidates and a
         # very short disliked list, so the overhead is negligible.
         candidates = self.database.get_delight_candidates(
-            min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
+            min_delight_score=self._dynamic_delight_threshold(),
             limit=20,
         )
         if not candidates:
@@ -1046,6 +1079,7 @@ class ContinuousRefreshController:
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
             ├─ _loop_x_producer()        60s   X (Twitter) discovery when under quota
             ├─ _loop_zhihu_producer()    60s   Zhihu discovery when under quota
+            ├─ _loop_reddit_producer()   60s   Reddit command-backed discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
             ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_image_cache_cleanup() 6h  prune consumed+unsaved covers
@@ -1076,6 +1110,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_youtube_producer()),
             asyncio.create_task(self._loop_x_producer()),
             asyncio.create_task(self._loop_zhihu_producer()),
+            asyncio.create_task(self._loop_reddit_producer()),
             asyncio.create_task(self._loop_proactive_push()),
             asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
@@ -1149,7 +1184,6 @@ class ContinuousRefreshController:
             with suppress(Exception):
                 await self._drain_discovery_candidates_and_precompute(
                     reason="periodic",
-                    batch_size=self.discovery_limit,
                 )
             await asyncio.sleep(self.check_interval_seconds)
 
@@ -1338,6 +1372,16 @@ class ContinuousRefreshController:
                 continue
             with suppress(Exception):
                 await self._tick_zhihu_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_reddit_producer(self) -> None:
+        """Reddit production — command-backed discovery when under quota."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_reddit_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_keyword_planner(self) -> None:
@@ -1594,6 +1638,25 @@ class ContinuousRefreshController:
         else:
             await produce_fn()
 
+    async def _tick_reddit_producer(self) -> None:
+        """Invoke the Reddit discovery producer if Reddit is under quota."""
+        producer = self.reddit_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("reddit")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
     async def _tick_soul_pipeline(self) -> None:
         """Invoke ProfileUpdatePipeline.tick() if the soul engine exposes one.
 
@@ -1627,6 +1690,8 @@ class ContinuousRefreshController:
         pool_below_target = pool_available < self.pool_target_count
 
         if pool_below_target:
+            if not self._pool_below_replenishment_watermark(pool_available):
+                return []
             source_plan = self._build_source_replenishment_plan()
             if source_plan:
                 return source_plan
@@ -1654,6 +1719,11 @@ class ContinuousRefreshController:
         ):
             plan.append((["explore"], self.discovery_limit))
         return plan
+
+    def _pool_below_replenishment_watermark(self, pool_available: int) -> bool:
+        target = max(1, int(self.pool_target_count))
+        low_watermark = int(target * _DISCOVERY_REPLENISH_LOW_WATERMARK_RATIO)
+        return int(pool_available) < low_watermark
 
     def _log_empty_refresh_plan_diagnostics(self, *, pool_available: int) -> None:
         try:
@@ -1787,7 +1857,7 @@ class ContinuousRefreshController:
                 return {"evaluated": 0, "cached": 0, "rejected": 0}
             result = await pipeline.drain_pending(
                 profile=profile,
-                batch_size=batch_size or self.discovery_limit,
+                batch_size=self._candidate_eval_drain_batch_size(batch_size),
             )
             drain_result = cast("dict[str, int]", result)
             evaluated = int(drain_result.get("evaluated", 0) or 0)
@@ -1902,16 +1972,6 @@ class ContinuousRefreshController:
             if current_pool_count >= self.pool_target_count:
                 break
 
-            await self._publish_event(
-                {
-                    "type": "refresh.strategy",
-                    "phase": "running",
-                    "strategy": "+".join(strategies),
-                    "message": self._strategy_message(strategies),
-                    **self._pool_count_payload(current_pool_counts),
-                }
-            )
-
             effective_limit = self._requested_refresh_limit(
                 requested_limit=requested_limit,
                 current_pool_count=current_pool_count,
@@ -1937,18 +1997,52 @@ class ContinuousRefreshController:
             # inline-admit: this plan iteration fetches + drains (admits) in the
             # same call. When the flag is on and this entry includes ``search``,
             # claim words from the store and inject them as ``keywords`` (the
-            # engine maps them onto the search strategy's ``queries`` param); on
-            # a successful admit mark them ``used``, on an empty/failed iteration
-            # mark them ``failed``. Non-search sub-strategies in the same entry
-            # are unaffected (they never receive the injected words).
+            # engine maps them onto the search strategy's ``queries`` param). If
+            # the planner store is empty, remove only ``search`` from this batch:
+            # passing queries=None would re-enable the legacy LLM generator.
             claimed_search: list[Any] = []
             coordinator = self.keyword_fetch
-            if (
+            should_claim_search = (
                 "search" in strategies
                 and coordinator is not None
                 and bool(getattr(coordinator, "should_claim", lambda: False)())
-            ):
+                and int(current_pool_counts.get("pending_eval", 0) or 0) < effective_limit
+            )
+            effective_strategies = list(strategies)
+            if should_claim_search and coordinator is not None:
                 claimed_search = coordinator.claim(_KW_PLATFORM_BILIBILI)
+                if not claimed_search:
+                    effective_strategies = [
+                        strategy for strategy in effective_strategies if strategy != "search"
+                    ]
+                    logger.info(
+                        "bili search skipped: unified keyword planner enabled but no "
+                        "pending keywords; running strategies=%s",
+                        ",".join(effective_strategies) or "none",
+                    )
+                    if not effective_strategies:
+                        continue
+            if strategy_limits:
+                filtered_strategy_limits = {
+                    strategy: limit
+                    for strategy, limit in strategy_limits.items()
+                    if strategy in effective_strategies
+                }
+                if should_claim_search and not claimed_search and effective_strategies:
+                    dropped_budget = max(0, int(strategy_limits.get("search", 0) or 0))
+                    if dropped_budget > 0:
+                        budget_target = (
+                            "related_chain"
+                            if "related_chain" in effective_strategies
+                            else effective_strategies[0]
+                        )
+                        filtered_strategy_limits[budget_target] = (
+                            max(0, int(filtered_strategy_limits.get(budget_target, 0) or 0))
+                            + dropped_budget
+                        )
+                effective_strategy_limits = filtered_strategy_limits or None
+            else:
+                effective_strategy_limits = None
             injected_keywords = (
                 [item.keyword for item in claimed_search] if claimed_search else None
             )
@@ -1957,6 +2051,16 @@ class ContinuousRefreshController:
             # admit-time yield backfill. Empty / None on the flag-off path.
             injected_keyword_ids = (
                 {item.keyword: int(item.id) for item in claimed_search} if claimed_search else None
+            )
+
+            await self._publish_event(
+                {
+                    "type": "refresh.strategy",
+                    "phase": "running",
+                    "strategy": "+".join(effective_strategies),
+                    "message": self._strategy_message(effective_strategies),
+                    **self._pool_count_payload(current_pool_counts),
+                }
             )
 
             pipeline = self.discovery_candidate_pipeline
@@ -1969,16 +2073,28 @@ class ContinuousRefreshController:
                 if pipeline is not None:
                     produce_kwargs: dict[str, Any] = {
                         "profile": profile,
-                        "strategies": strategies,
+                        "strategies": effective_strategies,
                         "limit": effective_limit,
-                        "strategy_limits": strategy_limits,
+                        "strategy_limits": effective_strategy_limits,
                         "pool_snapshot": pool_snapshot,
                     }
                     if injected_keywords is not None:
                         produce_kwargs["keywords"] = injected_keywords
                     if injected_keyword_ids:
                         produce_kwargs["keyword_ids"] = injected_keyword_ids
-                    produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
+                    ensure_supply = getattr(pipeline, "ensure_pending_supply", None)
+                    if callable(ensure_supply):
+                        supply_result = await ensure_supply(
+                            **produce_kwargs,
+                            target_pending=effective_limit,
+                        )
+                        produced_count = int(
+                            dict(supply_result).get("inserted", 0)
+                            if isinstance(supply_result, dict)
+                            else 0
+                        )
+                    else:
+                        produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
                     drain_result = await self._drain_discovery_candidates_and_precompute(
                         reason="refresh",
                         profile=profile,
@@ -1993,11 +2109,11 @@ class ContinuousRefreshController:
                 else:
                     discover_fn = self.discovery_engine.discover
                     discover_kwargs: dict[str, Any] = {
-                        "strategies": strategies,
+                        "strategies": effective_strategies,
                         "limit": effective_limit,
                     }
-                    if strategy_limits and _call_accepts_strategy_limits(discover_fn):
-                        discover_kwargs["strategy_limits"] = strategy_limits
+                    if effective_strategy_limits and _call_accepts_strategy_limits(discover_fn):
+                        discover_kwargs["strategy_limits"] = effective_strategy_limits
                     if _call_accepts_pool_snapshot(discover_fn):
                         discover_kwargs["pool_snapshot"] = pool_snapshot
                     if injected_keywords is not None and _call_accepts_keywords(discover_fn):
@@ -2023,7 +2139,7 @@ class ContinuousRefreshController:
                     else:
                         coordinator.mark_failed(claimed_search)
             all_discovered.extend(discovered)
-            flattened_strategies.extend(strategies)
+            flattened_strategies.extend(effective_strategies)
 
             if admitted_count > 0:
                 replenished_topics.extend(self._extract_topics(topic_items))
@@ -2196,11 +2312,11 @@ class ContinuousRefreshController:
         """Best-effort count of pending delight candidates (returns 0 on any
         error so the caller can do delta-based comparison without crashing
         the refresh tick)."""
-        from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
-
         try:
             return int(
-                self.database.count_delight_candidates(min_delight_score=DEFAULT_DELIGHT_THRESHOLD)
+                self.database.count_delight_candidates(
+                    min_delight_score=self._dynamic_delight_threshold()
+                )
             )
         except Exception:
             return 0
@@ -2567,6 +2683,50 @@ class ContinuousRefreshController:
             return False
         return pending_events >= self.signal_event_threshold
 
+    def keyword_planner_explore_due_soon(self) -> bool:
+        """Whether planner may piggyback B站 exploratory queries this pass.
+
+        This intentionally mirrors refresh-plan timing instead of giving the
+        planner its own clock. The small lead window lets a planner pass that
+        runs just before the refresh tick reuse the merged keyword LLM call for
+        explore, avoiding the later standalone ``discovery.explore.queries``
+        call while still respecting ``explore_refresh_hours``.
+        """
+        if "bilibili" not in self._normalized_pool_source_shares():
+            return False
+        if self.keyword_planner_real_deficit("bilibili") <= 0:
+            return False
+        try:
+            state = self.memory_manager.load_discovery_runtime_state()
+        except Exception:
+            logger.exception("keyword_planner_explore_due_soon state load failed")
+            return False
+        return self._is_due_soon(
+            str(state.get("last_explore_refresh_at", "")),
+            hours=self.explore_refresh_hours,
+            lead_seconds=max(0, int(self.check_interval_seconds)),
+        )
+
+    def keyword_planner_explore_covered_topic_groups(self) -> list[str]:
+        """Covered pool topic_groups for the planner's exploratory query block."""
+        getter = getattr(self.database, "get_active_pool_topic_groups", None)
+        if not callable(getter):
+            return []
+        try:
+            return [
+                str(item).strip() for item in getter(limit=12, min_count=2) if str(item).strip()
+            ]
+        except Exception:
+            logger.debug("keyword planner covered topic-group lookup failed", exc_info=True)
+            return []
+
+    def keyword_planner_mark_explore_planned(self) -> None:
+        """Mark explore refresh consumed after planner inserted explore queries."""
+        now = self._now().isoformat()
+        self._update_discovery_runtime_state(
+            lambda runtime_state: runtime_state.update({"last_explore_refresh_at": now})
+        )
+
     def _source_requested_count(
         self,
         source_family: str,
@@ -2675,6 +2835,8 @@ class ContinuousRefreshController:
                 stranded.append("twitter")
             elif source == "zhihu" and self.zhihu_producer is None:
                 stranded.append("zhihu")
+            elif source == "reddit" and self.reddit_producer is None:
+                stranded.append("reddit")
             elif source not in {
                 "bilibili",
                 "xiaohongshu",
@@ -2682,6 +2844,7 @@ class ContinuousRefreshController:
                 "youtube",
                 "twitter",
                 "zhihu",
+                "reddit",
             }:
                 # Unknown source family with an explicit share.
                 stranded.append(source)
@@ -2751,9 +2914,37 @@ class ContinuousRefreshController:
             # Cap at discovery_limit to preserve original behaviour
             # when the gap is huge (e.g. fresh init, just-trimmed pool).
             effective_limit = min(self.discovery_limit, per_strategy_target)
+            min_eval_batch = self._candidate_eval_batch_floor()
+            if min_eval_batch > 1:
+                effective_limit = max(effective_limit, min_eval_batch)
         else:
             effective_limit = max(self.discovery_limit, requested_limit)
         return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, effective_limit))
+
+    def _candidate_eval_batch_floor(self) -> int:
+        pipeline = self.discovery_candidate_pipeline
+        if pipeline is None:
+            return 1
+        try:
+            configured = int(getattr(pipeline, "min_eval_batch_size", 1) or 1)
+        except (TypeError, ValueError):
+            configured = 1
+        return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, configured))
+
+    def _candidate_eval_drain_batch_size(self, batch_size: int | None) -> int:
+        default = min(
+            _MAX_DISCOVERY_BACKFILL_PER_REFRESH,
+            max(self.discovery_limit, _DEFAULT_CANDIDATE_EVAL_BATCH_SIZE),
+        )
+        if batch_size is None:
+            return default
+        try:
+            requested = int(batch_size)
+        except (TypeError, ValueError):
+            return default
+        if requested <= 0:
+            return default
+        return requested
 
     def _requested_strategy_limits(
         self,
@@ -2770,12 +2961,30 @@ class ContinuousRefreshController:
         if not all(strategy in _BILIBILI_DISCOVERY_SOURCES for strategy in strategies):
             return None
         total_gap = max(1, self.pool_target_count - current_pool_count)
+        requested_budget = max(1, int(requested_limit))
+        if pool_below_target:
+            min_eval_batch = self._candidate_eval_batch_floor()
+            total_gap = max(total_gap, min_eval_batch)
+            requested_budget = max(requested_budget, min_eval_batch)
         shared_budget = min(
-            max(1, int(requested_limit)),
+            requested_budget,
             max(1, int(effective_limit)),
             total_gap,
         )
+        if set(strategies) == set(_BILIBILI_DISCOVERY_SOURCES) and (
+            self._should_defer_expensive_bilibili_strategies(total_gap)
+        ):
+            cheap = ["search", "related_chain"]
+            cheap_limits = self._split_budget_across_strategies(cheap, shared_budget)
+            return {strategy: cheap_limits.get(strategy, 0) for strategy in strategies}
         return self._split_budget_across_strategies(strategies, shared_budget)
+
+    def _should_defer_expensive_bilibili_strategies(self, total_gap: int) -> bool:
+        threshold = max(
+            _BILIBILI_EXPENSIVE_DISCOVERY_MIN_GAP,
+            int(self.pool_target_count * _BILIBILI_EXPENSIVE_DISCOVERY_GAP_RATIO),
+        )
+        return int(total_gap) < threshold
 
     @staticmethod
     def _split_budget_across_strategies(
@@ -2828,6 +3037,15 @@ class ContinuousRefreshController:
         if last_run is None:
             return True
         return self._now() - last_run >= timedelta(hours=hours)
+
+    def _is_due_soon(self, value: str, *, hours: int, lead_seconds: int) -> bool:
+        if hours <= 0:
+            return True
+        last_run = self._parse_iso_datetime(value)
+        if last_run is None:
+            return True
+        due_at = last_run + timedelta(hours=hours)
+        return self._now() >= due_at - timedelta(seconds=max(0, int(lead_seconds)))
 
     @staticmethod
     def _now() -> datetime:

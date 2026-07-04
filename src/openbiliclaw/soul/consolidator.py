@@ -144,6 +144,7 @@ class ConsolidationReport:
     run_id: str = ""
     rule_merges: list[str] = field(default_factory=list)
     clusters_sent: int = 0
+    llm_batches: int = 0
     merges: list[dict[str, object]] = field(default_factory=list)
     rejected_clusters: list[str] = field(default_factory=list)
     likes_before: int = 0
@@ -179,6 +180,35 @@ class _Cluster:
 
 def _pair_key(a: str, b: str) -> str:
     return "||".join(sorted((a, b)))
+
+
+def _batch_count(item_count: int, batch_size: int) -> int:
+    if item_count <= 0 or batch_size <= 0:
+        return 0
+    return (item_count + batch_size - 1) // batch_size
+
+
+def _log_run_summary(report: ConsolidationReport, *, changed: bool) -> None:
+    logger.info(
+        "profile consolidation run completed: "
+        "run_id=%s dry_run=%s clusters=%d llm_batches=%d changed=%s "
+        "merges=%d rule_merges=%d rejected=%d archived=%d "
+        "likes=%d->%d dislikes=%d->%d errors=%d",
+        report.run_id,
+        report.dry_run,
+        report.clusters_sent,
+        report.llm_batches,
+        changed,
+        len(report.merges),
+        len(report.rule_merges),
+        len(report.rejected_clusters),
+        len(report.archived_interests),
+        report.likes_before,
+        report.likes_after,
+        report.dislikes_before,
+        report.dislikes_after,
+        len(report.errors),
+    )
 
 
 def _qualified_member_key(name: str, category: str) -> str:
@@ -359,6 +389,8 @@ class ProfileConsolidator:
             if self._has_unjudged_pair(cluster, no_merge)
         ]
         report.clusters_sent = len(clusters)
+        if clusters and self._llm_service is not None:
+            report.llm_batches = _batch_count(len(clusters), _JUDGE_CLUSTER_BATCH)
 
         # ── Stage 2: LLM judgement ─────────────────────────────────────────
         valid_ops: list[dict[str, object]] = []
@@ -416,10 +448,11 @@ class ProfileConsolidator:
         report.likes_after = len(interests)
         report.dislikes_after = len(dislikes_raw)
 
+        changed = bool(rule_merges or valid_ops or report.archived_interests)
         if dry_run:
+            _log_run_summary(report, changed=changed)
             return report
 
-        changed = bool(rule_merges or valid_ops or report.archived_interests)
         if changed:
             preference_layer.data["interests"] = interests
             preference_layer.data["archived_interests"] = archived_raw
@@ -450,6 +483,7 @@ class ProfileConsolidator:
         if changed:
             state["last_applied_run_id"] = report.run_id
         self._save_state(state)
+        _log_run_summary(report, changed=changed)
         return report
 
     # -- Stage 0: rule merges ---------------------------------------------------

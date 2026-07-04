@@ -8,10 +8,15 @@ on:
 permissions:
   contents: write
 
+env:
+  FIREFOX_SIGNING_ENABLED: ${{ vars.FIREFOX_SIGNING_ENABLED != 'false' }}
+
 jobs:
   build:
     name: Build extension package
     runs-on: ubuntu-latest
+    outputs:
+      firefox_signed: ${{ steps.firefox-signing.outputs.enabled }}
 
     steps:
       - name: Check out repository
@@ -54,14 +59,43 @@ jobs:
         run: npm run package:firefox
         working-directory: extension
 
+      - name: Detect Firefox signing credentials
+        id: firefox-signing
+        shell: bash
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ "$FIREFOX_SIGNING_ENABLED" = "true" ] && [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Firefox signing credentials detected; signed XPI will be required."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            if [ "$FIREFOX_SIGNING_ENABLED" = "true" ]; then
+              echo "::notice::Firefox signing is enabled, but AMO credentials are missing; uploading unsigned Firefox ZIP only."
+            else
+              echo "Firefox signing disabled by FIREFOX_SIGNING_ENABLED."
+            fi
+          fi
+
+      - name: Sign Firefox extension release XPI
+        if: steps.firefox-signing.outputs.enabled == 'true'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: npm run sign:firefox:only
+        working-directory: extension
+
       - name: Verify extension release archives
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          FIREFOX_SIGNING_ACTIVE: ${{ steps.firefox-signing.outputs.enabled }}
         run: |
           expected="${RELEASE_TAG#extension-v}"
           chrome_archive="extension/openbiliclaw-extension-v${expected}.zip"
           firefox_archive="extension/openbiliclaw-extension-v${expected}-firefox.zip"
+          firefox_xpi="extension/openbiliclaw-extension-v${expected}-firefox.xpi"
           if [ ! -f "$chrome_archive" ]; then
             echo "missing Chrome-compatible extension archive: $chrome_archive"
             exit 1
@@ -70,14 +104,23 @@ jobs:
             echo "missing Firefox extension archive: $firefox_archive"
             exit 1
           fi
+          if [ "$FIREFOX_SIGNING_ACTIVE" = "true" ] && [ ! -f "$firefox_xpi" ]; then
+            echo "missing signed Firefox XPI: $firefox_xpi"
+            exit 1
+          fi
           echo "verified Chrome-compatible release archive: $chrome_archive"
           echo "verified Firefox release archive: $firefox_archive"
+          if [ -f "$firefox_xpi" ]; then
+            echo "verified signed Firefox XPI: $firefox_xpi"
+          fi
 
       - name: Upload packaged extension artifact
         uses: actions/upload-artifact@v7
         with:
           name: extension-package
-          path: extension/openbiliclaw-extension-v*.zip
+          path: |
+            extension/openbiliclaw-extension-v*.zip
+            extension/openbiliclaw-extension-v*.xpi
           if-no-files-found: error
 
   publish-release:
@@ -101,10 +144,12 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
         run: |
           expected="${RELEASE_TAG#extension-v}"
           chrome_archive="release-artifacts/openbiliclaw-extension-v${expected}.zip"
           firefox_archive="release-artifacts/openbiliclaw-extension-v${expected}-firefox.zip"
+          firefox_xpi="release-artifacts/openbiliclaw-extension-v${expected}-firefox.xpi"
           if [ ! -f "$chrome_archive" ]; then
             echo "missing Chrome-compatible extension archive: $chrome_archive"
             exit 1
@@ -113,14 +158,22 @@ jobs:
             echo "missing Firefox extension archive: $firefox_archive"
             exit 1
           fi
+          if [ "$FIREFOX_SIGNING_ACTIVE" = "true" ] && [ ! -f "$firefox_xpi" ]; then
+            echo "missing signed Firefox XPI: $firefox_xpi"
+            exit 1
+          fi
           echo "Chrome-compatible release artifact ready: $chrome_archive"
           echo "Firefox release artifact ready: $firefox_archive"
+          if [ -f "$firefox_xpi" ]; then
+            echo "Signed Firefox XPI ready: $firefox_xpi"
+          fi
 
       - name: Create GitHub Release and upload extension package
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          FIREFOX_SIGNING_ACTIVE: ${{ needs.build.outputs.firefox_signed }}
         run: |
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
@@ -128,10 +181,14 @@ jobs:
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           fi
           expected="${RELEASE_TAG#extension-v}"
-          for asset in \
-            "release-artifacts/openbiliclaw-extension-v${expected}.zip" \
+          assets=(
+            "release-artifacts/openbiliclaw-extension-v${expected}.zip"
             "release-artifacts/openbiliclaw-extension-v${expected}-firefox.zip"
-          do
+          )
+          if [ "$FIREFOX_SIGNING_ACTIVE" = "true" ]; then
+            assets+=("release-artifacts/openbiliclaw-extension-v${expected}-firefox.xpi")
+          fi
+          for asset in "${assets[@]}"; do
             for attempt in 1 2 3; do
               if gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --clobber; then
                 break
@@ -149,5 +206,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           CHANNEL: extension
-          ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip
+          ASSET_GLOBS: release-artifacts/openbiliclaw-extension-v*.zip release-artifacts/openbiliclaw-extension-v*.xpi
         run: bash .github/scripts/sync-aggregate-release.sh

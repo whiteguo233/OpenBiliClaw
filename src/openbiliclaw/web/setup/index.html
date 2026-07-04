@@ -149,17 +149,17 @@
         </div>
       </section>
 
-      <!-- Step 1: 连接 B站 -->
+      <!-- Step 1: 连接浏览器扩展 -->
       <section class="panel" data-panel="1">
-        <h2>连接你的 B站 账号</h2>
-        <p class="sub">让 OpenBiliClaw 读到你的观看历史,推荐才懂你。最省事的方式是装浏览器扩展,它会自动同步你的 B站 登录,无需复制 cookie。</p>
+        <h2>连接浏览器扩展和平台账号</h2>
+        <p class="sub">让 OpenBiliClaw 读到你在各平台的真实行为,推荐才懂你。最省事的方式是装浏览器扩展,它会在初始化时使用当前浏览器里已登录的平台账号。</p>
         <ol class="ext-steps">
           <li>安装 OpenBiliClaw 浏览器扩展（Chrome / Edge）</li>
-          <li>在浏览器里登录 <b>bilibili.com</b></li>
-          <li>扩展会自动把登录同步到本地后端</li>
+          <li>在浏览器里登录要接入的平台账号，例如 <b>bilibili.com</b> / <b>reddit.com</b></li>
+          <li>下一步只会检查你勾选的平台，B 站默认推荐但可以取消</li>
         </ol>
         <div id="biliStatus" class="msg show" style="background:var(--panel-2);color:var(--muted);border:1px solid var(--line)">
-          <span class="spin"></span>正在等待 B站 登录同步…（装好扩展并登录后会自动变绿）
+          <span class="spin"></span>正在检查 B站 登录同步…（只用 Reddit 等其他来源时可以直接跳过）
         </div>
         <div class="hint" style="margin-top:14px">没装扩展也行——可以先跳过,之后在主界面随时连接。</div>
         <div class="row-actions">
@@ -174,7 +174,7 @@
         <p class="sub">和浏览器插件里的「开始初始化」走同一套流程：先检查 AI 服务和所选平台登录，再拉取数据、生成画像、补齐首轮内容池。B 站默认勾选但可取消，至少保留一个来源。</p>
         <div id="initSources" class="init-sources"></div>
         <ul id="initChecklist" class="init-checks">
-          <li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>
+          <li class="init-hint-row">点「开始初始化」会先检查 AI 服务 / 向量模型，以及所选平台的登录状态。</li>
         </ul>
         <div id="initProgress" class="progress" hidden>
           <div class="progress-track"><div class="progress-fill" id="initProgressBar"></div></div>
@@ -194,7 +194,7 @@
         <ul class="check-list">
           <li><span class="tick">✓</span><div><b>AI 大脑</b><br><span class="hint" id="doneLlm">已连接</span></div></li>
           <li><span class="tick">✓</span><div><b>本地语义引擎</b><br><span class="hint">Ollama bge-m3 已随包就绪,推荐去重 / 多样性已开启</span></div></li>
-          <li id="biliDone" class="pending"><span class="tick">…</span><div><b>B站 账号</b><br><span class="hint" id="doneBili">可稍后在主界面连接</span></div></li>
+          <li id="biliDone" class="pending"><span class="tick">…</span><div><b>平台账号</b><br><span class="hint" id="doneBili">B 站可稍后连接；Reddit 等来源按初始化勾选项检查</span></div></li>
           <li><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint">画像和推荐池已就绪</span></div></li>
         </ul>
         <div class="row-actions">
@@ -236,6 +236,7 @@
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" },
       { key: "zhihu", label: "知乎" },
+      { key: "reddit", label: "Reddit" },
     ];
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
@@ -702,11 +703,11 @@
           biliConnected = true;
           clearInterval(biliPoll); biliPoll = null;
           $("#biliStatus").className = "msg show ok";
-          $("#biliStatus").innerHTML = "✓ 已检测到 B站 登录,账号已连接！";
+          $("#biliStatus").innerHTML = "✓ 已检测到 B站 登录；其他平台会在初始化时按勾选项检查。";
           $("#next1").textContent = "继续 →";
           const done = $("#biliDone"); done.classList.remove("pending");
           done.querySelector(".tick").textContent = "✓";
-          $("#doneBili").textContent = "已连接";
+          $("#doneBili").textContent = "B 站已连接；其他平台按初始化勾选项检查";
         }
       };
       tick();

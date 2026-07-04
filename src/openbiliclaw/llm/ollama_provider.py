@@ -165,6 +165,16 @@ class OllamaProvider(OpenAIProvider):
             data = await self._post_chat(payload)
             content = str((data.get("message") or {}).get("content") or "")
         if not content.strip():
+            reasoning = self._reasoning_like_content(data.get("message") or {})
+            if reasoning:
+                finish_reason = str(
+                    data.get("done_reason") or data.get("finish_reason") or "unknown"
+                )
+                raise LLMResponseError(
+                    "ollama returned reasoning but no final content "
+                    f"(finish_reason={finish_reason}); "
+                    "disable thinking/reasoning or increase max_tokens"
+                )
             raise LLMResponseError("ollama returned empty content")
 
         usage = None

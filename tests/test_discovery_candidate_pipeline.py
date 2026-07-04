@@ -231,6 +231,25 @@ class _LimitRecordingProducingEngine:
         ]
 
 
+class _SequenceProducingEngine:
+    def __init__(self, batches: list[list[DiscoveredContent]]) -> None:
+        self.batches = batches
+        self.calls: list[int] = []
+
+    async def produce_candidates(
+        self,
+        profile: object,
+        *,
+        strategies: list[str],
+        limit: int,
+        **kwargs: object,
+    ) -> list[DiscoveredContent]:
+        self.calls.append(limit)
+        if not self.batches:
+            return []
+        return self.batches.pop(0)
+
+
 class _NicknameRecordingDatabase:
     def __init__(self) -> None:
         self.nicknames: list[str] = []
@@ -268,6 +287,36 @@ def test_pipeline_pool_count_uses_dynamic_xhs_self_nickname() -> None:
 
     assert pipeline._pool_available_count() == 0  # noqa: SLF001
     assert db.nicknames == ["current"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_claims_two_eval_batches_by_default(tmp_path: Path) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key=f"bilibili:BV_DEFAULT_CONCURRENCY_{index}",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id=f"BV_DEFAULT_CONCURRENCY_{index}",
+                content_url=f"https://www.bilibili.com/video/BV_DEFAULT_CONCURRENCY_{index}",
+                title=f"Candidate {index}",
+            )
+            for index in range(5)
+        ]
+    )
+    engine = _BatchRecordingEvalEngine()
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=2)
+
+    assert result["evaluated"] == 4
+    assert engine.batch_lengths == [4]
 
 
 @pytest.mark.asyncio
@@ -327,6 +376,71 @@ async def test_pipeline_evaluates_mixed_pending_and_caches_accepted(tmp_path: Pa
     counts = db.count_discovery_candidates_by_status()
     assert counts["cached"] == 1
     assert counts["rejected_low_score"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_e2e_dedupes_text_first_description_before_llm(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    summary = "知乎回答摘要，正文和描述来自同一段插件抓取文本。"
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="zhihu:answer:dedupe-e2e",
+                source_platform="zhihu",
+                source_strategy="zhihu-hot",
+                content_type="answer",
+                content_id="answer:dedupe-e2e",
+                content_url="https://www.zhihu.com/question/1/answer/2",
+                title="知乎问题",
+                author_name="知乎作者",
+                description=summary,
+                body_text=summary,
+            )
+        ]
+    )
+    llm = _ScoringLLM(
+        [
+            {
+                "content_id": "answer:dedupe-e2e",
+                "score": 0.82,
+                "reason": "text fit",
+                "topic_group": "knowledge",
+                "style_key": "deep_dive",
+            }
+        ]
+    )
+    discovery_engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=discovery_engine,
+        pool_target_count=30,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    assert result == {"evaluated": 1, "cached": 1, "rejected": 0}
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM content_cache WHERE content_id='answer:dedupe-e2e'"
+        ).fetchone()[0]
+        == 1
+    )
+    user_input = str(llm.calls[0]["user_input"])
+    batch_json = (
+        user_input.split("<content_batch>", 1)[1]
+        .split(
+            "</content_batch>",
+            1,
+        )[0]
+        .strip()
+    )
+    items = json.loads(batch_json)
+    assert items[0]["source_platform"] == "zhihu"
+    assert items[0]["body_text"] == summary
+    assert items[0]["description"] == ""
 
 
 @pytest.mark.asyncio
@@ -753,6 +867,43 @@ async def test_pipeline_skips_concurrent_drain_calls(
 
 
 @pytest.mark.asyncio
+async def test_pipeline_releases_eval_claims_when_cancelled(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key="bilibili:BVCANCEL",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id="BVCANCEL",
+                title="Cancel me",
+            )
+        ]
+    )
+    engine = _BlockingEvalEngine()
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+    )
+
+    task = asyncio.create_task(pipeline.drain_pending(profile=_build_profile()))
+    await engine.started.wait()
+    assert db.count_discovery_candidates_by_status()["evaluating"] == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    counts = db.count_discovery_candidates_by_status()
+    assert counts["pending_eval"] == 1
+    assert counts.get("evaluating", 0) == 0
+
+
+@pytest.mark.asyncio
 async def test_pipeline_clears_admitted_snapshot_when_drain_lock_is_held(
     tmp_path: Path,
 ) -> None:
@@ -880,6 +1031,40 @@ async def test_pipeline_runs_eval_immediately_when_minimum_batch_is_ready(
     )
 
     result = await pipeline.drain_pending(profile=_build_profile(), batch_size=30)
+
+    assert result == {"evaluated": 8, "cached": 8, "rejected": 0}
+    assert engine.batch_lengths == [8]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_honors_minimum_eval_batch_when_caller_limit_is_smaller(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    db.enqueue_discovery_candidates(
+        [
+            DiscoveryCandidateWrite(
+                candidate_key=f"bilibili:BVMIN{i}",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id=f"BVMIN{i}",
+                title=f"Minimum {i}",
+            )
+            for i in range(8)
+        ]
+    )
+    engine = _BatchRecordingEvalEngine()
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+        min_eval_batch_size=8,
+        max_eval_wait_seconds=60,
+        time_fn=lambda: 1000.0,
+    )
+
+    result = await pipeline.drain_pending(profile=_build_profile(), batch_size=6)
 
     assert result == {"evaluated": 8, "cached": 8, "rejected": 0}
     assert engine.batch_lengths == [8]
@@ -1237,3 +1422,77 @@ async def test_pipeline_oversamples_discovery_to_reduce_duplicate_starvation(
     assert engine.limits == [20]
     assert enqueued == 20
     assert db.count_discovery_candidates_by_status()["pending_eval"] == 20
+
+
+@pytest.mark.asyncio
+async def test_pipeline_supply_filters_known_content_and_refills(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    _seed_visible_pool_row(db, "BVDUP")
+    engine = _SequenceProducingEngine(
+        [
+            [
+                DiscoveredContent(bvid="BVDUP", title="Already cached", source_strategy="search"),
+                DiscoveredContent(bvid="BVNEW1", title="Fresh 1", source_strategy="search"),
+            ],
+            [
+                DiscoveredContent(bvid="BVNEW2", title="Fresh 2", source_strategy="explore"),
+            ],
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+        candidate_fetch_oversample=1,
+    )
+
+    result = await pipeline.ensure_pending_supply(
+        profile=_build_profile(),
+        strategies=["search", "explore"],
+        limit=2,
+        target_pending=2,
+        max_attempts=2,
+    )
+
+    assert result["inserted"] == 2
+    assert result["pending_eval"] == 2
+    assert engine.calls == [2, 4]
+    rows = db.claim_discovery_candidates_for_eval(limit=10)
+    assert [row["bvid"] for row in rows] == ["BVNEW1", "BVNEW2"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_supply_retries_after_zero_insert_duplicate_batch(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "test.db")
+    db.initialize()
+    _seed_visible_pool_row(db, "BVDUP")
+    engine = _SequenceProducingEngine(
+        [
+            [DiscoveredContent(bvid="BVDUP", title="Already cached", source_strategy="search")],
+            [DiscoveredContent(bvid="BVNEW", title="Fresh", source_strategy="explore")],
+        ]
+    )
+    pipeline = DiscoveryCandidatePipeline(
+        database=db,
+        discovery_engine=engine,  # type: ignore[arg-type]
+        pool_target_count=30,
+        candidate_fetch_oversample=1,
+    )
+
+    result = await pipeline.ensure_pending_supply(
+        profile=_build_profile(),
+        strategies=["search", "explore"],
+        limit=1,
+        target_pending=1,
+        max_attempts=2,
+    )
+
+    assert result["inserted"] == 1
+    assert engine.calls == [1, 2]
+    rows = db.claim_discovery_candidates_for_eval(limit=10)
+    assert [row["bvid"] for row in rows] == ["BVNEW"]

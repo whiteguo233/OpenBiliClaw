@@ -156,12 +156,14 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         bilibili_client=bilibili_client,
         concurrency=concurrency,
         database=database,
+        embedding_service=embedding_service,
     )
     trending_strategy = TrendingStrategy(
         bilibili_client=bilibili_client,
         llm_service=llm_service,
         concurrency=concurrency,
         database=database,
+        embedding_service=embedding_service,
     )
     related_strategy = RelatedChainStrategy(
         bilibili_client=bilibili_client,

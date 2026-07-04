@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
-_NOISY_HTTP_LOGGERS = ("httpx", "httpcore")
+_NOISY_LOGGERS = ("httpx", "httpcore", "openai", "openai._base_client")
 
 
 def _coerce_level(level_name: str) -> int:
@@ -289,5 +289,5 @@ def configure_logging(
 
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
-    for logger_name in _NOISY_HTTP_LOGGERS:
+    for logger_name in _NOISY_LOGGERS:
         logging.getLogger(logger_name).setLevel(logging.WARNING)

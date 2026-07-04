@@ -14,7 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-LLM_CONNECTIVITY_PROBE_MAX_TOKENS = 1024
+LLM_CONNECTIVITY_PROBE_MAX_TOKENS = 4096
 
 
 class LLMProviderError(Exception):

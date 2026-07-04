@@ -1356,6 +1356,16 @@
       color: #0f88eb;
     }
 
+    .recommendation-source-corner.source-platform-reddit {
+      background: rgba(255, 69, 0, 0.78);
+      color: #fff;
+    }
+
+    .recommendation-cover.is-fallback .recommendation-source-corner.source-platform-reddit {
+      background: rgba(255, 69, 0, 0.12);
+      color: #d93f00;
+    }
+
     .recommendation-title {
       font-size: 17px;
       line-height: 1.38;
@@ -2341,6 +2351,57 @@
       gap: 8px;
       margin-bottom: 10px;
     }
+    .edit-interest-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .edit-interest-domain {
+      border: 1px solid rgba(230, 236, 245, 0.96);
+      border-left: 2px solid rgba(251, 114, 153, 0.52);
+      border-radius: 12px;
+      padding: 8px 9px 8px 10px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .edit-interest-domain-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .edit-domain-chip {
+      background: rgba(255, 240, 246, 0.96);
+      color: var(--brand-strong);
+      font-weight: 700;
+    }
+    .edit-specific-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 7px 0 0;
+      padding-left: 10px;
+      border-left: 1px solid rgba(251, 114, 153, 0.24);
+    }
+    .edit-specific-chip {
+      background: rgba(248, 250, 255, 0.96);
+      color: var(--text-secondary);
+    }
+    .edit-specific-add-row {
+      margin-top: 6px;
+      padding-left: 11px;
+    }
+    .edit-specific-add-row .edit-add-input {
+      padding: 7px 10px;
+      font-size: 11px;
+    }
+    .edit-specific-add-row .edit-add-btn {
+      min-height: 32px;
+      padding: 6px 11px;
+    }
+    .edit-specific-empty {
+      margin: 0;
+    }
     .edit-chip {
       display: inline-flex;
       align-items: center;
@@ -2392,11 +2453,19 @@
       font-size: 12px;
     }
     .edit-add-btn {
+      border: 0;
+      border-radius: 12px;
       background: rgba(240, 247, 255, 0.96);
       color: #397fcb;
+      cursor: pointer;
+      font-size: 12px;
       font-weight: 700;
       min-height: 36px;
       padding: 8px 14px;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+    .edit-add-btn:hover {
+      background: rgba(222, 238, 255, 0.98);
     }
     .edit-text-input {
       margin-bottom: 8px;
@@ -5220,6 +5289,68 @@
         <p class="settings-hint">知乎通过已登录浏览器插件执行搜索 / 热榜 / 首页 / 作者 / 相关任务；后端只入队任务并接收结果。</p>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="reddit">
+        <h3><span class="section-icon">R</span> Reddit</h3>
+        <div class="settings-field-row">
+          <input id="cfgRedditEnabled" type="checkbox">
+          <label for="cfgRedditEnabled">启用 Reddit 来源</label>
+        </div>
+        <p class="settings-hint source-status-row" id="cfgRedditStatus" data-source-status="reddit"><span class="src-dot">●</span> <span class="src-detail">Reddit 来源状态加载中…</span></p>
+        <div class="settings-field">
+          <label for="cfgRedditBackend">后端</label>
+          <select id="cfgRedditBackend">
+            <option value="rdt">rdt-cli</option>
+            <option value="extension">OpenBiliClaw 插件</option>
+            <option value="opencli">OpenCLI extension</option>
+            <option value="auto">自动选择命令后端</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label>Reddit discovery 分支</label>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeSearch" type="checkbox">
+            <label for="cfgRedditModeSearch">搜索</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeHot" type="checkbox">
+            <label for="cfgRedditModeHot">热门</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeSubreddit" type="checkbox">
+            <label for="cfgRedditModeSubreddit">Subreddit</label>
+          </div>
+          <div class="settings-field-row">
+            <input id="cfgRedditModeRelated" type="checkbox">
+            <label for="cfgRedditModeRelated">相关</label>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailySearchBudget">Reddit 每日搜索条目</label>
+          <input id="cfgRedditDailySearchBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailyHotBudget">Reddit 每日热门条目</label>
+          <input id="cfgRedditDailyHotBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailySubredditBudget">Reddit 每日 subreddit 条目</label>
+          <input id="cfgRedditDailySubredditBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditDailyRelatedBudget">Reddit 每日相关条目</label>
+          <input id="cfgRedditDailyRelatedBudget" type="number" min="0" step="1" placeholder="300">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditRequestInterval">Reddit 任务轮询间隔秒数</label>
+          <input id="cfgRedditRequestInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgRedditMinInterval">Reddit 最小调度间隔分钟数</label>
+          <input id="cfgRedditMinInterval" type="number" min="0" step="1" placeholder="60">
+        </div>
+        <p class="settings-hint">Reddit 日常 discovery 默认使用 rdt-cli 登录态命令后端；rdt / opencli 不可用时自动 fallback 到 OpenBiliClaw 插件任务。初始化 saved/upvoted/subscribed 信号仍通过插件复用当前浏览器登录态。默认每个分支每日 300 条。</p>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="browser">
         <h3><span class="section-icon">&#x1F310;</span> 通用网页源</h3>
         <div class="settings-field">
@@ -5257,6 +5388,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareZhihu">候选池知乎占比</label>
           <input id="cfgPoolShareZhihu" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareReddit">候选池 Reddit 占比</label>
+          <input id="cfgPoolShareReddit" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

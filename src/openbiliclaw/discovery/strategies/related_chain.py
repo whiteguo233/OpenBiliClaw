@@ -310,13 +310,19 @@ class RelatedChainStrategy(DiscoveryStrategy):
 
     def _event_seed_bvids_with_title(self) -> list[tuple[str, str]]:
         events = self.memory_manager.query_events(
-            event_types=["view", "favorite", "like"],
+            event_types=["favorite", "like", "coin", "share", "feedback", "view"],
             limit=max(self.max_seeds * 5, 20),
         )
         # Diversify seeds: pick from different titles/topics to avoid echo chamber
         seed_pairs: list[tuple[str, str]] = []
         seen_title_prefixes: set[str] = set()
-        for event in events:
+        ranked_events = sorted(
+            enumerate(events),
+            key=lambda pair: (-self._event_seed_priority(pair[1]), pair[0]),
+        )
+        for _, event in ranked_events:
+            if self._event_seed_priority(event) < 0:
+                continue
             bvid = self._extract_bvid_from_event(event)
             if not bvid:
                 continue
@@ -329,6 +335,42 @@ class RelatedChainStrategy(DiscoveryStrategy):
                 seen_title_prefixes.add(prefix)
             seed_pairs.append((bvid, full_title))
         return seed_pairs
+
+    @classmethod
+    def _event_seed_priority(cls, event: dict[str, object]) -> int:
+        event_type = str(event.get("event_type", "") or "").strip().lower()
+        metadata = cls._event_metadata(event)
+        feedback_type = str(metadata.get("feedback_type", "") or "").strip().lower()
+        reaction = str(metadata.get("reaction", "") or "").strip().lower()
+        satisfaction = str(event.get("inferred_satisfaction", "") or "").strip().lower()
+        if satisfaction == "negative" or feedback_type == "dislike" or reaction == "thumbs_down":
+            return -1
+        if event_type in {"favorite", "coin", "share"}:
+            return 100
+        if event_type == "like":
+            return 90
+        if event_type == "feedback" and (
+            satisfaction == "positive" or feedback_type in {"like", "favorite", "positive"}
+        ):
+            return 85
+        if event_type == "view" and satisfaction == "positive":
+            return 60
+        if satisfaction == "positive":
+            return 50
+        if event_type == "view":
+            return 10
+        return 20
+
+    @staticmethod
+    def _event_metadata(event: dict[str, object]) -> dict[str, object]:
+        metadata = event.get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                parsed = json.loads(metadata)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return metadata if isinstance(metadata, dict) else {}
 
     async def _preference_seed_bvids(self, profile: SoulProfile) -> list[str]:
         cooldown_remaining = search_cooldown_remaining(self.bilibili_client)
@@ -377,16 +419,10 @@ class RelatedChainStrategy(DiscoveryStrategy):
 
     @staticmethod
     def _extract_bvid_from_event(event: dict[str, object]) -> str:
-        metadata = event.get("metadata", {})
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                metadata = {}
-        if isinstance(metadata, dict):
-            bvid = str(metadata.get("bvid", "")).strip()
-            if bvid:
-                return bvid
+        metadata = RelatedChainStrategy._event_metadata(event)
+        bvid = str(metadata.get("bvid", "")).strip()
+        if bvid:
+            return bvid
 
         url = str(event.get("url", "")).strip()
         match = re.search(r"/video/(BV[\w]+)", url)

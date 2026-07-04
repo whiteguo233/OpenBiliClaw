@@ -96,6 +96,18 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
+      - name: Sanitize apt sources for Playwright
+        shell: bash
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \
+            \( -name "*microsoft*" -o -name "*azure-cli*" \) \
+            -print -delete || true
+          sudo grep -rlE 'packages\.microsoft\.com|azure-cli' /etc/apt/sources.list.d 2>/dev/null \
+            | xargs -r sudo rm -f || true
+          if [ -f /etc/apt/sources.list ]; then
+            sudo sed -i.bak '/packages\.microsoft\.com/d;/azure-cli/d' /etc/apt/sources.list
+          fi
+
       - name: Install Playwright Chromium
         run: python -m playwright install --with-deps chromium
 

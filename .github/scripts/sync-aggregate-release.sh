@@ -27,51 +27,38 @@ notes_file="$(mktemp)"
 download_dir="$(mktemp -d)"
 trap 'rm -f "$notes_file"; rm -rf "$download_dir"' EXIT
 
-latest_release_with_prefix() {
+release_with_project_version() {
   local prefix="$1"
+  local expected_tag="${prefix}${project_version}"
 
-  if [ -n "$release_tag" ] && [[ "$release_tag" == "$prefix"* ]]; then
+  if [ -n "$release_tag" ] && [ "$release_tag" = "$expected_tag" ]; then
     printf '%s\n' "$release_tag"
     return
   fi
 
-  local releases
-  releases="$(
-    gh release list \
-      --repo "$repo" \
-      --limit 100 \
-      --json tagName,isDraft \
-      --jq '.[] | select(.isDraft == false) | .tagName'
-  )"
-
-  while IFS= read -r tag_name; do
-    if [[ "$tag_name" == "$prefix"* ]]; then
-      printf '%s\n' "$tag_name"
-      return
-    fi
-  done <<< "$releases"
+  if gh release view "$expected_tag" --repo "$repo" >/dev/null 2>&1; then
+    printf '%s\n' "$expected_tag"
+  fi
 }
 
-extension_tag="$(latest_release_with_prefix "extension-v")"
-desktop_tag="$(latest_release_with_prefix "desktop-v")"
+extension_tag="$(release_with_project_version "extension-v")"
+desktop_tag="$(release_with_project_version "desktop-v")"
 
 extension_line="Not published yet."
 chrome_extension_asset_line="No Chrome-compatible extension release asset is available yet."
-firefox_extension_asset_line="No Firefox extension release asset is available yet."
+firefox_signed_asset_line="No signed Firefox extension XPI is available yet."
+firefox_dev_asset_line="No Firefox temporary-loading zip is available yet."
 if [ -n "$extension_tag" ]; then
   extension_version="${extension_tag#extension-v}"
   extension_line="[${extension_tag}](https://github.com/${repo}/releases/tag/${extension_tag})"
   chrome_extension_asset_line="\`openbiliclaw-extension-v${extension_version}.zip\`"
-  firefox_extension_asset_line="\`openbiliclaw-extension-v${extension_version}-firefox.zip\`"
+  firefox_dev_asset_line="\`openbiliclaw-extension-v${extension_version}-firefox.zip\`"
 fi
 
 desktop_line="Not published yet."
 desktop_note=""
 if [ -n "$desktop_tag" ]; then
   desktop_line="[${desktop_tag}](https://github.com/${repo}/releases/tag/${desktop_tag})"
-  if [ "$desktop_tag" != "desktop-v${project_version}" ]; then
-    desktop_note=" The latest desktop installer can lag the backend source version."
-  fi
 fi
 
 declare -a assets=()
@@ -155,8 +142,15 @@ download_release_assets() {
   done < <(find "$target_dir" -maxdepth 1 -type f -print0)
 }
 
-download_release_assets "$extension_tag" "openbiliclaw-extension-v*.zip"
+download_release_assets "$extension_tag" "openbiliclaw-extension-v*.zip" "openbiliclaw-extension-v*.xpi"
 download_release_assets "$desktop_tag" "*.dmg" "*.exe"
+
+if [ -n "$extension_tag" ]; then
+  firefox_xpi_asset_name="openbiliclaw-extension-v${extension_version}-firefox.xpi"
+  if asset_name_seen "$firefox_xpi_asset_name"; then
+    firefox_signed_asset_line="\`$firefox_xpi_asset_name\`"
+  fi
+fi
 
 asset_list="No package assets were attached by this run."
 if [ "${#assets[@]}" -gt 0 ]; then
@@ -179,7 +173,8 @@ This is the user-facing aggregate release. It keeps the current backend source t
 ## Downloads
 
 - Chrome / Edge / Brave extension: use ${chrome_extension_asset_line}
-- Firefox 140+ extension: use ${firefox_extension_asset_line}
+- Firefox 140+ extension: use ${firefox_signed_asset_line}
+- Firefox temporary debugging package: use ${firefox_dev_asset_line} via \`about:debugging\`
 - macOS / Windows desktop app: use the attached \`.dmg\` / \`.exe\` installer when present
 
 Attached package assets:
@@ -248,6 +243,67 @@ if [ "${#assets[@]}" -eq 0 ]; then
   echo "Aggregate release ${aggregate_tag} synced without package assets"
   exit 0
 fi
+
+is_aggregate_package_asset() {
+  local asset_name="$1"
+
+  case "$asset_name" in
+    openbiliclaw-extension-v*.zip | openbiliclaw-extension-v*.xpi | OpenBiliClaw-macos-v*.dmg | OpenBiliClaw-windows-*-Setup.exe)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prune_existing_package_assets() {
+  local asset_name
+
+  while IFS= read -r asset_name; do
+    if [ -z "$asset_name" ]; then
+      continue
+    fi
+    if ! is_aggregate_package_asset "$asset_name"; then
+      continue
+    fi
+
+    delete_existing_package_asset "$asset_name"
+  done < <(
+    gh release view "$aggregate_tag" \
+      --repo "$repo" \
+      --json assets \
+      --jq '.assets[].name'
+  )
+}
+
+delete_existing_package_asset() {
+  local asset_name="$1"
+  local attempt
+  local delete_log
+  delete_log="$(mktemp)"
+
+  for attempt in 1 2 3; do
+    if gh release delete-asset "$aggregate_tag" "$asset_name" --repo "$repo" --yes > /dev/null 2>"$delete_log"; then
+      rm -f "$delete_log"
+      return 0
+    fi
+
+    if grep -qi "not found" "$delete_log"; then
+      rm -f "$delete_log"
+      return 0
+    fi
+
+    cat "$delete_log" >&2
+    if [ "$attempt" -eq 3 ]; then
+      rm -f "$delete_log"
+      return 1
+    fi
+    sleep "$((attempt * 5))"
+  done
+}
+
+prune_existing_package_assets
 
 for asset in "${assets[@]}"; do
   for attempt in 1 2 3; do

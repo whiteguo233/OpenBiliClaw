@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.service import LLMService
@@ -79,12 +80,14 @@ async def _llm_xhs_keywords(
 ) -> list[str]:
     """The LLM attempt; returns ``[]`` on any failure so the caller can fall back."""
     try:
-        response = await llm_service.complete_structured_task(
+        complete_structured = llm_service.complete_structured_task
+        response = await complete_structured(
             system_instruction=_SYSTEM_PROMPT,
             user_input=_build_user_prompt(profile, count),
             temperature=0.8,
             max_tokens=512,
             caller="sources.xhs.keyword_gen",
+            **without_core_memory_kwargs(complete_structured),
         )
     except Exception as exc:
         logger.warning("xhs keyword LLM call failed: %s", exc)

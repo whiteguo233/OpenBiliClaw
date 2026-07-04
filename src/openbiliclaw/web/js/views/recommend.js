@@ -894,119 +894,144 @@ function renderCard(rawItem, index = 0) {
 
   const alreadyFeedback = feedbackDone.get(item.id);
 
-  const openBtn = createCardAction("\u{1F517} \u6253\u5F00", () => {
-    reportClick(buildRecommendationClickPayload(item, url));
-    if (url) window.open(url, "_blank");
-  });
+  const openBtn = createCardAction(
+    "打开",
+    () => {
+      reportClick(buildRecommendationClickPayload(item, url));
+      if (url) window.open(url, "_blank");
+    },
+    { ariaLabel: "打开", iconHtml: LINK_SVG_ICON, showText: true },
+  );
 
-  const likeBtn = createCardAction(alreadyFeedback === "like" ? "\u2705" : "\u{1F44D}", async () => {
-    likeBtn.disabled = true;
-    likeBtn.textContent = "\u2026";
-    try {
-      await submitFeedback(buildFeedbackPayload(item.id, "like"));
-      feedbackDone.set(item.id, "like");
-      likeBtn.textContent = "\u2705";
-    } catch {
-      likeBtn.disabled = false;
-      likeBtn.textContent = "\u{1F44D}";
-    }
-  });
+  const likeBtn = createCardAction(
+    "",
+    async () => {
+      likeBtn.disabled = true;
+      likeBtn.innerHTML = MORE_SVG_ICON;
+      try {
+        await submitFeedback(buildFeedbackPayload(item.id, "like"));
+        feedbackDone.set(item.id, "like");
+        likeBtn.innerHTML = CHECK_SVG_ICON;
+      } catch {
+        likeBtn.disabled = false;
+        likeBtn.innerHTML = THUMBS_UP_SVG_ICON;
+      }
+    },
+    { ariaLabel: "喜欢", iconHtml: alreadyFeedback === "like" ? CHECK_SVG_ICON : THUMBS_UP_SVG_ICON },
+  );
   if (alreadyFeedback === "like") likeBtn.disabled = true;
 
-  const dislikeBtn = createCardAction(alreadyFeedback === "dislike" ? "\u274C" : "\u{1F44E}", async () => {
-    dislikeBtn.disabled = true;
-    dislikeBtn.textContent = "\u2026";
-    try {
-      await submitFeedback(buildFeedbackPayload(item.id, "dislike"));
-      feedbackDone.set(item.id, "dislike");
-      // Remove the card from the list with a brief fade-out.
-      card.style.transition = "opacity 0.3s ease, max-height 0.3s ease";
-      card.style.opacity = "0";
-      card.style.maxHeight = card.offsetHeight + "px";
-      card.style.overflow = "hidden";
-      setTimeout(() => {
-        card.style.maxHeight = "0";
-        card.style.marginBottom = "0";
-        card.style.padding = "0";
-      }, 150);
-      setTimeout(() => {
-        card.remove();
-        patchState({
-          recommendations: state.recommendations.filter((r) => r.id !== item.id),
-        });
-      }, 450);
-    } catch {
-      dislikeBtn.disabled = false;
-      dislikeBtn.textContent = "\u{1F44E}";
-    }
-  });
+  const dislikeBtn = createCardAction(
+    "",
+    async () => {
+      dislikeBtn.disabled = true;
+      dislikeBtn.innerHTML = MORE_SVG_ICON;
+      try {
+        await submitFeedback(buildFeedbackPayload(item.id, "dislike"));
+        feedbackDone.set(item.id, "dislike");
+        // Remove the card from the list with a brief fade-out.
+        card.style.transition = "opacity 0.3s ease, max-height 0.3s ease";
+        card.style.opacity = "0";
+        card.style.maxHeight = card.offsetHeight + "px";
+        card.style.overflow = "hidden";
+        setTimeout(() => {
+          card.style.maxHeight = "0";
+          card.style.marginBottom = "0";
+          card.style.padding = "0";
+        }, 150);
+        setTimeout(() => {
+          card.remove();
+          patchState({
+            recommendations: state.recommendations.filter((r) => r.id !== item.id),
+          });
+        }, 450);
+      } catch {
+        dislikeBtn.disabled = false;
+        dislikeBtn.innerHTML = THUMBS_DOWN_SVG_ICON;
+      }
+    },
+    {
+      ariaLabel: "不感兴趣",
+      iconHtml: alreadyFeedback === "dislike" ? X_SVG_ICON : THUMBS_DOWN_SVG_ICON,
+    },
+  );
   if (alreadyFeedback === "dislike") dislikeBtn.disabled = true;
 
-  const commentBtn = createCardAction("\u{1F4AC}", () => {
-    feedbackSheet = { itemId: item.id, note: "", submitState: "idle" };
-    renderFeedbackSheet();
-  });
+  const commentBtn = createCardAction(
+    "",
+    () => {
+      feedbackSheet = { itemId: item.id, note: "", submitState: "idle" };
+      renderFeedbackSheet();
+    },
+    { ariaLabel: "聊一聊", iconHtml: MESSAGE_SVG_ICON },
+  );
 
   const savedNow = watchLaterSaved.has(item.bvid);
-  const starBtn = createCoverChip(CLOCK_SVG_ICON, "watch-later-btn", async () => {
-    if (watchLaterBusy) return;
-    watchLaterBusy = true;
-    const wasSaved = watchLaterSaved.has(item.bvid);
-    // optimistic toggle
-    setChipState(starBtn, !wasSaved, wasSaved ? "☆" : "★");
-    try {
-      if (wasSaved) {
-        await removeFromWatchLater(item.bvid);
-        watchLaterSaved.delete(item.bvid);
-      } else {
-        await addToWatchLater(item.bvid);
-        watchLaterSaved.add(item.bvid);
+  const starBtn = createCoverChip(
+    CLOCK_SVG_ICON,
+    "watch-later-btn",
+    async () => {
+      if (watchLaterBusy) return;
+      watchLaterBusy = true;
+      const wasSaved = watchLaterSaved.has(item.bvid);
+      // optimistic toggle
+      setChipState(starBtn, !wasSaved, wasSaved ? "☆" : "★");
+      try {
+        if (wasSaved) {
+          await removeFromWatchLater(item.bvid);
+          watchLaterSaved.delete(item.bvid);
+        } else {
+          await addToWatchLater(item.bvid);
+          watchLaterSaved.add(item.bvid);
+        }
+      } catch {
+        // revert on failure
+        setChipState(starBtn, wasSaved, wasSaved ? "★" : "☆");
+      } finally {
+        watchLaterBusy = false;
       }
-    } catch {
-      // revert on failure
-      setChipState(starBtn, wasSaved, wasSaved ? "★" : "☆");
-    } finally {
-      watchLaterBusy = false;
-    }
-  });
+    },
+    { label: "稍后再看", pressedLabel: "取消稍后再看" },
+  );
   setChipState(starBtn, savedNow, savedNow ? "★" : "☆");
-  starBtn.title = savedNow ? "取消稍后再看" : "稍后再看";
   // lazy-load real state from backend
   watchLaterStatus(item.bvid).then((res) => {
     if (res && res.saved) {
       watchLaterSaved.add(item.bvid);
       setChipState(starBtn, true, "★");
-      starBtn.title = "取消稍后再看";
     }
   }).catch(() => {});
 
   const favNow = favoriteSaved.has(item.bvid);
-  const favBtn = createCoverChip(STAR_SVG_ICON, "favorite-btn", async () => {
-    if (favoriteBusy) return;
-    favoriteBusy = true;
-    const wasSaved = favoriteSaved.has(item.bvid);
-    setChipState(favBtn, !wasSaved, wasSaved ? "♡" : "♥");
-    try {
-      if (wasSaved) {
-        await removeFromFavorite(item.bvid);
-        favoriteSaved.delete(item.bvid);
-      } else {
-        await addToFavorite(item.bvid);
-        favoriteSaved.add(item.bvid);
+  const favBtn = createCoverChip(
+    STAR_SVG_ICON,
+    "favorite-btn",
+    async () => {
+      if (favoriteBusy) return;
+      favoriteBusy = true;
+      const wasSaved = favoriteSaved.has(item.bvid);
+      setChipState(favBtn, !wasSaved, wasSaved ? "♡" : "♥");
+      try {
+        if (wasSaved) {
+          await removeFromFavorite(item.bvid);
+          favoriteSaved.delete(item.bvid);
+        } else {
+          await addToFavorite(item.bvid);
+          favoriteSaved.add(item.bvid);
+        }
+      } catch {
+        setChipState(favBtn, wasSaved, wasSaved ? "♥" : "♡");
+      } finally {
+        favoriteBusy = false;
       }
-    } catch {
-      setChipState(favBtn, wasSaved, wasSaved ? "♥" : "♡");
-    } finally {
-      favoriteBusy = false;
-    }
-  });
+    },
+    { label: "收藏", pressedLabel: "取消收藏" },
+  );
   setChipState(favBtn, favNow, favNow ? "♥" : "♡");
-  favBtn.title = favNow ? "取消收藏" : "收藏";
   favoriteStatus(item.bvid).then((res) => {
     if (res && res.saved) {
       favoriteSaved.add(item.bvid);
       setChipState(favBtn, true, "♥");
-      favBtn.title = "取消收藏";
     }
   }).catch(() => {});
 
@@ -1039,13 +1064,37 @@ function renderCard(rawItem, index = 0) {
   return card;
 }
 
-function createCardAction(label, handler) {
+function createCardAction(label, handler, { ariaLabel = "", iconHtml = "", showText = false } = {}) {
   const btn = document.createElement("button");
   btn.className = "card-action-btn";
-  btn.textContent = label;
+  btn.type = "button";
+  if (ariaLabel) {
+    btn.setAttribute("aria-label", ariaLabel);
+    btn.title = ariaLabel;
+  }
+  if (iconHtml) {
+    btn.innerHTML = `${iconHtml}${showText && label ? `<span>${esc(label)}</span>` : ""}`;
+  } else {
+    btn.textContent = label;
+  }
   btn.addEventListener("click", handler);
   return btn;
 }
+
+const LINK_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"/></svg>';
+const THUMBS_UP_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg>';
+const THUMBS_DOWN_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg>';
+const MESSAGE_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
+const CHECK_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const X_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const MORE_SVG_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>';
 
 // 稍后再看 = 时钟（一眼看懂"待会看"）；收藏 = 星星。SVG 图标族统一，
 // 选中态由 aria-pressed + CSS 驱动（时钟变色、星星填充），不做字形替换。
@@ -1054,11 +1103,17 @@ const CLOCK_SVG_ICON =
 const STAR_SVG_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17.1l-5.31 2.8 1.01-5.9L3.41 9.83l5.93-.86z"/></svg>';
 
-function createCoverChip(iconHtml, cls, handler) {
+function createCoverChip(iconHtml, cls, handler, { label = "", pressedLabel = "" } = {}) {
   const btn = document.createElement("button");
   btn.className = "cover-chip " + cls;
   btn.type = "button";
   btn.innerHTML = iconHtml;
+  if (label) {
+    btn.dataset.label = label;
+    btn.dataset.pressedLabel = pressedLabel || label;
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
   btn.setAttribute("aria-pressed", "false");
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1069,6 +1124,11 @@ function createCoverChip(iconHtml, cls, handler) {
 
 function setChipState(btn, pressed) {
   btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+  const label = pressed ? btn.dataset.pressedLabel : btn.dataset.label;
+  if (label) {
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
 }
 
 // ── Feedback Bottom Sheet ────────────────────────────────────

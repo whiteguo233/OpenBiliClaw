@@ -258,7 +258,11 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
     assert contents[2].franchise_key == ""
 
     # Cache tuple is the new 5-tuple shape and carries franchise_key.
-    cache_key = engine._batch_eval_cache_key(contents[0], profile, negative_revision=None)
+    cache_key = engine._batch_eval_cache_key(
+        contents[0],
+        profile_digest=engine._evaluation_profile_digest(profile),
+        negative_digest=engine._negative_examples_digest(None),
+    )
     cached = engine._eval_cache[cache_key]
     assert len(cached) == 5
     assert cached[4] == "原神"
@@ -276,18 +280,17 @@ async def test_evaluator_propagates_llm_franchise_key_through_to_db(
 
 
 @pytest.mark.asyncio
-async def test_evaluate_content_batch_default_size_30_uses_single_llm_call(
+async def test_evaluate_content_batch_default_size_45_uses_single_llm_call(
     tmp_path: Path,
 ) -> None:
-    """v0.3.25+ regression: default ``batch_size`` was raised from 10 → 30
-    so a typical strategy's full candidate slate (capped at
-    ``_EVALUATE_BATCH_HARD_CAP=30``) goes through the LLM in a single
-    call instead of three. This amortises the ~3500-token fixed prompt
-    overhead (system rules + profile_summary) across more items.
+    """Regression: default text ``batch_size`` is 45 so a larger eval slate
+    goes through the LLM in a single call instead of being split at 30.
+    This amortises the fixed prompt overhead (system rules + profile_summary)
+    across more items on long-context models.
 
-    Concretely: 25 candidates evaluated in one batch should produce
-    exactly 1 LLM call, not 3 (which the old 10-item batch_size would
-    have caused: ceil(25/10) = 3).
+    Concretely: 44 candidates evaluated in one text batch should produce
+    exactly 1 LLM call, not 2 (which the old 30-item batch_size would
+    have caused: ceil(44/30) = 2).
     """
     from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 
@@ -337,13 +340,13 @@ async def test_evaluate_content_batch_default_size_30_uses_single_llm_call(
     from openbiliclaw.soul.profile import SoulProfile
 
     profile = SoulProfile()
-    contents = [DiscoveredContent(bvid=f"BV{i}", title=f"item {i}") for i in range(25)]
+    contents = [DiscoveredContent(bvid=f"BV{i}", title=f"item {i}") for i in range(44)]
 
     scores = await engine.evaluate_content_batch(contents, profile, source_context="test")
 
-    assert len(scores) == 25
+    assert len(scores) == 44
     assert fake_llm.call_count == 1, (
-        f"expected single LLM call with batch_size=30 default, got {fake_llm.call_count}"
+        f"expected single LLM call with batch_size=45 default, got {fake_llm.call_count}"
     )
 
 

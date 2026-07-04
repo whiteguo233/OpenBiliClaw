@@ -1,6 +1,6 @@
 {
   "name": "openbiliclaw-extension",
-  "version": "0.3.94",
+  "version": "0.3.152",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,11 +15,14 @@
     "package:only": "node scripts/package.mjs --no-build",
     "package:firefox": "node scripts/package-firefox.mjs",
     "package:firefox:only": "node scripts/package-firefox.mjs --no-build",
+    "sign:firefox": "node scripts/sign-firefox.mjs",
+    "sign:firefox:only": "node scripts/sign-firefox.mjs --no-build",
     "webstore:upload": "node scripts/chrome-webstore-upload.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.29",
     "esbuild": "^0.25.10",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "web-ext": "^10.4.0"
   }
 }

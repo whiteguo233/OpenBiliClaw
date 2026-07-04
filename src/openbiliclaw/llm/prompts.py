@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
@@ -33,6 +33,21 @@ def _platform_display_name(source_platform: str) -> str:
     return _PLATFORM_DISPLAY_NAMES.get(source_platform, "内容")
 
 
+def _profile_prompt_blocks(
+    profile_summary: dict[str, object],
+    profile_blocks: list[str] | None = None,
+) -> list[str]:
+    """Return profile prompt blocks, preferring caller-rendered layers."""
+
+    if profile_blocks:
+        return list(profile_blocks)
+    return [
+        "<profile_summary>",
+        json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
+        "</profile_summary>",
+    ]
+
+
 def _friend_label_from_mix(source_platform_mix: dict[str, float] | None) -> str:
     """Pick a friend label that fits the user's observed source mix.
 
@@ -58,9 +73,7 @@ def _tone_context_line(source_platform_mix: dict[str, float] | None) -> str:
         return f"请保持“{friend}”基调：懂 {display} 语境，像熟人聊天，不像客服。"
     top = [
         platform
-        for platform, _ in sorted(source_platform_mix.items(), key=lambda kv: kv[1], reverse=True)[
-            :3
-        ]
+        for platform, _ in sorted(source_platform_mix.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
     ]
     display_list = " / ".join(_platform_display_name(p) for p in top)
     return (
@@ -126,6 +139,39 @@ def _normalize_platform_blocks(platform_blocks: list[dict[str, object]]) -> list
             )
         normalized_blocks.append(normalized)
     return normalized_blocks
+
+
+def _normalize_explore_domains_block(block: dict[str, object]) -> dict[str, object]:
+    normalized = dict(block)
+    try:
+        need_domains = int(cast("Any", normalized.get("need_domains", 5)) or 5)
+    except (TypeError, ValueError):
+        need_domains = 5
+    try:
+        queries_per_domain = int(cast("Any", normalized.get("queries_per_domain", 3)) or 3)
+    except (TypeError, ValueError):
+        queries_per_domain = 3
+    normalized["need_domains"] = max(1, need_domains)
+    normalized["queries_per_domain"] = max(
+        1,
+        min(3, queries_per_domain),
+    )
+    covered = normalized.get("covered_topic_groups", [])
+    if not isinstance(covered, (list, tuple)):
+        covered = []
+    seen: set[str] = set()
+    unique_covered: list[str] = []
+    for item in covered:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique_covered.append(text)
+        if len(unique_covered) >= 12:
+            break
+    normalized["covered_topic_groups"] = unique_covered
+    normalized["intent"] = "exploratory_bilibili_queries"
+    return normalized
 
 
 def build_socratic_dialogue_prompt(
@@ -199,6 +245,10 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
 10. 如果事件的 inferred_satisfaction 是 negative，或 metadata.feedback_type 是 dislike / metadata.reaction 是 thumbs_down，表示负向证据。不要把负向事件提取为 interests / favorite_up_users；只能用于 disliked_topics、风格避让或降低相关偏好置信度。
 11. metadata.signal_strength 表示该事件作为偏好证据的强度，不是最终 interest.weight。如果存在该字段，优先用它判断证据强弱；最终 weight 仍要结合重复次数、内容一致性、最近性、负向反馈和跨来源一致性。没有 signal_strength 时按事件类型粗略理解：favorite / bookmark / save / collect 是强正向；coin / share 是强正向；like 是明确正向；comment 是主动参与但要看语义；follow / subscription 是长期兴趣信号但偏创作者/频道维度，不能直接等同于每个题材都喜欢；view / history 是弱到中等信号，单条不能推出高权重兴趣，重复出现或与强信号同向时才提高；click 只有足够停留、完播或 positive inferred_satisfaction 时才增强；search 是意图信号不是喜欢信号；hover / scroll / snapshot 只作被动上下文辅助；dialogue 是用户主动聊到，按表达强度判断。负向反馈、dislike、thumbs_down 或 inferred_satisfaction=negative 优先级最高，不能被 signal_strength 抵消。
 12. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
+13. 初始化分片时，可顺手输出少量 awareness_candidates / insight_candidates：
+    - awareness_candidates 是对本批事件的直接观察，不是人格结论，最多 3 条；
+    - insight_candidates 是有证据支撑的轻量假设，最多 2 条，confidence 0~1；
+    - 它们只用于下一步初始画像生成的临时上下文，不要为了完整而编造。
 </rules>
 
 <output_schema>
@@ -220,7 +270,21 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
   "exploration_openness": 0.6,
   "disliked_topics": ["低质标题党"],
   "cognitive_style": ["偏好类比与隐喻式理解而非纯逻辑推演", "直觉优先、自上而下的全局把握"],
-  "favorite_up_users": ["某个UP主"]
+  "favorite_up_users": ["某个UP主"],
+  "awareness_candidates": [
+    {
+      "observation": "最近连续停留在高信息密度的工具链内容上",
+      "trend": "从泛泛探索转向验证具体工作流",
+      "emotion_guess": "带着掌控感需求的好奇"
+    }
+  ],
+  "insight_candidates": [
+    {
+      "hypothesis": "用户可能不只追新工具，更在意工具能否支撑长期推进",
+      "evidence": ["多条工具链和长期项目事件同向出现"],
+      "confidence": 0.68
+    }
+  ]
 }
 </output_schema>
 
@@ -263,7 +327,7 @@ def build_soul_profile_prompt(
     tone_profile: ToneProfile | None,
     source_platform_mix: dict[str, float] | None = None,
 ) -> list[dict[str, str]]:
-    """Build a structured prompt for initial soul-profile generation."""
+    """Build a cache-friendly prompt for initial soul-profile generation."""
     system_prompt = """
 <task>
 你要生成一份人格画像。你是用户的老朋友,正坐在 ta 对面,直接跟 ta 说"你是这样一个人"。
@@ -409,25 +473,25 @@ def build_soul_profile_prompt(
 }
 </output_schema>
 """.strip()
-    system_prompt = "\n\n".join(
-        [system_prompt, _render_tone_profile(tone_profile, source_platform_mix)]
-    )
     normalized_awareness = recent_awareness or []
     normalized_insights = active_insights or []
     user_prompt = "\n\n".join(
         [
-            "<history_summary>",
-            json.dumps(history_summary, ensure_ascii=False, indent=2),
-            "</history_summary>",
+            "<tone_profile>",
+            _render_tone_profile(tone_profile, source_platform_mix),
+            "</tone_profile>",
             "<preference_summary>",
-            json.dumps(preference_summary, ensure_ascii=False, indent=2),
+            json.dumps(preference_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</preference_summary>",
             "<recent_awareness>",
-            json.dumps(normalized_awareness, ensure_ascii=False, indent=2),
+            json.dumps(normalized_awareness, ensure_ascii=False, indent=2, sort_keys=True),
             "</recent_awareness>",
             "<active_insights>",
-            json.dumps(normalized_insights, ensure_ascii=False, indent=2),
+            json.dumps(normalized_insights, ensure_ascii=False, indent=2, sort_keys=True),
             "</active_insights>",
+            "<history_summary>",
+            json.dumps(history_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            "</history_summary>",
         ]
     )
     return [
@@ -889,45 +953,6 @@ def build_dialogue_insight_prompt(
     ]
 
 
-def build_trending_rids_prompt(
-    *,
-    profile_summary: dict[str, object],
-) -> list[dict[str, str]]:
-    """Build a structured prompt for selecting relevant Bilibili ranking rids."""
-    system_prompt = """
-<task>
-你要从用户画像中推断最值得关注的 B 站排行榜分区 rid。
-</task>
-
-<rules>
-1. 输出必须是严格 JSON，不要附带解释。
-2. 只返回 3 到 5 个最相关的分区 rid，不包含 0。
-3. 选出的 rid 必须横跨至少 3 个不同的一级分区大类（如知识、科技、影视、生活、游戏等），
-   避免全部落在同一大类下，以保证热门内容来源的多样性。
-4. 至少 1 个 rid 必须来自用户画像中未出现的兴趣领域（即用户没有直接关注但可能因热度而感兴趣的分区），
-   以引入新鲜感。
-5. 如果不确定，优先选择知识、科技、影视、纪录片相关分区。
-</rules>
-
-<output_schema>
-{
-  "rids": [36, 188, 181, 119]
-}
-</output_schema>
-""".strip()
-    user_prompt = "\n\n".join(
-        [
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2),
-            "</profile_summary>",
-        ]
-    )
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
 # 100% static system prompt for single-item content evaluation.
 # All variables (source_context, source_platform, profile, content)
 # go in user_prompt — see ``build_content_evaluation_prompt``.
@@ -1035,7 +1060,9 @@ def build_content_evaluation_prompt(
 _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<task>\n"
     "你要批量评估多个候选内容与一个用户画像的匹配度。"
-    "下面 user 消息会给出 <profile_summary>(画像)、<source_platform>(平台)、"
+    "下面 user 消息会按稳定性顺序给出画像层(<profile_core>、<profile_life_context>、"
+    "<profile_interests>、<profile_style_context>、<profile_recent_context>)、"
+    "<source_platform>(平台)、"
     "<source_context>(发现路径)、<content_batch>(本批候选),你按下面规则打分。\n"
     "</task>\n\n"
     "<rules>\n"
@@ -1106,7 +1133,7 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "商业意图**层面的比较;若高度相似(同款震惊体、同款保姆级全攻略、同款月入过万"
     "钓贴),`integration_fit` 与 `interest_overlap` 必须显著降低,不要被表面话题词"
     "吸引而错给高分。比较的是**话术模式**,不是关键词重叠。\n"
-    "13. profile_summary.disliked_topics 是长期避雷项;候选命中这些主题或话术模式时,"
+    "13. profile_interests.disliked_topics 是长期避雷项;候选命中这些主题或话术模式时,"
     "score 必须下调,不要把它们当成 interests 的反向补充来加分。\n"
     "</rules>\n\n"
     "<output_schema>\n"
@@ -1127,6 +1154,7 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
 def build_batch_content_evaluation_prompt(
     *,
     profile_summary: dict[str, object],
+    profile_blocks: list[str] | None = None,
     content_items: list[dict[str, object]],
     source_context: str = "",
     source_platform: str = "bilibili",
@@ -1139,13 +1167,12 @@ def build_batch_content_evaluation_prompt(
 
     v0.3.28+ cache-friendly: ``system_prompt`` is the module-level
     constant ``_BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT`` — 100% static
-    across all calls, so the entire ~3500-token instruction block is
-    cache-eligible. All variables (profile, source_platform,
-    source_context, content_items) live in ``user_prompt``, ordered from most
-    stable (profile, changes once per profile rebuild) to most variable
-    (content_batch, changes every call). DeepSeek's auto-cache hits the
-    system prefix every call after the first; explicit-cache providers
-    can mark the system block with cache_control.
+    across all calls, so the entire instruction block is cache-eligible.
+    v0.3.x+ eval callers may pass pre-rendered ``profile_blocks`` ordered
+    from stable core profile to volatile recent context; unchanged layers are
+    reused by the caller's render cache and keep the provider-visible prefix
+    byte-stable. The fallback path still serializes ``profile_summary`` as one
+    block for older call sites.
 
     v0.3.x: optional ``negative_examples`` block sits between
     ``<source_context>`` and ``<content_batch>``, carrying recent
@@ -1156,22 +1183,30 @@ def build_batch_content_evaluation_prompt(
     permanent rules about how to consume the block (rules 10 + 11) and
     stays call-invariant after that one-time template change.
     """
-    user_blocks: list[str] = [
-        "<profile_summary>",
-        json.dumps(
-            profile_summary,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        ),
-        "</profile_summary>",
-        "<source_platform>",
-        source_platform or "bilibili",
-        "</source_platform>",
-        "<source_context>",
-        source_context or "(unspecified)",
-        "</source_context>",
-    ]
+    user_blocks: list[str] = (
+        list(profile_blocks)
+        if profile_blocks
+        else [
+            "<profile_summary>",
+            json.dumps(
+                profile_summary,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            "</profile_summary>",
+        ]
+    )
+    user_blocks.extend(
+        [
+            "<source_platform>",
+            source_platform or "bilibili",
+            "</source_platform>",
+            "<source_context>",
+            source_context or "(unspecified)",
+            "</source_context>",
+        ]
+    )
     if negative_examples:
         user_blocks.extend(
             [
@@ -1254,6 +1289,7 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 def build_recommendation_expression_prompt(
     *,
     profile_summary: dict[str, object],
+    profile_blocks: list[str] | None = None,
     content_summary: dict[str, object],
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
@@ -1263,32 +1299,28 @@ def build_recommendation_expression_prompt(
     v0.3.28+ cache-friendly: ``system_prompt`` is the module-level
     constant ``_RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT`` (100% static).
     Platform label / tone profile / profile / content all live in
-    ``user_prompt``, ordered so that platform + tone (semi-stable per
-    user) come before content (changes every call) — extends the
-    prefix-cache match as far as the recommendation cycle reuses the
-    same persona.
+    ``user_prompt``. Callers may pass pre-rendered layered profile blocks,
+    which are placed before platform / tone / content so the provider cache
+    can reuse the stable profile prefix across platform and copy changes.
     """
-    user_prompt = "\n\n".join(
-        [
-            "<source_platform>",
-            source_platform or "bilibili",
-            "</source_platform>",
-            "<tone_profile>",
-            _render_tone_profile(tone_profile, {source_platform: 1.0}),
-            "</tone_profile>",
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</profile_summary>",
-            "<content_summary>",
-            json.dumps(
-                _normalize_content_style_fields(content_summary),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</content_summary>",
-        ]
-    )
+    user_blocks = [
+        *_profile_prompt_blocks(profile_summary, profile_blocks),
+        "<source_platform>",
+        source_platform or "bilibili",
+        "</source_platform>",
+        "<tone_profile>",
+        _render_tone_profile(tone_profile, {source_platform: 1.0}),
+        "</tone_profile>",
+        "<content_summary>",
+        json.dumps(
+            _normalize_content_style_fields(content_summary),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "</content_summary>",
+    ]
+    user_prompt = "\n\n".join(user_blocks)
     return [
         {"role": "system", "content": _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -1334,6 +1366,7 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
 def build_batch_expression_prompt(
     *,
     profile_summary: dict[str, object],
+    profile_blocks: list[str] | None = None,
     content_items: list[dict[str, object]],
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
@@ -1343,185 +1376,26 @@ def build_batch_expression_prompt(
     v0.3.28+ cache-friendly: ``system_prompt`` is the module-level
     constant ``_BATCH_EXPRESSION_SYSTEM_PROMPT`` (100% static).
     """
-    user_prompt = "\n\n".join(
-        [
-            "<source_platform>",
-            source_platform or "bilibili",
-            "</source_platform>",
-            "<tone_profile>",
-            _render_tone_profile(tone_profile, {source_platform: 1.0}),
-            "</tone_profile>",
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</profile_summary>",
-            "<content_batch>",
-            json.dumps(
-                [_normalize_content_style_fields(item) for item in content_items],
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</content_batch>",
-        ]
-    )
+    user_blocks = [
+        *_profile_prompt_blocks(profile_summary, profile_blocks),
+        "<source_platform>",
+        source_platform or "bilibili",
+        "</source_platform>",
+        "<tone_profile>",
+        _render_tone_profile(tone_profile, {source_platform: 1.0}),
+        "</tone_profile>",
+        "<content_batch>",
+        json.dumps(
+            [_normalize_content_style_fields(item) for item in content_items],
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "</content_batch>",
+    ]
+    user_prompt = "\n\n".join(user_blocks)
     return [
         {"role": "system", "content": _BATCH_EXPRESSION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
-# 100% static system prompt for delight-reason generation.
-_DELIGHT_REASON_SYSTEM_PROMPT = (
-    "<task>\n"
-    "你要为一条「主动惊喜推荐」写一段解释,说明为什么这条内容可能会让这个人意外地喜欢。\n"
-    "这不是普通推荐——这是你作为一个真正懂他的朋友,主动跑来说「这条你一定要看」。\n"
-    "下面 user 消息会给出 <source_platform>、<tone_profile>、<profile_summary>、"
-    "<content_summary>、<reason_stub>。\n"
-    "</task>\n\n"
-    "<rules>\n"
-    "1. 输出必须是严格 JSON,包含 delight_reason 和 delight_hook。\n"
-    "2. delight_reason(80-200字中文口语)要解释:\n"
-    "   - 这条内容为什么会让这个人产生「意外的共鸣」或「惊喜的发现」\n"
-    "   - 必须引用用户画像中的至少一个深层需求、洞察假说或认知偏好\n"
-    "   - 语气比普通推荐更亲密、更有把握,像「我知道你不常看这类,但这条真的会戳到你」\n"
-    "3. delight_hook(2-4个中文字)是一个短标签,用于UI徽章展示。\n"
-    "   例如:深层共鸣、跨域惊喜、灵感碰撞、意外契合、隐藏需求\n"
-    "4. 不要用:强烈推荐、值得一看、高质量、信息密度等套话。\n"
-    "5. reason_stub 提供了打分信号的线索,用它来组织 delight_reason 的叙事方向。\n"
-    "6. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。\n"
-    "7. content_summary.content_type 为 tweet / thread 时,标题只是正文首行,"
-    "请以 content_summary.body_text 为内容主体来组织叙事。\n"
-    "</rules>\n\n"
-    "<output_schema>\n"
-    "{\n"
-    '  "delight_reason": "你之前聊到过想搞明白...",\n'
-    '  "delight_hook": "深层共鸣"\n'
-    "}\n"
-    "</output_schema>"
-)
-
-
-_DELIGHT_BATCH_SCORE_SYSTEM_PROMPT = (
-    "<task>\n"
-    "你要为一批候选内容评估「惊喜推荐分」。这是用户在常规推荐流之外、特别值得"
-    "主动 surface 的「意外契合」内容。\n"
-    "下面 user 消息会给出 <profile_summary>(画像)、<content_batch>(候选列表)。\n"
-    "</task>\n\n"
-    "<rules>\n"
-    "1. 输出严格 JSON 数组,顺序与输入 <content_batch> 一一对应,长度相同。\n"
-    '2. 每项: {"bvid": "...", "score": 0.0-1.0, "rationale": "...", "hook": "..."}\n'
-    "3. 「惊喜」≠「相似度高」。判分核心:\n"
-    "   - 内容跟用户已有兴趣有概念上的连接,但不是直接重复(避免「又一条 X 测评」)。\n"
-    "   - 内容能呼应 deep_needs / active_insights — 用户没明说但实际渴望的方向。\n"
-    "   - 内容质量本身要好(标题/描述能透出做工)。\n"
-    "   - 优先 explore / related_chain 来源:search 天然 fitting,惊喜需要离开舒适区。\n"
-    "4. score 标尺:\n"
-    "   - 0.85+: 极少数真正「哇这个意外好对胃口」的 item。\n"
-    "   - 0.70-0.85: 跨域呼应,用户大概率会感兴趣但自己不会主动找。\n"
-    "   - 0.55-0.70: 有惊喜潜力但相对常规。\n"
-    "   - 0.40-0.55: 跟用户兴趣有些关联,但太普通。\n"
-    "   - <0.40: 跟用户兴趣无关或纯重复已有关注。\n"
-    "5. rationale (80-180 字中文口语) 用第二人称「你」,直接当 delight_reason 用:\n"
-    "   - 解释「为什么这条对你是惊喜」,引用画像中至少一个 deep_need / insight / 兴趣特征。\n"
-    "   - 语气像懂你的朋友主动说「这条你一定要看」,有把握、有连接、不空泛。\n"
-    "   - 不用套话: 强烈推荐 / 值得一看 / 高质量 / 信息密度。\n"
-    "6. hook (2-4 个中文字) 短标签,如: 深层共鸣 / 跨域惊喜 / 灵感碰撞 / 意外契合 / 隐藏需求。\n"
-    "7. 不要省略任何 item。即使是低分(<0.40)的也要返回完整结构,score + rationale 写明为什么不算惊喜。\n"
-    "</rules>\n\n"
-    "<output_schema>\n"
-    "[\n"
-    "  {\n"
-    '    "bvid": "BV1xxx",\n'
-    '    "score": 0.78,\n'
-    '    "rationale": "你之前 likes 里有 X 和 Y，这条把它俩用 Z 视角串起来了，正好戳你「想要更深一层」的那个点...",\n'
-    '    "hook": "跨域惊喜"\n'
-    "  }\n"
-    "]\n"
-    "</output_schema>"
-)
-
-
-def build_delight_score_batch_prompt(
-    *,
-    profile_summary: dict[str, object],
-    content_batch: list[dict[str, object]],
-) -> list[dict[str, str]]:
-    """Build a prompt for batch-scoring delight candidates via LLM.
-
-    Replaces the embedding-cosine pipeline (likes_alignment / deep_need /
-    insight / dislike) which biased toward "similar" rather than
-    "surprising". A single batched call returns score + rationale + hook
-    per candidate, eliminating the secondary delight_reason call.
-
-    System prompt is fully static (cache-friendly per CLAUDE.md
-    convention). User payload contains the per-call profile summary and
-    the candidate batch, both serialized with sort_keys for deterministic
-    cache prefixes.
-    """
-    user_prompt = "\n\n".join(
-        [
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</profile_summary>",
-            "<content_batch>",
-            json.dumps(
-                [_normalize_content_style_fields(item) for item in content_batch],
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</content_batch>",
-        ]
-    )
-    return [
-        {"role": "system", "content": _DELIGHT_BATCH_SCORE_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
-def build_delight_reason_prompt(
-    *,
-    profile_summary: dict[str, object],
-    content_summary: dict[str, object],
-    reason_stub: str,
-    tone_profile: ToneProfile | None,
-    source_platform: str = "bilibili",
-) -> list[dict[str, str]]:
-    """Build a prompt for generating a delight reason explanation.
-
-    The output should feel like a friend saying "I know you don't usually
-    watch this kind of thing, but I genuinely think this one would hit
-    different for you because..."
-
-    v0.3.28+ cache-friendly: ``system_prompt`` is the module-level
-    constant ``_DELIGHT_REASON_SYSTEM_PROMPT`` (100% static).
-    """
-    user_prompt = "\n\n".join(
-        [
-            "<source_platform>",
-            source_platform or "bilibili",
-            "</source_platform>",
-            "<tone_profile>",
-            _render_tone_profile(tone_profile, {source_platform: 1.0}),
-            "</tone_profile>",
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</profile_summary>",
-            "<content_summary>",
-            json.dumps(
-                _normalize_content_style_fields(content_summary),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</content_summary>",
-            "<reason_stub>",
-            reason_stub,
-            "</reason_stub>",
-        ]
-    )
-    return [
-        {"role": "system", "content": _DELIGHT_REASON_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -1559,8 +1433,8 @@ def build_explore_domains_prompt(
    不要都落在同一个抽象轴上。
 5. 同一母题的换皮变体最多只能保留 1 个，
    例如”博弈论 / 桌游机制 / 纳什均衡 / 策略模型”这类本质相同的方向不能同时出现。
-6. why_it_might_resonate 必须先说明它对应用户的哪种认知需求、
-   信息处理偏好或内在驱动力，再解释这种陌生内容为什么仍然可能打动这个人。
+6. 输出保持短 JSON：每个 domain 只包含 domain、novelty_level、queries 三个字段，
+   不要输出解释、分类、原因或其它长文本字段。
 7. novelty_level 范围必须在 0.65 到 0.95 之间；至少 3 个 domain 的 novelty_level ≥ 0.75。
 8. 每个 domain 生成 2 到 3 个适合 B 站搜索的 query，query 必须具体到可直接搜索的细分话题，禁止只写宽泛大词。
 9. 不同 domain 的 query 之间词汇重叠率要低；每个 query 必须包含一个内容形式词
@@ -1574,7 +1448,7 @@ def build_explore_domains_prompt(
    不同 domain 之间不得共享同一个上位概念（如"城市空间"与"城市规划"共享"城市"）。
 11. 心理诉求轴多样性（核心规则，违反即视为失败）：
    每个 domain 必须对应**不同**的心理诉求轴，每个轴最多只能出现一次。
-   定义清单（每个 domain 在 why_it_might_resonate 里**显式写出对应哪个轴**）：
+   定义清单：
      - 拆解·系统·结构  ：精密机械、数学、算法、博弈、底层原理、工艺拆解
      - 感官·沉浸·审美    ：视觉/听觉/材质/光影/空间体验、ASMR、风景、艺术
      - 情绪·叙事·人物    ：纪录片人物、剧情、日常 vlog、生活故事、情感讨论
@@ -1601,15 +1475,11 @@ def build_explore_domains_prompt(
   "domains": [
     {
       "domain": "城市空间与建筑叙事",
-      "category": "审美体验",
-      "why_it_might_resonate": "你偏好结构清晰、能从具体对象看见更大系统的内容。",
       "novelty_level": 0.72,
       "queries": ["上海 里弄 改造 纪录片", "创意 建筑 盘点", "废墟 探险 vlog"]
     }
   ]
 }
-category 必须从以下选项中选取且每个 domain 的 category 必须不同：
-知识解释 / 现实观察 / 审美体验 / 人物叙事 / 技术机制 / 社会文化 / 自然科学 / 生活方式
 </output_schema>
 """.strip()
     user_prompt_parts = [
@@ -2029,8 +1899,8 @@ _CATEGORY_MAPPING_SYSTEM_PROMPT = (
 
 # Module-level constant: 100% static system prompt for the MERGED, multi-
 # platform search-keyword generator (Discover backpressure refactor P1.4).
-# This single call subsumes the five per-platform keyword builders (B站
-# search / 小红书 / 抖音 / YouTube / X) so the profile is sent ONCE and the
+# This single call subsumes per-platform keyword builders (B站 search /
+# 小红书 / 抖音 / YouTube / X / 知乎 / Reddit 等) so the profile is sent ONCE and the
 # provider-side prompt cache fires on the byte-identical prefix. Per
 # CLAUDE.md "LLM Prompt-Cache Convention": NOTHING per-call lives here —
 # the profile, the due-platform set, each platform's need count, recent
@@ -2049,6 +1919,10 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "prefer_axes(冷启动或手动传入的优先补广度方向)、cold_start(是否空池冷启动)、"
     "supply_hint(数据观察:该平台近来实际产出较多、用户没有反感的方向,是下面 "
     "<supply_advantage> 静态表的数据化补充,可能为空)。\n"
+    "如果 user 消息额外包含 <explore_domains>,说明 B 站 explore refresh plan 已到期"
+    "或即将到期,且 B 站仍有补货空间。此时除了常规平台关键词,还要额外输出"
+    "可选 key `explore_domains`:它不是常规兴趣命中,而是专门给 B 站搜索缓存池的"
+    "探索性查询方向,用于跳出信息茧房和测试新的心理诉求轴。\n"
     "</task>\n\n"
     "<supply_advantage>\n"
     "每个平台结构性擅长的内容方向不同(下面是平台的固有供给优势,与具体用户无关)。"
@@ -2062,12 +1936,18 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "搜索语言。\n"
     "  - twitter:实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,"
     "华语圈话题可用中文。\n"
+    "  - zhihu:知乎中文问答 / 深度回答 / 经验复盘 / 专业解释 / 观点辨析。适合"
+    "问题式、场景式或概念 + 经验词的中文关键词。\n"
+    "  - reddit:subreddit 经验讨论 / 技术问答 / 开源项目 / 长帖复盘 / 社区观点。"
+    "优先英文关键词,1-5 词,可带 subreddit 或社区语境词。\n"
     "</supply_advantage>\n\n"
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter),每个 key 的值是一个"
-    "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。\n"
+    "(bilibili / xiaohongshu / douyin / youtube / twitter / zhihu / reddit),每个 key 的值是一个"
+    "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
+    "唯一例外:只有 user 消息含 <explore_domains> 时,才可以额外输出"
+    "`explore_domains` 数组。\n"
     "3. 每个平台生成恰好该平台 need 个搜索关键词;凑不满时宁缺毋滥,数组可短于 need,"
     "但不要为了凑数编造与画像无关的词。\n"
     "4. 每个关键词都要是适合在该平台搜索框直接输入的短词 / 短组合,不要写成长句。\n"
@@ -2086,6 +1966,12 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "avoid_topics 整组最多 2 个可以直接使用;至少一半关键词应覆盖 prefer_axes、"
     "较低权重兴趣、一级兴趣域的其它切面或适合该平台的跨域映射。仍要保留少量"
     "高权重兴趣入口,不要完全避开用户最喜欢的方向。\n"
+    "11. explore_domains 规则:只有收到 <explore_domains> 才生成。每个 domain 必须"
+    "明显带探索性:优先选择用户画像之外、但可能被其 deep_needs / interest_domains "
+    "间接吸引的跨域方向;不要把已有高权重兴趣换皮成探索。每个 domain 输出 domain、"
+    "novelty_level、queries;queries 是适合 B 站直接搜索的具体短词,每条都要含内容形式词"
+    "(纪录片 / 盘点 / vlog / 科普 / 测评 / 解说 / 体验等),并尽量避开"
+    "covered_topic_groups。探索 query 宁可少而新,不要补成常规关键词。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "{\n"
@@ -2093,7 +1979,13 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
     '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
     '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
-    '  "twitter": ["rust async runtime", "llm agents discussion"]\n'
+    '  "twitter": ["rust async runtime", "llm agents discussion"],\n'
+    '  "zhihu": ["AI 工具 经验", "城市规划 问答"],\n'
+    '  "reddit": ["local LLM agents", "open source AI tooling"],\n'
+    '  "explore_domains": [\n'
+    '    {"domain": "城市声音采样", "novelty_level": 0.84, '
+    '"queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"]}\n'
+    "  ]\n"
     "}\n"
     "</output_schema>"
 )
@@ -2148,7 +2040,9 @@ def build_category_mapping_prompt(
 def build_merged_keywords_prompt(
     *,
     profile_summary: dict[str, object],
+    profile_blocks: list[str] | None = None,
     platform_blocks: list[dict[str, object]],
+    explore_domains_block: dict[str, object] | None = None,
 ) -> list[dict[str, str]]:
     """Build the merged, multi-platform search-keyword generation prompt.
 
@@ -2166,6 +2060,10 @@ def build_merged_keywords_prompt(
             appear in the prompt (and may appear in the output). The ``avoid_*``
             and ``prefer_axes`` fields come from
             ``PoolDistributionSnapshot.to_prompt_hints()``.
+        explore_domains_block: Optional Bilibili explore-refresh request. When
+            present, the model may append an ``explore_domains`` array whose
+            queries are written into the Bilibili query cache as exploratory
+            searches.
 
     Cache-friendly per CLAUDE.md: ``system_prompt`` is the module-level constant
     ``_MERGED_KEYWORDS_SYSTEM_PROMPT`` (100% static). All per-call data lives in
@@ -2173,21 +2071,31 @@ def build_merged_keywords_prompt(
     due platforms), each serialized with ``ensure_ascii=False, indent=2,
     sort_keys=True``.
     """
-    user_prompt = "\n\n".join(
-        [
-            "<profile_summary>",
-            json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
-            "</profile_summary>",
-            "<platforms>",
-            json.dumps(
-                _normalize_platform_blocks(platform_blocks),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "</platforms>",
-        ]
-    )
+    user_blocks = [
+        *_profile_prompt_blocks(profile_summary, profile_blocks),
+        "<platforms>",
+        json.dumps(
+            _normalize_platform_blocks(platform_blocks),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        "</platforms>",
+    ]
+    if explore_domains_block is not None:
+        user_blocks.extend(
+            [
+                "<explore_domains>",
+                json.dumps(
+                    _normalize_explore_domains_block(explore_domains_block),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                "</explore_domains>",
+            ]
+        )
+    user_prompt = "\n\n".join(user_blocks)
     return [
         {"role": "system", "content": _MERGED_KEYWORDS_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -2278,3 +2186,82 @@ def parse_merged_keywords_with_presence(
                 break
         result[platform] = keywords
     return result, present
+
+
+def parse_merged_keywords_with_presence_and_explore_domains(
+    content: str,
+    platforms: list[str],
+    *,
+    per_platform_cap: int,
+    max_explore_domains: int = 5,
+    queries_per_domain: int = 3,
+) -> tuple[dict[str, list[str]], set[str], list[dict[str, object]]]:
+    """Parse platform keywords plus optional ``explore_domains``.
+
+    This keeps the legacy platform-keyword parser contract intact while giving
+    the unified planner a way to consume the optional exploratory Bilibili query
+    block requested by ``build_merged_keywords_prompt(..., explore_domains_block=...)``.
+    """
+    keywords, present = parse_merged_keywords_with_presence(
+        content,
+        platforms,
+        per_platform_cap=per_platform_cap,
+    )
+    payload = parse_llm_json_tolerant(content)
+    if not isinstance(payload, dict):
+        return keywords, present, []
+    raw_domains = payload.get("explore_domains")
+    if not isinstance(raw_domains, list):
+        return keywords, present, []
+
+    domains: list[dict[str, object]] = []
+    seen_domains: set[str] = set()
+    max_domains = max(0, int(max_explore_domains))
+    query_cap = max(1, int(queries_per_domain))
+    for raw_item in raw_domains:
+        if not isinstance(raw_item, dict):
+            continue
+        domain = str(raw_item.get("domain", "")).strip()
+        normalized_domain = "".join(domain.split()).lower()
+        if not domain or normalized_domain in seen_domains:
+            continue
+        queries = _clean_explore_domain_queries(raw_item.get("queries"), query_cap)
+        if not queries:
+            continue
+        seen_domains.add(normalized_domain)
+        domains.append(
+            {
+                "domain": domain,
+                "novelty_level": _clamp_explore_novelty(raw_item.get("novelty_level")),
+                "queries": queries,
+            }
+        )
+        if len(domains) >= max_domains:
+            break
+    return keywords, present, domains
+
+
+def _clean_explore_domain_queries(value: object, cap: int) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    queries: list[str] = []
+    for item in value:
+        if not isinstance(item, (str, int, float)):
+            continue
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        queries.append(text)
+        if len(queries) >= cap:
+            break
+    return queries
+
+
+def _clamp_explore_novelty(value: object) -> float:
+    try:
+        novelty = float(cast("Any", value))
+    except (TypeError, ValueError):
+        novelty = 0.65
+    return max(0.65, min(0.95, novelty))

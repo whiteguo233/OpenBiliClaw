@@ -274,6 +274,66 @@ class TestMobileWebViewModels:
           """)
         )
 
+    def test_reddit_recommendation_source_platform_url_and_text_card_are_source_aware(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              buildContentUrl,
+              buildRecommendationClickPayload,
+              getRecommendationCardKind,
+              getSourceLabel,
+              normalizeRecommendation,
+              normalizeSourcePlatform,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const post = normalizeRecommendation({
+              id: 44,
+              content_id: "t3_abc123",
+              content_url: "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+              title: "Local-first agents",
+              source_platform: "rd",
+              content_type: "post",
+              body_text: "A practical write-up.",
+              cover_url: "",
+            });
+            const postUrl = buildContentUrl(post);
+            const postCard = getRecommendationCardKind(post);
+
+            assert.equal(post.source_platform, "reddit");
+            assert.equal(getSourceLabel(post.source_platform), "Reddit");
+            assert.equal(postUrl, "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/");
+            assert.equal(postCard.kind, "text");
+            assert.equal(postCard.coverUrl, "");
+            assert.equal(postCard.text, "A practical write-up.");
+            assert.deepEqual(buildRecommendationClickPayload(post, postUrl), {
+              bvid: "t3_abc123",
+              content_id: "t3_abc123",
+              content_url: "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+              source_platform: "reddit",
+              title: "Local-first agents",
+              recommendation_id: 44,
+              topic_label: "",
+              up_name: "这位 UP 还没认出来",
+            });
+
+            const missingUrl = normalizeRecommendation({
+              content_id: "t3_missing",
+              title: "缺 URL 的 Reddit 帖子",
+              source_platform: "reddit",
+              content_type: "post",
+            });
+            assert.equal(missingUrl.source_platform, "reddit");
+            assert.equal(buildContentUrl(missingUrl), "");
+            assert.equal(
+              normalizeSourcePlatform({
+                content_url: "https://old.reddit.com/r/test/comments/1/post",
+              }),
+              "reddit",
+            );
+          """)
+        )
+
     def test_mobile_cover_templates_use_wrapper_fallbacks(self) -> None:
         recommend_js = Path("src/openbiliclaw/web/js/views/recommend.js").read_text()
         chat_js = Path("src/openbiliclaw/web/js/views/chat.js").read_text()
@@ -831,6 +891,17 @@ class TestMobileWebViewModels:
         assert 'surface: "profile"' in profile_js
         assert 'payload.surface = "profile"' in desktop_js
         assert 'respondToProbe(domain, action, { surface: "profile" })' in profile_js
+
+    def test_profile_edit_interest_specifics_are_editable_in_web_surfaces(self) -> None:
+        profile_js = Path("src/openbiliclaw/web/js/views/profile.js").read_text()
+        desktop_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text()
+
+        for source in (profile_js, desktop_js):
+            assert "specifics" in source
+            assert "edit-specific-list" in source
+            assert "data-edit-parent" in source
+            assert "添加二级兴趣" in source
+            assert "parent:" in source
 
     def test_normalize_profile_summary_preserves_probe_mode_metadata(self) -> None:
         _assert_js(

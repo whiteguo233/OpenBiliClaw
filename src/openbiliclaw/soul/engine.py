@@ -36,7 +36,11 @@ from .dialogue_insight_analyzer import (
 from .insight_analyzer import InsightAnalyzer
 from .overrides import ProfileOverrides, apply_edit, apply_overrides
 from .pipeline import ProfileUpdatePipeline
-from .preference_analyzer import DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE, PreferenceAnalyzer
+from .preference_analyzer import (
+    DEFAULT_PREFERENCE_EVENT_CHUNK_SIZE,
+    INIT_COGNITION_CONTEXT_KEY,
+    PreferenceAnalyzer,
+)
 from .profile import (
     AwarenessNote,
     InsightHypothesis,
@@ -238,6 +242,7 @@ class SoulEngine:
         # recall that must not block the edit response). Tracked so it isn't
         # garbage-collected mid-flight and can be awaited in tests / shutdown.
         self._background_edit_tasks: set[asyncio.Task[Any]] = set()
+        self._init_cognition_context: dict[str, object] = {}
 
     def set_embedding_service(self, embedding_service: Any) -> None:
         """Attach or update the embedding service after construction.
@@ -289,6 +294,8 @@ class SoulEngine:
             existing_preference=preference_layer.data,
             event_chunk_size=event_chunk_size,
         )
+        init_cognition = updated_preference.pop(INIT_COGNITION_CONTEXT_KEY, None)
+        self._init_cognition_context = init_cognition if isinstance(init_cognition, dict) else {}
         preference_layer.data.clear()
         preference_layer.data.update(updated_preference)
         preference_layer.save()
@@ -315,11 +322,15 @@ class SoulEngine:
         logger.info("build_initial_profile start: history=%d items", len(history))
         t0 = _time.monotonic()
         preference_layer = self._memory.get_layer("preference").data
+        awareness_notes = [awareness_note_to_dict(item) for item in self._load_awareness_notes()]
+        active_insights = [insight_hypothesis_to_dict(item) for item in self._load_insights()]
+        awareness_notes.extend(self._init_awareness_context())
+        active_insights.extend(self._init_insight_context())
         legacy_profile = await self._profile_builder.build(
             history=history,
             preference=preference_layer,
-            awareness_notes=[awareness_note_to_dict(item) for item in self._load_awareness_notes()],
-            active_insights=[insight_hypothesis_to_dict(item) for item in self._load_insights()],
+            awareness_notes=awareness_notes,
+            active_insights=active_insights,
         )
         logger.info(
             "build_initial_profile: legacy profile built in %.1fs",
@@ -332,6 +343,7 @@ class SoulEngine:
         soul_layer.data.update(profile.to_dict())
         soul_layer.save()
         self._memory.sync_profile_files(profile)
+        self._init_cognition_context = {}
         logger.info(
             "build_initial_profile done: total_elapsed=%.1fs",
             _time.monotonic() - t0,
@@ -385,6 +397,72 @@ class SoulEngine:
             logger.debug("Speculator force_tick after init failed", exc_info=True)
 
         return profile
+
+    def _init_awareness_context(self) -> list[dict[str, object]]:
+        raw_items = self._init_cognition_context.get("awareness")
+        items = raw_items if isinstance(raw_items, list) else []
+        result: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            observation = str(raw.get("observation", "")).strip()
+            key = self._normalize_context_text(observation)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append(
+                {
+                    "date": str(raw.get("date") or "init"),
+                    "observation": observation,
+                    "trend": str(raw.get("trend", "")).strip(),
+                    "emotion_guess": str(raw.get("emotion_guess", "")).strip(),
+                }
+            )
+        return result
+
+    def _init_insight_context(self) -> list[dict[str, object]]:
+        raw_items = self._init_cognition_context.get("insights")
+        items = raw_items if isinstance(raw_items, list) else []
+        result: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            hypothesis = str(raw.get("hypothesis", "")).strip()
+            key = self._normalize_context_text(hypothesis)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            evidence = raw.get("evidence")
+            result.append(
+                {
+                    "hypothesis": hypothesis,
+                    "evidence": [
+                        str(item).strip()
+                        for item in (evidence if isinstance(evidence, list) else [])
+                        if str(item).strip()
+                    ][:5],
+                    "confidence": self._clamp_confidence(raw.get("confidence", 0.5)),
+                    "validated": bool(raw.get("validated", False)),
+                    "created_at": str(raw.get("created_at") or "init"),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _normalize_context_text(value: str) -> str:
+        return " ".join(value.strip().lower().split())
+
+    @staticmethod
+    def _clamp_confidence(value: object) -> float:
+        if not isinstance(value, str | int | float) or isinstance(value, bool):
+            return 0.5
+        try:
+            number = float(value)
+        except ValueError:
+            return 0.5
+        return max(0.0, min(1.0, number))
 
     def is_profile_ready(self) -> bool:
         """Cheap, non-raising check for whether a soul profile exists.

@@ -4,6 +4,110 @@
 
 ---
 
+## v0.3.152 / extension v0.3.152 / desktop v0.3.152: 桌面启动自愈与动态惊喜阈值（2026-07-04）
+
+后端源码走 `backend-v0.3.152`，浏览器插件走 `extension-v0.3.152`，桌面安装包走 `desktop-v0.3.152`。
+
+- **macOS 安全阻挡提示收敛**：README、官网首页、desktop Release notes 和 DMG 内 `首次打开说明 First Launch.html` 统一改成“右键 / Control-click 打开 → 隐私与安全性仍要打开 → 已损坏时清除 quarantine”的顺序；用户侧不再被提示执行额外 `codesign` 命令，下载后安装包内也能直接看到同一段说明。
+- **插件更新失败原因可见**：side panel 设置页点击“立即应用”后，如果后端自动更新被 `dirty_worktree`、`untrusted_remote`、`branch_not_fast_forwardable` 等安全守卫拒绝，插件会展示本地化原因并刷新状态卡，不再只提示“后端更新未能开始”。
+- **更新入口严格区分安装渠道**：side panel 和桌面 Web 的版本面板现在只有在后端明确报告 `install_mode="git"` 且存在 `backend-v*` 更新时才显示“立即应用”；`install_mode="frozen"` 或最新 tag 为 `desktop-v*` 时只显示 Release 下载入口，空 / 未知安装方式不再误入源码自动更新分支。
+- **桌面安装包坏配置自愈**：Windows / macOS 冻结包启动时会先校验用户数据目录里的 `config.toml` 与 `config.local.toml`。若文件无法按 TOML 解析，或 TOML 结构导致运行时配置对象无法构建，入口会把坏文件改名为 `*.invalid[.N]` 备份，从打包内置 `config.example.toml` 重新生成默认 `config.toml`，并打开 `/setup/` 重新初始化；`data/` 目录不会被移动或删除。
+- **惊喜推荐改为池内 Top 10% 动态阈值**：`precompute_delight_scores()`、runtime 主动推送、pending-batch、CLI 和普通推荐池的 delight 占位排除都改用动态门槛。默认底线仍是 `0.70`，低探索开放度用户底线仍是 `0.80`；正式候选池样本不少于 20 条时，会取 `max(profile floor, 当前池内 Top 10% 分数边界)`，避免普通高分内容被过早包装成“惊喜推荐”。生产库副本验证还暴露了旧版 `delight_score` 标尺残留，因此 backfill 现在会重新领取并同步 `delight_score != relevance_score` 的历史行，包括 `shown` 且已有普通推荐历史的行。
+- **聚合 Release 不再误列缺失的 Firefox XPI**：`sync-aggregate-release.sh` 现在只有在实际收集到 `openbiliclaw-extension-v*-firefox.xpi` 资产时，才把 signed XPI 写进 `openbiliclaw-v*` 聚合页；未启用 AMO signing 时只列 Chrome zip 与 Firefox 临时加载 zip，避免用户看到不存在的下载文件。
+- **聚合 Release 只收同版本资产**：`openbiliclaw-vX.Y.Z` 现在只引用 `extension-vX.Y.Z` / `desktop-vX.Y.Z` 的包；某个 channel 尚未完成时显示未发布，不再从上一版 release 回填旧 `.zip` / `.dmg` / `.exe`。旧包清理同时把 GitHub API 超时后返回的 `not found` 视为幂等成功，避免删除实际已生效却导致 workflow 失败。
+- **README / 文档首页 / GitHub About 优化**：README 中英双版第一屏瘦身（删除开发版 E2E 段落、快速开始压缩为四短步、「最近更新」对齐 v0.3.152 用户可感知亮点并与更新日志板块去重）、核心特性与架构概览精简并链接模块文档、新增 Release / CI 徽章与结尾 star 引导、英文版补 RedNote / Chinese TikTok 平台注释；`docs/index.md` 拆分「用户 / 开发者」两个区块并去掉重复条目；新增 `docs/faq.md` 常见问题页；GitHub About 补 Reddit、缩短为卖点前置的双语文案。
+
+## v0.3.151 / extension v0.3.151 / desktop v0.3.151: LLM 探测诊断与发布渠道版本对齐（2026-07-02）
+
+后端源码走 `backend-v0.3.151`，浏览器插件走 `extension-v0.3.151`，桌面安装包走 `desktop-v0.3.151`。
+
+- **LLM 探测诊断补强**：配置页和 CLI 探测延续 `v0.3.150` 的 reasoning-only 诊断语义，并补充更清晰的 probe 失败信息，方便用户区分模型仅返回思考内容、最终内容为空和真实服务不可用。
+- **发布渠道版本号对齐**：浏览器插件、后端源码和桌面安装包统一提升到 `0.3.151`，GitHub Release 聚合页、插件包和桌面安装包使用同一版本号，减少用户在手动插件包、Chrome Web Store 与桌面安装包之间比对版本的成本。
+- **发布流程文档同步**：收紧平台来源发布 checklist，并刷新 README / 文档索引中的当前版本标识，确保本轮插件包、后端源码 tag 和桌面安装包 tag 对外一致。
+
+## v0.3.150 / extension v0.3.101 / desktop v0.3.150: Reddit rdt-cli 默认后端与发布包同步（2026-06-30）
+
+后端源码走 `backend-v0.3.150`，浏览器插件走 `extension-v0.3.101`，桌面安装包走 `desktop-v0.3.150`。
+
+- **Reddit discovery 默认切到 rdt-cli**：`rdt-cli>=0.4.1` 纳入默认运行时依赖，源码安装、AI 一键安装、Docker `pip install .` 和桌面 PyInstaller 安装包都会默认携带；日常 discovery 默认后端为 rdt-cli，插件仍负责 bootstrap 初始化信号，并在命令后端不可用、未登录或用户显式选择时作为 fallback。
+- **插件同步 rdt credential**：已连接 OpenBiliClaw 插件会尝试把浏览器里的 `reddit_session` 同步到 rdt-cli credential store，`rdt login` 仅作为插件不可用或浏览器 Cookie 不可读时的手动 fallback；后端状态页和 CLI 文案会明确区分 rdt 缺凭据、插件 fallback 可用和真实登录态任务结果。
+- **安装包与冻结包依赖对齐**：桌面打包显式收集 `rdt_cli` 及其 lazy 依赖，且在冻结包里提供 in-process fallback，避免只有 Python 包而没有 `rdt` console script 时 Reddit discovery 不可用。
+- **LLM 探测预算与 reasoning-only 诊断**：配置页 LLM 探测和 `LLMProvider.health_check()` 的共享输出预算从 1024 提到 4096。`DeepSeekProvider` 在 `reasoning_effort=""` 时会向 DeepSeek 请求体写入 `thinking={"type":"disabled"}`，而不是省略 thinking 字段；OpenAI-compatible / DeepSeek / OpenRouter / Ollama native 若只返回 `reasoning_content` / `reasoning` / `thinking` 而没有最终 `content`，现在仍判失败，但错误会明确提示“returned reasoning but no final content”并带 `finish_reason`，避免误以为服务完全没返回。
+- **真实环境验证补充**：本地真实插件登录态完成 `fetch-reddit --mode bootstrap`、四个 `discover-reddit*` smoke 和正式 `discover --source reddit`；当前浏览器会话里 rdt credential 仍未同步到 `reddit_session` 时，fallback 插件路径能完成事件拉取和 discovery。
+
+## v0.3.149 / extension v0.3.100 / desktop v0.3.149: Reddit 来源接入（2026-06-30）
+
+后端源码走 `backend-v0.3.149`，浏览器插件走 `extension-v0.3.100`，桌面安装包走 `desktop-v0.3.149`。
+
+- **Reddit 插件登录态 discovery 源**：新增 `reddit_tasks`、`RedditDiscoveryProducer`、`fetch-reddit`、`discover-reddit*` 和 `discover --source reddit`；默认后端为 OpenBiliClaw 浏览器插件，支持 search / hot / subreddit / related 四个独立分支，每个分支默认每日 300 条预算。
+- **Reddit 正式 discover 接入统一候选池**：插件任务回传的帖子 / 评论会转换为 `source_platform="reddit"` 的 `DiscoveredContent`，以 fetch-only 方式写入 `discovery_candidates`，后续由统一 evaluator 混源评估，避免真实 E2E 被单次 LLM 批量评估阻塞。
+- **知乎 / Reddit search query generation 复用统一 planner**：`zhihu-search` 和 `reddit-search` 都进入 `KeywordPlanner` 合并关键词生成和静态 `<supply_advantage>` 表，search 分支通过 `KeywordFetchCoordinator.claim(<platform>)` 消费并透传 `source_keyword_id`；关键词池为空时仍回退画像关键词。
+- **三端配置页与推荐卡适配**：插件 side panel、桌面 Web 和移动 Web 支持 Reddit 来源开关、source modes、四分支预算、候选池占比、来源状态和文字卡 fallback；配置保存后进入 `runtime.source_policy` 与 candidate pool 配额。
+- **Reddit guided init 画像信号**：Reddit 不再是 discovery-only 来源；`init --yes-reddit` / 图形化勾选 Reddit 会通过插件登录态读取 saved / upvoted / subscribed subreddit，分别转成 `favorite` / `like` / `follow` 事件纳入 `analyze_events()` / `build_initial_profile()`，Reddit-only 初始化只要真实拉到信号即可完成。CLI、`/api/init`、插件推荐 tab、桌面 Web 和 `/setup/` 均取消旧的 `no_profile_signal_sources` 拦截；`fetch-reddit --mode bootstrap` 可单独端到端验证事件拉取。API schema 默认值继续对齐实际 `[sources.reddit]` 的 `backend="extension"` 与四分支 discovery 预算 300。
+- **真实环境验证**：本地 worktree API + 已安装插件登录态完成 `fetch-reddit`、`discover-reddit`、`discover-reddit-hot`、`discover-reddit-subreddit`、`discover-reddit-related` 和 `discover --source reddit --limit 2`，四分支正式 producer 返回 `reddit-hot` / `reddit-related` / `reddit-search` / `reddit-subreddit` 候选并入池。
+- **新平台来源接入指南**：新增 `docs/platform-source-integration.md`，把知乎 / Reddit 接入经验沉淀为后续新增来源的标准 checklist。
+
+## v0.3.148 / extension v0.3.99 / desktop v0.3.148: LLM 余额熔断与推荐避雷兜底（2026-06-28）
+
+后端源码走 `backend-v0.3.148`，浏览器插件走 `extension-v0.3.99`，桌面安装包走 `desktop-v0.3.148`。
+
+- **DeepSeek / OpenAI-compatible 余额不足不再重试放大**：HTTP 402、`Insufficient Balance`、`payment required`、`billing`、余额不足等 provider 余额 / 账单失败现在归一为 `LLMRateLimitError`。Provider 自身不会再做 3 次 retry，registry 会进入 cooldown，批量推荐 / discovery 路径也会跳过逐条 fallback，避免余额不足时继续制造大量必失败请求和日志。
+- **Discovery 查询生成降本**：旧 B 站 `SearchStrategy` query 生成按画像 digest + pool hints 缓存；`ExploreStrategy` domain 生成改为短 JSON（只含 `domain/novelty_level/queries`，`max_tokens=2048`）并按画像 + covered topic groups 缓存；统一 `KeywordPlanner` 的 merged keyword 成功结果按画像 digest + 平台需求块 + 池子避让提示复用到 `[discovery].plan_ttl_hours`。真实环境验证发现 query/domain 生成仍会被完整画像和 thinking 放大，因此这些生成 caller 现在统一使用稳定 compact profile summary，flat `interests` 保留前 64 个，关闭额外 core memory 注入，并对 `search/explore` 关闭 DeepSeek thinking。后台 refresh 也改为约 90% 可换池低水位才跑 discovery，小缺口 B 站补货先只给 `search + related_chain` 预算，延后 `trending/explore`，避免几个库存缺口触发全套 planner/search/explore/trending。
+- **KeywordPlanner 合并 explore 方向生成**：当 `explore_refresh_hours` 已到期或距到期不足一个 refresh tick，且 B 站平台族仍有补货空间时，统一关键词 planner 会在同一轮 merged keyword LLM 调用里追加 `explore_domains` block；返回的探索 query 写入 B 站 `discovery_keywords(keyword_kind="explore")` query cache，成功插入后推进 `last_explore_refresh_at`。`ExploreStrategy` 在统一 planner 开启时会从这个 explore 候选池 claim query 搜索，池为空则本轮跳过，不再单独触发 `discovery.explore.queries`；普通 B 站 search 仍只消费 `keyword_kind="regular"`，且 claim / history / recycle 默认都按 `keyword_kind` 隔离。
+- **Trending rids 改为零 token 本地轮转**：`TrendingStrategy` 不再为选择 B 站排行榜分区调用 `discovery.trending.rids` LLM。现在固定抓 `rid=0` 全站榜，其余非 0 分区按 `profile_kw_digest + cycle + rid` 确定性洗牌，每轮最多取 `max_related_rids` 个，覆盖完一轮后再重新洗牌；个性化筛选留给后续内容 evaluator。
+- **Discovery evaluator 去掉 text-first 重复正文**：知乎 / X 等文字优先来源如果 `description` 与 `body_text` 来自同一段文本，`discovery.evaluate_batch` 和单条 fallback 评估 prompt 会省略重复的 `description`，只保留 `body_text` 作为正文输入，降低旧知乎候选里摘要 / 正文重复造成的 prompt 膨胀。
+- **Discovery interest 丰富度保护**：query / domain / keyword planner 的 compact profile summary 不再只是截取权重前 64 个兴趣；现在先取最多 128 个 interest 候选，再用 cache-only embedding 做 MMR 风格选择，在保留强兴趣的同时覆盖更多语义簇，并对贴近 `disliked_topics` 的 interest 降权。`disliked_topics` 自身也用同一缓存向量做多样性去重。真实 embedding cache 命中时，选择器预计算 dislike 相似度并增量维护“距已选最近相似度”，避免 prompt 构建阶段重复计算大量 bge-m3 cosine。没有 cached embedding 时保持原权重顺序，不新增热路径 embedding 调用。
+- **推荐出口增加 dislike 硬过滤兜底**：`RecommendationEngine.serve()` 从 discovery pool 读出候选后，会按当前 `profile.preferences.disliked_topics` 再过滤一次；主题字段精确命中，或标题 / 标签 / 简介 / 作者 / 短正文包含避雷 term 的候选不会进入排序，覆盖异步清池尚未完成或清池失败的窗口。
+- **Delight Score 复用 Evo 结果并清理旧 LLM 入口**：`precompute_delight_scores()` 不再为惊喜候选额外调用 Delight LLM；现在直接复用 Evo 已写入 `content_cache` 的 `relevance_score` 作为 `delight_score`，并优先用面向用户的 `pool_expression` 作为卡片展示的 `delight_reason`（缺失时 fallback 到 `relevance_reason/topic`），再用 `pool_topic_label/topic_group/topic_key/style_key` 生成 `delight_hook`。低于当前动态 delight 阈值（profile floor 与正式候选池 Top 10% 边界取高）的候选只落分不落文案，避免下轮重复处理；旧 `LLMDelightScorer`、Delight prompt builder 和 LLMService 中的 Delight caller 路由特例已移除。
+- **统一关键词 planner 切断 B 站旧搜索词 LLM 兜底**：`[discovery].unified_keyword_planner_enabled=true` 时，B 站主 refresh 若暂时 claim 不到 `discovery_keywords` 里的 pending 词，会只移除本轮 `search` 子策略并保留 `related_chain/trending/explore`，不再把 `queries=None` 传给 `SearchStrategy` 触发 `discovery.search.queries`，避免 planner 与旧搜索词生成同时烧 token。
+- **插件与桌面安装包同步发布**：浏览器插件版本提升到 `extension-v0.3.99`，用于 GitHub Release 与 Chrome Web Store 同步分发；桌面安装包提升到 `desktop-v0.3.148`，让冻结包用户直接获得本轮 LLM 费用控制、dislike 兜底和关键词 planner 修复。
+- **插件连接空态实时同步**：side panel 首次打开时如果 `/api/ping` 瞬时失败但 `/api/runtime-stream` 随后连上，现在会立刻把推荐页从“后端还没开张”离线空态切回在线刷新流程，不再只更新顶部“已连接”徽标；popup 离线期间会每 1 秒轻量重探测 `/api/ping`，runtime-stream 自身也改为固定 1 秒重连，后端启动后自动更新徽标并刷新推荐。
+- **插件 Release 缺 AMO 密钥不再阻断**：`release-extension.yml` 现在会先探测 Firefox AMO 签名凭证；只有 `FIREFOX_SIGNING_ENABLED=true` 且 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` 同时存在时才要求 signed XPI，否则仍发布 Chrome / Edge zip 与 Firefox 临时加载 zip，避免未配置 Firefox 签名密钥时阻断插件包发版。
+- **画像增量回填增加并发 claim 保护**：`/api/events` 的 `last_profile_pipeline_event_id` backfill 现在有进程内 single-flight 保护；当前一批旧 pending 行正在喂给 `ProfileUpdatePipeline` 时，并发事件请求会跳过重复 backfill，只处理自身 accepted 事件，避免同一批 200 条画像信号被重复送进 `soul.preference.chunk`。
+- **画像编辑支持二级兴趣**：`GET /api/profile/edit-state` 现在会返回兴趣树的 `specific_edits` 痕迹；插件 side panel、移动 Web 和桌面 Web 的画像编辑面板会按 `domain -> specifics` 渲染，新增 / 删除二级兴趣时向 `/api/profile/edit` 带 `parent`，不再只能编辑一级兴趣域；新增后立即删除的二级兴趣会归约为空覆盖，不再留下错误的已编辑状态。
+- **画像编辑态层级样式优化**：桌面 Web 的兴趣编辑树增加一级 domain 分组左侧层级线与二级 specifics 缩进分隔；插件 side panel 使用同一层级语义但收紧间距、字号和添加按钮 reset，避免二级兴趣编辑态挤成一片或露出浏览器默认按钮样式。
+- **初始化 chunk 顺带生成临时觉察 / 洞察上下文**：`soul.preference.chunk` 的结构化输出现在可包含 `awareness_candidates` / `insight_candidates`；后端会去重合并后只作为本次 `soul.profile_build` 的 prompt 上下文，不写入长期 `awareness.json` / `insight.json`，让初始人格画像在首次生成时就能利用每个 chunk 提炼出的观察和假设。
+
+## v0.3.147 / extension v0.3.98 / desktop v0.3.147: PC Web 正向反馈与探针原地聊天（2026-06-26）
+
+后端源码走 `backend-v0.3.147`，浏览器插件走 `extension-v0.3.98`，桌面安装包走 `desktop-v0.3.147`。
+
+- **PC Web 平台源状态与 Cookie 展示优化**：设置页“平台源”现在把“来源开关是否进入调度”和“Cookie / 令牌 / 插件任务是否可用”拆成两个 badge；知乎 `pending/unverified` 显示为“状态待验证”，修改来源开关但未保存时会标注“保存后生效”。新增 `/api/sources/credentials`，PC Web 会把 B 站 / 抖音 / X 当前 Cookie 和小红书最近 `xsec_token` 放在默认折叠的只读面板里；下方 Cookie 输入框仅用于覆盖，留空保存不会覆盖，只有主动粘贴新 Cookie 时才提交。
+- **PC Web 推荐反馈保留正向内容**：推荐卡点赞和“聊一聊”提交后不再从当前列表消失，点赞按钮会显示已按下状态；只有“不感兴趣”和“忽略”这类负向 / 移除型反馈继续延迟淡出当前卡片。桌面端推荐加载过滤同步只隐藏负向反馈，和移动 Web 的反馈行为保持一致。
+- **PC Web Inbox 探针支持原地聊天**：消息抽屉里的兴趣 / 挑战 / 避雷探针点击“多聊聊”时不再切到画像聊天页，而是在当前卡片内展开输入框并通过 `/api/chat/turns` 提交上下文聊天，回复 / 错误状态直接显示在卡片里。
+- **插件维护包同步发布**：浏览器插件版本提升到 `extension-v0.3.98`，用于 GitHub Release 与 Chrome Web Store 同步分发；本次主要同步当前后端 / Web 修复后的聚合版本号，插件功能代码与 `extension-v0.3.97` 保持一致。
+- **桌面安装包同步发布**：桌面安装包提升到 `desktop-v0.3.147`，让冻结包用户直接获得本轮 PC Web 设置页、推荐反馈和 Inbox 探针原地聊天修复。
+- **聚合 Release 自动清理旧包资产**：`openbiliclaw-v*` 聚合页同步新插件 / 桌面安装包前会先删除旧版本 `.zip` / `.dmg` / `.exe` 包类资产，避免同一个最新 release 同时展示上一版下载包。
+- **Firefox 签名 XPI 发布链路**：用户反馈 Firefox 直接安装 `openbiliclaw-extension-v*-firefox.zip` 会提示“未通过验证”。插件发布链路新增 AMO unlisted 签名脚本与 release workflow 上传，默认生成 `openbiliclaw-extension-v*-firefox.xpi` 供普通 Firefox 持久安装；`-firefox.zip` 保留为未签名开发包，仅用于 `about:debugging` 临时加载或 AMO 签名输入。
+- **CI Web E2E 避开 runner 失效 apt 源**：`Web guided-init E2E` 在安装 Playwright Chromium 依赖前会清理 GitHub runner 上可能返回 403 的 Microsoft / azure-cli apt 源，避免 `python -m playwright install --with-deps chromium` 在 apt update 阶段被外部源拖失败。
+- **候选评估限流不再误拒绝整批候选**：真实 SQLite + runtime drain E2E 复现 LLM 429 后，发现 batch evaluator 曾把 provider rate limit 转成全 0 分，导致 `discovery_candidates` 直接进入 `rejected_low_score`。现在 rate-limit / cooldown 会作为 transient failure 向上传递，`DiscoveryCandidatePipeline` 释放 claim 回 `pending_eval`，模型恢复后继续评估原候选。
+- **画像上下文 LLM 调用缓存前缀稳定**：`PreferenceAnalyzer` 的单批 / 分片结构化 LLM 调用现在会在 `LLMService` 支持时关闭额外 core memory 注入；事件批次和 existing preference 仍在 user prompt 中完整传递，但 system prompt 不再拼入动态画像片段，提升 `soul.preference.chunk` 这类初始化高频调用的 provider prompt-cache 命中率。同一策略也扩展到 discovery 单条 fallback、推荐池分类、delight 批量评分、跨平台关键词生成、awareness / insight / speculation / profile build 等已自带 `profile_summary` / `soul_profile` / `preference_summary` 的结构化调用，并用共享 helper 兼容不支持 `inject_core_memory` 的测试 stub 或旧服务对象。
+- **初始画像生成 prompt 稳定块前置**：`build_soul_profile_prompt()` 的 system prompt 改为完全静态，动态 `tone_profile` / 来源基调移动到 user prompt 首部；user prompt 顺序调整为 `<tone_profile>` → `<preference_summary>` → `<recent_awareness>` → `<active_insights>` → `<history_summary>`，并对 JSON 输入使用 `sort_keys=True`，避免巨大的历史摘要打断 provider prompt-cache 前缀。
+- **画像按层缓存输入扩展到推荐与关键词链路**：共享 `profile_prompt_layers()` 会把 `profile_summary` 拆成 `<profile_core>` / `<profile_life_context>` / `<profile_interests>` / `<profile_style_context>` / `<profile_recent_context>` 五层并按稳定性排序。`discovery.evaluate_batch`、推荐池分类、批量 / 单条推荐文案、delight 批量评分 / 备用理由、统一关键词 planner 都通过 `PromptLayerRenderCache` 按层 digest 复用渲染后的 prompt block：画像核心没变时保持 provider 可见前缀 byte-stable，近期觉察或洞察变化时只更新后置 recent 层，不牺牲各环节可见的完整画像。
+
+## v0.3.146 / extension v0.3.97 / desktop v0.3.146: 知乎长 ID 链接保真（2026-06-26）
+
+后端源码走 `backend-v0.3.146`，浏览器插件走 `extension-v0.3.97`，桌面安装包走 `desktop-v0.3.146`。
+
+- **知乎长 ID 链接不再被 JS 舍入**：插件知乎 task executor 对站内 API 响应做 lossless JSON 解析，把超过 `Number.MAX_SAFE_INTEGER` 的裸整数先转成字符串；归一化时也会优先从 URL 字符串解析 question / answer / article ID，修复 19 位 question id 被舍入成错误知乎链接的问题。真实后端 + 已连接浏览器插件 E2E 覆盖 `discover-zhihu-hot` 和指定 `2053435015258804659` 的 `discover-zhihu-related`，确认入库 URL 不再出现舍入后的 `2053435015258804700`。
+
+## v0.3.145 / extension v0.3.96 / desktop v0.3.145.1: Eval 缓存与推荐理由并发优化（2026-06-26）
+
+后端源码走 `backend-v0.3.145`，浏览器插件走 `extension-v0.3.96`，桌面安装包走 `desktop-v0.3.145.1`。
+
+- **抖音 / YouTube init 提问默认改为跳过**：交互式 `openbiliclaw init` 的“加入抖音数据?”和“加入 YouTube 数据?”现在与小红书一致默认 No，避免回车误触发需要登录浏览器前台 tab 的 bootstrap；显式启用仍使用 `--yes-douyin` / `--yes-youtube` 或回答 yes。
+- **Evo 前供给改为按水位补肉**：`DiscoveryCandidatePipeline.ensure_pending_supply()` 会按 `pending_eval + evaluating` 水位循环生产 raw candidates，直到接近本轮 evaluator batch、池子已满、没有新候选或达到尝试 / 时间预算；refresh path 优先调用该 supply loop，不再只跑一次 discover 后插入几个算几个。
+- **Evo 首批评估强制使用批量下限**：API runtime 配置的 `min_eval_batch_size=8` 现在会同时约束 refresh 的 supply target、策略预算和 drain claim size；即使池子只差 1-7 条，首次 evaluator 也会先攒到 8 条或等待超时，不再因缺口算法把 first drain 压成 6 条。
+- **入待评估池前过滤历史重复**：候选入库前会先过滤同批重复、历史 `discovery_candidates` 任意状态和已进入 `content_cache` 的 BVID/content_id，减少重复 discovery 占住 raw 前排后被 `INSERT OR IGNORE` 静默吞掉导致 Evo 只拿到 1-3 条。
+- **热重载取消不再卡住 evaluating**：真实端到端测试发现插件 cookie 同步触发 hot-reload 时，正在跑的 Evo batch 可能在模型返回后被取消，导致候选停在 `evaluating`；pipeline 现在捕获 `CancelledError` 并即时释放 claim 回 `pending_eval`，后续 drain 可继续处理。
+- **候选 eval 缓存命中优化**：批量 evaluator 的本地 cache key 改为候选身份 + full profile digest + negative_examples digest，不再被 Python profile 对象 id 或无关事件水位打穿；`discovery.evaluate_batch` 调用 LLMService 时会在支持的 provider/service 路径上关闭额外 core memory 注入，复用 prompt 内的完整结构化 profile，提升 provider prompt-cache 前缀稳定性。
+- **推荐理由生成缓存前缀保护**：推荐池批量文案、单条实时文案和备用 delight reason 调用 LLMService 时同样在支持路径上关闭额外 core memory 注入；推荐 prompt 仍保留完整结构化 profile，只去掉重复拼接，减少 token 并让 `recommendation.write_expression` / `recommendation.expression` 的 provider prompt-cache 前缀更稳定。
+- **eval / 推荐理由生成默认双 worker**：统一候选 evaluator 单次 drain 默认最多领取两个 batch 的候选，并由 `evaluate_content_batch()` 以 2 个 worker 跑 LLM batch；推荐池文案 `_drain_expression_copy()` 也改为默认 2 个 worker。外层 drain / expression lock 仍串行化多入口，claim size 仍受 evaluator hard cap 约束，取消时不吞 `CancelledError`。
+- **长上下文 eval 默认大 batch，推荐理由保守 30**：文本 `discovery.evaluate_batch` 默认 batch size 从 30 提到 45；周期 candidate-eval loop 未显式传参时也按 45 drain。多模态 eval 继续使用独立小 batch。真实 provider 并发测试显示 `recommendation.write_expression` 45 条偶发 JSON 解析失败，因此推荐文案默认 batch 保持 30；批量解析失败时仍会先在同一 worker 内递归拆半重试，provider 限流仍直接留空等待下一轮，避免并发或重试倍增。
+- **macOS DMG 加入首次打开指引**：未签名 / 未公证的实验桌面包现在会在 DMG 内放入 `首次打开说明 First Launch.html` 和可见安装提示图，Release notes 与 README 同步说明右键 / Control-click 打开和 Privacy & Security fallback，降低用户找不到“仍要打开”的概率。
+- **搜索关键词 claim 接入供给水位**：B 站 search 关键词只有在待评估水位不足时才 claim；如果 `pending_eval + evaluating` 已经足够，本轮不会空 claim 后又因 supply loop 不抓内容而误标 failed。
+- **相关推荐 seed 优先正反馈**：`RelatedChainStrategy` 的事件种子现在优先使用 `favorite` / `like` / `coin` / `share` / positive feedback，普通 `view` 降为 fallback，减少 related_chain 从弱浏览信号继续挖窄内容圈。
+
 ## v0.3.143 / extension v0.3.94 / desktop v0.3.143: 候选评估蓄水与补池诊断（2026-06-25）
 
 后端源码走 `backend-v0.3.143`，浏览器插件沿用 `extension-v0.3.94`，桌面安装包走 `desktop-v0.3.143`。
@@ -13,6 +117,8 @@
 - **低可用池不再被 source overflow 压掉**：`_enforce_pool_cap()` 在 `pool_available < pool_target_count` 时跳过 `trim_pool_source_overflow()`，避免 raw/source 配额把当前可用候选继续 suppress；总 raw ceiling 仍由 `trim_pool_to_target_count()` 收敛。
 - **空补货计划可诊断**：`_build_refresh_plan()` 在池子低于 target 但 plan 为空时会输出 `pool_available/raw/pending/source_available/source_raw/source_targets/raw_targets/requested_by_source`，方便直接定位是来源配额、raw headroom、非 B 站 producer 还是其它 gating 导致不补。
 - **减少重复 discovery 导致的小批 eval**：API runtime 的主 discovery raw 生产改为 4 倍 oversample，并同步放大 strategy limits；重复候选仍由 `candidate_key` 去重，但新候选更容易把 `pending_eval` 攒到有效 batch。
+- **画像整理日志区分 run 与 batch**：`ProfileConsolidator` 每次逻辑运行结束会输出一条 `profile consolidation run completed` 汇总，包含 `run_id`、候选簇数、LLM batch 数、合并 / 归档数量和前后库存，避免把同一轮拆批 LLM 调用误判为短时间重复合并。
+- **OpenAI SDK DEBUG 降噪**：全局 logging 初始化现在把 `openai` / `openai._base_client` 提升到 WARNING，避免 `logging.file_level=DEBUG` 时把完整 LLM prompt / 用户画像写进文件日志；业务侧 `[llm-cost]` 与模块 INFO 日志不受影响。
 
 ## v0.3.142 / extension v0.3.94 / desktop v0.3.142: 知乎后台 discovery 与发布包同步（2026-06-25）
 

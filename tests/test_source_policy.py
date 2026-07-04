@@ -23,6 +23,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "youtube": False,
         "twitter": False,
         "zhihu": False,
+        "reddit": False,
     }
 
 
@@ -36,6 +37,7 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "youtube": False,
         "twitter": False,
         "zhihu": False,
+        "reddit": False,
     }
     assert effective_pool_source_shares(config) == {"bilibili": 5}
 
@@ -110,6 +112,30 @@ def test_effective_pool_source_shares_keep_enabled_zhihu() -> None:
     }
 
 
+def test_effective_pool_source_shares_keep_enabled_reddit() -> None:
+    config = Config()
+    config.scheduler.pool_source_shares = {
+        "bilibili": 6,
+        "xiaohongshu": 1,
+        "douyin": 1,
+        "youtube": 1,
+        "twitter": 1,
+        "zhihu": 1,
+        "reddit": 3,
+    }
+    config.sources.xiaohongshu.enabled = False
+    config.sources.douyin.enabled = False
+    config.sources.youtube.enabled = False
+    config.sources.twitter.enabled = False
+    config.sources.zhihu.enabled = False
+    config.sources.reddit.enabled = True
+
+    assert effective_pool_source_shares(config) == {
+        "bilibili": 6,
+        "reddit": 3,
+    }
+
+
 def test_effective_pool_source_shares_backfills_enabled_zhihu_default() -> None:
     config = Config()
     config.scheduler.pool_source_shares = {
@@ -154,6 +180,7 @@ def test_suggest_pool_source_shares_uses_damped_event_counts() -> None:
             "douyin": True,
             "youtube": True,
             "zhihu": True,
+            "reddit": True,
         },
     )
 
@@ -163,6 +190,7 @@ def test_suggest_pool_source_shares_uses_damped_event_counts() -> None:
         "douyin": 1,
         "youtube": 3,
         "zhihu": 1,
+        "reddit": 1,
     }
 
 
@@ -189,6 +217,7 @@ def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:
             "douyin": False,
             "youtube": True,
             "zhihu": True,
+            "reddit": True,
         },
         configured_shares={
             "bilibili": 7,
@@ -196,6 +225,7 @@ def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:
             "douyin": 2,
             "youtube": 3,
             "zhihu": 4,
+            "reddit": 5,
         },
     )
 
@@ -204,4 +234,5 @@ def test_suggest_pool_source_shares_falls_back_when_counts_empty() -> None:
         "xiaohongshu": 2,
         "youtube": 3,
         "zhihu": 4,
+        "reddit": 5,
     }

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -13,6 +13,7 @@ import pytest
 from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.candidate_pool import DiscoveryCandidateWrite
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+from openbiliclaw.llm.base import LLMRateLimitError
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.runtime.events import RuntimeEventHub
 from openbiliclaw.runtime.presence import PresenceTracker
@@ -118,6 +119,7 @@ class _FakeDatabase:
         self.delight_count = delight_count
         self.count_delight_thresholds: list[float] = []
         self.get_delight_thresholds: list[float] = []
+        self.dynamic_default_thresholds: list[float] = []
         self.trim_target: int | None = None
         self.trim_source_share_quotas: dict[str, int] | None = None
         self.trim_overflow_source_share_quotas: dict[str, int] | None = None
@@ -246,6 +248,10 @@ class _FakeDatabase:
     ) -> dict[str, object] | None:
         self.get_delight_thresholds.append(min_delight_score)
         return self.delight_candidate
+
+    def dynamic_delight_threshold(self, *, default_threshold: float) -> float:
+        self.dynamic_default_thresholds.append(default_threshold)
+        return 0.88
 
     def get_delight_candidates(
         self,
@@ -440,6 +446,15 @@ class _FakeXProducer:
         return {"enqueued": 3, "discovered": 3, "reason": "ok"}
 
 
+class _FakeRedditProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 3, "discovered": 3, "reason": "ok"}
+
+
 class _FakeRecommendationEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[list[dict[str, object]], dict[str, object], int]] = []
@@ -510,6 +525,7 @@ _LOOP_BODY_ATTRS = [
     ("_loop_douyin_producer", ("_tick_douyin_producer",)),
     ("_loop_youtube_producer", ("_tick_youtube_producer",)),
     ("_loop_x_producer", ("_tick_x_producer",)),
+    ("_loop_reddit_producer", ("_tick_reddit_producer",)),
     (
         "_loop_proactive_push",
         (
@@ -906,8 +922,12 @@ async def test_refresh_controller_uses_shared_delight_threshold_for_runtime_quer
 
     assert status["pending_delight_count"] == 2
     assert pending is not None
-    assert database.count_delight_thresholds == [DEFAULT_DELIGHT_THRESHOLD]
-    assert database.get_delight_thresholds == [DEFAULT_DELIGHT_THRESHOLD]
+    assert database.dynamic_default_thresholds == [
+        DEFAULT_DELIGHT_THRESHOLD,
+        DEFAULT_DELIGHT_THRESHOLD,
+    ]
+    assert database.count_delight_thresholds == [0.88]
+    assert database.get_delight_thresholds == [0.88]
 
 
 def test_load_disliked_topic_phrases_reads_effective_dislikes() -> None:
@@ -1364,6 +1384,26 @@ async def test_candidate_eval_drain_runs_when_refresh_plan_empty() -> None:
     assert recommendations.pool_copy_calls == [({"profile": "ok"}, 60)]
 
 
+async def test_candidate_eval_drain_defaults_to_larger_eval_batch() -> None:
+    pipeline = _FakeCandidatePipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=0),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    result = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+    )
+
+    assert result["cached"] == 3
+    assert pipeline.drains == [45]
+
+
 async def test_candidate_eval_releases_drain_lock_before_precompute() -> None:
     pipeline = _FakeCandidatePipeline()
 
@@ -1462,6 +1502,115 @@ async def test_candidate_eval_drain_with_real_database_makes_raw_candidate_avail
     assert database.count_discovery_candidates_by_status()["cached"] == 1
     assert database.count_pool_candidates() == 1
     assert [call[1] for call in recommendations.pool_copy_calls] == [60]
+
+
+async def test_candidate_eval_rate_limit_releases_claims_for_recovery_with_real_database(
+    tmp_path: Path,
+) -> None:
+    class RateLimitThenScoringLLM:
+        def __init__(self, payload: list[dict[str, object]]) -> None:
+            self.payload = payload
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            if self.calls == 1:
+                raise LLMRateLimitError("provider 429 rate limit")
+            return _StructuredResponse(json.dumps(self.payload, ensure_ascii=False))
+
+    database = Database(tmp_path / "candidate-eval-rate-limit-e2e.db")
+    database.initialize()
+    payload: list[dict[str, object]] = []
+    writes: list[DiscoveryCandidateWrite] = []
+    style_keys = [
+        "deep_focus",
+        "quick_scan",
+        "hands_on",
+        "decision_support",
+        "story_immersion",
+        "opinion_sparring",
+        "social_chat",
+        "daily_wander",
+        "mood_release",
+        "aesthetic_browse",
+        "ambient_companion",
+        "live_pulse",
+        "curiosity_spark",
+    ]
+    for index in range(32):
+        content_id = f"BVratelimit{index:02d}"
+        writes.append(
+            DiscoveryCandidateWrite(
+                candidate_key=f"bilibili:{content_id}",
+                source_platform="bilibili",
+                source_strategy="search",
+                content_id=content_id,
+                content_url=f"https://www.bilibili.com/video/{content_id}",
+                title=f"限流恢复候选 {index}",
+            )
+        )
+        payload.append(
+            {
+                "content_id": content_id,
+                "score": 0.91,
+                "reason": "fit after recovery",
+                "topic_group": "tech",
+                "style_key": style_keys[index % len(style_keys)],
+            }
+        )
+    database.enqueue_discovery_candidates(writes)
+    llm = RateLimitThenScoringLLM(payload)
+    discovery_engine = ContentDiscoveryEngine(llm_service=llm, database=database)
+    pipeline = DiscoveryCandidatePipeline(
+        database=database,
+        discovery_engine=discovery_engine,
+        pool_target_count=64,
+    )
+    recommendations = _RealDatabasePrecomputeEngine(database)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_ProfileSoulEngine(),
+        discovery_engine=discovery_engine,
+        recommendation_engine=recommendations,
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=64,
+        pool_source_shares={"bilibili": 1},
+    )
+
+    first = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=32,
+    )
+
+    first_counts = database.count_discovery_candidates_by_status()
+    assert first == {"evaluated": 0, "cached": 0, "rejected": 0, "failed": 32}
+    assert first_counts["pending_eval"] == 32
+    assert first_counts.get("evaluating", 0) == 0
+    assert first_counts.get("rejected_low_score", 0) == 0
+
+    second = await controller._drain_discovery_candidates_and_precompute(
+        reason="periodic",
+        batch_size=32,
+    )
+
+    assert second == {"evaluated": 32, "cached": 32, "rejected": 0}
+    assert llm.calls == 2
+    final_counts = database.count_discovery_candidates_by_status()
+    assert final_counts["cached"] == 32
+    assert final_counts.get("evaluating", 0) == 0
+    cached_rows = database.conn.execute("SELECT COUNT(*) FROM content_cache").fetchone()[0]
+    assert cached_rows == 32
 
 
 async def test_refresh_pipeline_does_not_use_stale_topics_when_drain_skips() -> None:
@@ -1572,6 +1721,85 @@ async def test_run_refresh_plan_passes_pool_snapshot() -> None:
     assert discovery.pool_snapshot_calls[0] is not None
 
 
+async def test_run_refresh_plan_uses_supply_loop_when_pipeline_supports_it() -> None:
+    class SupplyPipeline:
+        last_admitted_items: list[object] = []
+
+        def __init__(self) -> None:
+            self.supply_calls: list[dict[str, object]] = []
+            self.drain_calls: list[dict[str, object]] = []
+
+        async def ensure_pending_supply(self, **kwargs: object) -> dict[str, int]:
+            self.supply_calls.append(dict(kwargs))
+            return {"inserted": 6, "pending_eval": 6, "evaluating": 0, "attempts": 2}
+
+        async def drain_pending(self, **kwargs: object) -> dict[str, int]:
+            self.drain_calls.append(dict(kwargs))
+            return {"evaluated": 6, "cached": 0, "rejected": 0}
+
+    pipeline = SupplyPipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=20, source_counts={"bilibili": 12}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=_FakeMemoryManager().load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search", "explore"], 10)],
+        reason="test",
+    )
+
+    assert pipeline.supply_calls
+    assert pipeline.supply_calls[0]["target_pending"] == pipeline.drain_calls[0]["batch_size"]
+    assert pipeline.supply_calls[0]["strategies"] == ["search", "explore"]
+
+
+async def test_run_refresh_plan_respects_candidate_eval_batch_floor() -> None:
+    class SupplyPipeline:
+        min_eval_batch_size = 8
+        last_admitted_items: list[object] = []
+
+        def __init__(self) -> None:
+            self.supply_calls: list[dict[str, object]] = []
+            self.drain_calls: list[dict[str, object]] = []
+
+        async def ensure_pending_supply(self, **kwargs: object) -> dict[str, int]:
+            self.supply_calls.append(dict(kwargs))
+            return {"inserted": 8, "pending_eval": 8, "evaluating": 0, "attempts": 1}
+
+        async def drain_pending(self, **kwargs: object) -> dict[str, int]:
+            self.drain_calls.append(dict(kwargs))
+            return {"evaluated": 8, "cached": 0, "rejected": 0}
+
+    pipeline = SupplyPipeline()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=24, source_counts={"bilibili": 20}),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+    )
+
+    await controller._run_refresh_plan(
+        state=_FakeMemoryManager().load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search", "explore"], 6)],
+        reason="test",
+    )
+
+    assert pipeline.supply_calls[0]["target_pending"] == 8
+    assert pipeline.drain_calls[0]["batch_size"] == 8
+    assert pipeline.supply_calls[0]["strategy_limits"] == {"search": 4, "explore": 4}
+
+
 async def test_refresh_controller_caps_single_discovery_backfill_request() -> None:
     discovery = _FakeDiscoveryEngine()
     now = datetime.now().isoformat()
@@ -1624,7 +1852,7 @@ async def test_refresh_controller_pool_aware_limit_scales_with_gap() -> None:
     scoring).
 
     Verifies the gap → per-strategy mapping for three regimes:
-    1. Tiny gap (5): floor at 5 (don't starve strategies entirely)
+    1. Tiny gap (5): stay above replenish low-watermark and skip discovery
     2. Mid gap (40): per_strategy = 30 (gap*3//4=30, no excess)
     3. Huge gap (1000): cap at discovery_limit=30 (avoid wave)
     """
@@ -1661,10 +1889,11 @@ async def test_refresh_controller_pool_aware_limit_scales_with_gap() -> None:
             explore_refresh_hours=999,
         )
 
-    # Tiny gap: 95/100, gap=5 → max(5, 5*3//4=3) = 5 (floor protects)
+    # Tiny gap: 95/100, gap=5 → above low-watermark; don't spend discovery LLM.
     discovery.calls.clear()
-    await make_controller(pool_count=95, pool_target=100).refresh_if_needed()
-    assert discovery.calls[0][2] == 5
+    result = await make_controller(pool_count=95, pool_target=100).refresh_if_needed()
+    assert result["reason"] == "below_threshold"
+    assert discovery.calls == []
 
     # Mid gap: 60/100, gap=40 → max(5, 40*3//4=30) = 30 (full discovery_limit)
     discovery.calls.clear()
@@ -1677,6 +1906,30 @@ async def test_refresh_controller_pool_aware_limit_scales_with_gap() -> None:
     discovery.calls.clear()
     await make_controller(pool_count=0, pool_target=1000).refresh_if_needed()
     assert discovery.calls[0][2] == 30
+
+
+async def test_refresh_controller_small_gap_skips_expensive_bilibili_generators() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=85),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=100,
+        discovery_limit=30,
+    )
+
+    await controller.refresh_if_needed()
+
+    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+    assert discovery.calls[0][2] == 11
+    assert discovery.strategy_limit_calls[0] == {
+        "search": 6,
+        "related_chain": 5,
+        "trending": 0,
+        "explore": 0,
+    }
 
 
 async def test_refresh_controller_replenishes_until_pool_reaches_target() -> None:
@@ -2587,6 +2840,72 @@ def test_source_replenishment_plan_escapes_raw_headroom_deadlock() -> None:
     assert controller._source_deficit("bilibili") == 30
 
 
+def test_keyword_planner_explore_due_soon_requires_bili_deficit() -> None:
+    last_explore = (datetime.now() - timedelta(hours=12) + timedelta(seconds=30)).isoformat()
+    state = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": last_explore,
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 0,
+            "last_replenished_count": 0,
+            "recent_pool_topics": [],
+        }
+    )
+    controller = ContinuousRefreshController(
+        memory_manager=state,
+        database=_FakeDatabase(
+            [],
+            pool_count=250,
+            source_available_counts={"bilibili": 250},
+            source_raw_counts={"bilibili": 250},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        explore_refresh_hours=12,
+        check_interval_seconds=60,
+    )
+
+    assert controller.keyword_planner_explore_due_soon() is True
+
+    no_bili_room = ContinuousRefreshController(
+        memory_manager=state,
+        database=_FakeDatabase(
+            [],
+            pool_count=300,
+            source_available_counts={"bilibili": 300},
+            source_raw_counts={"bilibili": 300},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=300,
+        explore_refresh_hours=12,
+        check_interval_seconds=60,
+    )
+
+    assert no_bili_room.keyword_planner_explore_due_soon() is False
+
+
+def test_keyword_planner_mark_explore_planned_updates_refresh_state() -> None:
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase([]),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+    )
+
+    controller.keyword_planner_mark_explore_planned()
+
+    assert memory.state["last_explore_refresh_at"]
+
+
 def test_real_database_enforce_then_replenish_reaches_available_target(
     tmp_path,
 ) -> None:
@@ -2706,7 +3025,7 @@ async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() ->
         memory_manager=_FakeMemoryManager(),
         database=_FakeDatabase(
             [],
-            pool_count=543,
+            pool_count=530,
             source_counts={
                 "bilibili": 475,
                 "xiaohongshu": 60,
@@ -2726,10 +3045,10 @@ async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() ->
     assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
     assert discovery.calls[0][2] == 5
     assert discovery.strategy_limit_calls[0] == {
-        "search": 2,
-        "related_chain": 1,
-        "trending": 1,
-        "explore": 1,
+        "search": 3,
+        "related_chain": 2,
+        "trending": 0,
+        "explore": 0,
     }
 
 
@@ -3019,6 +3338,51 @@ async def test_x_producer_skips_when_not_configured() -> None:
 
     # No producer wired → tick is a safe no-op (does not raise).
     await controller._tick_x_producer()
+
+
+async def test_reddit_producer_runs_when_reddit_under_quota() -> None:
+    producer = _FakeRedditProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "reddit": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "reddit": 2},
+        discovery_limit=30,
+        reddit_producer=producer,
+    )
+
+    await controller._tick_reddit_producer()
+
+    assert producer.calls == [30]
+
+
+async def test_reddit_producer_skips_when_reddit_at_quota() -> None:
+    producer = _FakeRedditProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "reddit": 120},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 8, "reddit": 2},
+        reddit_producer=producer,
+    )
+
+    await controller._tick_reddit_producer()
+
+    assert producer.calls == []
 
 
 def test_pool_cap_total_trim_receives_raw_ceiling_source_quotas() -> None:
@@ -3779,3 +4143,101 @@ async def test_bili_search_flag_on_injects_and_marks_used(tmp_path: Path) -> Non
     assert search_calls[0]["keywords"] == ["kw1", "kw2"]
     # Inline-admit success (discovered > 0) → both words USED.
     assert _bili_kw_statuses(kw_db) == {"kw1": "used", "kw2": "used"}
+
+
+async def test_bili_search_flag_on_store_empty_drops_search_instead_of_legacy_query_gen(
+    tmp_path: Path,
+) -> None:
+    kw_db = Database(tmp_path / "bili_empty.db")
+    kw_db.initialize()
+    pipeline = _CapturingPipeline(cached=2)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_KeywordStoreFakeDatabase(
+            [{"id": 1, "event_type": "view"}], pool_count=0, kw_db=kw_db
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=kw_db, discovery_config=_BiliKwCfg(True, fetch_batch=5)
+        ),
+    )
+
+    await controller.force_refresh()
+
+    assert pipeline.produce_kwargs, "expected non-search strategies to keep replenishing"
+    assert all("search" not in list(kwargs["strategies"]) for kwargs in pipeline.produce_kwargs)
+    assert all("keywords" not in kwargs for kwargs in pipeline.produce_kwargs)
+    assert _bili_kw_statuses(kw_db) == {}
+
+
+async def test_bili_search_flag_on_store_empty_reassigns_tiny_search_budget(
+    tmp_path: Path,
+) -> None:
+    kw_db = Database(tmp_path / "bili_empty_tiny_gap.db")
+    kw_db.initialize()
+    pipeline = _CapturingPipeline(cached=1)
+    memory = _FakeMemoryManager()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_KeywordStoreFakeDatabase([], pool_count=0, kw_db=kw_db),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=1,
+        discovery_limit=1,
+        pool_source_shares={"bilibili": 1},
+        keyword_fetch=KeywordFetchCoordinator(
+            database=kw_db, discovery_config=_BiliKwCfg(True, fetch_batch=5)
+        ),
+    )
+
+    await controller._run_refresh_plan(
+        state=memory.load_discovery_runtime_state(),
+        profile={"profile": "ok"},
+        plan=[(["search", "related_chain", "trending", "explore"], 1)],
+        reason="tiny_gap",
+    )
+
+    call = pipeline.produce_kwargs[0]
+    assert call["strategies"] == ["related_chain", "trending", "explore"]
+    assert call["strategy_limits"] == {
+        "related_chain": 1,
+        "trending": 0,
+        "explore": 0,
+    }
+
+
+async def test_bili_search_does_not_claim_when_eval_supply_is_full(tmp_path: Path) -> None:
+    kw_db = Database(tmp_path / "bili_supply_full.db")
+    kw_db.initialize()
+    kw_db.insert_pending_keywords("bilibili", ["kw1"], "dig")
+    pipeline = _CapturingPipeline(cached=0)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_KeywordStoreFakeDatabase(
+            [{"id": 1, "event_type": "view"}],
+            pool_count=0,
+            kw_db=kw_db,
+            discovery_status_counts={"pending_eval": 30},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        discovery_candidate_pipeline=pipeline,
+        pool_target_count=30,
+        pool_source_shares=_MULTI_SOURCE_SHARES,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=kw_db, discovery_config=_BiliKwCfg(True, fetch_batch=5)
+        ),
+    )
+
+    await controller.force_refresh()
+
+    assert all("keywords" not in kwargs for kwargs in pipeline.produce_kwargs)
+    assert _bili_kw_statuses(kw_db) == {"kw1": "pending"}

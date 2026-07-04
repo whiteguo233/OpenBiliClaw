@@ -32,6 +32,10 @@ def _openai_response(content: str = "ok") -> SimpleNamespace:
     )
 
 
+def test_connectivity_probe_token_budget_is_4096() -> None:
+    assert LLM_CONNECTIVITY_PROBE_MAX_TOKENS == 4096
+
+
 @pytest.mark.asyncio
 async def test_openai_provider_normalizes_response(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = OpenAIProvider(api_key="test-key")
@@ -231,6 +235,39 @@ async def test_openai_provider_does_not_retry_rate_limit(
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_treats_insufficient_balance_as_provider_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = DeepSeekProvider(api_key="test-key")
+    calls = {"count": 0}
+
+    class PaymentRequiredError(Exception):
+        status_code = 402
+        body = {
+            "error": {
+                "message": "Insufficient Balance",
+                "type": "unknown_error",
+                "code": "invalid_request_error",
+            }
+        }
+
+    async def fake_sleep(_: float) -> None:
+        pytest.fail("billing/quota failures should not burn provider retries")
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        calls["count"] += 1
+        raise PaymentRequiredError("Error code: 402 - Insufficient Balance")
+
+    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
+    monkeypatch.setattr("openbiliclaw.llm.openai_provider.asyncio.sleep", fake_sleep)
+
+    with pytest.raises(LLMRateLimitError):
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_rejects_empty_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -243,6 +280,44 @@ async def test_openai_provider_rejects_empty_response(
 
     with pytest.raises(LLMResponseError):
         await provider.complete([{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_reports_reasoning_only_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(
+        api_key="test-key",
+        provider_name="openai_compatible",
+    )
+
+    async def fake_create(**_: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            model="reasoning-model",
+            choices=[
+                SimpleNamespace(
+                    finish_reason="length",
+                    message=SimpleNamespace(
+                        content="",
+                        reasoning_content="reasoning tokens were returned",
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=4096,
+                total_tokens=4106,
+            ),
+        )
+
+    monkeypatch.setattr(provider._client.chat.completions, "create", fake_create)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    message = str(exc_info.value)
+    assert "returned reasoning but no final content" in message
+    assert "finish_reason=length" in message
 
 
 @pytest.mark.asyncio
@@ -439,6 +514,29 @@ async def test_deepseek_provider_accepts_per_call_model_override(
     assert response.content == "deepseek-ok"
     assert captured["model"] == "deepseek-override"
     assert provider._model == "deepseek-default"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_provider_sends_disabled_thinking_for_empty_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = DeepSeekProvider(api_key="test-key", reasoning_effort="max")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("deepseek-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        reasoning_effort="",
+    )
+
+    assert response.content == "deepseek-ok"
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert provider._reasoning_effort == "max"
 
 
 @pytest.mark.asyncio
@@ -758,6 +856,32 @@ async def test_ollama_provider_native_retries_without_format_on_empty(
     assert captured_payload[0]["format"] == "json"  # first attempt constrained
     assert "format" not in captured_payload[1]  # retry unconstrained
     assert response.content == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_native_reports_thinking_only_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OllamaProvider(base_url="http://localhost:11434/v1", num_ctx=4096)
+
+    async def fake_post_chat(_: dict[str, object]) -> dict[str, object]:
+        return {
+            "model": "qwen3",
+            "done_reason": "length",
+            "message": {
+                "content": "",
+                "thinking": "reasoning tokens were returned",
+            },
+        }
+
+    monkeypatch.setattr(provider, "_post_chat", fake_post_chat)
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        await provider.complete([{"role": "user", "content": "hi"}])
+
+    message = str(exc_info.value)
+    assert "returned reasoning but no final content" in message
+    assert "finish_reason=length" in message
 
 
 def test_openrouter_provider_defaults_and_headers() -> None:

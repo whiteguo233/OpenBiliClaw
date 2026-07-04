@@ -15,6 +15,7 @@ from openbiliclaw.discovery.strategies._utils import (
 )
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.llm.prompts import build_search_queries_prompt
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _PLATFORM_BILIBILI
 
 if TYPE_CHECKING:
@@ -37,11 +38,13 @@ async def generate_bili_search_keywords(
 
     try:
         messages = build_search_queries_prompt(profile_summary=build_profile_summary(profile))
-        response = await llm_service.complete_structured_task(
+        complete_structured = llm_service.complete_structured_task
+        response = await complete_structured(
             system_instruction=messages[0]["content"],
             user_input=messages[1]["content"],
             caller="runtime.bilibili_extension_search.queries",
             max_tokens=512,
+            **without_core_memory_kwargs(complete_structured),
         )
         queries = _parse_queries(str(getattr(response, "content", "")), limit=count)
         if queries:

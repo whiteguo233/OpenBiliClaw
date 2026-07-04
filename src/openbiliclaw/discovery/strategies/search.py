@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -18,9 +20,11 @@ from openbiliclaw.discovery.engine import (
     discovery_raw_candidate_mode_enabled,
     trim_candidates_for_llm,
 )
+from openbiliclaw.discovery.keyword_digest import profile_kw_digest
 from openbiliclaw.discovery.strategies._utils import (
     SupportsSearchClient,
-    build_profile_summary,
+    build_query_generation_profile_summary,
+    cached_embedding_lookup,
     clean_text,
     interest_anchors,
     normalize_match_text,
@@ -30,8 +34,10 @@ from openbiliclaw.discovery.strategies._utils import (
     to_int,
 )
 from openbiliclaw.llm.prompts import build_search_queries_prompt
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
+    from openbiliclaw.llm.embedding import SupportsEmbeddingService
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
@@ -46,12 +52,19 @@ class SearchStrategy(DiscoveryStrategy):
     bilibili_client: SupportsSearchClient
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
+    embedding_service: SupportsEmbeddingService | None = None
     queries_per_run: int = 8
     page_size: int = 10
     max_pages: int = 1
     llm_evaluation: bool = True
     score_threshold: float = 0.60
     last_intermediates: dict[str, object] = field(default_factory=dict)
+    query_cache_ttl_seconds: float = 6 * 60 * 60
+    _query_cache: dict[str, tuple[float, list[str]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     @property
     def name(self) -> str:
@@ -391,10 +404,16 @@ class SearchStrategy(DiscoveryStrategy):
                         type(raw_hints).__name__,
                     )
 
+        cache_key = self._query_cache_key(profile, pool_hints)
+        if cache_key is not None:
+            cached = self._cached_queries(cache_key)
+            if cached is not None:
+                return cached
+
         try:
             try:
                 prompt_messages = build_search_queries_prompt(
-                    profile_summary=self._profile_summary(profile),
+                    profile_summary=self._query_profile_summary(profile),
                     pool_hints=pool_hints,
                 )
             except (TypeError, ValueError) as exc:
@@ -405,20 +424,59 @@ class SearchStrategy(DiscoveryStrategy):
                     exc,
                 )
                 prompt_messages = build_search_queries_prompt(
-                    profile_summary=self._profile_summary(profile),
+                    profile_summary=self._query_profile_summary(profile),
                     pool_hints=None,
                 )
-            response = await self.llm_service.complete_structured_task(
+            complete_structured = self.llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=prompt_messages[0]["content"],
                 user_input=prompt_messages[1]["content"],
+                max_tokens=1024,
                 caller="discovery.search.queries",
+                reasoning_effort="",
+                **without_core_memory_kwargs(complete_structured),
             )
             queries = self._parse_queries(str(getattr(response, "content", "")))
             if queries:
+                if cache_key is not None:
+                    self._store_queries(cache_key, queries)
                 return queries
         except Exception:
             logger.exception("Search query generation failed; falling back to local queries.")
         return self._fallback_queries(profile)
+
+    def _query_cache_key(
+        self,
+        profile: SoulProfile,
+        pool_hints: dict[str, object] | None,
+    ) -> str | None:
+        try:
+            hints_blob = json.dumps(
+                pool_hints or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except TypeError:
+            return None
+        hints_digest = hashlib.sha256(hints_blob.encode("utf-8")).hexdigest()[:12]
+        return f"{profile_kw_digest(profile)}:{hints_digest}"
+
+    def _cached_queries(self, cache_key: str) -> list[str] | None:
+        cached = self._query_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, queries = cached
+        if time.monotonic() >= expires_at:
+            self._query_cache.pop(cache_key, None)
+            return None
+        return list(queries)
+
+    def _store_queries(self, cache_key: str, queries: list[str]) -> None:
+        ttl = max(0.0, float(self.query_cache_ttl_seconds))
+        if ttl <= 0:
+            return
+        self._query_cache[cache_key] = (time.monotonic() + ttl, list(queries))
 
     @staticmethod
     def _dedupe_queries(queries: list[str]) -> list[str]:
@@ -485,7 +543,13 @@ class SearchStrategy(DiscoveryStrategy):
 
     @staticmethod
     def _profile_summary(profile: SoulProfile) -> dict[str, object]:
-        return build_profile_summary(profile)
+        return build_query_generation_profile_summary(profile)
+
+    def _query_profile_summary(self, profile: SoulProfile) -> dict[str, object]:
+        return build_query_generation_profile_summary(
+            profile,
+            embedding_lookup=cached_embedding_lookup(self.embedding_service),
+        )
 
     @staticmethod
     def _interest_anchors(profile: SoulProfile) -> list[tuple[str, float]]:

@@ -169,13 +169,14 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           cat > "$notes_file" <<'EOF'
-          **实验性桌面安装包**（未签名 / 未公证，仅供尝鲜）。后端源码仍为 source-only；此处只发桌面应用二进制。
+          **实验性桌面安装包**（未签名 / 未公证，仅供尝鲜）。macOS DMG 内已放入首次打开说明；后端源码仍为 source-only，此处只发桌面应用二进制。
 
-          ### 首次打开要绕过系统拦截
-          - **macOS**：先拖进「应用程序」，再右键图标 →「打开」→ 在弹窗里再点「打开」；或「系统设置 → 隐私与安全性」点「仍要打开」。若仍提示“已损坏”，确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"; codesign --force --deep --sign - "$APP"; open "$APP"`。
+          ### macOS 安全阻挡
+          - 当前 Release 是 ad-hoc signed、未 notarized。打开 DMG 后先看 `首次打开说明 First Launch.html`，把应用拖进「应用程序」，再右键 / Control-click `OpenBiliClaw.app` →「打开」→ 在弹窗里再点「打开」；或到「System Settings → Privacy & Security」点「Open Anyway / 仍要打开」。
+          - 若提示“OpenBiliClaw.app 已损坏，无法打开”，通常是下载隔离属性导致。确认包来源可信后执行：`APP="/Applications/OpenBiliClaw.app"; xattr -dr com.apple.quarantine "$APP"`，然后再次打开应用。
           - **Windows**：SmartScreen 弹窗点「更多信息 → 仍要运行」。
 
-          自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/Library/Application Support/OpenBiliClaw`（mac）/ `%LOCALAPPDATA%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
+          自带本地 Ollama + `bge-m3` embedding，开箱即用，常驻 macOS 菜单栏 / Windows 系统托盘。数据在 `~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级 / 卸载不动它。Intel mac（x64）.dmg 未自动构建，需要时用手动的 build-installers.yml 产出后补挂。
           EOF
 
           ensure_release() {

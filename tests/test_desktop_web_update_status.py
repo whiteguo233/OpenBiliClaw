@@ -66,6 +66,24 @@ def test_desktop_web_settings_guides_frozen_installs_to_download_new_installer()
     assert 'startsWith("desktop-v")' in js
 
 
+def test_desktop_web_update_actions_require_explicit_install_branch() -> None:
+    """Only explicit git installs self-apply; desktop-v* always links to installers."""
+    js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert 'const isGitInstall = mode === "git"' in js
+    assert 'const isFrozenInstall = mode === "frozen"' in js
+    assert (
+        'const isDesktopInstallerUpdate = String(backend.latest_tag || "").startsWith("desktop-v")'
+        in js
+    )
+    assert 'isGitInstall && backend.state === "update_available"' in js
+    assert (
+        '(isFrozenInstall || isDesktopInstallerUpdate) && backend.state === "update_available"'
+        in js
+    )
+    assert '!unsupportedInstall && backend.state === "update_available"' not in js
+
+
 def test_desktop_web_settings_persists_delight_queue_limit_to_backend_config() -> None:
     """The shared delight queue size must be saved through /api/config."""
     js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")

@@ -73,10 +73,18 @@ class LLMProviderExecutionError(LLMServiceError):
 _RATE_LIMIT_ERROR_MARKERS = (
     "rate limit",
     "429",
+    "402",
     "cooling down",
     "too many requests",
     "resource exhausted",
     "quota exceeded",
+    "payment required",
+    "insufficient balance",
+    "billing",
+    "out of credit",
+    "credit exhausted",
+    "余额不足",
+    "账户余额",
 )
 
 
@@ -225,19 +233,15 @@ class LLMService:
     # through to ``_DEFAULT_PRIORITY``. The intent: when the system is
     # under load, popup-visible work (write_expression, evaluate_batch
     # for the active discovery batch) gets the next LLM slot before
-    # background bulk scoring (delight_score) or cold-path soul/xhs
-    # analysis. Without this, a long delight-scoring sweep could starve
-    # the user-visible expression backfill for minutes.
+    # cold-path soul/xhs analysis.
     _PRIORITY_MAP: ClassVar[dict[str, int]] = {
         "recommendation.write_expression": 1,
         "discovery.evaluate_batch": 1,
-        "recommendation.delight_score": 2,
         "soul": 2,
         "xhs": 2,
     }
     _DEFAULT_PRIORITY: ClassVar[int] = 3
     _ROUTE_BUCKET_PREFIXES: ClassVar[tuple[tuple[str, str], ...]] = (
-        ("recommendation.delight_score", "evaluation"),
         ("recommendation.evaluate_batch", "evaluation"),
         ("discovery.evaluate", "evaluation"),
         ("discovery.eval", "evaluation"),
@@ -350,6 +354,7 @@ class LLMService:
         caller: str = "",
         reasoning_effort: str | None = None,
         bypass_semaphore: bool = False,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a task with automatically injected core memory context.
 
@@ -365,9 +370,14 @@ class LLMService:
         ``bypass_semaphore`` (v0.3.64+) skips the global concurrency
         gate entirely. Use for user-initiated interactive requests
         (e.g. chat dialogue) that must never queue behind background work.
+
+        ``inject_core_memory`` lets hot-path evaluators opt out when
+        they already pass a task-specific structured profile in
+        ``user_input``. This keeps provider-side prompt-cache prefixes
+        stable without changing the information available to the task.
         """
         core_memory_block = ""
-        if self.memory is not None:
+        if inject_core_memory and self.memory is not None:
             with suppress(Exception):
                 core_memory_block = self.memory.render_core_memory_prompt()
         parts = [system_instruction.strip()]
@@ -433,6 +443,7 @@ class LLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a JSON-mode task with core memory injection.
 
@@ -451,6 +462,7 @@ class LLMService:
             json_mode=True,
             caller=caller,
             reasoning_effort=reasoning_effort,
+            inject_core_memory=inject_core_memory,
         )
 
     def supports_image_input(self, caller: str = "discovery.evaluate_batch") -> bool:
@@ -502,10 +514,11 @@ class LLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse:
         """Execute a JSON-mode task with user text plus image inputs."""
         core_memory_block = ""
-        if self.memory is not None:
+        if inject_core_memory and self.memory is not None:
             with suppress(Exception):
                 core_memory_block = self.memory.render_core_memory_prompt()
         parts = [system_instruction.strip()]

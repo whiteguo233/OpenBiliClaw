@@ -8,7 +8,12 @@ import {
 } from "./release-utils.mjs";
 
 /**
- * Package the Firefox extension into a .zip for AMO submission or sideloading.
+ * Package the Firefox extension into a .zip for AMO submission or temporary
+ * about:debugging loading.
+ *
+ * This archive is unsigned. Regular Firefox Release/Beta builds will reject it
+ * from about:addons / "Install Add-on From File" with a verification error until
+ * Mozilla AMO signs it and returns a signed .xpi.
  *
  * Usage:
  *   node scripts/package-firefox.mjs              # build + zip

@@ -128,6 +128,17 @@ class TestAtomicClaim:
         remaining = [str(r["keyword"]) for r in db.claim_keywords(_BILI, 2)]
         assert remaining == ["newest"]
 
+    def test_regular_and_explore_claims_are_separate(self, db: Database) -> None:
+        db.insert_pending_keywords(_BILI, ["常规词"], _DIGEST_A)
+        db.insert_pending_keywords(_BILI, ["探索词"], _DIGEST_A, keyword_kind="explore")
+
+        regular = db.claim_keywords(_BILI, 10)
+        assert [str(row["keyword"]) for row in regular] == ["常规词"]
+        assert db.claim_keywords(_BILI, 10) == []
+
+        explore = db.claim_keywords(_BILI, 10, keyword_kind="explore")
+        assert [str(row["keyword"]) for row in explore] == ["探索词"]
+
 
 class TestLifecycleTransitions:
     def test_used_only_from_inflight(self, db: Database) -> None:
@@ -287,6 +298,22 @@ class TestHistoryAndRecycle:
             db.mark_keyword_used(int(r["id"]))
         assert len(db.history_keywords(_BILI, window_size=3, window_hours=48)) == 3
 
+    def test_history_defaults_to_regular_pool(self, db: Database) -> None:
+        db.insert_pending_keywords(_BILI, ["regular"], _DIGEST_A)
+        db.insert_pending_keywords(_BILI, ["explore"], _DIGEST_A, keyword_kind="explore")
+        [regular] = db.claim_keywords(_BILI, 1)
+        [explore] = db.claim_keywords(_BILI, 1, keyword_kind="explore")
+        db.mark_keyword_used(int(regular["id"]))
+        db.mark_keyword_used(int(explore["id"]))
+
+        assert db.history_keywords(_BILI, window_size=50, window_hours=48) == ["regular"]
+        assert db.history_keywords(
+            _BILI,
+            window_size=50,
+            window_hours=48,
+            keyword_kind="explore",
+        ) == ["explore"]
+
     def test_recycle_oldest_used_moves_oldest_to_pending(self, db: Database) -> None:
         db.insert_pending_keywords(_BILI, ["first", "second", "third"], _DIGEST_A)
         rows = {r["keyword"]: r for r in db.claim_keywords(_BILI, 10)}
@@ -315,6 +342,22 @@ class TestHistoryAndRecycle:
         recycled = db.recycle_oldest_used(_BILI, 1, _DIGEST_A)
         assert recycled == 0
         assert _status(db, int(row["id"])) == "used"
+
+    def test_recycle_defaults_to_regular_pool(self, db: Database) -> None:
+        db.insert_pending_keywords(_BILI, ["regular"], _DIGEST_A)
+        db.insert_pending_keywords(_BILI, ["explore"], _DIGEST_A, keyword_kind="explore")
+        [regular] = db.claim_keywords(_BILI, 1)
+        [explore] = db.claim_keywords(_BILI, 1, keyword_kind="explore")
+        db.mark_keyword_used(int(regular["id"]))
+        db.mark_keyword_used(int(explore["id"]))
+        _backdate(db, int(explore["id"]), "used_at", minutes_ago=120)
+        _backdate(db, int(regular["id"]), "used_at", minutes_ago=60)
+
+        recycled = db.recycle_oldest_used(_BILI, 10, _DIGEST_A)
+
+        assert recycled == 1
+        assert _status(db, int(regular["id"])) == "pending"
+        assert _status(db, int(explore["id"])) == "used"
 
 
 class TestPurge:

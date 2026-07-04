@@ -72,6 +72,25 @@ def test_docs_make_auto_init_primary_for_all_install_channels() -> None:
     assert "手动 fallback" in docker_doc
 
 
+def test_readmes_explain_macos_first_launch_security_bypass() -> None:
+    readme = _read("README.md")
+    readme_en = _read("README_EN.md")
+
+    assert "macOS 安全阻挡" in readme
+    assert "Control-click" in readme
+    assert "隐私与安全性" in readme
+    assert "已损坏" in readme
+    assert "xattr -dr com.apple.quarantine" in readme
+    assert "codesign --force" not in readme
+
+    assert "macOS security blocking" in readme_en
+    assert "Control-click" in readme_en
+    assert "Privacy & Security" in readme_en
+    assert "is damaged and can't be opened" in readme_en
+    assert "xattr -dr com.apple.quarantine" in readme_en
+    assert "codesign --force" not in readme_en
+
+
 def test_docker_docs_promote_human_one_line_installer_contract() -> None:
     install_sh = _read("scripts/install.sh")
     docker_doc = _read("docs/docker-deployment.md")

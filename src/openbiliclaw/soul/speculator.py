@@ -19,6 +19,7 @@ from openbiliclaw.llm.json_utils import (
     DEFAULT_STRUCTURED_MAX_TOKENS,
     parse_llm_json_tolerant,
 )
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1267,11 +1268,13 @@ class InterestSpeculator:
             from openbiliclaw.llm.base import LLMProviderError
             from openbiliclaw.llm.service import LLMServiceError
 
-            response = await self._llm_service.complete_structured_task(
+            complete_structured = self._llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
                 caller="soul.speculate",
+                **without_core_memory_kwargs(complete_structured),
             )
             raw = _parse_speculation_response(response.content)
         except (LLMProviderError, LLMServiceError):

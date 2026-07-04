@@ -100,10 +100,15 @@ from openbiliclaw.api.models import (
     RecommendationOut,
     RecommendationRefreshResponse,
     RecommendationReshuffleResponse,
+    RedditCookieIn,
+    RedditCookieResponse,
+    RedditSourceConfigOut,
     RuntimeStatusResponse,
     SchedulerConfigOut,
+    SourceCredentialItem,
     SourcesBrowserConfigOut,
     SourcesConfigOut,
+    SourcesCredentialsResponse,
     SourceShareSuggestionIn,
     SourceShareSuggestionResponse,
     SourcesStatusResponse,
@@ -202,8 +207,24 @@ SOURCE_LABELS = {
     "profile_refresh": "聚合观察",
 }
 
-_SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
-_INIT_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu")
+_SOURCE_SHARE_ORDER = (
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+)
+_INIT_SOURCE_ORDER = (
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+)
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -481,6 +502,8 @@ def _normalize_source_platform(source: object) -> str:
         return "douyin"
     if source_key in {"zhihu", "知乎"}:
         return "zhihu"
+    if source_key in {"reddit", "rd"}:
+        return "reddit"
     if source_key in {"bilibili", "bili", ""}:
         return "bilibili"
     return source_key
@@ -499,6 +522,8 @@ def _infer_source_platform_from_url(url: object) -> str:
         return "douyin"
     if "zhihu.com" in text:
         return "zhihu"
+    if "reddit.com" in text or "redd.it" in text:
+        return "reddit"
     if "bilibili.com" in text or "b23.tv" in text:
         return "bilibili"
     return ""
@@ -777,6 +802,9 @@ def _fallback_recommendation_click_url(
         return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
     if source_platform == "twitter":
         return f"https://x.com/i/status/{quote(item_id, safe='')}"
+    if source_platform == "reddit":
+        reddit_id = item_id[3:] if item_id.startswith("t3_") else item_id
+        return f"https://www.reddit.com/comments/{quote(reddit_id, safe='')}/"
     if source_platform == "bilibili":
         return f"https://www.bilibili.com/video/{quote(bvid or item_id, safe='')}"
     return ""
@@ -1060,6 +1088,7 @@ def create_app(
         debounce_seconds=_FEEDBACK_BATCH_DEBOUNCE_SECONDS,
     )
     app.state.feedback_batch_scheduler = feedback_batch_scheduler
+    profile_pipeline_backfill_lock = asyncio.Lock()
 
     # ── Password gate (LAN/remote auth) ─────────────────────────────
     app.state.auth_gate = AuthGate(_auth_cfg, getattr(ctx, "database", None))
@@ -1476,6 +1505,19 @@ def create_app(
         """
         if max_event_id <= 0:
             return 0
+        if profile_pipeline_backfill_lock.locked():
+            logger.debug("profile pipeline backfill already in progress; skipping duplicate claim")
+            return 0
+        async with profile_pipeline_backfill_lock:
+            return await _backfill_pending_discovery_events_to_profile_pipeline_locked(
+                max_event_id=max_event_id
+            )
+
+    async def _backfill_pending_discovery_events_to_profile_pipeline_locked(
+        *,
+        max_event_id: int,
+    ) -> int:
+        """Feed discovery-pending profile events while holding the backfill claim lock."""
         load_state = getattr(ctx.memory_manager, "load_discovery_runtime_state", None)
         update_state = getattr(ctx.memory_manager, "update_discovery_runtime_state", None)
         if not callable(load_state) or not callable(update_state):
@@ -2060,6 +2102,7 @@ def create_app(
                 include_yt="youtube" in effective,
                 include_x="twitter" in effective,
                 include_zhihu="zhihu" in effective,
+                include_reddit="reddit" in effective,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_api_discover_backfill,
                 coordinator=coord,
@@ -2488,6 +2531,48 @@ def create_app(
             ),
         )
 
+    @app.post("/api/sources/reddit/cookie", response_model=RedditCookieResponse)
+    async def sync_reddit_cookie(payload: RedditCookieIn) -> RedditCookieResponse:
+        """Receive a Reddit cookie from the browser extension.
+
+        Reddit steady-state discovery defaults to rdt-cli. Instead of forcing
+        users to run ``rdt login`` manually, the connected extension can read
+        reddit.com cookies with Chrome's ``cookies`` permission and persist them
+        in rdt-cli's own credential format.
+        """
+        from openbiliclaw.sources.reddit_tasks import sync_rdt_credential_from_cookie_header
+
+        cookie_value = payload.cookie.strip()
+        if not cookie_value:
+            return RedditCookieResponse(
+                ok=False,
+                has_cookie=False,
+                message="cookie payload is empty",
+                error_code="empty_cookie",
+            )
+
+        result = sync_rdt_credential_from_cookie_header(cookie_value, source=payload.source)
+
+        if result.has_cookie:
+            with suppress(Exception):
+                await ctx.event_hub.publish(
+                    {
+                        "type": "reddit_cookie_synced",
+                        "source": payload.source,
+                        "has_cookie": result.has_cookie,
+                        "cookie_names": list(result.cookie_names),
+                    }
+                )
+
+        return RedditCookieResponse(
+            ok=result.ok,
+            has_cookie=result.has_cookie,
+            cookie_names=list(result.cookie_names),
+            credential_file=str(result.credential_file),
+            message=result.message,
+            error_code=result.error_code,
+        )
+
     @app.post("/api/init-completed")
     async def init_completed() -> dict[str, object]:
         """Notify the running server that ``openbiliclaw init`` has finished.
@@ -2648,6 +2733,25 @@ def create_app(
                             await websocket.send_json(
                                 {
                                     "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
+                    from openbiliclaw.sources.reddit_tasks import _rdt_saved_credential_state
+
+                    rd_cfg = getattr(runtime_config.sources, "reddit", None)
+                    rd_backend = str(getattr(rd_cfg, "backend", "rdt") or "rdt").strip().lower()
+                    if (
+                        rd_cfg is not None
+                        and bool(getattr(rd_cfg, "enabled", False))
+                        and rd_backend == "rdt"
+                    ):
+                        state, _message = _rdt_saved_credential_state()
+                        if state != "present":
+                            await websocket.send_json(
+                                {
+                                    "type": "reddit_cookie_sync_requested",
                                     "reason": "missing_cookie",
                                     "source": "runtime-stream",
                                 }
@@ -3513,9 +3617,7 @@ def create_app(
                                 "pool_raw_count": counts.get("raw", counts.get("available", 0)),
                                 "pool_pending_count": counts.get("pending", 0),
                                 "pool_pending_eval_count": counts.get("pending_eval", 0),
-                                "pool_evaluated_pending_count": counts.get(
-                                    "evaluated_pending", 0
-                                ),
+                                "pool_evaluated_pending_count": counts.get("evaluated_pending", 0),
                             }
                         )
             else:
@@ -3872,8 +3974,14 @@ def create_app(
 
         from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 
+        threshold = DEFAULT_DELIGHT_THRESHOLD
+        dynamic_threshold = getattr(ctx.runtime_controller, "_dynamic_delight_threshold", None)
+        if callable(dynamic_threshold):
+            with suppress(Exception):
+                threshold = float(dynamic_threshold())
+
         candidates = ctx.database.get_delight_candidates(
-            min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
+            min_delight_score=threshold,
             limit=count,
         )
         pushed: list[str] = []
@@ -3942,8 +4050,13 @@ def create_app(
             20,
         )
         requested_limit = configured_limit if limit is None else limit
+        threshold = DEFAULT_DELIGHT_THRESHOLD
+        dynamic_threshold = getattr(ctx.runtime_controller, "_dynamic_delight_threshold", None)
+        if callable(dynamic_threshold):
+            with suppress(Exception):
+                threshold = float(dynamic_threshold())
         rows = ctx.database.get_delight_candidates(
-            min_delight_score=DEFAULT_DELIGHT_THRESHOLD,
+            min_delight_score=threshold,
             limit=max(1, min(100, int(requested_limit))),
             include_liked=True,
         )
@@ -6912,6 +7025,94 @@ def create_app(
                         logged_in=False,
                     )
 
+        rd_cfg = getattr(srcs, "reddit", None)
+        rd_enabled = bool(getattr(rd_cfg, "enabled", False))
+        rd_backend = str(getattr(rd_cfg, "backend", "rdt") or "rdt").strip().lower()
+        if rd_backend in {"extension", "openbiliclaw", "plugin"}:
+            reddit = SourceStatusItem(
+                enabled=rd_enabled,
+                state="unverified",
+                detail="Reddit 使用 OpenBiliClaw 插件登录态；尚未看到成功任务结果。",
+                logged_in=False,
+            )
+            db_conn = getattr(ctx.database, "conn", None)
+            if db_conn is not None and hasattr(db_conn, "execute"):
+                with suppress(Exception):
+                    row = db_conn.execute(
+                        """
+                        SELECT type, status, result_json
+                        FROM reddit_tasks
+                        ORDER BY COALESCE(completed_at, claimed_at, created_at) DESC,
+                                 created_at DESC
+                        LIMIT 1
+                        """
+                    ).fetchone()
+                    if row is not None:
+                        task_type = str(row["type"] if hasattr(row, "keys") else row[0])
+                        status = str(row["status"] if hasattr(row, "keys") else row[1])
+                        result_json = row["result_json"] if hasattr(row, "keys") else row[2]
+                        error_code = ""
+                        reddit_debug: dict[str, Any] = {}
+                        with suppress(Exception):
+                            parsed = json.loads(str(result_json or "{}"))
+                            if isinstance(parsed, dict):
+                                error_code = str(parsed.get("error", "") or "")
+                                if isinstance(parsed.get("debug"), dict):
+                                    reddit_debug = parsed["debug"]
+                        login_required = error_code == "reddit_login_required" or bool(
+                            reddit_debug.get("login_required")
+                        )
+                        if status == "completed":
+                            reddit = SourceStatusItem(
+                                enabled=rd_enabled,
+                                state="ready",
+                                detail=f"最近 Reddit 插件任务已完成（{task_type}）。",
+                                logged_in=True,
+                            )
+                        elif login_required:
+                            reddit = SourceStatusItem(
+                                enabled=rd_enabled,
+                                state="missing",
+                                detail=(
+                                    "最近 Reddit 任务提示需要登录 Reddit。"
+                                    "请在当前浏览器登录后重试。"
+                                ),
+                                logged_in=False,
+                            )
+                        elif status == "failed":
+                            suffix = f"：{error_code}" if error_code else ""
+                            reddit = SourceStatusItem(
+                                enabled=rd_enabled,
+                                state="partial",
+                                detail=f"最近 Reddit 插件任务失败{suffix}。",
+                                logged_in=False,
+                            )
+                        elif status in {"pending", "in_progress"}:
+                            reddit = SourceStatusItem(
+                                enabled=rd_enabled,
+                                state="unverified",
+                                detail=f"Reddit 任务正在等待插件执行（{task_type} / {status}）。",
+                                logged_in=False,
+                            )
+        else:
+            try:
+                from openbiliclaw.sources.reddit_tasks import probe_reddit_command_backend
+
+                rd_status = probe_reddit_command_backend(rd_backend)
+                reddit = SourceStatusItem(
+                    enabled=rd_enabled,
+                    state=rd_status.state,
+                    detail=rd_status.message,
+                    logged_in=rd_status.state == "ready",
+                )
+            except Exception:
+                reddit = SourceStatusItem(
+                    enabled=rd_enabled,
+                    state="missing",
+                    detail="Reddit 命令后端状态不可用，请检查 opencli / rdt 安装。",
+                    logged_in=False,
+                )
+
         return SourcesStatusResponse(
             bilibili=bilibili,
             xiaohongshu=xiaohongshu,
@@ -6919,6 +7120,113 @@ def create_app(
             youtube=youtube,
             twitter=twitter,
             zhihu=zhihu,
+            reddit=reddit,
+        )
+
+    def _mask_source_credential(value: str, *, reveal: bool) -> str:
+        if reveal or not value:
+            return value
+        if len(value) <= 8:
+            return "*" * len(value)
+        return f"{value[:4]}{'*' * max(4, len(value) - 8)}{value[-4:]}"
+
+    def _xhs_token_from_url(url: str) -> str:
+        match = re.search(r"(?:[?&])xsec_token=([^&#]+)", str(url or ""))
+        return match.group(1) if match else ""
+
+    def _latest_xhs_token() -> str:
+        if not hasattr(ctx.database, "conn"):
+            return ""
+        queries = (
+            """
+            SELECT content_url
+            FROM discovery_candidates
+            WHERE source_platform = 'xiaohongshu'
+              AND content_url LIKE '%xsec_token=%'
+            ORDER BY last_seen_at DESC, id DESC
+            LIMIT 1
+            """,
+            """
+            SELECT content_url
+            FROM content_cache
+            WHERE source_platform = 'xiaohongshu'
+              AND content_url LIKE '%xsec_token=%'
+            ORDER BY discovered_at DESC, bvid DESC
+            LIMIT 1
+            """,
+        )
+        for sql in queries:
+            with suppress(Exception):
+                row = ctx.database.conn.execute(sql).fetchone()
+                if row:
+                    url = row["content_url"] if hasattr(row, "keys") else row[0]
+                    token = _xhs_token_from_url(str(url))
+                    if token:
+                        return token
+        return ""
+
+    @app.get("/api/sources/credentials", response_model=SourcesCredentialsResponse)
+    def sources_credentials(reveal_keys: bool = False) -> SourcesCredentialsResponse:
+        """Return current local Cookie / token snapshots for source settings pages."""
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+        from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
+
+        cfg = load_config()
+        srcs = cfg.sources
+
+        bili_cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        dy_cookie = resolve_douyin_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+        )
+        tw_cookie = resolve_x_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.twitter, "cookie_env", "OPENBILICLAW_X_COOKIE"),
+        )
+        xhs_token = _latest_xhs_token()
+        reddit_cookie_names = rdt_credential_cookie_names()
+
+        def item(label: str, value: str, detail: str) -> SourceCredentialItem:
+            return SourceCredentialItem(
+                label=label,
+                value=_mask_source_credential(value, reveal=reveal_keys),
+                available=bool(value.strip()),
+                detail=detail,
+            )
+
+        return SourcesCredentialsResponse(
+            bilibili=item("Cookie", bili_cookie, "B 站当前 resolved Cookie。"),
+            xiaohongshu=item(
+                "xsec_token",
+                xhs_token,
+                "小红书不保存整站 Cookie；这里展示最近同步内容 URL 中的 xsec_token。",
+            ),
+            douyin=item("Cookie", dy_cookie, "抖音当前 resolved Cookie。"),
+            youtube=SourceCredentialItem(
+                label="Cookie",
+                available=False,
+                detail="YouTube 当前按公开源接入，后端不保存 Cookie。",
+            ),
+            twitter=item("Cookie", tw_cookie, "X 当前 resolved Cookie。"),
+            zhihu=SourceCredentialItem(
+                label="Cookie",
+                available=False,
+                detail="知乎登录态保存在浏览器站点 / 插件上下文中，后端不保存可展示 Cookie。",
+            ),
+            reddit=SourceCredentialItem(
+                label="rdt credential",
+                value=", ".join(reddit_cookie_names),
+                available=bool(reddit_cookie_names),
+                detail=(
+                    "Reddit Cookie 由插件同步到 rdt-cli credential store；"
+                    "这里只展示 Cookie 名称。"
+                ),
+            ),
         )
 
     # ── Douyin task queue endpoints (extension dispatcher) ──────────
@@ -7081,6 +7389,7 @@ def create_app(
         return {"ok": True}
 
     # ── YouTube bootstrap endpoints ────────────────────────────────
+    from openbiliclaw.sources.reddit_tasks import RedditTaskQueue
     from openbiliclaw.sources.yt_tasks import (
         YtTaskQueue,
         yt_bootstrap_item_key,
@@ -7093,9 +7402,78 @@ def create_app(
     )
 
     _zhihu_task_queue: ZhihuTaskQueue | None = None
+    _reddit_task_queue: RedditTaskQueue | None = None
     db_conn = getattr(ctx.database, "conn", None)
     if hasattr(db_conn, "executescript"):
         _zhihu_task_queue = ZhihuTaskQueue(ctx.database)
+        _reddit_task_queue = RedditTaskQueue(ctx.database)
+
+    @app.get("/api/sources/reddit/next-task")
+    def reddit_next_task(response: Any = None) -> Any:
+        """Return the oldest pending Reddit task, or 204 if none."""
+        from starlette.responses import Response
+
+        if _reddit_task_queue is None:
+            return Response(status_code=204)
+        task = _reddit_task_queue.next_pending(only_ids=_init_owned_ids_filter())
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/reddit/task-result")
+    async def reddit_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a Reddit task result from the extension dispatcher."""
+        task_id = str(payload.get("task_id", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip()
+        items = [v for v in payload.get("items", []) if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        if not task_id:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=422, detail="task_id is required")
+
+        if _reddit_task_queue is None:
+            return {"ok": True}
+
+        if status in {"partial", "ok", "empty"}:
+            _reddit_task_queue.merge_result(
+                task_id,
+                items=items if items else None,
+                scope_counts=scope_counts,
+                debug=debug,
+                complete=status in {"ok", "empty"},
+            )
+        else:
+            _reddit_task_queue.fail(
+                task_id,
+                error=str(payload.get("error", "") or ""),
+                debug=debug,
+            )
+
+        return {"ok": True}
+
+    @app.post("/api/sources/reddit/kick")
+    async def reddit_task_kick() -> dict[str, Any]:
+        """Broadcast `reddit_task_available` over runtime-stream."""
+        publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+        if callable(publish):
+            with suppress(Exception):
+                await publish({"type": "reddit_task_available", "source": "task_kick"})
+        return {"ok": True}
 
     @app.get("/api/sources/zhihu/next-task")
     def zhihu_next_task(response: Any = None) -> Any:
@@ -7665,6 +8043,9 @@ def create_app(
         # Douyin / X store their cookie in data/*.json (env override wins),
         # not in config.toml — resolve here so the settings pages can show
         # the live credential exactly like the Bilibili card does.
+        from openbiliclaw.config import (
+            _normalize_pool_source_shares as _normalized_config_pool_source_shares,
+        )
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
 
         dy_cookie = ""
@@ -7805,6 +8186,17 @@ def create_app(
                     request_interval_seconds=cfg.sources.zhihu.request_interval_seconds,
                     min_interval_minutes=cfg.sources.zhihu.min_interval_minutes,
                 ),
+                reddit=RedditSourceConfigOut(
+                    enabled=cfg.sources.reddit.enabled,
+                    backend=cfg.sources.reddit.backend,
+                    source_modes=list(cfg.sources.reddit.source_modes),
+                    daily_search_budget=cfg.sources.reddit.daily_search_budget,
+                    daily_hot_budget=cfg.sources.reddit.daily_hot_budget,
+                    daily_subreddit_budget=cfg.sources.reddit.daily_subreddit_budget,
+                    daily_related_budget=cfg.sources.reddit.daily_related_budget,
+                    request_interval_seconds=cfg.sources.reddit.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.reddit.min_interval_minutes,
+                ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
@@ -7812,7 +8204,9 @@ def create_app(
                 extension_disconnect_grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
                 discovery_cron=cfg.scheduler.discovery_cron,
                 pool_target_count=cfg.scheduler.pool_target_count,
-                pool_source_shares=dict(cfg.scheduler.pool_source_shares),
+                pool_source_shares=_normalized_config_pool_source_shares(
+                    cfg.scheduler.pool_source_shares
+                ),
                 account_sync_interval_hours=cfg.scheduler.account_sync_interval_hours,
                 refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
                 signal_event_threshold=cfg.scheduler.signal_event_threshold,
@@ -8402,6 +8796,43 @@ def create_app(
                     ):
                         if key in zh_data:
                             setattr(cfg.sources.zhihu, key, int(zh_data[key]))
+
+                reddit_data = sources_data.get("reddit")
+                if isinstance(reddit_data, dict):
+                    if "enabled" in reddit_data:
+                        cfg.sources.reddit.enabled = _as_bool(reddit_data["enabled"])
+                    if "backend" in reddit_data:
+                        backend = str(reddit_data["backend"] or "").strip().lower()
+                        if backend in {"openbiliclaw", "plugin"}:
+                            backend = "extension"
+                        cfg.sources.reddit.backend = (
+                            backend if backend in {"extension", "opencli", "rdt", "auto"} else "rdt"
+                        )
+                    if "source_modes" in reddit_data:
+                        raw_modes = reddit_data["source_modes"]
+                        if isinstance(raw_modes, str):
+                            modes = [part.strip() for part in raw_modes.split(",")]
+                        elif isinstance(raw_modes, list):
+                            modes = [str(part).strip() for part in raw_modes]
+                        else:
+                            modes = []
+                        selected = [
+                            mode
+                            for mode in modes
+                            if mode in {"search", "hot", "subreddit", "related"}
+                        ]
+                        if selected:
+                            cfg.sources.reddit.source_modes = tuple(dict.fromkeys(selected))
+                    for key in (
+                        "daily_search_budget",
+                        "daily_hot_budget",
+                        "daily_subreddit_budget",
+                        "daily_related_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in reddit_data:
+                            setattr(cfg.sources.reddit, key, int(reddit_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:

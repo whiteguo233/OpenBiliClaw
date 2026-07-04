@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -17,10 +17,10 @@ from openbiliclaw.discovery.engine import (
     discovery_raw_candidate_mode_enabled,
     trim_candidates_for_llm,
 )
+from openbiliclaw.discovery.keyword_digest import profile_kw_digest
 from openbiliclaw.discovery.strategies._utils import (
     SupportsRankingClient,
     _gather_bounded,
-    build_profile_summary,
     clean_text,
     normalize_published_at,
     parse_duration,
@@ -28,6 +28,7 @@ from openbiliclaw.discovery.strategies._utils import (
 )
 
 if TYPE_CHECKING:
+    from openbiliclaw.llm.embedding import SupportsEmbeddingService
     from openbiliclaw.soul.profile import SoulProfile
     from openbiliclaw.storage.database import Database
 
@@ -42,12 +43,18 @@ class TrendingStrategy(DiscoveryStrategy):
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
+    embedding_service: SupportsEmbeddingService | None = None
     score_threshold: float = 0.60
     llm_evaluation: bool = True
     max_related_rids: int = 4
     # Broader default RIDs covering more top-level categories:
     # 36=科技, 188=资讯, 181=影视, 119=纪录片, 3=音乐, 129=舞蹈, 4=游戏, 160=生活
     default_rids: tuple[int, ...] = (36, 188, 181, 119, 3, 129, 4, 160)
+    _rid_rotation_state: dict[str, tuple[int, int, list[int]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     # Mapping from Bilibili ranking rid to semantic topic category
     RID_TO_TOPIC: dict[int, str] = field(
         default_factory=lambda: {
@@ -172,23 +179,42 @@ class TrendingStrategy(DiscoveryStrategy):
         return results
 
     async def _select_rids(self, profile: SoulProfile) -> list[int]:
-        from openbiliclaw.llm.prompts import build_trending_rids_prompt
+        key = profile_kw_digest(profile)
+        selected = self._next_rotating_rids(key)
+        if selected:
+            return [0, *selected]
+        return [0]
 
-        messages = build_trending_rids_prompt(profile_summary=build_profile_summary(profile))
-        try:
-            response = await self.llm_service.complete_structured_task(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                caller="discovery.trending.rids",
-            )
-            parsed = json.loads(str(getattr(response, "content", "")).strip())
-            if isinstance(parsed, dict) and isinstance(parsed.get("rids"), list):
-                selected = [to_int(item) for item in parsed["rids"] if to_int(item) > 0]
-                selected = self._dedupe_ints(selected)[: self.max_related_rids]
-                return [0, *selected]
-        except Exception:
-            logger.exception("Trending rid selection failed; using defaults.")
-        return [0, *list(self.default_rids[: self.max_related_rids])]
+    def _next_rotating_rids(self, profile_key: str) -> list[int]:
+        candidates = self._rotation_candidate_rids()
+        if not candidates:
+            return []
+        batch_size = max(1, min(int(self.max_related_rids), len(candidates)))
+        cycle, offset, order = self._rid_rotation_state.get(
+            profile_key,
+            (0, 0, self._shuffled_rids(profile_key, 0, candidates)),
+        )
+        if offset >= len(order):
+            cycle += 1
+            offset = 0
+            order = self._shuffled_rids(profile_key, cycle, candidates)
+        selected = order[offset : offset + batch_size]
+        offset += len(selected)
+        self._rid_rotation_state[profile_key] = (cycle, offset, order)
+        return selected
+
+    def _rotation_candidate_rids(self) -> list[int]:
+        candidates = [rid for rid in sorted(self.RID_TO_TOPIC) if rid > 0]
+        if candidates:
+            return candidates
+        return [rid for rid in self.default_rids if rid > 0]
+
+    @staticmethod
+    def _shuffled_rids(profile_key: str, cycle: int, candidates: list[int]) -> list[int]:
+        return sorted(
+            candidates,
+            key=lambda rid: hashlib.sha256(f"{profile_key}:{cycle}:{rid}".encode()).hexdigest(),
+        )
 
     def _map_ranking_item(
         self,

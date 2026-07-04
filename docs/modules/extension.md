@@ -4,7 +4,7 @@
 
 `extension/` 是浏览器插件子项目（Chrome / Edge / Brave 主构建，Firefox 独立构建），负责：
 
-- 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎等支持站点采集行为事件（平台无关内核 + 平台适配器）
+- 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit 等支持站点采集行为事件或执行来源任务（平台无关内核 + 平台适配器）
 - 通过 background service worker 缓冲并上报到本地后端
 - 在 side panel 中展示连接状态、推荐结果、画像和聊天入口
 
@@ -12,22 +12,23 @@
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
-| 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
+| 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 通过插件任务源接入初始化 saved/upvoted/subscribed 信号和 discovery search/hot/subreddit/related；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 稍后 / 收藏 / 画像 / 对话五个 tab；顶部功能区提供移动端二维码入口，按当前插件后端地址生成 `/m/` 扫码链接；460px 以下窄宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠；如果当前后端地址仍是 `127.0.0.1` / `localhost`，会先读 `/api/health.lan_ip` 并用局域网 IP 生成二维码，提示为 info 状态；后端会优先返回 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类真实局域网地址，排除 `198.18.x.x` 等 VPN/TUN 地址；移动 Web 推荐页首屏先渲染 `/api/recommendations`，再异步补 runtime status / activity / delight，慢请求不会让页面无限停在 loading；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复；惊喜推荐、兴趣猜测和避雷探针的内联聊天也会按 `scope=delight/probe/avoidance_probe` 恢复 pending/completed/failed turn；聊天 tab 激活时隐藏底部活动栏，聊天记录区独立滚动并占满上方空间，输入框固定在底部且会轮播想法、口味、自我描述、近期状态等多场景提示语 |
-| Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；`refresh.pool_updated` 只合并池子状态并刷新 header / pool chips / 底部可换提示 / 空态文案，不再重拉推荐列表，避免覆盖用户已经 append 出来的历史卡片。 |
+| Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；`refresh.pool_updated` 只合并池子状态并刷新 header / pool chips / 底部可换提示 / 空态文案，不再重拉推荐列表，避免覆盖用户已经 append 出来的历史卡片。插件 side panel 从离线转在线时（包括首次 `/api/ping` 瞬时失败但 `/api/runtime-stream` 随后连上的竞态）会立即调度推荐刷新；popup 离线期间会每 1 秒轻量重探测 `/api/ping`，runtime-stream 自身也固定每 1 秒重连，成功后停止轮询并切回在线刷新流程，避免后端已启动但插件仍停在“后端还没开张”的旧空态。 |
 | 兴趣挑战探针 UI | ✅ | `interest.probe` 和 `speculative_interests` 会保留后端的 `probe_mode` / `challenge` metadata；profile 页确认会向 `/api/interest-probes/respond` 传 `surface="profile"`，写回为 `profile_confirmed`，而 inbox / runtime probe 卡片确认保持默认 `probe_confirmed`。插件 side panel、移动 Web 和桌面 Web 会把普通 `near` 兴趣探针与 `lateral/bridge/wildcard` 挑战探针拆成不同样式和提示：普通兴趣强调继续探索，挑战探针提示“把口味往侧边推一点”，区别于避雷探针。用户对同一 domain 做确认、拒绝或探针内聊后，三端会用 handled probe key 立即从 inbox、画像页和 runtime hydration 里隐藏该探针，避免后端旧快照/缓存再次把它展示出来。 |
 | 避雷探针 UI | ✅ | popup inbox 支持 `avoidance.probe`，按钮文案为「确实不喜欢 / 不是 / 多聊聊」；画像页显示 `speculative_avoidances` 的待确认避雷方向，确认后通过 `/api/avoidance-probes/respond` 写回后端。插件 side panel、移动 Web 和桌面 Web 会用避雷专属样式和“少看这类 / 猜错点不是”提示，区别于正向兴趣试探。移动 Web 在任一探针按钮点击后会锁住同一卡片其它动作，避免一次 active 探针被连续提交 confirm + reject；三端也会在本地记录 handled 避雷 key，使已处理 domain 不再从 profile summary、pending probes 或 runtime stream 重复水合；消息收件箱空态不会重建 header，X 关闭入口保持可用。 |
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
 | X 推荐卡来源与文字卡 | ✅ | 插件 side panel、移动 Web 与桌面 Web 会把 `x` / `twitter` / `x.com` / `twitter.com` 统一归一为 `source_platform="twitter"`，标签显示 `X (Twitter)`，不再退成 Web 或 B 站；X tweet / thread 或无有效封面的推荐使用 `body_text` / title 渲染文本卡，桌面 Web 点击上报同步携带 `content_id` / `content_url` / `source_platform`。 |
+| 知乎候选链接保真 | ✅ | 知乎任务 executor 对站内 API 响应做 lossless JSON 解析，把超过 JS 安全整数范围的裸整数 token 先转成字符串；归一化 discovery / 收藏 / 动态条目时也会优先从 URL 字符串解析 question / answer / article ID，再退回 JSON 字段，避免 19 位 question id 被 `Number` 舍入后拼出不可打开链接。 |
 | 收藏夹 / 稍后再看 | ✅ | 推荐卡和 delight banner 都提供「时钟=稍后再看」「星星=收藏」两个互相独立的 SVG toggle（乐观 UI、失败回退、懒加载状态）；popup tab bar 已对齐移动 Web / 桌面 Web，提供独立「稍后」页（`viewWatchLater/watchLaterList`，`loadWatchLater` 拉 `/api/watch-later`）和「收藏」页（`viewFavorites/favoritesList`，`loadFavorites` 拉 `/api/favorites`），列表项展示 16:9 头图缩略图并支持打开 / 单条移除；列表页移除走共享的乐观绑定 `bindSavedCardRemove`——点击即从列表消失，DELETE（10s 超时）失败时卡片原位恢复、按钮变「重试」并打 console.error，不再等响应返回才动 DOM（旧实现静默吞错，DELETE 被同源慢请求排队时表现为「点了没反应」）；封面 URL 会和推荐卡一样归一化后走 `/api/image-proxy`。插件 popup 侧保存状态统一由 `popup-saved-sync.js` 管理：同一 bvid 的推荐卡、惊喜横幅按钮、保存列表移除会同步更新，且用户刚点击后的状态不会被旧的懒加载查询覆盖。详见 [收藏夹 spec](../specs/favorites.md) 与 [稍后再看 spec](../specs/watch-later.md)。 |
 | 惊喜推荐正向保留 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对惊喜推荐采用同一反馈语义：`喜欢 / 收藏 / 稍后再看 / 聊一聊` 保留候选在队列中；`去看看` 当场保留卡片但会上报 `view` 标记已读（三端统一，下次队列重灌不再出现）；`不感兴趣 / 忽略 / 关闭` 才立即移出当前队列。已喜欢的候选重灌后以 `state="liked"` 恢复展示。三端默认加载数量统一读取 `[scheduler].delight_queue_limit`，桌面 Web 设置页保存后插件和移动端随下一次队列拉取同步生效。 |
-| Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
+| Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions`。发布链路会把 `dist-firefox/` 先打成未签名 `openbiliclaw-extension-v*-firefox.zip`（开发 / 临时加载 / AMO 输入）；只有启用 AMO signing 且凭据可用时，才通过 `web-ext sign --channel=unlisted` 生成可直接安装的 `openbiliclaw-extension-v*-firefox.xpi` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；模型 tab 可设置 LLM / embedding 的显式备选 Provider，留空即不 fallback，并明确 embedding 不再跟随默认 LLM；LLM 与 embedding 默认配置旁提供「测试」按钮，按当前表单草稿调用 `/api/config/probe-service` 做无写入连通性探测并行内展示结果；平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / 通用网页 / 候选池配比独立分块，可开关四个平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 用单个「完整日志路径」编辑后端日志文件位置 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；模型 tab 可设置 LLM / embedding 的显式备选 Provider，留空即不 fallback，并明确 embedding 不再跟随默认 LLM；LLM 与 embedding 默认配置旁提供「测试」按钮，按当前表单草稿调用 `/api/config/probe-service` 做无写入连通性探测并行内展示结果；平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 用单个「完整日志路径」编辑后端日志文件位置 |
 | 封面图评估设置 | ✅ | side panel 调度 tab 补齐 `[discovery]` 多模态评估控制：可开关封面图评估，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存 payload 会保留已有 discovery 字段后覆盖 `multimodal_*` 参数，与桌面 Web 设置页保持同一配置面。 |
 | 桌面 Web 设置页对齐插件 | ✅ | 桌面 Web（`/web`）设置页 `src/openbiliclaw/web/desktop/` 的可配置面与插件 side panel 拉齐：模型 tab 补 `llm.concurrency`、DeepSeek `reasoning_effort`，并提供 LLM / embedding 测试按钮（当前表单草稿 → `/api/config/probe-service`，不保存配置）；平台源 tab 补完整 X(Twitter) 源块（`enabled` / `cookie_env` / 三项预算 / `request_interval` / `min_interval`）+ `GET /api/sources/x/status` 源健康提示、YouTube `min_interval_minutes`、知乎源块（`enabled` / search-hot-feed-creator-related 五项预算 / `request_interval` / `min_interval`）和候选池 X / 知乎占比；调度 tab 补 9 个真实 runtime 参数（`extension_disconnect_grace_seconds` / `refresh_check_interval_seconds` / `signal_event_threshold` / `feedback_batch_threshold` / `trending_refresh_hours` / `explore_refresh_hours` / `discovery_limit` / `proactive_push_interval_seconds` / `speculator_idle_interval_minutes`）；通用 tab 补局域网访问密码（`/auth/status` + `/auth/admin`，同源 loopback 视为可信本机）与开机自启（`/autostart-status` + `/autostart/apply`）。桌面 Web 同时移除了运行时不消费的 `discovery_cron` 旧字段，与插件一致；推荐页平台过滤 tab 会先按 `config.sources` / `pool_source_shares` 中启用的平台展示，再合并当前推荐卡真实来源，点击后只过滤当前已加载列表，命中为空时保留空结果状态 |
-| 统一来源接入状态 | ✅ | 新后端端点 `GET /api/sources/status`（`SourcesStatusResponse`）用纯本地信号给每个来源一致的登录 / cookie 状态：B站 看 cookie 是否含 `SESSDATA`/`bili_jct`/`DedeUserID`（三字段不全时报 `partial` 黄点而非绿点；`config.toml` 镜像为空时回落读 `data/bilibili_cookie.json`，覆盖 CLI 二维码登录只写文件的场景）、抖音 看 `resolve_douyin_cookie()`、小红书 看带 `xsec_token` 缓存行的**新鲜度**（24h 窗口内有新发现行或令牌回填刷新过 `last_seen_at` 的候选行才算 `ready`，仅剩存量旧行报 `stale` 黄点，杜绝停止同步后永久绿点）、X 复用 `XSourceHealthStore`（健康态为 `ok` 时再用 `resolve_x_cookie()` 校验凭据存在，缺失降级为 `missing_cookie`，避免健康表默认行误报「cookie 有效」）、YouTube 标 `no_auth`，知乎按本地 `zhihu_tasks` 最近完成 / 登录失败 / 其它失败状态显示 `ready` / `missing` / `partial` / `unverified`，全程不发对外平台请求。插件 side panel 六张来源卡片（`data-source-status`）与桌面 Web 平台源 tab 顶部「来源接入状态」彩点列表都读同一端点，`renderSourcesStatus()` 渲染统一彩点 + 文案，状态行可见时每 30 秒自动重拉。诚实标注：仅 X 为实时校验的 `ok`，其余为本地 `ready`（就绪）/ `partial`（凭据不完整）/ `stale`（令牌可能过期）/ `missing`（未配置）/ `unverified`（尚无任务证明）/ `no_auth`（无需登录源） |
+| 统一来源接入状态 | ✅ | 新后端端点 `GET /api/sources/status`（`SourcesStatusResponse`）用纯本地信号给每个来源一致的登录 / cookie 状态：B站 看 cookie 是否含 `SESSDATA`/`bili_jct`/`DedeUserID`（三字段不全时报 `partial` 黄点而非绿点；`config.toml` 镜像为空时回落读 `data/bilibili_cookie.json`，覆盖 CLI 二维码登录只写文件的场景）、抖音 看 `resolve_douyin_cookie()`、小红书 看带 `xsec_token` 缓存行的**新鲜度**（24h 窗口内有新发现行或令牌回填刷新过 `last_seen_at` 的候选行才算 `ready`，仅剩存量旧行报 `stale` 黄点，杜绝停止同步后永久绿点）、X 复用 `XSourceHealthStore`（健康态为 `ok` 时再用 `resolve_x_cookie()` 校验凭据存在，缺失降级为 `missing_cookie`，避免健康表默认行误报「cookie 有效」）、YouTube 标 `no_auth`，知乎 / Reddit 按本地任务表最近完成 / 登录失败 / 其它失败状态显示 `ready` / `missing` / `partial` / `unverified`，全程不发对外平台请求。插件 side panel 七张来源卡片（`data-source-status`）与桌面 Web 平台源 tab 顶部「来源接入状态」彩点列表都读同一端点，`renderSourcesStatus()` 渲染统一彩点 + 文案，状态行可见时每 30 秒自动重拉。诚实标注：仅 X 为实时校验的 `ok`，其余为本地 `ready`（就绪）/ `partial`（凭据不完整）/ `stale`（令牌可能过期）/ `missing`（未配置）/ `unverified`（尚无任务证明）/ `no_auth`（无需登录源） |
 | 来源 Cookie 明文配置对齐 | ✅ | 插件 side panel 与桌面 Web 的抖音 / X 来源卡片对齐 B 站卡片形态：新增明文 Cookie 文本框（`GET /api/config` 的 `sources.douyin.cookie` / `sources.twitter.cookie`，默认脱敏、`reveal_keys=true` 明文），可手动粘贴覆盖；`PUT /api/config` 把非空值路由到 `data/douyin_cookie.json` / `data/x_cookie.json`（secrets 不进 `config.toml`），X 粘贴含 `auth_token`+`ct0` 的有效 Cookie 同时解除 re-login 封锁。空字段与脱敏回显（连续 `****`）不覆盖现有 Cookie（`bilibili.cookie` 同样补上该防护）；小红书（token 嗅探）/ YouTube（无需登录）维持差异化说明 |
 | 开机自启动设置 | ✅ | 通用 tab 新增「开机自启动」开关：打开设置时读 `GET /api/autostart-status`，切换时调用 `POST /api/autostart/apply` 即时生效；`can_manage=false` 时按 `env_managed` / `shadowed` / `unsupported_*` 等 reason 禁用并展示行内提示。提示明确该开关只影响下次系统登录拉起后端，不启停当前进程；本机 Ollama 可能随 `start` 预检一起拉起。 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
@@ -38,7 +39,7 @@
 | 认知变化历史分页 | ✅ | 画像 tab 的认知卡片支持展开详情；「阿B 最近新记住了什么」默认只展示最近 3 条，需点击「加载更多」按钮分页查看更早的变化记录（不再随页面滚动自动续页，避免该区块无限变长） |
 | 认知卡片上下文澄清 | ✅ | 画像 tab 的认知卡片默认态现在固定展示“结论 + 上下文 + 状态提示”，用户可直接看出这是对哪条内容/哪轮聊天/哪组聚合信号形成的判断，以及这张卡片是否还能展开 |
 | 画像多层认知展示 | ✅ | 画像 tab 现已把“你怎么处理信息 / 你在内容里长期在找什么 / 这阵子更像在经历什么”单独拆开，不再只显示一段画像 prose 加兴趣 chips |
-| 画像可编辑（编辑模式） | ✅ | 画像页新增「编辑画像」开关：进入后由未截断的 `GET /api/profile/edit-state` 驱动，可增删核心特质 / 深层需求 / 价值观 / 内在驱动 / 认知风格 / 常看 UP 等 chip、增删喜欢 / 不喜欢领域、改写人格素描 / 人生阶段 / 当前阶段等长文、拖动滑杆调探索开放度 / 质量敏感度 / 幽默偏好 / 深度偏好等标量；文本与标量固定项显示「AI 想更新此项」漂移建议，每个改过的字段可「恢复 AI 建议」。每个控件 POST 一次 `/api/profile/edit`（确定性、抗画像重建；chip 增删即时生效，长文与滑杆点「保存」生效）。插件 side panel 进入编辑时会切到 `is-profile-editing` 页面态，强制只读画像卡片退出布局、编辑面板占据原位置；移动 Web（`/m`）与桌面 Web（`/web`）同样是替换式编辑态，三端行为一致 |
+| 画像可编辑（编辑模式） | ✅ | 画像页新增「编辑画像」开关：进入后由未截断的 `GET /api/profile/edit-state` 驱动，可增删核心特质 / 深层需求 / 价值观 / 内在驱动 / 认知风格 / 常看 UP 等 chip、增删喜欢 / 不喜欢一级领域及其二级 specifics、改写人格素描 / 人生阶段 / 当前阶段等长文、拖动滑杆调探索开放度 / 质量敏感度 / 幽默偏好 / 深度偏好等标量；文本与标量固定项显示「AI 想更新此项」漂移建议，每个改过的字段可「恢复 AI 建议」。每个控件 POST 一次 `/api/profile/edit`（确定性、抗画像重建；一级 domain 增删直接传 `target=likes/dislikes`，二级 specific 增删会额外带 `parent=<domain>`；chip 增删即时生效，长文与滑杆点「保存」生效）。插件 side panel 进入编辑时会切到 `is-profile-editing` 页面态，强制只读画像卡片退出布局、编辑面板占据原位置；移动 Web（`/m`）与桌面 Web（`/web`）同样是替换式编辑态，三端行为一致 |
 | 多源行为采集（MVP） | ✅ | content script 拆成「平台无关 kernel + 平台适配器」，新增小红书适配器。manifest 覆盖 `*.xiaohongshu.com`，事件携带 `source_platform` 字段；MVP 仅采 snapshot / click / scroll / search，like/collect 延后 |
 | 视频页停留时长采集 | ✅ | v0.3.x event-satisfaction：`src/content/video-dwell-tracker.ts` 用纯依赖注入的方式追踪 video page session，kernel 在 `pushState` / `replaceState` / `popstate` / `pagehide` 触发时 flush 一个 click 事件，metadata 携带 `watch_seconds` / `video_duration_seconds` / `dwell_source="video_page_exit"`，供后端 `classify_event_satisfaction` 区分 meaningful_dwell vs quick_exit。service worker 透传 metadata，不会丢字段 |
 | xhs token 嗅探（MAIN world） | ✅ | `src/main/xhs-token-sniffer.ts` 以 `world: "MAIN"`、`run_at: "document_start"` 注入 xhs 页面，劫持 `window.fetch` / `XMLHttpRequest` 扫描 xhs 自家 API 响应里的 `(note_id, xsec_token)` 对子，通过 `postMessage` 桥接到 isolated world 再 `/api/sources/xhs/tokens` 回填到 `content_cache` 与 `discovery_candidates`——解决搜索页永不带 token 导致点击命中 300031 登录墙的问题 |
@@ -59,7 +60,7 @@
 | 配置恢复与降级模式 UI | ✅ | popup API 会缓存最近一次成功的 `/api/config` 快照；设置页打开时如果后端离线但有缓存，会用缓存填表并显示离线时间；如果后端以 `degraded=true` 返回配置，会展示 blocking issues，保存按钮切到“保存并提示重启”，配合后端降级模式修复错误配置 |
 | 配置保存超时提示 | ✅ | `popup-api.requestJson()` 支持 AbortController timeout，`updateConfig()` 对 `PUT /api/config` 使用 60s 上限；超时时设置页显示 amber toast，文案只提示“保存请求可能已写入、热重载可能仍在后台进行”，不会断言配置一定已落盘 |
 | OpenAI 认证方式配置 | ✅ | 设置页 OpenAI provider 区域可选择 `API Key` 或 `Codex OAuth`，保存时把 `[llm.openai].auth_mode` 纳入 `/api/config` payload；后端仍负责 Codex token 导入、域名限制和配置校验 |
-| 版本与更新面板 | ✅ | 设置页调度 tab 的“版本与更新”读取 `/api/update-status` 展示后端当前 / 最新版本、状态、上次检查和错误；`github_rate_limited` / `github_unreachable` / `no_backend_tag_yet` 等稳定 reason 会映射成本地化提示，避免把后端错误 key 直接露给用户。`install_mode="git"` 且发现 `backend-v*` 更新时才显示“立即应用”；`install_mode="frozen"` 只跟踪 `desktop-v*` 安装包并显示“前往下载新安装包”，不会让安装包用户误触源码快进。`popup-helpers.normalizeRuntimeStatus()` 同时保留 `/api/runtime-status` 中的 `current_version`、`latest_remote_version`、`backend_update_state` 等自动更新摘要字段，避免 runtime 状态归一化时丢失后端版本信息。 |
+| 版本与更新面板 | ✅ | 设置页调度 tab 的“版本与更新”读取 `/api/update-status` 展示后端当前 / 最新版本、状态、上次检查和错误；`github_rate_limited` / `github_unreachable` / `no_backend_tag_yet`、`dirty_worktree`、`untrusted_remote`、`branch_not_fast_forwardable` 等稳定 reason 会映射成本地化提示，避免把后端错误 key 直接露给用户。`install_mode="git"` 且发现 `backend-v*` 更新时才显示“立即应用”；`install_mode` 为空或未知时不会走自动应用分支，避免把安装方式不明的后端误当 AI / 源码安装处理。点击后若 `/api/update/apply` 被后端安全守卫以 409 拒绝，popup 会用响应体刷新状态卡并在 toast 里显示具体阻断原因，再重新读取 canonical update status，避免继续停留在旧的 `update_available` 视图。`install_mode="frozen"` 或最新 tag 为 `desktop-v*` 时只显示“前往下载新安装包”，让安装包用户去 GitHub Release 下载新安装包覆盖安装，不会误触源码快进。`popup-helpers.normalizeRuntimeStatus()` 同时保留 `/api/runtime-status` 中的 `current_version`、`latest_remote_version`、`backend_update_state` 等自动更新摘要字段，避免 runtime 状态归一化时丢失后端版本信息。 |
 | 语义去重未启用提示 | ✅ | v0.3.54+ 推荐页启动时读 `/api/health.embedding_ready`，为 `false` 时在推荐列表上方显示可关闭横幅（`maybeShowEmbeddingBanner`）；「一键启用本地 Ollama」按钮 PUT `/api/config` 写入 `embedding.provider=ollama, model=bge-m3` 热加载，再复检 health，仅当 `embedding_ready` 翻 `true` 才收起横幅，否则提示去跑 `ollama serve` / `ollama pull bge-m3`。本会话内关闭后不再打扰（`sessionStorage`）。v0.3.97+ 横幅决策抽到 `popup-embedding-banner.js`（`shouldShowEmbeddingBanner`），并在面板重新可见 / 获焦时复检（`installEmbeddingBannerAutoRefresh`）——配合后端实时探活，embedding 修好后无需重开面板横幅即自动消失（此前 `maybeShowEmbeddingBanner` 仅面板打开时跑一次，常驻 side panel 会长期残留旧横幅）。v0.3.97+ 同时修复横幅**根本无法隐藏**的 CSS bug：`.embedding-banner { display: flex }` 盖过 UA `[hidden] { display: none }`（同优先级，author > UA），`banner.hidden = true` 形同虚设、横幅无视 `embedding_ready` 常驻——新增 `.embedding-banner[hidden] { display: none }` 守卫修复 |
 | 跨平台行为动作采集 | ✅ | B 站、小红书、抖音、YouTube 和 X 均通过 `PlatformAdapter` 识别统一动作：`like/favorite/comment/share/follow` 等按平台能力映射；`dislike` 永远经 `normalizeActionSignal()` 规范为 `feedback` 事件，metadata 带 `feedback_type=dislike` 与 `reaction=thumbs_down`。真实 DOM 点击会从内部 `span/svg` 向上归因到最近的按钮 / 链接 / 带 `aria-label` 的动作元素，避免真实站点嵌套按钮漏识别分享、关注等强信号。后台 buffer 把 `feedback/follow/share/view` 和带 dwell metadata 的 `click` 视为即时 flush 信号，高频 `scroll/hover/snapshot` 仍缓冲去重 |
 | 扩展捕捉 E2E 自检 | ✅ | 本机后端可通过 `/api/extension/e2e/run` 向已安装插件投递 `extension_e2e_run`，插件打开 / 复用抖音、小红书、X 标签页并执行白名单 DOM 操作，再由后端按运行窗口校验真实 `/api/events` 入库结果。复用同域 tab 时会先归位到平台入口，避免旧 404 / modal / 图片预览页污染测试；content executor 不直接发送 `BEHAVIOR_EVENT`，确保测到的是真实捕捉链路；会改变状态的动作需要显式 `allow_state_changing=true` |
@@ -77,11 +78,13 @@ extension/
 │   ├── build.mjs
 │   ├── package.mjs
 │   ├── package-firefox.mjs
+│   ├── sign-firefox.mjs
 │   └── chrome-webstore-upload.mjs
 ├── popup/
 │   ├── popup.html
 │   ├── popup.js
 │   ├── popup-autostart-control.js
+│   ├── popup-connection-poller.js # popup 离线期间轻量 /api/ping 重探测
 │   ├── popup-saved-sync.js
 │   └── popup-helpers.js    # popup 纯函数：runtime 状态归一化、探针 key / stale 过滤等
 ├── src/
@@ -91,6 +94,7 @@ extension/
 │   │   ├── e2e-runner.ts      # 后端驱动的真实标签页 E2E 捕捉自检 runner
 │   │   ├── bili-task-dispatcher.ts # B 站搜索兜底任务轮询 / 后台 tab / 结果回传
 │   │   ├── zhihu-task-dispatcher.ts # 知乎 bootstrap_events/search/hot/feed/creator/related 任务轮询 / 前后台 tab / 结果回传
+│   │   ├── reddit-task-dispatcher.ts # Reddit bootstrap/search/hot/subreddit/related 任务轮询 / 后台 tab / 结果回传
 │   │   └── service-worker.ts
 │   ├── content/
 │   │   ├── e2e-executor.ts    # 只执行白名单 DOM 操作，不直接伪造行为事件
@@ -107,10 +111,14 @@ extension/
 │   │   ├── xiaohongshu.ts     # 小红书 entry point，挂载 xiaohongshuAdapter
 │   │   ├── youtube.ts         # YouTube entry point，挂载 youtubeAdapter 与任务 executor
 │   │   ├── zhihu.ts           # 知乎 entry point，挂载 zhihuAdapter 与任务 executor
+│   │   ├── reddit.ts          # Reddit entry point，挂载 redditAdapter 与任务 executor
 │   │   ├── yt/
 │   │   │   └── task-executor.ts # YouTube bootstrap scope DOM 解析与回传
 │   │   ├── zhihu/
-│   │   │   └── task-executor.ts # 知乎浏览记录 / 收藏夹 / 动态条目 / discovery 候选读取与回传
+│   │   │   └── task-executor.ts # 知乎浏览记录 / 收藏夹 / 动态条目 / discovery 候选读取与回传；长数字 ID 按字符串保真解析
+│   │   ├── reddit/
+│   │   │   ├── task-mode.ts      # Reddit 任务 tab 标记识别
+│   │   │   └── task-executor.ts  # Reddit 同源 JSON bootstrap/search/hot/subreddit/related 读取与归一化
 │   │   └── xhs/
 │   │       ├── bootstrap.ts   # 初始化画像任务的 state / DOM 解析 helper
 │   │       ├── passive.ts     # 小红书被动 URL / note metadata 采集
@@ -129,7 +137,8 @@ extension/
 │           ├── twitter.ts     # tweet_id 提取、卡片选择器、动作关键字
 │           ├── xiaohongshu.ts # note_id 提取、卡片选择器
 │           ├── youtube.ts     # video_id 提取、卡片选择器、动作关键字
-│           └── zhihu.ts       # question / answer / article ID 提取与动作关键字
+│           ├── zhihu.ts       # question / answer / article ID 提取与动作关键字
+│           └── reddit.ts      # Reddit post/comment URL、subreddit 与动作关键字
 └── tests/
     ├── collector-helpers.test.ts
     ├── dist-module-specifiers.test.ts
@@ -167,9 +176,10 @@ extension/
 - 缓冲为空时也会周期轮询高置信通知
 - 每次 service worker 冷启动都会启动 B 站和抖音 Cookie 同步；如果已配置后端暂时不可用，会通过 `chrome.alarms` 以 1 分钟间隔重试，成功同步后恢复为 60 分钟刷新
 - 会启动知乎任务轮询；收到 runtime stream 的 `zhihu_task_available` 后立即打开带 `openbiliclaw_zhihu_task` 标记的知乎任务 tab。`bootstrap_events` 初始化 / 事件 smoke 使用前台 tab，会把浏览记录、收藏夹和个人动态条目回传到 `/api/sources/zhihu/task-result`；只有后端任务 payload 显式带 `profile_update=true` 时，新增条目才会由 API 自动写入 memory 并进入增量画像 pipeline。`search` / `hot` / `feed` / `creator` / `related` discovery 使用后台 tab，并把知乎候选分别回传为 `zhihu_search` / `zhihu_hot` / `zhihu_feed` / `zhihu_creator` / `zhihu_related`。任务 tab 不启动普通 `startCollector`，因此 CLI smoke、guided init 和 discovery 任务不会额外写入 `/api/events`
+- 会启动 Reddit 任务轮询；收到 runtime stream 的 `reddit_task_available` 后立即打开 / 复用带 `openbiliclaw_reddit_task` 标记的 Reddit 任务 tab。`bootstrap_events` 会先读 `/api/me.json`，再用当前浏览器的 `reddit.com` 登录态读取 saved、upvoted 和 subscribed subreddit，回传 `reddit_saved` / `reddit_upvoted` / `reddit_subscribed` 初始化信号；`search` / `hot` / `subreddit` / `related` discovery 则读取同源 `.json` endpoint，回传 `reddit_search` / `reddit_hot` / `reddit_subreddit` / `reddit_related` 候选到 `/api/sources/reddit/task-result`。dispatcher 在 tab load 后会对 content script listener 做短重试，吸收真实页面 complete 早于 isolated script 注册的时序抖动；service worker 冷启动和热 reload 后会在顶层启动 Reddit poll alarm，避免只靠 `onInstalled/onStartup` 导致新来源不轮询
 - 以 `client=background` 连接 `/api/runtime-stream` 后，如果后端发现本地缺少 B 站 Cookie，会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`。扩展收到后会立即执行对应 Cookie POST。后端也把这条 WebSocket 作为 extension presence 信号：连接建立时允许后台 LLM 工作，最后一个连接断开后进入 `extension_disconnect_grace_seconds` 宽限；服务端 reader 会主动 `receive()` 检测 idle disconnect，避免浏览器断开后 presence 卡住
 - 收到 `extension_e2e_run` 后会调用 `background/e2e-runner.ts`：按目标平台打开或复用标签页，复用时也会导航到平台稳定入口，等待页面 ready，再向 content script 发送 `OBC_E2E_EXECUTE`；runner 会先等待捕捉 buffer settle 并 flush，再把执行结果 POST 到 `/api/extension/e2e/result`，sendMessage / tab load / 整体运行都有独立超时，避免单个平台页面卡住整个后端请求
-- 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/ping`（2 秒超时）做一次活性探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；探针失败仍走原有的 5s → 60s 指数退避兜底重连。探活不再打 `/api/health`：health 会同步等一次 embedding 实探（冷缓存可达数秒），2 秒预算下会把健康但冷启动的后端误判为掉线；`/api/ping` 返回 404（旧后端）时回退 `/api/health`（12 秒预算）
+- 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/ping`（2 秒超时）做一次活性探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；探针失败后按固定 1 秒间隔继续重试，直到后端可达。探活不再打 `/api/health`：health 会同步等一次 embedding 实探（冷缓存可达数秒），2 秒预算下会把健康但冷启动的后端误判为掉线；`/api/ping` 返回 404（旧后端）时回退 `/api/health`（12 秒预算）
 - 后端不可达时会在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内仍会显示「后端还没开张，先运行 `openbiliclaw start`」
 - Cookie 监听器幂等注册，避免 onInstalled / onStartup / 冷启动重复挂载导致同一次登录触发多次 POST
 - 点击扩展图标时优先打开 Chrome side panel；Firefox 构建会改用 `sidebar_action` 打开同一套 `popup/popup.html`
@@ -355,7 +365,7 @@ CLI 入口：
 
 `popup/` 目录当前承载 side panel 页面，已具备：
 
-- 后端连接状态检查
+- 后端连接状态检查：首屏用 `/api/ping` 做轻量活性判断，`runtime-stream` 连接 / 断开负责实时翻转在线状态；当首屏或地址切换后处于离线状态时，`popup-connection-poller.js` 会每 1 秒重探测 `/api/ping`，runtime-stream 也以固定 1 秒间隔重连，一旦后端恢复就停止轮询、更新徽标并调度推荐刷新
 - 设置页「后端地址」（默认 `127.0.0.1`，接受裸 IPv4 / 主机名）和「后端端口」（默认 `8420`，仅接受 `1-65535` 的完整十进制整数）由 `popup-backend-config.js` 一起写入 `chrome.storage.local`；popup 自身的 `/api/...` HTTP 请求与 `runtime-stream` WebSocket，以及 service worker / cookie 同步 / 各源任务派发都通过 `apiUrl()` / `wsUrl()` 在调用时解析当前 origin，service worker 通过 `chrome.storage.onChanged` 同步收到变更并立即重连。endpoint 不会写入后端 `config.toml`；本机改端口时用 `openbiliclaw start --port <同一端口>`。Chrome Web Store / AMO 发布包为缩短审核和降低权限提示，默认只声明 `127.0.0.1` / `localhost` 后端 host 权限；连接局域网其他机器或远程域名需要带对应 host 权限的开发者构建，或后续补充 `optional_host_permissions` 的用户授权流程
 - 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；打开后的 `/m/` 页面已带 PWA manifest 与 iOS Web Clip 元数据，可从手机浏览器保存到主屏幕；当前不提供离线缓存，仍需手机能访问运行中的本地后端。如果当前 host 仍是 `127.0.0.1` / `localhost`，面板会提示手机通常无法访问，需要先把插件后端地址改成电脑局域网 IP；在 460px 以下侧边栏宽度，顶部 Web / 二维码 / 消息 / 设置按钮会换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠
 - 设置页调度区的「停止后台 LLM 请求」写入 `scheduler.enabled=false`；开启后会暂停 daemon-owned 定时发现、候选池预计算和画像更新里的 LLM / embedding 调用，推荐列表不会自动补充新内容，候选池为空时可能暂时没有推荐。「关闭浏览器后停止后台」写入 `scheduler.pause_on_extension_disconnect=true`，断开宽限秒数写入 `scheduler.extension_disconnect_grace_seconds`；所有扩展窗口断开并超过宽限期后，后台 LLM / embedding 工作暂停，重新打开浏览器后恢复。手动刷新和显式 CLI / API 操作仍按用户动作执行
@@ -454,9 +464,10 @@ npm run build
 - B 站搜索兜底 opt-in 浏览器 E2E harness（默认 skip，`BILI_EXTENSION_E2E=1` 才启动真实 Chromium）
 - B 站 / 抖音 Cookie 自动同步的重试闹钟和幂等监听器
 - manifest 图标资源存在性
-- Firefox manifest 的 version 注入、`sidebar_action` 降级路径、AMO 数据收集类别声明和 Firefox zip 打包清理
+- Firefox manifest 的 version 注入、`sidebar_action` 降级路径、AMO 数据收集类别声明、Firefox zip 打包清理和 AMO unlisted XPI 签名
 - popup 设置页字段与 `/api/config` schema 的基础对齐
 - popup API durable chat turn：`startChatTurn()`、`fetchChatTurn()`、`fetchChatTurns()` 会分别调用 `/api/chat/turns`、`/api/chat/turns/{turn_id}` 和列表接口
+- popup 离线连接恢复：`popup-connection-poller.js` 覆盖 `/api/ping` 失败后持续重探测、恢复后停止轮询并触发在线回调
 - popup 聊天布局：历史 hydrate 与切回聊天 tab 都会触发滚到底部，避免 hidden view 恢复后停在旧消息
 - `dist/` 运行时脚本可被 Chrome 直接加载
 
@@ -469,13 +480,14 @@ npm run build
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：
   - Chrome / Edge / Brave / 其他 Chromium 浏览器：`openbiliclaw-extension-vX.Y.Z.zip`
-  - Firefox 140+：`openbiliclaw-extension-vX.Y.Z-firefox.zip`
+  - Firefox 140+ 临时调试 / AMO 输入：`openbiliclaw-extension-vX.Y.Z-firefox.zip`
+  - Firefox 140+ 正式安装：`openbiliclaw-extension-vX.Y.Z-firefox.xpi`（仅 AMO signing 启用且凭据可用时生成）
 - 用户下载入口：`openbiliclaw-v*` 聚合 Latest Release；维护者需要核对构建日志时再看对应 `extension-v*` release
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
-- `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；发布尾部调用 `.github/scripts/sync-aggregate-release.sh`，把插件 zip 同步到当前 `openbiliclaw-v*` 聚合 Latest Release，并把该聚合页重新标记为 GitHub Latest。Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
+- `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本；仅当 `FIREFOX_SIGNING_ENABLED` 未关闭且 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` 可用时，才执行 `npm run sign:firefox:only` 生成 signed XPI。发布尾部调用 `.github/scripts/sync-aggregate-release.sh`，把实际存在的插件 zip / xpi 同步到当前 `openbiliclaw-v*` 聚合 Latest Release，并把该聚合页重新标记为 GitHub Latest。Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成未签名 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；配置 AMO 凭据后，`npm run sign:firefox:only` 会把当前 `dist-firefox/` 提交 AMO unlisted 签名并输出可直接安装的 `openbiliclaw-extension-vX.Y.Z-firefox.xpi`
 - v0.3.62 起，Chrome / Firefox 发布包移除 `http://*/*` 宽泛主机权限，只保留四个受支持内容平台和 `127.0.0.1` / `localhost` 本机后端权限，避免 Chrome Web Store 把插件标为“所有网站权限”。
 - v0.3.64 起，Chrome / Firefox 发布包不再声明 `tabs` permission；后台任务仍可使用 `chrome.tabs.create/update/remove/onUpdated/sendMessage` 打开、导航和清理受支持平台任务页，发布包仅保留实际需要的最小 permission 集合。
-- 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新，GitHub zip / sideload 用户按 release 页面下载新版并重新加载。
+- 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新；GitHub Release 下载的 Chrome zip / Firefox signed XPI / Firefox 临时 zip、开发者模式加载和临时加载用户按 release 页面下载新版并重新加载。
 
 Chrome Web Store 上传自动化走官方 API v2，不使用第三方上传 action：
 
@@ -513,7 +525,7 @@ npm run build
 - `service worker` 能启动并批量上报
 - `/api/events` 能接收插件预检请求与事件批次
 - SQLite `events` 表已能写入 `snapshot` 事件
-- popup 能根据 `/api/ping`（连接徽章活性，404 回退 `/api/health`）、`/api/health`（embedding / profile 就绪）与 `/api/recommendations` 切换在线、空状态与推荐列表展示
+- popup 能根据 `/api/ping`（连接徽章活性，404 回退 `/api/health`）、`/api/health`（embedding / profile 就绪）与 `/api/recommendations` 切换在线、空状态与推荐列表展示；如果打开时后端尚未就绪，side panel 会离线短轮询 `/api/ping`，后端启动后自动恢复在线状态并刷新推荐
 - side panel 页面反馈按钮已能经 `/api/feedback` 写回推荐表和事件层
 - side panel 现已支持 `推荐 / 稍后 / 收藏 / 画像 / 对话` 五个 tab，其中稍后再看和收藏列表与 PC Web、移动 Web 的保存语义一致
 - side panel 聊天信号已进入后端学习链，但仍采用受控积累，不会因为单轮聊天立即重写画像

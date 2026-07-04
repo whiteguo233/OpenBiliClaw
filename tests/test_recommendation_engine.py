@@ -68,6 +68,13 @@ def _build_profile() -> SoulProfile:
     )
 
 
+def _content_batch_from_prompt(user_input: str) -> list[dict[str, object]]:
+    batch_json = user_input.split("<content_batch>", 1)[1].split("</content_batch>", 1)[0]
+    payload = json.loads(batch_json.strip())
+    assert isinstance(payload, list)
+    return [dict(item) for item in payload if isinstance(item, dict)]
+
+
 def test_recommendation_profile_summary_includes_disliked_topics() -> None:
     profile = _build_profile()
     profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 141)]
@@ -407,6 +414,46 @@ async def test_serve_empty_after_exclusions_skips_curator_context() -> None:
             db.close()
 
         assert result == []
+
+
+@pytest.mark.asyncio
+async def test_serve_filters_profile_disliked_topics_before_pool_purge_finishes() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        try:
+            _seed_visible(
+                db,
+                "BV1CASE",
+                title="刑事案件纪实：真实大案复盘",
+                up_name="案件频道",
+                source="search",
+                relevance_score=0.99,
+                topic_key="刑事案件",
+                topic_group="法律案件",
+                pool_topic_label="刑事案件",
+            )
+            _seed_visible(
+                db,
+                "BV1DOC",
+                title="博物馆纪录片：一件瓷器的百年旅程",
+                up_name="纪录片频道",
+                source="search",
+                relevance_score=0.72,
+                topic_key="人文纪录片",
+                topic_group="纪录片",
+                pool_topic_label="人文纪录片",
+            )
+            profile = _build_profile()
+            profile.preferences.disliked_topics = ["刑事案件", "法律案件"]
+            engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+            recommendations = await engine.serve(profile, limit=1)
+            await asyncio.sleep(0)
+        finally:
+            db.close()
+
+        assert [item.content.bvid for item in recommendations] == ["BV1DOC"]
 
 
 @pytest.mark.asyncio
@@ -839,6 +886,113 @@ async def test_generate_expression_passes_body_text_for_text_items() -> None:
         assert '"body_text"' in user_input
         # body_text must never leak into the cached system prompt.
         assert "BODY_MARKER" not in str(llm.calls[0]["system_instruction"])
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_requests_no_core_memory_injection_when_supported() -> None:
+    class _CoreMemoryRecordingLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.calls.append(
+                {
+                    "caller": caller,
+                    "inject_core_memory": inject_core_memory,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "expression": "这条会接上你最近想把系统拆明白的状态。",
+                        "topic_label": "系统拆解",
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _CoreMemoryRecordingLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV_EXPR_NO_CORE",
+                title="系统拆解方法",
+                up_name="系统笔记",
+                description="把复杂问题拆成可执行结构。",
+                relevance_score=0.9,
+            ),
+            _build_profile(),
+        )
+
+        assert llm.calls == [
+            {
+                "caller": "recommendation.expression",
+                "inject_core_memory": False,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_generate_expression_uses_layered_profile_prefix() -> None:
+    class _LayerRecordingLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(self, **kwargs: object) -> LLMResponse:
+            self.calls.append(dict(kwargs))
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "expression": "这条能接住你喜欢拆复杂系统的劲头。",
+                        "topic_label": "系统拆解",
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        llm = _LayerRecordingLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        await engine.generate_expression(
+            DiscoveredContent(
+                bvid="BV_EXPR_LAYERED",
+                title="系统拆解方法",
+                up_name="系统笔记",
+                description="把复杂问题拆成可执行结构。",
+                relevance_score=0.9,
+            ),
+            _build_profile(),
+        )
+
+    user_input = str(llm.calls[0]["user_input"])
+    assert "<profile_summary>" not in user_input
+    assert user_input.index("<profile_core>") < user_input.index("<profile_interests>")
+    assert user_input.index("<profile_interests>") < user_input.index("<source_platform>")
+    assert user_input.index("<source_platform>") < user_input.index("<content_summary>")
 
 
 @pytest.mark.asyncio
@@ -1938,7 +2092,7 @@ async def test_safe_classify_pool_backlog_drains_copy_for_newly_classified() -> 
                     content = json.dumps(
                         [
                             {
-                                "score": 0.85,
+                                "score": 0.65,
                                 "reason": "美食烹饪",
                                 "topic_group": "美食烹饪",
                                 "style_key": "lifestyle",
@@ -2018,11 +2172,11 @@ async def test_e2e_precompute_pool_copy_classifies_then_copies_in_one_pass(
                         ],
                         ensure_ascii=False,
                     )
-                else:  # classify (evaluate_batch) + any delight call (harmless)
+                else:  # classify (evaluate_batch)
                     content = json.dumps(
                         [
                             {
-                                "score": 0.85,
+                                "score": 0.65,
                                 "reason": "美食烹饪",
                                 "topic_group": "美食烹饪",
                                 "style_key": "lifestyle",
@@ -2326,6 +2480,281 @@ async def test_precompute_batch_accepts_items_wrapper_without_single_fallback(
         assert row["pool_topic_label"] == "流程拆解"
         assert llm.callers == ["recommendation.write_expression"]
         assert "Batch expression generation failed" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_precompute_batch_requests_no_core_memory_injection_when_supported() -> None:
+    class _CoreMemoryRecordingBatchLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.calls.append(
+                {
+                    "caller": caller,
+                    "inject_core_memory": inject_core_memory,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV_BATCH_NO_CORE",
+                            "expression": "这条能接住你最近想拆流程的劲头。",
+                            "topic_label": "流程拆解",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        item = DiscoveredContent(
+            bvid="BV_BATCH_NO_CORE",
+            title="自动化流程怎么拆",
+            up_name="效率实验室",
+            description="把一个复杂流程拆成可执行的小步骤。",
+            relevance_score=0.88,
+        )
+        _seed_pool(db, [item], precomputed=False)
+        llm = _CoreMemoryRecordingBatchLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._precompute_batch([item], _build_profile())
+
+        assert completed == 1
+        assert llm.calls == [
+            {
+                "caller": "recommendation.write_expression",
+                "inject_core_memory": False,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_limits_batch_concurrency_to_two_by_default() -> None:
+    class _ConcurrencyRecordingExpressionLLM:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                return LLMResponse(
+                    content=json.dumps(
+                        [
+                            {
+                                "expression": "这条会接上你最近想拆流程的状态。",
+                                "topic_label": "流程拆解",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    provider="test",
+                    model="dummy",
+                    usage={},
+                )
+            finally:
+                self.active -= 1
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_CONCURRENCY_{index}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(4)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _ConcurrencyRecordingExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=4,
+            batch_size=1,
+        )
+
+        assert completed == 4
+        assert llm.max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_default_batch_size_is_30() -> None:
+    class _BatchSizeRecordingExpressionLLM:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            batch = _content_batch_from_prompt(user_input)
+            self.batch_sizes.append(len(batch))
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": item["bvid"],
+                            "expression": f"{item['bvid']} 的专属推荐文案。",
+                            "topic_label": "流程拆解",
+                        }
+                        for item in batch
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_DEFAULT_BATCH_{index:02d}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(46)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _BatchSizeRecordingExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=46,
+        )
+
+        assert completed == 46
+        assert sorted(llm.batch_sizes, reverse=True) == [30, 16]
+
+
+@pytest.mark.asyncio
+async def test_drain_expression_copy_splits_failed_batch_before_single_fallback() -> None:
+    class _SplitRetryExpressionLLM:
+        def __init__(self) -> None:
+            self.write_batch_sizes: list[int] = []
+            self.single_calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
+        ) -> LLMResponse:
+            if caller != "recommendation.write_expression":
+                self.single_calls += 1
+                raise AssertionError("split retry should avoid single fallback while halves pass")
+            batch = _content_batch_from_prompt(user_input)
+            self.write_batch_sizes.append(len(batch))
+            if len(batch) > 2:
+                return LLMResponse(content="not json", provider="test", model="dummy", usage={})
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": item["bvid"],
+                            "expression": f"{item['bvid']} 拆半后生成的推荐文案。",
+                            "topic_label": "流程拆解",
+                        }
+                        for item in batch
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(
+                bvid=f"BV_EXPR_SPLIT_{index}",
+                title=f"流程视频 {index}",
+                up_name="效率实验室",
+                description="把一个复杂流程拆成可执行的小步骤。",
+                style_key="deep_dive",
+                topic_group="效率工具",
+                relevance_score=0.88,
+            )
+            for index in range(4)
+        ]
+        _seed_pool(db, items, precomputed=False)
+        llm = _SplitRetryExpressionLLM()
+        engine = RecommendationEngine(llm=llm, database=db)
+
+        completed = await engine._drain_expression_copy(
+            profile=_build_profile(),
+            limit=4,
+            batch_size=4,
+        )
+
+        rows = {row["bvid"]: dict(row) for row in db.get_cached_content(limit=10)}
+        assert completed == 4
+        assert llm.write_batch_sizes == [4, 2, 2]
+        assert llm.single_calls == 0
+        assert rows["BV_EXPR_SPLIT_0"]["pool_expression"].startswith("BV_EXPR_SPLIT_0")
+        assert rows["BV_EXPR_SPLIT_3"]["pool_expression"].startswith("BV_EXPR_SPLIT_3")
 
 
 @pytest.mark.asyncio
@@ -2667,54 +3096,8 @@ async def test_generate_expression_accepts_echoed_schema_before_final_fenced_obj
         assert "Failed to generate recommendation expression" not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_generate_delight_reason_accepts_result_wrapper() -> None:
-    class _WrappedDelightReasonLLM:
-        async def complete_structured_task(
-            self,
-            *,
-            system_instruction: str,
-            user_input: str,
-            history: list[dict[str, str]] | None = None,
-            temperature: float = 0.7,
-            max_tokens: int = 4096,
-            caller: str = "",
-            reasoning_effort: str | None = None,
-        ) -> LLMResponse:
-            return LLMResponse(
-                content=json.dumps(
-                    {
-                        "result": {
-                            "delight_reason": "这条会把你对系统结构的好奇心接住。",
-                            "delight_hook": "结构上头",
-                        }
-                    },
-                    ensure_ascii=False,
-                ),
-                provider="test",
-                model="dummy",
-                usage={},
-            )
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db = Database(Path(tmpdir) / "test.db")
-        db.initialize()
-        engine = RecommendationEngine(llm=_WrappedDelightReasonLLM(), database=db)
-
-        reason, hook = await engine._generate_delight_reason(
-            DiscoveredContent(
-                bvid="BV_DELIGHT_WRAP",
-                title="复杂系统入门",
-                up_name="系统观察者",
-                description="从连接关系理解复杂系统。",
-                relevance_score=0.93,
-            ),
-            _build_profile(),
-            "系统结构",
-        )
-
-        assert reason == "这条会把你对系统结构的好奇心接住。"
-        assert hook == "结构上头"
+def test_recommendation_engine_no_longer_exposes_delight_reason_llm_helper() -> None:
+    assert not hasattr(RecommendationEngine, "_generate_delight_reason")
 
 
 def test_re_ingest_does_not_overwrite_classified_fields() -> None:
@@ -2772,9 +3155,9 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
-    """v0.3.34+ — delight scoring is one batched LLM call returning
-    score + rationale + hook per candidate (no separate reason call).
+async def test_precompute_delight_scores_reuses_evo_result_without_llm_call() -> None:
+    """Delight scoring should reuse Evo's relevance result instead of paying
+    another LLM scoring pass.
     """
 
     class _DelightLLM:
@@ -2788,22 +3171,7 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
             max_tokens: int = 4096,
             caller: str = "",
         ) -> LLMResponse:
-            return LLMResponse(
-                content=json.dumps(
-                    [
-                        {
-                            "bvid": "BV1BACKFILL",
-                            "score": 0.78,
-                            "rationale": "这条会把你最近那股想搞明白系统结构的劲头接住。",
-                            "hook": "结构上头",
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                provider="test",
-                model="dummy",
-                usage={},
-            )
+            raise AssertionError(f"unexpected LLM call during Evo backfill: {caller}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
@@ -2815,6 +3183,10 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
             up_name="系统观察者",
             source="explore",
             relevance_score=0.91,
+            relevance_reason="Evo 判断这条能接住你最近想拆清楚系统结构的劲头。",
+            topic_group="复杂系统",
+            pool_topic_label="系统结构",
+            pool_expression="这条会把你最近想拆清楚系统结构的劲头接住。",
             description="从复杂系统角度解释结构之间如何互相作用。",
             view_count=50000,
             like_count=3200,
@@ -2830,5 +3202,104 @@ async def test_precompute_delight_scores_uses_llm_batch_scorer() -> None:
         candidate = db.get_delight_candidate(min_delight_score=0.70)
         assert candidate is not None
         assert candidate["bvid"] == "BV1BACKFILL"
-        assert candidate["delight_reason"] == "这条会把你最近那股想搞明白系统结构的劲头接住。"
-        assert candidate["delight_hook"] == "结构上头"
+        assert candidate["delight_score"] == pytest.approx(0.91)
+        assert candidate["delight_reason"] == "这条会把你最近想拆清楚系统结构的劲头接住。"
+        assert candidate["delight_hook"] == "系统结构"
+
+
+@pytest.mark.asyncio
+async def test_precompute_delight_scores_uses_dynamic_pool_top_boundary() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        for index in range(40):
+            _seed_visible(
+                db,
+                f"BV1DYN{index:02d}",
+                title=f"动态样本 {index}",
+                relevance_score=0.50 + (index * 0.01),
+                relevance_reason="pool sample",
+                topic_group="动态样本",
+                pool_topic_label="动态样本",
+            )
+        _seed_visible(
+            db,
+            "BV1MID",
+            title="不够惊喜的中等匹配",
+            relevance_score=0.72,
+            relevance_reason="按旧阈值会通过",
+            topic_group="中等匹配",
+            pool_topic_label="中等匹配",
+            pool_expression="这条按旧阈值会被写成惊喜文案。",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        scored = await engine.precompute_delight_scores(
+            profile=_build_profile(),
+            limit=50,
+        )
+
+        assert scored > 0
+        row = db.conn.execute(
+            """
+            SELECT delight_score, delight_reason, delight_hook
+            FROM content_cache
+            WHERE bvid = 'BV1MID'
+            """
+        ).fetchone()
+        assert row is not None
+        assert float(row["delight_score"]) == pytest.approx(0.72)
+        assert row["delight_reason"] == ""
+        assert row["delight_hook"] == ""
+
+
+@pytest.mark.asyncio
+async def test_precompute_delight_scores_resyncs_legacy_stale_delight_score() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        for index in range(40):
+            _seed_visible(
+                db,
+                f"BV1DYN{index:02d}",
+                title=f"动态样本 {index}",
+                relevance_score=0.50 + (index * 0.01),
+                relevance_reason="pool sample",
+                topic_group="动态样本",
+                pool_topic_label="动态样本",
+            )
+        _seed_visible(
+            db,
+            "BV1STALE",
+            title="旧分数但新相关度很高",
+            relevance_score=0.92,
+            relevance_reason="Evo 已判断它进入当前 Top 10%",
+            topic_group="旧分数迁移",
+            pool_topic_label="旧分数迁移",
+            pool_expression="这条应该按新的 Evo relevance 重新成为惊喜候选。",
+        )
+        db.update_delight_score(
+            "BV1STALE",
+            delight_score=0.72,
+            delight_reason="旧阈值留下的理由",
+            delight_hook="旧钩子",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        scored = await engine.precompute_delight_scores(
+            profile=_build_profile(),
+            limit=50,
+        )
+
+        assert scored > 0
+        row = db.conn.execute(
+            """
+            SELECT delight_score, delight_reason, delight_hook
+            FROM content_cache
+            WHERE bvid = 'BV1STALE'
+            """
+        ).fetchone()
+        assert row is not None
+        assert float(row["delight_score"]) == pytest.approx(0.92)
+        assert row["delight_reason"] == "这条应该按新的 Evo relevance 重新成为惊喜候选。"
+        assert row["delight_hook"] == "旧分数迁移"

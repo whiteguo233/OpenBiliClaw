@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from openbiliclaw.llm.json_utils import DEFAULT_STRUCTURED_MAX_TOKENS, parse_llm_json_tolerant
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.soul.speculator import (
     _build_event_text,
     _has_probe_term_overlap,
@@ -1206,11 +1207,13 @@ class AvoidanceSpeculator:
         )
 
         try:
-            response = await llm_service.complete_structured_task(
+            complete_structured = llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
                 caller="soul.avoidance_speculate",
+                **without_core_memory_kwargs(complete_structured),
             )
             raw = _parse_avoidance_generation_response(response.content)
         except Exception:

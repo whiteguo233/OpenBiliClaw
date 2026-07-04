@@ -597,22 +597,61 @@ function renderListEditField(path, label, field) {
     </div>`;
 }
 
+function editSpecificName(item) {
+  if (typeof item === "string") return item;
+  if (item && typeof item === "object") return item.name || item.label || "";
+  return "";
+}
+
+function hasSpecificEdits(field) {
+  const edits = field?.specific_edits;
+  if (!edits || typeof edits !== "object") return false;
+  return Object.values(edits).some((edit) => {
+    if (!edit || typeof edit !== "object") return false;
+    return (edit.add?.length || 0) > 0 || (edit.remove?.length || 0) > 0;
+  });
+}
+
 function renderInterestEditField(path, label, field) {
   const domains = Array.isArray(field.domains) ? field.domains : [];
-  const edited = (field.removed_domains?.length || 0) > 0 || domains.some((d) => d?.user_added);
-  const chips = domains.length
+  const edited =
+    (field.removed_domains?.length || 0) > 0 ||
+    domains.some((d) => d?.user_added) ||
+    hasSpecificEdits(field);
+  const tree = domains.length
     ? domains
-        .map(
-          (d) =>
-            `<span class="edit-chip">${esc(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" data-edit-remove="${escAttr(path)}" data-edit-value="${escAttr(d.domain)}">✕</button></span>`,
-        )
+        .map((d) => {
+          if (!d?.domain) return "";
+          const specifics = Array.isArray(d.specifics)
+            ? d.specifics.map(editSpecificName).filter(Boolean)
+            : [];
+          const specificChips = specifics.length
+            ? specifics
+                .map(
+                  (specific) =>
+                    `<span class="edit-chip edit-specific-chip">${esc(specific)}<button class="edit-chip-remove" data-edit-remove-specific="${escAttr(path)}" data-edit-parent="${escAttr(d.domain)}" data-edit-value="${escAttr(specific)}">✕</button></span>`,
+                )
+                .join("")
+            : `<p class="edit-empty edit-specific-empty">还没有二级兴趣</p>`;
+          return `
+            <div class="edit-interest-domain">
+              <div class="edit-interest-domain-head">
+                <span class="edit-chip edit-domain-chip">${esc(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" data-edit-remove="${escAttr(path)}" data-edit-value="${escAttr(d.domain)}">✕</button></span>
+              </div>
+              <div class="edit-specific-list">${specificChips}</div>
+              <div class="edit-add-row edit-specific-add-row">
+                <input class="edit-add-input" data-edit-specific-input="${escAttr(path)}" data-edit-parent="${escAttr(d.domain)}" placeholder="添加二级兴趣" />
+                <button class="edit-add-btn" data-edit-add-specific="${escAttr(path)}" data-edit-parent="${escAttr(d.domain)}">添加</button>
+              </div>
+            </div>`;
+        })
         .join("")
     : `<p class="edit-empty">还没有，添加一个吧</p>`;
   const placeholder = path === "dislikes" ? "添加要避开的领域" : "添加感兴趣的领域";
   return `
     <div class="edit-field">
       <div class="edit-field-head"><span class="edit-field-label">${esc(label)}</span>${edited ? `<span class="edit-badge">已编辑</span>` : ""}</div>
-      <div class="edit-chip-list">${chips}</div>
+      <div class="edit-interest-tree">${tree}</div>
       <div class="edit-add-row">
         <input class="edit-add-input" data-edit-add-input="${escAttr(path)}" placeholder="${esc(placeholder)}" />
         <button class="edit-add-btn" data-edit-add="${escAttr(path)}">添加</button>
@@ -657,6 +696,16 @@ function bindEditActions() {
       void applyEdit({ target: btn.dataset.editRemove, op: "remove", value: btn.dataset.editValue }),
     );
   }
+  for (const btn of $root.querySelectorAll("[data-edit-remove-specific]")) {
+    btn.addEventListener("click", () =>
+      void applyEdit({
+        target: btn.dataset.editRemoveSpecific,
+        op: "remove",
+        value: btn.dataset.editValue,
+        parent: btn.dataset.editParent || "",
+      }),
+    );
+  }
   for (const btn of $root.querySelectorAll("[data-edit-reset]")) {
     btn.addEventListener("click", () => void applyEdit({ target: btn.dataset.editReset, op: "reset" }));
   }
@@ -669,6 +718,19 @@ function bindEditActions() {
       void applyEdit({ target: path, op: "add", value });
     });
   }
+  for (const btn of $root.querySelectorAll("[data-edit-add-specific]")) {
+    btn.addEventListener("click", () => {
+      const input = btn.closest(".edit-add-row")?.querySelector("[data-edit-specific-input]");
+      const value = input?.value.trim();
+      if (!value) return;
+      void applyEdit({
+        target: btn.dataset.editAddSpecific,
+        op: "add",
+        value,
+        parent: btn.dataset.editParent || "",
+      });
+    });
+  }
   for (const input of $root.querySelectorAll("[data-edit-add-input]")) {
     input.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
@@ -676,6 +738,20 @@ function bindEditActions() {
       const value = input.value.trim();
       if (!value) return;
       void applyEdit({ target: input.dataset.editAddInput, op: "add", value });
+    });
+  }
+  for (const input of $root.querySelectorAll("[data-edit-specific-input]")) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+      void applyEdit({
+        target: input.dataset.editSpecificInput,
+        op: "add",
+        value,
+        parent: input.dataset.editParent || "",
+      });
     });
   }
   for (const btn of $root.querySelectorAll("[data-edit-save]")) {

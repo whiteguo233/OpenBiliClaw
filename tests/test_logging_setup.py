@@ -58,11 +58,15 @@ def test_configure_logging_quiets_noisy_http_libraries(tmp_path: Path) -> None:
 
     logging.getLogger("httpx").setLevel(logging.NOTSET)
     logging.getLogger("httpcore").setLevel(logging.NOTSET)
+    logging.getLogger("openai").setLevel(logging.NOTSET)
+    logging.getLogger("openai._base_client").setLevel(logging.NOTSET)
 
     configure_logging(config)
 
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("openai").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("openai._base_client").getEffectiveLevel() >= logging.WARNING
 
 
 def test_configure_logging_uses_rotating_handler_when_enabled(tmp_path: Path) -> None:

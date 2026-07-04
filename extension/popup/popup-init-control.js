@@ -97,6 +97,7 @@ export const INIT_SOURCE_OPTIONS = [
   { key: "youtube", label: "YouTube" },
   { key: "twitter", label: "X" },
   { key: "zhihu", label: "知乎" },
+  { key: "reddit", label: "Reddit" },
 ];
 
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH

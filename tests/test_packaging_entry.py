@@ -155,6 +155,75 @@ def test_resolve_runtime_paths_honors_project_root_override(monkeypatch, tmp_pat
 
 
 # --------------------------------------------------------------------------- #
+# _repair_unloadable_config — desktop startup self-heals broken config files
+# --------------------------------------------------------------------------- #
+
+
+def test_repair_unloadable_config_reseeds_malformed_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "userdata"
+    bundled = tmp_path / "bundle"
+    project_root.mkdir()
+    bundled.mkdir()
+    bad_config = b"\xef\xbb\xbf[api]\nport = 18420\n"
+    (project_root / "config.toml").write_bytes(bad_config)
+    (bundled / "config.example.toml").write_text("[api]\nport = 18421\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+
+    result = entry._repair_unloadable_config(project_root, bundled)
+
+    assert result.repaired is True
+    assert result.regenerated_default is True
+    assert (project_root / "config.toml").read_text(encoding="utf-8") == "[api]\nport = 18421\n"
+    assert (project_root / "config.toml.invalid").read_bytes() == bad_config
+
+
+def test_repair_unloadable_config_reseeds_structurally_invalid_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "userdata"
+    bundled = tmp_path / "bundle"
+    project_root.mkdir()
+    bundled.mkdir()
+    (project_root / "config.toml").write_text('llm = "not-a-table"\n', encoding="utf-8")
+    (bundled / "config.example.toml").write_text("[api]\nport = 18421\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+
+    result = entry._repair_unloadable_config(project_root, bundled)
+
+    assert result.repaired is True
+    assert result.regenerated_default is True
+    assert (project_root / "config.toml").read_text(encoding="utf-8") == "[api]\nport = 18421\n"
+    assert (project_root / "config.toml.invalid").read_text(encoding="utf-8") == (
+        'llm = "not-a-table"\n'
+    )
+
+
+def test_repair_unloadable_config_quarantines_bad_local_without_reseeding_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "userdata"
+    bundled = tmp_path / "bundle"
+    project_root.mkdir()
+    bundled.mkdir()
+    main_config = "[api]\nport = 18420\n"
+    bad_local = b"{not toml}"
+    (project_root / "config.toml").write_text(main_config, encoding="utf-8")
+    (project_root / "config.local.toml").write_bytes(bad_local)
+    (bundled / "config.example.toml").write_text("[api]\nport = 18421\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+
+    result = entry._repair_unloadable_config(project_root, bundled)
+
+    assert result.repaired is True
+    assert result.regenerated_default is False
+    assert (project_root / "config.toml").read_text(encoding="utf-8") == main_config
+    assert not (project_root / "config.local.toml").exists()
+    assert (project_root / "config.local.toml.invalid").read_bytes() == bad_local
+
+
+# --------------------------------------------------------------------------- #
 # _migrate_legacy_install_dir_data — relocate old in-install-dir data
 # --------------------------------------------------------------------------- #
 
@@ -417,6 +486,58 @@ def test_main_uses_configured_api_host_when_env_host_unset(
     assert seen["host"] == "0.0.0.0"
     assert seen["port"] == 19090
     assert seen["ran"] is True
+
+
+def test_main_opens_setup_after_repairing_unloadable_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "userdata"
+    project_root.mkdir()
+    (project_root / "config.toml").write_bytes(b"\xef\xbb\xbf[api]\nport = 19090\n")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(project_root))
+    monkeypatch.delenv("OPENBILICLAW_HOST", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_PORT", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_SELFTEST", raising=False)
+    monkeypatch.setattr(entry.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(entry, "_redirect_output_to_logfile", lambda _root: None)
+    monkeypatch.setattr(entry, "_notify_starting", lambda: None)
+    monkeypatch.setattr(entry, "_copy_legacy_packaged_user_data", lambda *_args: None)
+    monkeypatch.setattr(entry, "_migrate_legacy_install_dir_data", lambda *_args: None)
+    monkeypatch.setattr(entry, "_inject_bundled_ollama_on_path", lambda _resources: False)
+    monkeypatch.setattr(entry, "_packaged_ollama_preflight", lambda: None)
+    monkeypatch.setattr(entry, "_ensure_embedding_model_async", lambda: None)
+    monkeypatch.setattr(entry, "_close_splash", lambda: None)
+    monkeypatch.setattr(entry, "_should_use_tray", lambda: False)
+    opened: list[str] = []
+    monkeypatch.setattr(entry.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    import uvicorn
+
+    import openbiliclaw.api.app as api_app
+
+    monkeypatch.setattr(api_app, "create_app", lambda: SimpleNamespace())
+
+    class _Config:
+        def __init__(self, app: object, *, host: str, port: int, log_level: str) -> None:
+            self.app = app
+            self.host = host
+            self.port = port
+            self.log_level = log_level
+
+    class _Server:
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def run(self) -> None:
+            pass
+
+    monkeypatch.setattr(uvicorn, "Config", _Config)
+    monkeypatch.setattr(uvicorn, "Server", _Server)
+
+    entry.main()
+
+    assert opened == ["http://127.0.0.1:8420/setup/"]
+    assert (project_root / "config.toml.invalid").exists()
 
 
 def test_main_disables_uvicorn_access_log_in_tray_mode(

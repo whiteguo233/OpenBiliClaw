@@ -30,10 +30,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import tomllib
 import webbrowser
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -99,6 +100,12 @@ def _legacy_packaged_user_data_root() -> Path:
 # Names older builds wrote next to the executable under ``{app}``; relocated to
 # the per-user data root on the first launch of a relocation-aware build.
 _LEGACY_DATA_ENTRIES = ("config.toml", "config.local.toml", "data", "logs")
+_CONFIG_FILES = ("config.toml", "config.local.toml")
+
+
+class _ConfigRepairResult(NamedTuple):
+    repaired: bool
+    regenerated_default: bool
 
 
 def _migrate_legacy_install_dir_data(install_dir: Path, project_root: Path) -> None:
@@ -172,10 +179,7 @@ def _copy_legacy_packaged_user_data(legacy_root: Path, project_root: Path) -> No
         except Exception as exc:  # noqa: BLE001 — best-effort compatibility
             print(f"[OpenBiliClaw] 历史安装包数据拷贝跳过 {name}: {exc}")
     if copied:
-        print(
-            f"[OpenBiliClaw] 已从历史安装包数据目录拷贝到 {project_root}: "
-            f"{', '.join(copied)}"
-        )
+        print(f"[OpenBiliClaw] 已从历史安装包数据目录拷贝到 {project_root}: {', '.join(copied)}")
 
 
 def _resolve_runtime_paths() -> tuple[Path, Path]:
@@ -230,6 +234,101 @@ def _seed_default_config(project_root: Path, bundled_resources: Path) -> bool:
             print(f"[OpenBiliClaw] 已生成默认配置: {config_path}")
             return True
     return False
+
+
+def _next_invalid_config_path(path: Path) -> Path:
+    """Return a non-clobbering backup path for an unloadable config file."""
+    candidate = path.with_name(f"{path.name}.invalid")
+    if not candidate.exists():
+        return candidate
+    index = 1
+    while True:
+        candidate = path.with_name(f"{path.name}.invalid.{index}")
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _quarantine_config_file(path: Path, reason: object) -> bool:
+    """Move an unloadable config aside so startup can regenerate defaults."""
+    destination = _next_invalid_config_path(path)
+    try:
+        path.rename(destination)
+    except OSError as exc:
+        print(f"[OpenBiliClaw] 配置文件无法隔离 {path}: {exc}")
+        return False
+    reason_text = str(reason).splitlines()[0]
+    print(
+        f"[OpenBiliClaw] 配置文件异常,已备份为 {destination.name};"
+        f" 将使用默认配置重新初始化。原因: {reason_text}"
+    )
+    return True
+
+
+def _toml_syntax_error(path: Path) -> BaseException | None:
+    """Return the TOML/encoding parse error for a config file, if any."""
+    try:
+        with path.open("rb") as file:
+            tomllib.load(file)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        return exc
+    except OSError as exc:
+        print(f"[OpenBiliClaw] 配置文件读取失败 {path}: {exc}")
+    return None
+
+
+def _runtime_config_error(project_root: Path) -> BaseException | None:
+    """Return the error raised by the real runtime config builder, if any."""
+    previous_root = os.environ.get("OPENBILICLAW_PROJECT_ROOT")
+    os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(project_root)
+    try:
+        from openbiliclaw.config import load_config
+
+        load_config()
+    except Exception as exc:  # noqa: BLE001 — desktop startup recovery boundary
+        return exc
+    finally:
+        if previous_root is None:
+            os.environ.pop("OPENBILICLAW_PROJECT_ROOT", None)
+        else:
+            os.environ["OPENBILICLAW_PROJECT_ROOT"] = previous_root
+    return None
+
+
+def _repair_unloadable_config(project_root: Path, bundled_resources: Path) -> _ConfigRepairResult:
+    """Quarantine broken config files and regenerate a default desktop config.
+
+    This only touches ``config.toml`` / ``config.local.toml``. User data under
+    ``data/`` remains intact; the setup wizard can re-collect missing settings.
+    """
+    repaired = False
+    regenerated_default = False
+
+    for name in _CONFIG_FILES:
+        path = project_root / name
+        if not path.exists():
+            continue
+        error = _toml_syntax_error(path)
+        if error is not None and _quarantine_config_file(path, error):
+            repaired = True
+
+    if not (project_root / "config.toml").exists():
+        regenerated_default = _seed_default_config(project_root, bundled_resources)
+
+    error = _runtime_config_error(project_root)
+    if error is not None:
+        print(
+            "[OpenBiliClaw] 配置结构无法加载,将隔离配置并重新初始化。"
+            f"原因: {str(error).splitlines()[0]}"
+        )
+        for name in _CONFIG_FILES:
+            path = project_root / name
+            if path.exists() and _quarantine_config_file(path, error):
+                repaired = True
+        if not (project_root / "config.toml").exists():
+            regenerated_default = _seed_default_config(project_root, bundled_resources)
+
+    return _ConfigRepairResult(repaired=repaired, regenerated_default=regenerated_default)
 
 
 def _bundled_ollama_path(bundled_resources: Path) -> Path | None:
@@ -681,6 +780,10 @@ def main() -> None:
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
         _default_ollama_to_embedding_only(project_root / "config.toml")
+    repair_result = _repair_unloadable_config(project_root, bundled_resources)
+    if repair_result.regenerated_default and has_bundled_ollama:
+        _enable_ollama_embedding_default(project_root / "config.toml")
+        _default_ollama_to_embedding_only(project_root / "config.toml")
 
     # The packaged app bypasses `openbiliclaw start`, so set up the same
     # structured, rotated, UTF-8 `openbiliclaw.log` the CLI gets — otherwise the
@@ -749,7 +852,7 @@ def main() -> None:
     # First launch → open the step-by-step setup wizard; afterwards → the app
     # itself. When bound to all interfaces, loopback is the address a local
     # browser can actually hit.
-    landing = "/setup/" if seeded else "/web/"
+    landing = "/setup/" if seeded or repair_result.repaired else "/web/"
     browser_host = "127.0.0.1" if host == "0.0.0.0" else host  # noqa: S104
     with suppress(Exception):
         webbrowser.open(f"http://{browser_host}:{port}{landing}")

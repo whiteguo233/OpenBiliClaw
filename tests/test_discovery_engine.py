@@ -21,7 +21,7 @@ from openbiliclaw.discovery.engine import (
 )
 from openbiliclaw.discovery.pool_snapshot import PoolDistributionSnapshot
 from openbiliclaw.llm.service import LLMProviderExecutionError
-from openbiliclaw.soul.profile import SoulProfile
+from openbiliclaw.soul.profile import AwarenessNote, InterestTag, SoulProfile
 from openbiliclaw.storage.database import Database
 
 from .test_explore_strategy import (
@@ -39,8 +39,13 @@ from .test_related_chain_strategy import (
     _event,
 )
 from .test_search_strategy import FakeBilibiliClient, FakeLLMService, _build_profile
-from .test_trending_strategy import FakeLLMService as FakeTrendingLLMService
-from .test_trending_strategy import FakeRankingClient
+from .test_trending_strategy import (
+    FakeLLMService as FakeTrendingLLMService,
+)
+from .test_trending_strategy import (
+    FakeRankingClient,
+    _first_rotating_rids,
+)
 
 
 @dataclass
@@ -102,6 +107,41 @@ class _DynamicBatchLLMService:
             for index, item in enumerate(items)
         ]
         return _SlowResponse(json.dumps(payload, ensure_ascii=False))
+
+
+class _ConcurrentBatchLLMService(_DynamicBatchLLMService):
+    def __init__(self, delay: float = 0.01) -> None:
+        super().__init__()
+        self.delay = delay
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> object:
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(self.delay)
+            return await super().complete_structured_task(
+                system_instruction=system_instruction,
+                user_input=user_input,
+                history=history,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                caller=caller,
+                reasoning_effort=reasoning_effort,
+            )
+        finally:
+            self.active_calls -= 1
 
 
 class _RecordingMultimodalBatchLLMService(_DynamicBatchLLMService):
@@ -476,6 +516,26 @@ async def test_evaluate_content_batch_skips_recently_viewed_before_llm() -> None
 
 
 @pytest.mark.asyncio
+async def test_evaluate_content_batch_limits_llm_batch_concurrency_to_two_by_default() -> None:
+    llm_service = _ConcurrentBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    contents = [
+        DiscoveredContent(
+            bvid=f"BV_BATCH_CONCURRENCY_{index}",
+            title=f"候选 {index}",
+            up_name="UP",
+            source_strategy="search",
+        )
+        for index in range(4)
+    ]
+
+    scores = await engine.evaluate_content_batch(contents, _build_profile(), batch_size=1)
+
+    assert scores == [0.8, 0.8, 0.8, 0.8]
+    assert llm_service.max_active_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_llm() -> None:
     llm_service = FakeLLMService(
         json.dumps(
@@ -523,6 +583,53 @@ async def test_evaluate_content_batch_skips_recently_viewed_non_bilibili_before_
     assert "fresh-yt" in user_input
     assert "seen-yt" not in user_input
     assert "已经看过的 YouTube" not in user_input
+
+
+@pytest.mark.asyncio
+async def test_evaluate_content_batch_omits_duplicate_text_description() -> None:
+    llm_service = _DynamicBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    summary = "知乎回答摘要，正文和描述来自同一段插件抓取文本。"
+
+    scores = await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                content_id="zhihu:answer:1",
+                source_platform="zhihu",
+                content_type="answer",
+                title="知乎问题",
+                description=summary,
+                body_text=summary,
+                source_strategy="zhihu-hot",
+            ),
+            DiscoveredContent(
+                content_id="twitter:tweet:1",
+                source_platform="twitter",
+                content_type="tweet",
+                title="Tweet first line",
+                description="短描述补充",
+                body_text="完整推文正文",
+                source_strategy="x-feed",
+            ),
+        ],
+        _build_profile(),
+        batch_size=2,
+    )
+
+    assert scores == [0.8, 0.8]
+    batch_json = (
+        llm_service.user_inputs[0]
+        .split("<content_batch>", 1)[1]
+        .split(
+            "</content_batch>",
+            1,
+        )[0]
+    )
+    items = json.loads(batch_json.strip())
+    assert items[0]["body_text"] == summary
+    assert items[0]["description"] == ""
+    assert items[1]["body_text"] == "完整推文正文"
+    assert items[1]["description"] == "短描述补充"
 
 
 @pytest.mark.asyncio
@@ -846,17 +953,17 @@ async def test_discovery_engine_runs_registered_trending_strategy() -> None:
     engine = ContentDiscoveryEngine(
         llm_service=FakeTrendingLLMService(
             [
-                '{"rids": [36]}',
                 '{"score": 0.83, "reason": "符合你的深度内容偏好。"}',
             ]
         )
     )
+    rids = _first_rotating_rids()
     engine.register_strategy(
         TrendingStrategy(
             bilibili_client=FakeRankingClient(
                 {
                     0: [{"bvid": "BV1A", "title": "全站榜", "author": "UP1", "mid": 1}],
-                    36: [],
+                    rids[1]: [],
                 }
             ),
             llm_service=engine._llm_service,
@@ -2111,7 +2218,7 @@ async def test_evaluate_batch_accepts_fenced_json_without_single_eval_fallback()
 
 
 @pytest.mark.asyncio
-async def test_evaluate_batch_skips_single_fallback_during_provider_cooldown() -> None:
+async def test_evaluate_batch_propagates_provider_cooldown_without_single_fallback() -> None:
     class _CooldownLLMService:
         def __init__(self) -> None:
             self.calls = 0
@@ -2140,9 +2247,9 @@ async def test_evaluate_batch_skips_single_fallback_during_provider_cooldown() -
         DiscoveredContent(bvid="BV_COOL_B", title="B", source_strategy="trending"),
     ]
 
-    scores = await engine._evaluate_batch(batch, _build_profile())
+    with pytest.raises(LLMProviderExecutionError):
+        await engine._evaluate_batch(batch, _build_profile())
 
-    assert scores == [0.0, 0.0]
     assert llm_service.calls == 1
 
 
@@ -2524,6 +2631,38 @@ class _RecordingBatchLLMService:
         return _SlowResponse(self.response)
 
 
+class _RecordingBatchKwargsLLMService(_RecordingBatchLLMService):
+    def __init__(
+        self,
+        response: str = '[{"score": 0.7, "reason": "ok", "style_key": "deep_dive"}]',
+    ) -> None:
+        super().__init__(response)
+        self.call_kwargs: list[dict[str, object]] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+        **kwargs: object,
+    ) -> object:
+        self.call_kwargs.append(dict(kwargs))
+        return await super().complete_structured_task(
+            system_instruction=system_instruction,
+            user_input=user_input,
+            history=history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+        )
+
+
 @pytest.mark.asyncio
 async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     llm = _RecordingBatchLLMService(
@@ -2574,6 +2713,101 @@ async def test_evaluate_batch_sends_per_item_platform_metadata() -> None:
     assert '"source_strategy": "xhs-extension-search"' in user
     assert '"content_type": "note"' in user
     assert "<source_platform>\n\nmixed\n\n</source_platform>" in user
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_requests_no_core_memory_injection_when_supported() -> None:
+    llm = _RecordingBatchKwargsLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVx", title="候选", up_name="u", source_strategy="search")],
+        _build_profile(),
+    )
+
+    assert llm.call_kwargs == [{"inject_core_memory": False}]
+
+
+def _json_prompt_block(user_input: str, tag: str) -> dict[str, object]:
+    block = user_input.split(f"<{tag}>", 1)[1].split(f"</{tag}>", 1)[0]
+    parsed = json.loads(block.strip())
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_uses_layered_profile_prompt_with_full_interests() -> None:
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+    profile = _build_profile()
+    profile.preferences.interests = [
+        InterestTag(name=f"兴趣{index}", category="测试", weight=1.0 - index / 1000)
+        for index in range(80)
+    ]
+
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVx", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+
+    user_input = llm.user_inputs[0]
+    assert "<profile_summary>" not in user_input
+    assert user_input.index("<profile_core>") < user_input.index("<profile_life_context>")
+    assert user_input.index("<profile_life_context>") < user_input.index("<profile_interests>")
+    assert user_input.index("<profile_interests>") < user_input.index("<profile_style_context>")
+    assert user_input.index("<profile_style_context>") < user_input.index(
+        "<profile_recent_context>"
+    )
+    assert user_input.index("<profile_recent_context>") < user_input.index("<content_batch>")
+
+    profile_interests = _json_prompt_block(user_input, "profile_interests")
+    interests = profile_interests["interests"]
+    assert isinstance(interests, list)
+    assert len(interests) == 80
+    assert interests[-1]["name"] == "兴趣79"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_only_updates_changed_profile_layers() -> None:
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm)
+    profile = _build_profile()
+
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVx", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+    profile.recent_awareness.append(
+        AwarenessNote(
+            date="2026-06-27",
+            observation="最近只改变近期觉察",
+            trend="短期上下文变化",
+            emotion_guess="专注",
+        )
+    )
+    await engine._evaluate_batch(
+        [DiscoveredContent(bvid="BVy", title="候选2", up_name="u", source_strategy="search")],
+        profile,
+    )
+
+    first_input, second_input = llm.user_inputs
+    for stable_tag in (
+        "profile_core",
+        "profile_life_context",
+        "profile_interests",
+        "profile_style_context",
+    ):
+        assert _json_prompt_block(first_input, stable_tag) == _json_prompt_block(
+            second_input,
+            stable_tag,
+        )
+    assert _json_prompt_block(first_input, "profile_recent_context") != _json_prompt_block(
+        second_input,
+        "profile_recent_context",
+    )
+
+    assert engine.evaluation_profile_prompt_cache_stats()["profile_core"]["hits"] == 1
+    assert engine.evaluation_profile_prompt_cache_stats()["profile_recent_context"]["misses"] == 2
 
 
 @pytest.mark.asyncio
@@ -2716,3 +2950,61 @@ async def test_eval_cache_rechecks_content_when_negative_exemplars_change() -> N
 
     assert len(llm.user_inputs) == 2, "negative-anchor revision must invalidate eval cache"
     assert "<negative_examples>" in llm.user_inputs[1]
+
+
+@pytest.mark.asyncio
+async def test_eval_cache_hits_for_equivalent_profile_objects() -> None:
+    """Equivalent profile content should reuse the same local eval result.
+
+    The cache key must not depend on Python object identity, or every profile
+    reload/rebuild turns into a cache miss.
+    """
+    db = _StubNegativeExemplarsDatabase(rows=[])
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    content = DiscoveredContent(
+        bvid="BVstable",
+        title="候选",
+        up_name="u",
+        source_strategy="search",
+    )
+
+    await engine.evaluate_content_batch([content], _build_profile())
+    await engine.evaluate_content_batch(
+        [
+            DiscoveredContent(
+                bvid="BVstable",
+                title="候选",
+                up_name="u",
+                source_strategy="search",
+            )
+        ],
+        _build_profile(),
+    )
+
+    assert len(llm.user_inputs) == 1
+
+
+@pytest.mark.asyncio
+async def test_eval_cache_survives_unrelated_event_id_change() -> None:
+    """A non-negative event should not invalidate exact eval results.
+
+    Negative exemplar content changes still invalidate the cache; merely moving
+    the global event waterline should not.
+    """
+    db = _StubNegativeExemplarsDatabase(rows=[])
+    llm = _RecordingBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm, database=db)
+    profile = _build_profile()
+
+    await engine.evaluate_content_batch(
+        [DiscoveredContent(bvid="BVsame", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+    db.bump_latest_event_id()
+    await engine.evaluate_content_batch(
+        [DiscoveredContent(bvid="BVsame", title="候选", up_name="u", source_strategy="search")],
+        profile,
+    )
+
+    assert len(llm.user_inputs) == 1

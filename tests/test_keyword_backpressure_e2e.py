@@ -96,7 +96,9 @@ class _MergedKeywordLLM:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> Any:
+        del inject_core_memory
         self.calls.append({"caller": caller, "user": user_input})
         from openbiliclaw.llm.base import LLMResponse
 

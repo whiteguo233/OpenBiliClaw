@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -83,6 +86,24 @@ def test_build_pyinstaller_install_command_falls_back_to_uv_when_pip_missing() -
     ) == ["/usr/local/bin/uv", "pip", "install", "pyinstaller"]
 
 
+def test_build_reddit_dependency_install_command_uses_default_dependency_spec() -> None:
+    cmd = build_module.build_reddit_dependency_install_command(pip_available=True)
+
+    assert cmd[:4] == [build_module.sys.executable, "-m", "pip", "install"]
+    assert cmd[4].startswith("rdt-cli>=")
+
+
+def test_pyinstaller_spec_collects_reddit_dependency() -> None:
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "openbiliclaw.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "OPENBILICLAW_BUNDLE_REDDIT" in spec
+    assert "rdt_cli" in spec
+    assert "browser_cookie3" in spec
+    assert "_reddit_hiddenimports" in spec
+
+
 def test_find_packaged_root_prefers_app_bundle_on_macos(tmp_path: Path) -> None:
     app_bundle = tmp_path / "OpenBiliClaw.app"
     app_bundle.mkdir()
@@ -111,6 +132,72 @@ def test_create_archive_writes_zip_with_packaged_root_contents(tmp_path: Path) -
 
     with zipfile.ZipFile(archive_path) as archive:
         assert "OpenBiliClaw/config.example.toml" in archive.namelist()
+
+
+def test_write_macos_first_launch_guide_explains_gatekeeper_paths(tmp_path: Path) -> None:
+    guide = build_module.write_macos_first_launch_guide(tmp_path)
+
+    text = guide.read_text(encoding="utf-8")
+
+    assert guide.name == build_module.MACOS_FIRST_LAUNCH_GUIDE_NAME
+    assert "Control-click" in text
+    assert "无法验证开发者" in text
+    assert "System Settings" in text
+    assert "Privacy & Security" in text
+    assert "仍要打开" in text
+    assert "已损坏" in text
+    assert "xattr -dr com.apple.quarantine" in text
+    assert "codesign --force" not in text
+
+
+def test_make_macos_dmg_stages_first_launch_guidance(tmp_path: Path, monkeypatch) -> None:
+    app_bundle = tmp_path / "OpenBiliClaw.app"
+    app_bundle.mkdir()
+    stage = tmp_path / "stage"
+    saw_guidance = False
+
+    def fake_mkdtemp(*, prefix: str) -> str:
+        assert prefix == "obc-dmg-"
+        stage.mkdir()
+        return str(stage)
+
+    def fake_check_call(cmd: list[str], **_: object) -> None:
+        assert cmd[0] == "ditto"
+        shutil.copytree(cmd[1], cmd[2])
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        stdout: object,
+        stderr: object,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal saw_guidance
+        assert stdout is subprocess.DEVNULL
+        assert stderr is subprocess.PIPE
+        assert text is True
+        assert (stage / "OpenBiliClaw.app").is_dir()
+        assert (stage / "Applications").is_symlink()
+        assert (stage / build_module.MACOS_FIRST_LAUNCH_GUIDE_NAME).is_file()
+        assert (stage / build_module.MACOS_FIRST_LAUNCH_IMAGE_NAME).is_file()
+        assert (stage / ".background" / "openbiliclaw-dmg-guide.png").is_file()
+        saw_guidance = True
+        Path(cmd[-1]).write_text("fake dmg\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(build_module.subprocess, "check_call", fake_check_call)
+    monkeypatch.setattr(build_module.subprocess, "run", fake_run)
+
+    dmg = build_module.make_macos_dmg(
+        app_bundle=app_bundle,
+        output_dir=tmp_path / "release",
+        version="v0.3.145-arm64",
+    )
+
+    assert saw_guidance is True
+    assert dmg.name == "OpenBiliClaw-macos-v0.3.145-arm64.dmg"
+    assert dmg.exists()
 
 
 def test_find_ollama_binary_prefers_explicit_path(tmp_path: Path, monkeypatch) -> None:
@@ -259,6 +346,19 @@ def test_desktop_release_workflow_uses_official_macos_ollama_bundle() -> None:
     assert "Contents/Resources/llama-server" in workflow
     assert "Contents/Resources/libllama-server-impl.dylib" in workflow
     assert "brew install ollama" not in workflow
+
+
+def test_desktop_release_workflow_mentions_macos_first_launch_guide() -> None:
+    workflow = (
+        Path(__file__).resolve().parent.parent / ".github" / "workflows" / "release-desktop.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "DMG 内已放入首次打开说明" in workflow
+    assert "macOS 安全阻挡" in workflow
+    assert "Control-click" in workflow
+    assert "Privacy & Security" in workflow
+    assert "xattr -dr com.apple.quarantine" in workflow
+    assert "codesign --force" not in workflow
 
 
 def test_manual_installer_workflow_uses_official_macos_ollama_bundle() -> None:

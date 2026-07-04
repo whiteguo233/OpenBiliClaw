@@ -108,6 +108,9 @@ def test_is_llm_rate_limit_error_detects_wrapped_provider_backoff() -> None:
     assert is_llm_rate_limit_error(
         LLMProviderExecutionError("Provider gemini is cooling down after 429")
     )
+    assert is_llm_rate_limit_error(
+        LLMProviderExecutionError("Provider deepseek failed: HTTP 402: Insufficient Balance")
+    )
     assert not is_llm_rate_limit_error(ValueError("Expected scored JSON array"))
 
 
@@ -187,6 +190,25 @@ async def test_complete_with_core_memory_injects_core_memory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_with_core_memory_can_skip_core_memory_for_cacheable_eval() -> None:
+    registry = FakeRegistry(LLMResponse(content="ok", provider="openai"))
+    memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
+    service = LLMService(registry=registry, memory=memory)  # type: ignore[arg-type]
+
+    await service.complete_with_core_memory(
+        system_instruction="你是内容评估助手。",
+        user_input="请评估这个视频。",
+        caller="discovery.evaluate_batch",
+        inject_core_memory=False,
+    )
+
+    system_content = str(registry.calls[0][0]["content"])
+    assert "你是内容评估助手。" in system_content
+    assert "## 用户画像" not in system_content
+    assert registry.calls[0][1]["content"] == "请评估这个视频。"
+
+
+@pytest.mark.asyncio
 async def test_complete_structured_task_enables_json_mode() -> None:
     registry = FakeRegistry(LLMResponse(content='{"ok": true}', provider="openai"))
     memory = FakeMemoryManager(core_prompt="## 用户画像\nportrait")
@@ -243,7 +265,10 @@ def test_resolve_priority_longest_prefix_wins() -> None:
     """write_expression beats the catch-all default; soul-level prefix matches."""
     assert LLMService._resolve_priority("recommendation.write_expression") == 1
     assert LLMService._resolve_priority("discovery.evaluate_batch") == 1
-    assert LLMService._resolve_priority("recommendation.delight_score") == 2
+    assert (
+        LLMService._resolve_priority("recommendation.background_score")
+        == LLMService._DEFAULT_PRIORITY
+    )
     assert LLMService._resolve_priority("soul.preference") == 2
     assert LLMService._resolve_priority("xhs.classify") == 2
     assert LLMService._resolve_priority("unrelated.tag") == LLMService._DEFAULT_PRIORITY
@@ -254,7 +279,7 @@ def test_route_bucket_for_caller_covers_actual_callers() -> None:
     assert LLMService._route_bucket_for_caller("soul.profile_builder") == "soul"
     assert LLMService._route_bucket_for_caller("discovery.search.query") == "discovery"
     assert LLMService._route_bucket_for_caller("discovery.evaluate_batch") == "evaluation"
-    assert LLMService._route_bucket_for_caller("recommendation.delight_score") == "evaluation"
+    assert LLMService._route_bucket_for_caller("recommendation.write_batch") == "recommendation"
     assert (
         LLMService._route_bucket_for_caller("recommendation.write_expression") == "recommendation"
     )
@@ -321,7 +346,7 @@ async def test_route_bucket_specific_prefix_beats_broad_recommendation() -> None
     await service.complete_with_core_memory(
         system_instruction="A",
         user_input="B",
-        caller="recommendation.delight_score",
+        caller="recommendation.evaluate_batch",
     )
 
     assert registry.provider_calls[0]["provider_name"] == "deepseek"

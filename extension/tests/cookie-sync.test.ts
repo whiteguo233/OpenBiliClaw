@@ -273,6 +273,53 @@ test("cookie sync runtime event posts the current x cookie immediately", async (
   });
 });
 
+test("readRedditCookieHeader returns the header only when reddit_session is present", async () => {
+  const { readRedditCookieHeader } = await importCookieSync();
+  installChromeMock([
+    { name: "reddit_session", value: "rs", domain: ".reddit.com" },
+    { name: "loid", value: "loid", domain: ".reddit.com" },
+  ]);
+
+  assert.equal(await readRedditCookieHeader(), "reddit_session=rs; loid=loid");
+});
+
+test("readRedditCookieHeader returns null without reddit_session", async () => {
+  const { readRedditCookieHeader } = await importCookieSync();
+  installChromeMock([{ name: "loid", value: "loid", domain: ".reddit.com" }]);
+
+  assert.equal(await readRedditCookieHeader(), null);
+});
+
+test("cookie sync runtime event posts the current reddit cookie immediately", async () => {
+  const { handleCookieSyncRuntimeEvent } = await importCookieSync();
+  installChromeMock([
+    { name: "reddit_session", value: "rs", domain: ".reddit.com" },
+    { name: "loid", value: "loid", domain: ".reddit.com" },
+  ]);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  const handled = handleCookieSyncRuntimeEvent({
+    type: "reddit_cookie_sync_requested",
+    reason: "missing_cookie",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/sources/reddit/cookie");
+  assert.deepEqual(calls[0].body, {
+    cookie: "reddit_session=rs; loid=loid",
+    source: "runtime-stream-request",
+  });
+});
+
 test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies together", async () => {
   const { handleCookieSyncAlarm } = await importCookieSync();
   installChromeMock([
@@ -313,6 +360,45 @@ test("legacy shared cookie sync alarm refreshes bilibili, douyin AND x cookies t
     cookie: "auth_token=x-at; ct0=x-csrf",
     source: "hourly-alarm",
   });
+});
+
+test("startCookieSync triggers a reddit cookie sync at startup", async () => {
+  const { startCookieSync } = await importCookieSync();
+  installChromeMock([
+    { name: "reddit_session", value: "rs", domain: ".reddit.com" },
+    { name: "loid", value: "loid", domain: ".reddit.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.ok(calls.includes("http://127.0.0.1:8420/api/sources/reddit/cookie"));
+});
+
+test("onChanged on a reddit.com session cookie schedules a sync", async () => {
+  const { startCookieSync } = await importCookieSync();
+  const { listeners } = installChromeMock([
+    { name: "reddit_session", value: "rs", domain: ".reddit.com" },
+  ]);
+  const calls: string[] = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, has_cookie: true }), { status: 200 });
+  };
+
+  startCookieSync();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  calls.length = 0;
+
+  listeners[0]({ cookie: { name: "reddit_session", domain: ".reddit.com" }, removed: false });
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  assert.ok(calls.includes("http://127.0.0.1:8420/api/sources/reddit/cookie"));
 });
 
 test("per-platform alarm only syncs its own platform", async () => {

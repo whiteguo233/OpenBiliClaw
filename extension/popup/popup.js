@@ -37,6 +37,7 @@ import {
   validateCommentInput,
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
+import { createOfflineBackendPoller } from "./popup-connection-poller.js";
 import {
   buildInitChecklist,
   describeInitReason,
@@ -162,7 +163,6 @@ let manualRefreshInFlight = false;
 let activityFeedRefreshTimer = null;
 let activityFeedRefreshInFlight = false;
 let activityFeedRefreshPending = false;
-let hasRuntimeStreamConnected = false;
 
 const elements = {
   content: document.querySelector(".content"),
@@ -298,6 +298,19 @@ let recommendationAutoLoadUserArmed = false;
 let recommendationAutoLoadTouchY = null;
 let recommendationAutoLoadIntentInitialized = false;
 let runtimeStreamClient = null;
+const offlineBackendPoller = createOfflineBackendPoller({
+  isOnline: () => state.online,
+  checkBackendStatus,
+  onOnline: async () => {
+    if (!state.online) {
+      state.online = true;
+      setStatus(true);
+      setHint("后端连上了，正在刷新。", "success");
+    }
+    scheduleRecommendationsRefresh({ delayMs: 0 });
+    void maybeShowEmbeddingBanner();
+  },
+});
 const CHAT_SESSION = "popup";
 const CHAT_POLL_INTERVAL_MS = 1200;
 const CHAT_POLL_DEADLINE_MS = 180_000;
@@ -1452,15 +1465,14 @@ function connectRuntimeStream() {
       }
     },
     onConnect() {
-      if (!state.online) {
+      const wasOnline = state.online;
+      offlineBackendPoller.stop();
+      if (!wasOnline) {
         state.online = true;
         setStatus(true);
-        if (hasRuntimeStreamConnected) {
-          setHint("后端重新连上了，正在刷新。", "success");
-          scheduleRecommendationsRefresh({ delayMs: 0 });
-        }
+        setHint("后端连上了，正在刷新。", "success");
+        scheduleRecommendationsRefresh({ delayMs: 0 });
       }
-      hasRuntimeStreamConnected = true;
     },
     onDisconnect() {
       if (state.online) {
@@ -1468,6 +1480,7 @@ function connectRuntimeStream() {
         setStatus(false);
         setHint("后端连接断了，等重连上会自动恢复。", "error");
       }
+      offlineBackendPoller.start();
     },
   });
   client.connect();
@@ -3577,9 +3590,10 @@ function makeResetButton(path) {
   return btn;
 }
 
-function makeRemovableChip(label, onRemove) {
+function makeRemovableChip(label, onRemove, chipClass = "") {
   const chip = document.createElement("span");
   chip.className = "edit-chip";
+  if (chipClass) chip.classList.add(chipClass);
   const text = document.createElement("span");
   text.textContent = label;
   chip.append(text);
@@ -3747,30 +3761,84 @@ function renderListEditField(path, label, field) {
   return block;
 }
 
+function editSpecificName(item) {
+  if (typeof item === "string") return item;
+  if (item && typeof item === "object") return item.name || item.label || "";
+  return "";
+}
+
+function hasInterestSpecificEdits(field) {
+  const edits = field && typeof field === "object" ? field.specific_edits : null;
+  if (!edits || typeof edits !== "object") return false;
+  return Object.values(edits).some((edit) => {
+    if (!edit || typeof edit !== "object") return false;
+    return (edit.add?.length || 0) > 0 || (edit.remove?.length || 0) > 0;
+  });
+}
+
 function renderInterestEditField(path, label, field) {
   const domains = Array.isArray(field.domains) ? field.domains : [];
   const removed = Array.isArray(field.removed_domains) ? field.removed_domains : [];
-  const edited = removed.length > 0 || domains.some((d) => d && d.user_added);
+  const edited =
+    removed.length > 0 ||
+    domains.some((d) => d && d.user_added) ||
+    hasInterestSpecificEdits(field);
   const block = makeEditFieldBlock(label, edited);
 
-  const chips = document.createElement("div");
-  chips.className = "edit-chip-list";
+  const tree = document.createElement("div");
+  tree.className = "edit-interest-tree";
   for (const dom of domains) {
     if (!dom || !dom.domain) continue;
     const name = dom.user_added ? `${dom.domain} ＋` : dom.domain;
-    chips.append(
-      makeRemovableChip(name, () =>
-        applyProfileEdit({ target: path, op: "remove", value: dom.domain }),
+    const domain = document.createElement("div");
+    domain.className = "edit-interest-domain";
+    const head = document.createElement("div");
+    head.className = "edit-interest-domain-head";
+    head.append(
+      makeRemovableChip(
+        name,
+        () => applyProfileEdit({ target: path, op: "remove", value: dom.domain }),
+        "edit-domain-chip",
       ),
     );
+    domain.append(head);
+
+    const specificList = document.createElement("div");
+    specificList.className = "edit-specific-list";
+    const specifics = Array.isArray(dom.specifics)
+      ? dom.specifics.map(editSpecificName).filter(Boolean)
+      : [];
+    for (const specific of specifics) {
+      specificList.append(
+        makeRemovableChip(
+          specific,
+          () => applyProfileEdit({ target: path, op: "remove", value: specific, parent: dom.domain }),
+          "edit-specific-chip",
+        ),
+      );
+    }
+    if (specifics.length === 0) {
+      const emptySpecific = document.createElement("p");
+      emptySpecific.className = "edit-empty edit-specific-empty";
+      emptySpecific.textContent = "还没有二级兴趣";
+      specificList.append(emptySpecific);
+    }
+    domain.append(specificList);
+
+    const specificAddRow = makeAddRow("添加二级兴趣", (value) =>
+      applyProfileEdit({ target: path, op: "add", value, parent: dom.domain }),
+    );
+    specificAddRow.classList.add("edit-specific-add-row");
+    domain.append(specificAddRow);
+    tree.append(domain);
   }
   if (domains.length === 0) {
     const empty = document.createElement("p");
     empty.className = "edit-empty";
     empty.textContent = "还没有，添加一个吧";
-    chips.append(empty);
+    tree.append(empty);
   }
-  block.append(chips);
+  block.append(tree);
   const placeholder = path === "dislikes" ? "添加要避开的领域" : "添加感兴趣的领域";
   block.append(makeAddRow(placeholder, (value) => applyProfileEdit({ target: path, op: "add", value })));
   if (edited) {
@@ -4893,7 +4961,7 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X", zhihu: "知乎" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X", zhihu: "知乎", reddit: "Reddit" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
@@ -5379,6 +5447,7 @@ async function initializeRecommendations() {
   setStatus(online);
 
   if (!online) {
+    offlineBackendPoller.start();
     state.runtimeStatus = null;
     state.runtimeConfig = null;
     state.recommendations = [];
@@ -5391,6 +5460,7 @@ async function initializeRecommendations() {
     renderProfileSummary(normalizeProfileSummary({ initialized: false }));
     return;
   }
+  offlineBackendPoller.stop();
 
   const [runtimeResult, recommendationResult, delightResult, configResult] =
     await Promise.allSettled([
@@ -5787,17 +5857,31 @@ function bindSettings() {
   }
 
   const BACKEND_UPDATE_REASON_TEXT = {
+    dirty_worktree: "代码目录有未提交改动，更新被阻止",
+    unsupported_install_mode: "当前安装方式不支持自动更新",
+    untrusted_remote: "git 远端不在允许列表，更新被阻止",
+    branch_not_fast_forwardable: "本地代码与发布版本分叉，无法快进更新",
+    merge_or_rebase_in_progress: "代码目录正在合并 / 变基，更新暂缓",
     github_rate_limited: "GitHub API 限流，请稍后再试",
     github_unreachable: "无法访问 GitHub 检查更新",
+    missing_target_tag: "远端未找到目标版本标签",
+    dependency_sync_failed: "更新后依赖安装失败",
+    restart_failed: "更新后重启失败",
     no_backend_tag_yet: "远端暂无后端发布标签",
     prerelease_ignored: "仅有预发布版本，已忽略",
+    already_applying: "正在更新中",
   };
+
+  function formatBackendUpdateReason(reason) {
+    const key = reason && reason !== "none" ? String(reason) : "";
+    if (!key) return "";
+    return BACKEND_UPDATE_REASON_TEXT[key] || key;
+  }
 
   function formatBackendUpdateError(backend) {
     const key =
       backend.last_error || (backend.reason && backend.reason !== "none" ? backend.reason : "");
-    if (!key) return "—";
-    return BACKEND_UPDATE_REASON_TEXT[key] || key;
+    return formatBackendUpdateReason(key) || "—";
   }
 
   function renderBackendUpdateStatus(payload) {
@@ -5814,19 +5898,24 @@ function bindSettings() {
     setText("extensionVersionValue", getExtensionVersionLabel());
 
     const installMode = String(backend.install_mode || "");
-    const unsupportedInstall = Boolean(installMode) && installMode !== "git";
-    const isFrozen = installMode === "frozen";
+    const isGitInstall = installMode === "git";
+    const isFrozenInstall = installMode === "frozen";
+    const isDesktopInstallerUpdate = String(backend.latest_tag || "").startsWith("desktop-v");
     const applyBtn = document.getElementById("backendUpdateApply");
     if (applyBtn instanceof HTMLButtonElement) {
       const canApply =
-        !unsupportedInstall && backend.state === "update_available" && Boolean(backend.latest_tag);
+        isGitInstall &&
+        backend.state === "update_available" &&
+        Boolean(backend.latest_tag) &&
+        !isDesktopInstallerUpdate;
       applyBtn.hidden = !canApply;
       applyBtn.disabled = !canApply;
       applyBtn.dataset.tag = backend.latest_tag || "";
     }
     const downloadLink = document.getElementById("backendUpdateDownload");
     if (downloadLink instanceof HTMLAnchorElement) {
-      const showDownload = isFrozen && backend.state === "update_available";
+      const showDownload =
+        (isFrozenInstall || isDesktopInstallerUpdate) && backend.state === "update_available";
       downloadLink.hidden = !showDownload;
       downloadLink.href =
         showDownload && backend.latest_tag
@@ -6082,6 +6171,33 @@ function bindSettings() {
     return selected.length > 0 ? selected : ["search"];
   }
 
+  const REDDIT_SOURCE_MODE_FIELDS = [
+    ["search", "cfgRedditModeSearch"],
+    ["hot", "cfgRedditModeHot"],
+    ["subreddit", "cfgRedditModeSubreddit"],
+    ["related", "cfgRedditModeRelated"],
+  ];
+
+  function setRedditSourceModes(rawModes) {
+    const fallbackModes = REDDIT_SOURCE_MODE_FIELDS.map(([mode]) => mode);
+    const selected = new Set(
+      (Array.isArray(rawModes) && rawModes.length > 0 ? rawModes : fallbackModes)
+        .map((mode) => String(mode).trim())
+        .filter(Boolean),
+    );
+    for (const [mode, id] of REDDIT_SOURCE_MODE_FIELDS) {
+      const el = document.getElementById(id);
+      if (el) el.checked = selected.has(mode);
+    }
+  }
+
+  function collectRedditSourceModes() {
+    const selected = REDDIT_SOURCE_MODE_FIELDS
+      .filter(([, id]) => checked(id))
+      .map(([mode]) => mode);
+    return selected.length > 0 ? selected : ["search"];
+  }
+
   // Unified per-source login / cookie status from GET /api/sources/status,
   // rendered as a uniform colored-dot line inside every source card. Only X is
   // live-validated (state ok); the rest report local cookie/token readiness.
@@ -6091,13 +6207,15 @@ function bindSettings() {
     no_auth: "#9aa0a6",
     missing: "#e0a800",
     missing_cookie: "#e0a800",
+    login_required: "#e0a800",
     rate_limited: "#e0a800",
     partial: "#e0a800",
     stale: "#e0a800",
+    error: "#e74c3c",
     expired_cookie: "#e74c3c",
     blocked: "#e74c3c",
   };
-  const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
+  const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
 
   // Best-effort: when the backend is unreachable, leave a neutral hint.
   async function renderSourcesStatus() {
@@ -6242,6 +6360,16 @@ function bindSettings() {
     setVal("cfgZhihuDailyRelatedBudget", cfg.sources?.zhihu?.daily_related_budget);
     setVal("cfgZhihuRequestInterval", cfg.sources?.zhihu?.request_interval_seconds);
     setVal("cfgZhihuMinInterval", cfg.sources?.zhihu?.min_interval_minutes);
+    const redditEnabled = document.getElementById("cfgRedditEnabled");
+    if (redditEnabled) redditEnabled.checked = cfg.sources?.reddit?.enabled === true;
+    setVal("cfgRedditBackend", cfg.sources?.reddit?.backend || "rdt");
+    setRedditSourceModes(cfg.sources?.reddit?.source_modes);
+    setVal("cfgRedditDailySearchBudget", cfg.sources?.reddit?.daily_search_budget);
+    setVal("cfgRedditDailyHotBudget", cfg.sources?.reddit?.daily_hot_budget);
+    setVal("cfgRedditDailySubredditBudget", cfg.sources?.reddit?.daily_subreddit_budget);
+    setVal("cfgRedditDailyRelatedBudget", cfg.sources?.reddit?.daily_related_budget);
+    setVal("cfgRedditRequestInterval", cfg.sources?.reddit?.request_interval_seconds);
+    setVal("cfgRedditMinInterval", cfg.sources?.reddit?.min_interval_minutes);
     void renderSourcesStatus();
 
     // General
@@ -6285,6 +6413,7 @@ function bindSettings() {
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
     setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgPoolShareZhihu", cfg.scheduler?.pool_source_shares?.zhihu);
+    setVal("cfgPoolShareReddit", cfg.scheduler?.pool_source_shares?.reddit);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -6450,6 +6579,17 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgZhihuRequestInterval", 3),
           min_interval_minutes: getInt("cfgZhihuMinInterval", 60),
         },
+        reddit: {
+          enabled: checked("cfgRedditEnabled"),
+          backend: getVal("cfgRedditBackend") || "rdt",
+          source_modes: collectRedditSourceModes(),
+          daily_search_budget: getInt("cfgRedditDailySearchBudget", 300),
+          daily_hot_budget: getInt("cfgRedditDailyHotBudget", 300),
+          daily_subreddit_budget: getInt("cfgRedditDailySubredditBudget", 300),
+          daily_related_budget: getInt("cfgRedditDailyRelatedBudget", 300),
+          request_interval_seconds: getInt("cfgRedditRequestInterval", 3),
+          min_interval_minutes: getInt("cfgRedditMinInterval", 60),
+        },
       },
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
@@ -6480,6 +6620,7 @@ function bindSettings() {
           youtube: getInt("cfgPoolShareYoutube", 1),
           twitter: getInt("cfgPoolShareTwitter", 1),
           zhihu: getInt("cfgPoolShareZhihu", 1),
+          reddit: getInt("cfgPoolShareReddit", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -6601,9 +6742,15 @@ function bindSettings() {
         const payload = await applyBackendUpdate(tag);
         renderBackendUpdateStatus({ state: payload.state, reason: payload.reason, latest_tag: tag });
         showToast("后端更新已开始，稍后会重启", "success");
-      } catch {
-        showToast("后端更新未能开始", "error");
+      } catch (error) {
+        const details = error?.details;
+        if (details && typeof details === "object") {
+          renderBackendUpdateStatus(details);
+        }
+        const reason = details?.reason || error?.message || "未知原因";
+        showToast(`后端更新未能开始：${formatBackendUpdateReason(reason) || reason}`, "error");
       } finally {
+        await loadBackendUpdateStatus();
         backendApplyBtn.disabled = false;
       }
     });
@@ -6666,6 +6813,7 @@ function bindSettings() {
             youtube: checked("cfgYoutubeEnabled"),
             twitter: checked("cfgTwitterEnabled"),
             zhihu: checked("cfgZhihuEnabled"),
+            reddit: checked("cfgRedditEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 5),
@@ -6674,6 +6822,7 @@ function bindSettings() {
             youtube: getInt("cfgPoolShareYoutube", 1),
             twitter: getInt("cfgPoolShareTwitter", 1),
             zhihu: getInt("cfgPoolShareZhihu", 1),
+            reddit: getInt("cfgPoolShareReddit", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -6683,6 +6832,7 @@ function bindSettings() {
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
         if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         if (shares.zhihu !== undefined) setVal("cfgPoolShareZhihu", shares.zhihu);
+        if (shares.reddit !== undefined) setVal("cfgPoolShareReddit", shares.reddit);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
         showToast(`生成建议失败: ${err.message}`, "error");
@@ -6755,12 +6905,17 @@ function bindSettings() {
       if (endpointChanged) {
         // Rebind the runtime stream against the new origin and refresh
         // the online indicator. If the backend isn't yet running on the
-        // new port these will retry per the WS backoff and the popup
+        // new port these will retry on the fixed liveness cadence and the popup
         // status will flip to offline — exactly the signal the user
         // needs to remember to start the daemon with --port.
         connectRuntimeStream();
         state.online = await checkBackendStatus();
         setStatus(state.online);
+        if (state.online) {
+          offlineBackendPoller.stop();
+        } else {
+          offlineBackendPoller.start();
+        }
       }
     } catch (err) {
       if (!renderStructuredConfigError(err)) {

@@ -166,7 +166,6 @@ def test_field_to_param_has_all_strategies() -> None:
 def test_field_to_param_values_are_valid_prompts() -> None:
     valid_prompts = {
         "search_queries_prompt",
-        "trending_rids_prompt",
         "content_evaluation_prompt",
         "explore_domains_prompt",
         "recommendation_expression_prompt",

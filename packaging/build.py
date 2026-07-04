@@ -24,6 +24,9 @@ DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = DIST_DIR / "release"
 PYPROJECT_FILE = PROJECT_ROOT / "pyproject.toml"
 SPEC_FILE = PROJECT_ROOT / "packaging" / "openbiliclaw.spec"
+MACOS_FIRST_LAUNCH_GUIDE_NAME = "首次打开说明 First Launch.html"
+MACOS_FIRST_LAUNCH_IMAGE_NAME = "首次打开提示 First Launch.png"
+MACOS_DMG_BACKGROUND_NAME = "openbiliclaw-dmg-guide.png"
 
 
 def ensure_pyinstaller() -> None:
@@ -67,6 +70,35 @@ def build_x_extra_install_command(*, pip_available: bool | None = None) -> list[
     return [sys.executable, "-m", "pip", "install", target]
 
 
+def project_dependency_spec(package_name: str) -> str:
+    """Return the default runtime dependency spec for one package."""
+
+    data = tomllib.loads(PYPROJECT_FILE.read_text(encoding="utf-8"))
+    normalized = package_name.replace("_", "-").lower()
+    for requirement in data["project"]["dependencies"]:
+        text = str(requirement)
+        name = text.split(";", 1)[0].strip().split("[", 1)[0]
+        name = re.split(r"[<>=!~ ]", name, maxsplit=1)[0]
+        if name.replace("_", "-").lower() == normalized:
+            return text
+    raise RuntimeError(f"missing default dependency spec for {package_name}")
+
+
+def build_reddit_dependency_install_command(*, pip_available: bool | None = None) -> list[str]:
+    """Return the command that ensures the Reddit bundle dependency is installed."""
+
+    resolved_pip_available = (
+        pip_available if pip_available is not None else importlib.util.find_spec("pip") is not None
+    )
+    target = project_dependency_spec("rdt-cli")
+    if resolved_pip_available:
+        return [sys.executable, "-m", "pip", "install", target]
+    uv = shutil.which("uv")
+    if uv:
+        return [uv, "pip", "install", target]
+    return [sys.executable, "-m", "pip", "install", target]
+
+
 def ensure_x_extra() -> bool:
     """Ensure ``twitter_cli`` (and its ``curl_cffi``) are importable for bundling.
 
@@ -90,6 +122,24 @@ def ensure_x_extra() -> bool:
         )
         return False
     return importlib.util.find_spec("twitter_cli") is not None
+
+
+def ensure_reddit_dependency() -> bool:
+    """Ensure ``rdt_cli`` is importable for bundling."""
+
+    if importlib.util.find_spec("rdt_cli") is not None:
+        return True
+    install_cmd = build_reddit_dependency_install_command()
+    print("[build] Installing default Reddit dependency (rdt-cli) for desktop bundle ...")
+    try:
+        subprocess.check_call(install_cmd)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"[build] WARNING: could not install the Reddit dependency ({exc}); "
+            "the bundle will use extension fallback for Reddit discovery"
+        )
+        return False
+    return importlib.util.find_spec("rdt_cli") is not None
 
 
 def read_project_version() -> str:
@@ -299,6 +349,173 @@ def apply_macos_bundle_fixes(dist_dir: Path) -> None:
         print(f"[build] Added .app compatibility symlink: {alias_name} -> {name}")
 
 
+def write_macos_first_launch_guide(stage_dir: Path) -> Path:
+    """Write a visible first-launch guide into the macOS DMG root."""
+    guide_path = stage_dir / MACOS_FIRST_LAUNCH_GUIDE_NAME
+    guide_path.write_text(
+        """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>OpenBiliClaw macOS First Launch</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 36px;
+      line-height: 1.55;
+      color: #1d1d1f;
+    }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    h2 { font-size: 20px; margin-top: 28px; }
+    code { background: #f2f2f2; border-radius: 4px; padding: 2px 4px; }
+    .note { border-left: 4px solid #0066cc; padding-left: 14px; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>OpenBiliClaw macOS 首次打开</h1>
+  <p class="note">
+    当前 Release 是 ad-hoc signed、未 notarized 的实验包。
+    请只在确认来源是 OpenBiliClaw GitHub Releases 后继续。
+  </p>
+  <h2>安装</h2>
+  <ol>
+    <li>把 <strong>OpenBiliClaw</strong> 拖到 <strong>Applications</strong>。</li>
+    <li>
+      首次打开如果提示“无法验证开发者”或“未经安全验证”，请右键 / Control-click 应用图标，
+      选择 <strong>Open / 打开</strong>，再在弹窗中点 <strong>Open / 打开</strong>。
+    </li>
+    <li>
+      如果仍被拦截，打开 <strong>System Settings -> Privacy & Security</strong>，
+      在页面底部点击 <strong>Open Anyway / 仍要打开</strong>。
+    </li>
+  </ol>
+
+  <h2>macOS 安全阻挡</h2>
+  <p>
+    如果提示“OpenBiliClaw.app 已损坏，无法打开。您应该将它移到废纸篓”，
+    通常是下载隔离属性导致。把 app 放入 Applications 后，在 Terminal 执行：
+  </p>
+  <pre><code>APP="/Applications/OpenBiliClaw.app"
+xattr -dr com.apple.quarantine "$APP"</code></pre>
+  <p>然后再次打开应用。</p>
+
+  <h2>English</h2>
+  <p>The current Release is ad-hoc signed, but not notarized.</p>
+  <ol>
+    <li>Drag <strong>OpenBiliClaw</strong> into <strong>Applications</strong>.</li>
+    <li>
+      If macOS says it cannot verify the developer, use
+      <strong>right-click / Control-click -> Open</strong>,
+      then click <strong>Open</strong> in the dialog.
+    </li>
+    <li>
+      If macOS still blocks it, go to
+      <strong>System Settings -> Privacy & Security</strong>
+      and choose <strong>Open Anyway</strong>.
+    </li>
+  </ol>
+  <p>
+    If macOS says the app is damaged, confirm the package came from this project's Releases,
+    run the <code>xattr</code> command above, then open the app again.
+  </p>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+    return guide_path
+
+
+def _load_dmg_font(size: int, *, bold: bool = False):
+    from PIL import ImageFont
+
+    candidates = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        (
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+            if bold
+            else "/System/Library/Fonts/Supplemental/Arial.ttf"
+        ),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        ),
+    ]
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def write_macos_dmg_background(stage_dir: Path) -> Path:
+    """Generate the DMG first-launch guidance background image."""
+    from PIL import Image, ImageDraw
+
+    background_dir = stage_dir / ".background"
+    background_dir.mkdir(parents=True, exist_ok=True)
+    background_path = background_dir / MACOS_DMG_BACKGROUND_NAME
+
+    image = Image.new("RGB", (980, 620), "#f7f8fa")
+    draw = ImageDraw.Draw(image)
+    title_font = _load_dmg_font(42, bold=True)
+    subtitle_font = _load_dmg_font(22, bold=True)
+    body_font = _load_dmg_font(21)
+    small_font = _load_dmg_font(17)
+
+    draw.rounded_rectangle(
+        (42, 42, 938, 578),
+        radius=20,
+        fill="#ffffff",
+        outline="#d6d9de",
+        width=2,
+    )
+    draw.text((78, 82), "OpenBiliClaw macOS 首次打开", fill="#111827", font=title_font)
+    draw.text(
+        (80, 144),
+        "Drag to Applications, then approve the first launch.",
+        fill="#4b5563",
+        font=subtitle_font,
+    )
+
+    steps = [
+        ("1", "拖到 Applications", "Drag OpenBiliClaw into Applications."),
+        ("2", "安全阻挡: 右键 / Control-click -> 打开", "Use Open from the context menu first."),
+        (
+            "3",
+            "已损坏: 先看 First Launch.html 里的 xattr 命令",
+            "If macOS says damaged, remove quarantine after verifying source.",
+        ),
+    ]
+    y = 218
+    for number, zh, en in steps:
+        draw.ellipse((82, y, 126, y + 44), fill="#0066cc")
+        draw.text((98, y + 7), number, fill="#ffffff", font=subtitle_font)
+        draw.text((148, y - 1), zh, fill="#111827", font=body_font)
+        draw.text((148, y + 30), en, fill="#4b5563", font=small_font)
+        y += 94
+
+    draw.text(
+        (80, 522),
+        "ad-hoc signed / 未公证: 请只在确认来源是 OpenBiliClaw GitHub Releases 后继续。",
+        fill="#7c2d12",
+        font=small_font,
+    )
+    draw.text(
+        (80, 548),
+        "Unsigned experimental build: continue only when you trust the release source.",
+        fill="#7c2d12",
+        font=small_font,
+    )
+    image.save(background_path)
+    shutil.copyfile(background_path, stage_dir / MACOS_FIRST_LAUNCH_IMAGE_NAME)
+    return background_path
+
+
 def make_macos_dmg(*, app_bundle: Path, output_dir: Path, version: str) -> Path:
     """Build a drag-to-Applications ``.dmg`` from the ``.app`` bundle (macOS only).
 
@@ -319,6 +536,8 @@ def make_macos_dmg(*, app_bundle: Path, output_dir: Path, version: str) -> Path:
     try:
         subprocess.check_call(["ditto", str(app_bundle), str(stage / app_bundle.name)])
         (stage / "Applications").symlink_to("/Applications")
+        write_macos_first_launch_guide(stage)
+        write_macos_dmg_background(stage)
         hdiutil_cmd = [
             "hdiutil",
             "create",
@@ -507,6 +726,7 @@ def build(
     bundle_ollama: bool = True,
     ollama_bin: str | None = None,
     bundle_x: bool = True,
+    bundle_reddit: bool = True,
 ) -> None:
     """Run PyInstaller."""
     ensure_pyinstaller()
@@ -519,6 +739,7 @@ def build(
     # the _wrapper extension) which the lazy `import twitter_cli` path would
     # otherwise hide from the analyzer.
     bundle_x_resolved = bundle_x and ensure_x_extra()
+    bundle_reddit_resolved = bundle_reddit and ensure_reddit_dependency()
 
     cmd = [
         sys.executable,
@@ -535,6 +756,7 @@ def build(
     env = os.environ.copy()
     env["OPENBILICLAW_BUNDLE_VERSION"] = bundle_version
     env["OPENBILICLAW_BUNDLE_X"] = "1" if bundle_x_resolved else "0"
+    env["OPENBILICLAW_BUNDLE_REDDIT"] = "1" if bundle_reddit_resolved else "0"
     if platform.system() == "Windows":
         version_file = write_windows_version_file(
             PROJECT_ROOT / "build" / "openbiliclaw_version_info.txt",
@@ -640,6 +862,11 @@ def main() -> None:
         action="store_true",
         help="Do not bundle the X (Twitter) discovery dependency (twitter-cli + curl_cffi)",
     )
+    parser.add_argument(
+        "--no-bundle-reddit",
+        action="store_true",
+        help="Do not bundle the Reddit discovery dependency (rdt-cli)",
+    )
     args = parser.parse_args()
 
     if args.clean:
@@ -649,6 +876,7 @@ def main() -> None:
         bundle_ollama=not args.no_bundle_ollama,
         ollama_bin=args.ollama_bin,
         bundle_x=not args.no_bundle_x,
+        bundle_reddit=not args.no_bundle_reddit,
     )
 
 

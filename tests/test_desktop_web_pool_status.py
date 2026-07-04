@@ -56,8 +56,7 @@ def test_desktop_hydration_refetches_runtime_after_recommendation_bootstrap() ->
     assert hydrate is not None, "desktop hydrateFromBackend not found"
     body = hydrate.group("body")
     assert (
-        "await requestJson(ENDPOINTS.runtimeStatus).catch(() => runtime?.status || runtime)"
-        in body
+        "await requestJson(ENDPOINTS.runtimeStatus).catch(() => runtime?.status || runtime)" in body
     )
     assert "applyRuntimeStatus(effectiveRuntime?.status || effectiveRuntime);" in body
 
@@ -181,6 +180,49 @@ def test_desktop_click_payload_keeps_x_source_metadata() -> None:
     assert "content_id" in body
     assert "content_url" in body
     assert "source_platform" in body
+
+
+def test_desktop_positive_feedback_keeps_recommendation_card_visible() -> None:
+    """Desktop feedback should match mobile: like stays, negative feedback hides."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    decision = re.search(
+        r"function shouldRemoveRecommendationAfterFeedback\(feedbackType\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert decision is not None, "desktop feedback removal decision helper not found"
+    assert 'return normalized === "dislike" || normalized === "dismiss";' in decision.group("body")
+
+    feedback_branch = re.search(
+        r'const feedbackType = action === "like"(?P<body>.*?)\n      \} catch',
+        app_js,
+        flags=re.S,
+    )
+    assert feedback_branch is not None, "desktop feedback branch not found"
+    body = feedback_branch.group("body")
+    assert 'like: ["已记录喜欢，推荐会继续保留在当前列表。", "已记录喜欢"]' in body
+    assert "if (shouldRemoveRecommendationAfterFeedback(feedbackType))" in body
+    assert "finishRecommendationFeedback(card, feedbackType);" in body
+
+
+def test_desktop_recommendation_hydration_filters_only_negative_feedback() -> None:
+    """Hydration must not hide liked recommendations returned by another client."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    feedbacked = re.search(
+        r"function isFeedbackedRecommendation\(item\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert feedbacked is not None, "desktop feedback filter not found"
+    body = feedbacked.group("body")
+    assert "shouldRemoveRecommendationAfterFeedback(feedback)" in body
+    assert (
+        "return shouldRemoveRecommendationAfterFeedback(feedback) || "
+        '(poolStatus === "feedbacked" && !feedback);'
+    ) in body
+    assert 'return Boolean(feedback) || poolStatus === "feedbacked";' not in body
 
 
 def test_desktop_pool_update_does_not_replace_recommendation_list() -> None:

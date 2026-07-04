@@ -507,12 +507,29 @@ class RuntimeContext:
             xhs_self_info_provider=_xhs_self_info_provider,
         )
 
+        discovery_cfg = getattr(new_config, "discovery", None)
+
+        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
+        # word-lifecycle helper shared by B站 search / explore and external
+        # search producers. Holds the keyword-store DAO (the database) +
+        # discovery config (the flag + ``fetch_batch``). With the flag off every
+        # site's ``should_claim`` returns False, so wiring it in is inert.
+        from openbiliclaw.config import DiscoveryConfig
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+
+        new_keyword_fetch = KeywordFetchCoordinator(
+            database=self.database,
+            # Real ``Config`` always carries ``discovery`` (a dataclass field);
+            # lightweight test stubs (SimpleNamespace) may not — fall back to the
+            # default (flag off) so the coordinator stays inert.
+            discovery_config=discovery_cfg or DiscoveryConfig(),
+        )
+
         # 7. Discovery engine + strategies
         concurrency = DiscoveryConcurrencyController(
             bilibili_request_concurrency=2,
             llm_evaluation_concurrency=2,
         )
-        discovery_cfg = getattr(new_config, "discovery", None)
         new_discovery_engine = ContentDiscoveryEngine(
             llm_service=new_llm_service,
             database=self.database,
@@ -533,12 +550,14 @@ class RuntimeContext:
             bilibili_client=new_bilibili_client,
             concurrency=concurrency,
             database=self.database,
+            embedding_service=new_embedding_service,
         )
         trending_strategy = TrendingStrategy(
             bilibili_client=new_bilibili_client,
             llm_service=new_llm_service,
             concurrency=concurrency,
             database=self.database,
+            embedding_service=new_embedding_service,
         )
         related_strategy = RelatedChainStrategy(
             bilibili_client=new_bilibili_client,
@@ -555,6 +574,7 @@ class RuntimeContext:
             concurrency=concurrency,
             embedding_service=new_embedding_service,
             database=cast("Any", self.database),
+            keyword_fetch=new_keyword_fetch,
         )
         new_discovery_engine.register_strategy(search_strategy)
         new_discovery_engine.register_strategy(trending_strategy)
@@ -630,29 +650,13 @@ class RuntimeContext:
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
         )
-        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
-        # word-lifecycle helper shared by the 5 search fetch sites (4 producers
-        # + the B站 search path in the controller). Holds the keyword-store DAO
-        # (the database) + discovery config (the flag + ``fetch_batch``). With
-        # the flag off (default) every site's ``should_claim`` returns False, so
-        # wiring it in is zero behavior change.
-        from openbiliclaw.config import DiscoveryConfig
-        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
-
-        new_keyword_fetch = KeywordFetchCoordinator(
-            database=self.database,
-            # Real ``Config`` always carries ``discovery`` (a dataclass field);
-            # lightweight test stubs (SimpleNamespace) may not — fall back to the
-            # default (flag off) so the coordinator stays inert.
-            discovery_config=discovery_cfg or DiscoveryConfig(),
-        )
-
         new_bilibili_producer: Any = None
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
         new_x_producer: Any = None
         new_zhihu_producer: Any = None
+        new_reddit_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
@@ -750,6 +754,15 @@ class RuntimeContext:
                 keyword_fetch=new_keyword_fetch,
                 kick=_kick_zhihu_extension,
             )
+            from openbiliclaw.runtime.reddit_producer import build_reddit_discovery_producer
+
+            new_reddit_producer = build_reddit_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
+            )
 
         # P1.6: unified keyword planner — deficit-pulled merged keyword
         # generation. Built as its OWN object (the controller has no
@@ -766,6 +779,7 @@ class RuntimeContext:
             soul_engine=new_soul_engine,
             pool_target_count=new_config.scheduler.pool_target_count,
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
+            embedding_service=new_embedding_service,
         )
 
         new_runtime_controller = ContinuousRefreshController(
@@ -796,6 +810,7 @@ class RuntimeContext:
             youtube_producer=new_youtube_producer,
             x_producer=new_x_producer,
             zhihu_producer=new_zhihu_producer,
+            reddit_producer=new_reddit_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
             # gui-init D1: pause the controller's background loops while a guided

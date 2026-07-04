@@ -46,6 +46,18 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgYoutubeDailyChannelBudget",
     "cfgYoutubeRequestInterval",
     "cfgYoutubeMinInterval",
+    "cfgRedditEnabled",
+    "cfgRedditBackend",
+    "cfgRedditModeSearch",
+    "cfgRedditModeHot",
+    "cfgRedditModeSubreddit",
+    "cfgRedditModeRelated",
+    "cfgRedditDailySearchBudget",
+    "cfgRedditDailyHotBudget",
+    "cfgRedditDailySubredditBudget",
+    "cfgRedditDailyRelatedBudget",
+    "cfgRedditRequestInterval",
+    "cfgRedditMinInterval",
     "cfgExtensionDisconnectGrace",
     "cfgRefreshCheckInterval",
     "cfgSignalEventThreshold",
@@ -73,6 +85,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgPoolShareXhs",
     "cfgPoolShareDouyin",
     "cfgPoolShareYoutube",
+    "cfgPoolShareReddit",
     "cfgSuggestPoolShares",
     "cfgSpeculationInterval",
     "cfgSpeculationTtl",
@@ -116,7 +129,17 @@ test("settings source tab separates every platform into its own block", () => {
     popupHtml.match(/<div id="settingsPanelSources"[\s\S]*?<div id="settingsPanelGeneral"/)?.[0] ??
     "";
 
-  for (const sourceKey of ["bilibili", "xiaohongshu", "douyin", "youtube", "browser", "pool"]) {
+  for (const sourceKey of [
+    "bilibili",
+    "xiaohongshu",
+    "douyin",
+    "youtube",
+    "twitter",
+    "zhihu",
+    "reddit",
+    "browser",
+    "pool",
+  ]) {
     assert.match(
       sourcesPanel,
       new RegExp(`data-source-card="${sourceKey}"`),
@@ -194,6 +217,37 @@ test("settings page exposes backend-only update controls and plugin release fall
   assert.doesNotMatch(popupJs, /extension_auto_apply|extension_update_available/);
 });
 
+test("settings backend update apply failures show backend reason and refresh status", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupJs, /dirty_worktree:\s*"代码目录有未提交改动，更新被阻止"/);
+  assert.match(popupJs, /untrusted_remote:\s*"git 远端不在允许列表，更新被阻止"/);
+  assert.match(popupJs, /branch_not_fast_forwardable:\s*"本地代码与发布版本分叉，无法快进更新"/);
+  assert.match(popupJs, /missing_target_tag:\s*"远端未找到目标版本标签"/);
+
+  assert.match(popupJs, /const details = error\?\.details/);
+  assert.match(popupJs, /renderBackendUpdateStatus\(details\)/);
+  assert.match(popupJs, /后端更新未能开始：/);
+  assert.match(popupJs, /await loadBackendUpdateStatus\(\)/);
+});
+
+test("settings backend update actions require explicit install branch", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  assert.match(popupJs, /const isGitInstall = installMode === "git"/);
+  assert.match(popupJs, /const isFrozenInstall = installMode === "frozen"/);
+  assert.match(
+    popupJs,
+    /const isDesktopInstallerUpdate = String\(backend\.latest_tag \|\| ""\)\.startsWith\("desktop-v"\)/,
+  );
+  assert.match(popupJs, /isGitInstall &&\s*backend\.state === "update_available"/);
+  assert.match(
+    popupJs,
+    /\(isFrozenInstall \|\| isDesktopInstallerUpdate\) && backend\.state === "update_available"/,
+  );
+  assert.doesNotMatch(popupJs, /!unsupportedInstall && backend\.state === "update_available"/);
+});
+
 test("settings page round-trips YouTube source budgets", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
@@ -254,6 +308,38 @@ test("settings page round-trips Zhihu discovery source modes", () => {
 
   assert.match(popupJs, /setZhihuSourceModes\(cfg\.sources\?\.zhihu\?\.source_modes\)/);
   assert.match(popupJs, /source_modes: collectZhihuSourceModes\(\)/);
+});
+
+test("settings page round-trips Reddit discovery config", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  for (const id of [
+    "cfgRedditEnabled",
+    "cfgRedditBackend",
+    "cfgRedditModeSearch",
+    "cfgRedditModeHot",
+    "cfgRedditModeSubreddit",
+    "cfgRedditModeRelated",
+    "cfgRedditDailySearchBudget",
+    "cfgRedditDailyHotBudget",
+    "cfgRedditDailySubredditBudget",
+    "cfgRedditDailyRelatedBudget",
+    "cfgRedditRequestInterval",
+    "cfgRedditMinInterval",
+    "cfgPoolShareReddit",
+  ]) {
+    assert.match(popupHtml, new RegExp(`id="${id}"`), `${id} should exist`);
+    assert.match(popupJs, new RegExp(`"${id}"`), `${id} should be wired in popup.js`);
+  }
+
+  assert.match(popupJs, /setRedditSourceModes\(cfg\.sources\?\.reddit\?\.source_modes\)/);
+  assert.match(popupJs, /source_modes: collectRedditSourceModes\(\)/);
+  assert.match(popupJs, /backend: getVal\("cfgRedditBackend"\) \|\| "rdt"/);
+  assert.match(popupJs, /daily_search_budget: getInt\("cfgRedditDailySearchBudget", 300\)/);
+  assert.match(popupJs, /reddit: getInt\("cfgPoolShareReddit", 1\)/);
+  assert.match(popupJs, /reddit: checked\("cfgRedditEnabled"\)/);
+  assert.match(popupJs, /if \(shares\.reddit !== undefined\) setVal\("cfgPoolShareReddit", shares\.reddit\)/);
 });
 
 test("settings page round-trips multimodal discovery evaluation controls", () => {

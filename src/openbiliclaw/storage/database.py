@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sqlite3
 import time
@@ -43,27 +44,61 @@ _VIEW_CONTENT_ID_METADATA_KEYS = (
     "aweme_id",
     "video_id",
     "yt_video_id",
+    "post_id",
 )
+_KEYWORD_KIND_REGULAR = "regular"
+_KEYWORD_KIND_EXPLORE = "explore"
+_KEYWORD_KINDS = {_KEYWORD_KIND_REGULAR, _KEYWORD_KIND_EXPLORE}
+
+
+def _normalize_keyword_kind(value: object) -> str:
+    kind = str(value or "").strip().lower()
+    return kind if kind in _KEYWORD_KINDS else _KEYWORD_KIND_REGULAR
+
+
+def _unique_clean_strings(values: Sequence[object]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _chunks(values: Sequence[str], size: int) -> list[list[str]]:
+    chunk_size = max(1, int(size))
+    return [list(values[index : index + chunk_size]) for index in range(0, len(values), chunk_size)]
+
+
 # Mirrors recommendation.delight.DEFAULT_DELIGHT_THRESHOLD. Storage stays a
 # leaf module (no openbiliclaw imports), so the value is duplicated here and
-# pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_in_sync.
+# pinned by tests/test_delight_scorer.py::test_delight_claim_threshold_floor_in_sync.
 _DELIGHT_CLAIM_MIN_SCORE = 0.70
+_DELIGHT_DYNAMIC_TOP_FRACTION = 0.10
+_DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE = 20
+_DELIGHT_SCORE_SYNC_EPSILON = 0.000001
 _DEFAULT_ADMISSION_MIN_SCORE = 0.60
+
 
 # Rows claimed by the surprise (delight) channel: already delivered as a
 # delight, or currently delight-eligible (the pending-queue predicate). The
 # regular feed's servable gate excludes them so the same content never shows
 # up in both the recommendation list and the surprise tray.
-_DELIGHT_CLAIM_GUARD_SQL = f"""
+def _delight_claim_guard_sql() -> str:
+    return """
                   AND NOT (
                     COALESCE(delight_notified, 0) = 1
                     OR (
-                      COALESCE(delight_score, 0.0) >= {_DELIGHT_CLAIM_MIN_SCORE}
+                      COALESCE(delight_score, 0.0) >= ?
                       AND COALESCE(delight_reason, '') != ''
                       AND COALESCE(delight_hook, '') != ''
                     )
                   )
 """
+
 
 _LEGACY_STYLE_KEY_MAP: dict[str, str] = {
     "deep_dive": "deep_focus",
@@ -101,6 +136,8 @@ _YOUTUBE_SOURCE_FAMILY = "youtube"
 _YOUTUBE_SOURCE_PREFIXES = ("yt-", "yt_", "youtube")
 _TWITTER_SOURCE_FAMILY = "twitter"
 _TWITTER_SOURCE_PREFIXES = ("x-", "x_", "twitter")
+_REDDIT_SOURCE_FAMILY = "reddit"
+_REDDIT_SOURCE_PREFIXES = ("reddit-", "reddit_")
 _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "manufacturing",
@@ -320,6 +357,8 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
         return _YOUTUBE_SOURCE_FAMILY
     if platform in {_TWITTER_SOURCE_FAMILY, "x"} or source_key.startswith(_TWITTER_SOURCE_PREFIXES):
         return _TWITTER_SOURCE_FAMILY
+    if platform in {_REDDIT_SOURCE_FAMILY, "rd"} or source_key.startswith(_REDDIT_SOURCE_PREFIXES):
+        return _REDDIT_SOURCE_FAMILY
     if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
         return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
@@ -336,6 +375,8 @@ def _normalize_source_platform_key(source_platform: object) -> str:
         return _YOUTUBE_SOURCE_FAMILY
     if raw in {_TWITTER_SOURCE_FAMILY, "x"}:
         return _TWITTER_SOURCE_FAMILY
+    if raw in {_REDDIT_SOURCE_FAMILY, "rd"}:
+        return _REDDIT_SOURCE_FAMILY
     if raw in {_BILIBILI_SOURCE_FAMILY, "bili"}:
         return _BILIBILI_SOURCE_FAMILY
     return raw
@@ -1782,6 +1823,55 @@ class Database:
         )
         return {str(row["status"]): int(row["count"]) for row in cursor.fetchall()}
 
+    def get_existing_discovery_candidate_keys(self, candidate_keys: Sequence[str]) -> set[str]:
+        """Return candidate keys already present in the raw evaluation queue."""
+
+        clean = _unique_clean_strings(candidate_keys)
+        if not clean:
+            return set()
+        self._ensure_fresh_read()
+        existing: set[str] = set()
+        for chunk in _chunks(clean, 900):
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = self.conn.execute(
+                f"""
+                SELECT candidate_key
+                FROM discovery_candidates
+                WHERE candidate_key IN ({placeholders})
+                """,
+                chunk,
+            )
+            existing.update(str(row["candidate_key"]) for row in cursor.fetchall())
+        return existing
+
+    def get_existing_content_cache_ids(self, content_ids: Sequence[str]) -> set[str]:
+        """Return BVID/content ids that already exist in the evaluated content cache."""
+
+        clean = _unique_clean_strings(content_ids)
+        if not clean:
+            return set()
+        self._ensure_fresh_read()
+        existing: set[str] = set()
+        for chunk in _chunks(clean, 450):
+            placeholders = ", ".join("?" for _ in chunk)
+            cursor = self.conn.execute(
+                f"""
+                SELECT bvid, content_id
+                FROM content_cache
+                WHERE bvid IN ({placeholders})
+                   OR content_id IN ({placeholders})
+                """,
+                [*chunk, *chunk],
+            )
+            for row in cursor.fetchall():
+                bvid = str(row["bvid"] or "").strip()
+                content_id = str(row["content_id"] or "").strip()
+                if bvid:
+                    existing.add(bvid)
+                if content_id:
+                    existing.add(content_id)
+        return existing
+
     def count_discovery_candidates_by_source_status(self) -> dict[str, dict[str, int]]:
         """Return candidate queue counts grouped by source and lifecycle status."""
 
@@ -1934,8 +2024,8 @@ class Database:
         ``max_per_topic_group=0`` to restore the legacy unrestricted
         ordering for callers that need it (e.g. health checks).
 
-        Rows claimed by the surprise (delight) channel are excluded via
-        ``_DELIGHT_CLAIM_GUARD_SQL`` — a delight that was delivered or is
+        Rows claimed by the surprise (delight) channel are excluded via the
+        delight claim guard — a delight that was delivered or is
         currently queue-eligible must never be duplicated by the regular
         feed. ``count_pool_candidates`` applies the same guard so the
         "还有 N 条" display stays in sync with what serve() can load.
@@ -1955,7 +2045,10 @@ class Database:
         min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
+        delight_threshold = self.dynamic_delight_threshold(
+            default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        )
+        delight_guard_sql = _delight_claim_guard_sql()
         if max_per_topic_group <= 0:
             sql = f"""
                 SELECT *
@@ -1986,7 +2079,12 @@ class Database:
                     bvid ASC
                 LIMIT ?
             """
-            params: tuple[Any, ...] = (min_score, *guard_params, fetch_limit)
+            params: tuple[Any, ...] = (
+                min_score,
+                *guard_params,
+                delight_threshold,
+                fetch_limit,
+            )
         else:
             # Per-group rank via window function: keep the top-N classified
             # items of each topic_group, then order the remainder by relevance.
@@ -2031,7 +2129,13 @@ class Database:
                     bvid ASC
                 LIMIT ?
             """
-            params = (min_score, *guard_params, max_per_topic_group, fetch_limit)
+            params = (
+                min_score,
+                *guard_params,
+                delight_threshold,
+                max_per_topic_group,
+                fetch_limit,
+            )
         cursor = self.conn.execute(sql, params)
         rows = [dict(row) for row in cursor.fetchall()]
         rows = self._exclude_viewed_rows(
@@ -2071,7 +2175,7 @@ class Database:
     ) -> list[dict[str, Any]]:
         """Load rows counted by the frontend-visible pool availability gate.
 
-        Applies ``_DELIGHT_CLAIM_GUARD_SQL`` like ``get_pool_candidates`` so
+        Applies the delight claim guard like ``get_pool_candidates`` so
         the availability count never includes surprise-channel rows serve()
         would refuse to load.
         """
@@ -2079,7 +2183,10 @@ class Database:
         min_score = self._pool_admission_min_score()
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
-        delight_guard_sql = _DELIGHT_CLAIM_GUARD_SQL
+        delight_threshold = self.dynamic_delight_threshold(
+            default_threshold=_DELIGHT_CLAIM_MIN_SCORE
+        )
+        delight_guard_sql = _delight_claim_guard_sql()
         if max_per_topic_group > 0:
             cursor = self.conn.execute(
                 f"""
@@ -2117,7 +2224,7 @@ class Database:
                 FROM ranked
                 WHERE group_rank <= ?
                 """,
-                (min_score, *guard_params, max_per_topic_group),
+                (min_score, *guard_params, delight_threshold, max_per_topic_group),
             )
         else:
             cursor = self.conn.execute(
@@ -2143,7 +2250,7 @@ class Database:
                     WHERE r.bvid = content_cache.bvid
                   )
                 """,
-                (min_score, *guard_params),
+                (min_score, *guard_params, delight_threshold),
             )
         viewed_content_keys = self.get_recent_viewed_content_keys()
         rows: list[dict[str, Any]] = []
@@ -4223,6 +4330,7 @@ class Database:
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 platform          TEXT NOT NULL,
                 keyword           TEXT NOT NULL,
+                keyword_kind      TEXT NOT NULL DEFAULT 'regular',
                 profile_kw_digest TEXT NOT NULL DEFAULT '',
                 status            TEXT NOT NULL DEFAULT 'pending',
                 created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -4232,15 +4340,25 @@ class Database:
                 attempts          INTEGER NOT NULL DEFAULT 0,
                 yield_count       INTEGER NOT NULL DEFAULT 0
             );
+        """)
+        columns = self.conn.execute("PRAGMA table_info(discovery_keywords)").fetchall()
+        column_names = {str(row[1]) for row in columns}
+        if "keyword_kind" not in column_names:
+            self.conn.execute(
+                "ALTER TABLE discovery_keywords "
+                "ADD COLUMN keyword_kind TEXT NOT NULL DEFAULT 'regular'"
+            )
+        self.conn.executescript("""
             -- Partial uniqueness: only the in-flight triplet is unique, so
             -- used/expired history never blocks re-generating the same word.
+            DROP INDEX IF EXISTS uq_discovery_keywords_inflight;
             CREATE UNIQUE INDEX IF NOT EXISTS uq_discovery_keywords_inflight
-                ON discovery_keywords (platform, keyword, profile_kw_digest)
+                ON discovery_keywords (platform, keyword, profile_kw_digest, keyword_kind)
                 WHERE status IN ('pending', 'claimed', 'executing');
             CREATE INDEX IF NOT EXISTS idx_discovery_keywords_status_digest
-                ON discovery_keywords (platform, status, profile_kw_digest);
+                ON discovery_keywords (platform, keyword_kind, status, profile_kw_digest);
             CREATE INDEX IF NOT EXISTS idx_discovery_keywords_status_used
-                ON discovery_keywords (platform, status, used_at);
+                ON discovery_keywords (platform, keyword_kind, status, used_at);
 
             CREATE TABLE IF NOT EXISTS discovery_planner_lock (
                 lock_name    TEXT PRIMARY KEY,
@@ -4279,12 +4397,15 @@ class Database:
         platform: str,
         keywords: Sequence[str],
         profile_kw_digest: str,
+        *,
+        keyword_kind: str = "regular",
     ) -> int:
         """Batch-insert ``pending`` keywords, ignoring in-flight duplicates.
 
         The partial unique index ``uq_discovery_keywords_inflight`` means a
         word already ``pending`` / ``claimed`` / ``executing`` for the same
-        ``(platform, profile_kw_digest)`` is silently skipped (``OR IGNORE``);
+        ``(platform, profile_kw_digest, keyword_kind)`` is silently skipped
+        (``OR IGNORE``);
         a word that is only present as ``used`` / ``expired`` history does
         **not** conflict, so the same word can be regenerated. Blank /
         duplicate words within ``keywords`` are de-duplicated up front.
@@ -4293,41 +4414,58 @@ class Database:
         """
         platform_key = platform.strip()
         digest = profile_kw_digest.strip()
+        kind = _normalize_keyword_kind(keyword_kind)
         seen: set[str] = set()
-        rows: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str, str, str]] = []
         for raw in keywords:
             word = str(raw).strip()
             if not word or word in seen:
                 continue
             seen.add(word)
-            rows.append((platform_key, word, digest))
+            rows.append((platform_key, word, kind, digest))
         if not rows:
             return 0
         before = self.conn.total_changes
         self._execute_many_write(
             """
             INSERT OR IGNORE INTO discovery_keywords
-                (platform, keyword, profile_kw_digest, status)
-            VALUES (?, ?, ?, 'pending')
+                (platform, keyword, keyword_kind, profile_kw_digest, status)
+            VALUES (?, ?, ?, ?, 'pending')
             """,
             rows,
         )
         return self.conn.total_changes - before
 
-    def count_pending_keywords(self, platform: str, profile_kw_digest: str) -> int:
+    def count_pending_keywords(
+        self,
+        platform: str,
+        profile_kw_digest: str,
+        *,
+        keyword_kind: str = "regular",
+    ) -> int:
         """Return how many ``pending`` keywords exist for this digest."""
+        kind = _normalize_keyword_kind(keyword_kind)
         self._ensure_fresh_read()
         row = self.conn.execute(
             """
             SELECT COUNT(*) AS n
             FROM discovery_keywords
-            WHERE platform = ? AND status = 'pending' AND profile_kw_digest = ?
+            WHERE platform = ?
+              AND keyword_kind = ?
+              AND status = 'pending'
+              AND profile_kw_digest = ?
             """,
-            (platform.strip(), profile_kw_digest.strip()),
+            (platform.strip(), kind, profile_kw_digest.strip()),
         ).fetchone()
         return int(row["n"]) if row is not None else 0
 
-    def claim_keywords(self, platform: str, n: int) -> list[dict[str, Any]]:
+    def claim_keywords(
+        self,
+        platform: str,
+        n: int,
+        *,
+        keyword_kind: str = "regular",
+    ) -> list[dict[str, Any]]:
         """Atomically claim up to ``n`` ``pending`` keywords for a platform.
 
         Uses a short-lived connection + ``BEGIN IMMEDIATE`` so two concurrent
@@ -4340,6 +4478,7 @@ class Database:
         claim_n = max(0, int(n))
         if claim_n <= 0:
             return []
+        kind = _normalize_keyword_kind(keyword_kind)
         self._ensure_fresh_read()
         conn = self.open_connection()
         try:
@@ -4348,11 +4487,13 @@ class Database:
                 """
                 SELECT id
                 FROM discovery_keywords
-                WHERE platform = ? AND status = 'pending'
+                WHERE platform = ?
+                  AND keyword_kind = ?
+                  AND status = 'pending'
                 ORDER BY created_at ASC, id ASC
                 LIMIT ?
                 """,
-                (platform.strip(), claim_n),
+                (platform.strip(), kind, claim_n),
             ).fetchall()
             if not pending:
                 conn.commit()
@@ -4484,19 +4625,24 @@ class Database:
         platform: str,
         window_size: int,
         window_hours: float,
+        *,
+        keyword_kind: str = "regular",
     ) -> list[str]:
         """Return recent in-flight + used keywords for dedup, newest first.
 
         Includes ``claimed`` / ``executing`` (in-flight, so the planner does
         not regenerate a word a fetch is about to consume) and ``used``
         (recently searched) within the rolling window. Capped at
-        ``window_size`` and bounded to the last ``window_hours``.
+        ``window_size`` and bounded to the last ``window_hours``. History is
+        scoped by keyword pool so regular search and planner-backed explore do
+        not suppress or recycle each other's queries.
         """
         from datetime import UTC, datetime, timedelta
 
         cap = max(0, int(window_size))
         if cap <= 0:
             return []
+        kind = _normalize_keyword_kind(keyword_kind)
         self._ensure_fresh_read()
         cutoff = (datetime.now(UTC) - timedelta(hours=max(0.0, window_hours))).strftime(
             "%Y-%m-%d %H:%M:%S"
@@ -4506,12 +4652,13 @@ class Database:
             SELECT keyword
             FROM discovery_keywords
             WHERE platform = ?
+              AND keyword_kind = ?
               AND status IN ('claimed', 'executing', 'used')
               AND COALESCE(used_at, executing_at, claimed_at, created_at) >= ?
             ORDER BY COALESCE(used_at, executing_at, claimed_at, created_at) DESC, id DESC
             LIMIT ?
             """,
-            (platform.strip(), cutoff, cap),
+            (platform.strip(), kind, cutoff, cap),
         ).fetchall()
         return [str(row["keyword"]) for row in rows]
 
@@ -4520,6 +4667,8 @@ class Database:
         platform: str,
         n: int,
         profile_kw_digest: str,
+        *,
+        keyword_kind: str = "regular",
     ) -> int:
         """Recycle the oldest ``used`` keywords back to ``pending``.
 
@@ -4535,6 +4684,7 @@ class Database:
         if recycle_n <= 0:
             return 0
         digest = profile_kw_digest.strip()
+        kind = _normalize_keyword_kind(keyword_kind)
         self._ensure_fresh_read()
         conn = self.open_connection()
         try:
@@ -4543,10 +4693,12 @@ class Database:
                 """
                 SELECT id, keyword
                 FROM discovery_keywords
-                WHERE platform = ? AND status = 'used'
+                WHERE platform = ?
+                  AND keyword_kind = ?
+                  AND status = 'used'
                 ORDER BY used_at ASC, id ASC
                 """,
-                (platform.strip(),),
+                (platform.strip(), kind),
             ).fetchall()
             recycled = 0
             for row in candidates:
@@ -4559,10 +4711,11 @@ class Database:
                     WHERE platform = ?
                       AND keyword = ?
                       AND profile_kw_digest = ?
+                      AND keyword_kind = ?
                       AND status IN ('pending', 'claimed', 'executing')
                     LIMIT 1
                     """,
-                    (platform.strip(), str(row["keyword"]), digest),
+                    (platform.strip(), str(row["keyword"]), digest, kind),
                 ).fetchone()
                 if clash is not None:
                     continue
@@ -5454,6 +5607,42 @@ class Database:
             "last_fetched_at": str(row["last_fetched_at"] or ""),
         }
 
+    def dynamic_delight_threshold(
+        self,
+        *,
+        default_threshold: float = _DELIGHT_CLAIM_MIN_SCORE,
+    ) -> float:
+        """Return the profile floor raised to the pool Top 10% boundary.
+
+        The dynamic component uses the current formal candidate pool, not raw
+        ``discovery_candidates``. When the pool is too small for a meaningful
+        percentile, the caller-provided default is returned unchanged.
+        """
+        try:
+            floor = float(default_threshold)
+        except (TypeError, ValueError):
+            floor = _DELIGHT_CLAIM_MIN_SCORE
+        floor = min(1.0, max(0.0, floor))
+
+        self._ensure_fresh_read()
+        cursor = self.conn.execute(
+            """
+            SELECT COALESCE(relevance_score, 0.0) AS score
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown')
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND COALESCE(relevance_score, 0.0) > 0.0
+            ORDER BY score DESC
+            """
+        )
+        scores = [float(row["score"]) for row in cursor.fetchall()]
+        if len(scores) < _DELIGHT_DYNAMIC_MIN_SAMPLE_SIZE:
+            return floor
+
+        top_count = max(1, math.ceil(len(scores) * _DELIGHT_DYNAMIC_TOP_FRACTION))
+        boundary = min(1.0, max(0.0, scores[top_count - 1]))
+        return max(floor, boundary)
+
     def get_delight_candidate(
         self,
         *,
@@ -5586,19 +5775,19 @@ class Database:
         min_relevance_score: float = 0.55,
         xhs_self_nickname: str = "",
     ) -> list[dict[str, Any]]:
-        """Return pool candidates that still need delight evaluation or copy.
+        """Return pool candidates that still need delight backfill or copy.
 
         Two-stage retrieval: ``relevance_score >= min_relevance_score``
         is the cheap pre-filter (the discovery LLM already judged user-
-        content fit during ``evaluate_batch``), then the caller runs the
-        expensive LLM delight scorer only on this shortlist.
+        content fit during ``evaluate_batch``), then the caller reuses that
+        Evo relevance result to populate delight fields only on this
+        shortlist.
 
         Default 0.55 is calibrated to the discovery rubric:
           0.6+ strong fit, 0.5-0.6 moderate, <0.5 weak fit.
-        Items below ``min_relevance_score`` skip delight scoring
+        Items below ``min_relevance_score`` skip delight backfill
         entirely — they're not going to delight anyone they don't
-        already half-fit, and burning LLM calls on weak-fit items just
-        wastes budget.
+        already half-fit.
         """
         guard_sql = _xhs_self_author_guard_sql()
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
@@ -5608,31 +5797,33 @@ class Database:
                 f"""
                 SELECT *
                 FROM content_cache
-                WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'suppressed')
+                WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
                   AND COALESCE(delight_score, 0.0) = 0.0
                   AND COALESCE(relevance_score, 0.0) >= ?
                   {guard_sql}
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM recommendations AS r
-                    WHERE r.bvid = content_cache.bvid
-                  )
                 ORDER BY relevance_score DESC, discovered_at DESC
                 LIMIT ?
                 """,
-                (effective_min_relevance_score, *guard_params, limit),
+                (
+                    effective_min_relevance_score,
+                    *guard_params,
+                    limit,
+                ),
             )
         else:
             cursor = self.conn.execute(
                 f"""
                 SELECT *
                 FROM content_cache
-                WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'suppressed')
+                WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'shown', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
                   AND COALESCE(relevance_score, 0.0) >= ?
                   AND (
                     COALESCE(delight_score, 0.0) = 0.0
+                    OR ABS(
+                      COALESCE(delight_score, 0.0) - COALESCE(relevance_score, 0.0)
+                    ) > ?
                     OR (
                       COALESCE(delight_score, 0.0) >= ?
                       AND (
@@ -5642,20 +5833,15 @@ class Database:
                     )
                   )
                   {guard_sql}
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM recommendations AS r
-                    WHERE r.bvid = content_cache.bvid
-                  )
                 ORDER BY
-                    CASE WHEN COALESCE(delight_score, 0.0) > 0.0 THEN 0 ELSE 1 END ASC,
-                    delight_score DESC,
                     relevance_score DESC,
+                    delight_score DESC,
                     discovered_at DESC
                 LIMIT ?
                 """,
                 (
                     effective_min_relevance_score,
+                    _DELIGHT_SCORE_SYNC_EPSILON,
                     min_delight_score_for_reason,
                     *guard_params,
                     limit,
@@ -5693,6 +5879,12 @@ class Database:
                 value = str(raw_value).strip()
                 if value:
                     content_ids.add(value)
+                    if (
+                        platform == _REDDIT_SOURCE_FAMILY
+                        and not value.startswith("t3_")
+                        and re.fullmatch(r"[A-Za-z0-9_]+", value)
+                    ):
+                        content_ids.add(f"t3_{value}")
 
         url_content_id = cls._extract_content_id_from_url(platform, url)
         if url_content_id:
@@ -5731,6 +5923,8 @@ class Database:
             or host.endswith(".twitter.com")
         ):
             return _TWITTER_SOURCE_FAMILY
+        if host == "reddit.com" or host.endswith(".reddit.com") or host == "redd.it":
+            return _REDDIT_SOURCE_FAMILY
         return ""
 
     @staticmethod
@@ -5763,6 +5957,12 @@ class Database:
             match = _BVID_PATTERN.search(url)
             if match:
                 return match.group(1)
+        if platform == _REDDIT_SOURCE_FAMILY:
+            host = parsed.netloc.lower()
+            if host == "redd.it" and path_parts:
+                return f"t3_{path_parts[0]}"
+            if len(path_parts) >= 4 and path_parts[0] == "r" and path_parts[2] == "comments":
+                return f"t3_{path_parts[3]}"
         return ""
 
     @staticmethod

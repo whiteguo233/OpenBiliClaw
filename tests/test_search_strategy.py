@@ -153,6 +153,294 @@ def test_build_profile_summary_includes_full_profile_context() -> None:
     assert summary["interests"][0]["name"] == "国际局势"
 
 
+def test_query_generation_profile_summary_is_compact_and_stable() -> None:
+    from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
+
+    profile = SoulProfile(
+        core_traits=[f"trait-{i}" for i in range(40)],
+        deep_needs=[f"need-{i}" for i in range(40)],
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(
+                    name=f"兴趣-{i}",
+                    category=f"类别-{i % 12}",
+                    weight=max(0.0, 1.0 - i * 0.01),
+                    first_seen="2026-01-01",
+                    last_seen="2026-06-27",
+                    source="behavior",
+                )
+                for i in range(80)
+            ],
+            disliked_topics=[f"不喜欢-{i}" for i in range(80)],
+        ),
+        recent_awareness=[
+            AwarenessNote(
+                date=f"2026-06-{i + 1:02d}",
+                observation="一条很长的近期意识流观察" * 10,
+                trend="趋势" * 10,
+                emotion_guess="情绪" * 10,
+            )
+            for i in range(20)
+        ],
+        active_insights=[
+            InsightHypothesis(
+                hypothesis="一条很长的假设" * 10,
+                evidence=["证据" * 20 for _ in range(10)],
+                confidence=0.8,
+                validated=True,
+            )
+            for _ in range(20)
+        ],
+    )
+
+    summary = build_query_generation_profile_summary(profile)
+
+    assert len(summary["core_traits"]) == 8
+    assert len(summary["deep_needs"]) == 8
+    assert len(summary["interests"]) == 64
+    assert len(summary["interest_domains"]) <= 16
+    assert len(summary["disliked_topics"]) == 64
+    assert "recent_awareness" not in summary
+    assert "active_insights" not in summary
+    assert "context" not in summary
+    assert "first_seen" not in json.dumps(summary, ensure_ascii=False)
+    assert "last_seen" not in json.dumps(summary, ensure_ascii=False)
+    assert "source" not in json.dumps(summary, ensure_ascii=False)
+
+
+def test_query_generation_profile_summary_uses_embedding_to_keep_interest_variety() -> None:
+    from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
+
+    repeated_ai = [
+        InterestTag(
+            name=f"AI 训练技巧 {i}",
+            category="人工智能",
+            weight=1.0 - i * 0.001,
+        )
+        for i in range(65)
+    ]
+    diverse_tail = [
+        InterestTag(name="摄影构图", category="影像创作", weight=0.50),
+        InterestTag(name="城市观察", category="社会观察", weight=0.49),
+        InterestTag(name="历史考据", category="历史", weight=0.48),
+        InterestTag(name="音乐制作", category="音乐", weight=0.47),
+        InterestTag(name="烹饪科学", category="生活", weight=0.46),
+    ]
+    vectors = {
+        "摄影构图": [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        "城市观察": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        "历史考据": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        "音乐制作": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        "烹饪科学": [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    }
+
+    def lookup(text: str) -> list[float]:
+        if text.startswith("AI 训练技巧"):
+            return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        return vectors.get(text, [])
+
+    profile = SoulProfile(preferences=PreferenceLayer(interests=[*repeated_ai, *diverse_tail]))
+
+    summary = build_query_generation_profile_summary(profile, embedding_lookup=lookup)
+    names = [str(item["name"]) for item in summary["interests"]]
+
+    assert len(names) == 64
+    assert {"摄影构图", "城市观察", "历史考据", "音乐制作", "烹饪科学"} <= set(names)
+    assert sum(name.startswith("AI 训练技巧") for name in names) < 64
+
+
+def test_query_generation_profile_summary_penalizes_interest_near_dislikes() -> None:
+    from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
+
+    clickbait = [
+        InterestTag(
+            name=f"标题党热点拆解 {i}",
+            category="热点",
+            weight=1.0 - i * 0.001,
+        )
+        for i in range(65)
+    ]
+    alternatives = [
+        InterestTag(name="纪录片深度解析", category="纪录片", weight=0.50),
+        InterestTag(name="摄影器材评测", category="影像", weight=0.49),
+        InterestTag(name="城市规划案例", category="城市", weight=0.48),
+        InterestTag(name="历史档案解读", category="历史", weight=0.47),
+    ]
+    vectors = {
+        "标题党": [1.0, 0.0, 0.0, 0.0, 0.0],
+        "低质混剪": [1.0, 0.0, 0.0, 0.0, 0.0],
+        "纪录片深度解析": [0.0, 1.0, 0.0, 0.0, 0.0],
+        "摄影器材评测": [0.0, 0.0, 1.0, 0.0, 0.0],
+        "城市规划案例": [0.0, 0.0, 0.0, 1.0, 0.0],
+        "历史档案解读": [0.0, 0.0, 0.0, 0.0, 1.0],
+    }
+
+    def lookup(text: str) -> list[float]:
+        if text.startswith("标题党热点拆解"):
+            return [1.0, 0.0, 0.0, 0.0, 0.0]
+        return vectors.get(text, [])
+
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[*clickbait, *alternatives],
+            disliked_topics=["标题党", "低质混剪"],
+        )
+    )
+
+    summary = build_query_generation_profile_summary(profile, embedding_lookup=lookup)
+    names = [str(item["name"]) for item in summary["interests"]]
+
+    assert len(names) == 64
+    assert {"纪录片深度解析", "摄影器材评测", "城市规划案例", "历史档案解读"} <= set(names)
+    assert sum(name.startswith("标题党热点拆解") for name in names) < 64
+
+
+def test_query_generation_profile_summary_embedding_selector_avoids_repeated_cosine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import openbiliclaw.discovery.strategies._utils as utils
+
+    calls = 0
+
+    def count_cosine(left: list[float], right: list[float]) -> float:
+        nonlocal calls
+        calls += 1
+        return 1.0 if left == right else 0.0
+
+    monkeypatch.setattr(utils, "_cosine_similarity_safe", count_cosine)
+
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(
+                    name=f"兴趣-{i}",
+                    category=f"类别-{i % 16}",
+                    weight=1.0 - i * 0.001,
+                )
+                for i in range(128)
+            ],
+            disliked_topics=[f"避雷-{i}" for i in range(128)],
+        )
+    )
+
+    def lookup(text: str) -> list[float]:
+        bucket = sum(ord(char) for char in text) % 8
+        return [1.0 if index == bucket else 0.0 for index in range(8)]
+
+    summary = utils.build_query_generation_profile_summary(profile, embedding_lookup=lookup)
+
+    assert len(summary["interests"]) == 64
+    assert len(summary["disliked_topics"]) == 64
+    assert calls < 40_000
+
+
+def test_query_generation_profile_summary_without_embedding_keeps_weight_order() -> None:
+    from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
+
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(
+                    name=f"兴趣-{i}",
+                    category=f"类别-{i % 8}",
+                    weight=1.0 - i * 0.001,
+                )
+                for i in range(70)
+            ],
+            disliked_topics=[f"不喜欢-{i}" for i in range(70)],
+        )
+    )
+
+    summary = build_query_generation_profile_summary(profile, embedding_lookup=lambda _text: [])
+
+    assert [item["name"] for item in summary["interests"]] == [f"兴趣-{i}" for i in range(64)]
+    assert summary["disliked_topics"] == [f"不喜欢-{i}" for i in range(64)]
+
+
+@pytest.mark.asyncio
+async def test_search_query_prompt_uses_cached_embedding_interest_diversity() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    class FakeEmbeddingService:
+        similarity_threshold = 0.82
+
+        async def embed(self, _text: str) -> list[float]:
+            raise AssertionError("query profile summary must use cache-only lookup")
+
+        def lookup_cached(self, text: str) -> list[float]:
+            if text.startswith("AI 训练技巧"):
+                return [1.0, 0.0, 0.0, 0.0]
+            if text == "摄影构图":
+                return [0.0, 1.0, 0.0, 0.0]
+            if text == "历史考据":
+                return [0.0, 0.0, 1.0, 0.0]
+            return []
+
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                *[
+                    InterestTag(
+                        name=f"AI 训练技巧 {i}",
+                        category="人工智能",
+                        weight=1.0 - i * 0.001,
+                    )
+                    for i in range(65)
+                ],
+                InterestTag(name="摄影构图", category="影像创作", weight=0.50),
+                InterestTag(name="历史考据", category="历史", weight=0.49),
+            ]
+        )
+    )
+    llm_service = FakeLLMService('{"queries": ["q"]}')
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=FakeBilibiliClient({}),
+        embedding_service=FakeEmbeddingService(),
+    )
+
+    await strategy._generate_queries(profile)
+
+    prompt = str(llm_service.calls[0]["user_input"])
+    assert "摄影构图" in prompt
+    assert "历史考据" in prompt
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_reuses_queries_for_same_profile_and_pool_hints() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片 深度 解析", "摄影 作品 盘点"]}')
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=FakeBilibiliClient({}),
+    )
+
+    first = await strategy._generate_queries(_build_profile())
+    second = await strategy._generate_queries(_build_profile())
+
+    assert first == ["纪录片 深度 解析", "摄影 作品 盘点"]
+    assert second == first
+    assert len(llm_service.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_query_generation_uses_low_cost_structured_call() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片 深度 解析"]}')
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=FakeBilibiliClient({}),
+    )
+
+    await strategy._generate_queries(_build_profile())
+
+    assert llm_service.calls[0]["caller"] == "discovery.search.queries"
+    assert llm_service.calls[0]["reasoning_effort"] == ""
+    assert llm_service.calls[0]["inject_core_memory"] is False
+
+
 @dataclass
 class FakeLLMService:
     content: str
@@ -168,12 +456,16 @@ class FakeLLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> object:
         self.calls.append(
             {
                 "system_instruction": system_instruction,
                 "user_input": user_input,
                 "history": history,
+                "caller": caller,
+                "reasoning_effort": reasoning_effort,
+                "inject_core_memory": inject_core_memory,
             }
         )
         return _FakeResponse(self.content)
@@ -667,8 +959,17 @@ async def test_search_strategy_caps_llm_eval_candidates_for_small_limit() -> Non
             max_tokens: int = 4096,
             caller: str = "",
             reasoning_effort: str | None = None,
+            inject_core_memory: bool = True,
         ) -> object:
-            del system_instruction, history, temperature, max_tokens, caller, reasoning_effort
+            del (
+                system_instruction,
+                history,
+                temperature,
+                max_tokens,
+                caller,
+                reasoning_effort,
+                inject_core_memory,
+            )
             if "<content_batch>" not in user_input:
                 return _FakeResponse('{"queries": ["q0", "q1", "q2", "q3"]}')
             batch = json.loads(user_input.split("<content_batch>")[1].split("</content_batch>")[0])

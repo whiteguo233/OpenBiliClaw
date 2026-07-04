@@ -132,6 +132,21 @@ test("normalizeZhihuHotItem maps hot-list targets", () => {
   assert.equal(item?.comment_count, 12);
 });
 
+test("normalizeZhihuHotItem preserves large question ids from URL strings", () => {
+  const questionId = "2053435015258804659";
+  const item = normalizeZhihuHotItem({
+    target: {
+      type: "question",
+      id: Number(questionId),
+      title: "凡人动画大电影票房问题",
+      url: `https://www.zhihu.com/question/${questionId}`,
+    },
+  });
+
+  assert.equal(item?.content_id, questionId);
+  assert.equal(item?.url, `https://www.zhihu.com/question/${questionId}`);
+});
+
 test("normalizeZhihuFeedItem maps recommendation feed answers", () => {
   const item = normalizeZhihuFeedItem({
     target: {
@@ -272,6 +287,28 @@ test("executeZhihuTask runs search tasks through search_v3", async () => {
     assert.equal(result.items[0]?.search_keyword, "AI 工程化");
     assert.equal(result.scope_counts.zhihu_search, 1);
     assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("executeZhihuTask preserves large numeric ids from raw Zhihu JSON", async () => {
+  const originalFetch = globalThis.fetch;
+  const questionId = "2053435015258804659";
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = String(input);
+    assert.ok(url.startsWith("/api/v3/feed/topstory/hot-lists/total"));
+    return new Response(
+      `{"data":[{"target":{"type":"question","id":${questionId},"title":"凡人动画大电影票房问题"}}],"paging":{"is_end":true}}`,
+      { headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await executeZhihuTask({ task_id: "task-hot-large-id", type: "hot", max_items: 1 });
+
+    assert.equal(result.items[0]?.content_id, questionId);
+    assert.equal(result.items[0]?.url, `https://www.zhihu.com/question/${questionId}`);
   } finally {
     globalThis.fetch = originalFetch;
   }

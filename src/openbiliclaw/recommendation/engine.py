@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
+from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
 from openbiliclaw.llm.service import is_llm_rate_limit_error
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
 if TYPE_CHECKING:
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+_DEFAULT_EXPRESSION_BATCH_SIZE = 30
+_DEFAULT_EXPRESSION_BATCH_CONCURRENCY = 2
 
 
 def _interests_by_weight(profile: SoulProfile) -> list[InterestTag]:
@@ -118,6 +122,7 @@ class SupportsCoreMemoryTask(Protocol):
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> LLMResponse: ...
 
 
@@ -174,12 +179,14 @@ class RecommendationEngine:
         embedding_service: SupportsEmbeddingService | None = None,
         task_registry: BackgroundTaskRegistry | None = None,
         xhs_self_info_provider: Callable[[], dict[str, object] | None] | None = None,
+        expression_batch_concurrency: int = _DEFAULT_EXPRESSION_BATCH_CONCURRENCY,
     ) -> None:
         self._llm = llm
         self._database = database
         self._curator = curator
         self._embedding_service = embedding_service
         self._xhs_self_info_provider = xhs_self_info_provider
+        self._expression_batch_concurrency = max(1, min(16, int(expression_batch_concurrency)))
         # v0.3.63+: optional registry for detached fire-and-forget tasks
         # (classify_pool_backlog_detached, precompute_delight_scores_detached).
         # When provided, those tasks register here so RuntimeContext's
@@ -188,6 +195,9 @@ class RecommendationEngine:
         # tests that don't inject a registry continue to work unchanged.
         self.task_registry: BackgroundTaskRegistry | None = task_registry
         self._classify_lock = asyncio.Lock()
+        self._profile_prompt_caches: defaultdict[str, PromptLayerRenderCache] = defaultdict(
+            PromptLayerRenderCache
+        )
         # v0.3.47+: serialise precompute_pool_copy so multiple
         # per-strategy fire-and-forget tasks (now created from
         # _run_refresh_plan after each strategy completes) don't load
@@ -195,14 +205,14 @@ class RecommendationEngine:
         #
         # v0.3.62+: split the previous single ``_precompute_lock`` into
         # two independent locks. The old shared lock serialised
-        # expression generation and delight scoring — when delight
-        # scoring was slow (LLM backoff or a large un-scored backlog),
+        # expression generation and delight backfill — when the delight
+        # backlog was large,
         # the next expression batch had to wait behind it even though
         # nothing about expression touches delight state. Now expression
-        # generation holds ``_expression_lock`` while delight scoring
+        # generation holds ``_expression_lock`` while delight backfill
         # runs in a detached task guarded by ``_delight_lock``, so the
         # two flows progress independently and back-to-back precompute
-        # calls still avoid double-spending delight LLM tokens.
+        # calls still avoid duplicate delight writes.
         self._expression_lock = asyncio.Lock()
         self._delight_lock = asyncio.Lock()
         # Background-computed supergroup canonical map. Populated by
@@ -215,6 +225,18 @@ class RecommendationEngine:
         # the new batch were also in the previous batch). High
         # carryover signals stale-pool / fatigue-bypass.
         self._last_served_bvids: frozenset[str] = frozenset()
+
+    def _profile_blocks(
+        self,
+        profile_summary: dict[str, object],
+        *,
+        cache_key: str,
+    ) -> list[str]:
+        """Render cached profile prompt layers for one recommendation task."""
+
+        return self._profile_prompt_caches[cache_key].render_json_layers(
+            profile_prompt_layers(profile_summary)
+        )
 
     def _xhs_self_nickname(self) -> str:
         """Return the persisted XHS self nickname for pool guards."""
@@ -292,13 +314,21 @@ class RecommendationEngine:
         if excluded_bvids:
             candidates = [c for c in candidates if c.bvid not in excluded_bvids]
         after_exclude_count = len(candidates)
+        candidates = self._exclude_disliked_topic_candidates(candidates, profile)
+        after_disliked_count = len(candidates)
+        if after_disliked_count < after_exclude_count:
+            logger.info(
+                "serve(/%s) filtered %d candidate(s) by profile disliked_topics",
+                label,
+                after_exclude_count - after_disliked_count,
+            )
         candidates = self._exclude_recently_viewed(candidates)
         after_viewed_count = len(candidates)
         if after_viewed_count == 0:
             logger.warning(
                 "serve(/%s) loaded 0 usable candidates from servable=%d "
                 "(raw=%d pending=%d) after filters: loaded=%d "
-                "after_exclude=%d after_viewed=%d. Skipping curator, "
+                "after_exclude=%d after_disliked=%d after_viewed=%d. Skipping curator, "
                 "MMR embeddings, and recommendation writes.",
                 label,
                 servable_pool_count,
@@ -306,6 +336,7 @@ class RecommendationEngine:
                 pending_pool_count,
                 loaded_count,
                 after_exclude_count,
+                after_disliked_count,
                 after_viewed_count,
             )
             self._last_served_bvids = frozenset()
@@ -325,11 +356,13 @@ class RecommendationEngine:
         if servable_pool_count != loaded_count:
             logger.info(
                 "serve(/%s) pool/load mismatch: count=%d → loaded=%d"
-                " → after_exclude=%d → after_viewed=%d (raw=%d pending=%d)",
+                " → after_exclude=%d → after_disliked=%d → after_viewed=%d "
+                "(raw=%d pending=%d)",
                 label,
                 servable_pool_count,
                 loaded_count,
                 after_exclude_count,
+                after_disliked_count,
                 after_viewed_count,
                 raw_pool_count,
                 pending_pool_count,
@@ -748,34 +781,38 @@ class RecommendationEngine:
         profile: SoulProfile,
         limit: int = 20,
         delight_limit: int = 30,
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EXPRESSION_BATCH_SIZE,
     ) -> int:
         """Precompute fast-path popup copy for fresh pool candidates.
 
         v0.3.47+: batches dispatched in parallel via ``asyncio.gather``,
-        and ``batch_size`` defaults to 30 (matches discovery's eval batch).
+        bounded by ``expression_batch_concurrency`` (default 2), and
+        ``batch_size`` defaults to 30. Real-provider concurrency testing
+        showed 45 can occasionally produce malformed batch JSON on
+        recommendation copy, so this path stays conservative while
+        discovery eval uses the larger text batch.
         With the previous serial × ``batch_size=8`` shape, a 60-item
         backlog needed 8 LLM calls and 8 sequential round trips. The new
         shape needs 2 LLM calls running concurrently — popup copy
         catches up minutes faster.
 
         v0.3.62+: expression generation is guarded by
-        ``self._expression_lock``; delight scoring runs in a detached
+        ``self._expression_lock``; delight backfill runs in a detached
         ``asyncio.create_task`` with its own ``self._delight_lock``. The
         previous single ``_precompute_lock`` held both flows under one
         gate, so a slow delight pass would stall the next expression
         batch even though pool items already needed ``pool_expression``.
         Splitting the locks lets expression and delight progress
         independently while the per-flow lock still prevents
-        back-to-back fires from double-spending LLM tokens on the same
-        items.
+        back-to-back fires from updating the same delight rows twice.
 
         The per-strategy fire-and-forget tasks queued from
         ``_run_refresh_plan`` therefore can't load the same
         un-precomputed candidates twice for expression generation.
 
-        Also runs delight scoring on un-scored candidates and generates
-        delight reasons for items above the delight threshold.
+        Also backfills delight fields from Evo's relevance result for
+        un-scored candidates, including card reasons for items above the
+        delight threshold.
 
         Args:
             profile: Current soul profile used for personalisation.
@@ -835,7 +872,7 @@ class RecommendationEngine:
         *,
         profile: SoulProfile,
         limit: int,
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EXPRESSION_BATCH_SIZE,
     ) -> int:
         """Generate popup copy for classified-but-uncopied pool candidates.
 
@@ -856,13 +893,29 @@ class RecommendationEngine:
             batches = [
                 candidates[i : i + batch_size] for i in range(0, len(candidates), batch_size)
             ]
-            results = await asyncio.gather(
-                *(self._precompute_batch(batch, profile) for batch in batches),
-                return_exceptions=True,
-            )
+            results: list[int | Exception | None] = [None] * len(batches)
+            next_batch_index = 0
+            worker_count = min(self._expression_batch_concurrency, len(batches))
+
+            async def _worker() -> None:
+                nonlocal next_batch_index
+                while next_batch_index < len(batches):
+                    batch_index = next_batch_index
+                    next_batch_index += 1
+                    try:
+                        results[batch_index] = await self._precompute_batch_with_split_retry(
+                            batches[batch_index],
+                            profile,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        results[batch_index] = exc
+
+            await asyncio.gather(*(_worker() for _ in range(worker_count)))
             completed = 0
             for r in results:
-                if isinstance(r, BaseException):
+                if isinstance(r, Exception):
                     logger.warning("Expression batch failed: %s", r)
                     continue
                 completed += int(r or 0)
@@ -948,8 +1001,8 @@ class RecommendationEngine:
 
         ``precompute_pool_copy`` schedules this as ``asyncio.create_task``
         instead of awaiting it inline. The previous shared
-        ``_precompute_lock`` made delight scoring stall the next
-        expression batch whenever the LLM was slow on delight calls —
+        ``_precompute_lock`` made delight backfill stall the next
+        expression batch whenever the delight queue was large —
         pool items would sit waiting for ``pool_expression`` even
         though expression generation itself was idle. Splitting the
         work into a detached task with its own ``_delight_lock`` keeps
@@ -1106,13 +1159,15 @@ class RecommendationEngine:
         platform = (batch[0].source_platform or "bilibili") if batch else "bilibili"
         messages = build_batch_content_evaluation_prompt(
             profile_summary=profile_data,
+            profile_blocks=self._profile_blocks(profile_data, cache_key="evaluate_batch"),
             content_items=content_items,
             source_context=batch[0].source_strategy if batch else "",
             source_platform=platform,
             negative_examples=negative_examples,
         )
 
-        response = await self._llm.complete_structured_task(
+        complete_structured = self._llm.complete_structured_task
+        response = await complete_structured(
             system_instruction=messages[0]["content"],
             user_input=messages[1]["content"],
             max_tokens=8192,
@@ -1120,6 +1175,7 @@ class RecommendationEngine:
             # categorical fields, doesn't benefit from reasoning chain.
             reasoning_effort="",
             caller="recommendation.evaluate_batch",
+            **without_core_memory_kwargs(complete_structured),
         )
         raw = str(getattr(response, "content", "")).strip()
         payload = extract_llm_json_list(
@@ -1189,29 +1245,24 @@ class RecommendationEngine:
         profile: SoulProfile,
         limit: int = 50,
     ) -> int:
-        """Score un-scored pool candidates for proactive delight potential.
+        """Populate proactive delight fields from Evo relevance output.
 
-        Two-stage retrieval:
-          1. Coarse: ``get_pool_candidates_needing_delight_score`` filters
-             by ``relevance_score >= 0.55`` and orders by relevance DESC,
-             capped at ``limit`` (default 50). Free — uses scores already
-             computed by discovery's ``evaluate_batch``.
-          2. Fine: ``LLMDelightScorer.score_batch`` LLM-judges those 50
-             against a delight rubric (cross-domain bridge / hidden need /
-             quality, not naive similarity).
-
-        Default ``limit=50`` (raised from 30 once relevance gate landed):
-        more head-room for the LLM to find true delights without burning
-        cycles on weak-fit junk. Cost: 50/5 = 10 batches × ~¥0.01 ≈
-        ¥0.10/cycle, ¥0.80/day at 8 cycles.
+        Evo already runs the expensive candidate evaluator and the pool-copy
+        path writes user-facing ``pool_expression`` into ``content_cache``.
+        Delight reuses ``relevance_score`` for scoring and prefers
+        ``pool_expression`` for card copy instead of paying another LLM pass.
         """
-        from openbiliclaw.recommendation.delight import LLMDelightScorer
-
-        scorer = LLMDelightScorer(llm_service=self._llm)
+        from openbiliclaw.recommendation.delight import effective_delight_threshold
 
         prefs = getattr(profile, "preferences", None)
         exploration_openness = float(getattr(prefs, "exploration_openness", 0.5))
-        effective_threshold = scorer.effective_threshold(exploration_openness)
+        default_threshold = effective_delight_threshold(exploration_openness)
+        dynamic_threshold = getattr(self._database, "dynamic_delight_threshold", None)
+        effective_threshold = (
+            float(dynamic_threshold(default_threshold=default_threshold))
+            if callable(dynamic_threshold)
+            else default_threshold
+        )
         rows = self._database.get_pool_candidates_needing_delight_score(
             limit=limit,
             min_delight_score_for_reason=effective_threshold,
@@ -1222,35 +1273,10 @@ class RecommendationEngine:
 
         candidates = self._rows_to_discovered(rows)
 
-        # All ``rows`` returned here either lack a delight_score, or have
-        # a stale one from the embedding-era scorer (which we choose to
-        # re-judge with the LLM rather than trust). Send them all through
-        # one batched LLM scoring pass — no special-case backfill loop.
         scored_count = 0
-        to_score: list[Any] = list(candidates)
-
-        try:
-            scored = await scorer.score_batch(to_score, profile)
-        except Exception:
-            logger.exception("Delight LLM batch scoring failed for %d candidates", len(to_score))
-            return 0
-
-        for candidate in to_score:
-            result = scored.get(candidate.bvid)
-            if result is None:
-                # LLM dropped this one — mark with sentinel score so it's
-                # not picked again next cycle, but record nothing positive.
-                self._database.update_delight_score(
-                    candidate.bvid,
-                    delight_score=0.01,
-                    delight_reason="",
-                    delight_hook="",
-                )
-                continue
-
-            persisted_score = max(0.01, result.score)
-            if result.score < effective_threshold:
-                # Below threshold — persist score but no reason/hook
+        for candidate in candidates:
+            persisted_score = max(0.01, min(1.0, float(candidate.relevance_score or 0.0)))
+            if persisted_score < effective_threshold:
                 self._database.update_delight_score(
                     candidate.bvid,
                     delight_score=persisted_score,
@@ -1260,84 +1286,57 @@ class RecommendationEngine:
                 scored_count += 1
                 continue
 
-            # Above threshold — LLM already provided rationale + hook
-            # in the same call, no extra LLM trip needed.
+            reason = self._evo_delight_reason(candidate)
+            hook = self._evo_delight_hook(candidate)
             self._database.update_delight_score(
                 candidate.bvid,
                 delight_score=persisted_score,
-                delight_reason=result.rationale or "",
-                delight_hook=result.hook or "意外契合",
+                delight_reason=reason,
+                delight_hook=hook,
             )
             scored_count += 1
             logger.info(
-                "Delight candidate found: %s (score=%.3f, hook=%s)",
+                "Delight candidate found from Evo result: %s (score=%.3f, hook=%s)",
                 candidate.bvid,
                 persisted_score,
-                result.hook,
+                hook,
             )
 
         return scored_count
 
-    async def _generate_delight_reason(
-        self,
-        content: DiscoveredContent,
-        profile: SoulProfile,
-        reason_stub: str,
-    ) -> tuple[str, str]:
-        """Generate a delight reason explanation via LLM.
-
-        Returns:
-            (delight_reason, delight_hook) tuple.
-        """
-        from openbiliclaw.llm.prompts import build_delight_reason_prompt
-
-        tone_profile = self._expression_tone_profile(profile, content)
-        messages = build_delight_reason_prompt(
-            profile_summary=_recommendation_profile_summary(profile),
-            content_summary={
-                "title": content.title,
-                "up_name": content.up_name,
-                "description": (content.description or "")[:400],
-                "source_strategy": content.source_strategy,
-                "style_key": normalize_style_key(content.style_key),
-                "topic_group": content.topic_group,
-                "relevance_score": content.relevance_score,
-                "content_type": content.content_type,
-                "body_text": content.body_text,
-            },
-            reason_stub=reason_stub,
-            tone_profile=tone_profile,
-            source_platform=content.source_platform or "bilibili",
+    @staticmethod
+    def _evo_delight_reason(item: DiscoveredContent) -> str:
+        reason = (item.pool_expression or "").strip()
+        if reason:
+            return reason
+        reason = (item.relevance_reason or "").strip()
+        if reason:
+            return reason
+        topic = (
+            (item.pool_topic_label or "").strip()
+            or (item.topic_group or "").strip()
+            or (item.topic_key or "").strip()
         )
-        try:
-            response = await self._llm.complete_structured_task(
-                system_instruction=messages[0]["content"],
-                user_input=messages[1]["content"],
-                caller="recommendation.delight_reason",
-            )
-            payload = extract_llm_json_object(
-                str(response.content),
-                wrapper_keys=("result", "item", "data", "output"),
-                item_predicate=lambda item: "delight_reason" in item or "delight_hook" in item,
-            )
-            if payload is None:
-                raise ValueError("Delight reason response must be a JSON object.")
-            reason = str(payload.get("delight_reason", "")).strip()
-            hook = str(payload.get("delight_hook", "")).strip()
-            if reason and hook:
-                return (reason, hook)
-        except Exception:
-            logger.exception(
-                "Failed to generate delight reason for %s",
-                content.bvid,
-            )
-        # Fallback
-        return ("这条可能会给你意外的惊喜", "意外惊喜")
+        if topic:
+            return f"这条内容和你当前画像里的「{topic}」方向匹配度很高。"
+        return "Evo 判断这条内容和你当前的兴趣画像匹配度很高。"
+
+    @staticmethod
+    def _evo_delight_hook(item: DiscoveredContent) -> str:
+        hook = (
+            (item.pool_topic_label or "").strip()
+            or (item.topic_group or "").strip()
+            or (item.topic_key or "").strip()
+            or (item.style_key or "").strip()
+        )
+        return hook or "高契合"
 
     async def _precompute_batch(
         self,
         batch: list[DiscoveredContent],
         profile: SoulProfile,
+        *,
+        fallback_to_single: bool = True,
     ) -> int:
         """Generate expressions for a batch via one LLM call."""
         from openbiliclaw.llm.prompts import build_batch_expression_prompt
@@ -1365,15 +1364,18 @@ class RecommendationEngine:
             }
             for item in batch
         ]
+        profile_summary = _recommendation_profile_summary(profile)
         messages = build_batch_expression_prompt(
-            profile_summary=_recommendation_profile_summary(profile),
+            profile_summary=profile_summary,
+            profile_blocks=self._profile_blocks(profile_summary, cache_key="batch_expression"),
             content_items=content_items,
             tone_profile=tone_profile,
             source_platform=batch[0].source_platform if batch else "bilibili",
         )
 
         try:
-            response = await self._llm.complete_structured_task(
+            complete_structured = self._llm.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=8192,
@@ -1383,6 +1385,7 @@ class RecommendationEngine:
                 # vs without, no quality difference).
                 reasoning_effort="",
                 caller="recommendation.write_expression",
+                **without_core_memory_kwargs(complete_structured),
             )
             payload = extract_llm_json_list(
                 str(response.content),
@@ -1401,6 +1404,12 @@ class RecommendationEngine:
                     exc,
                 )
                 return 0
+            if not fallback_to_single:
+                logger.warning(
+                    "Batch expression generation failed for %d items; will split retry",
+                    len(batch),
+                )
+                raise
             logger.warning(
                 "Batch expression generation failed for %d items, falling back to single",
                 len(batch),
@@ -1420,6 +1429,15 @@ class RecommendationEngine:
             # instead — each single call carries exactly one content item and
             # cannot be misaligned. (A 1-item batch has no ordering ambiguity,
             # so positional matching below stays safe for it.)
+            if not fallback_to_single:
+                logger.warning(
+                    "Batch expression response carried no bvid/content_id for %d "
+                    "items; positional matching is unreliable, will split retry",
+                    len(batch),
+                )
+                raise ValueError(
+                    f"Batch expression response carried no bvid/content_id for {len(batch)} items"
+                )
             logger.warning(
                 "Batch expression response carried no bvid/content_id for %d "
                 "items; positional matching is unreliable, falling back to "
@@ -1462,6 +1480,15 @@ class RecommendationEngine:
             expression for expression, bvids in bvids_by_expression.items() if len(bvids) > 1
         }
         if duplicated:
+            if not fallback_to_single and len(batch) > 1:
+                logger.warning(
+                    "Batch expression produced %d expression(s) shared across "
+                    "distinct videos (model likely repeating itself); will split retry",
+                    len(duplicated),
+                )
+                raise ValueError(
+                    f"Batch expression produced duplicate expressions for {len(batch)} items"
+                )
             logger.warning(
                 "Batch expression produced %d expression(s) shared across "
                 "distinct videos (model likely repeating itself); dropping them",
@@ -1481,6 +1508,35 @@ class RecommendationEngine:
             item.pool_topic_label = topic_label
             completed += 1
         return completed
+
+    async def _precompute_batch_with_split_retry(
+        self,
+        batch: list[DiscoveredContent],
+        profile: SoulProfile,
+    ) -> int:
+        """Try a batch, split failed large batches, then fall back to singles.
+
+        Split retries run inside the current expression worker. They do not
+        create nested tasks, so ``expression_batch_concurrency`` remains the
+        single concurrency control point.
+        """
+        if len(batch) <= 1:
+            return await self._precompute_batch(batch, profile, fallback_to_single=True)
+        try:
+            return await self._precompute_batch(batch, profile, fallback_to_single=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            midpoint = max(1, len(batch) // 2)
+            logger.warning(
+                "Expression batch split retry: size=%d -> %d/%d",
+                len(batch),
+                midpoint,
+                len(batch) - midpoint,
+            )
+            left = await self._precompute_batch_with_split_retry(batch[:midpoint], profile)
+            right = await self._precompute_batch_with_split_retry(batch[midpoint:], profile)
+            return left + right
 
     async def _precompute_single_fallback(
         self,
@@ -1604,11 +1660,13 @@ class RecommendationEngine:
         # Select most relevant interests for this content via embedding similarity
         interests_for_prompt = await self._select_relevant_interests(content, profile)
 
+        profile_summary = _recommendation_profile_summary(
+            profile,
+            interests=interests_for_prompt,
+        )
         messages = build_recommendation_expression_prompt(
-            profile_summary=_recommendation_profile_summary(
-                profile,
-                interests=interests_for_prompt,
-            ),
+            profile_summary=profile_summary,
+            profile_blocks=self._profile_blocks(profile_summary, cache_key="expression"),
             content_summary={
                 "title": content.title,
                 "up_name": content.up_name,
@@ -1624,10 +1682,12 @@ class RecommendationEngine:
             source_platform=content.source_platform or "bilibili",
         )
         try:
-            response = await self._llm.complete_structured_task(
+            complete_structured = self._llm.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 caller="recommendation.expression",
+                **without_core_memory_kwargs(complete_structured),
             )
             payload = extract_llm_json_object(
                 str(response.content),
@@ -2476,6 +2536,63 @@ class RecommendationEngine:
         if not viewed_bvids:
             return candidates
         return [item for item in candidates if item.bvid not in viewed_bvids]
+
+    @classmethod
+    def _exclude_disliked_topic_candidates(
+        cls,
+        candidates: list[DiscoveredContent],
+        profile: SoulProfile,
+    ) -> list[DiscoveredContent]:
+        terms = cls._normalized_disliked_topics(profile)
+        if not terms:
+            return candidates
+        return [item for item in candidates if not cls._matches_disliked_topic(item, terms)]
+
+    @classmethod
+    def _normalized_disliked_topics(cls, profile: SoulProfile) -> list[str]:
+        raw_topics = getattr(getattr(profile, "preferences", None), "disliked_topics", []) or []
+        result: list[str] = []
+        seen: set[str] = set()
+        for topic in raw_topics:
+            term = cls._normalize_dislike_match_text(topic)
+            if len(term) < 2 or term in seen:
+                continue
+            seen.add(term)
+            result.append(term)
+        return result
+
+    @classmethod
+    def _matches_disliked_topic(
+        cls,
+        item: DiscoveredContent,
+        disliked_terms: list[str],
+    ) -> bool:
+        exact_fields = [
+            cls._normalize_dislike_match_text(item.topic_key),
+            cls._normalize_dislike_match_text(item.topic_group),
+            cls._normalize_dislike_match_text(item.pool_topic_label),
+        ]
+        search_fields = [
+            cls._normalize_dislike_match_text(item.title),
+            cls._normalize_dislike_match_text(item.pool_topic_label),
+            cls._normalize_dislike_match_text(item.description),
+            cls._normalize_dislike_match_text(item.up_name),
+            cls._normalize_dislike_match_text((item.body_text or "")[:800]),
+            *[cls._normalize_dislike_match_text(tag) for tag in item.tags],
+        ]
+        for term in disliked_terms:
+            if term in exact_fields:
+                return True
+            if any(term in field for field in search_fields if field):
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_dislike_match_text(value: object) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        return re.sub(r"\s+", "", text)
 
     @staticmethod
     def _parse_tags(value: object) -> list[str]:

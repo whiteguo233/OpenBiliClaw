@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, parse_llm_json_tolerant
+from openbiliclaw.llm.prompt_cache import (
+    PromptLayerRenderCache,
+    profile_prompt_layers,
+    stable_json_digest,
+)
 from openbiliclaw.llm.service import is_llm_rate_limit_error
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
@@ -33,6 +39,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 _EVALUATE_BATCH_HARD_CAP_DEFAULT: int = 90
+_DEFAULT_EVAL_BATCH_SIZE: int = 45
+_DEFAULT_EVAL_BATCH_CONCURRENCY: int = 2
 _LLM_EVAL_OVERSAMPLE_FACTOR: int = 2
 _LLM_EVAL_MIN_WINDOW: int = 6
 _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
@@ -46,6 +54,8 @@ _EVAL_PROFILE_SPECIFICS_PER_DOMAIN_CAP = 12
 _EVAL_PROFILE_RECENT_CAP = 12
 _EVAL_PROFILE_EVIDENCE_CAP = 8
 _EVAL_PROFILE_SPECULATION_CAP = 12
+_EVAL_BATCH_CACHE_VERSION = "batch-content-eval-v1"
+_NEGATIVE_EXAMPLES_UNSET = object()
 
 
 def discovery_raw_candidate_mode_enabled() -> bool:
@@ -88,6 +98,13 @@ def compact_evaluation_profile_summary(profile_summary: dict[str, object]) -> di
         _EVAL_PROFILE_SPECULATION_CAP,
     )
     return compacted
+
+
+def evaluation_profile_prompt_layers(
+    profile_summary: dict[str, object],
+) -> list[tuple[str, dict[str, object]]]:
+    """Split eval profile prompt input from most stable to most volatile."""
+    return profile_prompt_layers(profile_summary)
 
 
 def _cap_profile_sequence(value: object, cap: int, *, newest: bool = False) -> object:
@@ -242,6 +259,7 @@ class SupportsStructuredTask(Protocol):
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> object: ...
 
 
@@ -348,6 +366,25 @@ def _prompt_visible_content_fields(content: DiscoveredContent) -> dict[str, obje
     }
     fields["tags"] = list(getattr(content, "tags", []) or [])
     return fields
+
+
+def _normalize_prompt_text_for_dedupe(value: str) -> str:
+    return re.sub(r"\s+", "", value).strip()
+
+
+def _prompt_description_for_content(
+    content: DiscoveredContent,
+    *,
+    limit: int | None = None,
+) -> str:
+    description = str(content.description or "")
+    if limit is not None:
+        description = description[:limit]
+    desc_key = _normalize_prompt_text_for_dedupe(description)
+    body_key = _normalize_prompt_text_for_dedupe(str(content.body_text or ""))
+    if desc_key and body_key.startswith(desc_key):
+        return ""
+    return description
 
 
 def _batch_results_by_content_key(
@@ -661,6 +698,7 @@ class ContentDiscoveryEngine:
         multimodal_image_quality: int = 72,
         multimodal_image_timeout_seconds: int = 6,
         multimodal_vision_supported: bool | None = None,
+        eval_batch_concurrency: int = _DEFAULT_EVAL_BATCH_CONCURRENCY,
     ) -> None:
         self._strategies: list[DiscoveryStrategy] = []
         self._llm_service = llm_service
@@ -677,9 +715,11 @@ class ContentDiscoveryEngine:
             1,
             min(20, int(multimodal_image_timeout_seconds)),
         )
+        self.eval_batch_concurrency = max(1, min(16, int(eval_batch_concurrency)))
         self._multimodal_vision_supported_override = multimodal_vision_supported
         self.multimodal_unavailable_reason = ""
         self._eval_cache: dict[str, tuple[float, str, str, str, str]] = {}
+        self._evaluation_profile_prompt_cache = PromptLayerRenderCache()
         # v0.3.x negative-anchors cache: (timestamp, latest_event_id,
         # exemplars). Refreshes when either the latest event id changes
         # (new negative classified) or 5 minutes have elapsed.
@@ -720,6 +760,19 @@ class ContentDiscoveryEngine:
             )
             return batch_size
         return min(batch_size, int(getattr(self, "multimodal_batch_size", 8)))
+
+    def _effective_eval_batch_concurrency(self) -> int:
+        try:
+            configured = int(
+                getattr(
+                    self,
+                    "eval_batch_concurrency",
+                    _DEFAULT_EVAL_BATCH_CONCURRENCY,
+                )
+            )
+        except (TypeError, ValueError):
+            configured = _DEFAULT_EVAL_BATCH_CONCURRENCY
+        return max(1, min(16, configured))
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
@@ -1160,7 +1213,7 @@ class ContentDiscoveryEngine:
                 "title": content.title,
                 "up_name": content.up_name,
                 "author_name": content.author_name or content.up_name,
-                "description": content.description,
+                "description": _prompt_description_for_content(content),
                 "duration": content.duration,
                 "source_strategy": content.source_strategy,
                 **_prompt_visible_content_fields(content),
@@ -1169,10 +1222,12 @@ class ContentDiscoveryEngine:
             source_platform=content.source_platform or "bilibili",
         )
         try:
-            llm_call = self._llm_service.complete_structured_task(
+            complete_structured = self._llm_service.complete_structured_task
+            llm_call = complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 caller="discovery.evaluate_single",
+                **without_core_memory_kwargs(complete_structured),
             )
             if self._concurrency is not None:
                 response = await self._concurrency.run_llm(llm_call)
@@ -1237,7 +1292,7 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         *,
         source_context: str = "",
-        batch_size: int = 30,
+        batch_size: int = _DEFAULT_EVAL_BATCH_SIZE,
     ) -> list[float]:
         """Evaluate multiple content items with batched LLM calls.
 
@@ -1245,14 +1300,10 @@ class ContentDiscoveryEngine:
         call per batch instead of one per item.  Falls back to single
         evaluation for items that fail in a batch.
 
-        v0.3.25+ default raised from 10 → 30 to amortize the ~3500-token
-        fixed prompt overhead (system rules + profile_summary) across
-        more candidates: 3 calls × (3500 + 800) input ≈ 12,900 input
-        tokens vs 1 call × (3500 + 2400) ≈ 5,900 — a ~54% reduction in
-        evaluation cost. The matching ``max_tokens`` boost (8192 → 16384
-        in the actual call below) gives the larger JSON output array
-        comfortable headroom (~50 tokens × 30 items ≈ 1500 output, well
-        under the new ceiling).
+        The default text batch size is 45, with a hard cap of 90 and two
+        worker slots by default. This keeps multimodal evaluation on its
+        smaller image-aware batch size while letting long-context text
+        models amortize the fixed profile/system prompt across more items.
 
         Returns scores in the same order as ``contents``.
         """
@@ -1296,16 +1347,21 @@ class ContentDiscoveryEngine:
         eval_contents = [content for _index, content in eval_pairs]
 
         # Split into cached vs uncached. Batch eval consumes recent negative
-        # exemplars, so the in-memory score cache is versioned by latest event
-        # id. Otherwise a newly recorded quick-exit cannot affect candidates
-        # scored earlier in the same process.
-        negative_revision = self._negative_exemplar_revision()
+        # exemplars, so the in-memory score cache is versioned by the actual
+        # prompt-visible negative examples digest. A new unrelated event may
+        # move the event-log waterline, but it should not evict exact eval
+        # results when the negative anchors fed to the model did not change.
+        negative_examples = self._get_negative_exemplars()
+        if not negative_examples:
+            negative_examples = None
+        profile_digest = self._evaluation_profile_digest(profile)
+        negative_digest = self._negative_examples_digest(negative_examples)
         uncached_indices: list[int] = []
         for i, content in enumerate(eval_contents):
             cache_key = self._batch_eval_cache_key(
                 content,
-                profile,
-                negative_revision=negative_revision,
+                profile_digest=profile_digest,
+                negative_digest=negative_digest,
             )
             cached = self._eval_cache.get(cache_key)
             if cached is not None:
@@ -1344,19 +1400,21 @@ class ContentDiscoveryEngine:
             logger.info("eval_batch multimodal fallback: %s", self.multimodal_unavailable_reason)
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
+        eval_batch_concurrency = self._effective_eval_batch_concurrency()
         logger.info(
-            "eval_batch start: source=%s items=%d batches=%d (cached=%d)",
+            "eval_batch start: source=%s items=%d batches=%d concurrency=%d (cached=%d)",
             source_context or "mixed",
             len(uncached_indices),
             total_batches,
+            eval_batch_concurrency,
             len(eval_contents) - len(uncached_indices),
         )
 
-        # Fan every batch out concurrently. The ``run_llm`` wrapper
-        # already caps actual parallelism to
-        # ``llm_evaluation_concurrency``, so this just lets the
-        # semaphore do its job without the sequential for-loop
-        # throttling us to 1 active batch per strategy.
+        # Run multiple LLM batches concurrently, but keep this task's
+        # own fanout bounded. The shared ``run_llm`` wrapper remains the
+        # global provider-facing cap across all discovery work; this local
+        # worker cap prevents one large eval job from creating unbounded
+        # child tasks or occupying every global LLM slot.
         async def _run_batch(
             batch_idx: int,
             batch_indices: list[int],
@@ -1367,6 +1425,7 @@ class ContentDiscoveryEngine:
                 batch_contents,
                 profile,
                 source_context=source_context,
+                negative_examples=negative_examples,
             )
             elapsed = time.monotonic() - t0
             kept = sum(1 for s in batch_scores if s > 0)
@@ -1410,14 +1469,31 @@ class ContentDiscoveryEngine:
             )
             return batch_indices, batch_scores
 
-        tasks = []
+        batch_jobs: list[tuple[int, list[int]]] = []
         for batch_idx, batch_start in enumerate(
             range(0, len(uncached_indices), batch_size), start=1
         ):
             batch_indices = uncached_indices[batch_start : batch_start + batch_size]
-            tasks.append(_run_batch(batch_idx, batch_indices))
+            batch_jobs.append((batch_idx, batch_indices))
 
-        for batch_indices, batch_scores in await asyncio.gather(*tasks):
+        results: list[tuple[list[int], list[float]] | None] = [None] * len(batch_jobs)
+        next_job_index = 0
+        worker_count = min(eval_batch_concurrency, len(batch_jobs))
+
+        async def _worker() -> None:
+            nonlocal next_job_index
+            while next_job_index < len(batch_jobs):
+                job_index = next_job_index
+                next_job_index += 1
+                batch_idx, batch_indices = batch_jobs[job_index]
+                results[job_index] = await _run_batch(batch_idx, batch_indices)
+
+        await asyncio.gather(*(_worker() for _ in range(worker_count)))
+
+        for result in results:
+            if result is None:
+                continue
+            batch_indices, batch_scores = result
             for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
                 scores[eval_indices[idx]] = batch_score
 
@@ -1523,15 +1599,45 @@ class ContentDiscoveryEngine:
         self._negative_exemplars_cache = (time.monotonic(), latest_id, exemplars)
         return exemplars
 
+    def _evaluation_profile_digest(self, profile: SoulProfile) -> str:
+        """Digest the full structured profile shape visible to batch evaluation."""
+
+        return stable_json_digest(self._evaluation_profile_summary(profile))
+
+    @staticmethod
+    def _evaluation_profile_summary(profile: SoulProfile) -> dict[str, object]:
+        return build_profile_summary(profile)
+
+    def _evaluation_profile_prompt_cache_obj(self) -> PromptLayerRenderCache:
+        """Return eval profile prompt cache, creating it for lightweight tests."""
+
+        cache = getattr(self, "_evaluation_profile_prompt_cache", None)
+        if not isinstance(cache, PromptLayerRenderCache):
+            cache = PromptLayerRenderCache()
+            self._evaluation_profile_prompt_cache = cache
+        return cache
+
+    def evaluation_profile_prompt_cache_stats(self) -> dict[str, dict[str, Any]]:
+        """Return eval profile prompt-layer cache stats."""
+
+        return self._evaluation_profile_prompt_cache_obj().stats()
+
+    @staticmethod
+    def _negative_examples_digest(examples: list[dict[str, object]] | None) -> str:
+        return stable_json_digest(examples or [])
+
     def _batch_eval_cache_key(
         self,
         content: DiscoveredContent,
-        profile: SoulProfile,
         *,
-        negative_revision: int | None,
+        profile_digest: str,
+        negative_digest: str,
     ) -> str:
-        revision = "none" if negative_revision is None else str(negative_revision)
-        return f"{self._content_identity(content)}:{id(profile)}:neg:{revision}"
+        return (
+            f"{_EVAL_BATCH_CACHE_VERSION}:"
+            f"{self._content_identity(content)}:"
+            f"profile:{profile_digest}:neg:{negative_digest}"
+        )
 
     async def _evaluate_batch(
         self,
@@ -1539,12 +1645,13 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         *,
         source_context: str = "",
+        negative_examples: object = _NEGATIVE_EXAMPLES_UNSET,
     ) -> list[float]:
         """Send one LLM call for a batch of items."""
         from openbiliclaw.discovery.candidate_pool import resolve_content_type
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
-        profile_data = compact_evaluation_profile_summary(build_profile_summary(profile))
+        profile_data = self._evaluation_profile_summary(profile)
         content_items: list[dict[str, object]] = []
         for c in batch:
             platform = (c.source_platform or ("bilibili" if c.bvid else "")).strip().lower()
@@ -1571,7 +1678,7 @@ class ContentDiscoveryEngine:
                     "title": c.title,
                     "up_name": c.up_name,
                     "author_name": c.author_name or c.up_name,
-                    "description": (c.description or "")[:400],
+                    "description": _prompt_description_for_content(c, limit=400),
                     "published_at": c.published_at,
                     "cover_url": c.cover_url,
                     "duration": c.duration,
@@ -1608,17 +1715,25 @@ class ContentDiscoveryEngine:
         batch_source_platform = (
             "mixed" if len(source_platforms) > 1 else next(iter(source_platforms), "bilibili")
         )
-        negative_examples = self._get_negative_exemplars()
+        if negative_examples is _NEGATIVE_EXAMPLES_UNSET:
+            negative_examples = self._get_negative_exemplars()
         # Treat empty list as "no examples" so the user-message stays
         # byte-identical to the no-examples shape on cold-start users.
         if not negative_examples:
             negative_examples = None
+        negative_examples_for_prompt = cast("list[dict[str, object]] | None", negative_examples)
+        profile_digest = self._evaluation_profile_digest(profile)
+        negative_digest = self._negative_examples_digest(negative_examples_for_prompt)
+        profile_blocks = self._evaluation_profile_prompt_cache_obj().render_json_layers(
+            evaluation_profile_prompt_layers(profile_data)
+        )
         messages = build_batch_content_evaluation_prompt(
             profile_summary=profile_data,
+            profile_blocks=profile_blocks,
             content_items=content_items,
             source_context=source_context or (batch[0].source_strategy if batch else ""),
             source_platform=batch_source_platform,
-            negative_examples=negative_examples,
+            negative_examples=negative_examples_for_prompt,
         )
 
         assert self._llm_service is not None
@@ -1629,28 +1744,33 @@ class ContentDiscoveryEngine:
                 None,
             )
             if image_inputs and callable(multimodal_call):
-                llm_call = multimodal_call(
-                    system_instruction=messages[0]["content"],
-                    user_input=messages[1]["content"],
-                    image_inputs=image_inputs,
-                    max_tokens=16384,
-                    reasoning_effort="",
-                    caller="discovery.evaluate_batch",
-                )
+                kwargs: dict[str, Any] = {
+                    "system_instruction": messages[0]["content"],
+                    "user_input": messages[1]["content"],
+                    "image_inputs": image_inputs,
+                    "max_tokens": 16384,
+                    "reasoning_effort": "",
+                    "caller": "discovery.evaluate_batch",
+                }
+                kwargs.update(without_core_memory_kwargs(multimodal_call))
+                llm_call = multimodal_call(**kwargs)
             else:
-                llm_call = self._llm_service.complete_structured_task(
-                    system_instruction=messages[0]["content"],
-                    user_input=messages[1]["content"],
+                kwargs = {
+                    "system_instruction": messages[0]["content"],
+                    "user_input": messages[1]["content"],
                     # v0.3.51+: explicitly disable provider thinking. This
                     # task is structured scoring (return JSON array), not
                     # reasoning — production logs showed 8-16 min/batch
                     # with reasoning enabled, dropping to ~30s without.
                     # 16384 max_tokens is plenty for the 1500-3000 token
                     # output a 30-item JSON array now needs.
-                    max_tokens=16384,
-                    reasoning_effort="",
-                    caller="discovery.evaluate_batch",
-                )
+                    "max_tokens": 16384,
+                    "reasoning_effort": "",
+                    "caller": "discovery.evaluate_batch",
+                }
+                complete_structured = self._llm_service.complete_structured_task
+                kwargs.update(without_core_memory_kwargs(complete_structured))
+                llm_call = complete_structured(**kwargs)
             if self._concurrency is not None:
                 response = await self._concurrency.run_llm(llm_call)
             else:
@@ -1662,12 +1782,12 @@ class ContentDiscoveryEngine:
         except Exception as exc:
             if is_llm_rate_limit_error(exc):
                 logger.warning(
-                    "Batch evaluation skipped single-item fallback for %d items because "
-                    "the LLM provider is rate-limited or cooling down: %s",
+                    "Batch evaluation is rate-limited for %d items; "
+                    "propagating transient failure so callers can retry later: %s",
                     len(batch),
                     exc,
                 )
-                return [0.0 for _ in batch]
+                raise
             logger.warning(
                 "Batch evaluation failed for %d items (%s: %s), falling back to single eval",
                 len(batch),
@@ -1730,8 +1850,8 @@ class ContentDiscoveryEngine:
 
             cache_key = self._batch_eval_cache_key(
                 content,
-                profile,
-                negative_revision=self._negative_exemplar_revision(),
+                profile_digest=profile_digest,
+                negative_digest=negative_digest,
             )
             self._eval_cache[cache_key] = (
                 score,

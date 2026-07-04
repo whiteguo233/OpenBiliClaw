@@ -33,6 +33,7 @@ from openbiliclaw.discovery.engine import (
     trim_candidates_for_llm,
 )
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.youtube.client import YtScraperClient, normalize_yt_video
 
 if TYPE_CHECKING:
@@ -159,12 +160,14 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
             sort_keys=True,
         )
         try:
-            raw = await self.llm_service.complete_structured_task(
+            complete_structured = self.llm_service.complete_structured_task
+            raw = await complete_structured(
                 system_instruction=_QUERIES_SYSTEM_PROMPT,
                 user_input=user_input,
                 temperature=0.8,
                 max_tokens=512,
                 caller="yt_search.generate_queries",
+                **without_core_memory_kwargs(complete_structured),
             )
             parsed = _extract_llm_json_payload(raw)
             if isinstance(parsed, dict):

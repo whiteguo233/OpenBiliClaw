@@ -40,9 +40,11 @@ through the DB-level planner lock, whose write transaction is released
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import socket
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -51,10 +53,17 @@ from openbiliclaw.discovery.pool_snapshot import (
     build_cold_start_pool_snapshot,
     build_pool_distribution_snapshot,
 )
+from openbiliclaw.discovery.strategies._utils import (
+    build_query_generation_profile_summary,
+    cached_embedding_lookup,
+)
+from openbiliclaw.llm.prompt_cache import PromptLayerRenderCache, profile_prompt_layers
 from openbiliclaw.llm.prompts import (
     build_merged_keywords_prompt,
     parse_merged_keywords_with_presence,
+    parse_merged_keywords_with_presence_and_explore_domains,
 )
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config, DiscoveryConfig
@@ -71,6 +80,8 @@ _PLANNER_PLATFORMS: tuple[str, ...] = (
     "douyin",
     "youtube",
     "twitter",
+    "zhihu",
+    "reddit",
 )
 _BILIBILI = "bilibili"
 # The planner reclaims in-flight rows that leaked past the claim lease before
@@ -133,6 +144,12 @@ class KeywordDeficitSource(Protocol):
 
     def keyword_planner_bilibili_catalyst(self) -> bool: ...
 
+    def keyword_planner_explore_due_soon(self) -> bool: ...
+
+    def keyword_planner_explore_covered_topic_groups(self) -> list[str]: ...
+
+    def keyword_planner_mark_explore_planned(self) -> None: ...
+
 
 class _SoulEngineLike(Protocol):
     async def get_profile(self) -> Any: ...
@@ -157,11 +174,13 @@ class KeywordPlanner:
         pool_target_count: int | None = None,
         signal_event_threshold: int = 6,
         owner: str | None = None,
+        embedding_service: Any | None = None,
     ) -> None:
         self._llm = llm_service
         self._db = database
         self._config = config
         self._soul_engine = soul_engine
+        self._embedding_service = embedding_service
         self._deficit_source: KeywordDeficitSource | None = None
         self._pool_target_count = pool_target_count
         self._signal_event_threshold = signal_event_threshold
@@ -178,6 +197,11 @@ class KeywordPlanner:
         # ``{platform: {"generated": n, "yield": y}}`` snapshot emitted by a
         # generation pass. Empty until the first pass that generates anything.
         self.last_cycle_ledger: dict[str, dict[str, int]] = {}
+        self._profile_prompt_cache = PromptLayerRenderCache()
+        self._generation_cache: dict[
+            str,
+            tuple[float, dict[str, list[str]], set[str], list[dict[str, object]]],
+        ] = {}
 
     # ── wiring ──────────────────────────────────────────────────────────
 
@@ -346,8 +370,6 @@ class KeywordPlanner:
         profile: SoulProfile,
         digest: str,
     ) -> dict[str, int]:
-        from openbiliclaw.discovery.strategies._utils import build_profile_summary
-
         hints_by_platform = self._avoid_hints(profile)
         supply_by_platform = self._supply_hints(hints_by_platform)
         blocks: list[dict[str, object]] = []
@@ -391,44 +413,77 @@ class KeywordPlanner:
         # declined, skip it without a fallback). It stays False when there was
         # nothing to call (``blocks`` empty) — no failure, just nothing to do.
         call_failed = False
+        explore_request = self._explore_domains_request() if blocks else None
+        explore_domains: list[dict[str, object]] = []
         if blocks:
             target_platforms = [str(block["platform"]) for block in blocks]
-            # Budget the merged call's max_tokens from the actual ask (sum of the
-            # gen_batch-capped needs) so the trailing platforms in the JSON are
-            # never truncated onto the interest-name fallback. Scales with
-            # platform count and gen_batch; floored at the prior 4096 default.
-            merged_max_tokens = max(
-                _MERGED_MIN_MAX_TOKENS,
-                total_ask * _MERGED_TOKENS_PER_KEYWORD + _MERGED_JSON_OVERHEAD_TOKENS,
-            )
-            try:
-                profile_summary = build_profile_summary(profile)
-                messages = build_merged_keywords_prompt(
-                    profile_summary=profile_summary,
-                    platform_blocks=blocks,
+            cache_key = self._generation_cache_key(digest, blocks, explore_request)
+            cached = self._cached_generation(cache_key)
+            if cached is not None:
+                generated, present, explore_domains = cached
+            else:
+                # Budget the merged call's max_tokens from the actual ask (sum of the
+                # gen_batch-capped needs) so the trailing platforms in the JSON are
+                # never truncated onto the interest-name fallback. Scales with
+                # platform count and gen_batch; floored at the prior 4096 default.
+                merged_max_tokens = max(
+                    _MERGED_MIN_MAX_TOKENS,
+                    total_ask * _MERGED_TOKENS_PER_KEYWORD + _MERGED_JSON_OVERHEAD_TOKENS,
                 )
-                response = await self._llm.complete_structured_task(
-                    system_instruction=messages[0]["content"],
-                    user_input=messages[1]["content"],
-                    caller="discovery.keyword_planner",
-                    reasoning_effort="",
-                    max_tokens=merged_max_tokens,
-                )
-                content = str(getattr(response, "content", "") or "")
-                generated, present = parse_merged_keywords_with_presence(
-                    content,
-                    target_platforms,
-                    per_platform_cap=gen_batch,
-                )
-            except Exception:
-                logger.exception(
-                    "keyword planner merged generation failed; "
-                    "falling back to interest names for %s",
-                    target_platforms,
-                )
-                generated = {}
-                present = set()
-                call_failed = True
+                try:
+                    profile_summary = build_query_generation_profile_summary(
+                        profile,
+                        embedding_lookup=cached_embedding_lookup(self._embedding_service),
+                    )
+                    profile_blocks = self._profile_prompt_cache.render_json_layers(
+                        profile_prompt_layers(profile_summary)
+                    )
+                    messages = build_merged_keywords_prompt(
+                        profile_summary=profile_summary,
+                        profile_blocks=profile_blocks,
+                        platform_blocks=blocks,
+                        explore_domains_block=explore_request,
+                    )
+                    complete_structured = self._llm.complete_structured_task
+                    response = await complete_structured(
+                        system_instruction=messages[0]["content"],
+                        user_input=messages[1]["content"],
+                        caller="discovery.keyword_planner",
+                        reasoning_effort="",
+                        max_tokens=merged_max_tokens,
+                        **without_core_memory_kwargs(complete_structured),
+                    )
+                    content = str(getattr(response, "content", "") or "")
+                    if explore_request is not None:
+                        (
+                            generated,
+                            present,
+                            explore_domains,
+                        ) = parse_merged_keywords_with_presence_and_explore_domains(
+                            content,
+                            target_platforms,
+                            per_platform_cap=gen_batch,
+                            max_explore_domains=int(cast("Any", explore_request["need_domains"])),
+                            queries_per_domain=int(
+                                cast("Any", explore_request["queries_per_domain"])
+                            ),
+                        )
+                    else:
+                        generated, present = parse_merged_keywords_with_presence(
+                            content,
+                            target_platforms,
+                            per_platform_cap=gen_batch,
+                        )
+                    self._store_generation(cache_key, generated, present, explore_domains)
+                except Exception:
+                    logger.exception(
+                        "keyword planner merged generation failed; "
+                        "falling back to interest names for %s",
+                        target_platforms,
+                    )
+                    generated = {}
+                    present = set()
+                    call_failed = True
 
         low = int(self._discovery.kw_cache_low)
         ledger: dict[str, int] = {}
@@ -474,8 +529,82 @@ class KeywordPlanner:
                     inserted += self._recycle(platform, shortfall, digest)
             ledger[platform] = inserted
 
+        if explore_request is not None and explore_domains:
+            explore_queries = self._explore_domain_queries(explore_domains)
+            inserted = self._insert(_BILIBILI, explore_queries, digest, keyword_kind="explore")
+            if inserted > 0:
+                ledger[_BILIBILI] = int(ledger.get(_BILIBILI, 0)) + inserted
+                self._mark_explore_planned()
+
         self._emit_cycle_ledger(ledger, digest)
         return ledger
+
+    def _generation_cache_key(
+        self,
+        digest: str,
+        blocks: list[dict[str, object]],
+        explore_request: dict[str, object] | None = None,
+    ) -> str:
+        cache_blocks: list[dict[str, object]] = []
+        for block in blocks:
+            cache_blocks.append(
+                {
+                    "platform": str(block.get("platform", "")),
+                    "need": int(cast("Any", block.get("need", 0)) or 0),
+                    "avoid_topics": _as_str_list(block.get("avoid_topics")),
+                    "avoid_styles": _as_str_list(block.get("avoid_styles")),
+                    "avoid_franchises": _as_str_list(block.get("avoid_franchises")),
+                    "prefer_axes": _as_str_list(block.get("prefer_axes")),
+                    "cold_start": bool(block.get("cold_start")),
+                    "supply_hint": _as_str_list(block.get("supply_hint")),
+                }
+            )
+        blob = json.dumps(
+            {
+                "digest": digest,
+                "gen_batch": int(self._discovery.gen_batch),
+                "blocks": cache_blocks,
+                "explore_domains": explore_request or None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return blob
+
+    def _generation_cache_ttl_seconds(self) -> float:
+        return max(1.0, float(self._discovery.plan_ttl_hours) * 60.0 * 60.0)
+
+    def _cached_generation(
+        self,
+        cache_key: str,
+    ) -> tuple[dict[str, list[str]], set[str], list[dict[str, object]]] | None:
+        cached = self._generation_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, generated, present, explore_domains = cached
+        if time.monotonic() >= expires_at:
+            self._generation_cache.pop(cache_key, None)
+            return None
+        return (
+            {platform: list(words) for platform, words in generated.items()},
+            set(present),
+            [dict(domain) for domain in explore_domains],
+        )
+
+    def _store_generation(
+        self,
+        cache_key: str,
+        generated: dict[str, list[str]],
+        present: set[str],
+        explore_domains: list[dict[str, object]] | None = None,
+    ) -> None:
+        self._generation_cache[cache_key] = (
+            time.monotonic() + self._generation_cache_ttl_seconds(),
+            {platform: list(words) for platform, words in generated.items()},
+            set(present),
+            [dict(domain) for domain in (explore_domains or [])],
+        )
 
     # ── per-cycle observability ledger (P1.9) ───────────────────────────
 
@@ -561,6 +690,68 @@ class KeywordPlanner:
             logger.exception("keyword planner bilibili catalyst lookup failed")
             return False
 
+    def _explore_domains_request(self) -> dict[str, object] | None:
+        """Optional explore-domain request piggybacked on a merged call.
+
+        Explore domain generation is tied to the refresh plan clock: only ask
+        when the controller says explore is due / nearly due AND Bilibili has
+        real replenishment room. The planner never fires a separate LLM call
+        just for explore; this method is used only when a normal merged keyword
+        call is already being built.
+        """
+        if self._real_deficit(_BILIBILI) <= 0:
+            return None
+        source = self._deficit_source
+        due = getattr(source, "keyword_planner_explore_due_soon", None)
+        if not callable(due):
+            return None
+        try:
+            if not bool(due()):
+                return None
+        except Exception:
+            logger.exception("keyword planner explore due lookup failed")
+            return None
+
+        covered: list[str] = []
+        covered_getter = getattr(source, "keyword_planner_explore_covered_topic_groups", None)
+        if callable(covered_getter):
+            try:
+                covered = [str(item).strip() for item in covered_getter() if str(item).strip()]
+            except Exception:
+                logger.debug("keyword planner explore covered-topic lookup failed", exc_info=True)
+                covered = []
+        return {
+            "need_domains": 5,
+            "queries_per_domain": 3,
+            "covered_topic_groups": covered[:12],
+        }
+
+    @staticmethod
+    def _explore_domain_queries(explore_domains: list[dict[str, object]]) -> list[str]:
+        queries: list[str] = []
+        seen: set[str] = set()
+        for domain in explore_domains:
+            raw_queries = domain.get("queries", [])
+            if not isinstance(raw_queries, (list, tuple)):
+                continue
+            for raw in raw_queries:
+                query = str(raw).strip()
+                if not query or query in seen:
+                    continue
+                seen.add(query)
+                queries.append(query)
+        return queries
+
+    def _mark_explore_planned(self) -> None:
+        source = self._deficit_source
+        marker = getattr(source, "keyword_planner_mark_explore_planned", None)
+        if not callable(marker):
+            return
+        try:
+            marker()
+        except Exception:
+            logger.debug("keyword planner explore planned marker failed", exc_info=True)
+
     # ── store + snapshot helpers ────────────────────────────────────────
 
     def _count_pending(self, platform: str, digest: str) -> int:
@@ -583,10 +774,28 @@ class KeywordPlanner:
             logger.exception("history_keywords failed for %s", platform)
             return []
 
-    def _insert(self, platform: str, words: list[str], digest: str) -> int:
+    def _insert(
+        self,
+        platform: str,
+        words: list[str],
+        digest: str,
+        *,
+        keyword_kind: str = "regular",
+    ) -> int:
         if not words:
             return 0
         try:
+            return int(
+                self._db.insert_pending_keywords(
+                    platform,
+                    words,
+                    digest,
+                    keyword_kind=keyword_kind,
+                )
+            )
+        except TypeError:
+            if keyword_kind != "regular":
+                return 0
             return int(self._db.insert_pending_keywords(platform, words, digest))
         except Exception:
             logger.exception("insert_pending_keywords failed for %s", platform)

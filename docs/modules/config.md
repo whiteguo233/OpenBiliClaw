@@ -9,6 +9,14 @@ cp config.example.toml config.toml
 # 编辑 config.toml，填入 LLM API Key；或对 OpenAI 实验性启用 Codex OAuth
 ```
 
+## 配置文件位置与恢复
+
+源码 / AI 一键安装 / 桌面安装包默认都使用同一个运行目录：macOS / Linux 为 `~/OpenBiliClaw`，Windows 为 `%USERPROFILE%\OpenBiliClaw`。`config.toml` 保存主配置，`config.local.toml` 是可选本机覆盖文件，加载时后者覆盖前者。
+
+桌面安装包启动时会先检查 `config.toml` 与 `config.local.toml` 是否可解析、是否能构建运行时 `Config` 对象。若发现 TOML 语法错误、文件编码错误，或结构形状导致配置对象无法构建，入口会把坏文件改名为 `config.toml.invalid` / `config.local.toml.invalid`（已有同名备份时追加 `.1`、`.2`），再从随包 `config.example.toml` 重新生成默认 `config.toml` 并打开 `/setup/` 重新初始化。这个恢复流程只处理配置文件，不会移动或删除 `data/`、数据库、Cookie 缓存或日志。
+
+CLI / 源码运行仍按普通错误处理：配置文件损坏时直接暴露异常，方便开发和部署排查。
+
 ## 配置段落
 
 ### `[general]`
@@ -198,7 +206,7 @@ Content-Type: application/json
 
 | kind | 行为 | 成功条件 |
 |------|------|----------|
-| `llm` | 构建临时 `LLMRegistry`，对当前 `default_provider` 发送一条 `max_tokens=1024` 的最小 chat completion 请求 | provider 已注册、chat-capable，并返回非异常响应 |
+| `llm` | 构建临时 `LLMRegistry`，对当前 `default_provider` 发送一条 `max_tokens=4096` 的最小 chat completion 请求 | provider 已注册、chat-capable，并返回非空最终 `content`；只返回 reasoning / thinking 时会显示明确失败诊断 |
 | `embedding` | 构建临时 `EmbeddingService`，调用 `EmbeddingService.probe()` 绕过缓存真实取一次向量 | provider 已配置，并返回非空向量 |
 
 响应统一为：
@@ -267,7 +275,7 @@ CPU 即可跑（~100-200ms/次），跨 Mac / Win / Linux 一致。
 
 运行时路由（v0.3.75+）：
 
-- `LLMService` 不再用 caller 第一段朴素判断模块，而是内置 caller bucket。例：`soul.*` → soul，`discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` → discovery，`recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` → evaluation，其他 `recommendation.*` → recommendation。
+- `LLMService` 不再用 caller 第一段朴素判断模块，而是内置 caller bucket。例：`soul.*` → soul，`discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` → discovery，`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` → evaluation，其他 `recommendation.*` → recommendation。
 - `provider` 非空时走 `LLMRegistry.complete_provider(provider, ...)` 精确调用该 provider，不走 fallback 链；该 provider 被 rate-limit 或返回错误时会直接报错，避免用户指定贵模型给画像却被静默改用默认便宜模型。
 - `model` 非空时作为单次调用的 `model=` 参数传给 provider，不会修改 provider 实例的默认模型；`provider` 留空但 `model` 非空时，使用当前 default provider + 该 per-call model。
 - `provider` 拼错或目标 provider 不是 chat-capable（例如 embedding-only Ollama）时，不会让保存配置失败；运行时会按模块 + provider 只 INFO 一次，然后降级到默认 provider 链。
@@ -423,6 +431,22 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `request_interval_seconds` | int | `3` | 后端等待任务时的轮询间隔 / 插件搜索节奏提示；真实平台请求仍发生在用户已登录浏览器内 |
 | `min_interval_minutes` | int | `60` | `ZhihuDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
 
+### `[sources.reddit]`
+
+Reddit 来源配置。Reddit 日常 discovery 默认走随 OpenBiliClaw 安装的 `rdt-cli` 登录态命令后端；已连接浏览器插件会把 `reddit_session` 自动同步到 `~/.config/rdt-cli/credential.json`，插件不可用时才需要手动运行 `rdt login`。后端会拉取 `search` / `hot` / `subreddit` / `related` 候选后转换为 `source_platform="reddit"` 的 `DiscoveredContent` 并只写入统一待评估候选池；LLM 评估和入正式推荐池由后台 `DiscoveryCandidatePipeline` 统一处理。初始化阶段仍可入队 `reddit_tasks(type="bootstrap_events")`，插件在已登录 `reddit.com` 会话里读取 saved / upvoted / subscribed subreddit 并转换为 `favorite` / `like` / `follow` 画像信号。`extension` 可显式作为浏览器登录态 discovery 后端；默认 `rdt` / `opencli` 命令后端不可用或未登录时也会自动 fallback 到插件任务。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否让 Reddit 参与初始化 opt-in、候选池配比和后台 discovery。默认关闭，必须显式 opt-in；关闭后 `RedditDiscoveryProducer` 不入队任务，`pool_source_shares.reddit` 配额从有效配比中剔除 |
+| `backend` | string | `"rdt"` | Reddit 取数后端。`rdt` 使用默认安装的 rdt-cli 登录态命令后端，并优先使用插件同步的 `reddit_session` credential；`rdt login` 仅作为手动 fallback；`extension` 使用 OpenBiliClaw 浏览器插件和当前浏览器登录态，且仍负责 bootstrap 初始化信号；`opencli` / `auto` 为兼容命令路径。命令后端状态不是 `ready` 时，CLI / producer 会自动 fallback 到插件任务 |
+| `source_modes` | list[str] | `["search", "hot", "subreddit", "related"]` | 后台和 `openbiliclaw discover --source reddit` 允许调度的 Reddit discovery 分支。`search` 使用统一关键词 planner，关键词池为空时回退画像兴趣；`hot` 默认拉 `r/all`；`subreddit` 优先用最近 Reddit 候选里的 subreddit 作种子；`related` 优先用最近 Reddit 内容 URL 作相关扩展种子 |
+| `daily_search_budget` | int | `300` | Reddit 搜索 discovery 每日条目预算 |
+| `daily_hot_budget` | int | `300` | Reddit 热门 discovery 每日条目预算 |
+| `daily_subreddit_budget` | int | `300` | Reddit subreddit discovery 每日条目预算 |
+| `daily_related_budget` | int | `300` | Reddit related discovery 每日条目预算 |
+| `request_interval_seconds` | int | `3` | 后端等待任务时的轮询间隔 / 插件任务节奏提示；真实平台请求发生在用户已登录浏览器内 |
+| `min_interval_minutes` | int | `60` | `RedditDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
+
 ### `[scheduler]`
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -431,12 +455,12 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `pause_on_extension_disconnect` | bool | `false` | 开启后，daemon-owned 后台 LLM / embedding 工作只在浏览器插件有 `/api/runtime-stream` 连接、或刚断开仍处于宽限窗口内时运行；离线期间不会自动补新内容 |
 | `extension_disconnect_grace_seconds` | int | `90` | 插件最后一个 `runtime-stream` 连接断开后的宽限秒数；小于等于 0 或无法解析时回退到 `90` |
 | `discovery_cron` | string | `"0 */8 * * *"` | 兼容旧配置的保留字段；当前 runtime 不消费这个 cron，发现补池由轮询、候选池缺口、行为阈值和下方策略间隔驱动。插件与桌面 Web 设置页均不再暴露该字段，只能通过手改 `config.toml` 保留 |
-| `pool_target_count` | int | `300` | 前端真实可换候选目标；允许范围 `1..600`。`count_pool_candidates()`（含预生成 / 分类 / 可打开 / 最近看过过滤 / topic window）低于目标时会持续补货；达到目标时 refresh（含 `force_refresh`）返回 `pool_at_cap` 不再 discover。raw 素材库存由独立 raw ceiling `max(pool_target_count * 2, pool_target_count + 120)` 控制，不再被压成与可换目标相同 |
+| `pool_target_count` | int | `300` | 前端真实可换候选目标；允许范围 `1..600`。`count_pool_candidates()`（含预生成 / 分类 / 可打开 / 最近看过过滤 / topic window）达到目标时 refresh（含 `force_refresh`）返回 `pool_at_cap` 不再 discover；后台定时 refresh 采用约 90% 的低水位，略低于目标时不立即跑 discovery，等库存真正低于水位再补货。raw 素材库存由独立 raw ceiling `max(pool_target_count * 2, pool_target_count + 120)` 控制，不再被压成与可换目标相同 |
 | `account_sync_interval_hours` | int | `6` | 账户侧长期信号同步间隔；运行时会低频拉取 history / favorites / following |
 | `refresh_check_interval_seconds` | int | `60` | `ContinuousRefreshController` 主循环轮询间隔；小于 `15` 或无法解析时回退默认值 |
 | `signal_event_threshold` | int | `6` | 累计多少条新行为事件后触发 `search + related_chain` 补池；小于 `1` 时回退默认值 |
 | `trending_refresh_hours` | int | `3` | `trending` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
-| `explore_refresh_hours` | int | `12` | `explore` 策略的最小刷新间隔；小于 `1` 时回退默认值 |
+| `explore_refresh_hours` | int | `12` | `explore` 策略的最小刷新间隔；小于 `1` 时回退默认值。统一关键词 planner 复用同一时钟：当该间隔已到或距到期不足一个 `refresh_check_interval_seconds`，且 B 站仍有补货空间时，会把探索 query 生成合并进当轮关键词调用 |
 | `discovery_limit` | int | `30` | 单轮 discovery wave 的候选上限；允许范围 `1..60` |
 | `delight_queue_limit` | int | `20` | 惊喜推荐队列默认加载数量；允许范围 `1..100`。桌面 Web、移动 Web 和浏览器插件默认调用 `/api/delight/pending-batch` 时共享该值，显式 query `limit` 可临时覆盖 |
 | `proactive_push_interval_seconds` | int | `120` | 主动推荐 / probe 推送循环间隔；小于 `30` 时回退默认值 |
@@ -465,11 +489,12 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 
 > 运行时护栏：
 > 即使 `pool_target_count` 设得较高，单次 refresh 里的 discover wave 也由 `discovery_limit` 控制（默认 `30`，最大 `60`），避免一次性把全部缺口都打满。
+> 后台 refresh 还会使用约 90% 的可换池低水位；池子只是轻微低于 `pool_target_count` 时不跑 discovery。B 站完整四策略补货在小缺口阶段优先只给 `search + related_chain` 预算，`trending/explore` 延后到更深缺口。
 > `pause_on_extension_disconnect` 只约束后端 daemon 自己发起的后台 LLM / embedding 工作；用户手动点击刷新、CLI 显式命令、配置保存和普通读取接口不因为插件离线而被拦截。`runtime-stream` 连接断开由后端 receive-side detector 记录，浏览器 idle disconnect 后不会让 presence 状态卡住。
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认保存的 share 是 `bilibili:xiaohongshu:douyin:youtube:twitter:zhihu = 5:1:1:1:1:1`。旧配置文件若已有本段但缺少后续新增的平台 key，加载时会自动补齐默认 share（例如 `zhihu = 1`）。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里小红书 / 抖音 / YouTube / X / 知乎都关闭，所以默认有效配比只有 Bilibili。
+候选池按平台族做保底配比，默认保存的 share 是 `bilibili:xiaohongshu:douyin:youtube:twitter:zhihu:reddit = 5:1:1:1:1:1:1`。旧配置文件若已有本段但缺少后续新增的平台 key，加载时会自动补齐默认 share（例如 `reddit = 1`）。关闭的平台会保留配置值但在运行时从有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`；默认安装里小红书 / 抖音 / YouTube / X / 知乎 / Reddit 都关闭，所以默认有效配比只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -479,14 +504,15 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
 | `twitter` | int | `1` | X (Twitter) 平台族占比；`search` / `feed`（For-You）/ `creator`（账号订阅）三个策略统一计入该族 |
 | `zhihu` | int | `1` | 知乎平台族占比；插件 `zhihu-search` / `zhihu-hot` / `zhihu-feed` / `zhihu-creator` / `zhihu-related` 候选统一计入该族 |
+| `reddit` | int | `1` | Reddit 平台族占比；插件 / 命令后端 `reddit-search` / `reddit-hot` / `reddit-subreddit` / `reddit-related` 候选统一计入该族 |
 
-运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于可换目标且 `[sources.bilibili].enabled=true` 时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，后台 `YoutubeDiscoveryProducer` 会在独立 loop 中触发 `yt_search` / `yt_trending` / `yt_channel`，主 refresh replenishment plan 不再 inline 调度 YouTube；X 低于目标且 `[sources.twitter].enabled=true` 时，后台 `XDiscoveryProducer` 会在独立 loop 中按预算和源健康触发 `search` / `feed` / `creator` 三个策略补池；知乎低于目标且 `[sources.zhihu].enabled=true` 时，后台 `ZhihuDiscoveryProducer` 会通过浏览器插件按 `source_modes` 触发 search / hot / feed / creator / related 补池。
+运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，后台 `YoutubeDiscoveryProducer` 会在独立 loop 中触发 `yt_search` / `yt_trending` / `yt_channel`，主 refresh replenishment plan 不再 inline 调度 YouTube；X 低于目标且 `[sources.twitter].enabled=true` 时，后台 `XDiscoveryProducer` 会在独立 loop 中按预算和源健康触发 `search` / `feed` / `creator` 三个策略补池；知乎低于目标且 `[sources.zhihu].enabled=true` 时，后台 `ZhihuDiscoveryProducer` 会通过浏览器插件按 `source_modes` 触发 search / hot / feed / creator / related 补池；Reddit 低于目标且 `[sources.reddit].enabled=true` 时，后台 `RedditDiscoveryProducer` 默认通过 `rdt-cli` 按 `source_modes` 触发 search / hot / subreddit / related 补 raw candidates；命令后端不可用或显式切到插件后端时，入队 OpenBiliClaw 插件任务。
 
-`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube / X / 知乎写回对应 `enabled`。其中知乎在 `fetch-zhihu` 命令下仍只是事件爬取 smoke；在 guided init 勾选知乎或传 `--yes-zhihu` 时，`bootstrap_events` 会作为首版画像信号参与 `analyze_events()` / `build_initial_profile()`。Bilibili 默认启用，也可在插件设置页或 `config.toml` 里手动关闭。交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关六个平台、编辑六个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
+`openbiliclaw init` 会根据用户是否接入小红书 / 抖音 / YouTube / X / 知乎 / Reddit 写回对应 `enabled`。其中知乎在 `fetch-zhihu` 命令下仍只是事件爬取 smoke；在 guided init 勾选知乎或传 `--yes-zhihu` 时，`bootstrap_events` 会作为首版画像信号参与 `analyze_events()` / `build_initial_profile()`。Reddit 同样支持 guided init：勾选 Reddit 或传 `--yes-reddit` 时，插件读取 saved / upvoted / subscribed subreddit，每个 scope 默认最多 300 条，并把事件纳入首版画像；`fetch-reddit --mode bootstrap` 可单独验证这条事件拉取链路。Bilibili 默认启用，也可在插件设置页或 `config.toml` 里手动关闭。交互式初始化在采集完各平台事件后，会按事件量给出一组推荐比例，用户可确认使用或手动输入。插件设置页也可开关七个平台、编辑七个平台占比，并通过 `/api/config/source-share-suggestion` 按已有事件重新生成建议值；GET 使用已保存配置，POST 可接收设置页当前尚未保存的 `enabled_sources` / `configured_shares`。
 
 ### `[discovery]`
 
-**统一关键词规划器 / Discover 背压 / 评估输入**（`DiscoveryConfig`）。把"每平台各自定时调 LLM 生成搜索词"换成**缺口拉动的双缓冲背压模型**：一个关键词存储（cache + 历史 + 产出）夹在「生成」与「抓取」之间，生成只在缓存见底且池子有真实缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重 + 池子分布避让）。同一段也承载 discovery evaluator 的可选封面图输入开关。本段**与 `[llm.discovery]` 是两个独立的表**——后者是 discovery 模块的 per-module LLM provider 覆盖，本段是规划器 / 背压 / 评估输入调参。完整设计见 [`docs/plans/2026-06-14-discover-backpressure-refactor-design.md`](../plans/2026-06-14-discover-backpressure-refactor-design.md) §6 参数表。
+**统一关键词规划器 / Discover 背压 / 评估输入**（`DiscoveryConfig`）。把"每平台各自定时调 LLM 生成搜索词"换成**缺口拉动的双缓冲背压模型**：一个关键词存储（cache + 历史 + 产出）夹在「生成」与「抓取」之间，生成只在缓存见底且池子有真实缺口时触发（一次合并 LLM 调用覆盖所有缺货平台，带历史去重 + 池子分布避让）。B 站 explore 方向也复用这条关键词存储：到达 `[scheduler].explore_refresh_hours` 的 refresh plan 窗口且 B 站有补货空间时，planner 会把 `explore_domains` 合并进同一次关键词生成，而不是新增配置项或单独 caller。同一段也承载 discovery evaluator 的可选封面图输入开关。本段**与 `[llm.discovery]` 是两个独立的表**——后者是 discovery 模块的 per-module LLM provider 覆盖，本段是规划器 / 背压 / 评估输入调参。完整设计见 [`docs/plans/2026-06-14-discover-backpressure-refactor-design.md`](../plans/2026-06-14-discover-backpressure-refactor-design.md) §6 参数表。
 
 > ✅ `unified_keyword_planner_enabled` **v0.3.124 起默认 `true`**：搜索词走统一规划器 + 关键词存储，本段其余字段随之生效。设为 `false` 可逐字回退到旧的逐平台搜索词生成路径（旧路径保留、回退无副作用）。
 
@@ -501,7 +527,7 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 | `history_window_hours` | int | `48` | 去重窗口时长（小时），与 `history_window_size` 配合滚动过期。小于 `1` 时回退默认值 |
 | `claim_lease_minutes` | int | `10` | 领取租约（分钟）：`claimed`/`executing` 超过这个时长未变会被回收成 `pending`，防 loop / 任务崩溃泄漏在途行。小于 `1` 时回退默认值 |
 | `planner_poll_seconds` | int | `120` | 关键词规划器轮询间隔（秒）；空闲轮询近似零成本。小于 `1` 时回退默认值 |
-| `plan_ttl_hours` | int | `12` | 兜底失效（小时）：即便画像 `profile_kw_digest` 未变，`pending` 关键词超过这个时长也会过期。小于 `1` 时回退默认值 |
+| `plan_ttl_hours` | int | `12` | 兜底失效（小时）：即便画像 `profile_kw_digest` 未变，`pending` 关键词超过这个时长也会过期；同画像、同平台需求块、同池子避让提示的 merged keyword 生成结果也按这个 TTL 在进程内复用。小于 `1` 时回退默认值 |
 | `admission_min_score` | float | `0.60` | 普通推荐池统一入池最低分。候选行 / raw payload 显式 `score_threshold` 可作为策略阈值覆盖；来源标签如 `admission_policy="observed"` 不能绕过该分数门。探索类策略可略低于该值，但平台 / 插件来源不能获得特权。必须在 `(0, 1]` 内，非法值回退默认值 |
 | `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；开启后仅当当前 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则自动退回纯文本评估 |
 | `multimodal_batch_size` | int | `8` | 图文评估 batch 上限。合法范围 `1..12`，超范围回退默认值；纯文本评估仍使用调用方原 batch size |
@@ -555,8 +581,8 @@ X 源健康状态（`ok` / `missing_cookie` / `expired_cookie` / `rate_limited` 
 
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：默认 provider、全局并发数、显式备选 provider、各 provider 的 key/model/base_url、DeepSeek `reasoning_effort`、OpenRouter headers、四个 per-module override
-- B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.*`、`sources.twitter.*`
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、六个平台 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`、`sources.xiaohongshu.*`、`sources.douyin.*`、`sources.youtube.*`、`sources.twitter.*`、`sources.zhihu.*`、`sources.reddit.*`
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、七个平台 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 
 保留但不单独暴露的字段主要是目前只有一个有效值的内部兼容项，例如 `[sources.douyin].mode = "direct"`；保存时插件会继续按当前支持值写回，不会删除其他高级字段。

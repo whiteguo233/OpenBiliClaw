@@ -29,6 +29,9 @@ _XHS = "xiaohongshu"
 _DOUYIN = "douyin"
 _YOUTUBE = "youtube"
 _TWITTER = "twitter"
+_ZHIHU = "zhihu"
+_REDDIT = "reddit"
+_SEARCH_PLATFORMS = (_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER, _ZHIHU, _REDDIT)
 
 
 # ── fakes ────────────────────────────────────────────────────────────────
@@ -58,8 +61,17 @@ class _FakeLLM:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> Any:
-        self.calls.append({"system": system_instruction, "user": user_input, "caller": caller})
+        self.calls.append(
+            {
+                "system": system_instruction,
+                "user": user_input,
+                "caller": caller,
+                "reasoning_effort": reasoning_effort,
+                "inject_core_memory": inject_core_memory,
+            }
+        )
         if self.entered is not None:
             self.entered.set()
         if self.gate is not None:
@@ -89,12 +101,24 @@ class _FakeDeficitSource:
     deficits: dict[str, int] = field(default_factory=dict)
     bili_catalyst: bool = False
     source_targets: dict[str, int] = field(default_factory=dict)
+    explore_due_soon: bool = False
+    covered_topic_groups: list[str] = field(default_factory=list)
+    explore_marked: int = 0
 
     def keyword_planner_real_deficit(self, platform: str) -> int:
         return int(self.deficits.get(platform, 0))
 
     def keyword_planner_bilibili_catalyst(self) -> bool:
         return bool(self.bili_catalyst)
+
+    def keyword_planner_explore_due_soon(self) -> bool:
+        return bool(self.explore_due_soon)
+
+    def keyword_planner_explore_covered_topic_groups(self) -> list[str]:
+        return list(self.covered_topic_groups)
+
+    def keyword_planner_mark_explore_planned(self) -> None:
+        self.explore_marked += 1
 
     def _source_target_counts(self) -> dict[str, int]:
         return dict(self.source_targets)
@@ -174,12 +198,21 @@ def db(tmp_path: Path) -> Database:
     return d
 
 
-def _pending(db: Database, platform: str, digest: str) -> list[str]:
+def _pending(
+    db: Database,
+    platform: str,
+    digest: str,
+    *,
+    keyword_kind: str = "regular",
+) -> list[str]:
     rows = db.conn.execute(
         "SELECT keyword FROM discovery_keywords "
-        "WHERE platform = ? AND status = 'pending' AND profile_kw_digest = ? "
+        "WHERE platform = ? "
+        "AND keyword_kind = ? "
+        "AND status = 'pending' "
+        "AND profile_kw_digest = ? "
         "ORDER BY id ASC",
-        (platform, digest),
+        (platform, keyword_kind, digest),
     ).fetchall()
     return [str(r["keyword"]) for r in rows]
 
@@ -210,6 +243,8 @@ async def test_cold_start_multiple_platforms_one_merged_call(db: Database) -> No
     # Exactly one merged call, tagged with the planner caller.
     assert len(llm.calls) == 1
     assert llm.calls[0]["caller"] == "discovery.keyword_planner"
+    assert llm.calls[0]["reasoning_effort"] == ""
+    assert llm.calls[0]["inject_core_memory"] is False
     # The user prompt mentions all three due platforms but NOT the zero-deficit ones.
     user = llm.calls[0]["user"]
     assert _BILI in user and _XHS in user and _DOUYIN in user
@@ -222,6 +257,52 @@ async def test_cold_start_multiple_platforms_one_merged_call(db: Database) -> No
     # Non-due platforms untouched.
     assert _pending(db, _YOUTUBE, digest) == []
     assert _pending(db, _TWITTER, digest) == []
+
+
+async def test_reddit_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
+    profile = _profile(("本地 AI agent", 0.95), ("开源 LLM", 0.8))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={_REDDIT: ["local LLM agents", "open source AI tooling"]})
+    deficit = _FakeDeficitSource(deficits={_REDDIT: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert ledger == {_REDDIT: 2}
+    assert len(llm.calls) == 1
+    user = llm.calls[0]["user"]
+    assert _REDDIT in user
+    assert _pending(db, _REDDIT, digest) == ["local LLM agents", "open source AI tooling"]
+
+
+async def test_zhihu_deficit_is_included_in_unified_keyword_generation(db: Database) -> None:
+    profile = _profile(("认知科学", 0.93), ("职场沟通", 0.81))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={_ZHIHU: ["认知科学 经验", "职场沟通 问答"]})
+    deficit = _FakeDeficitSource(deficits={_ZHIHU: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert ledger == {_ZHIHU: 2}
+    assert len(llm.calls) == 1
+    user = llm.calls[0]["user"]
+    assert _ZHIHU in user
+    assert _pending(db, _ZHIHU, digest) == ["认知科学 经验", "职场沟通 问答"]
+
+
+async def test_keyword_planner_uses_layered_profile_prefix(db: Database) -> None:
+    profile = _profile(("露营", 0.9), ("和田玉", 0.7))
+    llm = _FakeLLM(payload={_BILI: ["露营 装备 盘点"]})
+    deficit = _FakeDeficitSource(deficits={_BILI: 40})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    await planner.run_once()
+
+    user = llm.calls[0]["user"]
+    assert "<profile_summary>" not in user
+    assert user.index("<profile_core>") < user.index("<profile_interests>")
+    assert user.index("<profile_interests>") < user.index("<platforms>")
 
 
 async def test_cold_start_merged_prompt_carries_diversity_hints(db: Database) -> None:
@@ -253,7 +334,7 @@ async def test_full_pool_no_deficit_zero_llm_calls(db: Database) -> None:
     digest = profile_kw_digest(profile)
     llm = _FakeLLM(payload={_BILI: ["should not be used"]})
     deficit = _FakeDeficitSource(
-        deficits=dict.fromkeys((_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER), 0)
+        deficits=dict.fromkeys(_SEARCH_PLATFORMS, 0)
     )  # all zero, bili_catalyst False
     planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
 
@@ -261,8 +342,129 @@ async def test_full_pool_no_deficit_zero_llm_calls(db: Database) -> None:
 
     assert llm.calls == []
     assert ledger == {}
-    for platform in (_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER):
+    for platform in _SEARCH_PLATFORMS:
         assert _pending(db, platform, digest) == []
+
+
+async def test_planner_reuses_generation_when_profile_and_pool_snapshot_match(
+    db: Database,
+) -> None:
+    profile = _profile(("露营", 0.9), ("和田玉", 0.7))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(payload={_BILI: ["露营 装备 盘点", "和田玉 鉴别 入门"]})
+    deficit = _FakeDeficitSource(deficits={_BILI: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    first = await planner.run_once()
+    claimed = db.claim_keywords(_BILI, 10)
+    for row in claimed:
+        db.mark_keyword_failed(int(row["id"]))
+    second = await planner.run_once()
+
+    assert first == {_BILI: 2}
+    assert second == {_BILI: 2}
+    assert len(llm.calls) == 1
+    assert _pending(db, _BILI, digest) == ["露营 装备 盘点", "和田玉 鉴别 入门"]
+
+
+async def test_planner_appends_due_explore_domains_to_bili_query_cache(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9), ("城市观察", 0.65))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _BILI: ["人工智能 盘点"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片", "街头 声音 设计 vlog"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(
+        deficits={_BILI: 40},
+        explore_due_soon=True,
+        covered_topic_groups=["人工智能"],
+    )
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert len(llm.calls) == 1
+    user = llm.calls[0]["user"]
+    assert "<explore_domains>" in user
+    assert "人工智能" in user
+    assert _pending(db, _BILI, digest) == ["人工智能 盘点"]
+    assert _pending(db, _BILI, digest, keyword_kind="explore") == [
+        "城市 声音 采样 纪录片",
+        "街头 声音 设计 vlog",
+    ]
+    assert ledger[_BILI] == 3
+    assert deficit.explore_marked == 1
+
+
+async def test_planner_does_not_request_explore_domains_when_not_due(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _BILI: ["人工智能 盘点"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(deficits={_BILI: 40}, explore_due_soon=False)
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert "<explore_domains>" not in llm.calls[0]["user"]
+    assert _pending(db, _BILI, digest) == ["人工智能 盘点"]
+    assert ledger[_BILI] == 1
+    assert deficit.explore_marked == 0
+
+
+async def test_planner_requires_bili_deficit_before_requesting_explore_domains(
+    db: Database,
+) -> None:
+    profile = _profile(("人工智能", 0.9), ("城市观察", 0.65))
+    digest = profile_kw_digest(profile)
+    llm = _FakeLLM(
+        payload={
+            _XHS: ["人工智能 真实体验"],
+            "explore_domains": [
+                {
+                    "domain": "城市声音采样",
+                    "novelty_level": 0.84,
+                    "queries": ["城市 声音 采样 纪录片"],
+                }
+            ],
+        }
+    )
+    deficit = _FakeDeficitSource(
+        deficits={_BILI: 0, _XHS: 40},
+        explore_due_soon=True,
+    )
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    ledger = await planner.run_once()
+
+    assert len(llm.calls) == 1
+    assert "<explore_domains>" not in llm.calls[0]["user"]
+    assert _pending(db, _BILI, digest) == []
+    assert _pending(db, _XHS, digest) == ["人工智能 真实体验"]
+    assert ledger == {_XHS: 1}
+    assert deficit.explore_marked == 0
 
 
 async def test_digest_change_expires_old_and_regenerates(db: Database) -> None:
@@ -519,7 +721,7 @@ async def test_bilibili_catalyst_due_even_when_cache_not_below_low(db: Database)
     llm = _FakeLLM(payload={_BILI: ["新催化词"]})
     # No plain deficit anywhere, but bili catalyst fires.
     deficit = _FakeDeficitSource(
-        deficits=dict.fromkeys((_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER), 0),
+        deficits=dict.fromkeys(_SEARCH_PLATFORMS, 0),
         bili_catalyst=True,
     )
     planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
@@ -546,7 +748,7 @@ async def test_bilibili_catalyst_skips_generation_when_cache_full(db: Database) 
 
     llm = _FakeLLM(payload={_BILI: ["should not fire"]})
     deficit = _FakeDeficitSource(
-        deficits=dict.fromkeys((_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER), 0),
+        deficits=dict.fromkeys(_SEARCH_PLATFORMS, 0),
         bili_catalyst=True,
     )
     planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
@@ -716,9 +918,7 @@ async def test_cycle_ledger_empty_when_nothing_generated(db: Database) -> None:
     """No due platforms → no generation → the ledger stays empty (no log spam)."""
     profile = _profile(("露营", 0.9))
     llm = _FakeLLM(payload={_BILI: ["unused"]})
-    deficit = _FakeDeficitSource(
-        deficits=dict.fromkeys((_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER), 0)
-    )
+    deficit = _FakeDeficitSource(deficits=dict.fromkeys(_SEARCH_PLATFORMS, 0))
     planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
 
     await planner.run_once()
@@ -931,7 +1131,9 @@ class _CaptureLLM:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        inject_core_memory: bool = True,
     ) -> Any:
+        del inject_core_memory
         self.calls.append({"user": user_input, "caller": caller})
         self.max_tokens_seen.append(max_tokens)
         from openbiliclaw.llm.base import LLMResponse
@@ -958,13 +1160,13 @@ async def test_merged_ask_capped_at_gen_batch(db: Database) -> None:
 
 
 async def test_merged_max_tokens_scales_with_total_ask(db: Database) -> None:
-    # 5 due platforms × gen_batch(30) = 150 keyword ask → max_tokens sized to it
-    # (150 × 48 + 1024 = 8224), well above the 4096 floor, so the trailing
+    # 7 due platforms × gen_batch(30) = 210 keyword ask → max_tokens sized to it
+    # (210 × 48 + 1024 = 11104), well above the 4096 floor, so the trailing
     # platforms in the merged JSON are never truncated onto the fallback.
     profile = _profile(("露营", 0.9), ("和田玉", 0.7))
-    plats = (_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER)
+    plats = _SEARCH_PLATFORMS
     llm = _CaptureLLM(payload={p: ["w1", "w2"] for p in plats})
     deficit = _FakeDeficitSource(deficits=dict.fromkeys(plats, 40))
     cfg = _discovery_cfg(kw_cache_high=30, gen_batch=30)
     await _make_planner(db, llm=llm, profile=profile, deficit=deficit, discovery=cfg).run_once()
-    assert llm.max_tokens_seen[0] == 150 * 48 + 1024
+    assert llm.max_tokens_seen[0] == 210 * 48 + 1024

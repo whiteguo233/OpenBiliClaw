@@ -175,26 +175,16 @@ def test_effective_threshold_raises_for_conservative_users(tmp_path: Path) -> No
     assert scorer.effective_threshold(0.2) == 0.80  # Conservative user
 
 
-def test_default_thresholds_align_with_llm_rubric() -> None:
-    """v0.3.49 regression: delight thresholds must match the LLM scoring rubric.
-
-    `_DELIGHT_BATCH_SCORE_SYSTEM_PROMPT` defines:
-      0.70-0.85: "跨域呼应,用户大概率会感兴趣但自己不会主动找"  ← real delight
-      0.55-0.70: "有惊喜潜力但相对常规"                          ← NOT delight
-
-    Earlier defaults (0.57 / 0.67) sat inside the "相对常规" band, so
-    every batch surfaced ~60% false-positive "delight" content with
-    hooks like "常规补给"/"实用工具"/"信息整合" — items the LLM
-    itself flagged as **not** surprising. Lock the floor at 0.70.
-    """
+def test_default_thresholds_keep_evo_delight_bar_high() -> None:
+    """Delight copy should only be generated for high-confidence Evo fits."""
     from openbiliclaw.recommendation.delight import (
         CONSERVATIVE_DELIGHT_THRESHOLD,
         DEFAULT_DELIGHT_THRESHOLD,
     )
 
     assert DEFAULT_DELIGHT_THRESHOLD >= 0.70, (
-        "Default threshold must clear the LLM's 0.70 '跨域呼应' boundary; "
-        "values below admit content the LLM itself rated 'relatively normal'."
+        "Default threshold must keep proactive delight copy limited to high-confidence "
+        "Evo relevance results."
     )
     assert CONSERVATIVE_DELIGHT_THRESHOLD >= 0.80
     # And the conservative bar must remain strictly above the default.
@@ -202,14 +192,14 @@ def test_default_thresholds_align_with_llm_rubric() -> None:
 
 
 def test_score_065_rejected_at_default_threshold(tmp_path: Path) -> None:
-    """A 0.65 score (the prompt's '相对常规' band) must NOT pass."""
+    """A 0.65 Evo relevance score must NOT receive proactive delight copy."""
     database = _make_database(tmp_path)
     scorer = DelightScorer(embedding_service=None, database=database)
 
     threshold = scorer.effective_threshold(exploration_openness=0.5)
     assert threshold > 0.65, (
-        f"effective_threshold={threshold} would admit score=0.65, but the "
-        "LLM rubric explicitly tags 0.55-0.70 as '相对常规' (not delight)."
+        f"effective_threshold={threshold} would admit score=0.65, but that is below "
+        "the proactive delight copy bar."
     )
 
 
@@ -406,13 +396,12 @@ def test_database_delight_candidates_skip_feedbacked_items(tmp_path: Path) -> No
     assert database.count_delight_candidates(min_delight_score=0.85) == 1
 
 
-def test_delight_claim_threshold_in_sync() -> None:
-    """storage mirrors DEFAULT_DELIGHT_THRESHOLD without importing recommendation.
+def test_delight_claim_threshold_floor_in_sync() -> None:
+    """storage mirrors DEFAULT_DELIGHT_THRESHOLD as the dynamic floor.
 
-    The regular feed's delight-claim guard (storage layer) must use the
-    same threshold as the surprise queue, or content could fall in the
-    gap (excluded from the feed yet never surfaced as a surprise) or
-    duplicate across both surfaces.
+    Storage stays leaf-only and receives profile-aware threshold floors
+    from callers where available, so this constant only locks the
+    default fallback floor.
     """
     from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
     from openbiliclaw.storage.database import _DELIGHT_CLAIM_MIN_SCORE
@@ -493,6 +482,79 @@ def test_database_count_delight_candidates(tmp_path: Path) -> None:
     assert count == 1
 
 
+def test_database_dynamic_delight_threshold_uses_top_ten_percent_boundary(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    for index in range(40):
+        score = 0.50 + (index * 0.01)
+        database.cache_content(f"BV1DYN{index:02d}", title="dynamic", relevance_score=score)
+
+    threshold = database.dynamic_delight_threshold(default_threshold=0.70)
+
+    assert threshold == pytest.approx(0.86)
+
+
+def test_database_dynamic_delight_threshold_falls_back_when_pool_is_small(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    for index in range(19):
+        database.cache_content(f"BV1SMALL{index:02d}", title="small", relevance_score=0.95)
+
+    assert database.dynamic_delight_threshold(default_threshold=0.70) == pytest.approx(0.70)
+
+
+def test_database_dynamic_delight_threshold_never_drops_below_default(tmp_path: Path) -> None:
+    database = _make_database(tmp_path)
+    for index in range(40):
+        database.cache_content(f"BV1LOW{index:02d}", title="low", relevance_score=0.40)
+
+    assert database.dynamic_delight_threshold(default_threshold=0.70) == pytest.approx(0.70)
+
+
+def test_pool_candidates_use_dynamic_delight_claim_threshold(tmp_path: Path) -> None:
+    database = _make_database(tmp_path)
+    for index in range(40):
+        score = 0.50 + (index * 0.01)
+        bvid = f"BV1BASE{index:02d}"
+        database.cache_content(bvid, title=bvid, relevance_score=score)
+        database.conn.execute(
+            """
+            UPDATE content_cache
+            SET pool_expression = 'copy',
+                pool_topic_label = 'topic',
+                style_key = 'deep_focus',
+                topic_group = 'base'
+            WHERE bvid = ?
+            """,
+            (bvid,),
+        )
+
+    database.cache_content("BV1MID", title="mid delight", relevance_score=0.72)
+    database.conn.execute(
+        """
+        UPDATE content_cache
+        SET pool_expression = 'copy',
+            pool_topic_label = 'topic',
+            style_key = 'deep_focus',
+            topic_group = 'mid'
+        WHERE bvid = 'BV1MID'
+        """
+    )
+    database.update_delight_score(
+        "BV1MID",
+        delight_score=0.72,
+        delight_reason="ready",
+        delight_hook="hook",
+    )
+    database.conn.commit()
+
+    rows = database.get_pool_candidates(limit=50, max_per_topic_group=0)
+
+    assert "BV1MID" in [row["bvid"] for row in rows]
+
+
 def test_database_get_pool_candidates_needing_delight_score(tmp_path: Path) -> None:
     database = _make_database(tmp_path)
     # Unscored item (delight_score = 0.0 default)
@@ -551,78 +613,129 @@ def test_database_get_pool_candidates_needing_delight_score_includes_high_score_
 
     bvids = [c["bvid"] for c in candidates]
     assert "BV1BACKFILL" in bvids
-    assert "BV1READY" not in bvids
-    assert "BV1LOW" not in bvids
+    assert "BV1READY" in bvids
+    assert "BV1LOW" in bvids
+
+
+def test_database_get_pool_candidates_needing_delight_score_includes_stale_score_backfill(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    database.cache_content("BV1STALE", title="Stale", relevance_score=0.92)
+    database.update_delight_score(
+        "BV1STALE",
+        delight_score=0.72,
+        delight_reason="旧阈值留下的理由",
+        delight_hook="旧钩子",
+    )
+
+    candidates = database.get_pool_candidates_needing_delight_score(
+        limit=10,
+        min_delight_score_for_reason=0.91,
+    )
+
+    assert "BV1STALE" in [c["bvid"] for c in candidates]
+
+
+def test_database_get_pool_candidates_needing_delight_score_prioritizes_current_relevance(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    database.cache_content("BV1LOWOLD", title="Old high score", relevance_score=0.60)
+    database.update_delight_score(
+        "BV1LOWOLD",
+        delight_score=0.99,
+        delight_reason="旧高分",
+        delight_hook="旧",
+    )
+    database.cache_content("BV1HIGHNEW", title="Current high score", relevance_score=0.92)
+    database.update_delight_score(
+        "BV1HIGHNEW",
+        delight_score=0.72,
+        delight_reason="旧低分",
+        delight_hook="旧",
+    )
+
+    candidates = database.get_pool_candidates_needing_delight_score(
+        limit=1,
+        min_delight_score_for_reason=0.91,
+    )
+
+    assert [c["bvid"] for c in candidates] == ["BV1HIGHNEW"]
+
+
+def test_database_get_pool_candidates_needing_delight_score_includes_shown_stale_rows(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    database.cache_content("BV1SHOWN", title="Shown stale", relevance_score=0.92)
+    database.update_delight_score(
+        "BV1SHOWN",
+        delight_score=0.72,
+        delight_reason="旧低分",
+        delight_hook="旧",
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET pool_status = 'shown' WHERE bvid = ?",
+        ("BV1SHOWN",),
+    )
+    database.conn.commit()
+
+    candidates = database.get_pool_candidates_needing_delight_score(
+        limit=10,
+        min_delight_score_for_reason=0.91,
+    )
+
+    assert "BV1SHOWN" in [c["bvid"] for c in candidates]
+
+
+def test_database_get_pool_candidates_needing_delight_score_includes_shown_history_rows(
+    tmp_path: Path,
+) -> None:
+    database = _make_database(tmp_path)
+    database.cache_content("BV1HISTORY", title="Shown history stale", relevance_score=0.92)
+    database.update_delight_score(
+        "BV1HISTORY",
+        delight_score=0.72,
+        delight_reason="旧低分",
+        delight_hook="旧",
+    )
+    database.conn.execute(
+        "UPDATE content_cache SET pool_status = 'shown' WHERE bvid = ?",
+        ("BV1HISTORY",),
+    )
+    database.insert_recommendation(
+        "BV1HISTORY",
+        confidence=0.92,
+        expression="普通推荐历史",
+        topic="普通推荐",
+        presented=1,
+    )
+    database.conn.commit()
+
+    candidates = database.get_pool_candidates_needing_delight_score(
+        limit=10,
+        min_delight_score_for_reason=0.91,
+    )
+
+    assert "BV1HISTORY" in [c["bvid"] for c in candidates]
 
 
 # ---------------------------------------------------------------------------
-# v0.3.34+ — LLMDelightScorer + JSON shape tolerance + retrieval gate
+# v0.3.64+ — Delight no longer exposes an LLM scoring compatibility API
 # ---------------------------------------------------------------------------
 
 
-def test_extract_delight_entries_handles_plain_list() -> None:
-    """DeepSeek default: clean root-level array."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
+def test_delight_module_no_longer_exposes_llm_score_compat_api() -> None:
+    import openbiliclaw.recommendation.delight as delight
 
-    payload = '[{"bvid":"BV1","score":0.7,"rationale":"r","hook":"h"}]'
-    entries = _extract_delight_entries(payload, expected_count=1)
-    assert len(entries) == 1
-    assert entries[0]["bvid"] == "BV1"
-
-
-def test_extract_delight_entries_handles_dict_wrapped() -> None:
-    """mimo-v2.5-pro default: ``{"results": [...]}``."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
-
-    for wrap in ("results", "items", "delights", "data", "scores", "candidates", "output"):
-        payload = f'{{"{wrap}": [{{"bvid":"BV1","score":0.7}}]}}'
-        entries = _extract_delight_entries(payload, expected_count=1)
-        assert len(entries) == 1, f"failed to unwrap {wrap}"
-
-
-def test_extract_delight_entries_handles_fenced_wrapper() -> None:
-    """Some gateways fence the wrapped batch result instead of the raw list."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
-
-    payload = """```json
-{"output":[{"bvid":"BV1","score":0.72,"rationale":"r","hook":"h"}]}
-```"""
-    entries = _extract_delight_entries(payload, expected_count=1)
-    assert len(entries) == 1
-    assert entries[0]["bvid"] == "BV1"
-
-
-def test_extract_delight_entries_handles_jsonl_extra_data() -> None:
-    """mimo "Extra data" mode: multiple roots newline-separated."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
-
-    payload = '{"bvid":"BV1","score":0.7}\n{"bvid":"BV2","score":0.5}'
-    entries = _extract_delight_entries(payload, expected_count=2)
-    assert len(entries) == 2
-    assert {e["bvid"] for e in entries} == {"BV1", "BV2"}
-
-
-def test_extract_delight_entries_handles_single_dict_with_bvid() -> None:
-    """batch=1 case: LLM returns a single object, not wrapped in a list."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
-
-    payload = '{"bvid":"BV1","score":0.8,"rationale":"x","hook":"y"}'
-    entries = _extract_delight_entries(payload, expected_count=1)
-    assert len(entries) == 1
-    assert entries[0]["bvid"] == "BV1"
-
-
-def test_extract_delight_entries_handles_garbage() -> None:
-    """Invalid JSON yields empty list (caller must treat as scoring failure)."""
-    from openbiliclaw.recommendation.delight import _extract_delight_entries
-
-    assert _extract_delight_entries("not json", expected_count=5) == []
-    assert _extract_delight_entries("", expected_count=5) == []
-    assert _extract_delight_entries("{}", expected_count=5) == []
+    assert not hasattr(delight, "LLMDelightScorer")
+    assert not hasattr(delight, "DelightLLMResult")
+    assert not hasattr(delight, "_extract_delight_entries")
 
 
 def test_get_pool_candidates_filters_by_min_relevance(tmp_path: Path) -> None:
-    """v0.3.35: relevance_score gate cuts weak-fit items before LLM judgement."""
+    """relevance_score gate cuts weak-fit items before delight backfill."""
     database = _make_database(tmp_path)
     database.cache_content("BV1HIGH", title="High fit", relevance_score=0.85)
     database.cache_content("BV1MED", title="Moderate", relevance_score=0.60)
@@ -640,7 +753,7 @@ def test_get_pool_candidates_filters_by_min_relevance(tmp_path: Path) -> None:
 
 def test_get_pool_candidates_default_min_relevance_is_055(tmp_path: Path) -> None:
     """v0.3.35: default gate must remain 0.55 (any change is a behaviour
-    swing affecting how many candidates the LLM sees per cycle)."""
+    swing affecting how many candidates are checked per cycle)."""
     database = _make_database(tmp_path)
     database.cache_content("BV1HALF", title="Right at edge", relevance_score=0.54)
     database.cache_content("BV1OVER", title="Just over", relevance_score=0.56)

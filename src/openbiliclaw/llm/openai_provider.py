@@ -23,6 +23,17 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+_BILLING_BACKOFF_STATUS_CODES = {402}
+_BILLING_BACKOFF_MARKERS = (
+    "insufficient balance",
+    "payment required",
+    "quota exceeded",
+    "billing",
+    "out of credit",
+    "credit exhausted",
+    "余额不足",
+    "账户余额",
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -152,7 +163,7 @@ class OpenAIProvider(LLMProvider):
                 choice = response.choices[0]
                 content = choice.message.content or ""
             if not content.strip():
-                raise LLMResponseError(f"{self._provider_name} returned empty content")
+                raise self._empty_content_error(choice)
 
         usage = None
         if response.usage:
@@ -243,11 +254,20 @@ class OpenAIProvider(LLMProvider):
             return LLMTimeoutError(f"{self._provider_name} request timed out")
 
         status_code = getattr(exc, "status_code", None)
+        status_code_int = self._status_code_int(status_code)
         body_excerpt = self._provider_error_body_excerpt(exc)
-        message = str(exc).lower()
-        if status_code == 429 or "rate limit" in message or "too many requests" in message:
+        message = f"{exc} {body_excerpt}".lower()
+        if status_code_int == 429 or "rate limit" in message or "too many requests" in message:
             return LLMRateLimitError(f"{self._provider_name} rate limit exceeded")
-        if status_code and int(status_code) >= 500:
+        if status_code_int in _BILLING_BACKOFF_STATUS_CODES or any(
+            marker in message for marker in _BILLING_BACKOFF_MARKERS
+        ):
+            detail = body_excerpt or str(exc)
+            return LLMRateLimitError(
+                f"{self._provider_name} provider backoff: HTTP {status_code_int or status_code}: "
+                f"{detail}"
+            )
+        if status_code_int and status_code_int >= 500:
             return LLMProviderError(f"{self._provider_name} server error: {status_code}")
         if status_code and body_excerpt:
             logger.warning(
@@ -261,6 +281,17 @@ class OpenAIProvider(LLMProvider):
             )
 
         return LLMProviderError(f"{self._provider_name} request failed: {exc}")
+
+    @staticmethod
+    def _status_code_int(status_code: object) -> int | None:
+        if isinstance(status_code, int):
+            return status_code
+        if isinstance(status_code, str):
+            try:
+                return int(status_code.strip())
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _provider_error_body_excerpt(exc: Exception) -> str:
@@ -381,6 +412,37 @@ class OpenAIProvider(LLMProvider):
         ``extra_body`` of the OpenAI SDK.
         """
         return {}
+
+    def _empty_content_error(self, choice: Any) -> LLMResponseError:
+        reasoning = self._reasoning_like_content(getattr(choice, "message", None))
+        if reasoning:
+            finish_reason = str(getattr(choice, "finish_reason", "") or "unknown")
+            return LLMResponseError(
+                f"{self._provider_name} returned reasoning but no final content "
+                f"(finish_reason={finish_reason}); "
+                "disable thinking/reasoning or increase max_tokens"
+            )
+        return LLMResponseError(f"{self._provider_name} returned empty content")
+
+    @classmethod
+    def _reasoning_like_content(cls, message: object) -> str:
+        for field_name in ("reasoning_content", "reasoning", "thinking"):
+            value = cls._read_message_field(message, field_name)
+            if str(value or "").strip():
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _read_message_field(message: object, field_name: str) -> object:
+        if isinstance(message, dict):
+            return message.get(field_name)
+        value = getattr(message, field_name, None)
+        if value is not None:
+            return value
+        extra = getattr(message, "model_extra", None)
+        if isinstance(extra, dict):
+            return extra.get(field_name)
+        return None
 
 
 # DeepSeek's ``max_tokens`` caps thinking + response combined. With
@@ -504,7 +566,7 @@ class DeepSeekProvider(OpenAIProvider):
 
     def _extra_body(self) -> dict[str, Any]:
         if not self._reasoning_effort:
-            return {}
+            return {"thinking": {"type": "disabled"}}
         return {
             "thinking": {"type": "enabled"},
             "reasoning_effort": self._reasoning_effort,

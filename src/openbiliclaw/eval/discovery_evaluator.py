@@ -37,7 +37,6 @@ DISCOVERY_FIELD_TO_PARAM: dict[str, str] = {
     "search.filter_precision": "content_evaluation_prompt",
     # TrendingStrategy
     "trending.relevance": "content_evaluation_prompt",
-    "trending.rid_selection": "trending_rids_prompt",
     "trending.explanation_quality": "content_evaluation_prompt",
     "trending.specificity": "content_evaluation_prompt",
     # RelatedChainStrategy

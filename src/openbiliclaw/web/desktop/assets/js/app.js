@@ -22,6 +22,7 @@
       avoidanceProbeRespond: "/avoidance-probes/respond",
       insightFeedback: "/insights/feedback",
       sourceShareSuggestion: "/config/source-share-suggestion",
+      sourceCredentials: "/sources/credentials?reveal_keys=true",
       configProbe: "/config/probe-service",
       updateStatus: "/update-status",
       updateCheck: "/update/check",
@@ -54,6 +55,8 @@
       delightIndex: 0,
       delight: null,
       config: null,
+      sourceStatus: null,
+      sourceCredentials: null,
       runtimeStatus: null,
       runtimeSocket: null,
       videos: [],
@@ -81,12 +84,13 @@
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X (Twitter)" },
-      { key: "zhihu", label: "知乎" }
+      { key: "zhihu", label: "知乎" },
+      { key: "reddit", label: "Reddit" }
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu" };
-    const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question"]);
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎", reddit: "Reddit", rd: "Reddit" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit" };
+    const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -96,7 +100,8 @@
       { key: "douyin", label: "抖音" },
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" },
-      { key: "zhihu", label: "知乎" }
+      { key: "zhihu", label: "知乎" },
+      { key: "reddit", label: "Reddit" }
     ];
     const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_REASON_TEXT = {
@@ -608,6 +613,7 @@
         if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
         if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
         if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
+        if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
         return "web";
       }
       if (String(item?.bvid ?? "").trim()) return "bilibili";
@@ -640,10 +646,15 @@
       return String(item?.bvid || item?.content_id || item?.id || "");
     }
 
+    function shouldRemoveRecommendationAfterFeedback(feedbackType) {
+      const normalized = String(feedbackType || "").trim().toLowerCase();
+      return normalized === "dislike" || normalized === "dismiss";
+    }
+
     function isFeedbackedRecommendation(item) {
-      const feedback = String(item?.feedback_type || item?.feedback || "").trim();
+      const feedback = String(item?.feedback_type || item?.feedback || "").trim().toLowerCase();
       const poolStatus = String(item?.pool_status || item?.status || "").trim().toLowerCase();
-      return Boolean(feedback) || poolStatus === "feedbacked";
+      return shouldRemoveRecommendationAfterFeedback(feedback) || (poolStatus === "feedbacked" && !feedback);
     }
 
     function normalizeRecommendationList(items) {
@@ -1147,6 +1158,7 @@
       showMainPage("settingsPage");
       window.scrollTo({ top: 0, behavior: "smooth" });
       void renderSourcesStatus();
+      void renderSourceCredentials();
       void lanAuthControl?.reload();
       void bootAutostartControl?.reload();
       void refreshUpdateStatus();
@@ -1503,6 +1515,7 @@
       if (item.platform === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${encodeURIComponent(item.bvid)}`;
       if (item.platform === "youtube" && item.content_id) return `https://www.youtube.com/watch?v=${encodeURIComponent(item.content_id)}`;
       if (item.platform === "twitter" && item.content_id) return `https://x.com/i/status/${encodeURIComponent(item.content_id)}`;
+      if (item.platform === "reddit") return "";
       return "";
     }
 
@@ -1689,6 +1702,19 @@
       }, card ? delayMs : 0);
     }
 
+    function finishRecommendationFeedback(card, feedbackType = "") {
+      if (!card) return;
+      delete card.dataset.feedbackPending;
+      card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = false; });
+      const normalized = String(feedbackType || "").trim().toLowerCase();
+      if (normalized !== "like") return;
+      const button = card.querySelector('[data-action="like"]');
+      if (!button) return;
+      button.setAttribute("aria-pressed", "true");
+      button.classList.add("is-active");
+      button.disabled = true;
+    }
+
     const sendIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 12 20 4l-5 16-3.2-6.8L4 12Z"/><path d="m11.8 13.2 3.7-3.7"/></svg>';
 
     function openCardComposer(card) {
@@ -1826,19 +1852,27 @@
           await submitFeedback(item, "comment", note);
           if (input) input.value = "";
           closeCardComposer(card);
-          status.textContent = "已提交聊天线索，几秒后从当前列表移除。";
-          removeRecommendationCard(item, card, "已提交聊天线索");
+          item.feedback_type = "comment";
+          status.textContent = "已提交聊天线索，推荐会继续保留在当前列表。";
+          finishRecommendationFeedback(card, "comment");
+          showToast("已提交聊天线索");
           return;
         }
         const feedbackType = action === "like" ? "like" : action === "dismiss" ? "dismiss" : "dislike";
         await submitFeedback(item, feedbackType);
         const feedbackCopy = {
-          like: ["已记录喜欢，几秒后从当前列表移除。", "已记录喜欢"],
+          like: ["已记录喜欢，推荐会继续保留在当前列表。", "已记录喜欢"],
           dislike: ["已记录不感兴趣，几秒后从当前列表移除。", "已记录不感兴趣"],
           dismiss: ["已忽略这条推荐，几秒后从当前列表移除。", "已忽略推荐"]
         }[feedbackType];
         status.textContent = feedbackCopy[0];
-        removeRecommendationCard(item, card, feedbackCopy[1]);
+        if (shouldRemoveRecommendationAfterFeedback(feedbackType)) {
+          removeRecommendationCard(item, card, feedbackCopy[1]);
+          return;
+        }
+        item.feedback_type = feedbackType;
+        finishRecommendationFeedback(card, feedbackType);
+        showToast(feedbackCopy[1]);
       } catch (error) {
         delete card.dataset.feedbackPending;
         card.querySelectorAll(".card-actions button, .card-actions input").forEach((control) => { control.disabled = false; });
@@ -2386,17 +2420,49 @@
         </div>`;
     }
 
+    function profileEditSpecificName(item) {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") return item.name || item.label || "";
+      return "";
+    }
+
+    function profileEditHasSpecificEdits(field) {
+      const edits = field?.specific_edits;
+      if (!edits || typeof edits !== "object") return false;
+      return Object.values(edits).some((edit) => {
+        if (!edit || typeof edit !== "object") return false;
+        return (edit.add?.length || 0) > 0 || (edit.remove?.length || 0) > 0;
+      });
+    }
+
     function profileEditInterestField(path, label, field) {
       const domains = Array.isArray(field.domains) ? field.domains : [];
-      const edited = (field.removed_domains?.length || 0) > 0 || domains.some((d) => d?.user_added);
-      const chips = domains.length
-        ? domains.map((d) => `<span class="edit-chip">${escapeHtml(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" type="button" data-edit-remove="${escapeHtml(path)}" data-edit-value="${escapeHtml(d.domain)}">✕</button></span>`).join("")
+      const edited = (field.removed_domains?.length || 0) > 0 || domains.some((d) => d?.user_added) || profileEditHasSpecificEdits(field);
+      const tree = domains.length
+        ? domains.map((d) => {
+          if (!d?.domain) return "";
+          const specifics = Array.isArray(d.specifics) ? d.specifics.map(profileEditSpecificName).filter(Boolean) : [];
+          const specificChips = specifics.length
+            ? specifics.map((specific) => `<span class="edit-chip edit-specific-chip">${escapeHtml(specific)}<button class="edit-chip-remove" type="button" data-edit-remove-specific="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}" data-edit-value="${escapeHtml(specific)}">✕</button></span>`).join("")
+            : `<p class="video-meta edit-specific-empty">还没有二级兴趣</p>`;
+          return `
+            <div class="edit-interest-domain">
+              <div class="edit-interest-domain-head">
+                <span class="edit-chip edit-domain-chip">${escapeHtml(d.domain)}${d.user_added ? " ＋" : ""}<button class="edit-chip-remove" type="button" data-edit-remove="${escapeHtml(path)}" data-edit-value="${escapeHtml(d.domain)}">✕</button></span>
+              </div>
+              <div class="edit-specific-list">${specificChips}</div>
+              <div class="edit-add-row edit-specific-add-row">
+                <input class="edit-add-input" data-edit-specific-input="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}" placeholder="添加二级兴趣" />
+                <button class="pill-btn" type="button" data-edit-add-specific="${escapeHtml(path)}" data-edit-parent="${escapeHtml(d.domain)}">添加</button>
+              </div>
+            </div>`;
+        }).join("")
         : `<p class="video-meta">还没有，添加一个吧</p>`;
       const placeholder = path === "dislikes" ? "添加要避开的领域" : "添加感兴趣的领域";
       return `
         <div class="edit-field">
           <div class="edit-field-head"><span class="edit-field-label">${escapeHtml(label)}</span>${edited ? `<span class="edit-badge">已编辑</span>` : ""}</div>
-          <div class="edit-chip-list">${chips}</div>
+          <div class="edit-interest-tree">${tree}</div>
           <div class="edit-add-row">
             <input class="edit-add-input" data-edit-add-input="${escapeHtml(path)}" placeholder="${escapeHtml(placeholder)}" />
             <button class="pill-btn" type="button" data-edit-add="${escapeHtml(path)}">添加</button>
@@ -2436,6 +2502,14 @@
       root.querySelectorAll("[data-edit-remove]").forEach((btn) => {
         btn.addEventListener("click", () => void applyProfileEdit({ target: btn.dataset.editRemove, op: "remove", value: btn.dataset.editValue }));
       });
+      root.querySelectorAll("[data-edit-remove-specific]").forEach((btn) => {
+        btn.addEventListener("click", () => void applyProfileEdit({
+          target: btn.dataset.editRemoveSpecific,
+          op: "remove",
+          value: btn.dataset.editValue,
+          parent: btn.dataset.editParent || ""
+        }));
+      });
       root.querySelectorAll("[data-edit-reset]").forEach((btn) => {
         btn.addEventListener("click", () => void applyProfileEdit({ target: btn.dataset.editReset, op: "reset" }));
       });
@@ -2448,6 +2522,19 @@
           void applyProfileEdit({ target: path, op: "add", value });
         });
       });
+      root.querySelectorAll("[data-edit-add-specific]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const input = btn.closest(".edit-add-row")?.querySelector("[data-edit-specific-input]");
+          const value = input?.value.trim();
+          if (!value) return;
+          void applyProfileEdit({
+            target: btn.dataset.editAddSpecific,
+            op: "add",
+            value,
+            parent: btn.dataset.editParent || ""
+          });
+        });
+      });
       root.querySelectorAll("[data-edit-add-input]").forEach((input) => {
         input.addEventListener("keydown", (event) => {
           if (event.key !== "Enter") return;
@@ -2455,6 +2542,20 @@
           const value = input.value.trim();
           if (!value) return;
           void applyProfileEdit({ target: input.dataset.editAddInput, op: "add", value });
+        });
+      });
+      root.querySelectorAll("[data-edit-specific-input]").forEach((input) => {
+        input.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const value = input.value.trim();
+          if (!value) return;
+          void applyProfileEdit({
+            target: input.dataset.editSpecificInput,
+            op: "add",
+            value,
+            parent: input.dataset.editParent || ""
+          });
         });
       });
       root.querySelectorAll("[data-edit-save]").forEach((btn) => {
@@ -2706,12 +2807,124 @@
       }, 260);
     }
 
+    function appendInlineChatBubble(container, role, text) {
+      if (!container) return null;
+      const bubble = document.createElement("div");
+      bubble.className = `inline-chat-bubble ${role}${role === "reply" ? " inline-chat-reply" : ""}`;
+      bubble.textContent = text;
+      container.appendChild(bubble);
+      return bubble;
+    }
+
+    function messageProbeChatPrompt(msg, isAvoidance) {
+      return msg.domain
+        ? `我想多聊聊「${msg.domain}」这个${isAvoidance ? "避雷" : "兴趣"}方向。`
+        : `我想多聊聊这个${isAvoidance ? "避雷" : "兴趣"}方向。`;
+    }
+
+    async function pollInlineMessageChatTurn(turnId, chatArea, thinking, startedAt = Date.now()) {
+      const showReply = (text, tone = "reply") => {
+        thinking?.remove();
+        appendInlineChatBubble(chatArea.querySelector(".inline-chat-turns"), tone, text);
+        chatArea.querySelectorAll(".inline-chat-input, .inline-chat-send, .inline-chat-cancel").forEach((control) => { control.disabled = false; });
+        chatArea.querySelector(".inline-chat-input")?.focus();
+      };
+      try {
+        const latest = await requestJson(`${ENDPOINTS.chatTurns}/${encodeURIComponent(turnId)}`);
+        if (latest?.status === "completed" || latest?.reply) {
+          showReply(latest.reply || "后端已完成这轮聊天。");
+          return;
+        }
+        if (latest?.status === "failed" || Date.now() - startedAt > 180000) {
+          showReply(latest?.error || "聊天处理超时，稍后可以在历史里继续查看。", "error");
+          return;
+        }
+      } catch {
+        // Keep polling below; transient disconnects should not collapse the inline composer.
+      }
+      window.setTimeout(() => pollInlineMessageChatTurn(turnId, chatArea, thinking, startedAt), 1200);
+    }
+
+    function openInlineMessageProbeChat(msg, el) {
+      if (!el) return;
+      const existing = el.querySelector(".inline-chat-area");
+      if (existing) {
+        existing.querySelector(".inline-chat-input")?.focus();
+        return;
+      }
+      const probeType = messageType(msg);
+      const isAvoidance = probeType === "avoidance.probe";
+      const domain = String(msg.domain || "");
+      const prompt = messageProbeChatPrompt(msg, isAvoidance);
+      const actions = el.querySelector(".message-card-actions");
+      if (actions) actions.hidden = true;
+      const chatArea = document.createElement("div");
+      chatArea.className = "inline-chat-area";
+      chatArea.innerHTML = `
+        <div class="inline-chat-turns" aria-live="polite"></div>
+        <div class="inline-chat-compose">
+          <textarea class="inline-chat-input" rows="2" placeholder="${escapeHtml(isAvoidance ? `聊聊你为什么想避开「${domain || "这个方向"}」…` : `聊聊你对「${domain || "这个方向"}」的想法…`)}"></textarea>
+          <button class="inline-chat-send" type="button">发送</button>
+          <button class="inline-chat-cancel" type="button">返回</button>
+        </div>`;
+      actions?.insertAdjacentElement("afterend", chatArea);
+      const input = chatArea.querySelector(".inline-chat-input");
+      const sendBtn = chatArea.querySelector(".inline-chat-send");
+      const cancelBtn = chatArea.querySelector(".inline-chat-cancel");
+      const closeComposer = () => {
+        chatArea.remove();
+        if (actions) actions.hidden = false;
+      };
+      const submit = async () => {
+        const message = input?.value?.trim() || "";
+        if (!message) {
+          input?.focus();
+          return;
+        }
+        chatArea.querySelectorAll(".inline-chat-input, .inline-chat-send, .inline-chat-cancel").forEach((control) => { control.disabled = true; });
+        appendInlineChatBubble(chatArea.querySelector(".inline-chat-turns"), "user", message);
+        const thinking = appendInlineChatBubble(chatArea.querySelector(".inline-chat-turns"), "thinking", "阿B 正在结合这条探针思考…");
+        const turnId = createClientTurnId(isAvoidance ? "avoidance-probe" : "probe");
+        try {
+          const turn = await requestJsonStrict(ENDPOINTS.chatTurns, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              turn_id: turnId,
+              session: "webui",
+              scope: isAvoidance ? "avoidance_probe" : "probe",
+              subject_id: domain,
+              subject_title: domain || (isAvoidance ? "这个避雷方向" : "这个兴趣方向"),
+              message: `${prompt}\n\n${message}`
+            })
+          });
+          if (input) input.value = "";
+          void pollInlineMessageChatTurn(turn?.turn_id || turnId, chatArea, thinking);
+        } catch (error) {
+          thinking?.remove();
+          appendInlineChatBubble(chatArea.querySelector(".inline-chat-turns"), "error", error?.message || "后台正忙，等一下再聊。");
+          chatArea.querySelectorAll(".inline-chat-input, .inline-chat-send, .inline-chat-cancel").forEach((control) => { control.disabled = false; });
+          input?.focus();
+        }
+      };
+      sendBtn?.addEventListener("click", () => void submit());
+      cancelBtn?.addEventListener("click", closeComposer);
+      input?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          void submit();
+        }
+        if (event.key === "Escape") closeComposer();
+      });
+      window.setTimeout(() => input?.focus(), 40);
+    }
+
     async function respondProbe(msg, response, el) {
       if (!el) return;
       const actions = el.querySelector(".message-card-actions");
       if (response === "chat") {
-        openMessageChat(msg);
-        showToast("已在消息里打开聊天上下文");
+        openInlineMessageProbeChat(msg, el);
+        showToast("已在这条消息里打开聊天输入");
         return;
       }
       const key = messageKey(msg);
@@ -3384,6 +3597,16 @@
       if (el && value !== undefined && value !== null) el.value = String(value);
     }
 
+    function setCookieOverrideInput(id, currentCookie, platformLabel) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = "";
+      const hasCookie = Boolean(String(currentCookie || "").trim());
+      el.placeholder = hasCookie
+        ? `已保存${platformLabel} Cookie；留空保存不会覆盖，需要更换时粘贴新的 Cookie`
+        : `未保存${platformLabel} Cookie；需要手动覆盖时粘贴 Cookie`;
+    }
+
     function getInput(id) {
       return document.getElementById(id)?.value?.trim() || "";
     }
@@ -3426,6 +3649,33 @@
       return selected.length > 0 ? selected : ["search"];
     }
 
+    const REDDIT_SOURCE_MODE_FIELDS = [
+      ["search", "redditModeSearch"],
+      ["hot", "redditModeHot"],
+      ["subreddit", "redditModeSubreddit"],
+      ["related", "redditModeRelated"],
+    ];
+
+    function setRedditSourceModes(rawModes) {
+      const fallbackModes = REDDIT_SOURCE_MODE_FIELDS.map(([mode]) => mode);
+      const selected = new Set(
+        (Array.isArray(rawModes) && rawModes.length > 0 ? rawModes : fallbackModes)
+          .map((mode) => String(mode).trim())
+          .filter(Boolean),
+      );
+      for (const [mode, id] of REDDIT_SOURCE_MODE_FIELDS) {
+        const el = document.getElementById(id);
+        if (el) el.checked = selected.has(mode);
+      }
+    }
+
+    function collectRedditSourceModes() {
+      const selected = REDDIT_SOURCE_MODE_FIELDS
+        .filter(([, id]) => document.getElementById(id)?.checked === true)
+        .map(([mode]) => mode);
+      return selected.length > 0 ? selected : ["search"];
+    }
+
     function joinPath(directory, filename) {
       const dir = String(directory || "").trim();
       const name = String(filename || "").trim();
@@ -3458,36 +3708,122 @@
     }
 
     // Unified per-source login / cookie status (GET /api/sources/status),
-    // rendered as a uniform colored-dot list in the 平台源 settings tab.
-    const SOURCE_STATUS_DOT = {
-      ok: "#2ecc71", ready: "#2ecc71", no_auth: "#9aa0a6",
-      missing: "#e0a800", missing_cookie: "#e0a800", rate_limited: "#e0a800",
-      partial: "#e0a800", stale: "#e0a800",
-      expired_cookie: "#e74c3c", blocked: "#e74c3c"
+    // rendered with separate scheduling and credential/plugin states.
+    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
+    const CURRENT_CREDENTIAL_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu", "reddit"];
+    const SOURCE_ENABLE_SELECT_IDS = {
+      bilibili: "bilibiliEnabled",
+      xiaohongshu: "xhsEnabled",
+      douyin: "douyinEnabled",
+      youtube: "youtubeEnabled",
+      twitter: "twitterEnabled",
+      zhihu: "zhihuEnabled",
+      reddit: "redditEnabled"
     };
-    const SOURCE_STATUS_KEYS = ["bilibili", "xiaohongshu", "douyin", "youtube", "twitter", "zhihu"];
+    const SOURCE_ACCESS_STATE = {
+      ok: { tone: "ready", label: "接入可用" },
+      ready: { tone: "ready", label: "接入可用" },
+      no_auth: { tone: "public", label: "无需登录" },
+      unverified: { tone: "pending", label: "状态待验证" },
+      missing: { tone: "warning", label: "需要登录" },
+      missing_cookie: { tone: "warning", label: "缺少 Cookie" },
+      rate_limited: { tone: "warning", label: "频率受限" },
+      partial: { tone: "warning", label: "部分可用" },
+      stale: { tone: "warning", label: "需要刷新" },
+      expired_cookie: { tone: "danger", label: "Cookie 失效" },
+      blocked: { tone: "danger", label: "接入受阻" }
+    };
 
-    async function renderSourcesStatus() {
+    function setSourceBadge(badge, text, tone) {
+      if (!badge) return;
+      badge.textContent = text;
+      badge.dataset.tone = tone;
+    }
+
+    function getPendingSourceEnabled(key, item) {
+      const select = document.getElementById(SOURCE_ENABLE_SELECT_IDS[key]);
+      const currentEnabled = select ? select.value === "on" : Boolean(item?.enabled);
+      const savedEnabled = typeof item?.enabled === "boolean" ? item.enabled : currentEnabled;
+      return {
+        currentEnabled,
+        savedEnabled,
+        pending: currentEnabled !== savedEnabled
+      };
+    }
+
+    function renderSourcesStatusRows(data) {
       const list = $("#sourceStatusList");
       if (!list) return;
-      let data = null;
-      try { data = await requestJson("/sources/status"); } catch { data = null; }
       SOURCE_STATUS_KEYS.forEach((key) => {
         const row = list.querySelector(`[data-source-status="${key}"]`);
         if (!row) return;
-        const dot = row.querySelector(".src-dot");
+        const sourceBadge = row.querySelector(".source-source-badge");
+        const accessBadge = row.querySelector(".source-access-badge");
         const detail = row.querySelector(".src-detail");
         const item = data?.[key];
         if (!item) {
-          if (detail) detail.textContent = "状态暂不可用（后端未连接）。";
-          if (dot) dot.style.color = "#9aa0a6";
-          row.style.opacity = "1";
+          setSourceBadge(sourceBadge, "来源：状态未知", "muted");
+          setSourceBadge(accessBadge, "接入：后端未连接", "muted");
+          if (detail) detail.textContent = "暂时无法读取来源接入状态，请确认后端服务可用。";
+          row.classList.remove("source-row-unsaved");
+          row.dataset.sourceEnabled = "unknown";
+          row.dataset.accessTone = "muted";
           return;
         }
-        if (detail) detail.textContent = (item.enabled ? "" : "（未启用）") + (item.detail || "");
-        if (dot) dot.style.color = SOURCE_STATUS_DOT[item.state] || "#9aa0a6";
-        row.style.opacity = item.enabled ? "1" : "0.6";
+        const enableState = getPendingSourceEnabled(key, item);
+        const accessState = SOURCE_ACCESS_STATE[item.state] || { tone: "muted", label: "状态未知" };
+        const sourceLabel = enableState.pending
+          ? `来源：${enableState.currentEnabled ? "将启用" : "将停用"}，保存后生效`
+          : `来源：${enableState.savedEnabled ? "启用" : "停用"}`;
+        setSourceBadge(sourceBadge, sourceLabel, enableState.pending ? "pending" : enableState.savedEnabled ? "enabled" : "disabled");
+        setSourceBadge(accessBadge, `接入：${accessState.label}`, accessState.tone);
+        const detailPrefix = enableState.pending ? "开关已改动，保存配置后才会进入/退出调度。 " : "";
+        if (detail) detail.textContent = detailPrefix + (item.detail || "暂无更多状态细节。");
+        row.classList.toggle("source-row-unsaved", enableState.pending);
+        row.dataset.sourceEnabled = enableState.currentEnabled ? "true" : "false";
+        row.dataset.accessTone = accessState.tone;
       });
+    }
+
+    async function renderSourcesStatus() {
+      let data = null;
+      try { data = await requestJson("/sources/status"); } catch { data = null; }
+      state.sourceStatus = data;
+      renderSourcesStatusRows(data);
+    }
+
+    function renderSourceCredentialRows(data) {
+      const list = $("#sourceCredentialList");
+      if (!list) return;
+      CURRENT_CREDENTIAL_KEYS.forEach((key) => {
+        const row = list.querySelector(`[data-source-credential="${key}"]`);
+        if (!row) return;
+        const summary = row.querySelector(".source-credential-summary");
+        const value = row.querySelector(".source-credential-value");
+        const item = data?.[key];
+        if (!item) {
+          row.dataset.available = "false";
+          if (summary) summary.textContent = "状态暂不可用";
+          if (value) value.value = "暂时无法读取当前 Cookie / 登录凭据。";
+          return;
+        }
+        row.dataset.available = item.available ? "true" : "false";
+        if (summary) {
+          summary.textContent = item.available
+            ? `${item.label || "Cookie"} 已保存，展开查看`
+            : item.detail || "当前没有可展示 Cookie";
+        }
+        if (value) {
+          value.value = item.value || item.detail || "当前没有可展示 Cookie / 登录凭据。";
+        }
+      });
+    }
+
+    async function renderSourceCredentials() {
+      let data = null;
+      try { data = await requestJson(ENDPOINTS.sourceCredentials); } catch { data = null; }
+      state.sourceCredentials = data;
+      renderSourceCredentialRows(data);
     }
 
     // Login happens outside this page (user signs into a platform in another
@@ -3654,6 +3990,7 @@
       setInput("shareYoutube", scheduler.pool_source_shares?.youtube);
       setInput("shareTwitter", scheduler.pool_source_shares?.twitter);
       setInput("shareZhihu", scheduler.pool_source_shares?.zhihu);
+      setInput("shareReddit", scheduler.pool_source_shares?.reddit);
       setInput("speculationInterval", scheduler.speculation_interval_minutes);
       setInput("speculationTtl", scheduler.speculation_ttl_days);
       setInput("speculationCooldown", scheduler.speculation_cooldown_days);
@@ -3731,7 +4068,7 @@
       setInput("moduleEvaluationModel", llm.evaluation?.model);
 
       setSelect("biliAuth", config.bilibili?.auth_method || "cookie");
-      setInput("biliCookie", config.bilibili?.cookie);
+      setCookieOverrideInput("biliCookie", config.bilibili?.cookie, " B 站");
       setInput("biliBrowserExecutable", config.bilibili?.browser_executable);
       setSelect("biliBrowserHeaded", config.bilibili?.browser_headed === true ? "on" : "off");
       setSelect("bilibiliEnabled", config.sources?.bilibili?.enabled === false ? "off" : "on");
@@ -3742,7 +4079,7 @@
       setInput("xhsDailyCreatorBudget", config.sources?.xiaohongshu?.daily_creator_budget);
       setInput("xhsTaskInterval", config.sources?.xiaohongshu?.task_interval_seconds);
       setSelect("douyinEnabled", config.sources?.douyin?.enabled === true ? "on" : "off");
-      setInput("douyinCookie", config.sources?.douyin?.cookie);
+      setCookieOverrideInput("douyinCookie", config.sources?.douyin?.cookie, "抖音");
       setInput("douyinCookieEnv", config.sources?.douyin?.cookie_env);
       setInput("douyinDailySearchBudget", config.sources?.douyin?.daily_search_budget);
       setInput("douyinDailyHotBudget", config.sources?.douyin?.daily_hot_budget);
@@ -3755,7 +4092,7 @@
       setInput("youtubeRequestInterval", config.sources?.youtube?.request_interval_seconds);
       setInput("youtubeMinInterval", config.sources?.youtube?.min_interval_minutes);
       setSelect("twitterEnabled", config.sources?.twitter?.enabled === true ? "on" : "off");
-      setInput("twitterCookie", config.sources?.twitter?.cookie);
+      setCookieOverrideInput("twitterCookie", config.sources?.twitter?.cookie, " X");
       setInput("twitterCookieEnv", config.sources?.twitter?.cookie_env);
       setInput("twitterDailySearchBudget", config.sources?.twitter?.daily_search_budget);
       setInput("twitterDailyFeedBudget", config.sources?.twitter?.daily_feed_budget);
@@ -3771,7 +4108,17 @@
       setInput("zhihuDailyRelatedBudget", config.sources?.zhihu?.daily_related_budget);
       setInput("zhihuRequestInterval", config.sources?.zhihu?.request_interval_seconds);
       setInput("zhihuMinInterval", config.sources?.zhihu?.min_interval_minutes);
+      setSelect("redditEnabled", config.sources?.reddit?.enabled === true ? "on" : "off");
+      setSelect("redditBackend", config.sources?.reddit?.backend || "rdt");
+      setRedditSourceModes(config.sources?.reddit?.source_modes);
+      setInput("redditDailySearchBudget", config.sources?.reddit?.daily_search_budget);
+      setInput("redditDailyHotBudget", config.sources?.reddit?.daily_hot_budget);
+      setInput("redditDailySubredditBudget", config.sources?.reddit?.daily_subreddit_budget);
+      setInput("redditDailyRelatedBudget", config.sources?.reddit?.daily_related_budget);
+      setInput("redditRequestInterval", config.sources?.reddit?.request_interval_seconds);
+      setInput("redditMinInterval", config.sources?.reddit?.min_interval_minutes);
       void renderSourcesStatus();
+      void renderSourceCredentials();
 
       setSelect("logLevel", config.logging?.level || "INFO");
       setSelect("logFileLevel", config.logging?.file_level || "DEBUG");
@@ -4195,6 +4542,17 @@
             daily_related_budget: getIntInput("zhihuDailyRelatedBudget", 0),
             request_interval_seconds: getIntInput("zhihuRequestInterval", 3),
             min_interval_minutes: getIntInput("zhihuMinInterval", 60)
+          },
+          reddit: {
+            enabled: $("#redditEnabled").value === "on",
+            backend: getInput("redditBackend") || "rdt",
+            source_modes: collectRedditSourceModes(),
+            daily_search_budget: getIntInput("redditDailySearchBudget", 300),
+            daily_hot_budget: getIntInput("redditDailyHotBudget", 300),
+            daily_subreddit_budget: getIntInput("redditDailySubredditBudget", 300),
+            daily_related_budget: getIntInput("redditDailyRelatedBudget", 300),
+            request_interval_seconds: getIntInput("redditRequestInterval", 3),
+            min_interval_minutes: getIntInput("redditMinInterval", 60)
           }
         },
         scheduler: {
@@ -4218,7 +4576,8 @@
             douyin: getIntInput("shareDouyin", 1),
             youtube: getIntInput("shareYoutube", 1),
             twitter: getIntInput("shareTwitter", 1),
-            zhihu: getIntInput("shareZhihu", 1)
+            zhihu: getIntInput("shareZhihu", 1),
+            reddit: getIntInput("shareReddit", 1)
           },
           speculation_interval_minutes: getIntInput("speculationInterval", 10),
           speculation_ttl_days: getIntInput("speculationTtl", 3),
@@ -4345,16 +4704,17 @@
         return;
       }
       const mode = String(backend.install_mode || "");
-      // Older backends predate install_mode — keep the toggle usable there.
-      const unsupportedInstall = Boolean(mode) && mode !== "git";
-      const isFrozen = mode === "frozen";
+      const isGitInstall = mode === "git";
+      const isFrozenInstall = mode === "frozen";
+      const isDesktopInstallerUpdate = String(backend.latest_tag || "").startsWith("desktop-v");
+      const unsupportedInstall = !isGitInstall;
       const toggle = $("#autoUpdate");
       const interval = $("#autoUpdateInterval");
       // The toggle governs auto-apply, which non-git installs can never do —
       // frozen check-reminders run unconditionally on the backend side.
       if (toggle) toggle.disabled = unsupportedInstall;
       if (interval) interval.disabled = unsupportedInstall;
-      if (isFrozen) {
+      if (isFrozenInstall || isDesktopInstallerUpdate) {
         const { text, tone } = describeFrozenUpdateStatus(backend);
         line.dataset.tone = tone;
         line.textContent = text;
@@ -4370,17 +4730,17 @@
       // 立即检查 works on git checkouts AND frozen bundles (check-only there);
       // 立即应用 only when a newer tag is ready to fast-forward on git; the
       // download link replaces 立即应用 on frozen when a new installer exists.
-      const lockActions = unsupportedInstall && !isFrozen;
+      const lockActions = unsupportedInstall && !isFrozenInstall && !isDesktopInstallerUpdate;
       if (actions) actions.hidden = lockActions;
       if (checkBtn) checkBtn.disabled = lockActions || backend.state === "checking" || backend.state === "applying";
       if (applyBtn) {
-        const canApply = !unsupportedInstall && backend.state === "update_available" && Boolean(backend.latest_tag);
+        const canApply = isGitInstall && backend.state === "update_available" && Boolean(backend.latest_tag) && !isDesktopInstallerUpdate;
         applyBtn.hidden = !canApply;
         applyBtn.disabled = !canApply || backend.state === "applying";
         if (canApply) applyBtn.dataset.tag = String(backend.latest_tag);
       }
       if (downloadLink) {
-        const showDownload = isFrozen && backend.state === "update_available";
+        const showDownload = (isFrozenInstall || isDesktopInstallerUpdate) && backend.state === "update_available";
         downloadLink.hidden = !showDownload;
         if (showDownload) {
           downloadLink.href = backend.latest_tag
@@ -4669,8 +5029,11 @@
     safeBind("#probeEmbedding", "click", () => { void runEmbeddingConfigProbe(); });
     lanAuthControl = initLanAuthControl();
     bootAutostartControl = initBootAutostartControl();
+    Object.values(SOURCE_ENABLE_SELECT_IDS).forEach((id) => {
+      safeBind(`#${id}`, "change", () => renderSourcesStatusRows(state.sourceStatus));
+    });
     safeBind("#suggestSharesBtn", "click", async () => {
-      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
+      const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on", twitter: $("#twitterEnabled").value === "on", zhihu: $("#zhihuEnabled").value === "on", reddit: $("#redditEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
       if (shares) {
         setInput("shareBilibili", shares.bilibili);
@@ -4679,6 +5042,7 @@
         setInput("shareYoutube", shares.youtube);
         if (shares.twitter !== undefined) setInput("shareTwitter", shares.twitter);
         if (shares.zhihu !== undefined) setInput("shareZhihu", shares.zhihu);
+        if (shares.reddit !== undefined) setInput("shareReddit", shares.reddit);
         showToast("已应用来源占比建议");
       } else {
         showToast("没有拿到占比建议");

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -1206,6 +1207,39 @@ async def test_no_merge_memory_skips_judged_clusters(tmp_path: Path) -> None:
     second = await consolidator.run(dry_run=False)
     assert second.clusters_sent == 0
     assert llm.calls == 1  # no second LLM call
+
+
+async def test_consolidation_logs_one_summary_for_multi_batch_run(
+    tmp_path: Path,
+    caplog: Any,
+) -> None:
+    interests, groups = _paired_interests(33)
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+    llm = _PayloadAwareMergingLLM()
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding(groups),
+        data_dir=tmp_path,
+    )
+
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.soul.consolidator"):
+        report = await consolidator.run(dry_run=False)
+
+    assert report.clusters_sent == 33
+    assert llm.calls == 2
+    summaries = [
+        record
+        for record in caplog.records
+        if record.name == "openbiliclaw.soul.consolidator"
+        and record.getMessage().startswith("profile consolidation run completed")
+    ]
+    assert len(summaries) == 1
+    summary = summaries[0].getMessage()
+    assert "run_id=" in summary
+    assert "clusters=33" in summary
+    assert "llm_batches=2" in summary
+    assert "changed=True" in summary
 
 
 async def test_run_if_due_throttles_and_skips_clean_input(tmp_path: Path) -> None:

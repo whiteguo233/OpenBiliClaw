@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
@@ -18,15 +20,23 @@ from openbiliclaw.discovery.engine import (
     discovery_raw_candidate_mode_enabled,
     trim_candidates_for_llm,
 )
+from openbiliclaw.discovery.keyword_digest import profile_kw_digest
 from openbiliclaw.discovery.strategies._utils import (
     SupportsSearchClient,
-    build_profile_summary,
+    build_query_generation_profile_summary,
+    cached_embedding_lookup,
     interest_aliases,
     interest_anchors,
     search_cooldown_remaining,
 )
 from openbiliclaw.discovery.strategies.search import SearchStrategy
 from openbiliclaw.llm.prompts import build_explore_domains_prompt
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
+from openbiliclaw.runtime.keyword_fetch import (
+    KEYWORD_KIND_EXPLORE,
+    PLATFORM_BILIBILI,
+    ClaimedKeyword,
+)
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
@@ -69,7 +79,14 @@ class ExploreStrategy(DiscoveryStrategy):
     llm_evaluation: bool = True
     queries_per_domain: int = 3
     max_domains: int = 5
+    keyword_fetch: Any | None = None
     last_intermediates: dict[str, object] = field(default_factory=dict)
+    domain_cache_ttl_seconds: float = 6 * 60 * 60
+    _domain_cache: dict[str, tuple[float, list[dict[str, object]]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     @property
     def name(self) -> str:
@@ -112,10 +129,47 @@ class ExploreStrategy(DiscoveryStrategy):
             )
             return []
 
-        domains = await self._generate_domains(profile)
-        self.last_intermediates = {"domains": list(domains)}
-        if not domains:
-            return []
+        claimed_queries = self._claim_planner_explore_queries()
+        if claimed_queries is not None:
+            self.last_intermediates = {
+                "domains": [],
+                "queries": [item.keyword for item in claimed_queries],
+                "query_source": "keyword_planner",
+            }
+            if not claimed_queries:
+                return []
+            request_plan: list[tuple[str, float, bool, str, ClaimedKeyword | None]] = [
+                (item.keyword, 0.85, False, "", item) for item in claimed_queries
+            ]
+        else:
+            domains = await self._generate_domains(profile)
+            self.last_intermediates = {"domains": list(domains)}
+            if not domains:
+                return []
+
+            request_plan = []
+            for domain in domains:
+                novelty_level = self._clamp_novelty(domain.get("novelty_level", 0.5))
+                interest_anchored = bool(domain.get("interest_anchored", False))
+                domain_name = str(domain.get("domain", "")).strip()
+                for query in self._clean_queries(domain.get("queries", [])):
+                    request_plan.append(
+                        (query, novelty_level, interest_anchored, domain_name, None)
+                    )
+
+        # Respect per-strategy search budget to avoid exhausting IP-level quota.
+        if self.concurrency is not None:
+            budget = self.concurrency.search_budget_per_strategy
+            if len(request_plan) > budget:
+                logger.debug(
+                    "Explore: trimming request_plan from %d to %d (search budget)",
+                    len(request_plan),
+                    budget,
+                )
+                for _query, _novelty, _anchored, _domain, claimed in request_plan[budget:]:
+                    if claimed is not None:
+                        self._rollback_claimed_query(claimed)
+                request_plan = request_plan[:budget]
 
         evaluator = ContentDiscoveryEngine(
             llm_service=self.llm_service,
@@ -128,25 +182,6 @@ class ExploreStrategy(DiscoveryStrategy):
             concurrency=self.concurrency,
         )
         anchor_list = interest_anchors(profile)
-        request_plan: list[tuple[str, float, bool, str]] = []
-        for domain in domains:
-            novelty_level = self._clamp_novelty(domain.get("novelty_level", 0.5))
-            interest_anchored = bool(domain.get("interest_anchored", False))
-            domain_name = str(domain.get("domain", "")).strip()
-            for query in self._clean_queries(domain.get("queries", [])):
-                request_plan.append((query, novelty_level, interest_anchored, domain_name))
-
-        # Respect per-strategy search budget to avoid exhausting IP-level quota.
-        if self.concurrency is not None:
-            budget = self.concurrency.search_budget_per_strategy
-            if len(request_plan) > budget:
-                logger.debug(
-                    "Explore: trimming request_plan from %d to %d (search budget)",
-                    len(request_plan),
-                    budget,
-                )
-                request_plan = request_plan[:budget]
-
         # Use a dedicated cookie-free client and execute sequentially with
         # delay to avoid triggering IP-level v_voucher rate-limiting.
         search_client = self._create_search_client()
@@ -167,10 +202,12 @@ class ExploreStrategy(DiscoveryStrategy):
         domain_order: list[str] = []
         per_domain: dict[str, list[tuple[DiscoveredContent, float, bool]]] = {}
         seen_bvids: set[str] = set()
-        for (query, novelty_level, interest_anchored, domain_label), outcome in zip(
+        for (query, novelty_level, interest_anchored, domain_label, claimed), outcome in zip(
             request_plan, search_outcomes, strict=True
         ):
             if isinstance(outcome, BaseException):
+                if claimed is not None:
+                    self._mark_claimed_query_failed(claimed)
                 logger.error(
                     "Explore query failed: %s",
                     query,
@@ -184,6 +221,16 @@ class ExploreStrategy(DiscoveryStrategy):
                 )
                 continue
             if not isinstance(outcome, list):
+                if claimed is not None:
+                    self._mark_claimed_query_failed(claimed)
+                continue
+            if claimed is not None:
+                if outcome:
+                    self._mark_claimed_query_used(claimed)
+                else:
+                    self._mark_claimed_query_failed(claimed)
+                    continue
+            if not outcome:
                 continue
             bucket_key = domain_label or query
             if bucket_key not in per_domain:
@@ -259,6 +306,43 @@ class ExploreStrategy(DiscoveryStrategy):
 
         return self._sort_results(results)
 
+    def _claim_planner_explore_queries(self) -> list[ClaimedKeyword] | None:
+        coordinator = self.keyword_fetch
+        should_claim = getattr(coordinator, "should_claim", None)
+        if not callable(should_claim) or not bool(should_claim()):
+            return None
+        claim = getattr(coordinator, "claim", None)
+        if not callable(claim):
+            return []
+        try:
+            return list(
+                claim(
+                    PLATFORM_BILIBILI,
+                    max(1, int(self.max_domains) * int(self.queries_per_domain)),
+                    keyword_kind=KEYWORD_KIND_EXPLORE,
+                )
+            )
+        except TypeError:
+            return []
+        except Exception:
+            logger.exception("Explore: planner explore query claim failed")
+            return []
+
+    def _mark_claimed_query_used(self, claimed: ClaimedKeyword) -> None:
+        mark = getattr(self.keyword_fetch, "mark_used", None)
+        if callable(mark):
+            mark([claimed])
+
+    def _mark_claimed_query_failed(self, claimed: ClaimedKeyword) -> None:
+        mark = getattr(self.keyword_fetch, "mark_failed", None)
+        if callable(mark):
+            mark([claimed])
+
+    def _rollback_claimed_query(self, claimed: ClaimedKeyword) -> None:
+        rollback = getattr(self.keyword_fetch, "rollback", None)
+        if callable(rollback):
+            rollback(claimed)
+
     def _create_search_client(self) -> SupportsSearchClient:
         """Create a cookie-free API client for explore searches.
 
@@ -279,11 +363,11 @@ class ExploreStrategy(DiscoveryStrategy):
     async def _execute_search_sequential(
         self,
         client: SupportsSearchClient,
-        request_plan: list[tuple[str, float, bool, str]],
+        request_plan: list[tuple[str, float, bool, str, ClaimedKeyword | None]],
     ) -> list[object]:
         """Execute search queries sequentially with delay to avoid rate-limiting."""
         results: list[object] = []
-        for i, (query, _, _, _) in enumerate(request_plan):
+        for i, (query, _, _, _, _) in enumerate(request_plan):
             cooldown_remaining = search_cooldown_remaining(client)
             if cooldown_remaining > 0:
                 logger.info(
@@ -331,24 +415,28 @@ class ExploreStrategy(DiscoveryStrategy):
                 ", ".join(covered_topic_groups[:5]),
             )
 
+        cache_key = self._domain_cache_key(profile, covered_topic_groups)
+        cached = self._cached_domains(cache_key)
+        if cached is not None:
+            return cached
+
         messages = build_explore_domains_prompt(
-            profile_summary=build_profile_summary(profile)
+            profile_summary=build_query_generation_profile_summary(
+                profile,
+                embedding_lookup=cached_embedding_lookup(self.embedding_service),
+            )
             | {"exploration_openness": profile.preferences.exploration_openness},
             covered_topic_groups=covered_topic_groups,
         )
         try:
-            response = await self.llm_service.complete_structured_task(
+            complete_structured = self.llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
-                # v0.3.31+: bumped 4096 → 8192. With covered_topic_groups
-                # added to user msg + 5 domains × 3 queries +
-                # why_it_might_resonate text per domain, the JSON output
-                # was hitting the 4K cap mid-string (truncation observed
-                # at line 20 col 32 / char 736 in production logs),
-                # which made json.loads error out and the whole strategy
-                # return 0 items. 8K leaves comfortable headroom.
-                max_tokens=8192,
+                max_tokens=2048,
                 caller="discovery.explore.queries",
+                reasoning_effort="",
+                **without_core_memory_kwargs(complete_structured),
             )
             parsed = json.loads(str(getattr(response, "content", "")).strip())
         except Exception:
@@ -387,7 +475,42 @@ class ExploreStrategy(DiscoveryStrategy):
             if len(domains) >= self.max_domains:
                 break
         prioritized = self._prioritize_domains(domains, anchor_set)
-        return [domain for domain in prioritized if domain["queries"]]
+        result = [domain for domain in prioritized if domain["queries"]]
+        self._store_domains(cache_key, result)
+        return result
+
+    def _domain_cache_key(
+        self,
+        profile: SoulProfile,
+        covered_topic_groups: list[str] | None,
+    ) -> str:
+        payload = {
+            "profile": profile_kw_digest(profile),
+            "covered_topic_groups": [str(item) for item in (covered_topic_groups or [])],
+            "max_domains": int(self.max_domains),
+            "queries_per_domain": int(self.queries_per_domain),
+        }
+        blob = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+    def _cached_domains(self, cache_key: str) -> list[dict[str, object]] | None:
+        cached = self._domain_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, domains = cached
+        if time.monotonic() >= expires_at:
+            self._domain_cache.pop(cache_key, None)
+            return None
+        return [dict(domain) for domain in domains]
+
+    def _store_domains(self, cache_key: str, domains: list[dict[str, object]]) -> None:
+        ttl = max(0.0, float(self.domain_cache_ttl_seconds))
+        if ttl <= 0:
+            return
+        self._domain_cache[cache_key] = (
+            time.monotonic() + ttl,
+            [dict(domain) for domain in domains],
+        )
 
     async def _looks_too_similar_async(self, domain: str, current_interests: set[str]) -> bool:
         """Check if domain is too similar to existing interests.

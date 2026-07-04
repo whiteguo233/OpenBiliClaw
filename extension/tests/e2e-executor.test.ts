@@ -22,6 +22,7 @@ class FakeElement {
   public scrollTop = 0;
   public scrollHeight = 0;
   public clientHeight = 0;
+  public shadowRoot: { querySelectorAll: (selector: string) => FakeElement[] } | null = null;
   public readonly dispatchedEvents: string[] = [];
   public readonly textContent: string;
   private readonly attrs: Record<string, string>;
@@ -45,10 +46,11 @@ class FakeElement {
       bottom: 34,
       right: 90,
     },
-    options: {
-      selectors?: string[];
-      style?: Partial<{
-        display: string;
+	    options: {
+	      selectors?: string[];
+	      shadowChildren?: FakeElement[];
+	      style?: Partial<{
+	        display: string;
         visibility: string;
         pointerEvents: string;
         opacity: string;
@@ -59,14 +61,22 @@ class FakeElement {
     this.attrs = attrs;
     this.rect = rect;
     this.selectorMatches = new Set(options.selectors);
-    this.style = {
-      display: "block",
-      visibility: "visible",
-      pointerEvents: "auto",
-      opacity: "1",
-      ...options.style,
-    };
-  }
+	    this.style = {
+	      display: "block",
+	      visibility: "visible",
+	      pointerEvents: "auto",
+	      opacity: "1",
+	      ...options.style,
+	    };
+	    if (options.shadowChildren) {
+	      this.shadowRoot = {
+	        querySelectorAll(selector: string): FakeElement[] {
+	          if (selector === "*") return options.shadowChildren ?? [];
+	          return (options.shadowChildren ?? []).filter((element) => element.matches(selector));
+	        },
+	      };
+	    }
+	  }
 
   getAttribute(name: string): string | null {
     return this.attrs[name] ?? null;
@@ -160,6 +170,47 @@ test("twitter share clicks a visible matching target", async () => {
   const env = fakeEnv([share]);
 
   const result = await executeAction("twitter", "share", false, env);
+
+  assert.deepEqual(result, { action: "share", status: "ok", detail: "clicked" });
+  assert.equal(share.scrolled, true);
+  assert.equal(share.clicked, true);
+});
+
+test("reddit click targets visible post cards", async () => {
+  const card = new FakeElement("Local-first agents", {}, undefined, {
+    selectors: ["shreddit-post"],
+  });
+  const env = fakeEnv([card]);
+
+  const result = await executeAction("reddit", "click", false, env);
+
+  assert.deepEqual(result, { action: "click", status: "ok", detail: "clicked" });
+  assert.equal(card.scrolled, true);
+  assert.equal(card.clicked, true);
+});
+
+test("reddit share clicks a visible matching control", async () => {
+  const share = new FakeElement("", { "aria-label": "Share post", tag: "button" });
+  const env = fakeEnv([share]);
+
+  const result = await executeAction("reddit", "share", false, env);
+
+  assert.deepEqual(result, { action: "share", status: "ok", detail: "clicked" });
+  assert.equal(share.scrolled, true);
+  assert.equal(share.clicked, true);
+});
+
+test("reddit share can click controls inside open shadow roots", async () => {
+  const share = new FakeElement("", {}, undefined, {
+    selectors: ['[slot*="share" i]'],
+  });
+  const post = new FakeElement("Local-first agents", {}, undefined, {
+    selectors: ["shreddit-post"],
+    shadowChildren: [share],
+  });
+  const env = fakeEnv([post]);
+
+  const result = await executeAction("reddit", "share", false, env);
 
   assert.deepEqual(result, { action: "share", status: "ok", detail: "clicked" });
   assert.equal(share.scrolled, true);

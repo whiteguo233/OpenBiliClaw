@@ -1,7 +1,8 @@
 """Packaging-metadata tests for dependency metadata.
 
-Guards that the default package install includes the X discovery dependency.
-The ``openbiliclaw[x]`` extra remains as a backwards-compatible alias.
+Guards that the default package install includes command-backed discovery
+dependencies. The ``openbiliclaw[x]`` extra remains as a backwards-compatible
+alias for X.
 """
 
 from __future__ import annotations
@@ -30,6 +31,15 @@ def test_default_dependencies_include_twitter_cli() -> None:
     assert twitter_reqs, f"default install must require twitter-cli, got {requirements!r}"
     assert any(">=" in r for r in twitter_reqs), (
         f"twitter-cli requirement must pin a minimum version, got {twitter_reqs!r}"
+    )
+
+
+def test_default_dependencies_include_rdt_cli() -> None:
+    requirements = _runtime_dependencies()
+    rdt_reqs = [r for r in requirements if r.replace("_", "-").startswith("rdt-cli")]
+    assert rdt_reqs, f"default install must require rdt-cli, got {requirements!r}"
+    assert any(">=" in r for r in rdt_reqs), (
+        f"rdt-cli requirement must pin a minimum version, got {rdt_reqs!r}"
     )
 
 

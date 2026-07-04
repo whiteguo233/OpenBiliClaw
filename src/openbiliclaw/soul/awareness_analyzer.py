@@ -15,6 +15,7 @@ from openbiliclaw.llm.json_utils import (
 )
 from openbiliclaw.llm.prompts import build_awareness_prompt
 from openbiliclaw.llm.service import LLMServiceError
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 
 from .profile import AwarenessNote
 
@@ -54,6 +55,7 @@ class SupportsCoreMemoryTask(Protocol):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         caller: str = "",
+        inject_core_memory: bool = True,
     ) -> LLMResponse: ...
 
 
@@ -85,11 +87,13 @@ class AwarenessAnalyzer:
             soul_profile=soul_profile,
         )
         try:
-            response = await self.registry.complete_structured_task(
+            complete_structured = self.registry.complete_structured_task
+            response = await complete_structured(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=max_tokens,
                 caller="soul.awareness",
+                **without_core_memory_kwargs(complete_structured),
             )
         except (LLMProviderError, LLMServiceError) as exc:
             raise AwarenessGenerationError(str(exc)) from exc

@@ -73,4 +73,11 @@ export interface PlatformAdapter {
    * always sets `source_platform` + `content_id` separately.
    */
   buildEventMetadata(url: string): Record<string, unknown>;
+
+  /**
+   * Optional target-specific metadata for click/action events. This is
+   * needed on feed pages where the current URL is a list page but the user
+   * clicked a specific card's action button.
+   */
+  buildTargetMetadata?(target: Element, currentUrl: string): Record<string, unknown>;
 }

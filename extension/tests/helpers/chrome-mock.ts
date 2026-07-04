@@ -12,6 +12,7 @@ export interface ChromeMockState {
   createdTabs: Array<{ active?: boolean; url: string }>;
   updatedTabs: Array<{ active?: boolean; tabId: number; url?: string }>;
   sentMessages: Array<{ message: unknown; tabId: number }>;
+  executedScripts: Array<{ files?: string[]; tabId?: number; world?: string }>;
   fetchCalls: Array<{ body?: unknown; method?: string; url: string }>;
   queryResult: ChromeMockTab[];
   tabById: Map<number, ChromeMockTab>;
@@ -31,6 +32,7 @@ export function installChromeMock(): ChromeMockState {
     createdTabs: [],
     updatedTabs: [],
     sentMessages: [],
+    executedScripts: [],
     fetchCalls: [],
     queryResult: [],
     tabById: new Map(),
@@ -110,6 +112,20 @@ export function installChromeMock(): ChromeMockState {
             listeners.splice(index, 1);
           }
         },
+      },
+    },
+    scripting: {
+      async executeScript(opts: {
+        files?: string[];
+        target?: { tabId?: number };
+        world?: string;
+      }) {
+        state.executedScripts.push({
+          files: opts.files,
+          tabId: opts.target?.tabId,
+          world: opts.world,
+        });
+        return [{}];
       },
     },
   };

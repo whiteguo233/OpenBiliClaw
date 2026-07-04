@@ -18,6 +18,7 @@ from openbiliclaw.discovery.engine import (
 )
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.sources.douyin_direct import normalize_aweme_item
 
 if TYPE_CHECKING:
@@ -241,12 +242,14 @@ class DouyinDirectStrategy(DiscoveryStrategy):
         if self.llm_service is None or not profile.preferences.interests:
             return []
         try:
-            response = await self.llm_service.complete_structured_task(
+            complete_structured = self.llm_service.complete_structured_task
+            response = await complete_structured(
                 system_instruction=_DOUYIN_KEYWORDS_SYSTEM_PROMPT,
                 user_input=_build_douyin_keyword_user_prompt(profile, self.keywords_per_run),
                 temperature=0.8,
                 max_tokens=512,
                 caller="discovery.douyin.keyword_gen",
+                **without_core_memory_kwargs(complete_structured),
             )
         except Exception as exc:  # noqa: BLE001 - degrade to deterministic fallback
             logger.warning("douyin keyword LLM call failed: %s", exc)

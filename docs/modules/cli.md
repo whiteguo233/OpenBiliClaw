@@ -39,6 +39,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-zhihu` | 单独触发知乎事件拉取（默认 smoke；可选写入 memory / 重建画像） | ✅ |
 | `fetch-x` | 单独触发 X（Twitter）点赞 / 收藏拉取（服务端 cookie 重放，无扩展任务，不需 daemon；`--dry-run` 只打印不入库） | ✅ |
+| `fetch-reddit` | 单独触发 Reddit 插件 bootstrap 或搜索 smoke（默认不写 memory、不重建画像） | ✅ |
 | `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为独立 embedding provider（可选） | ✅ |
 | `recommend` | 查看推荐 | ✅ |
@@ -52,6 +53,10 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `discover-zhihu-feed` | 单独触发知乎首页推荐 discovery，并把候选写入待评估池 | ✅ |
 | `discover-zhihu-creator` | 单独触发知乎作者页 discovery，并把候选写入待评估池 | ✅ |
 | `discover-zhihu-related` | 单独触发知乎相关内容 discovery，并把候选写入待评估池 | ✅ |
+| `discover-reddit` | 单独触发 Reddit 搜索 discovery，并把候选写入待评估池 | ✅ |
+| `discover-reddit-hot` | 单独触发 Reddit 热门 discovery，并把候选写入待评估池 | ✅ |
+| `discover-reddit-subreddit` | 单独触发指定 subreddit discovery，并把候选写入待评估池 | ✅ |
+| `discover-reddit-related` | 单独触发 Reddit 相关内容 discovery，并把候选写入待评估池 | ✅ |
 | `search-douyin` | 通过浏览器插件调试抖音搜索召回 | ✅ |
 | `chat` | 苏格拉底式对话 | ✅ |
 | `delight` | 手动查看当前惊喜推荐候选 | ✅ |
@@ -435,7 +440,7 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 
 安装渠道里的首选路径是 `scripts/agent_bootstrap.py` 自动运行 init：Bash / PowerShell 人类一行安装会先在终端向导里按顺序确认 LLM、embedding、B 站 Cookie 和各来源 opt-in；Docker / AI agent / CI 非交互安装则通过显式 flags 和 `BOOTSTRAP_STATUS` 推进，不会阻塞读 stdin。bootstrap 随后会对默认 LLM provider 与 embedding 服务各做一次轻量真实调用；两者都可用才触发本命令。若 bootstrap 返回 `service_check_failed`，说明 `openbiliclaw init` 尚未运行，应先修 API key / base_url / model / Ollama，再重跑 bootstrap。直接执行 `openbiliclaw init` 仍保留为高级手动 fallback 和重复初始化入口。
 
-默认初始化信号上限：B 站观看历史最多 500 条、收藏最多 500 条（跨收藏夹总预算，单个收藏夹会按页补齐）、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 300 条；知乎 `bootstrap_events` 的浏览历史、收藏夹条目、动态点赞、动态收藏四个分支默认各最多 300 条。交互式 `init` 会让用户确认 B 站收藏 / 关注上限，收藏回车使用 500、关注回车使用 100；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
+默认初始化信号上限：B 站观看历史最多 500 条、收藏最多 500 条（跨收藏夹总预算，单个收藏夹会按页补齐）、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 300 条；知乎 `bootstrap_events` 的浏览历史、收藏夹条目、动态点赞、动态收藏四个分支默认各最多 300 条；Reddit `bootstrap_events` 的 saved、upvoted、subscribed 三个分支默认各最多 300 条。交互式 `init` 会让用户确认 B 站收藏 / 关注上限，收藏回车使用 500、关注回车使用 100；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
 
 v0.3.95+：交互式 `init` 的 embedding 配置阶段（`_interactive_embedding_setup(auto_if_ready=True)`）会先探测本机 Ollama——若 Ollama 已运行且装有 `bge-m3`，直接写入 `provider=ollama, model=bge-m3` 并跳过选项菜单，避免「确认用 Ollama 当聊天模型、却把语义去重所需的 embedding 留空」导致推荐刷到换皮重复。显式 `setup-embedding` 命令不走自动跳过，始终展示完整菜单以便切换 provider。
 
@@ -478,18 +483,21 @@ YouTube 导入依赖浏览器插件在用户已登录的 `https://www.youtube.co
 
 知乎导入复用 `bootstrap_events` 任务。后端入队 `zhihu_tasks(type="bootstrap_events")`，插件在用户已登录的 `https://www.zhihu.com` 页面里读取最近浏览、收藏夹条目、个人动态点赞和个人动态收藏，以任务结果回写 `/api/sources/zhihu/task-result`。`init --yes-zhihu` 会把同一批任务结果转换为统一事件并加入 `analyze_events()` / `build_initial_profile()`，同时把 `[sources.zhihu].enabled=true` 写回配置。`fetch-zhihu` 默认仍只打印 smoke 计数；需要把本次抓取写入 memory 可显式加 `--write-memory`，需要写入后立即重建画像可加 `--rebuild-profile`。非交互式终端默认跳过知乎，`OPENBILICLAW_NO_ZHIHU=1` 会压过 `--yes-zhihu`。后台会复用 6 小时内近期知乎 `bootstrap_events` 任务；动态点赞和动态收藏各自独立使用单分支上限，不共享额度。
 
+Reddit 导入也复用 `bootstrap_events` 任务。后端入队 `reddit_tasks(type="bootstrap_events")`，插件在用户已登录的 `https://www.reddit.com` 页面里先读取 `/api/me.json` 识别当前用户，再读取 saved、upvoted 和 subscribed subreddit，同步回写 `/api/sources/reddit/task-result`。`init --yes-reddit` 会把 saved → `favorite`、upvoted → `like`、subscribed → `follow` 的统一事件加入 `analyze_events()` / `build_initial_profile()`，同时把 `[sources.reddit].enabled=true` 写回配置；Reddit 可以作为唯一初始化来源，只要真实拉到至少一条信号。后台会复用 6 小时内近期 Reddit `bootstrap_events` 任务；三个分支各自独立使用单分支上限 300。
+
 X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**。X 的发现走服务端 cookie 重放，行为采集走浏览器扩展 MAIN-world tap，两者都在 init 之后才生效，所以 `init --yes-x` **只翻转 `[sources.twitter].enabled = true`**，不会在 init 期间打开 x.com 前台 tab 或拉取数据。启用后，用户登录 x.com → 扩展自动把 `auth_token` + `ct0` 同步到 `data/x_cookie.json` → 后台 `XDiscoveryProducer` 在下一个 refresh tick 按预算补 X 候选。非交互式终端默认跳过 X。
 
 源开关：
 
 - `--no-bilibili`：跳过 B 站数据接入（v0.3.118+，默认包含；至少需保留一个数据来源）。同时把 `[sources.bilibili].enabled` 持久化为 `false`，后台发现也不再跑 B 站。
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
-- `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
-- `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
+- `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
+- `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--yes-zhihu` / `--no-zhihu`：跳过知乎交互式提问，直接启用或跳过。`--yes-zhihu` 会执行 `bootstrap_events` 并把结果纳入本轮首版画像；非交互式终端默认跳过知乎，脚本化 init 应显式传其中一个。
+- `--yes-reddit` / `--no-reddit`：跳过 Reddit 交互式提问，直接启用或跳过。`--yes-reddit` 会执行 `bootstrap_events` 并把 saved / upvoted / subscribed 结果纳入本轮首版画像，同时开启后续 Reddit discovery；非交互式终端默认跳过 Reddit。
 - `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`：覆盖 B 站收藏 / 关注初始化信号上限，默认各 `300`；`0` 表示跳过对应信号。
-- `OPENBILICLAW_NO_BILIBILI=1` / `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1` / `OPENBILICLAW_NO_ZHIHU=1`：永久跳过对应源。
+- `OPENBILICLAW_NO_BILIBILI=1` / `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1` / `OPENBILICLAW_NO_ZHIHU=1` / `OPENBILICLAW_NO_REDDIT=1`：永久跳过对应源。
 - `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 - `OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS` / `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS`：抖音 / YouTube `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 - `OPENBILICLAW_ZHIHU_BOOTSTRAP_DEDUPE_HOURS`：知乎 `bootstrap_events` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
@@ -765,7 +773,7 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery 或 Zhihu 插件 discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。知乎正式流程会复用 runtime `ZhihuDiscoveryProducer`，按配置页 / `config.toml` 的 `[sources.zhihu].source_modes` 入队 search / hot / feed / creator / related 任务并进入统一待评估池。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略并将结果写入 `content_cache`，支持通过 `--source` 切换到 xiaohongshu 关键词生产流程、douyin discovery、知乎插件 discovery 或 Reddit discovery，或通过 `--strategy` 限定只跑部分 Bilibili 策略。知乎正式流程会复用 runtime `ZhihuDiscoveryProducer`，按配置页 / `config.toml` 的 `[sources.zhihu].source_modes` 入队 search / hot / feed / creator / related 任务并进入统一待评估池；Reddit 正式流程复用 `RedditDiscoveryProducer`，默认用 `[sources.reddit].backend="rdt"` 的 rdt-cli 登录态命令后端，按 `source_modes` 抓 search / hot / subreddit / related 候选；命令后端不可用时自动 fallback 到 OpenBiliClaw 插件任务。Reddit 候选只入 `discovery_candidates`，评估由后台统一 evaluator 处理。
 
 ```bash
 # 默认：Bilibili 全策略
@@ -812,16 +820,27 @@ $ openbiliclaw discover --source zhihu --limit 20
   来源: zhihu
   来源分布: zhihu-feed:5, zhihu-hot:5, zhihu-related:10
   分支: search, hot, feed, creator, related
+
+# 触发 Reddit 正式 discovery（使用设置页选中的 source_modes）
+$ openbiliclaw discover --source reddit --limit 20
+Reddit 内容发现
+发现摘要
+  发现条数: 31
+  入池候选: 6
+  来源: reddit
+  来源分布: reddit-hot:2, reddit-related:15, reddit-search:4, reddit-subreddit:10
+  分支: search, hot, subreddit, related
+  后端: rdt
 ```
 
 选项：
 
-- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin` 或 `zhihu`
+- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin`、`zhihu` 或 `reddit`
 - `--strategy, -S`：仅对 Bilibili 生效，可多次传或逗号分隔，取值 `search` / `trending` / `explore` / `related_chain`
 - `--limit, -n`：发现结果条数上限，默认 `30`
 - `--force`：xiaohongshu 专用，忽略 `XhsTaskProducer` 的 4 小时节流
 
-抖音 discovery 需要 `[sources.douyin].enabled = true`。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。
+抖音 discovery 需要 `[sources.douyin].enabled = true`。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。Reddit discovery 需要 `[sources.reddit].enabled = true`；默认 `backend="rdt"`，优先使用 rdt-cli 登录态命令后端，不使用 CDP/临时浏览器；rdt / opencli 不可用时自动复用 OpenBiliClaw 插件所在浏览器的 Reddit 登录态，也可在配置页显式切到 `extension`。
 
 `search` 子来源走浏览器插件 DOM-first 链路：CLI 入队 `dy_tasks(type="search")`，扩展后台 tab 先打开抖音首页，再在已登录页面里模拟搜索框输入 / 提交，候选以 `dy-plugin-search` 进入 discovery；fetch tap 兼容 `/general/search/single/`、`/search/item/` 和新版 `/general/search/stream/` chunked JSON。`hot` 子来源同样走插件：后端取 hot board 的 `sentence_id`，并把可用的 `group_id` 作为 `seed_aweme_id` 透传给扩展；扩展从首页点击热榜 / 热点入口和目标热词，靠页面自身加载与被动响应监听回传 `dy_hot`，不足时用已登录页面的 related API bridge 按 seed 拉相关视频，候选以 `dy-plugin-hot-related` 进入 discovery；小批量 hot 请求会展开一个小窗口并优先执行带 seed 的 hot item，在累计达到 `--limit` 后提前结束，避免串行 DOM 点击和页面加载拖到 `task_timeout`。`feed` 子来源会入队 `dy_tasks(type="feed")`，扩展在首页推荐流滚动触发加载，候选以 `dy-plugin-feed` 进入 discovery。三条链路都不主动跳 `/search/...`、`/hot/...` 快捷 URL；插件任务空 / 超时 / 失败时默认返回 0 条，direct-cookie fallback 只保留给显式诊断路径。search 若真实响应为 `search_nil_info.search_nil_item="hit_shark"` 且没有 `data/aweme_list`，属于抖音反爬空结果，CLI 会显示 0 条。
 
@@ -871,6 +890,35 @@ openbiliclaw discover-zhihu-related https://www.zhihu.com/question/<id> --limit 
 ```
 
 它们分别入队 `zhihu_tasks(type="hot"|"feed"|"creator"|"related")`，回写 `zhihu_hot` / `zhihu_feed` / `zhihu_creator` / `zhihu_related` 候选，source strategy 对应 `zhihu-hot` / `zhihu-feed` / `zhihu-creator` / `zhihu-related`。
+
+### `openbiliclaw fetch-reddit`
+
+单独触发 Reddit 事件 / 搜索 smoke，用于验证 Reddit 后端、登录态和归一化是否联通。默认 `--backend rdt`，`rdt-cli` 已随后端默认安装；已连接插件会把 `reddit_session` 自动同步到 rdt-cli credential store，插件不可用时才需要在本机已登录 Reddit 的浏览器环境里运行 `rdt login`。`--mode search|hot|subreddit|related` 优先通过 rdt-cli 读取候选并转换为低权重 view 事件用于终端预览；命令后端不可用、未登录或显式 `--backend extension` 时会改走插件任务桥。`--mode bootstrap` 会自动使用插件后端，入队 `reddit_tasks(type="bootstrap_events")` 并拉 saved / upvoted / subscribed。默认不会写 memory，也不会触发画像初始化或增量画像更新；需要真实落库时必须显式传 `--write-memory`，需要写入后重建画像时传 `--rebuild-profile`。`bootstrap` 只支持 extension 后端，因为它必须运行在已登录浏览器同源页面内。
+
+```bash
+$ openbiliclaw fetch-reddit "open source ai" --limit 10 --wait-seconds 180
+Reddit 数据拉取
+  Reddit 搜索 10 条 / 统一事件 10 条
+
+$ openbiliclaw fetch-reddit --mode bootstrap --wait-seconds 180
+Reddit 事件拉取
+  收藏(saved) 12 条 / 点赞(upvoted) 31 条 / 订阅 subreddit 18 个
+  写入 memory 未写入 memory
+  画像生成 未触发画像生成
+```
+
+### `openbiliclaw discover-reddit*`
+
+Reddit discovery smoke 命令会把 rdt-cli（默认安装）、OpenCLI 或插件后端返回的候选转换为 `DiscoveredContent(source_platform="reddit")` 并写入 `discovery_candidates(pending_eval)`；rdt / opencli 不可用或未登录时会自动 fallback 到插件任务。它们只验证取数和入池，不写 memory、不重建画像、不直接写 `content_cache`。正式补池优先使用 `openbiliclaw discover --source reddit`，它会按配置页保存的 `source_modes`、后端和来源比例进入 runtime producer。
+
+```bash
+openbiliclaw discover-reddit "open source ai" --limit 10
+openbiliclaw discover-reddit-hot --subreddit all --limit 10
+openbiliclaw discover-reddit-subreddit LocalLLaMA --limit 10
+openbiliclaw discover-reddit-related https://www.reddit.com/r/LocalLLaMA/comments/<id>/<slug>/ --limit 10
+```
+
+`discover-reddit` 默认走 search；`discover-reddit-hot` 默认 `r/all`，rdt 路径实际调用 `rdt all --json`；`discover-reddit-subreddit` 需要一个或多个 subreddit 名，rdt 路径实际调用 `rdt sub <name> --json`；`discover-reddit-related` 需要一个或多个 Reddit 内容 URL，rdt 路径会抽取 `/comments/<id>/` 后调用 `rdt read <id> --json`。命令默认 `--backend rdt`，优先使用插件同步的 rdt credential；插件不可用时可手动运行 `rdt login`。需要强制插件登录态链路时加 `--backend extension --wait-seconds 180`。若 rdt 路径不可用或未登录，CLI 会自动 fallback 到插件；若插件路径返回 `login_required`，请在安装了 OpenBiliClaw 插件的浏览器里正常登录 Reddit。
 
 ### `openbiliclaw search-douyin`
 

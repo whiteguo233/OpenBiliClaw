@@ -113,6 +113,47 @@ test("buildContentUrl does not fabricate Bilibili links for Zhihu ids", () => {
   assert.equal(buildContentUrl(item), "");
 });
 
+test("normalizeRecommendation keeps Reddit items source-aware and text-card based", () => {
+  const item = normalizeRecommendation({
+    id: 44,
+    content_id: "t3_abc123",
+    content_url: "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+    title: "Local-first agents",
+    source_platform: "rd",
+    content_type: "post",
+    body_text: "A practical write-up.",
+  });
+  const url = buildContentUrl(item);
+  const card = getRecommendationCardKind(item);
+
+  assert.equal(item.source_platform, "reddit");
+  assert.equal(url, "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/");
+  assert.equal(card.kind, "text");
+  assert.equal(card.text, "A practical write-up.");
+  assert.deepEqual(buildRecommendationClickPayload(item, url), {
+    bvid: "t3_abc123",
+    content_id: "t3_abc123",
+    content_url: "https://www.reddit.com/r/LocalLLaMA/comments/abc123/local_first_agents/",
+    source_platform: "reddit",
+    title: "Local-first agents",
+    recommendation_id: 44,
+    topic_label: "",
+    up_name: "这位 UP 还没认出来",
+  });
+});
+
+test("buildContentUrl does not fabricate Bilibili links for Reddit ids", () => {
+  const item = normalizeRecommendation({
+    content_id: "t3_abc123",
+    title: "缺 URL 的 Reddit 帖子",
+    source_platform: "reddit",
+    content_type: "post",
+  });
+
+  assert.equal(item.source_platform, "reddit");
+  assert.equal(buildContentUrl(item), "");
+});
+
 test("probeMessageKey normalizes type and domain", () => {
   assert.equal(normalizeProbeType("avoidance.probe"), "avoidance.probe");
   assert.equal(normalizeProbeType("unknown"), "interest.probe");

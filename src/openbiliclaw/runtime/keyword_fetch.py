@@ -1,7 +1,7 @@
 """Deficit-driven keyword fetch coordinator (Discover backpressure, P1.7).
 
 P1.6 made the keyword *planner* fill the ``discovery_keywords`` store with
-``pending`` search words. P1.7 makes the five search *fetch* sites consume that
+``pending`` search words. P1.7 makes search *fetch* sites consume that
 store: when the ``[discovery].unified_keyword_planner_enabled`` flag is on, each
 site claims words from the store (atomic ``claim_keywords``), injects them via
 the P1.5 injection param, fetches, and walks each claimed word through its
@@ -51,6 +51,9 @@ PLATFORM_DOUYIN = "douyin"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TWITTER = "twitter"
 PLATFORM_ZHIHU = "zhihu"
+PLATFORM_REDDIT = "reddit"
+KEYWORD_KIND_REGULAR = "regular"
+KEYWORD_KIND_EXPLORE = "explore"
 
 
 @dataclass(frozen=True)
@@ -62,7 +65,7 @@ class ClaimedKeyword:
 
 
 class KeywordFetchCoordinator:
-    """Claim-from-store + word-lifecycle helper shared by the 5 fetch sites.
+    """Claim-from-store + word-lifecycle helper shared by search fetch sites.
 
     Holds the database (the ``discovery_keywords`` DAO) and the discovery
     config (the flag + ``fetch_batch``). One coordinator instance is wired into
@@ -99,7 +102,13 @@ class KeywordFetchCoordinator:
 
     # ── claim ───────────────────────────────────────────────────────────
 
-    def claim(self, platform: str, n: int | None = None) -> list[ClaimedKeyword]:
+    def claim(
+        self,
+        platform: str,
+        n: int | None = None,
+        *,
+        keyword_kind: str = KEYWORD_KIND_REGULAR,
+    ) -> list[ClaimedKeyword]:
         """Atomically claim up to ``n`` (default ``fetch_batch``) pending words.
 
         Returns ``[]`` when the store has no claimable ``pending`` words for the
@@ -113,7 +122,15 @@ class KeywordFetchCoordinator:
         if not callable(claim_fn):
             return []
         try:
-            rows = claim_fn(platform, count)
+            rows = claim_fn(platform, count, keyword_kind=keyword_kind)
+        except TypeError:
+            if keyword_kind != KEYWORD_KIND_REGULAR:
+                return []
+            try:
+                rows = claim_fn(platform, count)
+            except Exception:
+                logger.exception("keyword fetch: claim_keywords failed for %s", platform)
+                return []
         except Exception:
             logger.exception("keyword fetch: claim_keywords failed for %s", platform)
             return []
