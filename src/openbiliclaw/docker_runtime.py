@@ -128,8 +128,11 @@ def _set_toml_string(content: str, section: str, key: str, value: str) -> str:
 
 def can_connect(host: str, port: int, timeout: float) -> bool:
     """Return whether a TCP endpoint is reachable."""
-    with socket.create_connection((host, port), timeout=timeout):
-        return True
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def resolve_optional_proxy_env(
