@@ -81,6 +81,7 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # model names here so the cost report remains useful for them.
         "kimi-k2.6": (0.001, 0.004),
         "kimi-k2.5": (0.001, 0.004),
+        "MiniMax-M3": (0.00432, 0.01728),  # $0.60/$2.40 per M
         "MiniMax-M2.7": (0.00216, 0.00864),  # $0.30/$1.20 per M
         "MiniMax-M2.5": (0.00216, 0.00864),
         "qwen-flash": (0.0003, 0.0009),

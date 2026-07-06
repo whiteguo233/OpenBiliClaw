@@ -1164,8 +1164,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "label": "MiniMax 官方",
             "description": (
-                "国产代码 / agent 场景的当前 SOTA 之一 (M2.7 在 SWE-Bench 上 80%+),"
-                "便宜 ($0.30 / $1.20 per M),适合做推荐这种结构化输出任务"
+                "国产代码 / agent 场景的当前 SOTA 之一 (M3: 1M ctx / 图文视频输入),"
+                "便宜 ($0.60 / $2.40 per M),适合做推荐这种结构化输出任务"
             ),
             "signup_url": (
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key "
@@ -1173,10 +1173,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             ),
             "supports_embedding": "false",
             "base_url": "https://api.minimax.io/v1",
-            "default_model": "MiniMax-M2.7",
+            "default_model": "MiniMax-M3",
             "hint": (
-                "MiniMax-M2.7 (默认 / 最新 / 4-2026 / 228K ctx) / "
-                "MiniMax-M2.5 / MiniMax-M2.1。"
+                "MiniMax-M3 (默认 / 最新 / 7-2026 / 1M ctx) / "
+                "MiniMax-M2.7 / MiniMax-M2.5 / MiniMax-M2.1。"
                 "旧 abab 系列 (abab6.5*) 已被 M 系列替代"
             ),
             "domain_alt": (
