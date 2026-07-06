@@ -1175,7 +1175,7 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             "base_url": "https://api.minimax.io/v1",
             "default_model": "MiniMax-M3",
             "hint": (
-                "MiniMax-M3 (默认 / 最新 / 7-2026 / 1M ctx) / "
+                "MiniMax-M3 (默认 / 最新 / 5-2026 / 1M ctx) / "
                 "MiniMax-M2.7 / MiniMax-M2.5 / MiniMax-M2.1。"
                 "旧 abab 系列 (abab6.5*) 已被 M 系列替代"
             ),
