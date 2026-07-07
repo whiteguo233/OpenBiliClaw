@@ -608,6 +608,8 @@ class ApiAuthConfig:
     trust_loopback: bool = True
     trusted_proxies: list[str] = field(default_factory=list)
     allowed_bearer_origins: list[str] = field(default_factory=list)
+    allowed_extension_ids: list[str] = field(default_factory=list)
+    verify_extension_id: bool = False
 
 
 @dataclass
@@ -1344,6 +1346,11 @@ def _build_api_auth(api_raw: dict[str, Any]) -> ApiAuthConfig:
         ),
         trusted_proxies=_coerce_str_list(auth_raw.get("trusted_proxies", [])),
         allowed_bearer_origins=_coerce_str_list(auth_raw.get("allowed_bearer_origins", [])),
+        allowed_extension_ids=_coerce_str_list(auth_raw.get("allowed_extension_ids", [])),
+        verify_extension_id=_coerce_bool(
+            _env("OPENBILICLAW_API_AUTH_VERIFY_EXTENSION_ID")
+            or auth_raw.get("verify_extension_id", False)
+        ),
     )
 
 
@@ -1887,6 +1894,8 @@ _LOCAL_AUTH_KEY_TO_FIELD = {
     "trust_loopback": "trust_loopback",
     "trusted_proxies": "trusted_proxies",
     "allowed_bearer_origins": "allowed_bearer_origins",
+    "allowed_extension_ids": "allowed_extension_ids",
+    "verify_extension_id": "verify_extension_id",
 }
 
 
@@ -2035,6 +2044,16 @@ def _api_auth_lines(
         "allowed_bearer_origins",
         f"allowed_bearer_origins = {_toml_str_list(auth.allowed_bearer_origins)}",
         lambda v: _toml_str_list(_coerce_str_list(v)),
+    )
+    emit(
+        "allowed_extension_ids",
+        f"allowed_extension_ids = {_toml_str_list(auth.allowed_extension_ids)}",
+        lambda v: _toml_str_list(_coerce_str_list(v)),
+    )
+    emit(
+        "verify_extension_id",
+        f"verify_extension_id = {_toml_bool(auth.verify_extension_id)}",
+        lambda v: _toml_bool(_coerce_bool(v)),
     )
     return lines
 

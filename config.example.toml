@@ -38,6 +38,15 @@ trusted_proxies = []
 # 默认空 = 只允许同源 Cookie 登录，绝不向 JS 返回 token。
 allowed_bearer_origins = []
 
+# 扩展 ID 白名单（从 manifest key 派生）。
+# 留空（默认）= 任意扩展均可通过 token 认证（公开发行默认）。
+# 非空 = 仅列出的 ID 可通过（私有部署双因子认证）。
+allowed_extension_ids = []
+# 是否启用扩展 ID 验证。
+# false（默认）= 跳过 ID 校验，任意扩展放行。
+# true = 扩展 ID 必须在 allowed_extension_ids 里匹配。
+verify_extension_id = false
+
 [llm]
 # Default LLM provider: "deepseek" | "openai" | "claude" | "gemini" | "ollama" | "openrouter" | "openai_compatible"
 # 这里选择的 provider 决定了运行时会检查哪一组敏感字段。

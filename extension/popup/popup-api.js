@@ -63,8 +63,17 @@ export async function requestJson(path, options = {}) {
   if (timeout.signal) {
     requestOptions.signal = timeout.signal;
   }
+  // Inject auth token from chrome.storage so cross-device requests
+  // bypass CSRF without requiring a cookie round-trip.  Harmless when
+  // no token is cached — the URL simply has no extra query-param.
+  const token = await readAuthToken();
+  let url = `${backendUrl}${path}`;
+  if (token) {
+    const sep = url.includes("?") ? "&" : "?";
+    url += `${sep}token=${encodeURIComponent(token)}`;
+  }
   try {
-    const response = await fetch(`${backendUrl}${path}`, requestOptions);
+    const response = await fetch(url, requestOptions);
     if (!response.ok) {
       let details = null;
       try {
@@ -80,6 +89,22 @@ export async function requestJson(path, options = {}) {
     return response.json();
   } finally {
     timeout.cleanup();
+  }
+}
+
+/** Read the cached auth token from chrome.storage.local (if available). */
+export async function readAuthToken() {
+  try {
+    const storage = globalThis.chrome?.storage?.local;
+    if (!storage?.get) return null;
+    return await new Promise((resolve) => {
+      storage.get(["obc_auth_token"], (items) => {
+        const v = items?.["obc_auth_token"];
+        resolve(typeof v === "string" && v.trim() ? v.trim() : null);
+      });
+    });
+  } catch {
+    return null;
   }
 }
 

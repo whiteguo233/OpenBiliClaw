@@ -19,6 +19,8 @@
  * WebSocket against the new origin).
  */
 
+import { getToken } from "./token-store.js";
+
 export const DEFAULT_BACKEND_HOST = "127.0.0.1";
 export const DEFAULT_BACKEND_PORT = 8420;
 export const BACKEND_ENDPOINT_STORAGE_KEY = "popup_backend_endpoint";
@@ -182,13 +184,19 @@ export async function getBackendOrigin(): Promise<string> {
 export async function apiUrl(path: string): Promise<string> {
   const ep = await ensureLoaded();
   const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `http://${ep.host}:${ep.port}/api${suffix}`;
+  const token = getToken();
+  const sep = suffix.includes("?") ? "&" : "?";
+  const qs = token ? `${sep}token=${encodeURIComponent(token)}` : "";
+  return `http://${ep.host}:${ep.port}/api${suffix}${qs}`;
 }
 
 export async function wsUrl(path: string): Promise<string> {
   const ep = await ensureLoaded();
   const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `ws://${ep.host}:${ep.port}/api${suffix}`;
+  const token = getToken();
+  const sep = suffix.includes("?") ? "&" : "?";
+  const qs = token ? `${sep}token=${encodeURIComponent(token)}` : "";
+  return `ws://${ep.host}:${ep.port}/api${suffix}${qs}`;
 }
 
 export function isValidBackendHost(value: unknown): boolean {

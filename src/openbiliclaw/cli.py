@@ -73,10 +73,12 @@ auth_app = typer.Typer(help="B 站认证命令")
 login_app = typer.Typer(help="账号登录命令")
 browser_app = typer.Typer(help="agent-browser 浏览器命令")
 autostart_app = typer.Typer(help="开机自启动命令")
+ext_key_app = typer.Typer(help="浏览器扩展密钥管理命令")
 app.add_typer(auth_app, name="auth")
 app.add_typer(login_app, name="login")
 app.add_typer(browser_app, name="browser")
 app.add_typer(autostart_app, name="autostart")
+app.add_typer(ext_key_app, name="ext-key")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
 _DISCOVER_STRATEGIES_OPTION = typer.Option(
@@ -4655,6 +4657,202 @@ def set_password(
         "已立即失效所有现有登录态。请重启后端 (openbiliclaw start) 使新密码生效"
         "（运行中的进程仍持旧配置，重启前请勿依赖新密码已启用）。",
     )
+
+
+# ── ext-key: 浏览器扩展密钥管理 ────────────────────────────────────────
+
+
+def _derive_extension_id_from_der(pub_der: bytes) -> str:
+    """Chrome extension ID derivation: SHA-256(DER pubkey)[:16] → a-p mapping."""
+    import hashlib
+
+    digest = hashlib.sha256(pub_der).digest()[:16]
+    return "".join(chr(ord("a") + (b >> 4)) + chr(ord("a") + (b & 0xF)) for b in digest)
+
+
+def _generate_manifest_key() -> tuple[str, str]:
+    """Generate a 2048-bit RSA key via openssl, return (manifest_key_b64, ext_id).
+
+    Requires ``openssl`` on PATH.  Uses only stdlib (subprocess + hashlib).
+    """
+    import base64
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        priv_path = os.path.join(tmpdir, "priv.pem")
+        pub_der_path = os.path.join(tmpdir, "pub.der")
+        # 1) Generate 2048-bit RSA private key
+        subprocess.run(
+            [
+                "openssl",
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+                "-out",
+                priv_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        # 2) Extract public key in DER-encoded SubjectPublicKeyInfo
+        subprocess.run(
+            [
+                "openssl",
+                "pkey",
+                "-in",
+                priv_path,
+                "-pubout",
+                "-outform",
+                "DER",
+                "-out",
+                pub_der_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        with open(pub_der_path, "rb") as f:
+            pub_der = f.read()
+
+    manifest_key = base64.b64encode(pub_der).decode("ascii")
+    ext_id = _derive_extension_id_from_der(pub_der)
+    return manifest_key, ext_id
+
+
+@ext_key_app.command("generate")
+def ext_key_generate() -> None:
+    """生成浏览器扩展 manifest key 并派生 extension ID。
+
+    RSA 2048 → 公钥 DER → manifest key (base64) + extension ID (SHA-256 a-p)。
+    """
+    import subprocess
+
+    try:
+        manifest_key, ext_id = _generate_manifest_key()
+    except FileNotFoundError:
+        _print_status_panel(
+            "error", "openssl 不可用", "需要 openssl 命令行工具（大多数 Linux/macOS 已内置）。"
+        )
+        raise typer.Exit(code=1) from None
+    except subprocess.CalledProcessError as exc:
+        _print_status_panel(
+            "error",
+            "openssl 执行失败",
+            exc.stderr.decode("utf-8", errors="replace") if exc.stderr else str(exc),
+        )
+        raise typer.Exit(code=1) from exc
+
+    _print_key_value_table(
+        "扩展密钥生成结果",
+        [
+            ("Extension ID", ext_id),
+            ("Origin", f"chrome-extension://{ext_id}"),
+            ("manifest key", manifest_key[:60] + "..."),
+        ],
+    )
+    console.print()
+    _print_status_panel(
+        "info",
+        "manifest.json 添加以下 key 字段",
+        manifest_key,
+    )
+
+
+@ext_key_app.command("status")
+def ext_key_status() -> None:
+    """显示扩展密钥验证状态（开关 + 白名单）。"""
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    auth = cfg.api.auth
+    rows: list[tuple[str, str]] = [
+        ("verify_extension_id", "开启" if auth.verify_extension_id else "关闭"),
+        ("白名单数量", str(len(auth.allowed_extension_ids))),
+    ]
+    for i, eid in enumerate(auth.allowed_extension_ids):
+        rows.append((f"  [{i}]", eid))
+    _print_key_value_table("扩展密钥白名单", rows)
+
+
+@ext_key_app.command("add")
+def ext_key_add(
+    ext_id: str = typer.Argument(..., help="要添加的 extension ID"),
+) -> None:
+    """添加 extension ID 到白名单。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if ext_id in cfg.api.auth.allowed_extension_ids:
+        _print_status_panel("warning", "已存在", f"{ext_id} 已在白名单中。")
+        return
+    cfg.api.auth.allowed_extension_ids.append(ext_id)
+    save_config(cfg)
+    _print_status_panel(
+        "success",
+        "已添加",
+        f"Extension ID {ext_id} 已加入白名单。\n"
+        f"当前白名单: {cfg.api.auth.allowed_extension_ids}\n"
+        "重启后端生效。",
+    )
+
+
+@ext_key_app.command("remove")
+def ext_key_remove(
+    ext_id: str = typer.Argument(..., help="要移除的 extension ID"),
+) -> None:
+    """从白名单移除 extension ID。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if ext_id not in cfg.api.auth.allowed_extension_ids:
+        _print_status_panel("warning", "未找到", f"{ext_id} 不在白名单中。")
+        return
+    cfg.api.auth.allowed_extension_ids.remove(ext_id)
+    save_config(cfg)
+    _print_status_panel(
+        "success",
+        "已移除",
+        f"Extension ID {ext_id} 已从白名单移除。\n"
+        f"当前白名单: {cfg.api.auth.allowed_extension_ids}\n"
+        "重启后端生效。",
+    )
+
+
+@ext_key_app.command("enable")
+def ext_key_enable() -> None:
+    """开启扩展 ID 验证（不在白名单的扩展将被拒绝）。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if cfg.api.auth.verify_extension_id:
+        _print_status_panel("info", "已开启", "扩展 ID 验证已是开启状态。")
+        return
+    if not cfg.api.auth.allowed_extension_ids:
+        _print_status_panel(
+            "warning",
+            "白名单为空",
+            "开启验证后所有扩展将被拒绝。请先用 `ext-key add` 添加 ID。",
+        )
+        raise typer.Exit(code=1)
+    cfg.api.auth.verify_extension_id = True
+    save_config(cfg)
+    _print_status_panel("success", "已开启", "扩展 ID 验证已开启。重启后端生效。")
+
+
+@ext_key_app.command("disable")
+def ext_key_disable() -> None:
+    """关闭扩展 ID 验证（任意扩展均可连接）。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if not cfg.api.auth.verify_extension_id:
+        _print_status_panel("info", "已关闭", "扩展 ID 验证已是关闭状态。")
+        return
+    cfg.api.auth.verify_extension_id = False
+    save_config(cfg)
+    _print_status_panel("success", "已关闭", "扩展 ID 验证已关闭。重启后端生效。")
 
 
 @app.command("serve-api")

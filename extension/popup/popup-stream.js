@@ -1,13 +1,36 @@
 import { getBackendBaseUrl } from "./popup-backend-config.js";
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8420/api";
+const AUTH_TOKEN_KEY = "obc_auth_token";
 
-export function createRuntimeStreamUrl(backendUrl = DEFAULT_BACKEND_URL) {
+export function createRuntimeStreamUrl(backendUrl = DEFAULT_BACKEND_URL, token = null) {
   const base = backendUrl.replace(/\/$/, "");
+  let wsUrl;
   if (base.startsWith("https://")) {
-    return `${base.replace("https://", "wss://")}/runtime-stream`;
+    wsUrl = `${base.replace("https://", "wss://")}/runtime-stream`;
+  } else {
+    wsUrl = `${base.replace("http://", "ws://")}/runtime-stream`;
   }
-  return `${base.replace("http://", "ws://")}/runtime-stream`;
+  if (token) {
+    wsUrl += `?token=${encodeURIComponent(token)}`;
+  }
+  return wsUrl;
+}
+
+/** Read the cached auth token from chrome.storage.local (if available). */
+async function readStoredToken() {
+  try {
+    const storage = globalThis.chrome?.storage?.local;
+    if (!storage?.get) return null;
+    return await new Promise((resolve) => {
+      storage.get([AUTH_TOKEN_KEY], (items) => {
+        const v = items?.[AUTH_TOKEN_KEY];
+        resolve(typeof v === "string" && v.trim() ? v.trim() : null);
+      });
+    });
+  } catch {
+    return null;
+  }
 }
 
 export function createRuntimeStreamClient({
@@ -81,8 +104,9 @@ export function createRuntimeStreamClient({
         scheduleReconnect();
         return;
       }
+      const token = await readStoredToken();
       if (stopped) return;
-      attachSocket(new WebSocketImpl(createRuntimeStreamUrl(resolved)));
+      attachSocket(new WebSocketImpl(createRuntimeStreamUrl(resolved, token)));
     })();
   }
 

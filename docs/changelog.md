@@ -4,6 +4,17 @@
 
 ---
 
+## v0.3.161 / extension v0.3.161：跨设备扩展认证与密钥管理（2026-07-06）
+
+后端源码走 `backend-v0.3.161`，浏览器插件走 `extension-v0.3.161`。支持浏览器扩展连接远程 OpenBiliClaw 后端，实现多设备部署场景。
+
+- **扩展登录认证**：新增扩展登录端点，支持 token-based 认证；扩展通过 `chrome.storage.local` 持久化会话；WebSocket 授权接受 query-param 或 bearer token；图片代理支持 query-param token fallback（解决 `<img src>` 跨域限制）。
+- **登录端点三路分发**：扩展 origin → token 模式（含 ID 白名单校验）；同源请求 → HttpOnly cookie；跨域请求 → bearer token（需配置 `allowed_bearer_origins`）。
+- **扩展密钥管理 CLI**：`ext-key generate` 生成 2048-bit RSA 密钥并派生 Chrome 扩展 ID；`ext-key enable/disable` 切换白名单校验；`ext-key add/remove/status` 管理 `allowed_extension_ids` 白名单。
+- **安全模型**：扩展请求需同时验证 Origin 和 Token；本地请求（127.0.0.1 / Docker 桥接 IP）遵循 `local = trusted` 原则，免除密码、Token、扩展 ID 三项校验（三者逻辑对称）。
+- **Docker 兼容**：移除桥接 IP 补丁（扩展现使用 Bearer token 认证）；`is_trusted_local` 优先识别扩展 origin。
+- **新增配置项**：`allowed_extension_ids`（扩展 ID 白名单）、`verify_extension_id`（校验开关，默认关闭）。
+
 ## v0.3.160 / extension v0.3.160 / desktop v0.3.160：把 bge-m3 打进交付物,消灭装机时的模型下载（2026-07-07）
 
 后端源码走 `backend-v0.3.160`,桌面安装包走 `desktop-v0.3.160`(浏览器插件本版无代码改动,不单独发 `extension-v*`)。设计见 `docs/plans/2026-07-07-bundled-embedding-model-{spec,plan}.md`(经 codex 3 轮对抗 review 收敛)。

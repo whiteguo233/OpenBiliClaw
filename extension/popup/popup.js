@@ -56,6 +56,8 @@ import {
   updateBackendEndpoint,
 } from "./popup-backend-config.js";
 import { initAuthControl } from "./popup-auth-control.js";
+import { initExtLogin } from "./popup-ext-login.js";
+import { readAuthToken } from "./popup-api.js";
 import { initAutostartControl } from "./popup-autostart-control.js";
 import {
   createQrSvgMarkup,
@@ -266,7 +268,10 @@ async function setProxyImageSrc(image, coverUrl) {
   const path = buildImageProxyPath(coverUrl);
   if (!path) return false;
   const origin = await getBackendOrigin();
-  image.src = `${origin}${path}`;
+  const token = await readAuthToken();
+  let url = `${origin}${path}`;
+  if (token) url += `&token=${encodeURIComponent(token)}`;
+  image.src = url;
   return true;
 }
 
@@ -278,6 +283,7 @@ async function setProxyImageSrc(image, coverUrl) {
 // cover can't stall the whole batch (the rest keep warming in the background).
 async function preloadCoverImages(items, { timeoutMs = 4000 } = {}) {
   const origin = await getBackendOrigin();
+  const token = await readAuthToken();
   const loaders = (Array.isArray(items) ? items : [])
     .map((item) => {
       const path = item?.cover_url ? buildImageProxyPath(item.cover_url) : null;
@@ -287,7 +293,9 @@ async function preloadCoverImages(items, { timeoutMs = 4000 } = {}) {
         img.decoding = "async";
         img.addEventListener("load", () => resolve(), { once: true });
         img.addEventListener("error", () => resolve(), { once: true });
-        img.src = `${origin}${path}`;
+        let url = `${origin}${path}`;
+        if (token) url += `&token=${encodeURIComponent(token)}`;
+        img.src = url;
       });
     })
     .filter(Boolean);
@@ -5890,6 +5898,13 @@ function bindSettings() {
     { getBaseUrl: getBackendBaseUrl },
   );
 
+  const extLogin = initExtLogin(
+    { password: document.getElementById("cfgExtLoginPassword"),
+      btn: document.getElementById("cfgExtLoginBtn"),
+      status: document.getElementById("cfgExtLoginStatus") },
+    { getBaseUrl: getBackendBaseUrl }
+  );
+
   const autostartControl = initAutostartControl(
     {
       checkbox: document.getElementById("cfgAutostartEnabled"),
@@ -7153,7 +7168,10 @@ async function enableLocalOllamaEmbedding(enableBtn) {
         embedding: {
           provider: "ollama",
           model: "bge-m3",
-          base_url: "http://localhost:11434/v1",
+          // Don't hardcode base_url: Docker deployments use
+          // http://ollama:11434/v1 (sidecar), local deployments use
+          // the default http://localhost:11434/v1.  Omitting it
+          // preserves whatever the backend already has configured.
         },
       },
     });

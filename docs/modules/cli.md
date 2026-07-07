@@ -28,6 +28,12 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `browser content <url>` | 获取页面文本内容 | ✅ |
 | `start` | 启动本地 API 服务 | ✅ |
 | `set-password` | 设置 / 修改局域网访问密码（`--disable` 关闭门禁 / `--logout-all` / `--rotate-secret`） | ✅ |
+| `ext-key generate` | 生成扩展 manifest key + 派生扩展 ID | ✅ |
+| `ext-key enable` | 启用扩展 ID 白名单校验（`verify_extension_id=true`） | ✅ |
+| `ext-key disable` | 禁用扩展 ID 白名单校验（`verify_extension_id=false`） | ✅ |
+| `ext-key add <id>` | 将扩展 ID 加入白名单 | ✅ |
+| `ext-key remove <id>` | 将扩展 ID 移出白名单 | ✅ |
+| `ext-key status` | 查看扩展密钥状态与白名单 | ✅ |
 | `autostart status` | 查看开机自启动配置、系统注册和平台支持状态 | ✅ |
 | `autostart enable` | 注册当前用户登录自启动并写入 `[autostart].enabled=true` | ✅ |
 | `autostart disable` | 移除当前用户登录自启动并写入 `[autostart].enabled=false` | ✅ |
@@ -293,6 +299,48 @@ $ openbiliclaw set-password --rotate-secret
 - `--rotate-secret`：轮换 `session_secret` 并撤销所有登录态；新密钥需重启后端进程才完全生效。
 
 > 改密码（无论走本命令、`init`、直接改 TOML、env、还是 `PUT /api/config`）都会在下次启动 / 重载时按密码指纹变化自动撤销旧登录态。永不过期（`session_ttl_hours=0`，「记住登录」）的会话不会因重启被误撤销。
+
+### `openbiliclaw ext-key`
+
+管理浏览器扩展的 manifest key 与 ID 白名单（写入 `[api.auth]`，见 [配置参考](config.md#apiauth)）。用于跨设备部署场景：管理员生成密钥后分发给远端扩展，扩展将 key 嵌入 manifest.json，后端按 ID 白名单校验连接合法性。
+
+```bash
+# 生成 manifest key + 派生扩展 ID
+$ openbiliclaw ext-key generate
+扩展密钥生成结果
+  Extension ID: abcdefghijklmnopqrstuvwxyz
+  Origin: chrome-extension://abcdefghijklmnopqrstuvwxyz
+  manifest key: MII... (2048-bit Base64)
+
+# 启用扩展 ID 白名单校验
+$ openbiliclaw ext-key enable
+
+# 禁用扩展 ID 白名单校验
+$ openbiliclaw ext-key disable
+
+# 将扩展 ID 加入白名单
+$ openbiliclaw ext-key add abcdefghijklmnopqrstuvwxyz
+
+# 将扩展 ID 移出白名单
+$ openbiliclaw ext-key remove abcdefghijklmnopqrstuvwxyz
+
+# 查看扩展密钥状态与白名单
+$ openbiliclaw ext-key status
+扩展密钥状态
+  校验状态: 已启用
+  白名单: abcdefghijklmnopqrstuvwxyz
+```
+
+子命令：
+
+- `generate`：使用 openssl 生成 2048-bit RSA 密钥并派生 Chrome 扩展 ID。生成的 key 需手动嵌入扩展的 `manifest.json`。
+- `enable`：设置 `verify_extension_id=true`，开启白名单校验。
+- `disable`：设置 `verify_extension_id=false`，关闭白名单校验（适合私有部署）。
+- `add <id>`：将指定扩展 ID 加入 `allowed_extension_ids`。
+- `remove <id>`：将指定扩展 ID 移出 `allowed_extension_ids`。
+- `status`：显示当前校验状态和白名单内容。
+
+> **本地请求免除校验**：即使 `verify_extension_id=true`，本地请求（127.0.0.1 / Docker 桥接 IP）仍免除扩展 ID 校验，遵循 `local = trusted` 原则。白名单仅对远程请求生效。
 
 ### `openbiliclaw autostart`
 

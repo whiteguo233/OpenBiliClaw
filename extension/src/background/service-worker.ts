@@ -77,6 +77,7 @@ import { handleE2ERuntimeEvent } from "./e2e-runner.ts";
 // the import when test files load these dispatchers directly. esbuild
 // bundles either extension, so production builds are unaffected.
 import { apiUrl, onBackendEndpointChange, wsUrl } from "../shared/backend-endpoint.ts";
+import { autoLogin } from "../shared/auth.js";
 import type { BehaviorEvent } from "../shared/types.js";
 
 let eventBuffer: BehaviorEvent[] = [];
@@ -503,14 +504,14 @@ function startPlatformTaskPolling(): void {
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureFlushAlarm();
-  void connectRuntimeStream();
+  void (async () => { await autoLogin(); await connectRuntimeStream(); })();
   startPlatformTaskPolling();
   startCookieSync();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureFlushAlarm();
-  void connectRuntimeStream();
+  void (async () => { await autoLogin(); await connectRuntimeStream(); })();
   startPlatformTaskPolling();
   startCookieSync();
 });
@@ -715,7 +716,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 });
 
 ensureFlushAlarm();
-void connectRuntimeStream();
+void (async () => { await autoLogin(); await connectRuntimeStream(); })();
 startPlatformTaskPolling();
 startCookieSync();
 

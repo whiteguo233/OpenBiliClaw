@@ -23,6 +23,8 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import socket
+import struct
 import time
 from typing import TYPE_CHECKING
 
@@ -195,6 +197,35 @@ def verify_token(
 # ── IP / proxy handling (§4.1, §6) ──────────────────────────────────────────
 
 _LOOPBACK = frozenset({"127.0.0.1", "::1"})
+
+
+def _detect_default_gateway() -> str | None:
+    """Read ``/proc/net/route`` and return the default gateway IP.
+
+    In a Docker container this is the bridge gateway (e.g. 172.18.0.1),
+    which is the only source IP that host-local requests can carry after
+    the kernel rewrites loopback through the bridge.  On a bare-metal /
+    VM host this is the LAN router, which never appears as a TCP source
+    for the local app — adding it is harmless.
+
+    Returns ``None`` when the file is unavailable (Windows, macOS, etc.).
+    """
+    try:
+        with open("/proc/net/route") as fh:
+            for line in fh:
+                parts = line.split()
+                # default route: destination=0, mask=0
+                if parts[1] == "00000000" and parts[7] == "00000000":
+                    return socket.inet_ntoa(struct.pack("<I", int(parts[2], 16)))
+    except (OSError, IndexError, ValueError):
+        pass
+    return None
+
+
+_GATEWAY_IP = _detect_default_gateway()
+_TRUSTED_LOCAL_IPS: frozenset[str] = (
+    _LOOPBACK | frozenset({_GATEWAY_IP}) if _GATEWAY_IP else _LOOPBACK
+)
 _FORWARD_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
 
 
@@ -293,7 +324,7 @@ def resolve_client_ip(
 
 
 def is_trusted_local(client_ip: str | None, trustworthy_local: bool) -> bool:
-    return trustworthy_local and client_ip is not None and client_ip in _LOOPBACK
+    return trustworthy_local and client_ip is not None and client_ip in _TRUSTED_LOCAL_IPS
 
 
 # ── origin / scheme normalization (§4.9) ────────────────────────────────────
@@ -409,6 +440,43 @@ def origin_allowed_for_bearer(origin: str | None, allowed: Iterable[str]) -> boo
         return False
     target = origin_string(parsed)
     return any(origin_string(parse_origin(entry)) == target for entry in allowed)
+
+
+_EXT_SCHEMES = ("chrome-extension://", "moz-extension://")
+
+
+def is_extension_origin(origin: str | None) -> bool:
+    """True if *origin* carries a browser-extension scheme."""
+    if not origin:
+        return False
+    return origin.startswith(_EXT_SCHEMES[0]) or origin.startswith(_EXT_SCHEMES[1])
+
+
+def extract_extension_id(origin: str | None) -> str | None:
+    """Extract the extension ID from a ``chrome-extension://<id>`` or
+    ``moz-extension://<id>`` origin.  Returns ``None`` for non-extension origins.
+    """
+    if not origin:
+        return None
+    for scheme in _EXT_SCHEMES:
+        if origin.startswith(scheme):
+            return origin[len(scheme) :].rstrip("/") or None
+    return None
+
+
+def extension_id_allowed(ext_id: str | None, allowed_ids: Iterable[str]) -> bool:
+    """Whether an extension ID is in the allow-list (case-sensitive exact match).
+
+    Returns ``False`` when *ext_id* is ``None`` or *allowed_ids* is empty —
+    the caller (``AuthGate._extension_allowed``) is responsible for deciding
+    whether to call this function at all based on ``verify_extension_id``.
+    """
+    if ext_id is None:
+        return False
+    allowed = list(allowed_ids)
+    if not allowed:
+        return False  # empty whitelist = no extensions permitted
+    return ext_id in allowed
 
 
 def header_present(headers: Mapping[str, str], names: Iterable[str] = _FORWARD_HEADERS) -> bool:
