@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 from urllib.parse import quote, urlencode, urlparse
+from xml.etree import ElementTree
 
 import httpx
 
@@ -94,6 +95,10 @@ class VideoInfo:
     danmaku_count: int = 0
     tags: list[str] | None = None
     pub_date: str = ""
+    # Part ("P1") id — the key for danmaku / subtitle endpoints. Already
+    # present in the /x/web-interface/view payload, so reading it costs
+    # nothing extra.
+    cid: int = 0
 
 
 @dataclass
@@ -561,6 +566,7 @@ class BilibiliAPIClient:
             share_count=stat.get("share", 0),
             danmaku_count=stat.get("danmaku", 0),
             pub_date=data.get("pubdate", ""),
+            cid=int(data.get("cid", 0) or 0),
         )
 
     async def search(
@@ -979,6 +985,44 @@ class BilibiliAPIClient:
             for reply in replies
         ]
         return comments[:limit]
+
+    async def get_danmaku_texts(self, cid: int, *, limit: int = 3000) -> list[str]:
+        """Fetch raw danmaku strings for one video part.
+
+        Uses the plain XML endpoint (``comment.bilibili.com/{cid}.xml``), which
+        needs no credentials and no WBI signing — unlike the protobuf segment
+        API. Goes through this client so it inherits the shared rate limit and
+        the ``trust_env=False`` CN-direct policy (pitfall rule 1).
+
+        Returns ``[]`` on any failure: danmaku are an optional enrichment
+        signal and must never break the caller.
+        """
+        part_id = int(cid or 0)
+        if part_id <= 0:
+            return []
+
+        await self._respect_rate_limit()
+        try:
+            response = await self._client.get(
+                f"https://comment.bilibili.com/{part_id}.xml"
+            )
+            if response.status_code >= 400:
+                logger.debug("danmaku HTTP %s for cid=%s", response.status_code, part_id)
+                return []
+            # httpx transparently inflates the deflate-encoded body.
+            root = ElementTree.fromstring(response.text)
+        except (httpx.HTTPError, ElementTree.ParseError, ValueError):
+            logger.debug("danmaku fetch/parse failed for cid=%s", part_id, exc_info=True)
+            return []
+
+        texts: list[str] = []
+        for node in root.iter("d"):
+            text = (node.text or "").strip()
+            if text:
+                texts.append(text)
+            if len(texts) >= max(1, int(limit)):
+                break
+        return texts
 
     async def close(self) -> None:
         """Close the HTTP client."""

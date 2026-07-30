@@ -727,6 +727,22 @@ class RuntimeContext:
             embedding_service=new_embedding_service,
             task_registry=self.task_registry,
             xhs_self_info_provider=_xhs_self_info_provider,
+            visual_profile_enabled=bool(
+                getattr(getattr(new_config, "discovery", None), "visual_profile_enabled", False)
+            ),
+            keyframe_enabled=bool(
+                getattr(getattr(new_config, "discovery", None), "keyframe_enabled", False)
+            ),
+            keyframe_max_frames=int(
+                getattr(getattr(new_config, "discovery", None), "keyframe_max_frames", 4)
+            ),
+            danmaku_enabled=bool(
+                getattr(getattr(new_config, "discovery", None), "danmaku_enabled", False)
+            ),
+            danmaku_max_chars=int(
+                getattr(getattr(new_config, "discovery", None), "danmaku_max_chars", 500)
+            ),
+            bilibili_client=new_bilibili_client,
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)

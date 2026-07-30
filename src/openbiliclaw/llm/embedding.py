@@ -88,6 +88,24 @@ def image_embedding_cache_key_for_url(cover_url: str) -> str:
     return f"{_IMAGE_CACHE_KEY_PREFIX}{digest}"
 
 
+def keyframe_embedding_cache_key(bvid: str, frame_index: int) -> str:
+    """Stable L1/L2 key for one sampled video keyframe.
+
+    Keyed by ``(bvid, frame_index)`` rather than frame bytes so the prewarm
+    writer and the ranking reader agree without re-downloading and re-cropping
+    the sprite sheet just to hash the pixels — the same reason
+    :func:`image_embedding_cache_key_for_url` is URL-keyed.
+
+    Shares the ``img:`` namespace (keyframes ARE images, in the same vector
+    space as covers) but the ``kf|`` payload prefix keeps them from ever
+    colliding with a cover key.
+    """
+    normalized = (bvid or "").strip()
+    payload = f"kf|{normalized}|{max(0, int(frame_index))}"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:40]
+    return f"{_IMAGE_CACHE_KEY_PREFIX}{digest}"
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two vectors (pure Python)."""
     dot = sum(x * y for x, y in zip(a, b, strict=False))

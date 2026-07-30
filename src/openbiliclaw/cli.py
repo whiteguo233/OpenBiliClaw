@@ -965,11 +965,29 @@ def _build_recommendation_engine() -> Any:
         info = state.get("xhs_self_info")
         return info if isinstance(info, dict) else None
 
+    # Only build a Bilibili client when the danmaku prewarm can actually use
+    # it — constructing one is not free (httpx client + cookie load).
+    _danmaku_on = bool(getattr(getattr(cfg, "discovery", None), "danmaku_enabled", False))
+
     return RecommendationEngine(
         llm=llm_service,
         database=database,
         embedding_service=embedding_service,
         xhs_self_info_provider=_xhs_self_info_provider,
+        visual_profile_enabled=bool(
+            getattr(getattr(cfg, "discovery", None), "visual_profile_enabled", False)
+        ),
+        keyframe_enabled=bool(
+            getattr(getattr(cfg, "discovery", None), "keyframe_enabled", False)
+        ),
+        keyframe_max_frames=int(
+            getattr(getattr(cfg, "discovery", None), "keyframe_max_frames", 4)
+        ),
+        danmaku_enabled=_danmaku_on,
+        danmaku_max_chars=int(
+            getattr(getattr(cfg, "discovery", None), "danmaku_max_chars", 500)
+        ),
+        bilibili_client=_build_bilibili_client() if _danmaku_on else None,
     )
 
 

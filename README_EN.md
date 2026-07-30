@@ -189,9 +189,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.184 (2026-07-23)**
+📌 Latest: **v0.3.185 (2026-07-28)**
 
-- **One brand icon across every surface** — the extension, PWA, desktop and mobile Web, website, Windows / macOS packages, and tray or menu bar now use the new pink paw icon.
+- **Multimodal visual signals calibrated on real data** — thresholds for the cover / visual-profile / keyframe / danmaku ranking bonuses are all re-derived from real deployment data, ending the initial-value saturation.
+- **More accurate recommendations: negative penalty dropped** — liked and disliked covers overlap in visual space, so the negative penalty was cancelling the positive signal; going positive-only correctly lifts kigurumi / AI desktop-pet / MV content matching your taste.
+- **Cross-platform fairness** — Bilibili-only danmaku / keyframe signals no longer structurally suppress bangumi / xiaohongshu; each platform is normalized within its own pool, and bangumi is back in the feed.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 

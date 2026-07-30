@@ -1264,6 +1264,8 @@ class Database:
         self._ensure_content_cache_topic_columns()
         self._ensure_content_cache_pool_copy_columns()
         self._ensure_content_cache_delight_columns()
+        self._ensure_content_cache_keyframe_columns()
+        self._ensure_content_cache_danmaku_columns()
         self._ensure_content_cache_multisource_columns()
         self._ensure_content_identity_columns()
         self._ensure_seen_items_ledger()
@@ -1278,6 +1280,7 @@ class Database:
         self._ensure_discovery_keywords_table()
         self._ensure_favorites_table()
         self._ensure_saved_sync_tables()
+        self._ensure_user_visual_clusters_table()
         self._ensure_auth_state_table()
         self._ensure_init_runs_table()
         self.reset_stale_discovery_candidate_evaluations()
@@ -7390,6 +7393,143 @@ class Database:
                 continue
             self.conn.execute(f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}")
 
+    def _ensure_content_cache_keyframe_columns(self) -> None:
+        """Add video-keyframe prewarm bookkeeping for existing databases.
+
+        Only a timestamp is stored: the frame vectors live in the embedding
+        cache under ``keyframe_embedding_cache_key`` keys. The timestamp is
+        written even when a video yields no frames, so videos without
+        videoshot data are not re-fetched every prewarm cycle.
+        """
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        required_columns = {
+            "keyframes_fetched_at": "TIMESTAMP",
+            "keyframe_count": "INTEGER DEFAULT 0",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            self.conn.execute(f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}")
+
+    def get_candidates_needing_keyframes(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bilibili pool rows whose keyframes have never been fetched.
+
+        Videoshot data only exists for Bilibili videos, so non-Bilibili and
+        text-shaped rows are excluded rather than retried forever.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, title, cover_url
+            FROM content_cache
+            WHERE keyframes_fetched_at IS NULL
+              AND COALESCE(bvid, '') != ''
+              AND COALESCE(source_platform, 'bilibili') = 'bilibili'
+              AND COALESCE(content_type, 'video') = 'video'
+            ORDER BY COALESCE(relevance_score, 0) DESC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_keyframes_fetched(self, bvid: str, *, keyframe_count: int = 0) -> None:
+        """Stamp a row as keyframe-processed (also on a zero-frame result)."""
+        key = (bvid or "").strip()
+        if not key:
+            return
+        self.conn.execute(
+            """
+            UPDATE content_cache
+            SET keyframes_fetched_at = CURRENT_TIMESTAMP,
+                keyframe_count = ?
+            WHERE bvid = ?
+            """,
+            (max(0, int(keyframe_count)), key),
+        )
+        self.conn.commit()
+
+    def _ensure_content_cache_danmaku_columns(self) -> None:
+        """Add danmaku-text enrichment fields for existing databases.
+
+        Deliberately NOT reusing ``body_text``: that column renders into the
+        card body on all three surfaces (extension / desktop / mobile web) and
+        feeds five LLM prompts, so danmaku there would turn card bodies into
+        walls of "已取餐". The timestamp is written even when a video yields no
+        danmaku, so such videos are not re-fetched every prewarm cycle.
+        """
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        required_columns = {
+            "danmaku_text": "TEXT DEFAULT ''",
+            "danmaku_fetched_at": "TIMESTAMP",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            self.conn.execute(f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}")
+
+    def get_candidates_needing_danmaku(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Bilibili pool rows whose danmaku have never been fetched."""
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, title
+            FROM content_cache
+            WHERE danmaku_fetched_at IS NULL
+              AND COALESCE(bvid, '') != ''
+              AND COALESCE(source_platform, 'bilibili') = 'bilibili'
+              AND COALESCE(content_type, 'video') = 'video'
+            ORDER BY COALESCE(relevance_score, 0) DESC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_danmaku_text(self, bvid: str, *, danmaku_text: str = "") -> None:
+        """Store condensed danmaku and stamp the row (also on an empty result)."""
+        key = (bvid or "").strip()
+        if not key:
+            return
+        self.conn.execute(
+            """
+            UPDATE content_cache
+            SET danmaku_text = ?,
+                danmaku_fetched_at = CURRENT_TIMESTAMP
+            WHERE bvid = ?
+            """,
+            (danmaku_text or "", key),
+        )
+        self.conn.commit()
+
+    def get_danmaku_texts_for(self, bvids: list[str]) -> dict[str, str]:
+        """Map bvid → stored danmaku text for the given ids (empty ones omitted)."""
+        keys = [b.strip() for b in bvids if (b or "").strip()]
+        if not keys:
+            return {}
+        out: dict[str, str] = {}
+        # Chunk to stay clear of SQLite's variable limit on large pool windows.
+        for start in range(0, len(keys), 400):
+            chunk = keys[start : start + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = self.conn.execute(
+                f"""
+                SELECT bvid, COALESCE(danmaku_text, '') AS danmaku_text
+                FROM content_cache
+                WHERE bvid IN ({placeholders})
+                """,
+                tuple(chunk),
+            )
+            for row in cursor.fetchall():
+                text = str(row["danmaku_text"] or "").strip()
+                if text:
+                    out[str(row["bvid"])] = text
+        return out
+
     def _ensure_content_cache_multisource_columns(self) -> None:
         """Add multi-source content identity fields for existing databases."""
         existing_columns = {
@@ -10067,6 +10207,138 @@ class Database:
             self.conn.execute(
                 f"ALTER TABLE {table_name} ADD COLUMN item_key TEXT NOT NULL DEFAULT ''"
             )
+
+    def _ensure_user_visual_clusters_table(self) -> None:
+        """Create the user visual-profile centroids table.
+
+        Stores k mean centroids per polarity (pos/neg) built from the user's
+        liked/disliked cover embeddings (see
+        ``recommendation.visual_profile.build_centroids``). Single-user model:
+        the table is implicitly scoped to the one user, like ``events`` /
+        ``recommendations``. Centroids live in the main DB (not
+        ``embedding_cache.db``) because they are profile-scoped, not
+        content-scoped, and the embedding cache exposes only get/put/count.
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS user_visual_clusters (
+                cluster_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                polarity     TEXT NOT NULL,        -- 'pos' | 'neg'
+                centroid     TEXT NOT NULL,        -- JSON list[float]
+                member_count INTEGER NOT NULL DEFAULT 0,
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_visual_clusters_polarity
+                ON user_visual_clusters(polarity);
+        """)
+
+    def get_user_visual_clusters(self) -> list[dict[str, Any]]:
+        """Return all stored visual centroids, newest-rebuilt ordering irrelevant.
+
+        Each row: ``{cluster_id, polarity, centroid (list[float]), member_count,
+        updated_at}``. ``centroid`` is parsed from JSON; a corrupt row is
+        skipped (never feed a bad vector into scoring — pitfall rule 2).
+        """
+        import json
+
+        rows = self.conn.execute(
+            "SELECT cluster_id, polarity, centroid, member_count, updated_at "
+            "FROM user_visual_clusters"
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                vec = json.loads(row["centroid"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(vec, list):
+                continue
+            out.append(
+                {
+                    "cluster_id": row["cluster_id"],
+                    "polarity": row["polarity"],
+                    "centroid": [float(x) for x in vec],
+                    "member_count": row["member_count"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+    def replace_user_visual_clusters(
+        self,
+        clusters: list[dict[str, Any]],
+    ) -> None:
+        """Atomically replace all visual centroids.
+
+        ``clusters`` items: ``{polarity, centroid (list[float]), member_count}``.
+        Clears the table and re-inserts in one transaction so a rebuild never
+        leaves a half-written profile for the hot path to read.
+        """
+        import json
+
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM user_visual_clusters")
+        for c in clusters:
+            polarity = str(c.get("polarity", "")).strip()
+            if polarity not in {"pos", "neg"}:
+                continue
+            vec = c.get("centroid")
+            if not isinstance(vec, list) or not vec:
+                continue
+            cur.execute(
+                "INSERT INTO user_visual_clusters (polarity, centroid, member_count) "
+                "VALUES (?, ?, ?)",
+                (
+                    polarity,
+                    json.dumps([float(x) for x in vec]),
+                    int(c.get("member_count", 0) or 0),
+                ),
+            )
+        self.conn.commit()
+
+    def latest_feedback_at(self) -> str:
+        """Newest ``feedback_at`` across recommendations, or '' if none.
+
+        Used to throttle visual-profile rebuilds: only rebuild when feedback
+        is newer than the last centroid ``updated_at``.
+        """
+        row = self.conn.execute(
+            "SELECT MAX(feedback_at) AS latest FROM recommendations "
+            "WHERE feedback_at IS NOT NULL"
+        ).fetchone()
+        latest = row["latest"] if row is not None else None
+        return str(latest) if latest is not None else ""
+
+    def get_feedback_covers(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        """All feedback rows with a joinable cover_url, regardless of score.
+
+        ``rebuild_visual_profile`` needs EVERY liked/disliked cover to build
+        taste centroids — including feedback on low-relevance items the user
+        still took the time to react to. ``get_recommendations`` cannot serve
+        this: it applies the pool admission predicate (``confidence >=
+        min_score``), which silently drops low-confidence feedback rows, so a
+        rebuild via that path saw only a fraction of the feedback and built
+        too few / empty centroids. This query bypasses admission and orders
+        by feedback time so the most recent reactions win deduplication.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT r.feedback_type, r.bvid,
+                   COALESCE(c.cover_url, '') AS cover_url
+            FROM recommendations AS r
+            LEFT JOIN content_cache AS c
+                   ON c.bvid = COALESCE(
+                        (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
+                        (SELECT bvid FROM content_cache WHERE content_id = r.bvid LIMIT 1)
+                   )
+            WHERE r.feedback_type IS NOT NULL
+              AND r.feedback_type != ''
+              AND COALESCE(c.cover_url, '') != ''
+            ORDER BY r.feedback_at DESC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def _ensure_saved_sync_tables(self) -> None:
         """Create normalized saved-content tables and import legacy saved rows once."""
