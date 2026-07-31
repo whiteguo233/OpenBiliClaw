@@ -1351,9 +1351,12 @@ class ApiAuthConfig:
 class TlsProxyConfig:
     """Optional TLS reverse proxy for remote device access.
 
-    When ``enabled`` is true and the proxy script is importable
-    (``cryptography`` installed), ``serve-api`` starts a background
-    thread that terminates TLS on ``port`` and forwards to the API.
+    When ``enabled`` is true and ``cryptography`` is installed,
+    ``serve-api`` starts a background thread that terminates TLS
+    on ``port`` and forwards to the API.
+
+    ``cert_dir`` defaults to ``{data_dir}/certs`` at runtime;
+    leave empty to use the default.
     """
 
     enabled: bool = False

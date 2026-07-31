@@ -563,5 +563,5 @@ satisfaction_filter_enabled = true
 enabled = false
 # HTTPS listen port (default 2119)
 port = 2119
-# Certificate directory (default auto-detected; set to persist across runs)
-# cert_dir = "/etc/obc-certs"
+# Certificate directory (defaults to {data_dir}/certs; leave empty for default)
+# cert_dir = ""

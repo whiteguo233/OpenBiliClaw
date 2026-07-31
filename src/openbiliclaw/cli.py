@@ -5918,7 +5918,7 @@ def _start_tls_proxy_if_enabled(api_host: str, api_port: int) -> None:
         )
         return
     tls_port = cfg.tls_proxy.port
-    cert_dir = cfg.tls_proxy.cert_dir or ""
+    cert_dir = cfg.tls_proxy.cert_dir or os.path.join(cfg.data_dir, "certs")
     thread = threading.Thread(
         target=start_tls_proxy,
         kwargs={

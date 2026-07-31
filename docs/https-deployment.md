@@ -21,12 +21,18 @@ docker compose --profile tls up -d    # 代理容器 + 后端一起启动
 ## 非 Docker 部署
 
 ```bash
-pip install "openbiliclaw[tls]"        # 安装 TLS 依赖（一次）
-openbiliclaw tls-proxy enable          # 写入 config.toml，之后 serve-api 自动启动代理
-openbiliclaw serve-api                 # 启动 API（代理线程自动跟随）
+# 1) 安装（一次）
+pip install "openbiliclaw[tls]"
+
+# 2) 开启（一次，写入 config.toml）
+openbiliclaw tls-proxy enable
+
+# 3) 日常启动（代理自动跟随）
+openbiliclaw serve-api
 ```
 
-> `tls-proxy status` 查看，`tls-proxy disable` 关闭。代理随 `serve-api` 退出自动停止。
+> `openbiliclaw tls-proxy status` 查看，`tls-proxy disable` 关闭。
+> 代理随 `serve-api` 退出自动停止，无需单独管理。
 
 ## 证书
 
@@ -43,16 +49,9 @@ openbiliclaw serve-api                 # 启动 API（代理线程自动跟随�
 
 ### 使用自己的证书
 
-`cert_dir` 目录下放好 `srv.crt` / `srv.key`（以及可选 `ca.crt` / `ca.crl`），代理启动时自动检测到便跳过生成。
+将 `srv.crt` / `srv.key`（以及可选 `ca.crt` / `ca.crl`）放入 `cert_dir` 目录（默认 `data/certs`），代理启动时自动检测到便跳过生成。
 
-Docker 用户：
-
-```bash
-docker run --rm -v openbiliclaw_certs:/dst -v /你/证书/目录:/src:ro \
-  busybox cp /src/srv.crt /src/srv.key /dst/
-```
-
-非 Docker 用户在 `config.toml` 中设置 `[tls_proxy].cert_dir` 指向证书目录。
+Docker 用户：拷入 `openbiliclaw_certs` 卷。
 
 ## 常见问题
 
@@ -62,8 +61,8 @@ docker run --rm -v openbiliclaw_certs:/dst -v /你/证书/目录:/src:ro \
 
 ### 改 HTTPS 端口？
 
-修改 `config.toml` 中的 `[tls_proxy].port`（默认 2119），重启。Docker 用户同步改 compose 端口映射。
+`config.toml` → `[tls_proxy].port`（默认 2119），重启。Docker 用户同步改 compose 端口映射。
 
 ### 证书过期？
 
-代理生成的有效期 3650 天。重签：删除 `cert_dir` 下的证书文件，重启自动生成新证书，重新下载 `ca.crt` 到客户端。
+代理自动生成的有效期 3650 天。重签：删除 `data/certs`（或你配的 `cert_dir`）下的证书文件，重启自动生成新证书，重新下载 `ca.crt` 到客户端。
