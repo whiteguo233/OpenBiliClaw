@@ -1412,6 +1412,9 @@ packaging = [
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
     { name = "pystray" },
 ]
+tls = [
+    { name = "cryptography" },
+]
 x = [
     { name = "twitter-cli" },
 ]
@@ -1422,6 +1425,7 @@ requires-dist = [
     { name = "apscheduler", specifier = ">=3.10" },
     { name = "bilibili-api-python", specifier = ">=16" },
     { name = "claude-agent-sdk", marker = "extra == 'eval'", specifier = ">=0.1" },
+    { name = "cryptography", marker = "extra == 'tls'", specifier = ">=41" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-genai", specifier = ">=1.66" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
@@ -1449,7 +1453,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=13" },
     { name = "yt-dlp", specifier = ">=2024.1.0" },
 ]
-provides-extras = ["dev", "local-llm", "x", "eval", "browser", "packaging"]
+provides-extras = ["dev", "local-llm", "x", "eval", "browser", "tls", "packaging"]
 
 [[package]]
 name = "packaging"

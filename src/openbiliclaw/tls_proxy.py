@@ -74,7 +74,7 @@ def _build_san_entries(extra_names: list[str]) -> list:
         x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
     ]
     for name in extra_names:
-        if name in ("localhost", "127.0.0.1"):
+        if not name or name in ("localhost", "127.0.0.1"):
             continue
         try:
             ipaddress.ip_address(name)
@@ -90,16 +90,15 @@ def _ensure_certs() -> None:
     Certificates are NEVER generated implicitly — this avoids overwriting
     user-provided certs just because the proxy started before they were
     copied in, or because the user's cert files use different names.
-    Auto-generation is controlled by the AUTO_GEN_CERTS environment
-    variable (set to "1" or "true" to enable it).
+    Auto-generation is controlled by the ``auto_gen_certs`` parameter
+    passed to ``start_tls_proxy()`` (which sets the ``_AUTO_GEN`` flag).
     """
     srv_crt_path = os.path.join(_CERT_DIR, "srv.crt")
     srv_key_path = os.path.join(_CERT_DIR, "srv.key")
     if os.path.isfile(srv_crt_path) and os.path.isfile(srv_key_path):
         return
 
-    auto = os.environ.get("AUTO_GEN_CERTS", "").lower()
-    if auto not in ("1", "true", "yes"):
+    if not _AUTO_GEN:
         sys.exit(
             f"\n  No server certificate found.\n"
             f"  Expected:  {srv_crt_path}\n"
@@ -118,7 +117,7 @@ def _ensure_certs() -> None:
     #           signed by CA, RSA 2048, serverAuth, 3650 days
     #   CRL: empty revocation list, CRL DP -> https://localhost:2119/ca.crl
     os.makedirs(_CERT_DIR, exist_ok=True)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
 
     # --- CA key + self-signed cert ---
     ca_key = rsa.generate_private_key(65537, 2048)
@@ -305,7 +304,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # CA certificate endpoint: serve ca.crt so new clients can download it.
         if path == "/ca.crt":
             try:
-                with open(CA_FILE, "rb") as fh:
+                with open(_CA_FILE, "rb") as fh:
                     data = fh.read()
                 self._reply(200, data, {"Content-Type": "application/x-x509-ca-cert"})
             except OSError:
@@ -315,7 +314,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # CRL endpoint: serve the revocation list directly from the mounted certs.
         if path == "/ca.crl":
             try:
-                with open(CRL_FILE, "rb") as fh:
+                with open(_CRL_FILE, "rb") as fh:
                     data = fh.read()
                 self._reply(200, data, {"Content-Type": "application/pkix-crl"})
             except OSError:

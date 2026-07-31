@@ -2550,7 +2550,7 @@ def _build_tls_proxy(raw: dict[str, Any]) -> TlsProxyConfig:
         san_raw = [s.strip() for s in san_raw.split(",") if s.strip()]
     return TlsProxyConfig(
         enabled=_coerce_bool(
-            _env("OPENBILICLAW_TLS_PROXY_ENABLED") or tls_raw.get("enabled", False),
+            os.environ.get("OPENBILICLAW_TLS_PROXY_ENABLED") or tls_raw.get("enabled", False),
         ),
         port=_normalize_api_port(tls_raw.get("port", 2119)),
         cert_dir=str(tls_raw.get("cert_dir", "") or ""),
