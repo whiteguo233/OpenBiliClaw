@@ -18,10 +18,8 @@ code*:
     ``origin_forbidden``).
 
 If no certificate exists in the cert directory on startup the proxy
-auto-generates a self-signed CA + server certificate pair (RSA 2048, SAN:
-sushe/localhost/127.0.0.1/114.214.181.255, 3650-day validity) that exactly
-replicates the project's gen-certs.sh logic.  Existing certificates are
-left untouched.
+auto-generates a self-signed CA + server certificate pair (RSA 2048,
+SAN: localhost/127.0.0.1 + user-configured names, 3650-day validity)
 
 Everything is configurable via environment variables with sane defaults, so
 the container starts with no arguments.
@@ -53,6 +51,7 @@ _KEY_FILE: str = "/certs/srv.key"
 _CRL_FILE: str = "/certs/ca.crl"
 _CA_FILE: str = "/certs/ca.crt"
 _AUTO_GEN: bool = False
+_SAN_NAMES: list[str] = []
 
 
 def _origin_allowed(origin: str) -> bool:
@@ -66,6 +65,23 @@ def _origin_allowed(origin: str) -> bool:
     if origin.startswith("http://") and origin.endswith(":2119"):
         return True
     return False
+
+
+def _build_san_entries(extra_names: list[str]) -> list:
+    """Build SAN list: always localhost + 127.0.0.1, plus user-provided names."""
+    entries = [
+        x509.DNSName("localhost"),
+        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+    ]
+    for name in extra_names:
+        if name in ("localhost", "127.0.0.1"):
+            continue
+        try:
+            ipaddress.ip_address(name)
+            entries.append(x509.IPAddress(ipaddress.ip_address(name)))
+        except ValueError:
+            entries.append(x509.DNSName(name))
+    return entries
 
 
 def _ensure_certs() -> None:
@@ -91,16 +107,16 @@ def _ensure_certs() -> None:
             f"  To fix, either:\n"
             f"    1) Copy your cert files into the volume mounted at {_CERT_DIR}.\n"
             f"    2) Set AUTO_GEN_CERTS=1 to auto-generate a self-signed pair\n"
-            f"       (CA: OpenBiliClaw Local CA, SAN: sushe/localhost/...\n"
+            f"       (CA: OpenBiliClaw Local CA, SAN: localhost/127.0.0.1 + configured names\n"
             f"        then download https://<host>:2119/ca.crt and trust the CA).\n"
         )
 
     # --- Explicit opt-in: auto-generate CA + server cert + CRL ---
-    # Replicates the project's gen-certs.sh logic exactly:
+    # Replicates the project's gen-certs.sh logic:
     #   CA: CN=OpenBiliClaw Local CA, RSA 2048, CA:TRUE, keyCertSign+cRLSign
-    #   Server: CN=sushe, SAN sushe/localhost/127.0.0.1/114.214.181.255,
+    #   Server: CN=<first SAN or localhost>, SAN localhost/127.0.0.1 + configured names,
     #           signed by CA, RSA 2048, serverAuth, 3650 days
-    #   CRL: empty revocation list, CRL DP -> https://sushe:2119/ca.crl
+    #   CRL: empty revocation list, CRL DP -> https://localhost:2119/ca.crl
     os.makedirs(_CERT_DIR, exist_ok=True)
     now = datetime.datetime.utcnow()
 
@@ -138,7 +154,7 @@ def _ensure_certs() -> None:
             x509.CRLDistributionPoints(
                 [
                     x509.DistributionPoint(
-                        full_name=[x509.UniformResourceIdentifier("https://sushe:2119/ca.crl")],
+                        full_name=[x509.UniformResourceIdentifier("https://localhost:2119/ca.crl")],
                         relative_name=None,
                         reasons=None,
                         crl_issuer=None,
@@ -158,7 +174,7 @@ def _ensure_certs() -> None:
 
     # --- Server key + CSR-signed cert ---
     srv_key = rsa.generate_private_key(65537, 2048)
-    srv_subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "sushe")])
+    srv_subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, _SAN_NAMES[0] if _SAN_NAMES else "localhost")])
     srv_cert = (
         x509.CertificateBuilder()
         .subject_name(srv_subject)
@@ -168,14 +184,7 @@ def _ensure_certs() -> None:
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=3650))
         .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName("sushe"),
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-                    x509.IPAddress(ipaddress.IPv4Address("114.214.181.255")),
-                ]
-            ),
+            x509.SubjectAlternativeName(_build_san_entries(_SAN_NAMES)),
             critical=False,
         )
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=False)
@@ -201,7 +210,7 @@ def _ensure_certs() -> None:
             x509.CRLDistributionPoints(
                 [
                     x509.DistributionPoint(
-                        full_name=[x509.UniformResourceIdentifier("https://sushe:2119/ca.crl")],
+                        full_name=[x509.UniformResourceIdentifier("https://localhost:2119/ca.crl")],
                         relative_name=None,
                         reasons=None,
                         crl_issuer=None,
@@ -394,6 +403,7 @@ def start_tls_proxy(
     crl_file: str = "",
     ca_file: str = "",
     auto_gen_certs: bool = False,
+    san_names: list[str] | None = None,
 ) -> ThreadingHTTPServer:
     """Start the TLS reverse proxy in the calling thread (blocks).
 
@@ -403,7 +413,7 @@ def start_tls_proxy(
         t.start()
     """
     global _HOST, _PORT, _BACKEND_HOST, _BACKEND_PORT
-    global _CERT_DIR, _CERT_FILE, _KEY_FILE, _CRL_FILE, _CA_FILE, _AUTO_GEN
+    global _CERT_DIR, _CERT_FILE, _KEY_FILE, _CRL_FILE, _CA_FILE, _AUTO_GEN, _SAN_NAMES
 
     cdir = cert_dir or os.environ.get("CERT_DIR", "/certs")
     _HOST = host
@@ -416,6 +426,7 @@ def start_tls_proxy(
     _CRL_FILE = crl_file or os.environ.get("CRL_FILE", os.path.join(cdir, "ca.crl"))
     _CA_FILE = ca_file or os.environ.get("CA_CERT_FILE", os.path.join(cdir, "ca.crt"))
     _AUTO_GEN = auto_gen_certs
+    _SAN_NAMES = san_names or []
 
     _ensure_certs()
     server = ThreadingHTTPServer((_HOST, _PORT), ProxyHandler)

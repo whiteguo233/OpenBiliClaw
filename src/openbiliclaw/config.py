@@ -1362,6 +1362,7 @@ class TlsProxyConfig:
     enabled: bool = False
     port: int = 2119
     cert_dir: str = ""
+    san_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -2544,12 +2545,16 @@ def _build_api_auth(api_raw: dict[str, Any]) -> ApiAuthConfig:
 
 def _build_tls_proxy(raw: dict[str, Any]) -> TlsProxyConfig:
     tls_raw: dict[str, Any] = raw.get("tls_proxy", {}) if isinstance(raw.get("tls_proxy"), dict) else {}
+    san_raw = tls_raw.get("san_names", [])
+    if isinstance(san_raw, str):
+        san_raw = [s.strip() for s in san_raw.split(",") if s.strip()]
     return TlsProxyConfig(
         enabled=_coerce_bool(
             _env("OPENBILICLAW_TLS_PROXY_ENABLED") or tls_raw.get("enabled", False),
         ),
         port=_normalize_api_port(tls_raw.get("port", 2119)),
         cert_dir=str(tls_raw.get("cert_dir", "") or ""),
+        san_names=list(san_raw) if isinstance(san_raw, list) else [],
     )
 
 

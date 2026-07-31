@@ -5853,20 +5853,43 @@ def ext_key_revoke(
 
 
 @tls_proxy_app.command("enable")
-def tls_proxy_enable() -> None:
+def tls_proxy_enable(
+    san: list[str] = typer.Option(
+        [],
+        "--san",
+        help="客户端访问时使用的 hostname 或 IP（可多次指定）。不指定则交互式输入。",
+    ),
+) -> None:
     """开启 TLS 反代（启动 API 时将自动监听 HTTPS 端口）。"""
     from openbiliclaw.config import load_config, save_config
 
     cfg = load_config()
-    if cfg.tls_proxy.enabled:
+
+    # 交互式收集 SAN
+    if not san and not cfg.tls_proxy.san_names:
+        _print_status_panel(
+            "info",
+            "证书域名配置",
+            "其他设备用什么地址访问本服务？\n"
+            "输入 hostname 或 IP，多个用逗号分隔，直接回车跳过（仅本机可用）。\n"
+            "示例：192.168.1.100, mybili.lan",
+        )
+        raw = typer.prompt("SAN（hostname/IP）", default="", show_default=False)
+        san = [s.strip() for s in raw.split(",") if s.strip()]
+
+    if san:
+        cfg.tls_proxy.san_names = san
+
+    if cfg.tls_proxy.enabled and not san:
         _print_status_panel("info", "已开启", "TLS 反代已是开启状态。")
         return
     cfg.tls_proxy.enabled = True
     save_config(cfg)
+    san_hint = f"，SAN: {', '.join(cfg.tls_proxy.san_names)}" if cfg.tls_proxy.san_names else "（仅本机）"
     _print_status_panel(
         "success",
         "已开启",
-        f"TLS 反代已开启（端口 {cfg.tls_proxy.port}）。下次启动 API 时将自动监听。",
+        f"TLS 反代已开启（端口 {cfg.tls_proxy.port}{san_hint}）。下次启动 API 时将自动监听。",
     )
 
 
@@ -5894,7 +5917,8 @@ def tls_proxy_status() -> None:
     lines = [
         f"状态:   {status_text}",
         f"端口:   {cfg.tls_proxy.port}",
-        f"证书目录: {cfg.tls_proxy.cert_dir or '(默认)'}",
+        f"证书目录: {cfg.tls_proxy.cert_dir or '(data/certs)'}",
+        f"SAN:    {', '.join(cfg.tls_proxy.san_names) if cfg.tls_proxy.san_names else '(仅本机 localhost)'}",
     ]
     extra = ""
     if not cfg.tls_proxy.enabled:
@@ -5928,6 +5952,7 @@ def _start_tls_proxy_if_enabled(api_host: str, api_port: int) -> None:
             "backend_port": api_port,
             "cert_dir": cert_dir,
             "auto_gen_certs": True,
+            "san_names": cfg.tls_proxy.san_names,
         },
         daemon=True,
         name="tls-proxy",

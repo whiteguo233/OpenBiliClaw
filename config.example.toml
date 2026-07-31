@@ -565,3 +565,7 @@ enabled = false
 port = 2119
 # Certificate directory (defaults to {data_dir}/certs; leave empty for default)
 # cert_dir = ""
+# Subject Alternative Names: hostnames/IPs clients use to access this server.
+# Collected interactively by `openbiliclaw tls-proxy enable`.
+# localhost and 127.0.0.1 are always included; add remote-access names here.
+# san_names = ["192.168.1.100", "mybili.lan"]
