@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 # Module ref needed for patch.multiple() targets
 from openbiliclaw import tls_proxy as _tls_proxy_mod

@@ -78,7 +78,7 @@ def _rewrite_origin(origin: str) -> str:
     return origin
 
 
-def _build_san_entries(extra_names: list[str]) -> list:
+def _build_san_entries(extra_names: list[str]) -> list[x509.GeneralName]:
     """Build SAN list: always localhost + 127.0.0.1, plus user-provided names."""
     entries = [
         x509.DNSName("localhost"),
@@ -213,7 +213,7 @@ def _ensure_certs() -> None:
             critical=True,
         )
         .add_extension(
-            x509.ExtendedKeyUsage([x509.ExtendedKeyUsageOID.SERVER_AUTH]),
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
             critical=False,
         )
         .add_extension(
@@ -261,7 +261,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "openbiliclaw-tls-proxy/1.0"
 
-    def _reply(self, code: int, body: bytes = b"", headers: dict | None = None) -> None:
+    def _reply(self, code: int, body: bytes = b"", headers: dict[str, str] | None = None) -> None:
         self.send_response(code)
         for key, value in (headers or {}).items():
             self.send_header(key, value)
@@ -347,8 +347,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         }
         # Preserve the original Host so the backend derives the same origin
         # (http://<host>:2119) that we rewrote the Origin to.
-        if self.headers.get("Host"):
-            fwd_headers["Host"] = self.headers.get("Host")
+        host_val = self.headers.get("Host")
+        if host_val:
+            fwd_headers["Host"] = host_val
         if fwd_origin is not None:
             fwd_headers["Origin"] = fwd_origin
 

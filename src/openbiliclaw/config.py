@@ -2544,7 +2544,8 @@ def _build_api_auth(api_raw: dict[str, Any]) -> ApiAuthConfig:
 
 
 def _build_tls_proxy(raw: dict[str, Any]) -> TlsProxyConfig:
-    tls_raw: dict[str, Any] = raw.get("tls_proxy", {}) if isinstance(raw.get("tls_proxy"), dict) else {}
+    tls_raw_val = raw.get("tls_proxy")
+    tls_raw: dict[str, Any] = tls_raw_val if isinstance(tls_raw_val, dict) else {}
     san_raw = tls_raw.get("san_names", [])
     if isinstance(san_raw, str):
         san_raw = [s.strip() for s in san_raw.split(",") if s.strip()]
