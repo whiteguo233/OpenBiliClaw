@@ -106,6 +106,47 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # TLS reverse proxy — the only public ingress for the web UI and browser
+  # extension. Terminates TLS with the project's self-signed cert and forwards
+  # to the backend over the internal network. It also normalises the Origin
+  # header so the backend's cross-origin bearer-login check passes without
+  # editing backend code (see docker/openbiliclaw_tls_proxy.py).
+  openbiliclaw-tls-proxy:
+    build:
+      context: .
+      dockerfile: docker/openbiliclaw-tls-proxy.Dockerfile
+      # In-container cert directory; overridable at build time.
+      args:
+        CERT_DIR: /certs
+    container_name: openbiliclaw-tls-proxy
+    depends_on:
+      openbiliclaw-backend:
+        condition: service_healthy
+    ports:
+      - "2119:2119"
+    volumes:
+      # Docker-managed volume — no host path needed.
+      # Proxy auto-generates CA+server certs if the volume is empty
+      # (new deployments).  Migrate existing certs in with a one-off:
+      #   docker run --rm -v openbiliclaw_certs:/dst \
+      #     -v /host/certs:/src:ro busybox cp /src/*.{crt,key,crl} /dst/
+      - openbiliclaw_certs:/certs
+    environment:
+      BACKEND_HOST: openbiliclaw-backend
+      BACKEND_PORT: "8420"
+      LISTEN_PORT: "2119"
+      CERT_DIR: /certs
+      # Set to "0" to disable auto-generation and require you to supply
+      # your own srv.crt / srv.key in the certs volume.
+      AUTO_GEN_CERTS: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request,sys; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:2119/ca.crl', context=ctx, timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   openbiliclaw_config:
   openbiliclaw_data:
@@ -113,3 +154,8 @@ volumes:
   # Persists ollama models across container recreations so users don't
   # have to re-pull bge-m3 on every rebuild.
   openbiliclaw_ollama:
+  # Holds the TLS certificate chain (ca.crt/ca.key, srv.crt/srv.key, ca.crl).
+  # Auto-generated on first startup when empty; persists across rebuilds.
+  # Explicit name prevents compose from adding the project-name prefix.
+  openbiliclaw_certs:
+    name: openbiliclaw_certs
