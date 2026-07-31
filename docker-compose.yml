@@ -106,12 +106,13 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # TLS reverse proxy — the only public ingress for the web UI and browser
-  # extension. Terminates TLS with the project's self-signed cert and forwards
-  # to the backend over the internal network. It also normalises the Origin
-  # header so the backend's cross-origin bearer-login check passes without
-  # editing backend code (see docker/openbiliclaw_tls_proxy.py).
+  # TLS reverse proxy — *optional* component for remote device access.
+  # Only started with `docker compose --profile tls up`.  Terminates TLS with
+  # the project's self-signed cert and forwards to the backend over the
+  # internal network.  See docs/https-deployment.md for non-Docker setups.
   openbiliclaw-tls-proxy:
+    profiles:
+      - tls
     build:
       context: .
       dockerfile: docker/openbiliclaw-tls-proxy.Dockerfile
