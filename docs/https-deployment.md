@@ -36,9 +36,9 @@ openbiliclaw serve-api
 
 ## 证书
 
-代理启动时自动检测 `cert_dir`（默认当前目录）：
+代理启动时自动检测 `cert_dir`（默认 `data/certs`）：
 - 已有 `srv.crt` + `srv.key` → 直接使用
-- 不存在 → 自动生成自签 CA + 服务器证书（RSA 2048，SAN: sushe/localhost/127.0.0.1/当前IP，3650 天）
+- 不存在 → 自动生成自签 CA + 服务器证书（RSA 2048，SAN: localhost/127.0.0.1 + 用户配置的主机名/IP，3650 天）
 
 ### 客户端信任 CA
 

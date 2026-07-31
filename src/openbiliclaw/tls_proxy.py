@@ -9,11 +9,11 @@ code*:
 
   * Validate the incoming ``Origin``: allow the browser extension
     (``chrome-extension://``) and same-site web origins
-    (``https://<host>:2119``); reject anything else with ``403`` before it
+    (``https://<host>:<port>``); reject anything else with ``403`` before it
     ever reaches the backend.
-  * Rewrite the web ``Origin`` scheme ``https://<host>:2119`` ->
-    ``http://<host>:2119`` while preserving the original ``Host`` header, so
-    the backend computes its own origin as ``http://<host>:2119`` and treats
+  * Rewrite the web ``Origin`` scheme ``https://<host>:<port>`` ->
+    ``http://<host>:<port>`` while preserving the original ``Host`` header, so
+    the backend computes its own origin as ``http://<host>:<port>`` and treats
     the request as same-origin (web password login no longer returns
     ``origin_forbidden``).
 
@@ -29,11 +29,10 @@ import datetime
 import ipaddress
 import os
 import select
-import sys
 import ssl
-import threading
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -54,17 +53,29 @@ _AUTO_GEN: bool = False
 _SAN_NAMES: list[str] = []
 
 
+def _write_file(path: str, data: bytes, mode: int) -> None:
+    with open(path, "wb") as fh:
+        fh.write(data)
+    os.chmod(path, mode)
+
+
 def _origin_allowed(origin: str) -> bool:
     if not origin:
         return True
     if origin.startswith("chrome-extension://"):
         return True
-    # Web UI origin: any https://<host>:2119 (the port this proxy listens on).
-    if origin.startswith("https://") and origin.endswith(":2119"):
-        return True
-    if origin.startswith("http://") and origin.endswith(":2119"):
-        return True
-    return False
+    # Web UI origin: any https://<host>:<proxy-port>.
+    port_suffix = f":{_PORT}"
+    return (origin.startswith("https://") or origin.startswith("http://")) and origin.endswith(
+        port_suffix
+    )
+
+
+def _rewrite_origin(origin: str) -> str:
+    # Flatten only the web scheme so the backend derives the same origin.
+    if origin.startswith("https://"):
+        return "http://" + origin[len("https://"):]
+    return origin
 
 
 def _build_san_entries(extra_names: list[str]) -> list:
@@ -93,16 +104,14 @@ def _ensure_certs() -> None:
     Auto-generation is controlled by the ``auto_gen_certs`` parameter
     passed to ``start_tls_proxy()`` (which sets the ``_AUTO_GEN`` flag).
     """
-    srv_crt_path = os.path.join(_CERT_DIR, "srv.crt")
-    srv_key_path = os.path.join(_CERT_DIR, "srv.key")
-    if os.path.isfile(srv_crt_path) and os.path.isfile(srv_key_path):
+    if os.path.isfile(_CERT_FILE) and os.path.isfile(_KEY_FILE):
         return
 
     if not _AUTO_GEN:
-        sys.exit(
+        raise RuntimeError(
             f"\n  No server certificate found.\n"
-            f"  Expected:  {srv_crt_path}\n"
-            f"             {srv_key_path}\n\n"
+            f"  Expected:  {_CERT_FILE}\n"
+            f"             {_KEY_FILE}\n\n"
             f"  To fix, either:\n"
             f"    1) Copy your cert files into the volume mounted at {_CERT_DIR}.\n"
             f"    2) Set AUTO_GEN_CERTS=1 to auto-generate a self-signed pair\n"
@@ -115,9 +124,10 @@ def _ensure_certs() -> None:
     #   CA: CN=OpenBiliClaw Local CA, RSA 2048, CA:TRUE, keyCertSign+cRLSign
     #   Server: CN=<first SAN or localhost>, SAN localhost/127.0.0.1 + configured names,
     #           signed by CA, RSA 2048, serverAuth, 3650 days
-    #   CRL: empty revocation list, CRL DP -> https://localhost:2119/ca.crl
+    #   CRL: empty revocation list, CRL DP -> https://localhost:<proxy-port>/ca.crl
     os.makedirs(_CERT_DIR, exist_ok=True)
     now = datetime.datetime.now(datetime.UTC)
+    _crl_dp_url = f"https://localhost:{_PORT}/ca.crl"
 
     # --- CA key + self-signed cert ---
     ca_key = rsa.generate_private_key(65537, 2048)
@@ -153,7 +163,7 @@ def _ensure_certs() -> None:
             x509.CRLDistributionPoints(
                 [
                     x509.DistributionPoint(
-                        full_name=[x509.UniformResourceIdentifier("https://localhost:2119/ca.crl")],
+                        full_name=[x509.UniformResourceIdentifier(_crl_dp_url)],
                         relative_name=None,
                         reasons=None,
                         crl_issuer=None,
@@ -173,7 +183,8 @@ def _ensure_certs() -> None:
 
     # --- Server key + CSR-signed cert ---
     srv_key = rsa.generate_private_key(65537, 2048)
-    srv_subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, _SAN_NAMES[0] if _SAN_NAMES else "localhost")])
+    srv_cn = _SAN_NAMES[0] if _SAN_NAMES else "localhost"
+    srv_subject = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, srv_cn)])
     srv_cert = (
         x509.CertificateBuilder()
         .subject_name(srv_subject)
@@ -209,7 +220,7 @@ def _ensure_certs() -> None:
             x509.CRLDistributionPoints(
                 [
                     x509.DistributionPoint(
-                        full_name=[x509.UniformResourceIdentifier("https://localhost:2119/ca.crl")],
+                        full_name=[x509.UniformResourceIdentifier(_crl_dp_url)],
                         relative_name=None,
                         reasons=None,
                         crl_issuer=None,
@@ -242,28 +253,15 @@ def _ensure_certs() -> None:
     _write_file(os.path.join(_CERT_DIR, "ca.crt"), ca_cert_bytes, 0o644)
     _write_file(os.path.join(_CERT_DIR, "ca.key"), ca_key_bytes, 0o600)
     _write_file(os.path.join(_CERT_DIR, "ca.crl"), crl_bytes, 0o644)
-    _write_file(srv_crt_path, srv_cert_bytes, 0o644)
-    _write_file(srv_key_path, srv_key_bytes, 0o600)
-
-
-def _write_file(path: str, data: bytes, mode: int) -> None:
-    with open(path, "wb") as fh:
-        fh.write(data)
-    os.chmod(path, mode)
-
-
-def _rewrite_origin(origin: str) -> str:
-    # Flatten only the web scheme so the backend derives the same origin.
-    if origin.startswith("https://"):
-        return "http://" + origin[len("https://"):]
-    return origin
+    _write_file(_CERT_FILE, srv_cert_bytes, 0o644)
+    _write_file(_KEY_FILE, srv_key_bytes, 0o600)
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "openbiliclaw-tls-proxy/1.0"
 
-    def _reply(self, code, body=b"", headers=None):
+    def _reply(self, code: int, body: bytes = b"", headers: dict | None = None) -> None:
         self.send_response(code)
         for key, value in (headers or {}).items():
             self.send_header(key, value)
@@ -273,7 +271,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if body and self.command != "HEAD":
             self.wfile.write(body)
 
-    def _relay_ws(self, conn):
+    def _relay_ws(self, conn: HTTPConnection) -> None:
         """Bidirectional raw-socket relay after a successful WebSocket upgrade.
 
         Once the 101 has been sent to the client we stop treating the
@@ -298,7 +296,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except (OSError, ConnectionError):
             pass
 
-    def _handle(self):
+    def _handle(self) -> None:
         path = self.path.split("?", 1)[0]
 
         # CA certificate endpoint: serve ca.crt so new clients can download it.
@@ -354,6 +352,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if fwd_origin is not None:
             fwd_headers["Origin"] = fwd_origin
 
+        conn = None
         try:
             conn = HTTPConnection(_BACKEND_HOST, _BACKEND_PORT, timeout=60)
             conn.request(self.command, self.path, body=body, headers=fwd_headers)
@@ -383,11 +382,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 {"Content-Type": "text/plain; charset=utf-8"},
             )
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = _handle
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = _handle  # noqa: N815
 
-    def log_message(self, *args):  # silence default stderr logging
+    def log_message(self, *args: Any) -> None:  # silence default stderr logging
         pass
 
 

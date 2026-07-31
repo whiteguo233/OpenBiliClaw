@@ -4,25 +4,19 @@ from __future__ import annotations
 
 import ipaddress
 import os
-import ssl
-import tempfile
-import threading
-import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from openbiliclaw import tls_proxy
+# Module ref needed for patch.multiple() targets
+from openbiliclaw import tls_proxy as _tls_proxy_mod
 from openbiliclaw.tls_proxy import (
-    ProxyHandler,
     _build_san_entries,
     _ensure_certs,
     _origin_allowed,
     _rewrite_origin,
-    start_tls_proxy,
 )
-
 
 # ── _build_san_entries ──────────────────────────────────────────────────────
 
@@ -111,7 +105,7 @@ class TestEnsureCerts:
 
     def test_generates_all_files_when_missing(self, tmp_path: Path) -> None:
         with patch.multiple(
-            tls_proxy,
+            _tls_proxy_mod,
             _CERT_DIR=str(tmp_path),
             _CERT_FILE=str(tmp_path / "srv.crt"),
             _KEY_FILE=str(tmp_path / "srv.key"),
@@ -133,7 +127,7 @@ class TestEnsureCerts:
         original_mtime = os.path.getmtime(tmp_path / "srv.crt")
 
         with patch.multiple(
-            tls_proxy,
+            _tls_proxy_mod,
             _CERT_DIR=str(tmp_path),
             _CERT_FILE=str(tmp_path / "srv.crt"),
             _KEY_FILE=str(tmp_path / "srv.key"),
@@ -148,7 +142,7 @@ class TestEnsureCerts:
         from cryptography import x509
 
         with patch.multiple(
-            tls_proxy,
+            _tls_proxy_mod,
             _CERT_DIR=str(tmp_path),
             _CERT_FILE=str(tmp_path / "srv.crt"),
             _KEY_FILE=str(tmp_path / "srv.key"),
@@ -171,7 +165,7 @@ class TestEnsureCerts:
         from cryptography import x509
 
         with patch.multiple(
-            tls_proxy,
+            _tls_proxy_mod,
             _CERT_DIR=str(tmp_path),
             _CERT_FILE=str(tmp_path / "srv.crt"),
             _KEY_FILE=str(tmp_path / "srv.key"),
@@ -187,10 +181,9 @@ class TestEnsureCerts:
 
     def test_generated_cert_signed_by_ca(self, tmp_path: Path) -> None:
         from cryptography import x509
-        from cryptography.hazmat.primitives import hashes
 
         with patch.multiple(
-            tls_proxy,
+            _tls_proxy_mod,
             _CERT_DIR=str(tmp_path),
             _CERT_FILE=str(tmp_path / "srv.crt"),
             _KEY_FILE=str(tmp_path / "srv.key"),
