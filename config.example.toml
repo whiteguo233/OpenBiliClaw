@@ -544,3 +544,24 @@ unmanaged_max_age_days = 30
 # retained as disliked_topics evidence instead of being learned as a
 # positive interest.
 satisfaction_filter_enabled = true
+
+
+# ──────────────────────────────────────────────────────────────
+# TLS Proxy
+# ──────────────────────────────────────────────────────────────
+# Optional HTTPS reverse proxy for remote device access. When enabled
+# and ``cryptography`` is installed (``pip install "openbiliclaw[tls]"``),
+# ``openbiliclaw serve-api`` automatically starts a background thread that
+# terminates TLS and forwards to the API port.
+#
+# Enable:  ``openbiliclaw tls-proxy enable``
+# Disable: ``openbiliclaw tls-proxy disable``
+# Status:  ``openbiliclaw tls-proxy status``
+#
+# See docs/https-deployment.md for Docker and non-Docker setups.
+[tls_proxy]
+enabled = false
+# HTTPS listen port (default 2119)
+port = 2119
+# Certificate directory (default auto-detected; set to persist across runs)
+# cert_dir = "/etc/obc-certs"

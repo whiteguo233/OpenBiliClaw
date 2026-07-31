@@ -334,11 +334,13 @@ login_app = typer.Typer(help="账号登录命令")
 browser_app = typer.Typer(help="agent-browser 浏览器命令")
 autostart_app = typer.Typer(help="开机自启动命令")
 ext_key_app = typer.Typer(help="浏览器扩展密钥管理命令")
+tls_proxy_app = typer.Typer(help="TLS 反代管理命令（远程设备 HTTPS 访问）")
 app.add_typer(auth_app, name="auth")
 app.add_typer(login_app, name="login")
 app.add_typer(browser_app, name="browser")
 app.add_typer(autostart_app, name="autostart")
 app.add_typer(ext_key_app, name="ext-key")
+app.add_typer(tls_proxy_app, name="tls-proxy")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
 _DISCOVER_STRATEGIES_OPTION = typer.Option(
@@ -5847,6 +5849,97 @@ def ext_key_revoke(
     )
 
 
+# ── tls-proxy ──────────────────────────────────────────────────────────────
+
+
+@tls_proxy_app.command("enable")
+def tls_proxy_enable() -> None:
+    """开启 TLS 反代（启动 API 时将自动监听 HTTPS 端口）。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if cfg.tls_proxy.enabled:
+        _print_status_panel("info", "已开启", "TLS 反代已是开启状态。")
+        return
+    cfg.tls_proxy.enabled = True
+    save_config(cfg)
+    _print_status_panel(
+        "success",
+        "已开启",
+        f"TLS 反代已开启（端口 {cfg.tls_proxy.port}）。下次启动 API 时将自动监听。",
+    )
+
+
+@tls_proxy_app.command("disable")
+def tls_proxy_disable() -> None:
+    """关闭 TLS 反代。"""
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+    if not cfg.tls_proxy.enabled:
+        _print_status_panel("info", "已关闭", "TLS 反代已是关闭状态。")
+        return
+    cfg.tls_proxy.enabled = False
+    save_config(cfg)
+    _print_status_panel("success", "已关闭", "TLS 反代已关闭。")
+
+
+@tls_proxy_app.command("status")
+def tls_proxy_status() -> None:
+    """查看 TLS 反代配置状态。"""
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    status_text = "开启" if cfg.tls_proxy.enabled else "关闭"
+    lines = [
+        f"状态:   {status_text}",
+        f"端口:   {cfg.tls_proxy.port}",
+        f"证书目录: {cfg.tls_proxy.cert_dir or '(默认)'}",
+    ]
+    extra = ""
+    if not cfg.tls_proxy.enabled:
+        extra = "（启用: openbiliclaw tls-proxy enable）"
+    _print_status_panel("info", "TLS 反代配置", "\n".join(lines) + extra)
+
+
+def _start_tls_proxy_if_enabled(api_host: str, api_port: int) -> None:
+    """Start the TLS proxy in a daemon thread if ``[tls_proxy].enabled``."""
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    if not cfg.tls_proxy.enabled:
+        return
+    try:
+        from openbiliclaw.tls_proxy import start_tls_proxy
+    except ImportError:
+        _print_status_panel(
+            "warning", "TLS 代理未启动",
+            "cryptography 未安装。安装后 TLS 代理将自动启用。（pip install cryptography）",
+        )
+        return
+    tls_port = cfg.tls_proxy.port
+    cert_dir = cfg.tls_proxy.cert_dir or ""
+    thread = threading.Thread(
+        target=start_tls_proxy,
+        kwargs={
+            "host": "0.0.0.0",
+            "port": tls_port,
+            "backend_host": "127.0.0.1",
+            "backend_port": api_port,
+            "cert_dir": cert_dir,
+            "auto_gen_certs": True,
+        },
+        daemon=True,
+        name="tls-proxy",
+    )
+    thread.start()
+    _print_status_panel(
+        "info", "TLS 反代已启动",
+        f"HTTPS 端口 {tls_port} → 后端 {api_port}。\n"
+        f"浏览器/插件可连接 https://<本机地址>:{tls_port}",
+    )
+
+
 @app.command("serve-api")
 def serve_api(
     host: str = typer.Option("0.0.0.0", "--host", help="API 监听地址"),
@@ -5869,6 +5962,7 @@ def serve_api(
             "（宿主机执行 `docker exec -it openbiliclaw-backend openbiliclaw init`）。",
         )
     _warn_if_pause_on_disconnect_requires_presence()
+    _start_tls_proxy_if_enabled(host, port)
     _run_api_server(host=host, port=port)
 
 

@@ -28,7 +28,7 @@ WORKDIR /app
 # certificate chain when the cert volume is empty (new deployments).
 RUN pip install --no-cache-dir cryptography
 
-COPY docker/openbiliclaw_tls_proxy.py /app/openbiliclaw_tls_proxy.py
+COPY src/openbiliclaw/tls_proxy.py /app/openbiliclaw_tls_proxy.py
 
 EXPOSE 2119
 

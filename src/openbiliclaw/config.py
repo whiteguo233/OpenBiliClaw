@@ -1348,6 +1348,20 @@ class ApiAuthConfig:
 
 
 @dataclass
+class TlsProxyConfig:
+    """Optional TLS reverse proxy for remote device access.
+
+    When ``enabled`` is true and the proxy script is importable
+    (``cryptography`` installed), ``serve-api`` starts a background
+    thread that terminates TLS on ``port`` and forwards to the API.
+    """
+
+    enabled: bool = False
+    port: int = 2119
+    cert_dir: str = ""
+
+
+@dataclass
 class ApiConfig:
     """Backend API server settings.
 
@@ -1386,6 +1400,7 @@ class Config:
     # Top-level `[soul]` is distinct from `[llm.soul]` (per-module
     # provider override): this carries soul-engine behavior toggles.
     soul: SoulConfig = field(default_factory=SoulConfig)
+    tls_proxy: TlsProxyConfig = field(default_factory=TlsProxyConfig)
 
     @property
     def data_path(self) -> Path:
@@ -2181,6 +2196,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
             )
         ),
         soul=soul,
+        tls_proxy=_build_tls_proxy(raw),
     )
 
 
@@ -2520,6 +2536,17 @@ def _build_api_auth(api_raw: dict[str, Any]) -> ApiAuthConfig:
         extension_token_ttl_hours=_coerce_extension_token_ttl_hours(
             auth_raw.get("extension_token_ttl_hours", _DEFAULT_EXTENSION_TOKEN_TTL_HOURS)
         ),
+    )
+
+
+def _build_tls_proxy(raw: dict[str, Any]) -> TlsProxyConfig:
+    tls_raw: dict[str, Any] = raw.get("tls_proxy", {}) if isinstance(raw.get("tls_proxy"), dict) else {}
+    return TlsProxyConfig(
+        enabled=_coerce_bool(
+            _env("OPENBILICLAW_TLS_PROXY_ENABLED") or tls_raw.get("enabled", False),
+        ),
+        port=_normalize_api_port(tls_raw.get("port", 2119)),
+        cert_dir=str(tls_raw.get("cert_dir", "") or ""),
     )
 
 

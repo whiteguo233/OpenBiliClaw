@@ -72,6 +72,9 @@ eval = [
 browser = [
     "playwright>=1.40",
 ]
+tls = [
+    "cryptography>=41",
+]
 packaging = [
     # Desktop installer builds (packaging/build.py). Bundles the backend into a
     # macOS .app/.dmg or Windows onedir for the Inno Setup installer.

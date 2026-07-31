@@ -70,41 +70,36 @@ docker compose --profile tls up -d
 
 ---
 
-## 方案 B：自建反代（非 Docker 用户 / 自管部署）
+## 方案 B：非 Docker 部署（pip install / 直接运行）
 
-### B-1：直接运行代理脚本（零依赖，仅需 Python 3.11+）
-
-`docker/openbiliclaw_tls_proxy.py` 可以脱离 Docker 直接运行：
+通过 `config.toml` 开关 + `serve-api` 自动启动：
 
 ```bash
-pip install cryptography         # 唯一额外依赖
-export BACKEND_HOST=127.0.0.1    # 后端地址
-export BACKEND_PORT=8420
-export CERT_DIR=/etc/obc-certs   # 证书存放目录
-export AUTO_GEN_CERTS=1          # 首次运行自动生成证书
-python docker/openbiliclaw_tls_proxy.py
+pip install "openbiliclaw[tls]"        # 安装 TLS 依赖（只需一次）
+openbiliclaw tls-proxy enable          # 写入 config.toml
+openbiliclaw serve-api                 # 启动 API + TLS 代理自动跟随
 ```
 
-配合 systemd（`/etc/systemd/system/openbiliclaw-tls-proxy.service`）：
+浏览器访问 `https://<host>:2119/web`，插件后端填 `https://<host>:2119`。
 
-```ini
-[Unit]
-Description=OpenBiliClaw TLS Proxy
-After=network.target
+> `openbiliclaw tls-proxy status` 查看代理状态。  
+> `openbiliclaw tls-proxy disable` 关闭。  
+> 代理线程随 `serve-api` 退出自动停止，无需单独管理。
 
-[Service]
-Type=simple
-User=nobody
-Environment="BACKEND_HOST=127.0.0.1"
-Environment="BACKEND_PORT=8420"
-Environment="CERT_DIR=/etc/obc-certs"
-Environment="AUTO_GEN_CERTS=1"
-ExecStart=/usr/bin/python3 /opt/OpenBiliClaw/docker/openbiliclaw_tls_proxy.py
-Restart=always
+### 使用自己的证书
 
-[Install]
-WantedBy=multi-user.target
+```bash
+# 1. 配置 config.toml 中的 cert_dir
+openbiliclaw tls-proxy enable
+# 然后手动编辑 config.toml，将 [tls_proxy] 下的 cert_dir 设为你的证书目录
+
+# 2. 确保目录下有 srv.crt / srv.key（以及可选的 ca.crt / ca.crl）
+
+# 3. 启动
+openbiliclaw serve-api
 ```
+
+### 使用 systemd 管理
 
 ### B-2：nginx
 
