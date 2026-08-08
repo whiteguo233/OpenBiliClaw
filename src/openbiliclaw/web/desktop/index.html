@@ -32,6 +32,151 @@
   </script>
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
+  <style>
+    /* 深潜研究 · 内嵌样式（跟随主站主题变量） */
+    .deepdive-page { width: 100%; max-width: 100%; display: flex; gap: 0; height: 100%; min-height: 0; }
+    /* 平台占位封面（无真实封面时显示） */
+    .platform-ph { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 120px; font-weight: 800; letter-spacing: 0.05em; color: rgba(255,255,255,0.9); font-size: 1.1rem; }
+    .platform-ph span { opacity: 0.92; text-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+    .platform-ph-xhs { background: linear-gradient(135deg, #ff2e4d, #ff6b81); }
+    .platform-ph-zhihu { background: linear-gradient(135deg, #0066ff, #4d94ff); }
+    .platform-ph-douyin { background: linear-gradient(135deg, #170b1d, #2a1a3a); }
+    .platform-ph-youtube { background: linear-gradient(135deg, #cc0000, #ff4d4d); }
+    .platform-ph-bilibili { background: linear-gradient(135deg, #fb7299, #fc9eb5); }
+    .platform-ph-x { background: linear-gradient(135deg, #444, #666); }
+    .deepdive-main { flex: 1; min-width: 0; overflow-y: auto; padding-right: var(--space-4, 16px); }
+    .deepdive-side { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border-soft, #2d3340); transition: width .2s, opacity .2s; overflow: hidden; }
+    .deepdive-side.collapsed { width: 0; border-left: none; opacity: 0; pointer-events: none; }
+    .deepdive-side-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2, 8px) var(--space-3, 12px); border-bottom: 1px solid var(--border-soft, #2d3340); flex-shrink: 0; }
+    .deepdive-side-head h3 { font-size: 14px; font-weight: 600; }
+    .deepdive-side-toggle { background: none; border: none; color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 6px; }
+    .deepdive-side-toggle:hover { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); }
+    .deepdive-side-log { flex: 1; overflow-y: auto; padding: var(--space-2, 8px); display: flex; flex-direction: column; gap: 8px; }
+    .deepdive-side-log .msg { max-width: 92%; padding: 8px 12px; border-radius: var(--radius-md, 12px); font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .deepdive-side-log .msg.user { align-self: flex-end; background: var(--accent, #6c8cff); color: #fff; border-bottom-right-radius: 4px; }
+    .deepdive-side-log .msg.assistant { align-self: flex-start; background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); border-bottom-left-radius: 4px; }
+    .deepdive-side-log .msg.system { align-self: center; background: transparent; color: var(--fg-dim, #9aa3b2); font-size: 11px; }
+    .deepdive-side-input { display: flex; gap: 8px; padding: var(--space-2, 8px) 0 0; margin-top: 6px; flex-shrink: 0; }
+    .deepdive-side-input input { flex: 1; background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); color: var(--fg, #e6e8ee); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; min-width: 0; }
+    .deepdive-side-input input:focus { border-color: var(--accent, #6c8cff); }
+    .deepdive-side-input button { background: var(--accent, #6c8cff); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; flex-shrink: 0; }
+    .deepdive-side-input button:disabled { opacity: 0.5; cursor: default; }
+    .deepdive-hist-fold { text-align: center; }
+    .deepdive-hist-fold button { background: none; border: 1px dashed var(--border-soft, #2d3340); color: var(--fg-dim, #9aa3b2); font-size: 11.5px; padding: 4px 12px; border-radius: 14px; cursor: pointer; }
+    .deepdive-hist-fold button:hover { color: var(--accent, #6c8cff); border-color: var(--accent, #6c8cff); }
+    .deepdive-typing { color: var(--fg-dim, #9aa3b2); font-size: 12px; padding: 4px 8px; }
+    .deepdive-typing::after { content: "…"; animation: deepdive-blink 1s infinite; }
+    @keyframes deepdive-blink { 50% { opacity: 0.2; } }
+    .deepdive-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--fg-dim, #9aa3b2); text-align: center; gap: 8px; }
+    .deepdive-empty .icon { font-size: 36px; }
+    /* 搜索结果卡片在 video-card 基础上微调 */
+    .deepdive-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-4, 16px); margin-top: var(--space-3, 12px); }
+    .deepdive-card-grid .video-card { cursor: pointer; }
+    .deepdive-card-grid .video-card .cover { cursor: pointer; }
+    /* 右侧面板折叠按钮浮动 */
+    .deepdive-side.collapsed + .deepdive-side-float { display: flex; }
+    .deepdive-side-float { display: none; position: absolute; right: 0; top: 0; z-index: 10; }
+    .deepdive-side-float button { writing-mode: vertical-lr; padding: 12px 6px; background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); border-right: none; border-radius: 8px 0 0 8px; color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 12px; }
+    .deepdive-side-float button:hover { color: var(--accent, #6c8cff); }
+    .deepdive-side-wrap { position: relative; display: flex; }
+    .deepdive-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin: var(--space-2, 8px) 0; }
+    .deepdive-filter-row .pill-btn { font-size: 12px; padding: 4px 12px; }
+    .deepdive-sessions-bar { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space-2, 8px); }
+    .deepdive-tree-root { display: flex; flex-direction: column; gap: 4px; }
+    .deepdive-tree-folder { display: flex; flex-direction: column; }
+    .deepdive-folder-row { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px; cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--fg-2, #c4c9d4); background: var(--surface-2, #232733); }
+    .deepdive-folder-row:hover { background: var(--surface-3, #2a2f3a); }
+    .deepdive-folder-toggle { display: inline-flex; width: 14px; justify-content: center; color: var(--fg-dim, #9aa3b2); transition: transform .15s; }
+    .deepdive-folder-toggle.collapsed { transform: rotate(-90deg); }
+    .deepdive-folder-icon { margin-right: 2px; }
+    .deepdive-folder-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .deepdive-folder-count { color: var(--fg-dim, #9aa3b2); font-size: 10px; }
+    .deepdive-folder-op { background: none; border: none; color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 11px; padding: 0 2px; border-radius: 4px; line-height: 1; opacity: 0; transition: opacity .15s; }
+    .deepdive-folder-row:hover .deepdive-folder-op { opacity: 1; }
+    .deepdive-folder-op:hover { color: var(--accent, #6c8cff); }
+    .deepdive-folder-op.del:hover { color: #ff6b6b; }
+    .deepdive-tree-folder-body { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 2px 16px; padding-left: 8px; border-left: 1px solid var(--border-soft, #2d3340); }
+    .deepdive-tree-folder-body.collapsed { display: none; }
+    .deepdive-tree-toolbar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 4px; }
+    .deepdive-tree-toolbar button { background: none; border: 1px dashed var(--border-soft, #2d3340); color: var(--fg-dim, #9aa3b2); font-size: 11px; padding: 2px 10px; border-radius: 12px; cursor: pointer; }
+    .deepdive-tree-toolbar button:hover { color: var(--accent, #6c8cff); border-color: var(--accent, #6c8cff); }
+    .deepdive-session-chip { background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); color: var(--fg-dim, #9aa3b2); padding: 3px 10px; border-radius: 16px; font-size: 11px; cursor: pointer; }
+    .deepdive-session-chip.active { border-color: var(--accent, #6c8cff); color: var(--fg, #e6e8ee); }
+    .deepdive-session-chip { display: inline-flex; align-items: center; gap: 2px; width: fit-content; }
+    .deepdive-session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+    .deepdive-session-op { background: none; border: none; color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 11px; padding: 0 2px; border-radius: 4px; line-height: 1; opacity: 0; transition: opacity .15s; }
+    .deepdive-session-chip:hover .deepdive-session-op { opacity: 1; }
+    .deepdive-session-op:hover { color: var(--accent, #6c8cff); }
+    .deepdive-session-op.deepdive-session-del:hover { color: #ff6b6b; }
+    /* 移动端：全屏对话 */
+    @media (max-width: 820px) {
+      .deepdive-page { flex-direction: column; }
+      .deepdive-main { display: none; }
+      .deepdive-main.mobile-visible { display: block; }
+      .deepdive-side { width: 100%; border-left: none; }
+      .deepdive-side.mobile-hidden { display: none; }
+      .deepdive-side-head .deepdive-side-toggle { display: none; }
+      .deepdive-mobile-back { display: inline-flex; }
+      .deepdive-mobile-chat-btn { display: inline-flex; }
+      .deepdive-side-head { justify-content: flex-start; gap: 8px; }
+      .deepdive-side-head h3 { margin-right: auto; }
+    }
+    .deepdive-mobile-back { display: none; background: none; border: 1px solid var(--border-soft, #2d3340); color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 13px; padding: 4px 10px; border-radius: 6px; align-items: center; }
+    .deepdive-mobile-back:hover { color: var(--accent, #6c8cff); border-color: var(--accent, #6c8cff); }
+    .deepdive-mobile-chat-btn { display: none; background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); color: var(--fg-dim, #9aa3b2); cursor: pointer; font-size: 13px; padding: 6px 12px; border-radius: 16px; align-items: center; }
+    .deepdive-mobile-chat-btn:hover { color: var(--accent, #6c8cff); border-color: var(--accent, #6c8cff); }
+    /* ── 卡片详情弹窗（毛玻璃 · 防误点跳转） ── */
+    .card-detail-overlay { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: clamp(12px, 3vw, 32px); background: color-mix(in oklab, var(--bg, #14161c), transparent 22%); backdrop-filter: blur(22px) saturate(1.3); -webkit-backdrop-filter: blur(22px) saturate(1.3); animation: card-detail-fade .18s var(--ease-standard, ease); }
+    .card-detail-overlay.is-closing { animation: card-detail-fade-out .16s var(--ease-standard, ease) forwards; }
+    @keyframes card-detail-fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes card-detail-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    .card-detail-modal { position: relative; width: min(520px, 100%); max-height: calc(100vh - 64px); overflow: auto; background: var(--surface, #1a1d24); border: 1px solid var(--border-soft, #2d3340); border-radius: 20px; box-shadow: var(--elev-raised, 0 18px 60px rgba(0,0,0,0.5)); animation: card-detail-pop .22s var(--ease-standard, ease); }
+    .card-detail-overlay.is-closing .card-detail-modal { animation: card-detail-pop-out .16s var(--ease-standard, ease) forwards; }
+    @keyframes card-detail-pop { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+    @keyframes card-detail-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(10px) scale(.98); } }
+    .card-detail-cover { position: relative; aspect-ratio: 16/9; background: var(--surface-2, #232733); border-radius: 20px 20px 0 0; overflow: hidden; }
+    .card-detail-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card-detail-cover .platform-badge { position: absolute; top: 12px; left: 12px; padding: 3px 10px; border-radius: 999px; background: color-mix(in oklab, var(--bg, #14161c), transparent 30%); color: var(--fg, #e6e8ee); font-size: 12px; font-weight: 600; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid color-mix(in oklab, var(--border-soft, #2d3340), transparent 20%); }
+    .card-detail-body { padding: 18px 20px 16px; }
+    .card-detail-title { font-size: 16px; font-weight: 700; line-height: 1.45; color: var(--fg, #e6e8ee); margin: 0 0 8px; }
+    .card-detail-author { font-size: 13px; color: var(--fg-dim, #9aa3b2); margin: 0 0 10px; }
+    .card-detail-desc { font-size: 13px; line-height: 1.6; color: var(--fg-2, #c4c9d4); margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto; }
+    .card-detail-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border-soft, #2d3340); padding-top: 14px; }
+    .card-detail-hint { font-size: 12px; color: var(--fg-dim, #9aa3b2); }
+    .card-detail-actions .card-detail-open-btn { background: var(--accent, #6c8cff); color: #fff; border: none; padding: 8px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, transform .1s; }
+    .card-detail-actions .card-detail-open-btn:hover { background: var(--accent-strong, #5a7bf0); }
+    .card-detail-actions .card-detail-open-btn:active { transform: scale(.97); }
+    .card-detail-close { position: absolute; top: 10px; right: 10px; z-index: 2; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: color-mix(in oklab, var(--bg, #14161c), transparent 25%); border: 1px solid color-mix(in oklab, var(--border-soft, #2d3340), transparent 20%); border-radius: 50%; color: var(--fg, #e6e8ee); font-size: 16px; cursor: pointer; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .card-detail-close:hover { background: color-mix(in oklab, var(--bg, #14161c), transparent 10%); }
+    /* ── 深潜 Prompt 设置（设置页 · 高级功能） ── */
+    #deepdivePlanPrompt, #deepdiveExecutePrompt, #deepdiveRefinePrompt { width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border-soft, #2d3340); border-radius: 8px; background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); font: inherit; font-size: 12.5px; line-height: 1.55; }
+    #deepdivePlanPrompt:focus, #deepdiveExecutePrompt:focus, #deepdiveRefinePrompt:focus { outline: none; border-color: var(--accent, #6c8cff); }
+    .settings-advanced-actions { display: flex; gap: 8px; align-items: center; }
+    /* ── 收藏夹（多选批量分类） ── */
+    .saved-collections-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .saved-collections-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .saved-collections-tabs .pill-btn { font-size: 12px; padding: 3px 10px; }
+    .saved-collections-tabs .pill-btn.active { border-color: var(--accent, #6c8cff); color: var(--accent, #6c8cff); }
+    .saved-card { position: relative; }
+    .saved-card.is-selecting .saved-select-box { display: flex; }
+    .saved-select-box { display: none; position: absolute; top: 8px; left: 8px; z-index: 5; width: 22px; height: 22px; align-items: center; justify-content: center; background: color-mix(in oklab, var(--bg, #14161c), transparent 20%); border: 2px solid var(--fg-dim, #9aa3b2); border-radius: 6px; cursor: pointer; backdrop-filter: blur(4px); }
+    .saved-select-box.checked { background: var(--accent, #6c8cff); border-color: var(--accent, #6c8cff); }
+    .saved-select-box.checked::after { content: "✓"; color: #fff; font-size: 13px; font-weight: 800; }
+    .saved-card.is-selected { outline: 2px solid var(--accent, #6c8cff); outline-offset: -2px; }
+    .saved-batch-bar { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 8px 12px; border: 1px solid var(--border-soft, #2d3340); border-radius: 10px; background: var(--surface, #1a1d24); }
+    .saved-batch-count { font-size: 12.5px; color: var(--fg, #e6e8ee); font-weight: 600; }
+    .saved-batch-target { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); border: 1px solid var(--border-soft, #2d3340); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; }
+    .saved-batch-target:focus { outline: none; border-color: var(--accent, #6c8cff); }
+    /* ── 收藏夹 tab：hover 显示 ✎重命名 / ✕删除 ── */
+    .saved-collection-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+    .saved-collection-ops { display: none; align-items: center; gap: 2px; }
+    .saved-collection-tab:hover .saved-collection-ops { display: inline-flex; }
+    .saved-collection-op { background: transparent; border: none; color: var(--fg-dim, #9aa3b2); font-size: 12px; line-height: 1; padding: 1px 3px; border-radius: 4px; cursor: pointer; }
+    .saved-collection-op:hover { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); }
+    .saved-collection-del:hover { color: #ff6b6b; }
+    /* ── 主站首页卡片反馈后自动消失（dislike/dismiss 10s 生效） ── */
+    .video-card.fs-removing { opacity: 0; transform: scale(0.94); transition: opacity .25s ease, transform .25s ease; }
+  </style>
 </head>
 <body>
   <div class="app-shell">
@@ -95,6 +240,7 @@
         <div class="side-drawer-panel" aria-label="侧边菜单">
           <nav class="side-drawer-nav" aria-label="全局功能">
           <button class="nav-action" id="homeBtn" type="button"><span class="nav-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span>首页</span></button>
+          <button class="nav-action" id="deepdiveBtn" type="button" onclick="openDeepDivePage()"><span class="nav-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></span><span>深潜研究</span></button>
           <button class="nav-action" id="watchLaterBtn" type="button"><span class="nav-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>稍后再看</span><span class="nav-count-badge" id="watchLaterCountBadge" hidden></span></button>
           <button class="nav-action" id="favoritesBtn" type="button"><span class="nav-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span><span>我的收藏</span><span class="nav-count-badge" id="favoritesCountBadge" hidden></span></button>
           <button class="nav-action" id="profileBtn" type="button"><span class="nav-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1"/></svg></span><span>我的画像</span></button>
@@ -224,6 +370,17 @@
           </div>
           <button class="pill-btn" id="watchLaterSyncAll" data-saved-list-action="sync-all" type="button" disabled>同步未同步内容（0）</button>
         </div>
+        <div class="saved-collections-bar" id="watchLaterCollectionsBar" data-collections-for="watch_later">
+          <button class="pill-btn saved-collections-multi" type="button">☑ 多选</button>
+          <button class="pill-btn saved-collections-add" type="button">＋ 新建收藏夹</button>
+          <div class="saved-collections-tabs" role="tablist" aria-label="收藏夹筛选"></div>
+          <div class="saved-batch-bar" id="watchLaterBatchBar" hidden>
+            <span class="saved-batch-count">已选 0 项</span>
+            <select class="saved-batch-target" aria-label="目标收藏夹"><option value="">未分类</option></select>
+            <button class="pill-btn primary saved-batch-apply" type="button">批量归类</button>
+            <button class="pill-btn saved-batch-cancel" type="button">取消</button>
+          </div>
+        </div>
         <p class="saved-sync-status" id="watchLaterSyncStatus" aria-live="polite"></p>
         <div class="saved-grid" id="watchLaterList"></div>
         <div class="saved-empty" id="watchLaterEmpty" hidden>还没有稍后再看的内容，去推荐里点时钟图标加入吧。</div>
@@ -237,6 +394,17 @@
             <p class="video-meta">点 ★ 收藏的内容会长期留在这里，和稍后再看互相独立。</p>
           </div>
           <button class="pill-btn" id="favoritesSyncAll" data-saved-list-action="sync-all" type="button" disabled>同步未同步内容（0）</button>
+        </div>
+        <div class="saved-collections-bar" id="favoritesCollectionsBar" data-collections-for="favorite">
+          <button class="pill-btn saved-collections-multi" type="button">☑ 多选</button>
+          <button class="pill-btn saved-collections-add" type="button">＋ 新建收藏夹</button>
+          <div class="saved-collections-tabs" role="tablist" aria-label="收藏夹筛选"></div>
+          <div class="saved-batch-bar" id="favoritesBatchBar" hidden>
+            <span class="saved-batch-count">已选 0 项</span>
+            <select class="saved-batch-target" aria-label="目标收藏夹"><option value="">未分类</option></select>
+            <button class="pill-btn primary saved-batch-apply" type="button">批量归类</button>
+            <button class="pill-btn saved-batch-cancel" type="button">取消</button>
+          </div>
         </div>
         <p class="saved-sync-status" id="favoritesSyncStatus" aria-live="polite"></p>
         <div class="saved-grid" id="favoritesList"></div>
@@ -960,6 +1128,24 @@
             </div>
             <p class="settings-note-inline">经典：仅用合并关键词生成器；混合：在经典基础上再叠加 search-backed 灵感轴链路（最丰富，但同时跑两套，混合最贵）；灵感：完全用灵感轴链路替代经典。</p>
           </section>
+
+          <section class="settings-advanced-section" aria-labelledby="advancedDeepDiveHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Deep Dive prompts</p>
+              <h3 id="advancedDeepDiveHeading">深潜探索</h3>
+            </div>
+            <p class="settings-note-inline">自定义深潜研究的 AI 提示词。三个模板分别用于：生成探索计划（plan）、根据澄清执行搜索（execute）、根据用户修正调整方向（refine）。模板中的 <code>{topic}</code>、<code>{enabled_platforms}</code> 等占位符会被自动替换。保存后立即生效。</p>
+            <div class="settings-advanced-fields">
+              <label class="settings-field full"><span>plan 提示词（生成搜索计划）</span><textarea id="deepdivePlanPrompt" rows="5" spellcheck="false" placeholder="内置默认提示词"></textarea></label>
+              <label class="settings-field full"><span>execute 提示词（执行搜索）</span><textarea id="deepdiveExecutePrompt" rows="4" spellcheck="false" placeholder="内置默认提示词"></textarea></label>
+              <label class="settings-field full"><span>refine 提示词（修正方向）</span><textarea id="deepdiveRefinePrompt" rows="4" spellcheck="false" placeholder="内置默认提示词"></textarea></label>
+              <p class="settings-probe-status" id="deepdivePromptsStatus" aria-live="polite"></p>
+              <div class="settings-advanced-actions">
+                <button class="pill-btn primary" id="deepdivePromptsSave" type="button">保存深潜提示词</button>
+                <button class="pill-btn" id="deepdivePromptsReset" type="button">恢复默认提示词</button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <div id="settingsPanelGeneral" class="settings-panel" data-settings-panel="general" role="tabpanel" aria-labelledby="settingsTabGeneral" hidden>
@@ -1072,6 +1258,49 @@
           </span>
         </div>
       </form>
+      </section>
+
+      <section class="chat-page content-page deepdive-page" id="deepdivePage" aria-label="深潜研究" hidden>
+        <div class="deepdive-main">
+          <div class="content-page-head">
+            <div>
+              <p class="eyebrow">Deep Dive</p>
+              <h2>深潜研究</h2>
+              <p class="video-meta">主动探索一个方向，AI 引导你澄清需求，然后跨平台搜集整理。</p>
+            </div>
+            <button class="pill-btn" id="deepdiveNewBtn" type="button">＋ 新建探索</button>
+            <button class="deepdive-mobile-chat-btn" id="deepdiveMobileChatBtn" type="button">💬 对话</button>
+          </div>
+          <div class="deepdive-sessions-bar" id="deepdiveSessionsBar" aria-label="活跃探索会话"></div>
+          <div class="deepdive-filter-row" id="deepdiveFilterRow" role="tablist" aria-label="搜索平台筛选"></div>
+          <div class="deepdive-empty" id="deepdiveEmpty">
+            <div class="icon">🔍</div>
+            <p>还没有搜索结果</p>
+            <p class="video-meta">在右侧输入探索方向，AI 会跨平台搜集整理</p>
+          </div>
+          <div class="deepdive-card-grid" id="deepdiveCardGrid" hidden></div>
+        </div>
+        <div class="deepdive-side-wrap">
+          <aside class="deepdive-side" id="deepdiveSide" aria-label="AI 引导对话">
+            <div class="deepdive-side-head">
+              <button class="deepdive-mobile-back" id="deepdiveMobileBack" type="button" title="查看结果卡片">‹ 结果</button>
+              <h3>💬 AI 引导</h3>
+              <button class="deepdive-side-toggle" id="deepdiveSideToggle" type="button" title="收起聊天面板">收起 ›</button>
+            </div>
+            <div class="deepdive-side-log" id="deepdiveSideLog" role="region" aria-label="AI 引导对话记录" tabindex="0">
+              <div class="deepdive-hist-fold" id="deepdiveHistFold" hidden>
+                <button type="button" id="deepdiveHistExpandBtn">↑ 展开更早对话</button>
+              </div>
+              <form class="deepdive-side-input" id="deepdiveSideForm">
+                <input id="deepdiveSideInput" aria-label="输入想探索的方向" placeholder="想深入了解什么？例如：新疆旅游攻略 / 学习 AE…">
+                <button type="submit" id="deepdiveSideSend">发送</button>
+              </form>
+            </div>
+          </aside>
+          <div class="deepdive-side-float" id="deepdiveSideFloat">
+            <button id="deepdiveSideOpen" type="button" title="展开聊天面板">打开对话 ‹</button>
+          </div>
+        </div>
       </section>
 
       <div class="llm-instance-dialog" id="llmInstanceDialog" role="dialog" aria-modal="true" aria-labelledby="llmInstanceDialogTitle" hidden>
@@ -1240,4 +1469,1446 @@
   <script src="/shared/dialogue-confirmation.js" defer></script>
   <script src="/shared/source-status.js" defer></script>
   <script src="/web/assets/js/app.js" defer></script>
+<script>
+  // ── 深潜研究 · 页面切换与交互逻辑 ──────────────────────────
+  const DEEP_MAIN_PAGE_IDS = ["homePage","watchLaterPage","favoritesPage","profilePage","chatPage","settingsPage"];
+
+  function openDeepDivePage() {
+    DEEP_MAIN_PAGE_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.setAttribute("hidden", "");
+    });
+    const page = document.getElementById("deepdivePage");
+    if (page) page.removeAttribute("hidden");
+    document.body.classList.add("content-page-open");
+    document.body.classList.remove("chat-page-open", "profile-page-open");
+    const drawer = document.getElementById("sideDrawer");
+    if (drawer) drawer.classList.remove("is-open");
+    window.scrollTo({ top: 0 });
+    initDeepDiveOnce();
+  }
+
+  document.addEventListener("click", function(e) {
+    var btn = e.target.closest(".nav-action");
+    if (btn && btn.id !== "deepdiveBtn") {
+      var dp = document.getElementById("deepdivePage");
+      if (dp && !dp.hidden) dp.setAttribute("hidden", "");
+    }
+  });
+
+  // ── 深潜研究 · 核心交互 ──────────────────────────────────
+  var deepDiveInitialized = false;
+  var deepDiveCurrentSession = null;
+  var deepDiveAwaitingClarify = false;
+  var deepDiveAwaitingRefine = false;
+  var deepDiveBusy = false;
+  var deepDiveCurrentFilter = "all";
+  // 10s 可撤销的延迟提交协调器（惰性初始化：外部脚本是 defer，内联脚本执行时尚未加载）
+  var deepDivePending = null;
+  function getDeepDivePending() {
+    if (deepDivePending) return deepDivePending;
+    var ctor = window.OpenBiliClawPendingActions && window.OpenBiliClawPendingActions.createPendingActionCoordinator;
+    if (!ctor) return null;
+    deepDivePending = ctor({ windowMs: 10000 });
+    return deepDivePending;
+  }
+
+  // ── 深潜 Prompt 自定义（设置页 → 高级功能 → 深潜探索） ────────
+  function deepDivePromptEls() {
+    return {
+      plan: document.getElementById("deepdivePlanPrompt"),
+      execute: document.getElementById("deepdiveExecutePrompt"),
+      refine: document.getElementById("deepdiveRefinePrompt"),
+      status: document.getElementById("deepdivePromptsStatus"),
+      save: document.getElementById("deepdivePromptsSave"),
+      reset: document.getElementById("deepdivePromptsReset")
+    };
+  }
+  function deepDivePromptsStatus(msg, ok) {
+    var els = deepDivePromptEls();
+    if (!els.status) return;
+    els.status.textContent = msg || "";
+    if (ok === true) els.status.setAttribute("data-tone", "success");
+    else if (ok === false) els.status.setAttribute("data-tone", "error");
+    else els.status.removeAttribute("data-tone");
+  }
+  async function deepDiveLoadPrompts() {
+    var els = deepDivePromptEls();
+    if (!els.plan || !els.execute || !els.refine) return;
+    try {
+      var data = await fetch("/api/deepdive/prompts").then(function(r) { return r.json(); });
+      var prompts = data.prompts || {};
+      els.plan.value = prompts.plan || "";
+      els.execute.value = prompts.execute || "";
+      els.refine.value = prompts.refine || "";
+      deepDivePromptsStatus(data.custom && Object.keys(data.custom).length
+        ? "已加载自定义提示词（保存后立即生效）"
+        : "当前使用内置默认提示词", true);
+    } catch (e) {
+      deepDivePromptsStatus("加载深潜提示词失败：" + (e.message || "网络错误"), false);
+    }
+  }
+  async function deepDiveSavePrompts() {
+    var els = deepDivePromptEls();
+    if (!els.plan || !els.execute || !els.refine) return;
+    var payload = {
+      plan: els.plan.value,
+      execute: els.execute.value,
+      refine: els.refine.value
+    };
+    if (els.save) { els.save.disabled = true; els.save.textContent = "保存中…"; }
+    try {
+      var resp = await fetch("/api/deepdive/prompts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      deepDivePromptsStatus("已保存，立即生效", true);
+      if (window.showToast) showToast("深潜提示词已保存");
+    } catch (e) {
+      deepDivePromptsStatus("保存失败：" + (e.message || "网络错误"), false);
+      if (window.showToast) showToast("深潜提示词保存失败");
+    } finally {
+      if (els.save) { els.save.disabled = false; els.save.textContent = "保存深潜提示词"; }
+    }
+  }
+  async function deepDiveResetPrompts() {
+    var els = deepDivePromptEls();
+    if (!els.plan) return;
+    if (!window.confirm("确定恢复深潜提示词为内置默认值？当前自定义内容将被清空。")) return;
+    if (els.reset) { els.reset.disabled = true; }
+    try {
+      var resp = await fetch("/api/deepdive/prompts/reset", { method: "POST" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      var data = await resp.json();
+      var prompts = data.prompts || {};
+      els.plan.value = prompts.plan || "";
+      els.execute.value = prompts.execute || "";
+      els.refine.value = prompts.refine || "";
+      deepDivePromptsStatus("已恢复为内置默认提示词", true);
+      if (window.showToast) showToast("深潜提示词已恢复默认");
+    } catch (e) {
+      deepDivePromptsStatus("恢复失败：" + (e.message || "网络错误"), false);
+    } finally {
+      if (els.reset) { els.reset.disabled = false; }
+    }
+  }
+  function deepDiveBindPromptSettings() {
+    var els = deepDivePromptEls();
+    if (!els.plan || !els.save) return;
+    if (els.save.getAttribute("data-deepdive-bound")) return;
+    els.save.setAttribute("data-deepdive-bound", "1");
+    els.save.addEventListener("click", deepDiveSavePrompts);
+    if (els.reset) els.reset.addEventListener("click", deepDiveResetPrompts);
+    // 打开设置页时加载一次（惰性：元素存在才加载）
+    deepDiveLoadPrompts();
+  }
+  // 设置页切到高级功能时绑定深潜 prompt 控件（页面加载时也尝试一次）
+  (function() {
+    function tryBindDeepDive() {
+      var els = deepDivePromptEls();
+      if (els.plan && els.save) {
+        deepDiveBindPromptSettings();
+        return true;
+      }
+      return false;
+    }
+    if (!tryBindDeepDive()) {
+      // 元素可能还没渲染（设置页隐藏时 DOM 仍在，通常能直接找到）；保险起见监听设置页打开
+      var settingsTabs = document.querySelectorAll("[data-settings-tab]");
+      settingsTabs.forEach(function(tab) {
+        tab.addEventListener("click", function() {
+          window.setTimeout(tryBindDeepDive, 300);
+        });
+      });
+    }
+  })();
+
+  function initDeepDiveOnce() {
+    if (deepDiveInitialized) return;
+    deepDiveInitialized = true;
+
+    var sideLog = document.getElementById("deepdiveSideLog");
+    var sideInput = document.getElementById("deepdiveSideInput");
+    var sideForm = document.getElementById("deepdiveSideForm");
+    var sideSend = document.getElementById("deepdiveSideSend");
+    var sideToggle = document.getElementById("deepdiveSideToggle");
+    var sideOpen = document.getElementById("deepdiveSideOpen");
+    var sidePanel = document.getElementById("deepdiveSide");
+    var newBtn = document.getElementById("deepdiveNewBtn");
+    var sessionsBar = document.getElementById("deepdiveSessionsBar");
+    var cardGrid = document.getElementById("deepdiveCardGrid");
+    var emptyState = document.getElementById("deepdiveEmpty");
+    var filterRow = document.getElementById("deepdiveFilterRow");
+    var allResults = [];
+
+    function api(path, opts) {
+      var url = "/api/deepdive" + path;
+      return fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...(opts || {}),
+      }).then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.error || r.statusText); });
+        return r.json();
+      });
+    }
+
+    function sideMsg(role, text) {
+      var div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      // 插入到输入栏之前（输入栏跟随消息流，是 log 内最后一个元素）
+      var formEl = document.getElementById("deepdiveSideForm");
+      if (formEl && sideLog.contains(formEl)) sideLog.insertBefore(div, formEl);
+      else sideLog.appendChild(div);
+      sideLog.scrollTop = sideLog.scrollHeight;
+    }
+
+    function setTyping(on, message) {
+      var old = sideLog.querySelector(".deepdive-typing");
+      if (old) old.remove();
+      if (on) {
+        var div = document.createElement("div");
+        div.className = "deepdive-typing";
+        div.textContent = message || "AI 正在思考…";
+        // 插入到输入栏之前（输入栏是 log 内最后一个元素，跟随消息流）
+        var form = document.getElementById("deepdiveSideForm");
+        if (form) sideLog.insertBefore(div, form);
+        else sideLog.appendChild(div);
+        sideLog.scrollTop = sideLog.scrollHeight;
+      }
+    }
+
+    function setBusy(v) {
+      deepDiveBusy = v;
+      sideSend.disabled = v;
+      sideInput.placeholder = v ? "处理中，请稍候…" : (deepDiveAwaitingClarify ? "回答上面的澄清问题…" : (deepDiveAwaitingRefine ? "描述想调整的方向…" : (deepDiveCurrentSession ? "继续补充需求，或点「新建探索」…" : "想深入了解什么？")));
+    }
+
+    // ── 卡片渲染（复用主站 video-card 样式） ────────────────
+    function platformName(p) {
+      return {bilibili:"B 站",xhs:"小红书",zhihu:"知乎",youtube:"YouTube",douyin:"抖音"}[p] || p;
+    }
+    function platformIcon(p) {
+      return {bilibili:"B站",xhs:"小红书",zhihu:"知乎",youtube:"YT",douyin:"抖音"}[p] || p;
+    }
+
+    function renderCards(cards) {
+      allResults = cards || [];
+      applyFilter(deepDiveCurrentFilter);
+    }
+
+    function applyFilter(platform) {
+      deepDiveCurrentFilter = platform;
+      var filtered = platform === "all" ? allResults : allResults.filter(function(c) { return c.platform === platform; });
+      cardGrid.innerHTML = "";
+      if (filtered.length === 0) {
+        cardGrid.setAttribute("hidden", "");
+        emptyState.removeAttribute("hidden");
+        return;
+      }
+      emptyState.setAttribute("hidden", "");
+      cardGrid.removeAttribute("hidden");
+      filtered.forEach(function(c) {
+        var card = document.createElement("article");
+        card.className = "video-card";
+        var coverImg = c.cover_url ? '<img src="' + escapeHtml(proxyCover(c.cover_url)) + '" alt="' + escapeHtml(c.title) + '" loading="lazy" referrerpolicy="no-referrer">' : '';
+        var durationBadge = '';
+        // 无封面时用平台色占位（视觉统一）
+        if (!c.cover_url) {
+          var phClass = 'platform-ph-' + (c.platform || 'x');
+          coverImg = '<div class="platform-ph ' + phClass + '" aria-hidden="true"><span>' + platformIcon(c.platform) + '</span></div>';
+        }
+        var statsHtml = c.description ? '<p class="video-stats">' + escapeHtml(c.description.slice(0, 80)) + '</p>' : '';
+        var authorHtml = c.author ? '<span class="up-name">' + escapeHtml(c.author) + '</span> · ' : '';
+        card.innerHTML =
+          '<a class="cover" href="' + escapeHtml(c.url || '#') + '" target="_blank" rel="noopener" aria-label="打开 ' + escapeHtml(c.title) + '">' +
+            coverImg +
+            '<span class="platform" data-platform="' + (c.platform || 'bilibili') + '">' + platformName(c.platform) + '</span>' +
+            durationBadge +
+          '</a>' +
+          '<div>' +
+            '<p class="video-title">' + escapeHtml(c.title) + '</p>' +
+            '<p class="video-meta">' + authorHtml + platformName(c.platform) + ' · 搜索' + '</p>' +
+            statsHtml +
+          '</div>' +
+          '<p class="reason" role="button" tabindex="0" aria-expanded="false"><span class="reason-text">' + escapeHtml(c.description || '搜索结果') + '</span></p>' +
+          '<div class="card-actions" aria-label="搜索结果操作">' +
+            '<div class="card-feedback-icons" aria-label="喜欢或不感兴趣">' +
+              '<button class="feedback-icon-btn" data-action="like" type="button" aria-label="喜欢" title="喜欢"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M7 10v10"/><path d="M15 5.2 14 10h5.4a1.8 1.8 0 0 1 1.7 2.2l-1.5 6A2.4 2.4 0 0 1 17.3 20H7"/><path d="M7 10l4.5-5.3A2 2 0 0 1 15 6v4"/></svg></button>' +
+              '<span class="feedback-separator" aria-hidden="true">/</span>' +
+              '<button class="feedback-icon-btn" data-action="dislike" type="button" aria-label="不感兴趣" title="不感兴趣"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M17 14V4"/><path d="M9 18.8 10 14H4.6a1.8 1.8 0 0 1-1.7-2.2l1.5-6A2.4 2.4 0 0 1 6.7 4H17"/><path d="M17 14l-4.5 5.3A2 2 0 0 1 9 18v-4"/></svg></button>' +
+              '<span class="feedback-separator" aria-hidden="true">/</span>' +
+              '<button class="feedback-icon-btn" data-action="dismiss" type="button" aria-label="忽略" title="忽略"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M9.84 9.91A3 3 0 0 0 12 15c.82 0 1.57-.33 2.11-.87M6.5 6.65A10.45 10.45 0 0 0 2.46 12C3.73 16.06 7.52 19 12 19c1.99 0 3.84-.58 5.4-1.58M11 5.05c.33-.03.66-.05 1-.05 4.48 0 8.27 2.94 9.54 7a10.5 10.5 0 0 1-1.19 2.5"/></svg></button>' +
+              '<span class="feedback-separator" aria-hidden="true">/</span>' +
+              '<button class="feedback-icon-btn watch-later-btn" data-action="watch-later" type="button" aria-label="稍后再看" title="稍后再看" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.2 1.9"/></svg></button>' +
+              '<span class="feedback-separator" aria-hidden="true">/</span>' +
+              '<button class="feedback-icon-btn favorite-btn" data-action="favorite" type="button" aria-label="收藏" title="收藏" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.65 5.37 5.93.86-4.29 4.18 1.01 5.9L12 17.1l-5.31 2.8 1.01-5.9L3.41 9.83l5.93-.86z"/></svg></button>' +
+            '</div>' +
+            '<div class="comment-field"><input placeholder="想围绕这条聊什么？" aria-label="想围绕这条聊什么？"></div>' +
+            '<button class="small-btn composer-cancel" data-action="cancel-comment" type="button" aria-label="返回" title="返回">‹</button>' +
+            '<button class="small-btn chat-action" data-action="comment" type="button">聊一聊</button>' +
+          '</div>' +
+          '<p class="status-line" aria-live="polite"></p>';
+        card.querySelector(".cover").addEventListener("click", function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          // 卡片详情弹窗：先预览，再点「打开原链接」才跳转（防误点）
+          if (typeof window.openCardDetail === "function") {
+            window.openCardDetail({
+              title: c.title || "",
+              url: c.url || "",
+              author: c.author || "",
+              description: c.description || "",
+              cover_url: c.cover_url || "",
+              platform: platformName(c.platform) || c.platform || ""
+            });
+          } else if (c.url) {
+            window.open(c.url, "_blank");
+          }
+        });
+        // ── 反馈按钮：喜欢/点踩/忽略/稍后再看/收藏 → 10s 可撤销延迟提交 ──
+        function deepDiveStageFeedback(card, item, action, commitFn) {
+          var pending = getDeepDivePending();
+          if (!pending) return false;
+          var key = (item.platform || 'x') + ':' + (item.bvid || item.url || item.title || '');
+          if (!key || pending.has(key)) return false;
+          var status = card.querySelector('.status-line');
+          var snapshot = {};
+          card.querySelectorAll('.card-feedback-icons [data-action]').forEach(function(b) {
+            snapshot[b.dataset.action] = { pressed: b.getAttribute('aria-pressed'), active: b.classList.contains('is-active') };
+          });
+          var copy = {
+            like: { pending: '已标记喜欢，10 秒内可撤销。', committed: '已记录喜欢' },
+            dislike: { pending: '已标记不感兴趣，10 秒内可撤销。', committed: '已记录不感兴趣' },
+            dismiss: { pending: '已标记忽略，10 秒内可撤销。', committed: '已忽略' },
+            'watch-later': { pending: '已加入稍后再看，10 秒内可撤销。', committed: '已加入稍后再看' },
+            favorite: { pending: '已收藏，10 秒内可撤销。', committed: '已收藏' }
+          }[action] || { pending: '已处理，10 秒内可撤销。', committed: '已处理' };
+          var ok = pending.schedule(key, {
+            commit: function() { return commitFn(); },
+            rollback: function() {
+              card.querySelectorAll('.card-feedback-icons [data-action]').forEach(function(b) {
+                var snap = snapshot[b.dataset.action] || {};
+                b.setAttribute('aria-pressed', snap.pressed || 'false');
+                b.classList.toggle('is-active', !!snap.active);
+                b.disabled = false;
+              });
+              card.classList.remove('is-feedback-pending');
+              status.classList.remove('has-feedback-action');
+              status.textContent = '已撤销反馈';
+            },
+            committed: function() {
+              if (!card.isConnected) return;
+              card.querySelectorAll('.card-feedback-icons [data-action]').forEach(function(b) { b.disabled = false; });
+              card.classList.remove('is-feedback-pending');
+              status.classList.remove('has-feedback-action');
+              // 点赞/稍后再看/收藏 只更新状态文本；点踩/忽略 → 10s 生效后卡片消失
+              if (action === 'dislike' || action === 'dismiss') {
+                var idx = allResults.indexOf(item);
+                if (idx >= 0) allResults.splice(idx, 1);
+                card.remove();
+                if (cardGrid.childElementCount === 0) {
+                  emptyState.removeAttribute('hidden');
+                  cardGrid.setAttribute('hidden', '');
+                }
+                renderFilters();
+                return;
+              }
+              status.textContent = copy.committed;
+            }
+          });
+          if (!ok) return false;
+          card.classList.add('is-feedback-pending');
+          card.querySelectorAll('.card-feedback-icons [data-action]').forEach(function(b) { b.disabled = true; });
+          var clicked = card.querySelector('[data-action="' + action + '"]');
+          if (clicked) { clicked.setAttribute('aria-pressed', 'true'); clicked.classList.add('is-active'); }
+          var undo = document.createElement('button');
+          undo.type = 'button';
+          undo.className = 'feedback-undo-btn';
+          undo.textContent = '撤销';
+          undo.addEventListener('click', function() { pending.undo(key); });
+          status.classList.add('has-feedback-action');
+          status.setAttribute('aria-live', 'polite');
+          status.replaceChildren(document.createTextNode(copy.pending + ' '), undo);
+          return true;
+        }
+
+        // 喜欢/点踩/忽略 → 延迟提交 /api/events
+        ['like','dislike','dismiss'].forEach(function(action) {
+          var btn = card.querySelector('[data-action="' + action + '"]');
+          if (btn) btn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            deepDiveStageFeedback(card, c, action, function() {
+              return fetch('/api/events', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  events: [{
+                    type: 'feedback',
+                    source_platform: c.platform || 'bilibili',
+                    title: c.title || '',
+                    url: c.url || '',
+                    timestamp: Date.now(),
+                    event_id: 'deepdive_' + action + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                    metadata: { feedback_type: action, bvid: c.bvid || '', content_id: c.bvid || '' }
+                  }]
+                })
+              }).then(function(r) { if (!r.ok) throw new Error('反馈提交失败'); return r.json(); });
+            });
+          });
+        });
+        // 稍后再看/收藏 → 延迟提交 /api/saved/（注意 extra=forbid，不能传 item_key）
+        ['watch-later','favorite'].forEach(function(action) {
+          var btn = card.querySelector('[data-action="' + action + '"]');
+          if (btn) btn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            var listKind = action === 'watch-later' ? 'watch_later' : 'favorite';
+            // cover_url 补全协议（B站返回 // 开头）
+            var absCover = (c.cover_url || '').startsWith('//') ? 'https:' + c.cover_url : (c.cover_url || '');
+            deepDiveStageFeedback(card, c, action, function() {
+              return fetch('/api/saved/' + listKind, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  source_platform: c.platform || 'bilibili',
+                  content_id: c.bvid || '',
+                  content_url: c.url || '',
+                  content_type: 'video',
+                  title: c.title || '',
+                  author_name: c.author || '',
+                  cover_url: absCover
+                })
+              }).then(function(r) {
+                if (!r.ok) throw new Error('保存失败');
+                return r.json();
+              }).then(function(d) {
+                var saved = d && d.saved;
+                if (saved) {
+                  var targetBtn = card.querySelector('[data-action="' + action + '"]');
+                  if (targetBtn) {
+                    targetBtn.setAttribute('aria-pressed', 'true');
+                    targetBtn.title = action === 'watch-later' ? '取消稍后再看' : '取消收藏';
+                  }
+                }
+                return d;
+              });
+            });
+          });
+        });
+        // ── 聊一聊：打开/关闭发送器 + 提交（主站 openCardComposer/closeCardComposer/send-comment 逻辑） ──
+        var status = card.querySelector('.status-line');
+        var chatBtn = card.querySelector('.chat-action');
+        var cancelBtn = card.querySelector('[data-action="cancel-comment"]');
+        var commentInput = card.querySelector('.comment-field input');
+        var cardActions = card.querySelector('.card-actions');
+        var sendIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 12 20 4l-5 16-3.2-6.8L4 12Z"/><path d="m11.8 13.2 3.7-3.7"/></svg>';
+        function openComposer() {
+          cardActions.classList.add('is-composing');
+          chatBtn.classList.add('is-send');
+          chatBtn.dataset.action = 'send-comment';
+          chatBtn.innerHTML = sendIcon;
+          chatBtn.setAttribute('aria-label', '发送');
+          chatBtn.setAttribute('title', '发送');
+          requestAnimationFrame(function() { if (commentInput) commentInput.focus(); });
+        }
+        function closeComposer() {
+          cardActions.classList.remove('is-composing');
+          chatBtn.classList.remove('is-send');
+          chatBtn.dataset.action = 'comment';
+          chatBtn.textContent = '聊一聊';
+          chatBtn.removeAttribute('aria-label');
+          chatBtn.removeAttribute('title');
+        }
+        if (chatBtn) chatBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (cardActions.classList.contains('is-composing')) {
+            var note = commentInput ? commentInput.value.trim() : '';
+            if (!note) {
+              status.textContent = '先写一句想聊的内容，再提交这条反馈。';
+              if (commentInput) commentInput.focus();
+              return;
+            }
+            if (commentInput) commentInput.value = '';
+            closeComposer();
+            status.textContent = '已发起对话，AI 回复会出现在对话面板。';
+            // 1) 记录 feedback 事件（画像/信号，与主 Web 一致）
+            fetch('/api/events', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ events: [{
+                type: 'feedback',
+                source_platform: c.platform || 'bilibili',
+                title: c.title || '',
+                url: c.url || '',
+                timestamp: Date.now(),
+                event_id: 'deepdive_comment_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                metadata: { feedback_type: 'comment', bvid: c.bvid || '', content_id: c.bvid || '', feedback_note: note }
+              }]})
+            }).then(function(r) {
+              if (!r.ok) throw new Error('反馈记录失败');
+              return r.json();
+            }).catch(function(err) {
+              // 反馈记录失败不阻塞对话发起
+              console.warn('深潜聊一聊 feedback 记录失败:', err.message);
+            });
+            // 2) 创建对话 turn（session=popup 与主 Web 共享），触发 AI 回复
+            fetch('/api/chat/turns', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                session: 'popup',
+                scope: 'chat',
+                message: note,
+                subject_id: c.bvid || '',
+                subject_title: c.title || ''
+              })
+            }).then(function(r) {
+              if (!r.ok) return r.json().then(function(e) { throw new Error(e.detail || e.error || '对话发起失败'); });
+              return r.json();
+            }).then(function(turn) {
+              status.textContent = '已发起对话，AI 回复会出现在对话面板。';
+              if (turn && turn.turn_id) {
+                // 尝试切换到共享对话面板查看回复（若主 Web 存在该面板）
+                var panel = document.querySelector('#chatPage, [data-page="chat"]');
+                if (panel && typeof openChatPage === 'function') openChatPage();
+              }
+            }).catch(function(err) {
+              status.textContent = err.message || '对话发起失败';
+            });
+          } else {
+            openComposer();
+          }
+        });
+        if (cancelBtn) cancelBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          closeComposer();
+        });
+        if (commentInput) commentInput.addEventListener('blur', function(e) {
+          var next = e.relatedTarget;
+          if (next && cardActions.contains(next)) return;
+          window.setTimeout(function() {
+            if (!cardActions.classList.contains('is-composing')) return;
+            if (cardActions.contains(document.activeElement)) return;
+            closeComposer();
+          }, 150);
+        });
+        cardGrid.appendChild(card);
+      });
+      renderFilters();
+    }
+
+    function escapeHtml(s) {
+      if (!s) return "";
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+
+    // 封面走主站图片代理（B站图床有防盗链，浏览器直连加载失败）
+    function proxyCover(url) {
+      if (!url) return "";
+      // B站返回协议相对路径（//i0.hdslb.com/...），补全 https:
+      var full = String(url).trim();
+      if (full.startsWith("//")) full = "https:" + full;
+      try { new URL(full); } catch(e) { return ""; }
+      return "/api/image-proxy?url=" + encodeURIComponent(full);
+    }
+
+    function renderFilters() {
+      var platforms = {};
+      allResults.forEach(function(c) { platforms[c.platform] = (platforms[c.platform] || 0) + 1; });
+      var total = allResults.length;
+      var html = '<button class="pill-btn' + (deepDiveCurrentFilter === "all" ? " is-active" : "") + '" data-platform="all" role="tab" aria-selected="' + (deepDiveCurrentFilter === "all" ? "true" : "false") + '">全部 (' + total + ')</button>';
+      Object.keys(platforms).forEach(function(p) {
+        var active = deepDiveCurrentFilter === p;
+        html += '<button class="pill-btn' + (active ? " is-active" : "") + '" data-platform="' + p + '" role="tab" aria-selected="' + (active ? "true" : "false") + '">' + platformName(p) + ' (' + platforms[p] + ')</button>';
+      });
+      filterRow.innerHTML = html;
+      filterRow.querySelectorAll("[data-platform]").forEach(function(btn) {
+        btn.addEventListener("click", function() { applyFilter(this.dataset.platform); });
+      });
+    }
+
+    // ── 会话管理 ────────────────────────────────────────────
+    var deepDiveHistExpanded = false;  // 历史对话是否已展开
+    function sideMsgBefore(role, text, beforeEl) {
+      var div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      if (beforeEl) sideLog.insertBefore(div, beforeEl);
+      else sideLog.appendChild(div);
+    }
+    function renderSession(s) {
+      // 右侧聊天面板（历史折叠：默认只渲染最近 10 条，可展开更早）
+      var histFold = document.getElementById("deepdiveHistFold");
+      var form = document.getElementById("deepdiveSideForm");
+      var allMsgs = s.messages || [];
+      // 清空后重排：折叠按钮在最前、输入栏在最后（跟随消息流）
+      sideLog.innerHTML = "";
+      if (histFold) sideLog.appendChild(histFold);
+      if (form) sideLog.appendChild(form);
+      var showFrom = 0;
+      if (allMsgs.length > 10 && !deepDiveHistExpanded) {
+        showFrom = allMsgs.length - 10;
+        if (histFold) histFold.hidden = false;
+      } else {
+        if (histFold) histFold.hidden = true;
+      }
+      for (var i = showFrom; i < allMsgs.length; i++) {
+        var m = allMsgs[i];
+        sideMsgBefore(m.role === "user" ? "user" : "assistant", m.content, form);
+      }
+      sideLog.scrollTop = sideLog.scrollHeight;
+      // 左侧卡片
+      if (s.results && s.results.length) {
+        renderCards(s.results);
+      }
+      setBusy(false);
+    }
+
+    function bindHistExpand() {
+      var btn = document.getElementById("deepdiveHistExpandBtn");
+      if (!btn || btn.dataset.bound) return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", function() {
+        deepDiveHistExpanded = true;
+        var fold = document.getElementById("deepdiveHistFold");
+        if (fold) fold.hidden = true;
+        // 重新渲染当前会话完整历史
+        if (deepDiveCurrentSession) renderSession(deepDiveCurrentSession);
+        // 滚动到顶部（展开更早的内容从顶部开始看）
+        sideLog.scrollTop = 0;
+      });
+    }
+    bindHistExpand();
+
+    function clearSession() {
+      // 只清消息，保留输入栏和「展开更早对话」按钮（它们在 log 内部）
+      var histFold = document.getElementById("deepdiveHistFold");
+      var form = document.getElementById("deepdiveSideForm");
+      sideLog.innerHTML = "";
+      if (histFold) sideLog.appendChild(histFold);
+      if (form) sideLog.appendChild(form);
+      deepDiveHistExpanded = false;
+      cardGrid.innerHTML = "";
+      cardGrid.setAttribute("hidden", "");
+      emptyState.removeAttribute("hidden");
+      filterRow.innerHTML = "";
+      allResults = [];
+    }
+
+    async function loadSessions() {
+      try {
+        var data = await api("/sessions");
+        sessionsBar.innerHTML = "";
+        var folders = data.folders || [];
+        var sessions = data.sessions || [];
+        // 建文件夹工具栏
+        var toolbar = document.createElement("div");
+        toolbar.className = "deepdive-tree-toolbar";
+        var addFolderBtn = document.createElement("button");
+        addFolderBtn.type = "button";
+        addFolderBtn.textContent = "＋ 新建文件夹";
+        addFolderBtn.addEventListener("click", async function() {
+          var name = window.prompt("文件夹名字：", "");
+          if (!name) return;
+          name = name.trim();
+          if (!name) return;
+          try {
+            await api("/folders", { method: "POST", body: JSON.stringify({ name: name }) });
+            loadSessions();
+          } catch(err) { sideMsg("system", "建文件夹失败: " + err.message); }
+        });
+        toolbar.appendChild(addFolderBtn);
+        sessionsBar.appendChild(toolbar);
+
+        // 分组：根目录会话 + 各文件夹
+        var rootSessions = sessions.filter(function(s) { return !s.folder; });
+        var folderSessions = {};
+        sessions.forEach(function(s) {
+          if (s.folder) {
+            (folderSessions[s.folder] = folderSessions[s.folder] || []).push(s);
+          }
+        });
+
+        // 渲染文件夹组
+        var root = document.createElement("div");
+        root.className = "deepdive-tree-root";
+
+        folders.forEach(function(folderName) {
+          var group = document.createElement("div");
+          group.className = "deepdive-tree-folder";
+          // 文件夹行
+          var row = document.createElement("div");
+          row.className = "deepdive-folder-row";
+          var toggle = document.createElement("span");
+          toggle.className = "deepdive-folder-toggle";
+          toggle.textContent = "▾";
+          var icon = document.createElement("span");
+          icon.className = "deepdive-folder-icon";
+          icon.textContent = "📁";
+          var name = document.createElement("span");
+          name.className = "deepdive-folder-name";
+          name.textContent = folderName;
+          name.title = folderName;
+          var count = document.createElement("span");
+          count.className = "deepdive-folder-count";
+          var items = folderSessions[folderName] || [];
+          count.textContent = "(" + items.length + ")";
+          // 重命名/删除
+          var renBtn = document.createElement("button");
+          renBtn.type = "button"; renBtn.className = "deepdive-folder-op"; renBtn.textContent = "✎"; renBtn.title = "重命名文件夹";
+          renBtn.addEventListener("click", async function(e) {
+            e.stopPropagation();
+            var newName = window.prompt("重命名文件夹：", folderName);
+            if (!newName) return;
+            newName = newName.trim();
+            if (!newName) return;
+            try {
+              await api("/folders/" + encodeURIComponent(folderName), { method: "PATCH", body: JSON.stringify({ name: newName }) });
+              loadSessions();
+            } catch(err) { sideMsg("system", "重命名失败: " + err.message); }
+          });
+          var delBtn = document.createElement("button");
+          delBtn.type = "button"; delBtn.className = "deepdive-folder-op del"; delBtn.textContent = "✕"; delBtn.title = "删除文件夹（会话移回根目录）";
+          delBtn.addEventListener("click", async function(e) {
+            e.stopPropagation();
+            if (!window.confirm("删除文件夹「" + folderName + "」？其中的探索会移回根目录，不删除会话。")) return;
+            try {
+              await api("/folders/" + encodeURIComponent(folderName), { method: "DELETE" });
+              loadSessions();
+            } catch(err) { sideMsg("system", "删除失败: " + err.message); }
+          });
+          row.appendChild(toggle);
+          row.appendChild(icon);
+          row.appendChild(name);
+          row.appendChild(count);
+          row.appendChild(renBtn);
+          row.appendChild(delBtn);
+          // 折叠/展开
+          row.addEventListener("click", function() {
+            body.classList.toggle("collapsed");
+            toggle.classList.toggle("collapsed");
+          });
+          // 文件夹体
+          var body = document.createElement("div");
+          body.className = "deepdive-tree-folder-body";
+          items.forEach(function(s) { body.appendChild(makeSessionChip(s)); });
+          group.appendChild(row);
+          group.appendChild(body);
+          root.appendChild(group);
+        });
+
+        // 根目录会话
+        rootSessions.forEach(function(s) {
+          root.appendChild(makeSessionChip(s));
+        });
+
+        sessionsBar.appendChild(root);
+      } catch(e) {}
+    }
+
+    function makeSessionChip(s) {
+      var chip = document.createElement("span");
+      chip.className = "deepdive-session-chip" + (deepDiveCurrentSession && s.id === deepDiveCurrentSession.id ? " active" : "");
+      chip.title = s.topic || "未命名";
+      var name = document.createElement("span");
+      name.className = "deepdive-session-name";
+      name.textContent = (s.topic || "未命名").slice(0, 14);
+      chip.appendChild(name);
+      // 移入文件夹按钮（树形收纳）
+      var moveBtn = document.createElement("button");
+      moveBtn.type = "button";
+      moveBtn.className = "deepdive-session-op";
+      moveBtn.textContent = "📂";
+      moveBtn.title = "移动到文件夹";
+      moveBtn.addEventListener("click", async function(e) {
+        e.stopPropagation();
+        try {
+          var data = await api("/sessions");
+          var folders = data.folders || [];
+          var options = ["（根目录）"].concat(folders);
+          var choice = window.prompt("选择目标文件夹（输入名字，留空=根目录）：\n\n" + options.join("\n"));
+          if (choice === null) return;
+          var target = choice.trim() === "" ? "" : choice.trim();
+          await api("/" + s.id + "/move", { method: "POST", body: JSON.stringify({ folder: target }) });
+          loadSessions();
+        } catch(err) { sideMsg("system", "移动失败: " + err.message); }
+      });
+      chip.appendChild(moveBtn);
+      // 重命名按钮
+      var renameBtn = document.createElement("button");
+      renameBtn.type = "button";
+      renameBtn.className = "deepdive-session-op";
+      renameBtn.textContent = "✎";
+      renameBtn.title = "重命名";
+      renameBtn.addEventListener("click", async function(e) {
+        e.stopPropagation();
+        var newName = window.prompt("给探索起个新名字：", s.topic || "");
+        if (newName === null) return;
+        newName = newName.trim();
+        if (!newName) return;
+        try {
+          await api("/" + s.id + "/rename", { method: "PATCH", body: JSON.stringify({ name: newName }) });
+          if (deepDiveCurrentSession && deepDiveCurrentSession.id === s.id) {
+            deepDiveCurrentSession.topic = newName;
+          }
+          loadSessions();
+        } catch(err) { sideMsg("system", "重命名失败: " + err.message); }
+      });
+      chip.appendChild(renameBtn);
+      // 删除按钮
+      var delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "deepdive-session-op deepdive-session-del";
+      delBtn.textContent = "✕";
+      delBtn.title = "删除探索";
+      delBtn.addEventListener("click", async function(e) {
+        e.stopPropagation();
+        if (!window.confirm("删除探索「" + (s.topic || "未命名") + "」？此操作不可恢复。")) return;
+        try {
+          await api("/" + s.id, { method: "DELETE" });
+          if (deepDiveCurrentSession && deepDiveCurrentSession.id === s.id) {
+            deepDiveCurrentSession = null;
+            deepDiveAwaitingClarify = false;
+            deepDiveAwaitingRefine = false;
+            clearSession();
+            sideMsg("system", "探索已删除。输入新方向开始新的探索。");
+          }
+          loadSessions();
+        } catch(err) { sideMsg("system", "删除失败: " + err.message); }
+      });
+      chip.appendChild(delBtn);
+      // 点击 chip 主体打开会话
+      chip.addEventListener("click", function() { openSession(s.id); });
+      return chip;
+    }
+
+    async function openSession(id) {
+      try {
+        var s = await api("/" + id);
+        deepDiveCurrentSession = s;
+        deepDiveAwaitingClarify = s.status === "planning" || s.status === "clarifying";
+        deepDiveAwaitingRefine = s.status === "displaying";
+        renderSession(s);
+        loadSessions();
+      } catch(e) { sideMsg("system", "加载会话失败: " + e.message); }
+    }
+
+    async function startNew(prompt) {
+      setBusy(true);
+      setTyping(true);
+      try {
+        var s = await api("/start", { method: "POST", body: JSON.stringify({ topic: prompt }) });
+        deepDiveCurrentSession = s;
+        deepDiveAwaitingClarify = true;
+        deepDiveAwaitingRefine = false;
+        renderSession(s);
+        loadSessions();
+      } catch(e) {
+        setTyping(false);
+        sideMsg("system", "开始失败: " + e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    // ── 事件绑定 ────────────────────────────────────────────
+    sideForm.addEventListener("submit", async function(e) {
+      e.preventDefault();
+      var text = sideInput.value.trim();
+      if (!text || deepDiveBusy) return;
+      sideInput.value = "";
+
+      if (!deepDiveCurrentSession) {
+        await startNew(text);
+        return;
+      }
+
+      setBusy(true);
+      // 轻量搜索进度提示：轮换文案，不做复杂进度条
+      var searchTips = [
+        "别急，正在跨平台搜索中…",
+        "正在问 B站、抖音、小红书…",
+        "搜索结果整理中，马上就好…",
+      ];
+      var tipIdx = 0;
+      setTyping(true, searchTips[0]);
+      var tipTimer = window.setInterval(function() {
+        tipIdx = (tipIdx + 1) % searchTips.length;
+        var old = sideLog.querySelector(".deepdive-typing");
+        if (old) old.textContent = searchTips[tipIdx];
+        sideLog.scrollTop = sideLog.scrollHeight;
+      }, 8000);
+      // 用户消息插入到输入栏之前（输入栏跟随消息流）
+      var sideFormEl = document.getElementById("deepdiveSideForm");
+      sideMsgBefore("user", text, sideFormEl);
+      try {
+        var s;
+        if (deepDiveAwaitingClarify) {
+          s = await api("/" + deepDiveCurrentSession.id + "/clarify", { method: "POST", body: JSON.stringify({ input: text }) });
+          deepDiveAwaitingClarify = false;
+          deepDiveAwaitingRefine = true;
+        } else {
+          s = await api("/" + deepDiveCurrentSession.id + "/refine", { method: "POST", body: JSON.stringify({ input: text }) });
+          deepDiveAwaitingRefine = true;
+        }
+        deepDiveCurrentSession = s;
+        renderSession(s);
+      } catch(err) {
+        setTyping(false);
+        sideMsg("system", "出错: " + err.message);
+      } finally {
+        if (tipTimer) { window.clearInterval(tipTimer); tipTimer = null; }
+        setBusy(false);
+      }
+    });
+
+    // 右侧面板收起/展开
+    sideToggle.addEventListener("click", function() {
+      sidePanel.classList.add("collapsed");
+    });
+    sideOpen.addEventListener("click", function() {
+      sidePanel.classList.remove("collapsed");
+    });
+
+    // 新建探索
+    newBtn.addEventListener("click", function() {
+      deepDiveCurrentSession = null;
+      deepDiveAwaitingClarify = false;
+      deepDiveAwaitingRefine = false;
+      clearSession();
+      sideMsg("system", "新探索已开始。在下方输入你想深入了解的方向，AI 会引导你。");
+      sideInput.focus();
+      setBusy(false);
+    });
+
+    // 移动端：全屏对话 ↔ 结果卡片切换
+    var deepdiveMain = document.querySelector(".deepdive-main");
+    var mobileBack = document.getElementById("deepdiveMobileBack");
+    var mobileChatBtn = document.getElementById("deepdiveMobileChatBtn");
+    function isMobileView() { return window.innerWidth <= 820; }
+    function showDeepDiveResults() {
+      if (!isMobileView()) return;
+      deepdiveMain.classList.add("mobile-visible");
+      sidePanel.classList.add("mobile-hidden");
+    }
+    function showDeepDiveChat() {
+      if (!isMobileView()) return;
+      deepdiveMain.classList.remove("mobile-visible");
+      sidePanel.classList.remove("mobile-hidden");
+      sideInput.focus();
+    }
+    if (mobileBack) mobileBack.addEventListener("click", showDeepDiveResults);
+    if (mobileChatBtn) mobileChatBtn.addEventListener("click", showDeepDiveChat);
+    // 新建探索时切回对话（移动端）
+    newBtn.addEventListener("click", showDeepDiveChat);
+    // 打开会话后（移动端）默认看对话，有结果时仍留在对话让用户自己切
+    // 窗口尺寸跨断点时自动修正显示状态
+    window.addEventListener("resize", function() {
+      if (!isMobileView()) {
+        deepdiveMain.classList.remove("mobile-visible");
+        sidePanel.classList.remove("mobile-hidden");
+      }
+    });
+
+    // 初始化
+    sideMsg("system", "你好！在下方输入一个方向，AI 会引导你探索。");
+    loadSessions();
+  }
+</script>
+<script>
+  // ── 收藏夹（多选批量分类 · 复用深潜 folder 模式） ──────────────
+  (function() {
+    var LIST_KINDS = ["favorite", "watch_later"];
+    var selected = { favorite: {}, watch_later: {} };  // item_key → true
+    var selecting = { favorite: false, watch_later: false };
+    var activeFilter = { favorite: "", watch_later: "" };  // "" = 全部
+
+    function api(path, opts) {
+      opts = opts || {};
+      return fetch("/api/saved" + path, {
+        method: opts.method || "GET",
+        headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      }).then(function(r) { return r.json(); });
+    }
+
+    function pageFor(listKind) {
+      return listKind === "favorite"
+        ? document.getElementById("favoritesPage")
+        : document.getElementById("watchLaterPage");
+    }
+    function gridFor(listKind) {
+      return listKind === "favorite"
+        ? document.getElementById("favoritesList")
+        : document.getElementById("watchLaterList");
+    }
+    function barFor(listKind) {
+      return listKind === "favorite"
+        ? document.getElementById("favoritesCollectionsBar")
+        : document.getElementById("watchLaterCollectionsBar");
+    }
+    function batchBarFor(listKind) {
+      return listKind === "favorite"
+        ? document.getElementById("favoritesBatchBar")
+        : document.getElementById("watchLaterBatchBar");
+    }
+
+    // 加载收藏夹 tabs + 批量目标下拉
+    function refreshCollections(listKind) {
+      api("/" + listKind + "/collections").then(function(data) {
+        var collections = data.collections || [];
+        var bar = barFor(listKind);
+        if (!bar) return;
+        var tabs = bar.querySelector(".saved-collections-tabs");
+        tabs.innerHTML = "";
+        var all = document.createElement("button");
+        all.type = "button"; all.className = "pill-btn" + (activeFilter[listKind] === "" ? " active" : "");
+        all.textContent = "全部";
+        all.addEventListener("click", function() {
+          activeFilter[listKind] = "";
+          refreshCollections(listKind);
+          applyFilter(listKind);
+        });
+        tabs.appendChild(all);
+        var un = document.createElement("button");
+        un.type = "button"; un.className = "pill-btn" + (activeFilter[listKind] === "__none__" ? " active" : "");
+        un.textContent = "未分类";
+        un.addEventListener("click", function() {
+          activeFilter[listKind] = "__none__";
+          refreshCollections(listKind);
+          applyFilter(listKind);
+        });
+        tabs.appendChild(un);
+        collections.forEach(function(name) {
+          var b = document.createElement("button");
+          b.type = "button"; b.className = "pill-btn saved-collection-tab" + (activeFilter[listKind] === name ? " active" : "");
+          b.title = "点击筛选";
+          // 文件夹名字 span + 操作按钮组（hover 显示）
+          var nameSpan = document.createElement("span");
+          nameSpan.className = "saved-collection-name";
+          nameSpan.textContent = name;
+          var ops = document.createElement("span");
+          ops.className = "saved-collection-ops";
+          var renameBtn = document.createElement("button");
+          renameBtn.type = "button"; renameBtn.className = "saved-collection-op"; renameBtn.title = "重命名";
+          renameBtn.textContent = "✎";
+          renameBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            var newName = window.prompt("重命名收藏夹：", name);
+            if (!newName) return;
+            newName = newName.trim();
+            if (!newName) return;
+            api("/" + listKind + "/collections/" + encodeURIComponent(name), { method: "PATCH", body: { name: newName } }).then(function() {
+              if (activeFilter[listKind] === name) activeFilter[listKind] = newName;
+              refreshCollections(listKind);
+              refreshList(listKind);
+            });
+          });
+          var delBtn = document.createElement("button");
+          delBtn.type = "button"; delBtn.className = "saved-collection-op saved-collection-del"; delBtn.title = "删除收藏夹";
+          delBtn.textContent = "✕";
+          delBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            if (!window.confirm("删除收藏夹「" + name + "」？其中的内容会移回未分类。")) return;
+            api("/" + listKind + "/collections/" + encodeURIComponent(name), { method: "DELETE" }).then(function() {
+              if (activeFilter[listKind] === name) activeFilter[listKind] = "";
+              refreshCollections(listKind);
+              refreshList(listKind);
+            });
+          });
+          ops.appendChild(renameBtn);
+          ops.appendChild(delBtn);
+          b.appendChild(nameSpan);
+          b.appendChild(ops);
+          b.addEventListener("click", function(e) {
+            if (e.target.closest(".saved-collection-ops")) return;
+            activeFilter[listKind] = name;
+            refreshCollections(listKind);
+            applyFilter(listKind);
+          });
+          tabs.appendChild(b);
+        });
+        // 批量目标下拉
+        var batchBar = batchBarFor(listKind);
+        if (batchBar) {
+          var sel = batchBar.querySelector(".saved-batch-target");
+          sel.innerHTML = '<option value="">未分类</option>';
+          collections.forEach(function(name) {
+            var opt = document.createElement("option");
+            opt.value = name; opt.textContent = name;
+            sel.appendChild(opt);
+          });
+        }
+      });
+    }
+
+    // 重渲染列表（app.js 的 renderSavedList 会自动调用；这里用于筛选后强制刷新）
+    function refreshList(listKind) {
+      // 通过点击主站已有的刷新逻辑：触发 saved 列表重载
+      var reload = listKind === "favorite" ? "refreshFavorites" : "refreshWatchLater";
+      if (typeof window[reload] === "function") { window[reload](); }
+    }
+
+    // 筛选：过滤当前网格中的卡片（不触发后端重新拉取，直接 DOM 级）
+    function applyFilter(listKind) {
+      var grid = gridFor(listKind);
+      if (!grid) return;
+      var f = activeFilter[listKind];
+      var cards = grid.querySelectorAll(".saved-card");
+      var visible = 0;
+      cards.forEach(function(card) {
+        var col = (card.dataset.collection || "");
+        var match = f === "" ? true : f === "__none__" ? !col : col === f;
+        card.style.display = match ? "" : "none";
+        if (match) visible++;
+      });
+      // 空态处理
+      var page = pageFor(listKind);
+      var emptyId = listKind === "favorite" ? "favoritesEmpty" : "watchLaterEmpty";
+      var empty = document.getElementById(emptyId);
+      if (empty) {
+        if (visible === 0 && cards.length > 0) empty.removeAttribute("hidden");
+        else empty.setAttribute("hidden", "");
+      }
+    }
+
+    // 给卡片注入选择框 + collection 标记（MutationObserver 监听网格变更）
+    var collectionMap = { favorite: {}, watch_later: {} };
+    function refreshCollectionMap(listKind) {
+      api("/" + listKind + "?limit=200").then(function(data) {
+        var map = {};
+        (data.items || []).forEach(function(it) { map[it.item_key] = it.collection || ""; });
+        collectionMap[listKind] = map;
+        var grid = gridFor(listKind);
+        if (grid) {
+          grid.querySelectorAll(".saved-card").forEach(function(card) {
+            card.dataset.collection = map[card.dataset.itemKey] || "";
+          });
+          if (activeFilter[listKind]) applyFilter(listKind);
+        }
+      });
+    }
+    function injectSelectBoxes(listKind) {
+      var grid = gridFor(listKind);
+      if (!grid) return;
+      grid.querySelectorAll(".saved-card").forEach(function(card) {
+        if (card.querySelector(".saved-select-box")) return;  // 已注入
+        var box = document.createElement("div");
+        box.className = "saved-select-box";
+        box.title = "选择/取消";
+        box.addEventListener("click", function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var key = card.dataset.itemKey;
+          if (selected[listKind][key]) {
+            delete selected[listKind][key];
+            box.classList.remove("checked");
+            card.classList.remove("is-selected");
+          } else {
+            selected[listKind][key] = true;
+            box.classList.add("checked");
+            card.classList.add("is-selected");
+          }
+          updateBatchBar(listKind);
+        });
+        card.appendChild(box);
+        // 从 collectionMap 填 collection
+        card.dataset.collection = collectionMap[listKind][card.dataset.itemKey] || "";
+      });
+    }
+
+    function updateBatchBar(listKind) {
+      var batchBar = batchBarFor(listKind);
+      if (!batchBar) return;
+      var count = Object.keys(selected[listKind]).length;
+      batchBar.querySelector(".saved-batch-count").textContent = "已选 " + count + " 项";
+      batchBar.querySelector(".saved-batch-apply").disabled = count === 0;
+    }
+
+    function enterSelectMode(listKind) {
+      selecting[listKind] = true;
+      var grid = gridFor(listKind);
+      if (grid) grid.querySelectorAll(".saved-card").forEach(function(c) { c.classList.add("is-selecting"); });
+      var batchBar = batchBarFor(listKind);
+      if (batchBar) batchBar.hidden = false;
+      updateBatchBar(listKind);
+    }
+    function exitSelectMode(listKind) {
+      selecting[listKind] = false;
+      selected[listKind] = {};
+      var grid = gridFor(listKind);
+      if (grid) grid.querySelectorAll(".saved-card").forEach(function(c) {
+        c.classList.remove("is-selecting", "is-selected");
+      });
+      var batchBar = batchBarFor(listKind);
+      if (batchBar) batchBar.hidden = true;
+    }
+
+    function bindBar(listKind) {
+      var bar = barFor(listKind);
+      if (!bar) return;
+      var multi = bar.querySelector(".saved-collections-multi");
+      var add = bar.querySelector(".saved-collections-add");
+      if (multi && !multi.dataset.bound) {
+        multi.dataset.bound = "1";
+        multi.addEventListener("click", function() {
+          if (selecting[listKind]) { exitSelectMode(listKind); multi.textContent = "☑ 多选"; }
+          else { enterSelectMode(listKind); multi.textContent = "✕ 取消多选"; }
+        });
+      }
+      if (add && !add.dataset.bound) {
+        add.dataset.bound = "1";
+        add.addEventListener("click", function() {
+          var name = window.prompt("新建收藏夹名字：", "");
+          if (!name) return;
+          name = name.trim();
+          if (!name) return;
+          api("/" + listKind + "/collections", { method: "POST", body: { name: name } }).then(function() {
+            refreshCollections(listKind);
+          });
+        });
+      }
+      // 批量操作条
+      var batchBar = batchBarFor(listKind);
+      if (batchBar) {
+        var apply = batchBar.querySelector(".saved-batch-apply");
+        var cancel = batchBar.querySelector(".saved-batch-cancel");
+        if (apply && !apply.dataset.bound) {
+          apply.dataset.bound = "1";
+          apply.addEventListener("click", function() {
+            var target = batchBar.querySelector(".saved-batch-target").value;
+            var keys = Object.keys(selected[listKind]);
+            if (!keys.length) return;
+            api("/" + listKind + "/batch-collection", { method: "POST", body: { item_keys: keys, collection: target } }).then(function() {
+              exitSelectMode(listKind);
+              var multi = bar.querySelector(".saved-collections-multi");
+              if (multi) multi.textContent = "☑ 多选";
+              refreshList(listKind);
+            });
+          });
+        }
+        if (cancel && !cancel.dataset.bound) {
+          cancel.dataset.bound = "1";
+          cancel.addEventListener("click", function() {
+            exitSelectMode(listKind);
+            var multi = bar.querySelector(".saved-collections-multi");
+            if (multi) multi.textContent = "☑ 多选";
+          });
+        }
+      }
+      refreshCollections(listKind);
+    }
+
+    // 初始化：绑定两个列表 + MutationObserver 注入选择框 + 从卡片数据读 collection
+    LIST_KINDS.forEach(function(listKind) {
+      bindBar(listKind);
+      var grid = gridFor(listKind);
+      if (grid && !grid.dataset.obsBound) {
+        grid.dataset.obsBound = "1";
+        var obs = new MutationObserver(function() {
+          injectSelectBoxes(listKind);
+          refreshCollectionMap(listKind);
+        });
+        obs.observe(grid, { childList: true, subtree: true });
+      }
+    });
+    // 页面打开时（隐藏的 DOM 仍在）确保绑定一次
+    window.setTimeout(function() {
+      LIST_KINDS.forEach(function(listKind) { bindBar(listKind); });
+    }, 1500);
+  })();
+</script>
+<!-- ── 卡片详情弹窗（全局共享：深潜 + 主站官方卡片） ── -->
+<div class="card-detail-overlay" id="cardDetailOverlay" hidden>
+  <div class="card-detail-modal" role="dialog" aria-modal="true" aria-label="内容预览">
+    <button class="card-detail-close" id="cardDetailClose" type="button" aria-label="关闭预览" title="关闭">×</button>
+    <div class="card-detail-cover" id="cardDetailCover">
+      <span class="platform-badge" id="cardDetailPlatform"></span>
+    </div>
+    <div class="card-detail-body">
+      <h3 class="card-detail-title" id="cardDetailTitle"></h3>
+      <p class="card-detail-author" id="cardDetailAuthor"></p>
+      <p class="card-detail-desc" id="cardDetailDesc"></p>
+      <div class="card-detail-actions">
+        <span class="card-detail-hint">再次点击下方按钮打开原链接</span>
+        <button class="card-detail-open-btn" id="cardDetailOpen" type="button">打开原链接 ↗</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // ── 卡片详情弹窗（深潜 + 主站官方卡片共用） ──────────────────
+  (function() {
+    var overlay = document.getElementById("cardDetailOverlay");
+    var detailCover = document.getElementById("cardDetailCover");
+    var detailPlatform = document.getElementById("cardDetailPlatform");
+    var detailTitle = document.getElementById("cardDetailTitle");
+    var detailAuthor = document.getElementById("cardDetailAuthor");
+    var detailDesc = document.getElementById("cardDetailDesc");
+    var detailOpen = document.getElementById("cardDetailOpen");
+    var detailClose = document.getElementById("cardDetailClose");
+    var currentUrl = "";
+
+    function escapeHtml(s) {
+      if (!s) return "";
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+    function proxyCover(url) {
+      if (!url) return "";
+      var full = String(url).trim();
+      if (full.startsWith("//")) full = "https:" + full;
+      try { new URL(full); } catch(e) { return ""; }
+      return "/api/image-proxy?url=" + encodeURIComponent(full);
+    }
+
+    // 打开弹窗：data = {title, url, author, description, cover_url, platform}
+    window.openCardDetail = function(data) {
+      if (!data || !data.title) return;
+      currentUrl = data.url || "";
+      // 清空旧的封面
+      detailCover.querySelectorAll("img").forEach(function(img) { img.remove(); });
+      // 封面（优先真实封面，无则平台色占位）
+      var coverSrc = proxyCover(data.cover_url);
+      if (coverSrc) {
+        var img = document.createElement("img");
+        img.src = coverSrc;
+        img.alt = data.title;
+        img.referrerPolicy = "no-referrer";
+        detailCover.insertBefore(img, detailPlatform);
+      } else {
+        var ph = document.createElement("div");
+        ph.className = "platform-ph platform-ph-" + (data.platform || "x");
+        ph.style.minHeight = "200px";
+        ph.textContent = data.platform || "内容";
+        detailCover.insertBefore(ph, detailPlatform);
+      }
+      detailPlatform.textContent = data.platform || "";
+      detailTitle.textContent = data.title;
+      detailAuthor.textContent = data.author || "";
+      detailDesc.textContent = data.description || "";
+      detailOpen.disabled = !currentUrl;
+      detailOpen.textContent = currentUrl ? "打开原链接 ↗" : "无可用链接";
+      overlay.hidden = false;
+      overlay.classList.remove("is-closing");
+      document.body.style.overflow = "hidden";
+    };
+    function closeCardDetail() {
+      if (overlay.hidden) return;
+      overlay.classList.add("is-closing");
+      window.setTimeout(function() {
+        overlay.hidden = true;
+        overlay.classList.remove("is-closing");
+        document.body.style.overflow = "";
+      }, 160);
+    }
+    window.closeCardDetail = closeCardDetail;
+    if (detailClose) detailClose.addEventListener("click", function(e) { e.stopPropagation(); closeCardDetail(); });
+    if (overlay) overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) closeCardDetail();
+    });
+    if (detailOpen) detailOpen.addEventListener("click", function(e) {
+      e.stopPropagation();
+      if (currentUrl) window.open(currentUrl, "_blank", "noopener,noreferrer");
+      closeCardDetail();
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") closeCardDetail();
+    });
+
+    // ── 主站官方卡片拦截（不动 512KB bundle）──
+    // 官方卡片封面是原生 <a href target="_blank">，用捕获阶段拦截：
+    // 点击封面 → 打开详情弹窗，阻止原生跳转；弹窗内再点「打开原链接」才跳转。
+    document.addEventListener("click", function(e) {
+      // 只处理主站推荐网格里的卡片封面（深潜卡片已自带 handler，不重复拦截）
+      if (overlay && !overlay.hidden) return;
+      var cover = e.target.closest("#videoGrid .video-card .cover, #videoGrid .video-card .cover a");
+      if (!cover) return;
+      var card = cover.closest(".video-card");
+      if (!card) return;
+      var link = cover.closest("a") || (cover.tagName === "A" ? cover : null);
+      // 若弹窗内已打开或点击的是反馈按钮区域，不拦截
+      if (e.target.closest(".card-actions, .card-feedback-icons, .comment-field, .reason, [data-action]")) return;
+      // 提取卡片数据（从 DOM）
+      var titleEl = card.querySelector(".video-title");
+      var authorEl = card.querySelector(".up-name") || card.querySelector(".video-meta .up-link") || card.querySelector(".video-meta");
+      var descEl = card.querySelector(".reason-text");
+      var platEl = card.querySelector(".platform");
+      var img = card.querySelector(".cover img");
+      var rawCover = "";
+      if (img) {
+        var src = img.getAttribute("src") || "";
+        if (src.indexOf("/api/image-proxy?url=") === 0) {
+          try { rawCover = decodeURIComponent(src.split("url=")[1]); } catch(err) {}
+        } else if (src && src.indexOf("http") === 0) {
+          rawCover = src;
+        }
+      }
+      var authorText = "";
+      if (authorEl) {
+        authorText = authorEl.textContent || "";
+        if (authorEl.classList.contains("video-meta")) {
+          // 主站 .video-meta 是「作者 · 主题 · 时间」拼接，只取第一段（作者）
+          var seg = authorText.split("·")[0] || "";
+          authorText = seg.trim();
+        }
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof window.openCardDetail === "function") {
+        window.openCardDetail({
+          title: titleEl ? titleEl.textContent : "",
+          url: link ? link.href : "",
+          author: authorText,
+          description: descEl ? descEl.textContent : "",
+          cover_url: rawCover,
+          platform: platEl ? platEl.textContent : ""
+        });
+      }
+    }, true);  // 捕获阶段：先于 app.js 的 bubble 阶段 handler
+  })();
+</script>
+<script>
+  // ── 主站首页卡片：点踩/忽略 10s 生效后自动消失（复用深潜交互） ──
+  // 主站首页的 pendingActions 在 512KB bundle 闭包内，无法直接接 committed 回调。
+  // 用 MutationObserver 监听卡片 .status-line 文本：当变成 committed 文案
+  // （「已记录不感兴趣/已忽略这条推荐，下次刷新列表时会隐藏」）时，卡片渐隐移除。
+  (function() {
+    var COMMITTED_MARKERS = ["下次刷新列表时会隐藏", "会用于优化画像"];
+    var grid = document.getElementById("videoGrid");
+    if (!grid) return;
+
+    function removeCard(card) {
+      if (!card || card.dataset.fsRemoving) return;
+      card.dataset.fsRemoving = "1";
+      card.classList.add("fs-removing");
+      window.setTimeout(function() {
+        if (card.isConnected) card.remove();
+      }, 260);  // 配合 CSS transition .25s
+    }
+
+    function scanStatusLines() {
+      grid.querySelectorAll(".video-card .status-line").forEach(function(status) {
+        var text = (status.textContent || "").trim();
+        for (var i = 0; i < COMMITTED_MARKERS.length; i++) {
+          if (text.indexOf(COMMITTED_MARKERS[i]) !== -1) {
+            var card = status.closest(".video-card");
+            removeCard(card);
+            break;
+          }
+        }
+      });
+    }
+
+    // 观察子节点变化（点踩/忽略提交后 status-line 文本更新）
+    var obs = new MutationObserver(function() {
+      scanStatusLines();
+    });
+    obs.observe(grid, { childList: true, subtree: true, characterData: true });
+
+    // 首次扫描（已加载的卡片）
+    scanStatusLines();
+  })();
+</script>
 </body></html>
