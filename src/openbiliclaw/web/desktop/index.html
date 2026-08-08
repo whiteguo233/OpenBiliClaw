@@ -167,6 +167,13 @@
     .saved-batch-count { font-size: 12.5px; color: var(--fg, #e6e8ee); font-weight: 600; }
     .saved-batch-target { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); border: 1px solid var(--border-soft, #2d3340); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; }
     .saved-batch-target:focus { outline: none; border-color: var(--accent, #6c8cff); }
+    /* ── 收藏夹 tab：hover 显示 ✎重命名 / ✕删除 ── */
+    .saved-collection-tab { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+    .saved-collection-ops { display: none; align-items: center; gap: 2px; }
+    .saved-collection-tab:hover .saved-collection-ops { display: inline-flex; }
+    .saved-collection-op { background: transparent; border: none; color: var(--fg-dim, #9aa3b2); font-size: 12px; line-height: 1; padding: 1px 3px; border-radius: 4px; cursor: pointer; }
+    .saved-collection-op:hover { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); }
+    .saved-collection-del:hover { color: #ff6b6b; }
     /* ── 主站首页卡片反馈后自动消失（dislike/dismiss 10s 生效） ── */
     .video-card.fs-removing { opacity: 0; transform: scale(0.94); transition: opacity .25s ease, transform .25s ease; }
   </style>
@@ -2712,25 +2719,18 @@
         tabs.appendChild(un);
         collections.forEach(function(name) {
           var b = document.createElement("button");
-          b.type = "button"; b.className = "pill-btn" + (activeFilter[listKind] === name ? " active" : "");
-          b.textContent = name;
-          b.title = "重命名：右键 / 删除：双击";
-          b.addEventListener("click", function() {
-            activeFilter[listKind] = name;
-            refreshCollections(listKind);
-            applyFilter(listKind);
-          });
-          b.addEventListener("dblclick", function(e) {
-            e.stopPropagation();
-            if (!window.confirm("删除收藏夹「" + name + "」？其中的内容会移回未分类。")) return;
-            api("/" + listKind + "/collections/" + encodeURIComponent(name), { method: "DELETE" }).then(function() {
-              if (activeFilter[listKind] === name) activeFilter[listKind] = "";
-              refreshCollections(listKind);
-              refreshList(listKind);
-            });
-          });
-          b.addEventListener("contextmenu", function(e) {
-            e.preventDefault();
+          b.type = "button"; b.className = "pill-btn saved-collection-tab" + (activeFilter[listKind] === name ? " active" : "");
+          b.title = "点击筛选";
+          // 文件夹名字 span + 操作按钮组（hover 显示）
+          var nameSpan = document.createElement("span");
+          nameSpan.className = "saved-collection-name";
+          nameSpan.textContent = name;
+          var ops = document.createElement("span");
+          ops.className = "saved-collection-ops";
+          var renameBtn = document.createElement("button");
+          renameBtn.type = "button"; renameBtn.className = "saved-collection-op"; renameBtn.title = "重命名";
+          renameBtn.textContent = "✎";
+          renameBtn.addEventListener("click", function(e) {
             e.stopPropagation();
             var newName = window.prompt("重命名收藏夹：", name);
             if (!newName) return;
@@ -2741,6 +2741,28 @@
               refreshCollections(listKind);
               refreshList(listKind);
             });
+          });
+          var delBtn = document.createElement("button");
+          delBtn.type = "button"; delBtn.className = "saved-collection-op saved-collection-del"; delBtn.title = "删除收藏夹";
+          delBtn.textContent = "✕";
+          delBtn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            if (!window.confirm("删除收藏夹「" + name + "」？其中的内容会移回未分类。")) return;
+            api("/" + listKind + "/collections/" + encodeURIComponent(name), { method: "DELETE" }).then(function() {
+              if (activeFilter[listKind] === name) activeFilter[listKind] = "";
+              refreshCollections(listKind);
+              refreshList(listKind);
+            });
+          });
+          ops.appendChild(renameBtn);
+          ops.appendChild(delBtn);
+          b.appendChild(nameSpan);
+          b.appendChild(ops);
+          b.addEventListener("click", function(e) {
+            if (e.target.closest(".saved-collection-ops")) return;
+            activeFilter[listKind] = name;
+            refreshCollections(listKind);
+            applyFilter(listKind);
           });
           tabs.appendChild(b);
         });
