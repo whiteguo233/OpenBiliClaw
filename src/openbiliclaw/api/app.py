@@ -4905,17 +4905,18 @@ def create_app(
         xhs_cfg = getattr(getattr(config_obj, "sources", None), "xiaohongshu", None)
         database = getattr(ctx, "database", None)
 
-        def _kick() -> None:
-            """Best-effort wake-up for the extension dispatcher."""
-            from urllib import error, request
+        async def _kick() -> None:
+            """Best-effort wake-up for the extension dispatcher.
 
-            req = request.Request(
-                "http://127.0.0.1:8420/api/sources/xhs/kick",
-                method="POST",
-                data=b"",
-            )
-            with suppress(error.URLError, TimeoutError, OSError):
-                request.urlopen(req, timeout=1.0).close()
+            Broadcasts the same `xhs_task_available` event as the official
+            `/api/sources/xhs/kick` endpoint via the in-process event hub —
+            no HTTP self-call, no hardcoded port, works regardless of the
+            configured server bind address.
+            """
+            publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
+            if callable(publish):
+                with suppress(Exception):
+                    await publish({"type": "xhs_task_available", "source": "deepdive_kick"})
 
         async def _wait_for_task(queue: XhsTaskQueue, task_id: str, wait_seconds: float) -> list[dict]:
             """轮询 xhs_tasks 直到任务完成/失败/超时，返回 notes 列表。"""
@@ -4958,7 +4959,7 @@ def create_app(
                 logger.info("小红书 plugin search skipped: task budget exhausted")
                 return []
             with suppress(Exception):
-                _kick()
+                await _kick()
             notes = await _wait_for_task(
                 queue, task_id, wait_seconds=float(getattr(xhs_cfg, "plugin_wait_seconds", 300.0))
             )
