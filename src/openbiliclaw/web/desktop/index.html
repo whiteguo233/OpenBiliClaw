@@ -1925,7 +1925,8 @@
             }
             if (commentInput) commentInput.value = '';
             closeComposer();
-            status.textContent = '已提交聊天线索，卡片会保留在当前结果。';
+            status.textContent = '已发起对话，AI 回复会出现在对话面板。';
+            // 1) 记录 feedback 事件（画像/信号，与主 Web 一致）
             fetch('/api/events', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
@@ -1939,10 +1940,35 @@
                 metadata: { feedback_type: 'comment', bvid: c.bvid || '', content_id: c.bvid || '', feedback_note: note }
               }]})
             }).then(function(r) {
-              if (!r.ok) throw new Error('反馈提交失败');
+              if (!r.ok) throw new Error('反馈记录失败');
               return r.json();
             }).catch(function(err) {
-              status.textContent = err.message || '反馈提交失败';
+              // 反馈记录失败不阻塞对话发起
+              console.warn('深潜聊一聊 feedback 记录失败:', err.message);
+            });
+            // 2) 创建对话 turn（session=popup 与主 Web 共享），触发 AI 回复
+            fetch('/api/chat/turns', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                session: 'popup',
+                scope: 'chat',
+                message: note,
+                subject_id: c.bvid || '',
+                subject_title: c.title || ''
+              })
+            }).then(function(r) {
+              if (!r.ok) return r.json().then(function(e) { throw new Error(e.detail || e.error || '对话发起失败'); });
+              return r.json();
+            }).then(function(turn) {
+              status.textContent = '已发起对话，AI 回复会出现在对话面板。';
+              if (turn && turn.turn_id) {
+                // 尝试切换到共享对话面板查看回复（若主 Web 存在该面板）
+                var panel = document.querySelector('#chatPage, [data-page="chat"]');
+                if (panel && typeof openChatPage === 'function') openChatPage();
+              }
+            }).catch(function(err) {
+              status.textContent = err.message || '对话发起失败';
             });
           } else {
             openComposer();
