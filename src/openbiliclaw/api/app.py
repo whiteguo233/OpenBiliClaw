@@ -4353,6 +4353,403 @@ def create_app(
             embedding_ready=embedding_ready,
         )
 
+    # ── 深潜研究 API ──────────────────────────────────────────
+    from openbiliclaw.deepdive.session import SessionManager
+    from openbiliclaw.deepdive.engine import DeepDiveEngine
+
+    def _read_enabled_sources() -> list[str]:
+        """读取主站已启用的平台源，深潜研究动态同步。
+
+        每次重新 load_config() 读最新文件——web 设置保存配置后立即生效，
+        ctx.config 是启动快照不会自动更新。
+        """
+        platform_map = {
+            "bilibili": "bilibili",
+            "xiaohongshu": "xhs",
+            "douyin": "douyin",
+            "youtube": "youtube",
+            "twitter": "twitter",
+            "zhihu": "zhihu",
+            "reddit": "reddit",
+            "bangumi": "bangumi",
+        }
+        enabled: list[str] = []
+        try:
+            from openbiliclaw.config import load_config
+            fresh = load_config()
+            sources = getattr(fresh, "sources", None)
+            for cfg_name, short in platform_map.items():
+                section = getattr(sources, cfg_name, None)
+                if section is not None and bool(getattr(section, "enabled", False)):
+                    enabled.append(short)
+        except Exception:
+            logger.exception("读取平台源配置失败")
+        # 兜底：至少 B站
+        if not enabled:
+            enabled = ["bilibili"]
+        return enabled
+
+    def _build_douyin_search_fn() -> Any:
+        """构建抖音搜索回调：plugin 机制（浏览器扩展模拟真实操作）。
+
+        扩展在线时走任务队列真实搜索（规避 direct-cookie 风控）；
+        等不到结果时返回空列表，由引擎兜底链接卡。
+        """
+        from pathlib import Path
+
+        config_obj = getattr(ctx, "config", None)
+        dy_cfg = getattr(getattr(config_obj, "sources", None), "douyin", None)
+
+        async def _search_douyin(keyword: str, *, limit: int = 10) -> list[dict]:
+            if not dy_cfg or not bool(getattr(dy_cfg, "enabled", False)):
+                return []
+            try:
+                from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+                from openbiliclaw.sources.douyin_direct import DouyinDirectClient
+                from openbiliclaw.sources.douyin_plugin_search import DouyinPluginSearchClient
+
+                cookie = resolve_douyin_cookie(
+                    data_dir=Path(str(getattr(config_obj, "data_path", "data"))),
+                    cookie_env=str(getattr(dy_cfg, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")),
+                )
+                if not cookie:
+                    logger.info("抖音 cookie 缺失，无法 plugin 搜索")
+                    return []
+                async with DouyinDirectClient(cookie=cookie) as direct_client:
+                    client = DouyinPluginSearchClient(
+                        database=getattr(ctx, "database", None),
+                        direct_client=direct_client,
+                        wait_seconds=60.0,  # 等浏览器扩展执行（扩展在线时真实返回）
+                        poll_interval_seconds=0.5,
+                        daily_search_budget=int(getattr(dy_cfg, "daily_search_budget", 0)),
+                    )
+                    return await client.search_aweme(keyword, limit=limit)
+            except Exception as exc:
+                logger.warning("抖音 plugin 搜索构建失败: %s", exc)
+                return []
+
+        return _search_douyin
+
+    def _build_xhs_search_fn() -> Any:
+        """构建小红书搜索回调：扩展任务队列（XhsTaskQueue + 浏览器扩展真实执行）。
+
+        官方小红书内容全部由浏览器扩展抓取（adapter 是 stub，无后端搜索 API）。
+        深潜搜小红书时把关键词入队 xhs_tasks，扩展 claim 后真实搜索并回写
+        notes（含 cover_url/cover_data），轮询取回后返回带封面的笔记。
+        扩展不在线或超时返回空列表，由引擎兜底链接卡。
+        """
+        import asyncio
+        import json
+        from contextlib import suppress
+
+        from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
+
+        config_obj = getattr(ctx, "config", None)
+        xhs_cfg = getattr(getattr(config_obj, "sources", None), "xiaohongshu", None)
+        database = getattr(ctx, "database", None)
+
+        def _kick() -> None:
+            """Best-effort wake-up for the extension dispatcher."""
+            from urllib import error, request
+
+            req = request.Request(
+                "http://127.0.0.1:8420/api/sources/xhs/kick",
+                method="POST",
+                data=b"",
+            )
+            with suppress(error.URLError, TimeoutError, OSError):
+                request.urlopen(req, timeout=1.0).close()
+
+        async def _wait_for_task(queue: XhsTaskQueue, task_id: str, wait_seconds: float) -> list[dict]:
+            """轮询 xhs_tasks 直到任务完成/失败/超时，返回 notes 列表。"""
+            deadline = asyncio.get_running_loop().time() + wait_seconds
+            while True:
+                task = queue.get(task_id)
+                status = str((task or {}).get("status", "")).strip()
+                if status in {"completed", "failed"}:
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    return []
+                await asyncio.sleep(0.5)
+            if not task or task.get("status") != "completed":
+                return []
+            try:
+                result = json.loads(str(task.get("result_json") or "{}"))
+            except json.JSONDecodeError:
+                return []
+            if not isinstance(result, dict):
+                return []
+            notes = result.get("notes", [])
+            return [n for n in notes if isinstance(n, dict)]
+
+        async def _search_xhs(keyword: str, *, limit: int = 10) -> list[dict]:
+            if not xhs_cfg or not bool(getattr(xhs_cfg, "enabled", False)):
+                return []
+            if database is None or not hasattr(database, "conn"):
+                return []
+            try:
+                queue = XhsTaskQueue(database)
+                task_id = queue.enqueue_with_id(
+                    "search",
+                    {"keyword": keyword},
+                    daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 20)),
+                )
+            except Exception as exc:
+                logger.info("小红书 plugin search enqueue failed: %s", exc)
+                return []
+            if not task_id:
+                logger.info("小红书 plugin search skipped: task budget exhausted")
+                return []
+            with suppress(Exception):
+                _kick()
+            notes = await _wait_for_task(
+                queue, task_id, wait_seconds=float(getattr(xhs_cfg, "plugin_wait_seconds", 300.0))
+            )
+            # 规范化：保留封面 URL；扩展有时只回 cover_data（base64），前端会走图片代理
+            items: list[dict] = []
+            for n in notes[:limit]:
+                note_id = str(n.get("note_id") or n.get("content_id") or "").strip()
+                url = str(n.get("url") or "").strip()
+                title = str(n.get("title") or "").strip()
+                if not title and not url:
+                    continue
+                item = {
+                    "title": title,
+                    "url": url,
+                    "author": str(n.get("author") or "").strip(),
+                    "cover_url": str(n.get("cover_url") or "").strip(),
+                    "note_id": note_id,
+                }
+                if n.get("cover_data"):
+                    item["cover_data"] = n["cover_data"]
+                    item["cover_content_type"] = n.get("cover_content_type", "image/webp")
+                items.append(item)
+            return items
+
+        return _search_xhs
+
+    def _sync_engine_platforms() -> None:
+        """每次请求前把最新启用平台同步到引擎（真正动态匹配 web 设置）"""
+        try:
+            _deepdive_engine.enabled_platforms = _read_enabled_sources()
+        except Exception:
+            logger.exception("同步引擎平台白名单失败")
+
+    _deepdive_session_manager = SessionManager(
+        db_path=str(getattr(getattr(ctx, "config", None), "data_path", "data")) + "/deepdive_sessions.db"
+    )
+    _deepdive_enabled_platforms = _read_enabled_sources()
+
+    # ── 深潜 Prompt 自定义（独立 JSON 持久化，不碰 config.toml） ──
+    _deepdive_prompts_path = str(getattr(getattr(ctx, "config", None), "data_path", "data")) + "/deepdive_prompts.json"
+
+    def _load_deepdive_prompts() -> dict[str, str]:
+        """读取自定义 prompt；无文件/字段缺失时返回 {}（engine 用内置默认）"""
+        try:
+            with open(_deepdive_prompts_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return {}
+            return {
+                k: str(v).strip()
+                for k, v in data.items()
+                if k in ("plan", "execute", "refine") and isinstance(v, str) and v.strip()
+            }
+        except Exception:
+            return {}
+
+    def _save_deepdive_prompts(prompts: dict[str, str]) -> None:
+        """持久化自定义 prompt 到独立 JSON 文件"""
+        try:
+            with open(_deepdive_prompts_path, "w", encoding="utf-8") as fh:
+                json.dump({k: v for k, v in prompts.items() if k in ("plan", "execute", "refine")}, fh, ensure_ascii=False, indent=2)
+        except Exception:
+            logger.exception("保存深潜 prompt 失败")
+
+    _deepdive_engine = DeepDiveEngine(
+        session_manager=_deepdive_session_manager,
+        llm_service=ctx.llm_service,
+        discovery_engine=ctx.discovery_engine,
+        bilibili_client=ctx.bilibili_client,
+        enabled_platforms=_deepdive_enabled_platforms,
+        data_path=str(getattr(getattr(ctx, "config", None), "data_path", "data")),
+        douyin_search_fn=_build_douyin_search_fn(),
+        xhs_search_fn=_build_xhs_search_fn(),
+        prompts=_load_deepdive_prompts(),
+    )
+
+    @app.post("/api/deepdive/start")
+    async def deepdive_start(body: dict):
+        """开始一次深潜研究"""
+        _sync_engine_platforms()
+        topic = body.get("topic", "").strip()
+        if not topic:
+            return JSONResponse({"error": "topic 不能为空"}, status_code=400)
+        profile = None
+        if ctx.soul_engine is not None:
+            try:
+                profile = await ctx.soul_engine.get_profile()
+            except Exception:
+                pass
+        result = await _deepdive_engine.start_session(topic, profile=profile)
+        return result
+
+    @app.post("/api/deepdive/{session_id}/clarify")
+    async def deepdive_clarify(session_id: str, body: dict):
+        """用户回答澄清问题，开始搜索"""
+        _sync_engine_platforms()
+        user_input = body.get("input", "").strip()
+        if not user_input:
+            return JSONResponse({"error": "input 不能为空"}, status_code=400)
+        result = await _deepdive_engine.clarify(session_id, user_input)
+        if "error" in result:
+            return JSONResponse(result, status_code=404)
+        return result
+
+    @app.post("/api/deepdive/{session_id}/refine")
+    async def deepdive_refine(session_id: str, body: dict):
+        """用户修正搜索方向"""
+        _sync_engine_platforms()
+        refinement = body.get("input", "").strip()
+        if not refinement:
+            return JSONResponse({"error": "input 不能为空"}, status_code=400)
+        result = await _deepdive_engine.refine(session_id, refinement)
+        if "error" in result:
+            return JSONResponse(result, status_code=404)
+        return result
+
+    # ── 深潜 Prompt 自定义 API（必须在 /api/deepdive/{session_id} 之前注册）──
+    from openbiliclaw.deepdive.engine import (
+        DEEP_DIVE_PLAN_PROMPT_TEMPLATE,
+        DEEP_DIVE_EXECUTE_PROMPT_TEMPLATE,
+        DEEP_DIVE_REFINE_PROMPT_TEMPLATE,
+    )
+
+    _DEEP_DIVE_DEFAULT_PROMPTS = {
+        "plan": DEEP_DIVE_PLAN_PROMPT_TEMPLATE,
+        "execute": DEEP_DIVE_EXECUTE_PROMPT_TEMPLATE,
+        "refine": DEEP_DIVE_REFINE_PROMPT_TEMPLATE,
+    }
+
+    @app.get("/api/deepdive/prompts")
+    async def deepdive_get_prompts():
+        """读取深潜 prompt 配置：merged（自定义优先）+ defaults（内置默认）"""
+        custom = _load_deepdive_prompts()
+        merged = {k: custom.get(k) or _DEEP_DIVE_DEFAULT_PROMPTS[k] for k in _DEEP_DIVE_DEFAULT_PROMPTS}
+        return {
+            "prompts": merged,
+            "defaults": dict(_DEEP_DIVE_DEFAULT_PROMPTS),
+            "custom": custom,
+        }
+
+    @app.put("/api/deepdive/prompts")
+    async def deepdive_put_prompts(body: dict):
+        """保存深潜 prompt 配置（仅保存非空字段）并热更新引擎"""
+        custom = _load_deepdive_prompts()
+        changed = False
+        for key in ("plan", "execute", "refine"):
+            val = body.get(key)
+            if isinstance(val, str):
+                val = val.strip()
+                if val:
+                    if custom.get(key) != val:
+                        custom[key] = val
+                        changed = True
+                else:
+                    # 空字符串 = 恢复该字段为默认（从自定义里移除）
+                    if key in custom:
+                        del custom[key]
+                        changed = True
+        if changed:
+            _save_deepdive_prompts(custom)
+            _deepdive_engine.prompts = {
+                k: custom.get(k) or _DEEP_DIVE_DEFAULT_PROMPTS[k] for k in _DEEP_DIVE_DEFAULT_PROMPTS
+            }
+        return {"status": "saved", "custom": custom}
+
+    @app.post("/api/deepdive/prompts/reset")
+    async def deepdive_reset_prompts():
+        """恢复深潜 prompt 为内置默认"""
+        _save_deepdive_prompts({})
+        _deepdive_engine.prompts = dict(_DEEP_DIVE_DEFAULT_PROMPTS)
+        return {"status": "reset", "prompts": dict(_DEEP_DIVE_DEFAULT_PROMPTS)}
+
+    @app.get("/api/deepdive/sessions")
+    async def deepdive_list():
+        """列出所有活跃会话 + 文件夹"""
+        sessions = _deepdive_session_manager.list_sessions()
+        return {
+            "sessions": [
+                _deepdive_engine._session_to_dict(s) for s in sessions
+            ],
+            "folders": _deepdive_session_manager.list_folders(),
+        }
+
+    # ── 深潜文件夹（树形收纳） API ─────────────────────────────
+    @app.post("/api/deepdive/folders")
+    async def deepdive_create_folder(body: dict):
+        """创建文件夹"""
+        name = (body.get("name", "") or "").strip()
+        if not name:
+            return JSONResponse({"error": "name 不能为空"}, status_code=400)
+        ok = _deepdive_session_manager.create_folder(name)
+        if not ok:
+            return JSONResponse({"error": "文件夹已存在或创建失败"}, status_code=409)
+        return {"status": "created", "folders": _deepdive_session_manager.list_folders()}
+
+    @app.patch("/api/deepdive/folders/{name}")
+    async def deepdive_rename_folder(name: str, body: dict):
+        """重命名文件夹"""
+        new_name = (body.get("name", "") or "").strip()
+        ok = _deepdive_session_manager.rename_folder(name, new_name)
+        if not ok:
+            return JSONResponse({"error": "重命名失败（文件夹不存在或新名重复）"}, status_code=404)
+        return {"status": "renamed", "folders": _deepdive_session_manager.list_folders()}
+
+    @app.delete("/api/deepdive/folders/{name}")
+    async def deepdive_delete_folder(name: str):
+        """删除文件夹（归属会话移回根目录）"""
+        ok = _deepdive_session_manager.delete_folder(name)
+        if not ok:
+            return JSONResponse({"error": "文件夹不存在"}, status_code=404)
+        return {"status": "deleted", "folders": _deepdive_session_manager.list_folders()}
+
+    @app.post("/api/deepdive/{session_id}/move")
+    async def deepdive_move_session(session_id: str, body: dict):
+        """把会话移动到文件夹（folder='' 移回根目录）"""
+        folder = (body.get("folder", "") or "").strip()
+        ok = _deepdive_session_manager.move_session(session_id, folder)
+        if not ok:
+            return JSONResponse({"error": "会话不存在"}, status_code=404)
+        return {"status": "moved", "folder": folder}
+
+    @app.get("/api/deepdive/{session_id}")
+    async def deepdive_get(session_id: str):
+        """获取会话状态"""
+        session = _deepdive_session_manager.get_session(session_id)
+        if not session:
+            return JSONResponse({"error": "会话不存在"}, status_code=404)
+        return _deepdive_engine._session_to_dict(session)
+
+    @app.delete("/api/deepdive/{session_id}")
+    async def deepdive_delete(session_id: str):
+        """删除会话"""
+        ok = _deepdive_session_manager.delete_session(session_id)
+        if not ok:
+            return JSONResponse({"error": "会话不存在"}, status_code=404)
+        return {"status": "deleted"}
+
+    @app.patch("/api/deepdive/{session_id}/rename")
+    async def deepdive_rename(session_id: str, body: dict):
+        """重命名会话"""
+        new_name = (body.get("name", "") or "").strip()
+        if not new_name:
+            return JSONResponse({"error": "name 不能为空"}, status_code=400)
+        session = _deepdive_session_manager.rename_session(session_id, new_name)
+        if not session:
+            return JSONResponse({"error": "会话不存在"}, status_code=404)
+        return _deepdive_engine._session_to_dict(session)
+
     @app.get("/api/init-status", response_model=InitStatusOut)
     async def init_status(request: Request) -> InitStatusOut:
         """Authoritative guided-init status + pre-init checklist (gui-init §3).
@@ -6885,6 +7282,7 @@ def create_app(
             author_name=str(row.get("author_name", "")),
             cover_url=str(row.get("cover_url", "")),
             note=str(row.get("note", "")),
+            collection=str(row.get("collection", "")),
             added_at=str(row.get("added_at", "")),
             sync_status=_safe_native_status(row.get("sync_status")),
             sync_task_id=str(row.get("sync_task_id", "")),
@@ -7005,6 +7403,50 @@ def create_app(
             items=[_saved_list_item(row) for row in rows],
             total=_saved_count(list_kind),
         )
+
+    # ── 收藏夹（多选批量分类，复用深潜 folder 模式） ────────────
+    @app.get("/api/saved/{list_kind}/collections")
+    async def saved_collections_list(list_kind: SavedListKind):
+        """列出该列表的收藏夹"""
+        return {"collections": ctx.database.list_saved_collections(list_kind)}
+
+    @app.post("/api/saved/{list_kind}/collections")
+    async def saved_collections_create(list_kind: SavedListKind, body: dict):
+        """创建收藏夹"""
+        name = (body.get("name", "") or "").strip()
+        if not name:
+            return JSONResponse({"error": "name 不能为空"}, status_code=400)
+        ok = ctx.database.create_saved_collection(list_kind, name)
+        if not ok:
+            return JSONResponse({"error": "收藏夹已存在或创建失败"}, status_code=409)
+        return {"status": "created", "collections": ctx.database.list_saved_collections(list_kind)}
+
+    @app.patch("/api/saved/{list_kind}/collections/{name}")
+    async def saved_collections_rename(list_kind: SavedListKind, name: str, body: dict):
+        """重命名收藏夹"""
+        new_name = (body.get("name", "") or "").strip()
+        ok = ctx.database.rename_saved_collection(list_kind, name, new_name)
+        if not ok:
+            return JSONResponse({"error": "重命名失败（不存在或新名重复）"}, status_code=404)
+        return {"status": "renamed", "collections": ctx.database.list_saved_collections(list_kind)}
+
+    @app.delete("/api/saved/{list_kind}/collections/{name}")
+    async def saved_collections_delete(list_kind: SavedListKind, name: str):
+        """删除收藏夹（条目移回未分类）"""
+        ok = ctx.database.delete_saved_collection(list_kind, name)
+        if not ok:
+            return JSONResponse({"error": "收藏夹不存在"}, status_code=404)
+        return {"status": "deleted", "collections": ctx.database.list_saved_collections(list_kind)}
+
+    @app.post("/api/saved/{list_kind}/batch-collection")
+    async def saved_collections_batch(list_kind: SavedListKind, body: dict):
+        """多选批量归类：item_keys → collection"""
+        item_keys = body.get("item_keys") or []
+        collection = (body.get("collection", "") or "").strip()
+        if not isinstance(item_keys, list) or not item_keys:
+            return JSONResponse({"error": "item_keys 不能为空"}, status_code=400)
+        count = ctx.database.batch_set_saved_collection(list_kind, [str(k) for k in item_keys], collection)
+        return {"status": "updated", "count": count, "collection": collection}
 
     @app.post("/api/saved/{list_kind}/sync", response_model=SavedSyncBatchResponse)
     async def saved_sync(
@@ -12347,12 +12789,10 @@ def create_app(
         if native_task is not None:
             return native_task
 
-        # Disabling a source stops automatic discovery immediately, including
-        # tasks that were already pending before the config hot-reload. Keep
-        # them pending so re-enabling can resume rather than silently discard
-        # user-planned work. Explicit native-save jobs above remain available.
-        if not background_tasks_enabled:
-            return Response(status_code=204)
+        # NOTE: 与 dy_next_task 对齐——不检查 scheduler.enabled 全局开关。
+        # scheduler.enabled=false 只应关闭自动发现调度，不应挡住浏览器扩展
+        # 手动 claim 搜索任务（深潜研究等用户主动触发的搜索会被误伤）。
+        # 2026-08-07 修复：移除 background_tasks_enabled 前置检查。
 
         # 204 No Content responses MUST NOT carry a body (RFC 7230).
         # JSONResponse(204, None) serialises None to "null" (4 bytes),

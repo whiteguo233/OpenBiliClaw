@@ -12888,8 +12888,15 @@ class Database:
                 list_kind TEXT NOT NULL CHECK (list_kind IN ('favorite', 'watch_later')),
                 item_key  TEXT NOT NULL REFERENCES saved_items(item_key) ON DELETE CASCADE,
                 note      TEXT NOT NULL DEFAULT '',
+                collection TEXT NOT NULL DEFAULT '',
                 added_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (list_kind, item_key)
+            );
+            CREATE TABLE IF NOT EXISTS saved_collections (
+                list_kind  TEXT NOT NULL CHECK (list_kind IN ('favorite', 'watch_later')),
+                name       TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (list_kind, name)
             );
             CREATE INDEX IF NOT EXISTS idx_saved_memberships_item_key
                 ON saved_memberships(item_key);
@@ -12983,6 +12990,20 @@ class Database:
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # 兼容旧库：saved_memberships 补 collection 列 + 建 saved_collections 表
+        membership_cols = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(saved_memberships)").fetchall()
+        }
+        if "collection" not in membership_cols:
+            self.conn.execute(
+                "ALTER TABLE saved_memberships ADD COLUMN collection TEXT NOT NULL DEFAULT ''"
+            )
+        # collection 列就绪后再建索引（旧库升级时列不存在会导致 CREATE INDEX 失败）
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_saved_memberships_collection "
+            "ON saved_memberships(list_kind, collection)"
+        )
         native_state_columns = {
             str(row["name"])
             for row in self.conn.execute("PRAGMA table_info(native_save_states)").fetchall()
@@ -13621,6 +13642,7 @@ class Database:
                 i.updated_at,
                 m.note,
                 m.added_at,
+                m.collection,
                 COALESCE(n.requested_action, '') AS requested_action,
                 COALESCE(n.resolved_action, '') AS resolved_action,
                 COALESCE(n.resolved_target, '') AS resolved_target,
@@ -13781,6 +13803,84 @@ class Database:
             (normalized_kind, limit, offset),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # ── 收藏夹（多选批量分类，复用深潜 folder 模式） ─────────────
+    def list_saved_collections(self, list_kind: str) -> list[str]:
+        """列出某列表（favorite/watch_later）的收藏夹名"""
+        normalized_kind = self._saved_list_kind(list_kind)
+        rows = self.conn.execute(
+            "SELECT name FROM saved_collections WHERE list_kind = ? ORDER BY created_at",
+            (normalized_kind,),
+        ).fetchall()
+        return [str(row["name"]) for row in rows]
+
+    def create_saved_collection(self, list_kind: str, name: str) -> bool:
+        """创建收藏夹（已存在返回 False）"""
+        normalized_kind = self._saved_list_kind(list_kind)
+        cleaned = name.strip()
+        if not cleaned:
+            return False
+        try:
+            self.conn.execute(
+                "INSERT INTO saved_collections (list_kind, name) VALUES (?, ?)",
+                (normalized_kind, cleaned),
+            )
+            return True
+        except Exception:
+            return False
+
+    def rename_saved_collection(self, list_kind: str, old_name: str, new_name: str) -> bool:
+        """重命名收藏夹：更新 collections 表 + 同步归属条目的 collection 字段"""
+        normalized_kind = self._saved_list_kind(list_kind)
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+        if not old_name or not new_name or old_name == new_name:
+            return False
+        cursor = self.conn.execute(
+            "UPDATE saved_collections SET name = ? WHERE list_kind = ? AND name = ?",
+            (new_name, normalized_kind, old_name),
+        )
+        if int(cursor.rowcount or 0) == 0:
+            return False
+        self.conn.execute(
+            "UPDATE saved_memberships SET collection = ? WHERE list_kind = ? AND collection = ?",
+            (new_name, normalized_kind, old_name),
+        )
+        return True
+
+    def delete_saved_collection(self, list_kind: str, name: str) -> bool:
+        """删除收藏夹：移除记录 + 条目移回未分类（collection=''）"""
+        normalized_kind = self._saved_list_kind(list_kind)
+        cleaned = name.strip()
+        if not cleaned:
+            return False
+        cursor = self.conn.execute(
+            "DELETE FROM saved_collections WHERE list_kind = ? AND name = ?",
+            (normalized_kind, cleaned),
+        )
+        if int(cursor.rowcount or 0) == 0:
+            return False
+        self.conn.execute(
+            "UPDATE saved_memberships SET collection = '' WHERE list_kind = ? AND collection = ?",
+            (normalized_kind, cleaned),
+        )
+        return True
+
+    def batch_set_saved_collection(
+        self, list_kind: str, item_keys: list[str], collection: str
+    ) -> int:
+        """多选批量归类：把多个条目设置到同一收藏夹（''=移回未分类）"""
+        normalized_kind = self._saved_list_kind(list_kind)
+        keys = [k.strip() for k in item_keys if k and k.strip()]
+        if not keys:
+            return 0
+        target = collection.strip()
+        placeholders = ",".join("?" for _ in keys)
+        cursor = self.conn.execute(
+            f"UPDATE saved_memberships SET collection = ? WHERE list_kind = ? AND item_key IN ({placeholders})",
+            (target, normalized_kind, *keys),
+        )
+        return int(cursor.rowcount or 0)
 
     def upsert_native_save_state(
         self,

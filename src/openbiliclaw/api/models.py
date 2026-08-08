@@ -1735,6 +1735,7 @@ class SavedListItem(BaseModel):
     author_name: str = ""
     cover_url: str = ""
     note: str = ""
+    collection: str = ""
     added_at: str = ""
     sync_status: NativeSaveStatusOut = "pending"
     sync_task_id: str = ""
