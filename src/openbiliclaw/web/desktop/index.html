@@ -167,6 +167,8 @@
     .saved-batch-count { font-size: 12.5px; color: var(--fg, #e6e8ee); font-weight: 600; }
     .saved-batch-target { background: var(--surface-2, #232733); color: var(--fg, #e6e8ee); border: 1px solid var(--border-soft, #2d3340); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; }
     .saved-batch-target:focus { outline: none; border-color: var(--accent, #6c8cff); }
+    /* ── 主站首页卡片反馈后自动消失（dislike/dismiss 10s 生效） ── */
+    .video-card.fs-removing { opacity: 0; transform: scale(0.94); transition: opacity .25s ease, transform .25s ease; }
   </style>
 </head>
 <body>
@@ -3053,6 +3055,48 @@
         });
       }
     }, true);  // 捕获阶段：先于 app.js 的 bubble 阶段 handler
+  })();
+</script>
+<script>
+  // ── 主站首页卡片：点踩/忽略 10s 生效后自动消失（复用深潜交互） ──
+  // 主站首页的 pendingActions 在 512KB bundle 闭包内，无法直接接 committed 回调。
+  // 用 MutationObserver 监听卡片 .status-line 文本：当变成 committed 文案
+  // （「已记录不感兴趣/已忽略这条推荐，下次刷新列表时会隐藏」）时，卡片渐隐移除。
+  (function() {
+    var COMMITTED_MARKERS = ["下次刷新列表时会隐藏", "会用于优化画像"];
+    var grid = document.getElementById("videoGrid");
+    if (!grid) return;
+
+    function removeCard(card) {
+      if (!card || card.dataset.fsRemoving) return;
+      card.dataset.fsRemoving = "1";
+      card.classList.add("fs-removing");
+      window.setTimeout(function() {
+        if (card.isConnected) card.remove();
+      }, 260);  // 配合 CSS transition .25s
+    }
+
+    function scanStatusLines() {
+      grid.querySelectorAll(".video-card .status-line").forEach(function(status) {
+        var text = (status.textContent || "").trim();
+        for (var i = 0; i < COMMITTED_MARKERS.length; i++) {
+          if (text.indexOf(COMMITTED_MARKERS[i]) !== -1) {
+            var card = status.closest(".video-card");
+            removeCard(card);
+            break;
+          }
+        }
+      });
+    }
+
+    // 观察子节点变化（点踩/忽略提交后 status-line 文本更新）
+    var obs = new MutationObserver(function() {
+      scanStatusLines();
+    });
+    obs.observe(grid, { childList: true, subtree: true, characterData: true });
+
+    // 首次扫描（已加载的卡片）
+    scanStatusLines();
   })();
 </script>
 </body></html>
