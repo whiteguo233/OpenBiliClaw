@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -227,3 +228,51 @@ def test_installers_can_clone_code_into_existing_packaged_data_root() -> None:
     assert "Test-UserDataOnlyRoot" in install_ps1
     assert "Clone-IntoUserDataRoot" in install_ps1
     assert "_is_user_data_only_root" in bootstrap
+
+
+def test_install_ps1_starts_with_utf8_bom() -> None:
+    # `install.ps1` declares `#requires -Version 5.1`. Windows PowerShell 5.1
+    # (the default shell on Win10/11) decodes a BOM-less script with the system
+    # ANSI/GBK codepage, corrupting the Chinese comments and here-string
+    # boundaries and producing dozens of parse errors. A UTF-8 BOM is what makes
+    # 5.1 read the file as UTF-8 (issue #157).
+    raw = (ROOT / "scripts" / "install.ps1").read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), (
+        "scripts/install.ps1 must start with a UTF-8 BOM so Windows PowerShell "
+        "5.1 decodes it as UTF-8, not ANSI/GBK."
+    )
+
+
+# Legitimate PowerShell scope / provider qualifiers that may appear as `$name:`
+# inside double-quoted strings (e.g. `$env:PATH`, `$script:ReuseFrom`).
+_PS_SCOPE_PROVIDERS = {
+    "env",
+    "variable",
+    "function",
+    "alias",
+    "global",
+    "local",
+    "script",
+    "private",
+    "using",
+    "workflow",
+}
+
+
+def test_install_ps1_has_no_bare_variable_colon_in_double_quotes() -> None:
+    install_ps1 = _read("scripts/install.ps1")
+
+    # In a double-quoted PowerShell string, `$name:` is parsed as a
+    # scope/provider-qualified reference (like `$env:PATH`). When `name` is a
+    # plain variable the `:` is followed by a non-name character and the whole
+    # script fails to parse with "Variable reference is not valid" — the exact
+    # breakage from issue #157. `${InstallDir}:` (braced) is the correct
+    # escaping; `$env:` / `$script:` and a backtick-escaped `` `$name `` are
+    # legitimate and must stay allowed.
+    for match in re.finditer(r"\$([A-Za-z_][A-Za-z0-9_]*):", install_ps1):
+        name = match.group(1)
+        escaped = install_ps1[match.start() - 1 : match.start()] == "`"
+        assert name in _PS_SCOPE_PROVIDERS or escaped, (
+            f"scripts/install.ps1 has a bare `$name:` variable reference at "
+            f"offset {match.start()}; use `${{{name}}}:` in double-quoted strings."
+        )
