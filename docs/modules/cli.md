@@ -89,6 +89,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `ledger` | 查看画像更新台账（`--line` 逐行 / `--days` / `--write-point` 过滤） | ✅ |
 | `delight` | 手动查看当前惊喜推荐候选 | ✅ |
 | `probe` | 手动查看并确认猜测兴趣方向 | ✅ |
+| `quality-gate suggest-patterns [--apply]` | 让 LLM 根据画像 `disliked_topics` 与近期低质内容标题生成 Clickbait 正则建议；`--apply` 直接写入 `config.toml` 的 `[quality_gate].clickbait_patterns` | ✅ |
 | `python -m openbiliclaw.integrations.openclaw.cli capabilities` | Agent Bridge capability negotiation：协议版本、宿主名和完整 skill 清单 | ✅ |
 | `python -m openbiliclaw.integrations.openclaw.cli next-avoidance-probe` | Agent JSON bridge：拉取下一条不喜欢领域探针 | ✅ |
 | `python -m openbiliclaw.integrations.openclaw.cli respond-avoidance-probe` | Agent JSON bridge：确认 / 否认 / 暂缓 / 多聊避雷探针 | ✅ |
@@ -542,6 +543,20 @@ $ openbiliclaw probe
 1. 城市空间叙事
 2. 复杂系统
 ```
+
+### `openbiliclaw quality-gate suggest-patterns`
+
+让 LLM 根据用户画像和近期不喜欢的内容，建议用于 `[quality_gate]` 的 Clickbait 正则模式。分析来源：近期被 dislike 的内容标题、画像中的 `disliked_topics`，以及画像兴趣关键词（避免 LLM 对用户真正感兴趣的领域误杀）。
+
+```bash
+# 只生成建议（不修改配置），LLM 输出的正则需用户确认
+$ openbiliclaw quality-gate suggest-patterns
+
+# 直接将建议写入 config.toml 的 [quality_gate].clickbait_patterns
+$ openbiliclaw quality-gate suggest-patterns --apply
+```
+
+生成的建议默认只展示给用户确认；`--apply` 才会把正则写回 `config.toml`（追加到现有 `clickbait_patterns`）。QualityGate 过滤器本身在 `[quality_gate].enabled = true` 时生效，详见 `docs/modules/config.md` 的 `[quality_gate]` 一节。
 
 ### Agent JSON bridge: avoidance and current capabilities
 
