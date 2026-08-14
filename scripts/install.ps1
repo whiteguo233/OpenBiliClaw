@@ -235,7 +235,7 @@ function Clone-IntoUserDataRoot {
         $dest = Join-Path $InstallDir $entry.Name
         if (Test-Path $dest) {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-            Log-Err "Cannot merge checkout into $InstallDir: destination exists: $dest"
+            Log-Err "Cannot merge checkout into ${InstallDir}: destination exists: $dest"
             exit 1
         }
         Move-Item -LiteralPath $entry.FullName -Destination $InstallDir

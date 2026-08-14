@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- **修复 Windows 一键安装脚本解析错误（issue #157）**：`scripts/install.ps1` 第 238 行 `"Cannot merge checkout into $InstallDir: ..."` 中，双引号内的 `$InstallDir:` 被 PowerShell 解析为「驱动器/作用域限定变量引用」（类似 `$env:PATH`），因 `:` 后紧跟非变量名字符触发 `Variable reference is not valid`，导致整个脚本在 parse 阶段即失败、原生 Windows 一键安装必现挂掉。现改为 `${InstallDir}` 括号定界写法，脚本可正常解析执行。全局复查确认其余 `$var:` 均为合法的 `$env:` / `$script:` 作用域限定或单引号/反引号转义场景；新增回归测试 `test_install_ps1_has_no_bare_variable_colon_in_double_quotes` 拦截双引号内的裸 `$var:` 写法。
+
 ## v0.3.205：证据驱动时效推荐与可靠性升级（2026-08-14）
 
 - **发布与市场状态**：`backend-v0.3.205`、`extension-v0.3.205`、`desktop-v0.3.205` 与聚合 `openbiliclaw-v0.3.205` 均指向提交 `a49af312`；聚合 Latest Release 已附两份扩展 ZIP 与四份桌面安装器。Chrome Web Store 已上传 `0.3.205` 并进入 `PENDING_REVIEW`；Firefox AMO 已接受 listed `0.3.205`，文件状态为 `unreviewed`。AMO `eula_policy` API 仍返回 HTTP 406，manifest 数据类别、reviewer notes、商店描述和随包隐私政策已提交。
