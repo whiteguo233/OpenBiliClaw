@@ -186,6 +186,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
 | `FollowingUser` | 关注用户（mid, uname, sign） |
+| `UpCardInfo` | UP 主卡片信息（mid, name, level, follower_count, official_verify；`official_verify`：-1=无认证, 0=个人认证, 1=企业/机构认证）。`BilibiliAPIClient.get_up_card(mid)` 调用 `/x/space/acc/info`，带 24h TTL 缓存，供 QualityGate 质量门禁使用 |
 | `CommentInfo` | 评论（mid, uname, message, like_count） |
 | `AuthStatus` | 认证状态（has_cookie, authenticated, username 等；`network_error=True` 表示校验死在传输层——代理 / 风控 / 超时——而非 Cookie 失效） |
 | `BilibiliAuthExpiredError` | 任意 `_get_json()` endpoint 返回 `-101` 时的专项异常，仍继承 `BilibiliAPIError` |
