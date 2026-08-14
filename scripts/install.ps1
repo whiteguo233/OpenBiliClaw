@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     OpenBiliClaw one-command installer for native Windows (PowerShell).
@@ -235,7 +235,7 @@ function Clone-IntoUserDataRoot {
         $dest = Join-Path $InstallDir $entry.Name
         if (Test-Path $dest) {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-            Log-Err "Cannot merge checkout into $InstallDir: destination exists: $dest"
+            Log-Err "Cannot merge checkout into ${InstallDir}: destination exists: $dest"
             exit 1
         }
         Move-Item -LiteralPath $entry.FullName -Destination $InstallDir
@@ -369,23 +369,23 @@ function Invoke-Bootstrap([string]$PythonExe) {
         Log-Err "Your checkout may be stale — cd $InstallDir; git pull and retry."
         exit 1
     }
-    $args = @(
+    $bootstrapArgs = @(
         '--project-dir', $InstallDir
         '--mode',        $Mode
         '--host',        $ApiHost
         '--port',        "$Port"
     )
-    if ($ReuseFrom) { $args += '--reuse-from'; $args += $ReuseFrom }
-    if ($SkipStart) { $args += '--skip-start' }
+    if ($ReuseFrom) { $bootstrapArgs += '--reuse-from'; $bootstrapArgs += $ReuseFrom }
+    if ($SkipStart) { $bootstrapArgs += '--skip-start' }
     if (-not $env:OPENBILICLAW_NONINTERACTIVE -and -not $env:CI) {
-        $args += '--interactive-confirm'
-        $args += '--wait-for-extension-cookie'
+        $bootstrapArgs += '--interactive-confirm'
+        $bootstrapArgs += '--wait-for-extension-cookie'
     }
 
     $script:BootstrapLog = [IO.Path]::GetTempFileName()
-    Log-Info "Running bootstrap: $PythonExe $bootstrap $($args -join ' ')"
+    Log-Info "Running bootstrap: $PythonExe $bootstrap $($bootstrapArgs -join ' ')"
 
-    & $PythonExe $bootstrap @args 2>&1 | Tee-Object -FilePath $script:BootstrapLog
+    & $PythonExe $bootstrap @bootstrapArgs 2>&1 | Tee-Object -FilePath $script:BootstrapLog
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
         Log-Err "Bootstrap exited with code $rc."
