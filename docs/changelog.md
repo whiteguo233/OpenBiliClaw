@@ -6,6 +6,7 @@
 
 ## 未发布
 
+- **修复 bootstrap 二次运行追加重复 TOML 实例段（issue #174）**：`agent_bootstrap` 的 section 匹配现在忽略裸键/引号键差异，`[llm.instances.openai]` 与 `[llm.instances."openai"]` 视为同一表，避免 `tomllib` 报 `Cannot declare ... twice`。
 - **修复非 DeepSeek 安装被默认空 Key 实例拦截（issue #176）**：`agent_bootstrap` 选择其他 LLM provider 时，会自动停用样例中的无 API Key DeepSeek 实例并从 `default_chain` 移除；已有 DeepSeek Key 的备选实例保持不变，`init` 不再要求用户手改 `config.toml`。
 - **修复 Windows PowerShell 5.1 安装器在 clone 成功后静默退出（issue #177）**：`install.ps1` 现在在检查 `$LASTEXITCODE` 前捕获 `git clone` 的 stderr；PS 5.1 不再把 Git 的正常进度输出误判为终止错误，完整 clone 会继续运行 bootstrap，真实 clone 失败仍会显示 Git 原始诊断并清理临时日志。
 - **修复桌面 Web 关闭自动续页后后台仍消耗可换库存（issue #81）**：已有推荐卡片时切回标签页、配置应用和状态水合不再请求可能触发首屏补池的 `/api/recommendations`，只同步 runtime / 库存状态；只有空列表首屏或用户明确手动刷新才读取推荐快照，已显示卡片和库存开关边界保持稳定。
