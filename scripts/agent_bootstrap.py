@@ -1822,6 +1822,57 @@ def read_simple_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
+def _toml_table_path(header: str) -> tuple[str, ...]:
+    """Normalize ``[a.b."c"]`` / ``[a.b.c]`` to ``('a', 'b', 'c')``.
+
+    Backend rewrites of config.toml often quote dotted keys
+    (``[llm.instances."openai"]``). Those tables are the same as the bare-key
+    form the bootstrap editor writes (``[llm.instances.openai]``).
+    """
+
+    text = header.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1].strip()
+    parts: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\" and index + 1 < len(text):
+                buf.append(text[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+            else:
+                buf.append(char)
+            index += 1
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            index += 1
+            continue
+        if char == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+            index += 1
+            continue
+        buf.append(char)
+        index += 1
+    parts.append("".join(buf).strip())
+    return tuple(part for part in parts if part)
+
+
+def _toml_section_matches(header_line: str, section: str) -> bool:
+    """True when a TOML header names the same table as ``section``."""
+
+    return _toml_table_path(header_line) == _toml_table_path(f"[{section}]")
+
+
 def set_toml_raw_value(content: str, section: str, key: str, rendered_value: str) -> str:
     """Rewrite one scalar/array value under ``[section]``.
 
@@ -1844,7 +1895,7 @@ def set_toml_raw_value(content: str, section: str, key: str, rendered_value: str
             if in_section:
                 insert_at = index
                 break
-            in_section = stripped == section_header
+            in_section = _toml_section_matches(stripped, section)
             if in_section:
                 section_found = True
                 insert_at = index + 1
@@ -1921,14 +1972,13 @@ def clear_toml_string_value(content: str, section: str, key: str) -> tuple[str, 
     """
 
     new_line = f'{key} = ""'
-    section_header = f"[{section}]"
     lines = content.splitlines()
     in_section = False
     changed = False
     for index, raw_line in enumerate(lines):
         stripped = raw_line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_section = stripped == section_header
+            in_section = _toml_section_matches(stripped, section)
             continue
         if not in_section:
             continue

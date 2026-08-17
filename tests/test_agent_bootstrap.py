@@ -1664,3 +1664,50 @@ def test_stale_entry_is_not_duplicated_on_refold() -> None:
         init_status=_init_status("failed"),
     )
     assert twice["missing"].count(bootstrap.STALE_COOKIE_MISSING_ENTRY) == 1
+
+
+def test_set_toml_raw_value_matches_quoted_instance_section() -> None:
+    import tomllib
+
+    content = '[llm.instances."openai"]\nenabled = true\napi_key = "sk-old"\n'
+    updated = bootstrap.set_toml_raw_value(
+        content, "llm.instances.openai", "enabled", "false"
+    )
+    updated = bootstrap.set_toml_string_value(
+        updated, "llm.instances.openai", "api_key", "sk-new"
+    )
+    assert updated.count("[llm.instances") == 1
+    parsed = tomllib.loads(updated)
+    assert parsed["llm"]["instances"]["openai"]["enabled"] is False
+    assert parsed["llm"]["instances"]["openai"]["api_key"] == "sk-new"
+
+
+def test_clear_toml_string_value_matches_quoted_section() -> None:
+    import tomllib
+
+    content = '[llm.instances."openai"]\nbase_url = "https://relay.example/v1"\n'
+    updated, changed = bootstrap.clear_toml_string_value(
+        content, "llm.instances.openai", "base_url"
+    )
+    assert changed
+    assert updated.count("[llm.instances") == 1
+    assert tomllib.loads(updated)["llm"]["instances"]["openai"]["base_url"] == ""
+
+
+def test_toml_table_path_equates_bare_and_quoted_keys() -> None:
+    assert bootstrap._toml_table_path('[llm.instances.openai]') == (
+        "llm",
+        "instances",
+        "openai",
+    )
+    assert bootstrap._toml_table_path('[llm.instances."openai"]') == (
+        "llm",
+        "instances",
+        "openai",
+    )
+    assert bootstrap._toml_table_path('[llm.instances."openai-compatible"]') == (
+        "llm",
+        "instances",
+        "openai-compatible",
+    )
+
