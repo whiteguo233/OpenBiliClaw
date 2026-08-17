@@ -1670,12 +1670,8 @@ def test_set_toml_raw_value_matches_quoted_instance_section() -> None:
     import tomllib
 
     content = '[llm.instances."openai"]\nenabled = true\napi_key = "sk-old"\n'
-    updated = bootstrap.set_toml_raw_value(
-        content, "llm.instances.openai", "enabled", "false"
-    )
-    updated = bootstrap.set_toml_string_value(
-        updated, "llm.instances.openai", "api_key", "sk-new"
-    )
+    updated = bootstrap.set_toml_raw_value(content, "llm.instances.openai", "enabled", "false")
+    updated = bootstrap.set_toml_string_value(updated, "llm.instances.openai", "api_key", "sk-new")
     assert updated.count("[llm.instances") == 1
     parsed = tomllib.loads(updated)
     assert parsed["llm"]["instances"]["openai"]["enabled"] is False
@@ -1695,7 +1691,7 @@ def test_clear_toml_string_value_matches_quoted_section() -> None:
 
 
 def test_toml_table_path_equates_bare_and_quoted_keys() -> None:
-    assert bootstrap._toml_table_path('[llm.instances.openai]') == (
+    assert bootstrap._toml_table_path("[llm.instances.openai]") == (
         "llm",
         "instances",
         "openai",
@@ -1710,4 +1706,3 @@ def test_toml_table_path_equates_bare_and_quoted_keys() -> None:
         "instances",
         "openai-compatible",
     )
-
