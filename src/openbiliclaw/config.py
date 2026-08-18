@@ -114,6 +114,9 @@ _DEFAULT_SPECULATOR_IDLE_INTERVAL_MINUTES = 30
 _DEFAULT_FEEDBACK_BATCH_THRESHOLD = 3
 _MIN_AUTO_UPDATE_CHECK_INTERVAL_HOURS = 1
 _DEFAULT_AUTO_UPDATE_CHECK_INTERVAL_HOURS = 6
+# Peak-hour deferral (DeepSeek off-peak half-price). Beijing time, UTC+8.
+_DEFAULT_PEAK_HOURS = "09:00-12:00,14:00-18:00"
+_DEFAULT_PEAK_REFILL_FLOOR = 30
 # Unified keyword planner (Discover backpressure refactor P1, spec §6).
 # All defaults are the owner-approved starting baseline; see
 # docs/plans/2026-06-14-discover-backpressure-refactor-design.md §6 and
@@ -1008,6 +1011,20 @@ class SchedulerConfig:
     # 2026-07-28 经真实 A/B 三道门与 A/A 噪声控制后默认开启；false 保留为
     # 逐字节回退到旧反馈批线的紧急开关。
     unified_interest_line: bool = True
+    # Peak-hour deferral for daemon-owned background LLM work. When true,
+    # background loops pause inside ``peak_hours`` (Beijing time) so calls
+    # land in cheaper off-peak windows (DeepSeek bills off-peak at half
+    # price). Interactive traffic (dialogue / sentiment / config probes) is
+    # never deferred. Refill keeps an emergency floor: when the servable
+    # pool drops below ``peak_refill_floor``, refill runs even inside a
+    # peak window so the feed never starves. Maintenance traffic (profile
+    # consolidation, speculation, proactive pushes) is fully deferred.
+    pause_during_peak_hours: bool = False
+    # Peak window spec "HH:MM-HH:MM,HH:MM-HH:MM" in Beijing time (UTC+8).
+    peak_hours: str = _DEFAULT_PEAK_HOURS
+    # Servable pool count at/below which refill bypasses peak deferral.
+    # 0 means "never bypass" (peak fully blocks refill too).
+    peak_refill_floor: int = _DEFAULT_PEAK_REFILL_FLOOR
     # Default off. The auto-updater pulls from GitHub releases and
     # restarts the backend when a newer version is detected, but it has
     # historically caused restart loops when the local
@@ -2583,6 +2600,16 @@ def _build_config(
                         # never engaged on a live backend.
                         default=True,
                     ),
+                    "pause_during_peak_hours": _coerce_bool(
+                        sched_raw.get("pause_during_peak_hours"),
+                        default=False,
+                    ),
+                    "peak_hours": _normalize_peak_hours(sched_raw.get("peak_hours")),
+                    "peak_refill_floor": _normalize_scheduler_int(
+                        sched_raw.get("peak_refill_floor"),
+                        default=_DEFAULT_PEAK_REFILL_FLOOR,
+                        min_value=0,
+                    ),
                 },
                 section="scheduler",
             )
@@ -3524,6 +3551,27 @@ def _normalize_source_incremental_hours(
             raise ValueError("source incremental interval must be an integer in 0..168")
         return default
     return parsed
+
+
+def _normalize_peak_hours(value: object) -> str:
+    """Normalize a peak-window spec to ``"HH:MM-HH:MM,HH:MM-HH:MM"`` form.
+
+    Malformed or empty values fall back to the default Beijing peak window
+    (DeepSeek official: 09:00-12:00, 14:00-18:00).  The runtime gate
+    (``runtime/presence.py``) re-parses the normalized string leniently, so
+    this only needs to keep the config value a well-formed string.
+    """
+    if value is None:
+        return _DEFAULT_PEAK_HOURS
+    text = str(value).strip()
+    if not text:
+        return _DEFAULT_PEAK_HOURS
+    # Light validation: at least one "HH:MM-HH:MM" pair must survive.
+    from openbiliclaw.runtime.presence import parse_peak_windows
+
+    if not parse_peak_windows(text):
+        return _DEFAULT_PEAK_HOURS
+    return text
 
 
 def _normalize_inspiration_breadth(value: object) -> str:
@@ -5198,6 +5246,10 @@ def _render_config_toml(
             f"pool_target_count = {config.scheduler.pool_target_count}",
             f"copy_ready_target_count = {config.scheduler.copy_ready_target_count}",
             f"account_sync_interval_hours = {config.scheduler.account_sync_interval_hours}",
+            "pause_during_peak_hours = "
+            f"{_toml_bool(config.scheduler.pause_during_peak_hours)}",
+            f"peak_hours = {_toml_string(config.scheduler.peak_hours)}",
+            f"peak_refill_floor = {config.scheduler.peak_refill_floor}",
             "source_incremental_enabled = "
             f"{_toml_bool(config.scheduler.source_incremental_enabled)}",
             f"source_incremental_hours = {config.scheduler.source_incremental_hours}",

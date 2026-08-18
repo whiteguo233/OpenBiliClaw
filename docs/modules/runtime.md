@@ -596,6 +596,9 @@ XHS / 抖音 / YouTube / 知乎 / Reddit / V2EX 的插件任务桥保留两层�
 | `scheduler.enabled` | `true` | 后台 LLM / embedding 总开关。 |
 | `scheduler.pause_on_extension_disconnect` | `false` | 浏览器插件断开后是否暂停后台 LLM / embedding 工作。 |
 | `scheduler.extension_disconnect_grace_seconds` | `90` | 插件断开后的宽限秒数。 |
+| `scheduler.pause_during_peak_hours` | `false` | 高峰时段错峰：开启后 daemon-owned 后台 LLM 调用在 `peak_hours`（北京时间）窗口内暂停，落到更便宜的空闲时段（DeepSeek 空闲半价）。交互流量（对话 / sentiment / 配置探测）永不错峰；补货在池子跌破 `peak_refill_floor` 时仍允许紧急补货，避免白天断供；维护流量（画像合并、speculation、proactive push）完全推迟。 |
+| `scheduler.peak_hours` | `"09:00-12:00,14:00-18:00"` | 高峰窗口规格 `"HH:MM-HH:MM,HH:MM-HH:MM"`，北京时间（UTC+8）。默认与 DeepSeek 官方高峰一致。 |
+| `scheduler.peak_refill_floor` | `30` | 高峰时段补货的紧急水位：servable 池子可用数等于或低于该值时补货绕过高峰暂停照常执行；`0` 表示高峰完全禁止补货。 |
 | `scheduler.refresh_check_interval_seconds` | `60` | `ContinuousRefreshController` 主循环轮询间隔。 |
 | `scheduler.signal_event_threshold` | `6` | 累计多少条 discovery-trigger 新行为事件后触发 `search + related_chain`；该计数只表示 discovery refresh 水位，不表示画像待处理队列。 |
 | `scheduler.trending_refresh_minutes` | `3` | `trending` 策略最小刷新间隔（分钟）。v0.3.186 起单位由小时改为分钟；旧键 `trending_refresh_hours` 读取时按 ×60 换算。 |

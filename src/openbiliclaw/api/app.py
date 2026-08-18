@@ -16906,6 +16906,9 @@ def create_app(
                 auto_update_check_interval_hours=cfg.scheduler.auto_update_check_interval_hours,
                 auto_update_allow_prerelease=cfg.scheduler.auto_update_allow_prerelease,
                 auto_update_allowed_remotes=list(cfg.scheduler.auto_update_allowed_remotes),
+                pause_during_peak_hours=cfg.scheduler.pause_during_peak_hours,
+                peak_hours=cfg.scheduler.peak_hours,
+                peak_refill_floor=cfg.scheduler.peak_refill_floor,
             ),
             discovery=DiscoveryConfigOut(
                 unified_keyword_planner_enabled=cfg.discovery.unified_keyword_planner_enabled,

@@ -2301,6 +2301,9 @@ class SchedulerConfigOut(BaseModel):
     auto_update_check_interval_hours: int = 6
     auto_update_allow_prerelease: bool = False
     auto_update_allowed_remotes: list[str] = Field(default_factory=list)
+    pause_during_peak_hours: bool = False
+    peak_hours: str = "09:00-12:00,14:00-18:00"
+    peak_refill_floor: int = Field(default=30, ge=0)
 
 
 class SoulConfigOut(BaseModel):
