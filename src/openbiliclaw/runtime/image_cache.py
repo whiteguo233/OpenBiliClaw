@@ -279,6 +279,7 @@ def cleanup_image_cache(
 
 ALLOWED_IMAGE_HOST_SUFFIXES: tuple[str, ...] = (
     "hdslb.com",
+    "biliimg.com",
     "xhscdn.com",
     "pstatp.com",
     "douyinpic.com",
