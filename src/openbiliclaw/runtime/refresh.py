@@ -493,6 +493,11 @@ class ContinuousRefreshController:
     _last_pool_maintenance_scan_at: datetime | None = field(default=None, init=False)
     _last_empty_plan_diag_at: datetime | None = field(default=None, init=False)
     _last_empty_plan_fingerprint: tuple[int] | None = field(default=None, init=False)
+    # Peak-hour deferral: cached servable-pool count so refill loops can pass
+    # ``pool_available`` to the LLM gate without re-reading the DB every tick.
+    # Invalidated after a short TTL; refresh loops re-read on demand.
+    _peak_pool_available: int = field(default=0, init=False)
+    _peak_pool_available_at: float = field(default=0.0, init=False)
     _suppressed_empty_plan_count: int = field(default=0, init=False)
     # Pool-share fairness (spec 2026-07-20, Phase 4): last per-family
     # (available, target, deficit) snapshot. The per-source deficit summary is
@@ -536,8 +541,13 @@ class ContinuousRefreshController:
         "feedback",
     ]
 
-    def _llm_work_allowed(self) -> bool:
-        """Return whether daemon-owned background LLM / embedding work can run."""
+    def _llm_work_allowed(self, *, pool_available: int | None = None) -> bool:
+        """Return whether daemon-owned background LLM / embedding work can run.
+
+        ``pool_available`` marks the caller as refill traffic and carries the
+        current servable-pool count, so peak-hour deferral can keep an
+        emergency floor. ``None`` means non-refill (maintenance / push).
+        """
         # Pause every background loop while a guided init is active (gui-init
         # D1) — the continuous refresh / soul-pipeline / producer ticks all gate
         # on this, so init's explicit analyze/build/backfill runs uncontended.
@@ -547,7 +557,11 @@ class ContinuousRefreshController:
                     return False
             except Exception:
                 pass
-        allowed = background_llm_work_allowed(self.scheduler_config, self.presence)
+        allowed = background_llm_work_allowed(
+            self.scheduler_config,
+            self.presence,
+            pool_available=pool_available,
+        )
         if allowed != self._last_llm_gate_allowed:
             logger.info(
                 "Background LLM work gate %s",
@@ -555,6 +569,27 @@ class ContinuousRefreshController:
             )
             self._last_llm_gate_allowed = allowed
         return allowed
+
+    def _peak_refill_pool_available(self) -> int:
+        """Return a cached servable-pool count for refill gate admission.
+
+        Only meaningful when peak-hour deferral is enabled; the short TTL
+        keeps the per-loop gate check free of a DB read on every tick.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        if self._peak_pool_available_at and now - self._peak_pool_available_at < 30:
+            return self._peak_pool_available
+        try:
+            counts = self._pool_readiness_counts()
+            available = int(counts.get("available", 0) or 0)
+        except Exception:
+            logger.debug("peak pool available read failed", exc_info=True)
+            available = 0
+        self._peak_pool_available = available
+        self._peak_pool_available_at = now
+        return available
 
     def _xhs_self_nickname(self) -> str:
         """Return the persisted XHS self nickname for pool guards."""
@@ -723,7 +758,7 @@ class ContinuousRefreshController:
         ``refresh_if_needed`` entry does, so callers reaching it from
         different paths can't double-acquire.
         """
-        if not self._llm_work_allowed():
+        if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
             return {"refreshed": False, "strategies": [], "reason": "llm_paused"}
 
         if self._refresh_lock.locked():
@@ -1463,7 +1498,7 @@ class ContinuousRefreshController:
         executed.
         """
 
-        if not self._llm_work_allowed():
+        if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
             return {
                 "refreshed": False,
                 "strategies": [],
@@ -1758,7 +1793,7 @@ class ContinuousRefreshController:
                     "Init grace period — skipping first refresh tick to let "
                     "Bilibili WBI bucket cool down (next tick will run normally)"
                 )
-            elif not self._llm_work_allowed():
+            elif not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             else:
@@ -1786,7 +1821,7 @@ class ContinuousRefreshController:
         by ``_run_refresh_plan`` so no LLM token double-spend.
         """
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1796,7 +1831,7 @@ class ContinuousRefreshController:
     async def _loop_candidate_eval(self) -> None:
         """Drain pending discovery-candidate raw rows independently of refresh plans."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 logger.debug("candidate eval drain skipped: reason=llm_paused")
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
@@ -1904,7 +1939,7 @@ class ContinuousRefreshController:
         fallback ``topic_group=title[:N]`` (the ugly "屎屎/165/三花"
         debug we saw on 2026-05-05).
         """
-        if not self._llm_work_allowed():
+        if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
             return
         if self._profile_ready_observed:
             return
@@ -1933,6 +1968,7 @@ class ContinuousRefreshController:
     async def _loop_soul_pipeline(self) -> None:
         """Soul profile pipeline — buffer flushes, speculator, cognition."""
         while True:
+            # Maintenance traffic: peak-hour deferral fully blocks it.
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
@@ -1943,7 +1979,7 @@ class ContinuousRefreshController:
     async def _loop_xhs_producer(self) -> None:
         """XHS keyword production — Soul-driven search task generation."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1953,7 +1989,7 @@ class ContinuousRefreshController:
     async def _loop_bilibili_producer(self) -> None:
         """Bilibili extension fallback — only enqueues while API search cools down."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1963,7 +1999,7 @@ class ContinuousRefreshController:
     async def _loop_douyin_producer(self) -> None:
         """Douyin production — plugin/direct discovery when Douyin is below quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1973,7 +2009,7 @@ class ContinuousRefreshController:
     async def _loop_youtube_producer(self) -> None:
         """YouTube production — backend-direct discovery when YouTube is below quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1983,7 +2019,7 @@ class ContinuousRefreshController:
     async def _loop_x_producer(self) -> None:
         """X (Twitter) production — server-side cookie-replay discovery when under quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -1993,7 +2029,7 @@ class ContinuousRefreshController:
     async def _loop_zhihu_producer(self) -> None:
         """Zhihu production — plugin-backed discovery when under quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2003,7 +2039,7 @@ class ContinuousRefreshController:
     async def _loop_reddit_producer(self) -> None:
         """Reddit production — command-backed discovery when under quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2013,7 +2049,7 @@ class ContinuousRefreshController:
     async def _loop_bangumi_producer(self) -> None:
         """Bangumi production — official anonymous API discovery when under quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2023,7 +2059,7 @@ class ContinuousRefreshController:
     async def _loop_linuxdo_producer(self) -> None:
         """Linux.do production — same-origin extension discovery when under quota."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2033,7 +2069,7 @@ class ContinuousRefreshController:
     async def _loop_v2ex_producer(self) -> None:
         """V2EX production — anonymous/public discovery with optional PAT."""
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2044,7 +2080,7 @@ class ContinuousRefreshController:
         """Run anonymous Weibo discovery when its source quota is underfilled."""
 
         while True:
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(self.check_interval_seconds)
                 continue
             with suppress(Exception):
@@ -2070,7 +2106,7 @@ class ContinuousRefreshController:
             if not bool(getattr(planner, "enabled", False)):
                 await asyncio.sleep(poll_seconds)
                 continue
-            if not self._llm_work_allowed():
+            if not self._llm_work_allowed(pool_available=self._peak_refill_pool_available()):
                 await asyncio.sleep(poll_seconds)
                 continue
             with suppress(Exception):
@@ -2088,6 +2124,8 @@ class ContinuousRefreshController:
         contribute notification fatigue.
         """
         while True:
+            # Proactive pushes are maintenance traffic: peak-hour deferral
+            # fully blocks them (delight/probe scoring is not urgent).
             if not self._llm_work_allowed():
                 await asyncio.sleep(self.proactive_push_interval_seconds)
                 continue

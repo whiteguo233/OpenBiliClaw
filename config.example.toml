@@ -449,6 +449,20 @@ enabled = true
 # Manual CLI/API requests remain explicit and are not blocked by this switch.
 pause_on_extension_disconnect = false
 extension_disconnect_grace_seconds = 90
+# Peak-hour deferral: when true, daemon-owned background LLM calls pause inside
+# the peak windows below (Beijing time), so they land in cheaper off-peak slots
+# (DeepSeek bills off-peak at half price). Interactive traffic (dialogue,
+# sentiment, config probes) is never deferred. Refill keeps an emergency floor:
+# when the servable pool drops below peak_refill_floor, refill still runs inside
+# a peak window so the feed never starves. Maintenance traffic (profile
+# consolidation, speculation, proactive pushes) is fully deferred.
+pause_during_peak_hours = false
+# Peak window spec "HH:MM-HH:MM,HH:MM-HH:MM" in Beijing time (UTC+8).
+# Default matches DeepSeek's official peak hours.
+peak_hours = "09:00-12:00,14:00-18:00"
+# Servable pool count at/below which refill bypasses peak deferral.
+# 0 means "never bypass" (peak fully blocks refill too).
+peak_refill_floor = 30
 # Legacy compatibility field. The current runtime does not consume this cron;
 # discovery is driven by the refresh loop, pool deficits, event thresholds, and
 # per-strategy refresh intervals below.
