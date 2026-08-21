@@ -22,6 +22,8 @@
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
+> 🇨🇳 **Mainland China downloads (current v0.3.208)**: the large macOS / Windows installers that exceed Gitee's 100 MB attachment limit are available from [123 Cloud domestic download](https://4001474255.share.123pan.cn/123pan/IxbZMh-hhhR3), with a permanent share that supports downloads without signing in; get the extension, smaller installers, and source from the [Gitee v0.3.208 release](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.208).
+
 ## OpenBiliClaw in 10 Seconds
 
 A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, and the open web — without handing your profile to another platform.
@@ -49,7 +51,7 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **Mainland China users can also download the large macOS / Windows packages from [123 Cloud (v0.3.208)](https://4001474255.share.123pan.cn/123pan/IxbZMh-hhhR3) without signing in.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
@@ -283,6 +285,8 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 #### Option A: Download the desktop installer (experimental, easiest)
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
+
+> 🇨🇳 For large-package downloads from mainland China, use [123 Cloud (current v0.3.208)](https://4001474255.share.123pan.cn/123pan/IxbZMh-hhhR3); the permanent share works without signing in and contains the regular Apple-silicon macOS build, the embedding-enabled Apple-silicon macOS build, and the embedding-enabled Windows build. The extension, regular Windows installer, and source remain available from GitHub / the [Gitee release](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.208).
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)

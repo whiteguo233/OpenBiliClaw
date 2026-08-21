@@ -17,6 +17,7 @@
 
 - **修复 LLM 预算首次告警被系统运行时间误吞**：`_last_llm_budget_warned_at` 初值从 `0` 改为 `-inf`，避免在机器启动不足一个预算窗口时，第一次触发后台 LLM 预算暂停不输出 WARNING。
 - **发布状态**：后端 / 插件 / 桌面安装包 / Docker 镜像与聚合 Release 均已发布为 `v0.3.208`，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Chrome Web Store 已上传并提交 `0.3.208` 审核；Firefox AMO 已提交 listed `0.3.208`。聚合 Latest Release 已附扩展 ZIP / Safari DMG 与四份桌面安装器。
+- **国内下载入口**：README、GitHub Pages 首页、文档导航与 Gitee v0.3.208 发行说明均补充 123 云盘国内下载入口；当前分享永久有效并支持免登录下载超过 Gitee 100 MB 附件上限的 macOS / Windows 大安装包。
 - **来源周期回拉支持逐源开关（issue #180 相关）**：`[sources.<slug>]` 新增 `incremental_enabled`（默认 `false`），与 `[scheduler].source_incremental_enabled` 总开关组成“总开关 + 每来源开关”两级控制；插件 side panel 与桌面 Web 的「平台源」配置页为 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX 增加“允许扩展周期回拉”勾选项，调度页暴露总开关。后端只有两级开关都为 `true` 时才入队周期 bootstrap 任务；关闭某来源时其 scheduler-owned pending / stale in-progress 任务会被取消，避免再打开前台标签页。默认所有开关均为关闭，手动初始化、`fetch-*` 与后台 discovery 不受影响。
 - **后台 LLM 自设预算 + Embedding 熔断（issue #188）**：`[scheduler]` 新增 `llm_budget_max_calls`（默认 120 / 小时）与 `llm_budget_window_seconds`（默认 3600），daemon 通过共享 `LLMConcurrencyGate` 统计后台 LLM 请求，窗口内达到上限即暂停自动发现 / 补池 / 画像等循环并打一条 WARNING，避免无人值守时持续烧 DeepSeek 等付费额度；手动 CLI / API 请求不受影响，`0` 可关闭预算。`EmbeddingService` 新增连续失败熔断：默认连续 3 次异常或空向量后冷却 60 秒，冷却期内不再触碰不可达 embedding 端点、不再逐条打 full-traceback WARN，冷却后自动重探。
 - **修复 defer(暂缓) 后假设仍显示在待聊确认（issue #189）**：`/api/chat/pending-confirmations` 现在读取 `memory/dialogue_confirmation_state.json` 中的 `deferred_until`，冷却结束前已 defer 的假设不再出现在待聊列表；冷却到期后自动恢复。用户主动 open 仍按原契约绕过冷却，不会因列表过滤而误 404。
