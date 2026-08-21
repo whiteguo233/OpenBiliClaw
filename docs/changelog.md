@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- **修复 main 分支 CI 自 8 月 20 日起持续红灯的测试问题**：架构总览图迁出 README（80eb6d92）后，文档一致性测试同步改为读取 `docs/architecture-overview(.en).md`；`test_mobile_web_view_models` 修复一处 E501 超长行；`soul_engine` / `web_guided_init` 的测试桩补齐 d8f63745 新增的 `llm_concurrency` 参数。纯测试改动，无运行时行为变化。
+
 - **修复普通视频点击被误记为点踩（issue #205，含真实浏览器 A/B 验证）**：#200 的长度守卫只保护了 textContent，`aria-label`/`title` 路径仍会把标题含“不喜欢/不感兴趣”的普通卡片点击记成 `feedback(dislike)`——真实 bilibili.com 搜索页 A/B 实测：修复前构建点 3 张真实卡片产生 3 条误报，修复后 0 条。中文平台适配器（bilibili/douyin/zhihu）统一改为「≤8 字符短标签 + className token 匹配」（真实控件标签最长 6 字）；英文平台把动词锚定到真实控件——YouTube 控件 aria-label 动词开头（"Like this video…"/“不喜欢此视频”），结果卡片是「标题 by 作者」句式，故 aria 用动词前缀匹配、卡片文案封顶 12 字符；Reddit 投票只认 aria/class 锚定的 downvote/upvote。真实 YouTube A/B：修复前点 3 张标题含 "dislike" 的结果卡片产生 3 条误报（词边界版仍有 13/48 卡片命中，已改锚定后归零），修复后 0 条且 watch 页真实 dislike 控件正向采集正常。kernel 对 DOM 点踩新增按控件的奇偶点击追踪：第二次点击识别为取消（记 `retraction` 而非新 dislike），10 分钟无操作重置计数。awareness 双 system prompt 新增「负反馈一致性」规则：笔记声称点踩时必须引用真实的负反馈事件。`docs/modules/extension.md` 与 `docs/modules/llm.md` 已同步。
 - **修复移动 Web 加载更多推荐时的卡顿感**：`handleAppend()` 不再在插入新卡片前 `await` 整批封面预解码（原来后端返回后还要等最多 3 秒），而是先插入卡片、再后台预热前 4 张封面，其余封面保持 `loading="lazy"` 并交给滚动预热 observer 在接近视口时补拉；`renderCard()` 改为只对列表前 4 张卡使用 eager 封面，避免一次 append 10 张卡同时抢图片代理与解码资源。`appendRecommendations()` 补上 `DEFAULT_READ_TIMEOUT_MS` 请求超时；加载更多失败不再把 `autoAppendExhausted` 永久置为 true，而是在 header 显示「加载更多失败，请稍后重试」并允许下次滚动/点击重试。
 - **新增 Serply 作为 query inspiration 搜索后端**：`[discovery]` 新增 `serply_api_key`，填写后 `SerplyInspirationProvider` 直连 [serply.io](https://serply.io) 的 `GET /v1/search`；`inspiration_search_backends` 默认追加 `serply`，留空 Key 时该后端直接跳过，不影响现有 Exa / You.com / mcporter 链路。

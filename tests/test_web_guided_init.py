@@ -662,7 +662,9 @@ class _StubEngine:
         self.profile = object()
         self.discover_profiles: list[object] = []
 
-    async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+    async def analyze_events(
+        self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+    ):
         self.received_callback = progress_callback
         if progress_callback is not None:
             for i in range(1, self.chunk_reports + 1):
@@ -884,7 +886,9 @@ async def test_run_guided_init_bounds_hung_preference_analysis(monkeypatch) -> N
             super().__init__()
             self.cancelled = False
 
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             try:
                 await asyncio.Event().wait()
             finally:
@@ -1259,7 +1263,9 @@ async def test_run_guided_init_idle_analysis_reports_connectivity_message(monkey
             super().__init__()
             self.cancelled = False
 
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             try:
                 await asyncio.Event().wait()
             finally:
@@ -1301,7 +1307,9 @@ async def test_run_guided_init_slow_analysis_completes_past_old_fixed_budget(mon
     ticks = {"n": 0}
 
     class _SlowProgressingEngine(_StubEngine):
-        async def analyze_events(self, events, *, event_chunk_size=0, progress_callback=None):
+        async def analyze_events(
+            self, events, *, event_chunk_size=0, progress_callback=None, llm_concurrency=None
+        ):
             self.received_callback = progress_callback
             for i in range(1, 7):
                 # Each chunk takes longer than the whole old floor budget would

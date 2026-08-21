@@ -8,8 +8,8 @@ def test_saved_sync_docs_name_default_and_routes() -> None:
     storage_doc = Path("docs/modules/storage.md").read_text()
     architecture_doc = Path("docs/architecture.md").read_text()
     spec_doc = Path("docs/spec.md").read_text()
-    readme = Path("README.md").read_text()
-    readme_en = Path("README_EN.md").read_text()
+    readme = Path("docs/architecture-overview.md").read_text()
+    readme_en = Path("docs/architecture-overview.en.md").read_text()
     docs_index = Path("docs/index.md").read_text()
     e2e_doc = Path("docs/native-save-e2e.md").read_text()
     changelog = Path("docs/changelog.md").read_text()
@@ -72,8 +72,8 @@ def test_saved_sync_docs_register_extension_adapters_and_completed_executors() -
     module = Path("docs/modules/saved-sync.md").read_text(encoding="utf-8")
     storage = Path("docs/modules/storage.md").read_text(encoding="utf-8")
     changelog = Path("docs/changelog.md").read_text(encoding="utf-8")
-    readme = Path("README.md").read_text(encoding="utf-8")
-    readme_en = Path("README_EN.md").read_text(encoding="utf-8")
+    readme = Path("docs/architecture-overview.md").read_text(encoding="utf-8")
+    readme_en = Path("docs/architecture-overview.en.md").read_text(encoding="utf-8")
 
     for text in (architecture, spec, module, changelog, readme, readme_en):
         assert "unsupported_adapter_missing" in text
@@ -99,8 +99,8 @@ def test_saved_sync_docs_explain_truthful_graphical_state_interpretation() -> No
     architecture = Path("docs/architecture.md").read_text(encoding="utf-8")
     spec = Path("docs/spec.md").read_text(encoding="utf-8")
     changelog = Path("docs/changelog.md").read_text(encoding="utf-8")
-    readme = Path("README.md").read_text(encoding="utf-8")
-    readme_en = Path("README_EN.md").read_text(encoding="utf-8")
+    readme = Path("docs/architecture-overview.md").read_text(encoding="utf-8")
+    readme_en = Path("docs/architecture-overview.en.md").read_text(encoding="utf-8")
 
     for text in (saved_sync, extension, architecture, spec, readme, readme_en):
         assert "unsupported_content_type" in text
@@ -120,8 +120,8 @@ def test_six_platform_native_save_docs_define_safe_e2e_contract() -> None:
     integration = Path("docs/platform-source-integration.md").read_text(encoding="utf-8")
     architecture = Path("docs/architecture.md").read_text(encoding="utf-8")
     spec = Path("docs/spec.md").read_text(encoding="utf-8")
-    readme = Path("README.md").read_text(encoding="utf-8")
-    readme_en = Path("README_EN.md").read_text(encoding="utf-8")
+    readme = Path("docs/architecture-overview.md").read_text(encoding="utf-8")
+    readme_en = Path("docs/architecture-overview.en.md").read_text(encoding="utf-8")
     changelog = Path("docs/changelog.md").read_text(encoding="utf-8")
     docs_index = Path("docs/index.md").read_text(encoding="utf-8")
     runbook = Path("docs/testing/six-platform-native-save-e2e.md").read_text(encoding="utf-8")

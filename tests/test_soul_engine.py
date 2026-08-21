@@ -411,8 +411,9 @@ async def test_init_cognition_context_leaves_preference_and_feeds_profile_build(
         existing_preference: dict[str, object],
         event_chunk_size: int = 0,
         progress_callback: object | None = None,
+        llm_concurrency: int | None = None,
     ) -> dict[str, object]:
-        del events, existing_preference, event_chunk_size, progress_callback
+        del events, existing_preference, event_chunk_size, progress_callback, llm_concurrency
         return {
             "interests": [{"name": "AI 工具链", "category": "科技", "weight": 0.81}],
             "style": {},

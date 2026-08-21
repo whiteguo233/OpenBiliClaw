@@ -51,8 +51,8 @@ def test_source_incremental_docs_cover_configuration_and_six_source_staging() ->
 def test_source_incremental_docs_state_online_and_atomic_admission_boundaries() -> None:
     architecture = _read("docs/architecture.md")
     extension_docs = _read("docs/modules/extension.md")
-    readme = _read("README.md")
-    readme_en = _read("README_EN.md")
+    readme = _read("docs/architecture-overview.md")
+    readme_en = _read("docs/architecture-overview.en.md")
 
     assert "BEGIN IMMEDIATE" in architecture
     assert "XHS→抖音→YouTube→知乎→Reddit→Linux.do" in architecture
@@ -61,6 +61,6 @@ def test_source_incremental_docs_state_online_and_atomic_admission_boundaries() 
     assert "source_incremental_enabled=false" in extension_docs
     assert "douyin_incremental_hours=0" in extension_docs
     assert "扩展在线周期回拉" in readme
-    assert "账号周期回拉默认关闭" in readme
+    assert "账号周期回拉默认关闭" in _read("README.md")
     assert "extension-online periodic re-pull" in readme_en.lower()
-    assert "periodic account re-pull is off by default" in readme_en.lower()
+    assert "periodic re-pull (off by default" in readme_en.lower()
