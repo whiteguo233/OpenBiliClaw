@@ -2101,6 +2101,7 @@ class Database:
         self._ensure_content_cache_multisource_columns()
         self._ensure_content_identity_columns()
         self._ensure_seen_items_ledger()
+        self._ensure_content_cache_quality_columns()
         self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
@@ -5384,6 +5385,8 @@ class Database:
                 float(kwargs.get("rating_score", 0.0) or 0.0),
                 max(0, int(kwargs.get("rating_count", 0) or 0)),
                 max(0, int(kwargs.get("source_rank", 0) or 0)),
+                kwargs.get("up_level", 0),
+                kwargs.get("follower_count", 0),
                 persist_temporal_fields,
                 persist_temporal_fields,
                 persist_temporal_fields,
@@ -5472,13 +5475,15 @@ class Database:
                 source_keyword_id,
                 rating_score,
                 rating_count,
-                source_rank
+                source_rank,
+                up_level,
+                follower_count
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -5657,26 +5662,11 @@ class Database:
                     content_cache.author_name,
                     ''
                 ),
-                body_text = COALESCE(
-                    NULLIF(excluded.body_text, ''),
-                    content_cache.body_text,
-                    ''
-                ),
-                content_type = COALESCE(
-                    NULLIF(excluded.content_type, ''),
-                    content_cache.content_type,
-                    'video'
-                ),
-                -- P1.8: keep the producing-keyword provenance once set; a later
-                -- re-ingest from a source that doesn't carry the id (NULL) must
-                -- not wipe it.
-                source_keyword_id = COALESCE(
-                    excluded.source_keyword_id,
-                    content_cache.source_keyword_id
-                ),
                 rating_score = excluded.rating_score,
                 rating_count = excluded.rating_count,
-                source_rank = excluded.source_rank
+                source_rank = excluded.source_rank,
+                up_level = excluded.up_level,
+                follower_count = excluded.follower_count
             """,
             _cache_write_params,
         )
@@ -13695,6 +13685,18 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_recommendations_item_key
                 ON recommendations (item_key);
         """)
+
+    def _ensure_content_cache_quality_columns(self) -> None:
+        """Add QualityGate up_level/follower_count columns for existing databases."""
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        if "up_level" not in existing_columns:
+            self.conn.execute("ALTER TABLE content_cache ADD COLUMN up_level INTEGER DEFAULT 0")
+        if "follower_count" not in existing_columns:
+            sql = "ALTER TABLE content_cache ADD COLUMN follower_count INTEGER DEFAULT 0"
+            self.conn.execute(sql)
 
     def _ensure_source_recipes_table(self) -> None:
         """Create the source_recipes table if it does not exist."""

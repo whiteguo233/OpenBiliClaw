@@ -251,7 +251,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         bilibili_client=bilibili_client,
     )
 
-    from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
+    from openbiliclaw.discovery.engine import (
+        DiscoveryConcurrencyController,
+        QualityGateChecker,
+    )
 
     concurrency = DiscoveryConcurrencyController(
         bilibili_request_concurrency=4,
@@ -260,12 +263,26 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     )
     discovery_cfg = getattr(config, "discovery", None)
 
+    quality_gate = QualityGateChecker(
+        enabled=config.quality_gate.enabled,
+        mode=config.quality_gate.mode,
+        min_follower=config.quality_gate.min_follower,
+        max_level=config.quality_gate.max_level,
+        min_views=config.quality_gate.min_views,
+        ban_franchise_accounts=config.quality_gate.ban_franchise_accounts,
+        allowlist_mids=config.quality_gate.allowlist_mids,
+        clickbait_patterns=config.quality_gate.clickbait_patterns,
+        bilibili_client=bilibili_client,
+    )
+
     discovery_engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
         embedding_service=embedding_service,
         concurrency=concurrency,
         eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
+        bilibili_client=bilibili_client,
+        quality_gate=quality_gate,
     )
     search_strategy = SearchStrategy(
         llm_service=llm_service,

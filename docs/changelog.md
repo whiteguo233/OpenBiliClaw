@@ -100,6 +100,8 @@
 - **修复 with-embedding 安装包 bge-m3 调用 500（llama-server `0xc0000005` 访问违规）的诊断与随包版本**：Windows 随包 Ollama 从 `0.30.6` 升到 `0.32.13`（`release-desktop.yml` / `build-installers.yml` / `docker/ollama-bundled.Dockerfile` 同步），降低旧版 llama-server 在 embedding 负载上的崩溃概率；`ollama_diagnostics` 新增 `0xc0000005` / access violation 识别，`model_broken` 文案改为按「一键重拉 → 重启 → 内存/虚拟内存 → 杀软白名单 → 升级安装包」排序排查，不再只说「下载不完整或内存不足」；托管 Ollama 在桌面包启动时（`OPENBILICLAW_PROJECT_ROOT` 已设置）把 `ollama serve` 与 llama-server 的 stdout/stderr 写入 `<project>/logs/ollama-managed.log`，让后续同类崩溃有原生日志可查，CLI / dev / 测试仍保持 DEVNULL。测试补充访问违规分类与日志捕获 / 关闭。
 
 
+- 新增 QualityGate 主动质量过滤器（PR #52，关联 issue #44）：discovery 引擎在内容写入候选池前执行基于 UP 主指标 + 标题规则的质量门禁，不满足门槛的内容直接标记 `rejected_quality` / `penalized_quality`，不进候选池。新配置段 `[quality_gate]`（`enabled` / `mode` / `min_follower` / `max_level` / `min_views` / `ban_franchise_accounts` / `allowlist_mids` / `clickbait_patterns`，默认关闭）；B 站 API 新增带 24h 缓存的 UP 主卡片信息接口 `get_up_card()`；`content_cache` 表新增 `up_level` / `follower_count` 列（自动迁移）；OpenClaw adapter 注入 `QualityGateChecker`。新增 CLI 命令 `openbiliclaw quality-gate suggest-patterns [--apply]`，让 LLM 根据画像 `disliked_topics` 与近期低质内容标题生成 Clickbait 正则建议，`--apply` 直接写入 `config.toml`。
+
 ## v0.3.205：证据驱动时效推荐与可靠性升级（2026-08-14）
 
 - **发布与市场状态**：`backend-v0.3.205`、`extension-v0.3.205`、`desktop-v0.3.205` 与聚合 `openbiliclaw-v0.3.205` 均指向提交 `a49af312`；聚合 Latest Release 已附两份扩展 ZIP 与四份桌面安装器。Chrome Web Store 已上传 `0.3.205` 并进入 `PENDING_REVIEW`；Firefox AMO 已接受 listed `0.3.205`，文件状态为 `unreviewed`。AMO `eula_policy` API 仍返回 HTTP 406，manifest 数据类别、reviewer notes、商店描述和随包隐私政策已提交。

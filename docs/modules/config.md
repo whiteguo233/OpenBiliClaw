@@ -124,6 +124,31 @@ load → save → load round-trip；保存其他已知配置表时也不会再�
 | `normalize_tls_san_names()` | 验证、规范化并去重 DNS/IP SAN |
 | `resolve_tls_cert_dir(config)` | 按 project root / data_dir 解析运行时证书目录 |
 
+### `[quality_gate]`
+
+基于 UP 主指标 + 标题规则的主动质量过滤器（`QualityGateConfig`），在 discovery 引擎把内容写入候选池之前执行，只作用于 Bilibili 内容（非 Bilibili 来源始终放行）。默认关闭；开启后不满足质量门槛的内容直接标记 `rejected_quality` / `penalized_quality`，不进候选池。
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 是否启用质量门禁 |
+| `mode` | string | `"reject"` | `"reject"` = 硬性拦截（不进候选池）；`"penalize"` = 软降级（标记为 backfill 低优先级） |
+| `min_follower` | int | `1000` | UP 主粉丝数低于该值触发拦截 / 降级 |
+| `max_level` | int | `2` | UP 主等级 ≤ 该值触发拦截 / 降级（Lv1-Lv2） |
+| `min_views` | int | `500` | 视频播放量低于该值触发拦截 / 降级 |
+| `ban_franchise_accounts` | bool | `true` | 拦截企业 / 机构认证账号（`official_verify == 1`） |
+| `allowlist_mids` | list[int] | `[]` | 完全绕过质量门禁的 UP 主 mid 白名单 |
+| `clickbait_patterns` | list[string] | 内置 6 条 | 命中标题即触发拦截 / 降级的正则列表（大小写不敏感，非法正则在加载时跳过） |
+
+说明：
+- `min_follower` / `max_level` 依赖 UP 主信息接口（`/x/space/acc/info`），带 24 小时 TTL 缓存；API 不可用或 mid 未知时这些检查直接放行。
+- `clickbait_patterns` 可通过 `openbiliclaw quality-gate suggest-patterns` 让 LLM 根据画像 `disliked_topics` 与近期低质标题生成建议（见 `docs/modules/cli.md`）。
+
+#### Config 模块公开 QualityGate API
+
+| API | 说明 |
+|---|---|
+| `QualityGateConfig` | 根 `Config.quality_gate` 的 typed 配置对象 |
+
 ### `[saved_sync]`
 
 ```toml
