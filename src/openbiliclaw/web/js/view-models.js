@@ -139,6 +139,7 @@ const SOURCE_LABEL_MAP = {
   bangumi: "Bangumi",
   linuxdo: "Linux.do",
   v2ex: "V2EX",
+  instagram: "Instagram",
   web: "Web",
 };
 
@@ -167,6 +168,8 @@ const SOURCE_ALIAS_MAP = {
   "linux.do": "linuxdo",
   v2: "v2ex",
   v2ex: "v2ex",
+  ig: "instagram",
+  instagram: "instagram",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -235,6 +238,8 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   "v2ex-tab": "V2EX Tab",
   "v2ex-hot": "V2EX 热门",
   "v2ex-latest": "V2EX 最新",
+  "instagram-topic": "Instagram Topic",
+  "instagram-creator": "Instagram 作者",
 };
 
 function urlHostMatches(url, hostnames) {
@@ -266,6 +271,7 @@ export function normalizeSourcePlatform(item) {
     if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
     if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
     if (urlHostMatches(url, ["v2ex.com"])) return "v2ex";
+    if (urlHostMatches(url, ["instagram.com"])) return "instagram";
     return "web";
   }
   if (normalizeText(item?.bvid)) return "bilibili";
@@ -307,6 +313,7 @@ function formatRuntimeTopicLabel(value) {
   if (key.startsWith("bangumi-")) return "Bangumi";
   if (key.startsWith("linuxdo-")) return "Linux.do";
   if (key.startsWith("v2ex-")) return "V2EX";
+  if (key.startsWith("instagram-")) return "Instagram";
   return text;
 }
 
@@ -361,7 +368,12 @@ export function buildContentUrl(item) {
   }
   if (platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
-  if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
+  if (
+    platform === "zhihu"
+    || platform === "reddit"
+    || platform === "weibo"
+    || platform === "instagram"
+  ) return "";
   return buildVideoUrl(vid);
 }
 

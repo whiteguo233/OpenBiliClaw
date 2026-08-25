@@ -286,6 +286,8 @@ ALLOWED_IMAGE_HOST_SUFFIXES: tuple[str, ...] = (
     "ggpht.com",
     "lain.bgm.tv",
     "sinaimg.cn",
+    "cdninstagram.com",
+    "fbcdn.net",
 )
 # CN CDNs must be fetched DIRECT: env/system proxies (Clash & co.) route them
 # through exit IPs their risk control blocks or throttles — the same failure

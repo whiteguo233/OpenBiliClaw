@@ -800,6 +800,22 @@ V2EX 是匿名公开 discovery 源，支持官方匿名 JSON API / Feed，以及
 
 完整字段和公开路径见 [V2EX 来源文档](v2ex.md)。
 
+### `[sources.instagram]`
+
+Instagram 是默认关闭的实验来源。公开 `topic` / `creator` 与个人 init 都由扩展隔离任务执行；后端不保存或重放 Instagram Cookie。完整安全、授权与终态边界见 [Instagram 来源文档](instagram.md)。
+
+| 键 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | 是否允许 Instagram 参与候选配比、公开任务和显式 guided init |
+| `source_modes` | list[str] | `["topic", "creator"]` | 只接受 `topic` / `creator`；不提供登录私有任意 keyword SERP，不执行会写 Recent Searches 的 UI 搜索 |
+| `daily_topic_budget` | int | `60` | topic 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
+| `daily_creator_budget` | int | `30` | creator 分支每 UTC 日的 retained candidate 预算；`0` 表示不设日上限 |
+| `request_interval_seconds` | int | `3` | 同一任务内相邻只读请求的节流下限；不能绕过 task 的 absolute deadline |
+| `min_interval_minutes` | int | `10` | producer 成功运行间隔；显式 smoke 仍受扩展 presence、task cap 与限流终态约束 |
+| `bootstrap_limit` | int | `300` | liked / saved / following 每 scope 的最大条数，保存范围 `1..300`；达到 cap 不代表历史完整 |
+
+Instagram 首版为 `init-only`，没有 `instagram_incremental_hours` 配置，也不进入周期账号回拉 roster。关闭来源时保存的 pool share 不参与有效配比。
+
 状态语义如下：
 
 | 状态 | 配置页文案 | 含义 |
@@ -879,7 +895,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认保存的 share 是 `bilibili:xiaohongshu:douyin:youtube:twitter:zhihu:reddit:bangumi:linuxdo:v2ex:weibo = 5:1:1:1:1:1:1:1:1:1:1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认保存的 share 是 `bilibili:xiaohongshu:douyin:youtube:twitter:zhihu:reddit:bangumi:linuxdo:v2ex:weibo:instagram = 5:1:1:1:1:1:1:1:1:1:1:1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -894,6 +910,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `linuxdo` | int | `1` | Linux.do 平台族占比；`linuxdo-search` / `linuxdo-hot` / `linuxdo-feed` / `linuxdo-creator` / `linuxdo-related` 统一计入该族 |
 | `v2ex` | int | `1` | V2EX 平台族占比；`v2ex-search` / `v2ex-node` / `v2ex-tab` / `v2ex-hot` / `v2ex-latest` 统一计入该族 |
 | `weibo` | int | `1` | 微博平台族占比；`weibo-search` / `weibo-hot` / `weibo-creator` 统一计入该族 |
+| `instagram` | int | `1` | Instagram 平台族占比；`instagram-topic` / `instagram-creator` 统一计入该族，仅在来源启用时生效 |
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池；YouTube 低于目标且 `[sources.youtube].enabled=true` 时，后台 `YoutubeDiscoveryProducer` 会在独立 loop 中触发 `yt_search` / `yt_trending` / `yt_channel`，主 refresh replenishment plan 不再 inline 调度 YouTube；X 低于目标且 `[sources.twitter].enabled=true` 时，后台 `XDiscoveryProducer` 会在独立 loop 中按预算和源健康触发 `search` / `feed` / `creator` 三个策略补池；知乎低于目标且 `[sources.zhihu].enabled=true` 时，后台 `ZhihuDiscoveryProducer` 会通过浏览器插件按 `source_modes` 触发 search / hot / feed / creator / related 补池；Reddit 低于目标且 `[sources.reddit].enabled=true` 时，后台 `RedditDiscoveryProducer` 默认通过 `rdt-cli` 按 `source_modes` 触发 search / hot / subreddit / related 补 raw candidates；命令后端不可用或显式切到插件后端时，入队 OpenBiliClaw 插件任务。Bangumi 低于目标且 `[sources.bangumi].enabled=true` 时，后台 `BangumiDiscoveryProducer` 直连官方匿名 API，按分支预算写 raw candidates，并遵循持久化限流冷却。Linux.do 低于目标且 `[sources.linuxdo].enabled=true` 时，后台 `LinuxdoDiscoveryProducer` 入队同源扩展任务，以五种只读模式写 raw candidates。
 

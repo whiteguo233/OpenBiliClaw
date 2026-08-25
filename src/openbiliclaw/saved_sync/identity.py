@@ -14,9 +14,10 @@ _ALIASES = {
     "bgm": "bangumi",
     "v2": "v2ex",
     "wb": "weibo",
+    "ig": "instagram",
 }
 
-_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"weibo"})
+_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"weibo", "instagram"})
 
 
 def canonical_source_platform(value: str) -> str:

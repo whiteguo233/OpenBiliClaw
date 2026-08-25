@@ -416,6 +416,19 @@ daily_creator_budget = 30
 request_interval_seconds = 3
 min_interval_minutes = 10
 
+# ── Instagram 公开发现 + 登录态初始化（只读）──
+# topic / creator 发现由浏览器执行匿名同源任务；初始化时可读取当前账号最近的
+# liked / saved / following。扩展只同步 sessionid 是否存在的布尔心跳，不上传 Cookie。
+# 首版个人信号为 init-only，不注册后台周期增量。
+[sources.instagram]
+enabled = false
+source_modes = ["topic", "creator"]
+daily_topic_budget = 60               # 每日实际保留的 topic 候选上限；0 = 不设上限
+daily_creator_budget = 30             # 每日实际保留的 creator 候选上限；0 = 不设上限
+request_interval_seconds = 3          # 扩展对上游分页请求的最小间隔（1..30 秒）
+min_interval_minutes = 10             # producer 两次有产出运行的最小间隔
+bootstrap_limit = 300                 # 每个个人 scope 最多读取 300 条
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -524,6 +537,7 @@ bangumi = 1
 linuxdo = 1
 v2ex = 1
 weibo = 1
+instagram = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──
 # 把"每平台各自定时调 LLM 生成搜索词"换成缺口拉动的双缓冲背压模型：一个关键词

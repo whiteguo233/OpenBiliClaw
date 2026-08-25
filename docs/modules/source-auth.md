@@ -251,6 +251,17 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 统一验证动作登记为 `VERIFY_ACTIONS["v2ex"] = "live_probe"`，相关契约回归见
 `tests/test_source_auth_contract.py`。
 
+## Instagram 的接入
+
+Instagram 使用现有 capability-specific contract，不新增第二套鉴权模型：
+
+- `discover` 为 `anonymous`，因此没有登录心跳也可排队公开 topic / creator 任务；扩展在线属于 transport readiness，不会被伪装成持有账号凭据。
+- `profile` / `bootstrap` 为 `login-required`，只在扩展最近观察到 `sessionid` 存在时进入可执行状态；心跳 payload 只有 `logged_in: bool`。
+- `cookie-sync` 为 optional readiness。`sessionid` value、`csrftoken` 和 `ds_user_id` 不进入 API、数据库或日志。
+- 个人任务仍必须由同源 `accounts/current_user` 响应正面给出数字账号 ID；心跳不是 identity evidence。账号 ID 只用于派生不可逆 account key 和隔离事件。
+
+凭据表单使用 extension-only `login_state` 描述符。验证动作是 `browser_heartbeat`，只验证最近的本地观察证据，不现场请求 Instagram。登录墙、challenge 或任务失败更新任务/发现健康状态，不能反向把匿名 discover 标成需要登录。
+
 ## 新增平台的强制契约
 
 新平台必须在 `providers.py` 填全契约字段、在 `verify.py` 的 `VERIFY_ACTIONS` 登记动作，否则过不了 `tests/test_source_auth_contract.py` 的参数化测试。若动作是 `browser_heartbeat`，还必须同步登记 `_BROWSER_HEARTBEAT_PREFIXES`，提供对应数据库 getter、extension runtime-stream event handler 与来源专属 round-trip test；未知 slug 必须 fail closed，不能落到某个既有平台的 else 分支。

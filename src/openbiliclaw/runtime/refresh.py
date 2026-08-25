@@ -99,10 +99,11 @@ _PLATFORM_SOURCE_ORDER = (
     "twitter",
     "zhihu",
     "reddit",
-    "linuxdo",
     "bangumi",
+    "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
 # Pool-share fairness (spec 2026-07-20, Phase 3): max over-share rows evicted
@@ -387,6 +388,7 @@ class ContinuousRefreshController:
     linuxdo_producer: Any | None = None
     v2ex_producer: Any | None = None
     weibo_producer: Any | None = None
+    instagram_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
     presence: PresenceTracker = field(default_factory=PresenceTracker)
     # gui-init D1: optional init-aware gate. When it returns True (a guided init
@@ -1536,6 +1538,7 @@ class ContinuousRefreshController:
             "linuxdo": self._tick_linuxdo_producer,
             "v2ex": self._tick_v2ex_producer,
             "weibo": self._tick_weibo_producer,
+            "instagram": self._tick_instagram_producer,
         }
         raw_results = await asyncio.gather(
             *(ticker() for ticker in tickers.values()),
@@ -1660,6 +1663,7 @@ class ContinuousRefreshController:
             ├─ _loop_bangumi_producer()  60s   Bangumi official-API discovery when under quota
             ├─ _loop_linuxdo_producer()  60s   Linux.do extension discovery when under quota
             ├─ _loop_weibo_producer()    60s   Weibo guest-session discovery when under quota
+            ├─ _loop_instagram_producer() 60s  Instagram browser-task public discovery
             ├─ _loop_proactive_push()    60s   delight + interest probe
             ├─ _loop_keyword_planner()  120s   P1.6 — merged keyword generation (flag-gated)
             ├─ _loop_source_incremental_sync() 60s  extension account refresh
@@ -1707,6 +1711,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_linuxdo_producer()),
             asyncio.create_task(self._loop_v2ex_producer()),
             asyncio.create_task(self._loop_weibo_producer()),
+            asyncio.create_task(self._loop_instagram_producer()),
             asyncio.create_task(self._loop_proactive_push()),
             asyncio.create_task(self._loop_keyword_planner()),
             asyncio.create_task(self._loop_image_cache_cleanup()),
@@ -2051,6 +2056,17 @@ class ContinuousRefreshController:
                 await self._tick_weibo_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_instagram_producer(self) -> None:
+        """Run public Instagram discovery when its source quota is underfilled."""
+
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_instagram_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
     async def _loop_keyword_planner(self) -> None:
         """P1.6: deficit-pulled merged keyword generation (flag-gated).
 
@@ -2324,6 +2340,14 @@ class ContinuousRefreshController:
         return await self._tick_platform_producer(
             source_family="weibo",
             producer=self.weibo_producer,
+        )
+
+    async def _tick_instagram_producer(self) -> dict[str, object]:
+        """Invoke Instagram discovery when its source-family quota has a deficit."""
+
+        return await self._tick_platform_producer(
+            source_family="instagram",
+            producer=self.instagram_producer,
         )
 
     async def _tick_soul_pipeline(self) -> None:
@@ -3719,6 +3743,8 @@ class ContinuousRefreshController:
                 stranded.append("v2ex")
             elif source == "weibo" and self.weibo_producer is None:
                 stranded.append("weibo")
+            elif source == "instagram" and self.instagram_producer is None:
+                stranded.append("instagram")
             elif source not in {
                 "bilibili",
                 "xiaohongshu",
@@ -3731,6 +3757,7 @@ class ContinuousRefreshController:
                 "linuxdo",
                 "v2ex",
                 "weibo",
+                "instagram",
             }:
                 # Unknown source family with an explicit share.
                 stranded.append(source)

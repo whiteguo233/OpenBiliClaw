@@ -54,6 +54,7 @@ PREFILTER_PLATFORM_CLASSES: Final[frozenset[str]] = frozenset(
         "bangumi",
         "bilibili",
         "douyin",
+        "instagram",
         "reddit",
         "twitter",
         "unknown",

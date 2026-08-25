@@ -61,32 +61,44 @@ def _hint_strings() -> tuple[str, ...]:
 def test_overseas_platform_list_is_the_verified_one() -> None:
     """Pins the classification a human verified against the transport code.
 
-    bangumi / youtube / twitter / reddit sit outside the GFW; the CN-direct
-    families must never join them, because pitfall rule 1 forces those to
-    ignore proxies entirely.
+    bangumi / youtube / twitter / reddit / instagram sit outside the GFW;
+    the CN-direct families must never join them, because pitfall rule 1
+    forces those to ignore proxies entirely.
     """
-    assert {"bangumi", "youtube", "twitter", "reddit"} == OVERSEAS_EGRESS_PLATFORMS
+    assert {
+        "bangumi",
+        "youtube",
+        "twitter",
+        "reddit",
+        "instagram",
+    } == OVERSEAS_EGRESS_PLATFORMS
     for family in ("bilibili", "xiaohongshu", "douyin", "zhihu"):
         assert not requires_overseas_network(family), f"{family} is CN-direct"
-    # Aliases resolve too — a caller passing "bgm" / "x" / "yt" must not slip
+    # Aliases resolve too — a caller passing "bgm" / "x" / "yt" / "ig" must not slip
     # through as an unknown platform and silently lose the advisory.
-    for alias in ("bgm", "x", "yt", "rd"):
+    for alias in ("bgm", "x", "yt", "rd", "ig"):
         assert requires_overseas_network(alias), alias
 
 
-def test_all_overseas_backend_transports_are_told_to_change_the_setting() -> None:
+def test_overseas_hints_distinguish_backend_and_browser_transports() -> None:
     """Advice that cannot fix the failure is worse than none (rule 7).
 
-    ``[network].mode`` governs each overseas backend transport: HTTP clients,
-    twitter-cli's curl session, and rdt/OpenCLI environments. Browser fallback
-    remains browser-owned, but that does not make the backend advice false.
+    ``[network].mode`` governs the overseas backend transports: HTTP clients,
+    twitter-cli's curl session, and rdt/OpenCLI environments. Instagram is a
+    browser-extension transport, so it must receive the external-network hint
+    instead of being told that changing the backend setting will fix it.
     """
     routed = {rule.family for rule in SOURCE_FAMILY_RULES if rule.routed_by_network_mode}
-    assert routed == OVERSEAS_EGRESS_PLATFORMS
+    assert routed == {"bangumi", "youtube", "twitter", "reddit"}
+    assert OVERSEAS_EGRESS_PLATFORMS - routed == {"instagram"}
 
     for family in routed:
         hint = overseas_network_hint(family, network_mode="direct")
         assert "改成「跟随系统代理」或「自定义代理」" in hint, family
+
+    instagram_hint = overseas_network_hint("instagram", network_mode="direct")
+    assert "不经过 OpenBiliClaw 的「海外网络模式」" in instagram_hint
+    assert "系统代理本身能访问该站点" in instagram_hint
 
 
 @pytest.mark.parametrize("mode", ["system", "custom", "", "DIRECT ", "unknown"])

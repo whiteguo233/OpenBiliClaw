@@ -169,6 +169,17 @@ ID 字段是严格 JSON string，不接受数字、布尔或其它类型的自�
 Linux.do 站点访问全部发生在真实 `linux.do` task tab 内，且只允许同源 JSON `GET`。个人 bootstrap 先以 `/session/current.json` 正面确认 username；`_t=true` 只是 source-auth 心跳，不能替代任务内身份确认。结构化错误只包含 code/status/path，不把 challenge HTML、JSON body、Cookie 或 CSRF 字段带进回调。dispatcher 在执行前把 task/tab/deadline 写入扩展 session storage；MV3 service worker 重启时先恢复 runner，仍存活的任务 tab 可把结果交给恢复后的 handler 重试后端回传，不会重跑上游 GET。完整契约见 [Linux.do 来源文档](linuxdo.md)。
 周期任务 payload 带 `incremental=true`；六源 handler（含 V2EX）在 guided init 外给 durable event 标记 `profile_update_owner="generic"`，在 init-owned 回调中只落事实、由阶段 2/3 统一建模。事件 ingress 成功或 duplicate receipt 后才按响应顺序 checkpoint seen key，再翻 terminal；没有 handler 直接调用画像 pipeline。扩展离线时 runtime 不创建任务，也不推进调度时间。
 
+### Instagram 任务与登录态端点
+
+| 端点 | 行为 |
+| --- | --- |
+| `POST /api/sources/instagram/login-state` | 只接受严格布尔 `logged_in`，保存 `sessionid` 存在性与更新时间；不接受 Cookie value |
+| `GET /api/sources/instagram/next-task` | 扩展通过 authenticated backend session 原子领取一个 `discover` / `bootstrap_events` 任务；无任务为 bodyless 204 |
+| `POST /api/sources/instagram/task-result` | 接收 claim token、canonical rows、scope counts/completeness 与结构化错误；canonical payload 先 stage，投影完成后才 terminal |
+| `POST /api/sources/instagram/kick` | 只向 runtime stream 广播 `instagram_task_available`；不访问 Instagram |
+
+task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `creator`；bootstrap 只接受 liked/saved/following。个人结果没有正向数字 current-account ID 时一律拒绝投影；后端仅保存派生 account key。Cookie、header、raw JSON/HTML 和 challenge body 都不属于 API schema。只有 route-specific envelope 明确终止才能报告 `empty` / complete，已有 rows 的限流、challenge、cap 或 schema failure 使用 partial 并保留 staged rows。
+
 ## B 站与抖音浏览器任务边界
 
 | 方法与路径 | 状态 | 契约 |

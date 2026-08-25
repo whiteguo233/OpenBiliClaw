@@ -67,6 +67,7 @@ _PLATFORM_SOURCE_FIELDS = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 
 

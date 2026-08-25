@@ -38,8 +38,7 @@ const PRESENTATION = {
 const PLATFORM_NAMES = {
   bilibili: "B站", youtube: "YouTube", twitter: "X", xiaohongshu: "小红书",
   douyin: "抖音", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
-  linuxdo: "Linux.do",
-  douyin: "抖音", weibo: "微博", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", v2ex: "V2EX",
+  linuxdo: "Linux.do", weibo: "微博", v2ex: "V2EX", instagram: "Instagram",
 };
 
 function esc(s) {

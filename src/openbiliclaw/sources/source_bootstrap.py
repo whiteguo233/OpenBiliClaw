@@ -29,6 +29,7 @@ DEFAULT_REDDIT_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_LINUXDO_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_V2EX_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_WEIBO_BOOTSTRAP_DEDUPE_HOURS = 6.0
+DEFAULT_INSTAGRAM_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 _RECENT_TASK_STATUSES = ("pending", "in_progress", "completed", "failed")
 Notify = Callable[[str], None]
@@ -49,6 +50,7 @@ _BOOTSTRAP_TASK_TABLES: tuple[tuple[str, str, str], ...] = (
     ("linuxdo", "linuxdo_tasks", "bootstrap_events"),
     ("v2ex", "v2ex_tasks", "bootstrap_profile"),
     ("weibo", "weibo_tasks", "bootstrap_events"),
+    ("instagram", "instagram_tasks", "bootstrap_events"),
 )
 
 
@@ -297,7 +299,14 @@ def _linuxdo_reusable_recent_task(
         return None
     latest = max(
         terminals,
-        key=lambda row: (str(row.get("created_at", "")), str(row.get("id", ""))),
+        # SQLite timestamps are second-granularity here.  When a success and
+        # failure share that second, prefer retrying over letting the success
+        # mask potentially newer negative evidence.
+        key=lambda row: (
+            str(row.get("created_at", "")),
+            str(row.get("status", "")) == "failed",
+            str(row.get("id", "")),
+        ),
     )
     if str(latest.get("status", "")) != "completed":
         return None
@@ -311,6 +320,98 @@ def _linuxdo_reusable_recent_task(
         else ""
     )
     return latest if terminal_status in {"ok", "empty"} else None
+
+
+def _instagram_reusable_recent_task(
+    queue: Any,
+    *,
+    recent_hours: float,
+    expected_payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return active work or the latest positively completed Instagram init.
+
+    Failed and partial browser runs are retry evidence, not successful
+    bootstrap snapshots.  Comparing the newest completed and failed attempts
+    also prevents an older success from masking a later authentication or
+    transport failure inside the dedupe window.
+    """
+
+    if not isinstance(expected_payload, dict):
+        return None
+    expected = expected_payload
+
+    def same_contract(row: dict[str, Any]) -> bool:
+        try:
+            candidate = json.loads(str(row.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(candidate, dict):
+            return False
+        fields = (
+            "scopes",
+            "max_items_per_scope",
+            "max_pages_per_scope",
+            "request_interval_ms",
+            "profile_update",
+            "smoke_only",
+            "profile_rebuild",
+            "purpose",
+            "expected_account_key",
+        )
+        return all(candidate.get(field) == expected.get(field) for field in fields)
+
+    active = queue.find_recent_task(
+        "bootstrap_events",
+        recent_hours=recent_hours,
+        statuses=("pending", "in_progress"),
+    )
+    if isinstance(active, dict) and same_contract(active):
+        return active
+
+    terminals = [
+        row
+        for row in (
+            queue.find_recent_task(
+                "bootstrap_events",
+                recent_hours=recent_hours,
+                statuses=("completed",),
+            ),
+            queue.find_recent_task(
+                "bootstrap_events",
+                recent_hours=recent_hours,
+                statuses=("failed",),
+            ),
+        )
+        if isinstance(row, dict)
+    ]
+    if not terminals:
+        return None
+    latest = max(
+        terminals,
+        # Failed evidence wins a same-second tie: retrying is safer than
+        # treating an ambiguously ordered success as the latest attempt.
+        key=lambda row: (
+            str(row.get("created_at", "")),
+            str(row.get("status", "")) == "failed",
+            str(row.get("id", "")),
+        ),
+    )
+    if str(latest.get("status", "")) != "completed":
+        return None
+
+    from openbiliclaw.sources.task_result_protocol import staged_terminal_status
+
+    terminal = staged_terminal_status(latest.get("result_json"))
+    if terminal not in {"ok", "empty"} or not same_contract(latest):
+        return None
+    try:
+        canonical = json.loads(str(latest.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return None
+    expected_account_key = str(expected.get("expected_account_key") or "").strip()
+    if not expected_account_key or not isinstance(canonical, dict):
+        return None
+    return latest if canonical.get("account_key") == expected_account_key else None
 
 
 def _created_or_budget_result(
@@ -1113,11 +1214,124 @@ def enqueue_v2ex_bootstrap(
     )
 
 
+@_serialized_enqueue
+def enqueue_instagram_bootstrap(
+    database: Any,
+    *,
+    config: Any | None = None,
+    force: bool = False,
+    incremental: bool = False,
+    incremental_owner: str = "",
+    profile_update: bool = False,
+    smoke_only: bool = False,
+    profile_rebuild: bool = False,
+    account_key: str = "",
+    purpose: str = "",
+    notify: Notify | None = None,
+) -> BootstrapEnqueueResult:
+    """Enqueue a fixed-scope Instagram init task without browser secrets."""
+
+    from openbiliclaw.sources.instagram_tasks import (
+        INSTAGRAM_BOOTSTRAP_PURPOSES,
+        INSTAGRAM_BOOTSTRAP_SCOPES,
+        InstagramTaskQueue,
+        is_instagram_account_key,
+    )
+
+    del incremental_owner
+    if incremental:
+        _notify(
+            notify,
+            "  [yellow]Instagram 当前仅支持初始化拉取，不支持周期增量。[/yellow]",
+        )
+        return BootstrapEnqueueResult(task_id=None, created=False, reason="unsupported_incremental")
+
+    def configured_limit(name: str, default: int, maximum: int) -> int:
+        try:
+            value = int(getattr(config, name, default))
+        except (TypeError, ValueError):
+            value = default
+        return min(maximum, max(1, value))
+
+    max_items = configured_limit("bootstrap_limit", 300, 300)
+    max_pages = 20
+    request_interval_ms = configured_limit("request_interval_seconds", 3, 30) * 1000
+    normalized_account_key = (
+        str(account_key or "").strip() if is_instagram_account_key(account_key) else ""
+    )
+    normalized_purpose = str(purpose or "").strip().casefold()
+    if normalized_purpose not in INSTAGRAM_BOOTSTRAP_PURPOSES:
+        normalized_purpose = (
+            "smoke"
+            if smoke_only
+            else "profile-rebuild"
+            if profile_rebuild
+            else "guided-init"
+            if profile_update
+            else "fetch"
+        )
+    payload = {
+        "scopes": list(INSTAGRAM_BOOTSTRAP_SCOPES),
+        "max_items_per_scope": max_items,
+        "max_pages_per_scope": max_pages,
+        "request_interval_ms": request_interval_ms,
+        "profile_update": bool(profile_update),
+        "smoke_only": bool(smoke_only),
+        "profile_rebuild": bool(profile_rebuild),
+        "purpose": normalized_purpose,
+        "expected_account_key": normalized_account_key,
+    }
+    try:
+        queue = InstagramTaskQueue(database)
+        with _bootstrap_admission_transaction(database):
+            dedupe_hours = _dedupe_hours(
+                "OPENBILICLAW_INSTAGRAM_BOOTSTRAP_DEDUPE_HOURS",
+                DEFAULT_INSTAGRAM_BOOTSTRAP_DEDUPE_HOURS,
+            )
+            if not force and dedupe_hours > 0:
+                recent = _instagram_reusable_recent_task(
+                    queue,
+                    recent_hours=dedupe_hours,
+                    expected_payload=payload,
+                )
+                if recent is not None:
+                    reused = _recent_reuse_result(
+                        recent,
+                        message=(
+                            "  [dim]复用最近的 Instagram bootstrap 任务"
+                            "({status})；需要重新拉取可设置 "
+                            "OPENBILICLAW_INSTAGRAM_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
+                        ),
+                        notify=notify,
+                    )
+                    if reused is not None:
+                        return reused
+
+            active = _active_bootstrap_result(database, notify=notify)
+            if active is not None:
+                return active
+            task_id = queue.enqueue_with_id(
+                "bootstrap_events",
+                payload,
+                daily_budget=10,
+            )
+    except Exception as exc:
+        _notify(notify, f"  [yellow]Instagram 初始化事件未拉取: {exc}[/yellow]")
+        return BootstrapEnqueueResult(task_id=None, created=False, reason="enqueue_error")
+
+    return _created_or_budget_result(
+        task_id,
+        budget_message=("  [yellow]Instagram 初始化事件未拉取: 今日任务预算已用完。[/yellow]"),
+        notify=notify,
+    )
+
+
 __all__ = [
     "BootstrapEnqueueResult",
     "SOURCE_BOOTSTRAP_DECISION_LOCK",
     "enqueue_dy_bootstrap",
     "enqueue_linuxdo_bootstrap",
+    "enqueue_instagram_bootstrap",
     "enqueue_reddit_bootstrap",
     "enqueue_v2ex_bootstrap",
     "enqueue_xhs_bootstrap",

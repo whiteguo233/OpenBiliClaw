@@ -16,6 +16,7 @@ PLATFORM_BANGUMI = "bangumi"
 PLATFORM_LINUXDO = "linuxdo"
 PLATFORM_V2EX = "v2ex"
 PLATFORM_WEIBO = "weibo"
+PLATFORM_INSTAGRAM = "instagram"
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,16 @@ SOURCE_FAMILY_RULES = (
         platform_aliases=frozenset({"weibo", "wb", "微博"}),
         source_prefixes=("weibo-", "weibo_"),
         url_hosts=("weibo.com", "weibo.cn"),
+    ),
+    SourceFamilyRule(
+        family=PLATFORM_INSTAGRAM,
+        platform_aliases=frozenset({"instagram", "ig"}),
+        source_prefixes=("instagram-", "instagram_"),
+        url_hosts=("instagram.com",),
+        requires_overseas_network=True,
+        # Instagram requests run in the browser extension and therefore follow
+        # the browser/system proxy rather than OpenBiliClaw's HTTP client mode.
+        routed_by_network_mode=False,
     ),
 )
 

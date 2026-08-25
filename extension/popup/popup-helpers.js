@@ -48,6 +48,8 @@ function normalizeSourcePlatform(value, url = "") {
     "linux.do": "linuxdo",
     v2: "v2ex",
     v2ex: "v2ex",
+    ig: "instagram",
+    instagram: "instagram",
   };
   if (aliases[key]) return aliases[key];
   if (key) return key;
@@ -63,6 +65,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
   if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
   if (urlHostMatches(url, ["v2ex.com"])) return "v2ex";
+  if (urlHostMatches(url, ["instagram.com"])) return "instagram";
   return "";
 }
 
@@ -177,6 +180,8 @@ const PLATFORM_DISPLAY_NAMES = {
   "linux.do": "Linux.do",
   v2: "V2EX",
   v2ex: "V2EX",
+  ig: "Instagram",
+  instagram: "Instagram",
 };
 
 export function platformDisplayName(value) {
@@ -228,6 +233,7 @@ export function buildContentUrl(item) {
   }
   if (platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
+  if (platform === "instagram") return "";
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
   return buildVideoUrl(vid);
 }

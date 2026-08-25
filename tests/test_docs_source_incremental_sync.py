@@ -22,7 +22,7 @@ def _read(relative_path: str) -> str:
     return (_ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_source_incremental_docs_cover_configuration_and_six_source_staging() -> None:
+def test_source_incremental_docs_cover_configuration_and_eight_source_staging() -> None:
     config_docs = _read("docs/modules/config.md")
     config_example = _read("config.example.toml")
     storage_docs = _read("docs/modules/storage.md")
@@ -33,7 +33,7 @@ def test_source_incremental_docs_cover_configuration_and_six_source_staging() ->
     assert "source_incremental_enabled = false" in config_example
     assert "douyin_incremental_hours = 0" in config_example
     assert "默认关闭" in config_docs
-    assert "### 六来源任务结果 staging" in storage_docs
+    assert "### 八来源任务结果 staging" in storage_docs
     for queue_name in (
         "XhsTaskQueue",
         "DyTaskQueue",
@@ -42,8 +42,11 @@ def test_source_incremental_docs_cover_configuration_and_six_source_staging() ->
         "RedditTaskQueue",
         "LinuxdoTaskQueue",
         "V2EXTaskQueue",
+        "InstagramTaskQueue",
     ):
         assert queue_name in storage_docs
+    assert "### 七来源任务结果 staging" not in storage_docs
+    assert "### 六来源任务结果 staging" not in storage_docs
     assert "### 五来源任务结果 staging" not in storage_docs
     assert "### 四来源任务结果 staging" not in storage_docs
 

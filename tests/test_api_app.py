@@ -15084,6 +15084,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["refresh_check_interval_seconds"] == 75
@@ -15653,6 +15654,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
         assert cfg.scheduler.refresh_check_interval_seconds == 75
         assert cfg.scheduler.eval_min_batch_size == 23
@@ -15802,6 +15804,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -15815,6 +15818,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "linuxdo": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 8,
@@ -15896,6 +15900,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "v2ex": 0,
                 "bangumi": 0,
                 "linuxdo": 0,
+                "instagram": 0,
             },
             "enabled_sources": {
                 "bilibili": True,
@@ -15909,6 +15914,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "linuxdo": False,
                 "weibo": False,
                 "v2ex": False,
+                "instagram": False,
             },
             "suggested_shares": {
                 "bilibili": 6,

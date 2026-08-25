@@ -6909,7 +6909,7 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", twitter: "X", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", twitter: "X", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
@@ -8454,6 +8454,10 @@ function bindSettings() {
     ["hot", "cfgV2exModeHot"],
     ["latest", "cfgV2exModeLatest"],
   ];
+  const INSTAGRAM_SOURCE_MODE_FIELDS = [
+    ["topic", "cfgInstagramModeTopic"],
+    ["creator", "cfgInstagramModeCreator"],
+  ];
 
   function setCheckedValues(fields, rawValues) {
     const fallback = fields.map(([value]) => value);
@@ -9543,6 +9547,14 @@ function bindSettings() {
     setVal("cfgV2exDailyLatestBudget", cfg.sources?.v2ex?.daily_latest_budget);
     setVal("cfgV2exRequestInterval", cfg.sources?.v2ex?.request_interval_seconds);
     setVal("cfgV2exMinInterval", cfg.sources?.v2ex?.min_interval_minutes);
+    const instagramEnabled = document.getElementById("cfgInstagramEnabled");
+    if (instagramEnabled) instagramEnabled.checked = cfg.sources?.instagram?.enabled === true;
+    setCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, cfg.sources?.instagram?.source_modes);
+    setVal("cfgInstagramDailyTopicBudget", cfg.sources?.instagram?.daily_topic_budget);
+    setVal("cfgInstagramDailyCreatorBudget", cfg.sources?.instagram?.daily_creator_budget);
+    setVal("cfgInstagramRequestInterval", cfg.sources?.instagram?.request_interval_seconds);
+    setVal("cfgInstagramMinInterval", cfg.sources?.instagram?.min_interval_minutes);
+    setVal("cfgInstagramBootstrapLimit", cfg.sources?.instagram?.bootstrap_limit);
     void renderSourcesStatus();
 
     // General
@@ -9611,6 +9623,7 @@ function bindSettings() {
     setVal("cfgPoolShareBangumi", cfg.scheduler?.pool_source_shares?.bangumi);
     setVal("cfgPoolShareLinuxdo", cfg.scheduler?.pool_source_shares?.linuxdo);
     setVal("cfgPoolShareV2ex", cfg.scheduler?.pool_source_shares?.v2ex);
+    setVal("cfgPoolShareInstagram", cfg.scheduler?.pool_source_shares?.instagram);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -9815,6 +9828,15 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgV2exRequestInterval", 2),
           min_interval_minutes: getInt("cfgV2exMinInterval", 5),
         },
+        instagram: {
+          enabled: checked("cfgInstagramEnabled"),
+          source_modes: collectCheckedValues(INSTAGRAM_SOURCE_MODE_FIELDS, ["topic", "creator"]),
+          daily_topic_budget: getInt("cfgInstagramDailyTopicBudget", 60),
+          daily_creator_budget: getInt("cfgInstagramDailyCreatorBudget", 30),
+          request_interval_seconds: getInt("cfgInstagramRequestInterval", 3),
+          min_interval_minutes: getInt("cfgInstagramMinInterval", 10),
+          bootstrap_limit: getInt("cfgInstagramBootstrapLimit", 300),
+        },
       },
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
@@ -9858,6 +9880,7 @@ function bindSettings() {
           bangumi: getInt("cfgPoolShareBangumi", 1),
           linuxdo: getInt("cfgPoolShareLinuxdo", 1),
           v2ex: getInt("cfgPoolShareV2ex", 1),
+          instagram: getInt("cfgPoolShareInstagram", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -9949,6 +9972,7 @@ function bindSettings() {
     bangumi: "cfgBangumiEnabled",
     linuxdo: "cfgLinuxdoEnabled",
     v2ex: "cfgV2exEnabled",
+    instagram: "cfgInstagramEnabled",
   };
 
   function setSourceCardOpen(card, open) {
@@ -10421,6 +10445,7 @@ function bindSettings() {
             bangumi: checked("cfgBangumiEnabled"),
             linuxdo: checked("cfgLinuxdoEnabled"),
             v2ex: checked("cfgV2exEnabled"),
+            instagram: checked("cfgInstagramEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 5),
@@ -10434,6 +10459,7 @@ function bindSettings() {
             bangumi: getInt("cfgPoolShareBangumi", 1),
             linuxdo: getInt("cfgPoolShareLinuxdo", 1),
             v2ex: getInt("cfgPoolShareV2ex", 1),
+            instagram: getInt("cfgPoolShareInstagram", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -10448,6 +10474,7 @@ function bindSettings() {
         if (shares.bangumi !== undefined) setVal("cfgPoolShareBangumi", shares.bangumi);
         if (shares.linuxdo !== undefined) setVal("cfgPoolShareLinuxdo", shares.linuxdo);
         if (shares.v2ex !== undefined) setVal("cfgPoolShareV2ex", shares.v2ex);
+        if (shares.instagram !== undefined) setVal("cfgPoolShareInstagram", shares.instagram);
         markSettingsDirty(suggestBtn);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
@@ -10543,6 +10570,17 @@ function bindSettings() {
     saveBtn.textContent = "保存中...";
     toast.hidden = true;
     try {
+      const instagramEnabled = checked("cfgInstagramEnabled");
+      const instagramOrigin = "https://*.instagram.com/*";
+      if (instagramEnabled && chrome.permissions?.request) {
+        const granted = await chrome.permissions.request({ origins: [instagramOrigin] });
+        if (!granted) {
+          showToast("启用 Instagram 需要授予 instagram.com 的站点访问权限。", "error");
+          return;
+        }
+      } else if (!instagramEnabled && chrome.permissions?.remove) {
+        await chrome.permissions.remove({ origins: [instagramOrigin] }).catch(() => false);
+      }
       // Backend endpoint lives in chrome.storage, not the backend's
       // config.toml — persist it locally first so the subsequent
       // updateConfig() PUT targets the new origin.

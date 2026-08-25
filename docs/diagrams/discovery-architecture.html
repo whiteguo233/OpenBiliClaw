@@ -317,7 +317,7 @@
   <!-- ══════════════════════════════════════════ -->
   <rect x="790" y="450" width="330" height="246" rx="10" fill="#2a0d0d" stroke="#da3633" stroke-width="1.5"/>
   <text x="955" y="472" text-anchor="middle" fill="#da3633" font-size="12" font-weight="700">扩展 DOM 入池 (绕过 discover())</text>
-  <text x="955" y="488" text-anchor="middle" fill="#8b949e" font-size="9">小红书(必经) · 抖音/YT 可选 — 全拓扑见 §6</text>
+  <text x="955" y="488" text-anchor="middle" fill="#8b949e" font-size="9">含 Instagram topic/creator browser-task — 全拓扑见 §6</text>
 
   <rect x="805" y="500" width="300" height="40" rx="6" fill="#161b22" stroke="#da3633" stroke-width="1"/>
   <text x="955" y="517" text-anchor="middle" fill="#da3633" font-size="9.5">扩展 DOM 提取 → POST /api/sources/*/</text>
@@ -731,8 +731,8 @@
   <!-- Cross-source lanes (bottom right) -->
   <rect x="860" y="354" width="200" height="60" rx="10" fill="#2a0d0d" stroke="#da3633" stroke-width="2"/>
   <text x="960" y="376" text-anchor="middle" fill="#da3633" font-size="12" font-weight="600">扩展采集通道 (§5)</text>
-  <text x="960" y="392" text-anchor="middle" fill="#8b949e" font-size="8.5">XHS / 抖音 / YouTube</text>
-  <text x="960" y="405" text-anchor="middle" fill="#8b949e" font-size="8.5">DOM → API → content_cache → classify</text>
+  <text x="960" y="392" text-anchor="middle" fill="#8b949e" font-size="8.5">XHS / 抖音 / YouTube / Instagram</text>
+  <text x="960" y="405" text-anchor="middle" fill="#8b949e" font-size="8.5">同源任务 → discovery_candidates → evaluator</text>
   <line x1="860" y1="384" x2="757" y2="316" stroke="#da3633" stroke-width="1" stroke-dasharray="4,3"/>
 </svg>
 </div>
@@ -741,7 +741,7 @@
 <!-- SECTION 5: Multi-platform Safe Extension Capture              -->
 <!-- ═══════════════════════════════════════════════════════════════ -->
 <div class="diagram-section">
-<div class="section-title">5. 扩展端安全采集架构 &mdash; 被动·主动·订阅（小红书 / 抖音 / YouTube 通用）</div>
+<div class="section-title">5. 扩展端安全采集架构 &mdash; 被动·主动·订阅（含 Instagram browser-task）</div>
 
 <svg width="1140" height="700" viewBox="0 0 1140 700">
   <defs>
@@ -838,7 +838,7 @@
   <!-- content cache -->
   <rect x="500" y="408" width="600" height="56" rx="8" fill="#1a1a24" stroke="#8b949e" stroke-width="2"/>
   <text x="800" y="430" text-anchor="middle" fill="#8b949e" font-size="13" font-weight="600">content_cache (Pool)</text>
-  <text x="800" y="448" text-anchor="middle" fill="#6e7681" font-size="9">source_platform 使用 11 个 canonical family · classify_pool_backlog 补分类</text>
+  <text x="800" y="448" text-anchor="middle" fill="#6e7681" font-size="9">source_platform 使用 12 个 canonical family（含 Instagram）· classify_pool_backlog 补分类</text>
 
   <!-- arrows from queues/producers down -->
   <line x1="645" y1="308" x2="700" y2="322" stroke="#3fb950" stroke-width="1.3" marker-end="url(#x-green)"/>

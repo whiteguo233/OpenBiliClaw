@@ -6,6 +6,7 @@
 
 ## 未发布
 
+- **新增 Instagram 来源接入（实验性、默认关闭）**：公开内容发现通过扩展隔离任务读取有界 topic / creator 页面；首次画像可选只读导入本人近期点赞、收藏与关注，分别映射为 `like` / `favorite` / `follow`。Cookie、Authorization、原始响应和搜索历史写入都不离开或不发生在浏览器任务中；后端只接收布尔 `sessionid` readiness、正向 current-account 身份和字段白名单结果。实现参考固定 commit 的 instagrapi / Instaloader 等协议事实并保持 clean-room，GPL 代码未复制。该路径不是 Meta 官方 Consumer API，生产启用仍以 Meta 自动采集许可或明确产品风险决定为门禁。
 - **新增「重新初始化 / 重建画像」入口（gui-init §4 收口）**：已初始化后，桌面 Web 设置页「通用 → 初始化与画像」与扩展 popup 通用 tab 提供「重新初始化 / 重建画像」按钮（`window.confirm` 二次确认后调 `POST /api/init {force:true}`，成功后回推荐 tab 展示四阶段进度）；CLI `openbiliclaw init --force` 跳过已初始化二次确认并按重新初始化执行（交互终端默认检测到已初始化时先 y/N 确认，非交互保持直接重跑）。语义为 force 重建：重新拉取所选平台数据、重建完整画像并补足首轮发现池，现有事件 / 收藏 / 对话历史 / 手动编辑覆盖全部保留。**force 重初始化同时清空旧推荐池**（`pool_status='purged_by_reinit'`，按新画像重新发现并生成首轮推荐，避免旧画像推荐滞留并顶满 backfill 目标）；可选 `reset_cognition`（CLI `--reset-cognition` / API body / 设置页复选框）清空旧 awareness / insight 认知层，适合换账号或大改兴趣。**重初始化前自动创建快照备份**（`data/backups/reinit-<时间戳>/`：SQLite 冷备 + `data/memory/` 全部画像/认知层，CLI 可 `--no-backup` 跳过），重建覆盖的画像与删除的认知层均可恢复。后端 `POST /api/init` 的 `force:true` 绕过 `already_initialized` 守卫，其余前置复验与写者门控不变；移动 Web 无设置页，重新初始化入口按四表面契约声明排除。
 - **新增 Flutter 原生移动客户端（独立仓库）**：OpenBiliClaw-mobile 提供 Android / iOS / Web / Linux / macOS / Windows 全平台客户端，连接同一本地后端；推荐 / 对话 / 画像 / 收藏与 30 天历史 / 消息收件箱齐全，B 站封面 CDN 直连省两跳。首个安装包已随其 Latest Release 发布（Android 签名 APK / iOS 未签名 IPA）。README（中英）、项目主页与文档导航同步加入入口链接与下载入口。
 

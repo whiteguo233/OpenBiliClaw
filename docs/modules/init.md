@@ -125,6 +125,14 @@ wrapper 的任务句柄另有 done callback 审计终态；若任务已经退出
 
 Issue #113 空库存解环（v0.3.168+）：首次运行时 `soul.preference*` / `soul.profile_build` 等 maintenance 调用可能因 canonical durable inventory 为空而停在后台 admission，但首池又依赖阶段 2/3 先完成。`run_guided_init()` 现在用 task-local `ContextVar` scope 只放行阶段 2 偏好分析和阶段 3 画像任务；同 scope 内的画像辅助调用一并放行，总 provider gate 仍限制并发。阶段 4 只在完整画像落盘后创建，且不继承 bypass；其中 `discovery.explore.queries` 与空库存时的 `sources.*.extract` 归 `refill.supply`，避免发现内部再形成「探索词等待库存、库存等待发现」的环；`api.config_probe` 归 interactive，使用户在空库存故障态仍能测试并修复模型配置，但继续受总 gate 限制。普通 account-sync / 画像重建不受影响；阶段 2 自适应、阶段 3 的 360 秒与阶段 4 的 600 秒上限继续兜住 provider 真慢或异常。
 
+## Instagram 初始化
+
+Instagram 是显式 opt-in、`init-only` 的浏览器来源。只有用户选择该来源、扩展在线且最近 `sessionid` 布尔心跳为已登录时，Stage 1 才排队 `bootstrap_events`。任务在隔离 Instagram tab 中先读取 current account，再以独立 lane 拉取近期 liked、saved 和 following；三者分别转换为 `like`、`favorite`、`follow`。
+
+每个 lane 独立保存 `scope_count` 与 `scope_complete`。合法响应明确终止游标才 complete；达到 item/page cap、cursor 重复、挑战、限流、登录墙、HTML 或 schema 漂移都保留已接受 rows 并返回 partial/failed。本版不做缺失推断或 retraction，也不注册周期增量调度。Instagram-only 且没有可用登录态/有效事件时，仍走现有 `no_profile_signal_sources` / `empty_signals` fail-closed 语义。
+
+任务回调沿用 init 写者门控对 `/api/sources/<slug>/{kick,task-result}` 的精确 allowlist；canonical result 先 stage，再进入 durable event ingress 和 seen checkpoint，最后翻 terminal。Cookie、请求头和原始响应不属于 init payload。
+
 ## 测试
 
 - `tests/test_init_coordinator.py` — 协调器生命周期 / 单飞 / 严格 stage 顺序 / 启动与运行期租约 reconcile / 取消 / 双时钟 / indeterminate progress，以及部分成功 reason/detail 的持久化与事件透传。

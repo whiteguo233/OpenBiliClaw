@@ -556,6 +556,14 @@ result = await producer.produce_if_due(limit=20)
 
 V2EX producer 是公开只读 discovery 的正式 runtime / CLI 入口。它按 `[sources.v2ex].source_modes` 轮转 `search / node / tab / hot / latest`，使用统一关键词 planner、Node/Tab 配置、分支预算和持久化节流。`search` 优先复用已配置 Exa / You provider 发送 `site:v2ex.com/t` 查询并用官方 Topic 详情补全；provider 无结果或失败时回退官方 latest/hot 有界匹配。PAT 只增强 API 2.0 访问，401/403 会清除本轮 PAT、对应已验证身份并继续匿名；所有 Topic 通过共享 `DiscoveryCandidatePipeline` 入 `discovery_candidates(pending_eval)`，不在 producer 内联调用 evaluator。每日预算只按共享池全局去重 / 预筛后真正保留的候选扣费，HTTP 请求、详情增强和已知重复不扣。producer 会在共享评估前用 `detail_fetch_limit` 有界补齐不完整 Topic，并仅在 PAT 可用时用 `reply_enrichment_limit` 读取 Reply 第一页生成确定性讨论摘要；`max_topic_chars` / `max_reply_digest_chars` 在 normalizer 边界裁剪，Reply 不单独入池。浏览器 bootstrap 由 `V2EXTaskQueue` 负责领取和 staged 完成，事件入口聚合用户自己的 Reply；runtime 只读取 active profile identity 的 Node Affinity，不能被刚观察到的另一账号替换。`v2ex_incremental_hours` 排队增量任务，首次完整 guided 快照种下收藏基线，后续完整 scope 由 `V2EXFavoriteSnapshotStore` 执行连续两次缺失确认并通过 durable effect 生成 retraction / restore。
 
+### InstagramDiscoveryProducer
+
+`InstagramDiscoveryProducer` 不直接持有上游 client。它把后端冻结的 `topic` / `creator` task 写入 `instagram_tasks`，通过 runtime stream kick 在线扩展，并等待 durable final；扩展离线、任务 timeout 或 non-terminal result 不会被当作空候选。Producer 另以 owner token/lease 标记自己创建的 discover task：重启后只接管过期 owner，迟到结果可重放，多个 daemon/CLI 不会同时续建同一 logical cycle；单轮还有绝对时限，超时的 task 留给下一轮恢复而不会长期占住全局 refresh lock。候选管线瞬时失败时 owner 不翻 consumed，下一轮依靠全局 dedupe 重试未入池 rows。
+
+Producer 只接收 `sources.instagram` normalizer 认可的 canonical media，按数字 media ID 全局去重并标记 `instagram-topic` / `instagram-creator` provenance，再交给共享 `DiscoveryCandidatePipeline`。日预算只对最终 retained candidates 扣费；关闭来源、pool 已满、cadence 未到或 browser task 不可执行时不创建 stranded claim。`topic` 只消费直接公共 URL seed，不注册 Instagram 为任意关键词内容搜索源；`creator` 只使用明确 username seed。
+
+错误分类保留 `login_required / challenge_required / rate_limited / schema_changed / timeout / partial`，并把已接收 items 随 partial 交付，但只在确有候选交付时记录生产性 cadence。Opaque cursor 不在后端猜测或合成，重复 cursor 与 `has_more` 缺 cursor 都不能推进 complete state。
+
 ### BilibiliExtensionSearchProducer
 
 ```python

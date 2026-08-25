@@ -109,6 +109,7 @@ const PLATFORM_LABELS = {
   linuxdo: "Linux.do",
   weibo: "微博",
   v2ex: "V2EX",
+  instagram: "Instagram",
 };
 
 function safeSyncText(value, maxLength = 240) {

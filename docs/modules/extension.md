@@ -492,6 +492,18 @@ CLI 入口：
 
 当前 Linux.do adapter/task-mode/executor/dispatcher/cookie-sync 已有专属单测，Chrome 与 Firefox bundle 均构建通过。2026-08-09 已用实际安装的 Chrome unpacked extension 和真实已登录账号完成热重载、67 条 bootstrap 事件、五种 discovery 任务、正式候选入池与无敏感字段回传 E2E；Firefox 尚未做同等真实账号安装版验收。完整后端 schema、CLI、实测数据与审核边界见 [Linux.do 来源文档](linuxdo.md)。
 
+### Instagram 任务桥
+
+Instagram 普通页面不启动通用 behavior collector。只有带稳定 task marker、由 dispatcher 创建并绑定的 tab 安装 executor；sender、tab ID 与 current task 任一不匹配时消息被拒绝。任务支持 `discover`（`topic` / `creator`）和 `bootstrap_events`（`instagram_liked` / `instagram_saved` / `instagram_following`）。
+
+dispatcher 采用 durable MV3 协议：service worker 启动先恢复 session state；确认扩展 capability 后先取得跨来源 mutex，再 GET `next-task`，避免已 claim row 因别的平台占用 runner 而滞留。task/tab/progress、idle/absolute deadline、accepted rows 与精确序列化的 pending result 保存在 `chrome.storage.session`；只有 `task-result` 返回 2xx 才清 outbox 和关闭自建 tab。alarm、runtime wake 和 worker restart 都复用同一 payload，不生成第二份 final。
+
+需要读取页面自身 GraphQL/fetch 响应时，isolated receiver 在 MAIN-world tap 之前于 `document_start` 安装。tap 只允许 Instagram 同源白名单 endpoint，立即裁剪为有界 media/user rows、opaque cursor 与 terminal evidence；不会 `postMessage` raw body、Cookie、Authorization、CSRF 或请求头。有界 replay buffer 覆盖“响应早于 executor listener”，超限数据直接丢弃并让任务 degraded。
+
+`cookie-sync.ts` 只把 `sessionid` 是否存在上报为 `logged_in` 布尔值；startup、cookie change、runtime sync request 和小时 alarm 均复用同一路径。个人任务必须再从同源 current-account 响应确认数字账号 ID。首个 challenge/429/HTML/login wall 立即停止相应 lane，保留已接受 rows；任务不自动登录/2FA、不输入 Instagram Search、不调用 like/save/follow/comment/message 写端点。
+
+Chrome 与 Firefox manifest 只增加 `*://*.instagram.com/*`，不增加 `<all_urls>`。build/asset verifier 必须覆盖 isolated content script、可选 MAIN-world tap、service worker entry 和两套输出目录。真实验收必须记录加载的是本 worktree 新构建；单纯 reload 旧安装不能当 provenance。
+
 ### `popup/`
 
 `popup/` 目录当前承载 side panel 页面，已具备：

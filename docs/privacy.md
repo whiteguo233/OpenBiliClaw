@@ -1,10 +1,12 @@
 # OpenBiliClaw 隐私权政策
 
 生效日期：2026-05-31
-更新日期：2026-08-09
+更新日期：2026-08-12
 
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问 Bilibili、小红书、抖音、YouTube、V2EX 等受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。
+
+Instagram 是默认关闭的实验来源：普通 Instagram 页面不做被动行为采集；只有用户启用公开发现或显式选择初始化时，插件才在隔离任务 tab 中执行有界同源只读任务。安全隔离不代表 Meta 授权，部署者仍需自行确认自动采集权限。
 
 本政策说明 OpenBiliClaw 浏览器插件与本地后端如何处理数据。插件不会把数据发送到 OpenBiliClaw 开发者运营的服务器；Chrome Web Store / AMO 发布包默认只声明本机后端权限，数据流向通常是用户本机运行的 OpenBiliClaw 后端。
 
@@ -20,6 +22,7 @@ OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器�
 | 用户活动 | 点击、搜索、滚动、停留时长、观看时长、喜欢 / 不喜欢、收藏、稍后再看、关注等行为 | 构建和更新兴趣画像，改进推荐排序，过滤不感兴趣内容 |
 | 网站内容 | 页面上可见的文字、封面图 URL、视频 / 笔记标题、作者、标签、描述、链接、统计信息等元数据 | 理解内容主题、生成候选池、去重和解释推荐理由 |
 | V2EX 只读任务字段 | Topic / Node 的公开 ID、标题、URL、作者、Node、时间、回复摘录，以及布尔登录状态 | 执行用户主动触发的四个 bootstrap scope、聚合讨论事件和生成 Node 偏好；不用于站内写操作 |
+| Instagram 只读任务字段 | 公开 media / user ID、canonical URL、caption、作者、封面、权威发布时间；初始化时的 liked / saved / following scope、数字 current-account ID 与 `sessionid` 存在布尔值 | 公开 topic / creator 发现和用户显式触发的近期点赞、收藏、关注初始化；不用于普通浏览追踪或站内写操作 |
 | 个人通讯 | 用户在 OpenBiliClaw 插件侧边栏聊天框中主动输入的消息；以及用户在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（提交成功后经网络层采集，仅送本机后端） | 与用户配置的本地后端聊天接口交互，帮助查看画像、推荐和设置；用户亲手写的评论 / 弹幕是最强的兴趣表达之一，用于更准确地构建兴趣画像 |
 | 本地配置与 UI 状态 | 后端地址、已关闭提示、插件设置、缓存的后端配置、任务状态 | 保持插件连接、本地偏好和界面状态 |
 | 用户主动创建的迁移包 | 文件配置中的模型 / 来源 API Key 与 token、平台 Cookie、本地 SQLite、画像 / 记忆、历史、图片缓存和白名单桌面偏好；不包含源机整段 API auth（密码 / hash、session secret、设备 key 等） | 仅在用户从本机桌面配置页明确选择导出时，生成供用户自行搬到另一台机器的 `.obcbackup` |
@@ -78,13 +81,15 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 |------|------|
 | `activeTab` | 在用户当前打开的受支持平台页面中识别内容并执行必要的页面动作 |
 | `alarms` | 定时重试 cookie 同步、后端连接检查和任务轮询 |
-| `cookies` | 读取用户已登录站点的必要 cookie，并按各来源最小化契约使用；Linux.do 只判断 `_t` 是否存在并上报布尔值，不同步任何 Cookie 值 |
+| `cookies` | 读取用户已登录站点的必要 cookie，并按各来源最小化契约使用；Linux.do `_t` 与 Instagram `sessionid` 都只判断是否存在并上报布尔值，不同步 Cookie value |
 | `notifications` | 显示来自本地后端的推荐、任务或状态通知 |
 | `scripting` | 在受支持平台页面注入内容脚本，采集页面内容和行为信号 |
 | `sidePanel` | 提供 OpenBiliClaw 侧边栏界面 |
 | `storage` | 保存插件设置、本地 UI 状态和后端连接信息 |
 | 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据 |
 | 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、V2EX 以及本机 OpenBiliClaw 后端之间读写必要数据 |
+
+`*://*.instagram.com/*` 主机权限只用于扩展自己创建、带任务标记的隔离 tab。公开任务读取有界 topic/hashtag 或明确 creator 页面；初始化任务先由同源 `accounts/current_user` 响应正面确认数字账号 ID，再以 GET 读取 liked、saved 和 following 分页。插件只判断 `sessionid` 是否存在并向用户配置的后端发送布尔 readiness；Cookie value、Authorization/CSRF、请求头、原始 JSON/HTML、挑战页正文和浏览器完整历史都不会上传。MAIN-world 桥只发送字段白名单归一化 rows、opaque cursor 与终态证据，并有数量/大小上限。任务不会输入 Instagram Search，不执行 like/save/follow/comment/message 等写请求，也不会自动处理 2FA、checkpoint 或 challenge。普通 Instagram 页面不启动 behavior collector。
 
 `http://127.0.0.1/*` 和 `http://localhost/*` 用于连接用户自己的本机 OpenBiliClaw 后端。内容采集脚本只声明在受支持内容平台上运行；发布包不声明 `http://*/*`、`https://*/*` 或 `<all_urls>` 这类所有网站权限。
 

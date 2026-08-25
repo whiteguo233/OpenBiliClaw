@@ -146,6 +146,45 @@ def test_weibo_bootstrap_registry_uses_durable_task_table() -> None:
     assert "weibo_tasks" in _TASK_TABLES
 
 
+def test_instagram_bootstrap_registry_enqueues_instagram_tasks_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.sources import source_bootstrap
+    from openbiliclaw.sources.task_result_protocol import _TASK_TABLES
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "openbiliclaw.sources.instagram_tasks.InstagramTaskQueue",
+        _queue_class(captured=captured),
+    )
+    config = SimpleNamespace(bootstrap_limit=300, request_interval_seconds=3)
+
+    result = source_bootstrap.enqueue_instagram_bootstrap(
+        _FakeDatabase(),
+        config=config,
+        force=True,
+        profile_update=True,
+    )
+
+    assert ("instagram", "instagram_tasks", "bootstrap_events") in (
+        source_bootstrap._BOOTSTRAP_TASK_TABLES
+    )
+    assert "instagram_tasks" in _TASK_TABLES
+    assert result.created is True
+    assert captured["task_type"] == "bootstrap_events"
+    assert captured["payload"] == {
+        "scopes": ["instagram_liked", "instagram_saved", "instagram_following"],
+        "max_items_per_scope": 300,
+        "max_pages_per_scope": 20,
+        "request_interval_ms": 3000,
+        "profile_update": True,
+        "smoke_only": False,
+        "profile_rebuild": False,
+        "purpose": "guided-init",
+        "expected_account_key": "",
+    }
+
+
 @pytest.mark.parametrize(
     ("helper_name", "queue_path", "task_type", "expected_payload"),
     _PLATFORMS,

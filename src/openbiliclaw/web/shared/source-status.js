@@ -64,7 +64,7 @@
   /** Platform slugs the contract covers, in settings-page display order. */
   const SOURCE_KEYS = Object.freeze([
     "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "zhihu", "reddit",
-    "bangumi", "linuxdo", "v2ex",
+    "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 
   const SOURCE_CAPABILITIES = Object.freeze({
@@ -79,6 +79,7 @@
     bangumi: Object.freeze({ guidedInit: true }),
     linuxdo: Object.freeze({ guidedInit: true }),
     v2ex: Object.freeze({ guidedInit: true }),
+    instagram: Object.freeze({ guidedInit: true }),
   });
   const INIT_SOURCE_KEYS = Object.freeze(
     SOURCE_KEYS.filter((key) => SOURCE_CAPABILITIES[key]?.guidedInit === true),
@@ -103,6 +104,7 @@
     bangumi: "Bangumi",
     linuxdo: "Linux.do",
     v2ex: "V2EX",
+    instagram: "Instagram",
   });
 
   function sourceLabel(key) {

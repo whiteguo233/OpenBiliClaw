@@ -183,6 +183,7 @@ class TestConfigDefaults:
             "linuxdo": 1,
             "weibo": 1,
             "v2ex": 1,
+            "instagram": 1,
         }
 
     def test_bilibili_source_enabled_defaults_true(self) -> None:
@@ -1366,6 +1367,7 @@ youtube = 3
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 
@@ -1860,6 +1862,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
     save_config(config, config_path)
@@ -1877,6 +1880,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "linuxdo": 1,
         "weibo": 1,
         "v2ex": 1,
+        "instagram": 1,
     }
 
 

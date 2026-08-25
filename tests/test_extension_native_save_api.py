@@ -441,7 +441,7 @@ def test_native_save_source_api_is_documented() -> None:
         "docs/modules/runtime.md": "extension_native_save_broker",
         "docs/modules/saved-sync.md": "global native ownership",
         "docs/modules/init.md": "legacy discovery/bootstrap queues",
-        "docs/modules/api-auth.md": "seven state-changing GET `/next-task`",
+        "docs/modules/api-auth.md": "ten state-changing GET `/next-task`",
         "docs/architecture.md": "/api/sources/{xhs,dy,yt,x,zhihu,reddit}",
         "docs/spec.md": "native_save multiplex",
         "README.md": "七源 source task multiplex",

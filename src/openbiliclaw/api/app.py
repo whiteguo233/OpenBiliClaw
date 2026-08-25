@@ -108,6 +108,9 @@ from openbiliclaw.api.models import (
     InitStatusOut,
     InsightFeedbackIn,
     InsightFeedbackResponse,
+    InstagramLoginStateIn,
+    InstagramLoginStateResponse,
+    InstagramSourceConfigOut,
     LinuxdoLoginStateIn,
     LinuxdoLoginStateResponse,
     LinuxdoSourceConfigOut,
@@ -225,6 +228,12 @@ from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
 )
+from openbiliclaw.sources.instagram_tasks import (
+    INSTAGRAM_LOGIN_FAILURE_CODES as _INSTAGRAM_LOGIN_FAILURE_CODES,
+)
+from openbiliclaw.sources.instagram_tasks import (
+    normalize_instagram_failure_code,
+)
 from openbiliclaw.sources.platforms import (
     CANONICAL_SOURCE_FAMILIES,
     normalize_source_platform,
@@ -274,6 +283,40 @@ _SQLITE_SIGNED_INTEGER_MAX = (1 << 63) - 1
 _CONTENT_HISTORY_CURSOR_VERSION = 1
 _CONTENT_HISTORY_CURSOR_MAX_LENGTH = 32768
 _CONTENT_HISTORY_CURSOR_ITEM_KEY_MAX_LENGTH = 2048
+
+
+def _instagram_login_failure_code(value: object) -> str:
+    """Return an exact login failure, allowing only a frozen scope prefix."""
+
+    normalized = normalize_instagram_failure_code(value)
+    code = normalized.rpartition(":")[2]
+    return code if code in _INSTAGRAM_LOGIN_FAILURE_CODES else ""
+
+
+def _instagram_result_login_failure(result: Mapping[str, object]) -> str:
+    """Find an exact fatal login code in canonical error/debug evidence."""
+
+    candidates: list[object] = [result.get("error")]
+    debug = result.get("debug")
+    if isinstance(debug, Mapping):
+        failures = debug.get("failures")
+        if isinstance(failures, list):
+            candidates.extend(failures)
+    for candidate in candidates:
+        if code := _instagram_login_failure_code(candidate):
+            return code
+    return ""
+
+
+def _instagram_permission_conflict_detail(error: PermissionError) -> str:
+    """Map queue claim races separately from account-binding violations."""
+
+    code = str(error).strip()
+    if code == "task_claim_conflict":
+        return "task_claim_conflict"
+    if code == "instagram_account_changed":
+        return "instagram_account_switch_not_supported"
+    return "task_result_conflict"
 
 
 class _MigrationArchiveStreamingResponse(StreamingResponse):
@@ -488,6 +531,7 @@ _SOURCE_SHARE_ORDER = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 _INIT_SOURCE_ORDER = (
     "bilibili",
@@ -501,6 +545,7 @@ _INIT_SOURCE_ORDER = (
     "linuxdo",
     "v2ex",
     "weibo",
+    "instagram",
 )
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
@@ -2644,6 +2689,8 @@ def create_app(
             "/api/sources/v2ex/credential",
             "/api/sources/weibo/login-state",
             "/api/sources/weibo/credential",
+            "/api/sources/instagram/login-state",
+            "/api/sources/instagram/credential",
         }
     )
 
@@ -3219,7 +3266,7 @@ def create_app(
         account_key: str = "",
     ) -> None:
         """Persist bootstrap keys that already entered the source event path."""
-        if not keys and not (source in {"linuxdo", "weibo"} and account_key):
+        if not keys and not (source in {"linuxdo", "weibo", "instagram"} and account_key):
             return
         from datetime import UTC, datetime
 
@@ -3244,6 +3291,8 @@ def create_app(
                 state["linuxdo_account_key"] = account_key
             if source == "weibo" and account_key:
                 state["weibo_account_key"] = account_key
+            if source == "instagram" and account_key:
+                state["instagram_account_key"] = account_key
             state["last_source_bootstrap_sync_at"] = datetime.now(UTC).isoformat()
             return state
 
@@ -5168,6 +5217,7 @@ def create_app(
                 include_bangumi="bangumi" in effective,
                 include_linuxdo="linuxdo" in effective,
                 include_weibo="weibo" in effective,
+                include_instagram="instagram" in effective,
                 bangumi_username=bangumi_username,
                 bangumi_token=bangumi_token,
                 v2ex_username=v2ex_username,
@@ -5189,7 +5239,15 @@ def create_app(
             linuxdo_degraded = linuxdo_status == "degraded"
             weibo_status = str(getattr(result, "weibo_status", "skipped") or "skipped")
             weibo_degraded = weibo_status in {"failed", "timeout", "login_required"}
-            partial_success = discovery_partial or dy_degraded or linuxdo_degraded or weibo_degraded
+            instagram_status = str(getattr(result, "instagram_status", "skipped") or "skipped")
+            instagram_degraded = instagram_status in {
+                "failed",
+                "timeout",
+                "login_required",
+                "challenge",
+                "rate_limited",
+                "partial",
+            }
             v2ex_status = str(getattr(result, "v2ex_status", "skipped") or "skipped")
             v2ex_partial = v2ex_status == "partial"
             partial_success = (
@@ -5198,6 +5256,7 @@ def create_app(
                 or linuxdo_degraded
                 or v2ex_partial
                 or weibo_degraded
+                or instagram_degraded
             )
             reason = getattr(result, "discovery_reason", None)
             detail = str(getattr(result, "discovery_detail", "") or "").strip()
@@ -5241,6 +5300,21 @@ def create_app(
                 detail = " ".join(part for part in (detail, weibo_detail) if part)
                 if not discovery_partial and not dy_degraded and not v2ex_partial:
                     reason = "weibo_degraded"
+            if instagram_degraded:
+                instagram_event_count = len(getattr(result, "instagram_events", []) or [])
+                instagram_detail = (
+                    f"Instagram 采集状态 instagram_status={instagram_status}："
+                    f"已保留 {instagram_event_count} 条已采事件；"
+                    "首版个人信号仅在初始化时读取，请确认浏览器登录态和扩展连接后重试。"
+                )
+                detail = " ".join(part for part in (detail, instagram_detail) if part)
+                if (
+                    not discovery_partial
+                    and not dy_degraded
+                    and not v2ex_partial
+                    and not weibo_degraded
+                ):
+                    reason = "instagram_degraded"
             await coord.complete(
                 run_id,
                 partial_success=partial_success,
@@ -5508,6 +5582,29 @@ def create_app(
                 effective_sources.discard("weibo")
                 warnings.append(
                     "微博个人信号未就绪：本次初始化跳过收藏、关注和互动记录；公开发现保持启用。"
+                )
+        instagram_capability_readiness = capability_readiness
+        if "instagram" in effective_sources and callable(instagram_capability_readiness):
+            instagram_profile_readiness = str(
+                instagram_capability_readiness("instagram", "profile") or "unverified"
+            )
+            if instagram_profile_readiness != "ready":
+                if effective_sources == {"instagram"}:
+                    return JSONResponse(
+                        {
+                            "error": "no_profile_signal_sources",
+                            "detail": (
+                                "Instagram 公开 topic / creator 发现无需登录，但初始化"
+                                "点赞、收藏和关注记录需要当前浏览器已登录 Instagram 并连接扩展。"
+                            ),
+                            "capability": "profile",
+                            "readiness": instagram_profile_readiness,
+                        },
+                        status_code=409,
+                    )
+                effective_sources.discard("instagram")
+                warnings.append(
+                    "Instagram 个人信号未就绪：本次初始化跳过点赞、收藏和关注；公开发现保持启用。"
                 )
         configured_bangumi_username = str(
             getattr(
@@ -12770,6 +12867,27 @@ def create_app(
             updated_at=result.updated_at,
         )
 
+    @app.post(
+        "/api/sources/instagram/login-state",
+        response_model=InstagramLoginStateResponse,
+        deprecated=True,
+    )
+    async def update_instagram_login_state(
+        payload: InstagramLoginStateIn,
+    ) -> InstagramLoginStateResponse:
+        """Persist sessionid presence only; an Instagram Cookie is never accepted."""
+
+        if not hasattr(ctx.database, "set_instagram_login_state"):
+            raise HTTPException(status_code=503, detail="database not configured")
+        result = await _write_source_credential(
+            "instagram", kind="login_state", value=payload.logged_in, source="extension"
+        )
+        return InstagramLoginStateResponse(
+            ok=True,
+            logged_in=payload.logged_in,
+            updated_at=result.updated_at,
+        )
+
     @app.post("/api/sources/v2ex/identity")
     async def ingest_v2ex_identity(payload: dict[str, Any]) -> dict[str, Any]:
         """Persist an observed username or an explicit user acceptance."""
@@ -14451,6 +14569,13 @@ def create_app(
                 "微博公开发现无需登录；初始化本人收藏、关注和互动时，插件只同步布尔登录状态，"
                 "实际只读请求在微博页面内执行，不读取或保存用户 Cookie。",
             ),
+            instagram=item(
+                "instagram",
+                "浏览器登录态",
+                "",
+                "Instagram 公开发现无需登录；个人点赞、收藏和关注由浏览器插件同源读取，"
+                "后端只保存 sessionid 是否存在的布尔状态。",
+            ),
         )
 
     # ── Douyin task queue endpoints (extension dispatcher) ──────────
@@ -14659,6 +14784,13 @@ def create_app(
         return await _kick_source_task("x")
 
     # ── YouTube bootstrap endpoints ────────────────────────────────
+    from openbiliclaw.sources.instagram_tasks import (
+        INSTAGRAM_HEARTBEAT_EVIDENCE_AT_FIELD,
+        InstagramTaskQueue,
+        instagram_account_key,
+        instagram_bootstrap_item_key,
+        instagram_bootstrap_items_to_events,
+    )
     from openbiliclaw.sources.linuxdo_tasks import (
         LinuxdoTaskQueue,
         LinuxdoTaskResultValidationError,
@@ -14700,6 +14832,7 @@ def create_app(
     _linuxdo_task_queue: LinuxdoTaskQueue | None = None
     _v2ex_task_queue: V2EXTaskQueue | None = None
     _weibo_task_queue: WeiboTaskQueue | None = None
+    _instagram_task_queue: InstagramTaskQueue | None = None
     _v2ex_snapshot_store: V2EXFavoriteSnapshotStore | None = None
     db_conn = getattr(ctx.database, "conn", None)
     if hasattr(db_conn, "executescript"):
@@ -14708,6 +14841,7 @@ def create_app(
         _linuxdo_task_queue = LinuxdoTaskQueue(ctx.database)
         _v2ex_task_queue = V2EXTaskQueue(ctx.database)
         _weibo_task_queue = WeiboTaskQueue(ctx.database)
+        _instagram_task_queue = InstagramTaskQueue(ctx.database)
         _v2ex_snapshot_store = V2EXFavoriteSnapshotStore(ctx.database)
 
     @app.get("/api/sources/reddit/next-task")
@@ -15470,6 +15604,252 @@ def create_app(
     async def weibo_task_kick() -> dict[str, Any]:
         """Broadcast ``weibo_task_available`` over runtime-stream."""
         return await _kick_source_task("weibo")
+
+    @app.get("/api/sources/instagram/next-task")
+    def instagram_next_task(response: Any = None) -> Any:
+        """Return the oldest Instagram browser task, or 204 when none is ready."""
+
+        from starlette.responses import Response
+
+        queue = _instagram_task_queue
+        if queue is None:
+            return Response(status_code=204)
+        runtime_config = getattr(ctx, "config", None)
+        if runtime_config is None:
+            from openbiliclaw.config import load_config
+
+            runtime_config = load_config()
+        source_cfg = getattr(getattr(runtime_config, "sources", None), "instagram", None)
+        # ``enabled`` gates background discovery production, not an explicit
+        # fetch/init task the user already admitted.  When disabled, allow only
+        # personal bootstrap work so a stale discover backlog cannot run.
+        allowed_task_types = (
+            None if bool(getattr(source_cfg, "enabled", False)) else ("bootstrap_events",)
+        )
+        task = queue.next_pending(
+            only_ids=_init_owned_ids_filter(),
+            task_types=allowed_task_types,
+        )
+        if task is None:
+            return Response(status_code=204)
+        try:
+            task_payload = json.loads(str(task.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            task_payload = {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            "claim_token": task.get("claim_token", ""),
+            **(task_payload if isinstance(task_payload, dict) else {}),
+        }
+
+    @app.post("/api/sources/instagram/task-result")
+    async def instagram_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Freeze and ingest one credential-free Instagram browser result."""
+
+        from openbiliclaw.sources.task_result_protocol import (
+            parse_task_result,
+            staged_terminal_status,
+        )
+
+        task_id = str(payload.get("task_id", "") or "").strip()
+        claim_token = str(payload.get("claim_token", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip().lower()
+        if not task_id:
+            raise HTTPException(status_code=422, detail="task_id is required")
+        if status not in {"ok", "empty", "partial", "failed"}:
+            raise HTTPException(status_code=422, detail="invalid_result_status")
+        raw_items = payload.get("items", [])
+        if not isinstance(raw_items, list) or any(not isinstance(item, dict) for item in raw_items):
+            raise HTTPException(status_code=422, detail="invalid_task_items")
+        scope_counts = payload.get("scope_counts")
+        if scope_counts is not None and not isinstance(scope_counts, dict):
+            raise HTTPException(status_code=422, detail="invalid_scope_counts")
+        scope_complete = payload.get("scope_complete")
+        if scope_complete is not None and not isinstance(scope_complete, dict):
+            raise HTTPException(status_code=422, detail="invalid_scope_complete")
+        debug = payload.get("debug")
+        if debug is not None and not isinstance(debug, dict):
+            raise HTTPException(status_code=422, detail="invalid_task_debug")
+        queue = _instagram_task_queue
+        if queue is None:
+            raise HTTPException(status_code=409, detail="task_result_conflict")
+        task = _require_legacy_task(queue, task_id)
+        if str(task.get("status", "") or "") in {"completed", "failed"}:
+            return {"ok": True, "ignored": True}
+        if not queue.claim_token_matches(task_id, claim_token):
+            raise HTTPException(status_code=409, detail="task_claim_conflict")
+
+        task_type = str(task.get("type", "") or "").strip()
+        try:
+            task_payload = json.loads(str(task.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            task_payload = {}
+        if not isinstance(task_payload, dict):
+            task_payload = {}
+        canonical = parse_task_result(task.get("result_json"))
+        staged = staged_terminal_status(canonical)
+        account_id = payload.get("account_id")
+        account_key = instagram_account_key(account_id)
+        profile_update = bool(task_payload.get("profile_update"))
+        smoke_only = bool(task_payload.get("smoke_only"))
+
+        def reject_account_mismatch() -> None:
+            try:
+                queue.fail_account_mismatch(task_id, claim_token=claim_token)
+            except PermissionError as exc:
+                raise HTTPException(status_code=409, detail="task_claim_conflict") from exc
+            raise HTTPException(
+                status_code=409,
+                detail="instagram_account_switch_not_supported",
+            )
+
+        def reject_missing_identity() -> None:
+            try:
+                queue.fail_identity_missing(task_id, claim_token=claim_token)
+            except PermissionError as exc:
+                raise HTTPException(status_code=409, detail="task_claim_conflict") from exc
+            raise HTTPException(status_code=409, detail="instagram_identity_required")
+
+        if not staged:
+            if task_type == "bootstrap_events" and status in {"ok", "empty", "partial"}:
+                if not account_key:
+                    reject_missing_identity()
+                expected_account_key = str(
+                    task_payload.get("expected_account_key", "") or ""
+                ).strip()
+                bound = str(
+                    _load_source_bootstrap_state().get("instagram_account_key", "") or ""
+                ).strip()
+                if (expected_account_key and expected_account_key != account_key) or (
+                    bound and bound != account_key
+                ):
+                    reject_account_mismatch()
+            error_text = str(payload.get("error", "") or "").strip()
+            if status == "failed" and not error_text:
+                raise HTTPException(status_code=422, detail="task_error_required")
+            try:
+                canonical, _staged_by_current_callback = queue.stage_final_result_with_freshness(
+                    task_id,
+                    terminal_status=status,
+                    claim_token=claim_token,
+                    items=list(raw_items),
+                    scope_counts=scope_counts,
+                    scope_complete=scope_complete,
+                    account_id=account_id,
+                    error=error_text,
+                    debug=debug,
+                )
+            except PermissionError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=_instagram_permission_conflict_detail(exc),
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        canonical_terminal = staged_terminal_status(canonical)
+        if canonical_terminal not in {"ok", "empty", "partial", "failed"}:
+            raise HTTPException(status_code=409, detail="task_result_not_staged")
+
+        canonical_items = [item for item in canonical.get("items", []) if isinstance(item, dict)]
+        canonical_account_key = str(canonical.get("account_key", "") or "").strip()
+        if task_type == "bootstrap_events" and canonical_terminal != "failed":
+            if not canonical_account_key:
+                reject_missing_identity()
+            expected_account_key = str(task_payload.get("expected_account_key", "") or "").strip()
+            bound = str(
+                _load_source_bootstrap_state().get("instagram_account_key", "") or ""
+            ).strip()
+            if (expected_account_key and expected_account_key != canonical_account_key) or (
+                bound and bound != canonical_account_key
+            ):
+                reject_account_mismatch()
+        init_busy = _init_active_now()
+        skip_profile = init_busy and not _init_owns_task(task_id)
+        if (
+            task_type == "bootstrap_events"
+            and canonical_terminal in {"ok", "empty", "partial"}
+            and profile_update
+            and not smoke_only
+            and not skip_profile
+        ):
+            events_with_keys: list[tuple[dict[str, Any], str]] = []
+            if canonical_items:
+                fresh_items, item_keys_by_index = _filter_new_source_bootstrap_items(
+                    "instagram",
+                    canonical_items,
+                    lambda item: instagram_bootstrap_item_key(
+                        item,
+                        account_key=canonical_account_key,
+                    ),
+                )
+                for index, item in enumerate(fresh_items):
+                    events = instagram_bootstrap_items_to_events(
+                        [item],
+                        account_key=canonical_account_key,
+                    )
+                    events_with_keys.extend(
+                        (event, item_keys_by_index.get(index, "")) for event in events
+                    )
+            accepted_keys = await _accept_source_profile_events(
+                source="instagram",
+                task_id=task_id,
+                events_with_keys=events_with_keys,
+                generic_owner=not init_busy,
+            )
+            _mark_source_bootstrap_keys(
+                "instagram",
+                accepted_keys,
+                account_key=canonical_account_key,
+            )
+
+        raw_canonical_debug = canonical.get("debug")
+        canonical_debug: dict[str, Any] = (
+            dict(raw_canonical_debug) if isinstance(raw_canonical_debug, dict) else {}
+        )
+        login_failure = (
+            _instagram_result_login_failure(canonical) if task_type == "bootstrap_events" else ""
+        )
+        heartbeat_evidence_at = str(
+            canonical.get(INSTAGRAM_HEARTBEAT_EVIDENCE_AT_FIELD, "") or ""
+        ).strip()
+        has_positive_evidence = (
+            task_type == "bootstrap_events"
+            and canonical_terminal in {"ok", "empty"}
+            and canonical_account_key
+            and canonical_debug.get("response_observed") is True
+            and (
+                canonical_debug.get("identity_resolved") is True
+                or canonical_debug.get("identity_verified") is True
+            )
+        )
+        project_login_state = getattr(
+            ctx.database,
+            "project_instagram_login_state_if_not_newer",
+            None,
+        )
+        if callable(project_login_state) and heartbeat_evidence_at:
+            if login_failure:
+                project_login_state(False, heartbeat_evidence_at)
+            elif has_positive_evidence:
+                project_login_state(True, heartbeat_evidence_at)
+        try:
+            queue.complete_staged_result(task_id, claim_token=claim_token)
+        except PermissionError as exc:
+            detail = (
+                "task_claim_conflict"
+                if str(exc).strip() == "task_claim_conflict"
+                else "task_result_conflict"
+            )
+            raise HTTPException(status_code=409, detail=detail) from exc
+        return {"ok": True}
+
+    @app.post("/api/sources/instagram/kick")
+    async def instagram_task_kick() -> dict[str, Any]:
+        """Broadcast ``instagram_task_available`` over runtime-stream."""
+
+        return await _kick_source_task("instagram")
 
     @app.get("/api/sources/linuxdo/next-task")
     def linuxdo_next_task(response: Any = None) -> Any:
@@ -16590,6 +16970,15 @@ def create_app(
                     daily_creator_budget=cfg.sources.weibo.daily_creator_budget,
                     request_interval_seconds=cfg.sources.weibo.request_interval_seconds,
                     min_interval_minutes=cfg.sources.weibo.min_interval_minutes,
+                ),
+                instagram=InstagramSourceConfigOut(
+                    enabled=cfg.sources.instagram.enabled,
+                    source_modes=list(cfg.sources.instagram.source_modes),
+                    daily_topic_budget=cfg.sources.instagram.daily_topic_budget,
+                    daily_creator_budget=cfg.sources.instagram.daily_creator_budget,
+                    request_interval_seconds=cfg.sources.instagram.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.instagram.min_interval_minutes,
+                    bootstrap_limit=cfg.sources.instagram.bootstrap_limit,
                 ),
             ),
             scheduler=SchedulerConfigOut(
@@ -18837,6 +19226,80 @@ def create_app(
                         if raw_value < 0:
                             raise HTTPException(status_code=400, detail=f"微博 {key} 不能为负数")
                         setattr(cfg.sources.weibo, key, raw_value)
+
+                instagram_data = sources_data.get("instagram")
+                if isinstance(instagram_data, dict):
+                    allowed_instagram_fields = {
+                        "enabled",
+                        "source_modes",
+                        "daily_topic_budget",
+                        "daily_creator_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                        "bootstrap_limit",
+                    }
+                    unknown_instagram_fields = sorted(
+                        set(instagram_data) - allowed_instagram_fields
+                    )
+                    if unknown_instagram_fields:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Instagram 包含不支持的配置字段: "
+                                + ", ".join(unknown_instagram_fields)
+                            ),
+                        )
+                    instagram_cfg = cfg.sources.instagram
+                    if "enabled" in instagram_data:
+                        instagram_cfg.enabled = _as_bool(instagram_data["enabled"])
+                    if "source_modes" in instagram_data:
+                        raw_modes = instagram_data["source_modes"]
+                        if not isinstance(raw_modes, list):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Instagram source_modes 必须是数组",
+                            )
+                        selected_modes = tuple(
+                            dict.fromkeys(
+                                str(mode).strip().lower() for mode in raw_modes if str(mode).strip()
+                            )
+                        )
+                        if not selected_modes or any(
+                            mode not in {"topic", "creator"} for mode in selected_modes
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Instagram source_modes 包含不支持的值",
+                            )
+                        if selected_modes == ("creator",):
+                            selected_modes = ("topic", "creator")
+                        instagram_cfg.source_modes = selected_modes
+                    instagram_integer_limits = {
+                        "daily_topic_budget": (0, None),
+                        "daily_creator_budget": (0, None),
+                        "request_interval_seconds": (1, 30),
+                        "min_interval_minutes": (0, None),
+                        "bootstrap_limit": (1, 300),
+                    }
+                    for key, (minimum, maximum) in instagram_integer_limits.items():
+                        if key not in instagram_data:
+                            continue
+                        raw_value = instagram_data[key]
+                        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Instagram {key} 必须是整数",
+                            )
+                        if raw_value < minimum or (maximum is not None and raw_value > maximum):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"Instagram {key} 必须在 {minimum}"
+                                    + (f"..{maximum}" if maximum is not None else " 以上")
+                                    + " 范围内"
+                                ),
+                            )
+                        setattr(instagram_cfg, key, raw_value)
 
         # Apply scheduler updates
         if "scheduler" in update:

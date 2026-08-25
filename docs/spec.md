@@ -7,7 +7,7 @@
 ## 1. 项目定位
 
 OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi 和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
-OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、微博和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
+OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、微博、Instagram 和通用 Web 等来源帮你发现那些你会喜欢但自己找不到的内容。
 
 **核心理念**：
 - 不是冷冰冰的推荐算法，而是一个**有温度的 AI 朋友**
@@ -38,6 +38,7 @@ OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 A
 - 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do 普通页面的交互行为；Reddit 初始化 saved/upvoted/subscribed 信号复用插件登录态任务桥，日常 discovery 默认使用 rdt-cli 登录态命令后端，不可用时 fallback 到插件任务。Linux.do 的隔离任务 tab 只运行同源只读 executor、不会启动普通 collector：公开 discovery 支持 search/hot/feed/creator/related，个人 bootstrap 支持 bookmarks/likes/read_history。其余行为链覆盖点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
 - 通过统一 `PlatformAdapter` 捕捉 B 站 / 小红书 / 抖音 / YouTube / X / 知乎的交互行为；Reddit 初始化 saved/upvoted/subscribed 信号复用插件登录态任务桥，日常 discovery 默认使用 rdt-cli 登录态命令后端，不可用时 fallback 到插件任务：点击、滚动、停留、评论、点赞、收藏、分享、关注、搜索，以及 B 站特有投币；click 在 capture 阶段记录，scroll 同时覆盖页面和内部 feed / modal 滚动容器
 - 微博公开 discovery 由后端匿名 visitor 完成；插件只在显式 guided init 时申请微博 host permission，使用隔离同源任务页只读导入收藏、关注和 mentions。后端不接收 Cookie，不做普通行为采集、站内写回或 native-save；个人 bootstrap 当前为 init-only
+- Instagram 普通页面不启动被动行为采集。公开 topic/creator discovery 与显式 guided init 的 liked/saved/following 导入都在隔离任务 tab 中执行；`sessionid` 只上报存在性，current-account 数字 ID 才是账号分区证据。登录墙、challenge、HTML、429 与 partial 不得伪装成空结果；不执行 Instagram Search 或任何站内写入。
 - 记录行为发生时的**完整上下文**：对应的 DOM 页面快照、当前浏览路径、时间戳、平台内容 ID
 - 捕捉用户的**微行为**：鼠标悬停、视频进度条跳转、视频暂停 / 继续、页面导航等
 - 采集用户亲手写的**评论 / 弹幕正文**（最强的兴趣表达之一）：X 回复正文与 B 站评论 / 弹幕正文均经 MAIN-world 网络 tap 在**提交成功后**采集（业务码校验），双端截断 200 字符 + 剥离控制字符后进入 `metadata.comment_text`（弹幕 `comment_kind="danmaku"`）
@@ -410,7 +411,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │ +停留满意度   │  │ +文字卡渲染   │  │ 待聊列表/卡片   │    │
 │  └──────────────┘  └──────────────┘  └─────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ bili/xhs/dy/yt/zhihu/reddit/linuxdo/v2ex/weibo 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
+│  │ bili/xhs/dy/yt/zhihu/reddit/linuxdo/v2ex/weibo/instagram 任务调度 + 源开关/比例配置（后台 tab / 初始化导入 / 配比建议）│ │
 │  │ 微博任务仅在显式 guided init 运行：同源只读导入收藏、关注、mentions；不上传 Cookie、不采集普通行为 │ │
 │  │ XHS 自动任务：source/scheduler 领取门 → SQLite 节流/风控冷却 → 关闭/限流时不再开任务 tab │ │
 │  │ XHS search：inactive tab → MAIN 搜索响应归一化 → isolated replay / DOM 兜底          │ │
@@ -566,7 +567,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │              │  │ + profile/search/feed/yt/zhihu)│ │ + LLM 抽取)│    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ sources.platforms：十一平台 alias / strategy / URL host      │ │
+│  │ sources.platforms：十二平台 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -603,6 +604,10 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │   有界 Topic 详情 + PAT Reply digest -> v2ex:<topic_id> 文字卡；Reply 不单独入池 │ │
 │  │   四只读 scope + route/耗尽证明 -> staged ingress -> identity gate -> 账号分区 Node affinity │ │
 │  │   首个 complete 收藏 scope 种基线；后续连续两次缺失 -> durable retract/restore │ │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ InstagramDiscoveryProducer: queue-backed topic/creator task → canonical media → pending eval │ │
+│  │   liked/saved/following → like/favorite/follow；sessionid 只作 bool，账号由 current-user 正证 │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Cookie/登录态、runtime-stream presence、任务持久化/claim、seen-key 去重 │ │

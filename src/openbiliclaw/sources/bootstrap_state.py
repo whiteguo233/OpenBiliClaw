@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Per-source cap for the durable bootstrap dedupe projection.  Periodic
 # account pulls only need the newest keys because each source bootstrap scope
 # is itself bounded to recent account rows.
 SOURCE_SEEN_KEY_CAP = 5000
+_OPAQUE_ACCOUNT_KEY_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 SOURCE_BOOTSTRAP_STATE_KEYS: dict[str, str] = {
     "xhs": "xhs_seen_note_keys",
@@ -23,6 +25,8 @@ SOURCE_BOOTSTRAP_STATE_KEYS: dict[str, str] = {
     "linuxdo": "linuxdo_seen_item_keys",
     "v2ex": "v2ex_seen_item_keys",
     "weibo": "weibo_seen_item_keys",
+    "instagram": "instagram_seen_item_keys",
+    "ig": "instagram_seen_item_keys",
 }
 
 
@@ -39,6 +43,8 @@ def default_source_bootstrap_state() -> dict[str, object]:
         "v2ex_seen_item_keys": [],
         "weibo_seen_item_keys": [],
         "weibo_account_key": "",
+        "instagram_seen_item_keys": [],
+        "instagram_account_key": "",
         "last_source_bootstrap_sync_at": "",
         "source_incremental": {
             "cursor": "",
@@ -152,6 +158,12 @@ def normalize_source_bootstrap_state(loaded: Any) -> dict[str, object]:
     default = default_source_bootstrap_state()
     if not isinstance(loaded, dict):
         return default
+    raw_instagram_account_key = loaded.get("instagram_account_key", "")
+    instagram_account_key = (
+        raw_instagram_account_key.strip() if isinstance(raw_instagram_account_key, str) else ""
+    )
+    if not _OPAQUE_ACCOUNT_KEY_RE.fullmatch(instagram_account_key):
+        instagram_account_key = ""
     return {
         "xhs_seen_note_keys": merge_seen_keys(loaded.get("xhs_seen_note_keys", []), []),
         "dy_seen_video_keys": merge_seen_keys(loaded.get("dy_seen_video_keys", []), []),
@@ -171,6 +183,8 @@ def normalize_source_bootstrap_state(loaded: Any) -> dict[str, object]:
             if isinstance(loaded.get("weibo_account_key", ""), str)
             else ""
         ),
+        "instagram_seen_item_keys": merge_seen_keys(loaded.get("instagram_seen_item_keys", []), []),
+        "instagram_account_key": instagram_account_key,
         "last_source_bootstrap_sync_at": (
             loaded.get("last_source_bootstrap_sync_at", "").strip()
             if isinstance(loaded.get("last_source_bootstrap_sync_at", ""), str)

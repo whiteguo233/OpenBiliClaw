@@ -74,6 +74,14 @@ const entrypoints = [
     outfile: resolve(root, `${outDir}/content/v2ex.js`),
   },
   {
+    entry: resolve(root, "src/content/instagram.ts"),
+    outfile: resolve(root, `${outDir}/content/instagram.js`),
+  },
+  {
+    entry: resolve(root, "src/main/instagram-response-tap.ts"),
+    outfile: resolve(root, `${outDir}/main/instagram-response-tap.js`),
+  },
+  {
     entry: resolve(root, "src/content/x.ts"),
     outfile: resolve(root, `${outDir}/content/x.js`),
   },

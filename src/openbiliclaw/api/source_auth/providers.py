@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.api.source_auth.contract import (
+    CapabilityAuthMode,
     CapabilityReadiness,
     SourceAuthContract,
     SourceCapabilityAuth,
@@ -78,7 +79,14 @@ if TYPE_CHECKING:
 _XHS_LOGIN_FRESH_HOURS = 72
 _ZHIHU_LOGIN_FRESH_HOURS = 72
 _WEIBO_LOGIN_FRESH_HOURS = 72
-_WEIBO_CAPABILITY_AUTH_MODES = {
+_INSTAGRAM_LOGIN_FRESH_HOURS = 72
+_WEIBO_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
+    "discover": "anonymous",
+    "profile": "login-required",
+    "bootstrap": "login-required",
+    "cookie-sync": "optional-credential",
+}
+_INSTAGRAM_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
     "discover": "anonymous",
     "profile": "login-required",
     "bootstrap": "login-required",
@@ -712,25 +720,25 @@ def _weibo_capabilities(
 
     return {
         "discover": SourceCapabilityAuth(
-            mode="anonymous",
+            mode=_WEIBO_CAPABILITY_AUTH_MODES["discover"],
             required=True,
             readiness="ready",
             detail="搜索、热搜和公开作者时间线无需登录。",
         ),
         "profile": SourceCapabilityAuth(
-            mode="login-required",
+            mode=_WEIBO_CAPABILITY_AUTH_MODES["profile"],
             required=True,
             readiness=personal_readiness,
             detail="初始化本人收藏、关注和互动需要微博浏览器登录态。",
         ),
         "bootstrap": SourceCapabilityAuth(
-            mode="login-required",
+            mode=_WEIBO_CAPABILITY_AUTH_MODES["bootstrap"],
             required=True,
             readiness=personal_readiness,
             detail="个人事件只在微博同源浏览器任务中读取，后端不接收 Cookie。",
         ),
         "cookie-sync": SourceCapabilityAuth(
-            mode="optional-credential",
+            mode=_WEIBO_CAPABILITY_AUTH_MODES["cookie-sync"],
             required=False,
             readiness=personal_readiness,
             detail="插件仅上报布尔登录状态；游客 SUB 不算登录凭据。",
@@ -742,6 +750,105 @@ def weibo_capability_readiness(ctx: SourceAuthContext) -> dict[str, SourceCapabi
     """Public readiness helper used by guided init and source status."""
 
     return auth_weibo(ctx).capabilities
+
+
+# ── Instagram ───────────────────────────────────────────────────────
+
+
+def _instagram_capabilities(
+    personal_readiness: CapabilityReadiness,
+) -> dict[str, SourceCapabilityAuth]:
+    """Return the anonymous-discover/private-account capability matrix."""
+
+    personal_detail = "个人点赞、收藏和关注只在 Instagram 同源浏览器任务中读取；后端不接收 Cookie。"
+    return {
+        "discover": SourceCapabilityAuth(
+            mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["discover"],
+            required=True,
+            readiness="ready",
+            detail="公开 topic 与 creator 内容发现无需登录。",
+        ),
+        "profile": SourceCapabilityAuth(
+            mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["profile"],
+            required=True,
+            readiness=personal_readiness,
+            detail=personal_detail,
+        ),
+        "bootstrap": SourceCapabilityAuth(
+            mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["bootstrap"],
+            required=True,
+            readiness=personal_readiness,
+            detail=personal_detail,
+        ),
+        "cookie-sync": SourceCapabilityAuth(
+            mode=_INSTAGRAM_CAPABILITY_AUTH_MODES["cookie-sync"],
+            required=False,
+            readiness=personal_readiness,
+            detail="插件仅上报 sessionid 是否存在；Cookie 值始终留在浏览器内。",
+        ),
+    }
+
+
+def auth_instagram(ctx: SourceAuthContext) -> SourceAuthContract:
+    """Instagram: anonymous discovery plus browser-owned personal bootstrap."""
+
+    logged_in, when, fresh = _login_heartbeat(
+        ctx.database,
+        getter="get_instagram_login_state",
+        fresh_hours=_INSTAGRAM_LOGIN_FRESH_HOURS,
+    )
+    readiness: CapabilityReadiness = (
+        "ready" if logged_in and fresh else "stale" if logged_in and when else "login_required"
+    )
+    base: dict[str, Any] = {
+        "auth_required": False,
+        # The fixed verify action may request the first extension heartbeat,
+        # but before any row exists the source-wide legacy contract has no
+        # credential verdict to attribute to a method (invariant I3).
+        "verify_method": "browser_heartbeat" if when else "none",
+        "verify_ttl_seconds": _HEARTBEAT_TTL_SECONDS if when else None,
+        # Verification asks the extension for its first heartbeat as well as
+        # refreshing an old one, so absence is not a reason to disable it.
+        "can_verify_now": True,
+        "capabilities": _instagram_capabilities(readiness),
+        "legacy_state": "no_auth",
+        "legacy_logged_in": True,
+    }
+    if logged_in and fresh:
+        return SourceAuthContract(
+            **base,
+            credential="present",
+            credential_origin="extension",
+            verification="verified",
+            verified_at=str(when),
+            detail="Instagram 公开发现可匿名；浏览器 sessionid 心跳正常，可导入个人事件。",
+        )
+    if when:
+        return SourceAuthContract(
+            **base,
+            credential="present" if logged_in else "none",
+            credential_origin="extension" if logged_in else "none",
+            verification="stale" if logged_in else "failed",
+            verified_at=str(when),
+            detail=(
+                "Instagram 公开发现可匿名；浏览器登录心跳已过期，请打开 Instagram 刷新。"
+                if logged_in
+                else "Instagram 公开发现可匿名；浏览器当前未检测到 sessionid。"
+            ),
+        )
+    return SourceAuthContract(
+        **base,
+        credential="none",
+        credential_origin="none",
+        verification="unverified",
+        detail="Instagram 公开发现可匿名；初始化个人点赞、收藏和关注需要浏览器登录。",
+    )
+
+
+def instagram_capability_readiness(ctx: SourceAuthContext) -> dict[str, SourceCapabilityAuth]:
+    """Public readiness helper shared by guided init and source status."""
+
+    return auth_instagram(ctx).capabilities
 
 
 # ── X (Twitter) ──────────────────────────────────────────────────────
@@ -1935,6 +2042,7 @@ SOURCE_AUTH_PROVIDERS: dict[str, Callable[[SourceAuthContext], SourceAuthContrac
     "linuxdo": auth_linuxdo,
     "v2ex": auth_v2ex,
     "weibo": auth_weibo,
+    "instagram": auth_instagram,
 }
 
 

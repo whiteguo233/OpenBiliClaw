@@ -179,6 +179,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "linuxdo": 1,
     "v2ex": 1,
     "weibo": 1,
+    "instagram": 1,
 }
 
 _SOURCE_INCREMENTAL_ENV_FIELDS = {
@@ -1318,6 +1319,19 @@ class WeiboSourceConfig:
     min_interval_minutes: int = 10
 
 
+@dataclass
+class InstagramSourceConfig:
+    """Instagram browser-task discovery and personal-signal configuration."""
+
+    enabled: bool = False
+    source_modes: tuple[str, ...] = ("topic", "creator")
+    daily_topic_budget: int = 60
+    daily_creator_budget: int = 30
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 10
+    bootstrap_limit: int = 300
+
+
 V2EX_ALLOWED_SOURCE_MODES = frozenset({"search", "node", "tab", "hot", "latest"})
 V2EX_CONFIG_INTEGER_LIMITS: dict[str, tuple[int, int]] = {
     "daily_search_budget": (0, 100_000),
@@ -1394,6 +1408,7 @@ class SourcesConfig:
     linuxdo: LinuxdoSourceConfig = field(default_factory=LinuxdoSourceConfig)
     v2ex: V2EXSourceConfig = field(default_factory=V2EXSourceConfig)
     weibo: WeiboSourceConfig = field(default_factory=WeiboSourceConfig)
+    instagram: InstagramSourceConfig = field(default_factory=InstagramSourceConfig)
 
 
 @dataclass
@@ -1725,9 +1740,10 @@ def _filter_dataclass_kwargs(
 def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
     """Warn once per process for per-source budgets that look like misused toggles.
 
-    ``daily_*_budget`` is a per-UTC-day task-count cap, not an on/off switch; ``0``
-    means unlimited. A value of 1–4 almost always means the user typed ``1`` to
-    "enable" a source and unknowingly throttled it to a single task per day.
+    ``daily_*_budget`` is a per-UTC-day source-work cap, not an on/off switch;
+    ``0`` means unlimited. Individual producers define whether work means
+    retained candidates or upstream requests. A value of 1–4 almost always
+    means the user typed ``1`` to "enable" a source and unknowingly throttled it.
     """
     source_configs: list[tuple[str, Any]] = [
         ("xiaohongshu", sources.xiaohongshu),
@@ -1739,6 +1755,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("bangumi", sources.bangumi),
         ("linuxdo", sources.linuxdo),
         ("weibo", sources.weibo),
+        ("instagram", sources.instagram),
     ]
     for source_name, source_config in source_configs:
         for source_field in fields(source_config):
@@ -2093,6 +2110,7 @@ def _build_config(
     linuxdo_raw = sources_raw.get("linuxdo", {})
     v2ex_raw = sources_raw.get("v2ex", {})
     weibo_raw = sources_raw.get("weibo", {})
+    instagram_raw = sources_raw.get("instagram", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -2307,6 +2325,40 @@ def _build_config(
             ),
             min_interval_minutes=_normalize_weibo_non_negative_int(
                 weibo_raw.get("min_interval_minutes", 10), "min_interval_minutes"
+            ),
+        ),
+        instagram=InstagramSourceConfig(
+            enabled=bool(instagram_raw.get("enabled", False)),
+            source_modes=_normalize_instagram_source_modes(
+                instagram_raw.get("source_modes", ["topic", "creator"])
+            ),
+            daily_topic_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_topic_budget", 60), "daily_topic_budget"
+            ),
+            daily_creator_budget=_normalize_instagram_non_negative_int(
+                instagram_raw.get("daily_creator_budget", 30), "daily_creator_budget"
+            ),
+            request_interval_seconds=min(
+                30,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("request_interval_seconds", 3),
+                        "request_interval_seconds",
+                    ),
+                ),
+            ),
+            min_interval_minutes=_normalize_instagram_non_negative_int(
+                instagram_raw.get("min_interval_minutes", 10), "min_interval_minutes"
+            ),
+            bootstrap_limit=min(
+                300,
+                max(
+                    1,
+                    _normalize_instagram_non_negative_int(
+                        instagram_raw.get("bootstrap_limit", 300), "bootstrap_limit"
+                    ),
+                ),
             ),
         ),
     )
@@ -3198,6 +3250,37 @@ def normalize_tls_san_names(value: object) -> list[str]:
             seen.add(key)
             normalized.append(canonical)
     return normalized
+
+
+def _normalize_instagram_source_modes(value: object) -> tuple[str, ...]:
+    """Return the ordered, bounded Instagram discovery mode set.
+
+    Creator expansion is seeded from topic results, so a creator-only value
+    must retain the topic lane instead of producing a permanently empty run.
+    """
+
+    if isinstance(value, str):
+        raw = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        raw = [str(part).strip() for part in value]
+    else:
+        raw = ["topic", "creator"]
+    selected = tuple(
+        dict.fromkeys(item.lower() for item in raw if item.lower() in {"topic", "creator"})
+    )
+    if selected == ("creator",):
+        return ("topic", "creator")
+    return selected or ("topic", "creator")
+
+
+def _normalize_instagram_non_negative_int(value: object, field_name: str) -> int:
+    """Validate one Instagram budget/interval integer without bool coercion."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"sources.instagram.{field_name} 必须是非负整数")
+    if value < 0:
+        raise ConfigError(f"sources.instagram.{field_name} 不能为负数")
+    return value
 
 
 def normalize_tls_enabled(value: object) -> bool:
@@ -5111,6 +5194,15 @@ def _render_config_toml(
             f"request_interval_seconds = {config.sources.weibo.request_interval_seconds}",
             f"min_interval_minutes = {config.sources.weibo.min_interval_minutes}",
             "",
+            "[sources.instagram]",
+            f"enabled = {_toml_bool(config.sources.instagram.enabled)}",
+            f"source_modes = {_toml_str_list(list(config.sources.instagram.source_modes))}",
+            f"daily_topic_budget = {config.sources.instagram.daily_topic_budget}",
+            f"daily_creator_budget = {config.sources.instagram.daily_creator_budget}",
+            f"request_interval_seconds = {config.sources.instagram.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.instagram.min_interval_minutes}",
+            f"bootstrap_limit = {config.sources.instagram.bootstrap_limit}",
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             "pause_on_extension_disconnect = "
@@ -5225,6 +5317,7 @@ def _render_config_toml(
             f"linuxdo = {int(config.scheduler.pool_source_shares.get('linuxdo', 1))}",
             f"v2ex = {int(config.scheduler.pool_source_shares.get('v2ex', 1))}",
             f"weibo = {int(config.scheduler.pool_source_shares.get('weibo', 1))}",
+            f"instagram = {int(config.scheduler.pool_source_shares.get('instagram', 1))}",
             "",
             "[discovery]",
             "unified_keyword_planner_enabled = "

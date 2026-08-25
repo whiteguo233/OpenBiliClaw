@@ -202,13 +202,14 @@
       { key: "bangumi", label: "Bangumi" },
       { key: "linuxdo", label: "Linux.do" },
       { key: "v2ex", label: "V2EX" },
+      { key: "instagram", label: "Instagram" },
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
     // 首次成功读到库存快照之前是"未知"，不能把还没读到伪装成 0。
     const PLATFORM_COUNT_UNKNOWN_TEXT = "—";
     const PLATFORM_COUNT_UNKNOWN_LABEL = "库存待读取";
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex" };
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX", instagram: "Instagram", ig: "Instagram" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex", ig: "instagram", instagram: "instagram" };
     const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
@@ -223,7 +224,7 @@
     const INIT_SOURCE_LABEL_FALLBACK = {
       bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube",
       twitter: "X", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
-      linuxdo: "Linux.do", v2ex: "V2EX"
+      linuxdo: "Linux.do", v2ex: "V2EX", instagram: "Instagram"
     };
     const INIT_SOURCE_DEFAULT_CHECKED = new Set(["bilibili"]);
     const _initSourceStatus = globalThis.OpenBiliClawSourceStatus || null;
@@ -1248,6 +1249,7 @@
         if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
         if (urlHostMatches(url, ["zhihu.com", "zhuanlan.zhihu.com"])) return "zhihu";
         if (urlHostMatches(url, ["reddit.com", "redd.it"])) return "reddit";
+        if (urlHostMatches(url, ["instagram.com"])) return "instagram";
         if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
         return "web";
       }

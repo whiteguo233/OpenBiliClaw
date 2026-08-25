@@ -435,6 +435,7 @@ test("init source options: bilibili is default-checked but deselectable, others 
     "bangumi",
     "linuxdo",
     "v2ex",
+    "instagram",
   ]);
   // The login reminder copy mentions logging in on this browser.
   assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
@@ -470,6 +471,13 @@ test("init source options: Zhihu is present, opt-in, labelled 知乎", () => {
   assert.ok(zhihu, "zhihu option must exist");
   assert.ok(!zhihu?.defaultChecked);
   assert.equal(zhihu?.label, "知乎");
+});
+
+test("init source options: Instagram is present, opt-in, labelled Instagram", () => {
+  const instagram = INIT_SOURCE_OPTIONS.find((option) => option.key === "instagram");
+  assert.ok(instagram, "instagram option must exist");
+  assert.ok(!instagram?.defaultChecked);
+  assert.equal(instagram?.label, "Instagram");
 });
 
 test("init source options: Reddit is present, opt-in, labelled Reddit", () => {

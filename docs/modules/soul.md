@@ -94,6 +94,7 @@
 | 兴趣探针聊天情绪判断 | ✅ | `/api/interest-probes/respond` 的 chat 分支会先让对话引擎回复，再用非 JSON 的单词分类 LLM 调用判断 `strong_positive / weak_positive / neutral_deferred / neutral / negative`（系统提示是 `llm/prompts.py:build_probe_sentiment_prompt` 的静态常量，走 prompt 缓存），失败时回退关键词；强正向直接确认，弱正向进入短期探索 buffer，`neutral_deferred`（用户主动说「先放着」「稍后再看」）走 defer 搁置状态机，`neutral`（态度模糊，如「再看看」）不改状态，避免一句“有点意思”立刻写成长期兴趣 |
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
+| Instagram 初始化画像信号 | ✅（init-only） | 用户显式启用后，`openbiliclaw init` 把同源只读任务确认的 `instagram_liked` / `instagram_saved` / `instagram_following` 分别映射为 `like` / `favorite` / `follow`。任务必须先解析当前数字账号并按 account key 分区；partial 保留已确认事件但不声明完整快照，普通浏览/Feed 曝光不进入画像。 |
 | 抖音初始化画像信号 | ✅ | `openbiliclaw init --yes-douyin` 会把插件解析到的抖音 `dy_post/dy_collect/dy_like/dy_follow` 转成 `view/favorite/like/follow` 事件，并进入偏好分析和初始画像 history |
 | Durable 行为事件增量画像 | ✅ | profile 已存在时，`POST /api/events`、推荐点击与带画像语义的 source task 只经 `EventIngressService` 提交 durable event 并 wake。app-owned scheduler 的 `profile_events` generic consumer 与 `content_feedback` consumer 按显式 owner、各自 cursor 扫描，使用 event-row 稳定 signal ID，通过 `checkpointed_enqueue_batch()` 原子发布 buffer+cursor，再调用 `tick_if_buffered()`；独立周期维护才调用完整 `tick()`，HTTP 不直调 pipeline/LLM。retraction 投影在 generic cursor 前完成；hypothesis/import feedback 由其它 owner 处理或只越过 feedback cursor；rejected/not_initialized 不入 pipeline。 |
 | 小红书 / 抖音 / YouTube / 知乎 / Reddit / Linux.do 增量画像事件 | ✅ | profile 已存在时，带画像更新语义的 bootstrap task-result 新增事件会经 durable ingress 后进入 generic profile-update owner，参与后续分层画像更新；知乎 / Reddit / Linux.do 普通 fetch smoke 默认不进入画像，周期任务则由后端 `incremental=true` 标记放行；Linux.do 只接收插件归一化后的事件，不接收 Cookie 或原始响应 |
@@ -469,7 +470,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 首次初始化时，走的是 `SoulEngine.build_initial_profile(history)`：
 
 1. 先读取已有 `preference` 层。
-2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书、抖音、YouTube、知乎、Reddit、Linux.do、Bangumi bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
+2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书、抖音、YouTube、知乎、Reddit、Linux.do、Instagram、Bangumi bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
 3. 再加载历史 `awareness_notes` 和 `active_insights`。首次新装通常为空；如果第 2 步的初始化分片输出了临时 `awareness_candidates` / `insight_candidates`，`SoulEngine` 会把它们追加到本次 profile-build prompt 的 awareness / insights 输入中。
 4. `ProfileBuilder.build()` 把 `history_summary + preference_summary + awareness + insights` 一起送给 LLM。临时 chunk cognition 只参与这次 prompt，不持久化到 awareness / insight 层。
 5. LLM 返回结构化 JSON，必须包含：

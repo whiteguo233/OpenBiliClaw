@@ -14,6 +14,7 @@
     zh: "zhihu",
     rd: "reddit",
     wb: "weibo",
+    ig: "instagram",
   });
 
   function text(value) {
@@ -48,6 +49,7 @@
       if (["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"].some(
         (domain) => host === domain || host.endsWith(`.${domain}`),
       )) return "weibo";
+      if (host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am" || host.endsWith(".instagr.am")) return "instagram";
       if (host.endsWith(".bilibili.com") || host === "b23.tv") return "bilibili";
       if (["bgm.tv", "bangumi.tv"].some((domain) => host === domain || host.endsWith(`.${domain}`))) return "bangumi";
       return "web";

@@ -262,6 +262,7 @@ const INIT_SOURCE_LABEL_FALLBACK = {
   reddit: "Reddit",
   bangumi: "Bangumi",
   v2ex: "V2EX",
+  instagram: "Instagram",
 };
 const INIT_SOURCE_DEFAULT_CHECKED = new Set(["bilibili"]);
 const _initSourceStatus = globalThis.OpenBiliClawSourceStatus || null;
