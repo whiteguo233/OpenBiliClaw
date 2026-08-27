@@ -9,6 +9,7 @@
 - **修复 explore 调度三条堵塞链路**：Planner 生成 explore 词后不再回写 `last_explore_refresh_at`，改为独立的 `last_explore_planned_at`；执行戳只在 ExploreStrategy 真正派发且 `supply attempts > 0` 后更新，避免“没跑也算跑”。`_build_refresh_plan` 不再在 270–299 死区直接 `return []`：水位以下只补 `search + related_chain`，due 的 `trending / explore` 作为独立计划项入队；`refresh_if_needed` 不再因 pool at cap 直接跳过周期探索，`_run_refresh_plan` 的 cap break 只作用于 `search / related_chain`。补充拆钟、270–299 区间、补货拆分与 supply attempts 打戳等测试；真实环境验证 `deepseek-v4-flash` 下 explore 成功发现 2 条并写入 content_cache。
 
 - **发布状态**：后端 / 插件 / 桌面安装包 / Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.212`，完整性门禁全绿，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Gitee 镜像已同步 main 与四个频道 tag。
+- **国内下载入口**：Gitee 已创建 [v0.3.212 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.212)，挂载扩展包、Safari DMG 与普通 Windows 安装包；三款超过 100 MB 的桌面包已上传到 [123 云盘永久分享](https://4001474255.share.123pan.cn/123pan/IxbZMh-rp6O3)，分享页支持免登录下载。
 
 ## v0.3.211：异常报警可视化与商汤日日新零成本上手（2026-08-26）
 

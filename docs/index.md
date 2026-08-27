@@ -9,7 +9,7 @@
 - [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
 - [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [国内大包下载（123 云盘）](https://4001474255.share.123pan.cn/123pan/IxbZMh-hhhR3) — 当前 v0.3.210 的 macOS / Windows 大安装包，分享永久有效并支持免登录下载；[Gitee v0.3.210 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.210) 提供国内镜像附件与源码入口
+- [国内大包下载（123 云盘）](https://4001474255.share.123pan.cn/123pan/IxbZMh-rp6O3) — 当前 v0.3.212 的 macOS / Windows 大安装包，分享永久有效并支持免登录下载；[Gitee v0.3.212 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.212) 提供国内镜像附件与源码入口
 - [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
 - [变更日志](changelog.md) — 各版本交付记录
 - [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
