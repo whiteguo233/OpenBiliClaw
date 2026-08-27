@@ -8,6 +8,10 @@
 
 - **修复 explore 调度三条堵塞链路**：Planner 生成 explore 词后不再回写 `last_explore_refresh_at`，改为独立的 `last_explore_planned_at`；执行戳只在 ExploreStrategy 真正派发且 `supply attempts > 0` 后更新，避免“没跑也算跑”。`_build_refresh_plan` 不再在 270–299 死区直接 `return []`：水位以下只补 `search + related_chain`，due 的 `trending / explore` 作为独立计划项入队；`refresh_if_needed` 不再因 pool at cap 直接跳过周期探索，`_run_refresh_plan` 的 cap break 只作用于 `search / related_chain`。补充拆钟、270–299 区间、补货拆分与 supply attempts 打戳等测试；真实环境验证 `deepseek-v4-flash` 下 explore 成功发现 2 条并写入 content_cache。
 
+- **versioned 时效衰减 120 天 → 60 天并补齐准入 TTL**：`versioned` 排序 bonus 半衰期从 120 天收紧到 60 天（versioned 内容指涉可识别的软件 / 产品 / 模型 / 游戏等仍在迭代的对象，价值衰减比旧曲线更快），复审间隔同步为 60 天，并新增 120 天准入 TTL（v1 legacy 行按年龄触发复审）。同步更新 `TEMPORAL_CLASS_POLICIES` 校准注释、`docs/modules/recommendation.md` / `discovery.md` / `storage.md` / `spec.md` 与推荐架构图。
+
+- **候选评估 temporal 边界判别优化**：评估 prompt 的 `temporal_class` 六选一新增「指涉对象是否仍在演进 / 迭代」核心判别式——`versioned` 定义从「强绑定版本号」扩展为「指涉可识别、在迭代的具体对象（软件 / 产品 / 模型 / 工具 / 框架 / 游戏 / 设备）」；`historical` 只保留「指涉对象已闭合、价值是档案」的内容，`盘点 / 回顾 / 年度总结` 框架本身不再构成 historical 理由；教程若具体指涉快速迭代的工具或产品归 versioned 而非 evergreen。单条与批量 system prompt 同步更新（sparse 变体经同一常量派生）。
+
 - **发布状态**：后端 / 插件 / 桌面安装包 / Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.212`，完整性门禁全绿，详情见 [Release](https://github.com/whiteguo233/OpenBiliClaw/releases)。Gitee 镜像已同步 main 与四个频道 tag。
 
 ## v0.3.211：异常报警可视化与商汤日日新零成本上手（2026-08-26）

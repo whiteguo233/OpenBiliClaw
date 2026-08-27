@@ -437,7 +437,7 @@ def test_grounding_downgrades_nonaffirmative_active_state_evidence(
     [
         ("breaking", "freshness_only", "2026-08-13T12:00:00Z"),
         ("current", "event_state", "2026-08-26T12:00:00Z"),
-        ("versioned", "version_state", "2026-12-10T12:00:00Z"),
+        ("versioned", "version_state", "2026-10-11T12:00:00Z"),
     ],
 )
 def test_schedule_uses_class_review_intervals(

@@ -506,7 +506,7 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  │     raw断供 → 欠份额 producer 即时并行唤醒 → 真实新增计数 / 无产出阶梯退避 │ │
 │  │ API CandidateEvalCoordinator: available + eligible copy-pending + evaluated -> 3×30 -> serial admit │ │
 │  │ evaluator: time-neutral relevance + atomic grounded temporal evidence -> tri-state eligibility │ │
-│  │ temporal policy: 1/14/120d review clock; deadline/terminal evidence expires; gaps fail-neutral │ │
+│  │ temporal policy: 1/14/60d review clock; versioned 120d TTL; deadline/terminal evidence expires; gaps fail-neutral │ │
 │  │ OpenClaw refresh: first source/eval <=4 -> copy <=4/no split retry -> canonical subset; both hosts recover first │ │
 │  │ delight: copy/topic ready + seen_items guard -> score/snapshot -> UI × writes seen ledger │ │
 │  │ reshuffle: current IDs + seen_items -> retire/snapshot/MMR -> final recheck+atomic persist │ │

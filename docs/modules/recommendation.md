@@ -456,11 +456,11 @@ from openbiliclaw.recommendation.curator import PoolCurator
 
 `serendipity` 加分只对 `explore` 来源发放（满额 1.0）。其余任何 strategy —— 包括 `trending` —— 一律为 0.0：来源只是上下文，不能凭发现路径白拿 rec_score（issue #90）。
 
-`freshness` 现在表示 publication-time temporal bonus，不再读取 `discovered_at`。只有 `breaking/current/versioned`、有效 `published_at` 且分类置信度至少 `0.60` 的候选参与：半衰期分别为 1 / 14 / 120 天，类别权重为 0.85 / 0.60 / 0.30；置信度 `>=0.80` 使用完整权重，`>=0.60 且 <0.80` 使用半量，低于 0.60 为 0。`evergreen/historical/unknown`、缺失/无效/明显未来时间全部保持中性，不会把发现时间冒充发布时间。
+`freshness` 现在表示 publication-time temporal bonus，不再读取 `discovered_at`。只有 `breaking/current/versioned`、有效 `published_at` 且分类置信度至少 `0.60` 的候选参与：半衰期分别为 1 / 14 / 60 天，类别权重为 0.85 / 0.60 / 0.30；置信度 `>=0.80` 使用完整权重，`>=0.60 且 <0.80` 使用半量，低于 0.60 为 0。`evergreen/historical/unknown`、缺失/无效/明显未来时间全部保持中性，不会把发现时间冒充发布时间。
 
 三态 eligibility 与 bonus 共用 `discovery.temporal` 的类别策略、置信门和发布时间解析，避免 admission、排序、serving 三套规则漂移，但两者语义独立。Agent 的 v2 证据组为 `class/confidence/reason + validity_mode/valid_until/scope/evidence/state`；代码拥有 `evaluated_at/next_review_at/policy_version/evidence_complete`。只有置信度 `>=0.80`、整组完整、`scope=core` 且 evidence 可在 Agent 实际看到的 prompt projection 中逐字 grounding 时，已过 `explicit_deadline` 或事件 `expired` / 版本 `superseded` 才返回 `expired`。deadline 证据必须明确写出日期、时刻和时区并与 `valid_until` 完全一致，终态证据必须正向明示“已结束 / 已替代”；日期-only、反向表述、`hook`、低置信、缺字段、未 grounding、无效时钟与不一致的 mode/state 均 fail-neutral，不解析 `temporal_reason` 猜截止日。
 
-年龄曲线只负责“多久再看一次”：`breaking/current/versioned` 分别在评估后 1 / 14 / 120 天进入 `review_due`，不是内容死亡线；明确 deadline 的复核点就是 deadline。旧 v1 `breaking/current` 行跨过原 3 / 60 天窗口时也只进入 `review_due`。`event_state=active` 与 `version_state=active` 会按类别继续安排复审；`evergreen/historical/unknown`、`scope=hook` 和证据不足内容不因固定年龄被挡。
+年龄曲线只负责“多久再看一次”：`breaking/current/versioned` 分别在评估后 1 / 14 / 60 天进入 `review_due`，不是内容死亡线；明确 deadline 的复核点就是 deadline。旧 v1 `breaking/current` 行跨过原 3 / 60 天窗口时也只进入 `review_due`；`versioned` 另设 120 天准入 TTL（v1 legacy 行按年龄触发复审）。`event_state=active` 与 `version_state=active` 会按类别继续安排复审；`evergreen/historical/unknown`、`scope=hook` 和证据不足内容不因固定年龄被挡。
 
 生命周期卡口覆盖三个时机：Evaluation 完成后、写入 `content_cache` 前先做三态 admission；`review_due` 的 discovery 行重新排队，`expired` 行终态拒绝。已经入池的 `review_due` 内容会进入可逆 `temporal_review_hold`，不能展示、不计库存，并由现有 legacy/recovery evaluator 复审；DB 用 1 / 2 / 4 / 8 / 16 / 24 小时有界租约调度重复失败，完整新证据可恢复 `fresh` 并清零租约，`expired` 才转 `stale`。每次 `PoolServeSnapshot` 前动态收敛状态，最终 recommendation + shown 写事务再复核。Engine 只返回真正原子提交成功的条目，因此内容不会因为“排序低但一直刷”最终漏出。
 
@@ -508,7 +508,7 @@ from openbiliclaw.recommendation.curator import PoolCurator
 |------|----|
 | `breaking` temporal bonus | 半衰期 1 天，类别权重 0.85 |
 | `current` temporal bonus | 半衰期 14 天，类别权重 0.60 |
-| `versioned` temporal bonus | 半衰期 120 天，类别权重 0.30 |
+| `versioned` temporal bonus | 半衰期 60 天，类别权重 0.30 |
 | temporal confidence 分档 | `>=0.80` 全量；`>=0.60 且 <0.80` 半量；其余中性 |
 | dislike UP 主惩罚 | 0.20 |
 | dislike 话题惩罚 | 0.10 |

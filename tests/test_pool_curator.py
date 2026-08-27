@@ -73,7 +73,7 @@ def test_temporal_bonus_uses_class_weight_for_new_content() -> None:
 
 def test_temporal_bonus_reaches_half_at_each_class_half_life() -> None:
     now = _now()
-    cases = (("breaking", 1, 0.85), ("current", 14, 0.60), ("versioned", 120, 0.30))
+    cases = (("breaking", 1, 0.85), ("current", 14, 0.60), ("versioned", 60, 0.30))
 
     for temporal_class, half_life_days, class_weight in cases:
         item = _temporal_item(
