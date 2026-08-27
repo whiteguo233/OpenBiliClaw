@@ -759,7 +759,10 @@ def test_v2_uncertain_or_malformed_evidence_fails_eligible(changes: dict[str, ob
     assert decision.needs_review is False
 
 
-@pytest.mark.parametrize(("temporal_class", "review_days"), [("breaking", 3), ("current", 60), ("versioned", 120)])
+@pytest.mark.parametrize(
+    ("temporal_class", "review_days"),
+    [("breaking", 3), ("current", 60), ("versioned", 120)],
+)
 def test_legacy_v1_age_window_now_schedules_review_instead_of_expiry(
     temporal_class: str,
     review_days: int,
