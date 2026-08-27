@@ -198,10 +198,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.212 (2026-08-26)**
+📌 Latest: **v0.3.213 (2026-08-27)**
 
-- **Diagnostics alerts** — LLM / Embedding failures (rate limits, auth, circuit-breaker trips) now show up live in the desktop & extension settings log tab; no more digging through log files.
-- **SenseNova free tier (issue #193)** — a built-in `sensenova` one-click preset lets new users try the full recommendation pipeline at zero cost.
+- **More reliable recommendation supply** — homogeneous high-score pools remain servable, so refill and serendipity recommendations no longer dry up unnecessarily.
+- **Sharper freshness classification** — actively evolving software, products, models, and tools are reviewed on a shorter cadence, with an explicit admission TTL for legacy `versioned` rows.
+- **Hide the pending-confirmation badge** — a new Desktop Web setting removes the pending-chat count when you want a quieter interface.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 

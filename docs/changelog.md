@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.213：推荐供给与时效判断修复（2026-08-27）
+
+- **推荐池供给修复（issue #220）**：同质高分内容不再把普通推荐池误判成不可服务，补货和惊喜推荐在池内内容质量集中时仍能正常提供；新增回归测试覆盖该边界。
+
+- **待聊确认徽章可选隐藏（issue #217）**：桌面 Web 设置新增开关，允许用户关闭导航栏上的待聊确认数量徽章；设置持久化并在刷新后保持，默认行为不变。
+
+- **时效判断收紧（issue #218）**：`versioned` 内容的排序 bonus 半衰期与复审间隔从 120 天收紧到 60 天，并为 v1 legacy 行补充 120 天准入 TTL；评估提示将仍在迭代的软件、产品、模型、工具、框架、游戏与设备识别为 `versioned`，只有已闭合、以档案价值为主的对象才归为 `historical`。
+
 ## v0.3.212：修复 explore 调度堵塞导致的惊喜候选断供（2026-08-26）
 
 - **修复 explore 调度三条堵塞链路**：Planner 生成 explore 词后不再回写 `last_explore_refresh_at`，改为独立的 `last_explore_planned_at`；执行戳只在 ExploreStrategy 真正派发且 `supply attempts > 0` 后更新，避免“没跑也算跑”。`_build_refresh_plan` 不再在 270–299 死区直接 `return []`：水位以下只补 `search + related_chain`，due 的 `trending / explore` 作为独立计划项入队；`refresh_if_needed` 不再因 pool at cap 直接跳过周期探索，`_run_refresh_plan` 的 cap break 只作用于 `search / related_chain`。补充拆钟、270–299 区间、补货拆分与 supply attempts 打戳等测试；真实环境验证 `deepseek-v4-flash` 下 explore 成功发现 2 条并写入 content_cache。
