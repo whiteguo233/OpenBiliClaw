@@ -500,9 +500,10 @@ def evaluate_temporal_eligibility(
     V2 only hard-expires high-confidence, complete, core-value evidence with
     a grounded explicit deadline.  A scheduled non-deadline check becomes
     ``review_due`` instead.  Calls using only the old three semantic fields
-    retain the old 3/60 day windows, but those windows now schedule review
-    rather than claiming factual expiry.  Every malformed or uncertain input
-    fails neutral.
+    retain the legacy 3 / 60 day windows for breaking/current and the 120 day
+    admission TTL for versioned, but those windows now schedule review rather
+    than claiming factual expiry.  Every malformed or uncertain input fails
+    neutral.
     """
 
     effective_now = now or datetime.now(UTC)
