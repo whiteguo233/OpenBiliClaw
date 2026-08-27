@@ -16,6 +16,10 @@
 
 - **时效判断收紧（issue #218）**：`versioned` 内容的排序 bonus 半衰期与复审间隔从 120 天收紧到 60 天，并为 v1 legacy 行补充 120 天准入 TTL；评估提示将仍在迭代的软件、产品、模型、工具、框架、游戏与设备识别为 `versioned`，只有已闭合、以档案价值为主的对象才归为 `historical`。
 
+- **发布状态**：后端源码、浏览器插件、macOS / Windows 桌面安装包、Docker 多架构镜像与聚合 Release 均已发布为 `v0.3.213`，完整性门禁与主 CI 全绿，详见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.213)。Chrome Web Store 已上传并提交 `0.3.213` 审核（当前为 `PENDING_REVIEW`）。
+
+- **国内下载入口**：已创建 [Gitee v0.3.213 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.213)，挂载 4 个小包；7 个包均已上传至 [123 云盘永久分享](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)，分享页显示 7 项均有效，可直接打开下载。
+
 ## v0.3.212：修复 explore 调度堵塞导致的惊喜候选断供（2026-08-26）
 
 - **修复 explore 调度三条堵塞链路**：Planner 生成 explore 词后不再回写 `last_explore_refresh_at`，改为独立的 `last_explore_planned_at`；执行戳只在 ExploreStrategy 真正派发且 `supply attempts > 0` 后更新，避免“没跑也算跑”。`_build_refresh_plan` 不再在 270–299 死区直接 `return []`：水位以下只补 `search + related_chain`，due 的 `trending / explore` 作为独立计划项入队；`refresh_if_needed` 不再因 pool at cap 直接跳过周期探索，`_run_refresh_plan` 的 cap break 只作用于 `search / related_chain`。补充拆钟、270–299 区间、补货拆分与 supply attempts 打戳等测试；真实环境验证 `deepseek-v4-flash` 下 explore 成功发现 2 条并写入 content_cache。
