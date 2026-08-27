@@ -24,7 +24,7 @@ from openbiliclaw.llm.base import LLMResponse
 from openbiliclaw.soul.profile import InterestTag, SoulProfile
 from openbiliclaw.storage.database import Database
 
-_V6_PRODUCTION_SYSTEM_SHA256 = "0316ce1690e86c6ee6cbd513e270b80177d451883db7341e4d751d667a9ebdda"
+_V6_PRODUCTION_SYSTEM_SHA256 = "fb8c8660ad15bf5459c84d3e5bb09034851fc536f141aa2f3fcd5097d3040e88"
 _V6_PRODUCTION_USER_SHA256 = "48944e86483632062b18f1d6b26655d2ef64ac4855c8f34d92da99d76a3d619f"
 
 

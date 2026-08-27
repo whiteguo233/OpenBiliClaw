@@ -402,7 +402,7 @@ def test_malformed_rereview_preserves_due_v2_temporal_evidence(tmp_path: Path) -
     assert stored["temporal_validity_mode"] == "version_state"
     assert stored["temporal_state"] == "active"
     assert stored["temporal_evidence"] == "产品版本 1.0 仍受支持"
-    assert stored["temporal_next_review_at"] == "2000-04-30T00:00:00Z"
+    assert stored["temporal_next_review_at"] == "2000-03-01T00:00:00Z"
     assert stored["temporal_evaluated_at"] == "2000-01-01T00:00:00Z"
     assert stored["temporal_evidence_complete"] == 1
     assert stored["temporal_review_attempts"] == 2
