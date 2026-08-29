@@ -639,6 +639,8 @@ trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose 
 │  SQLite: events(inferred_satisfaction) / seen_items(views+saves+snapshot)   │
 │          discovery_candidates → relevance + temporal eligible/review_due/expired admission │
 │          evaluator_prefilter_shadow_audit (30d / 20k bounded, no raw content) │
+│          eval_scorer: learned opt-in = embedding max-cosine → [0,1] │
+│          evaluator_learned_scorer_shadow_audit (30d / 20k bounded, no raw) │
 │          discovery_keywords → 24h safe cross-digest pending reconcile (0=hard expiry) │
 │          admitted pending copy → bounded copy-ready watermark → serve/refill │
 │          discovery_keywords(+cohort gate) / discovery_inspiration_*│
