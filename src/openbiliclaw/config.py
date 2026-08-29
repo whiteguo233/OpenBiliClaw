@@ -1139,6 +1139,9 @@ class DiscoveryConfig:
     # Embedding pre-filter rollout for discovery evaluation. ``shadow`` logs
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
+    # Evaluator backend for discovery batches: "llm" (default, unchanged) or
+    # "learned" (opt-in learned relevance scorer; falls back to LLM when unavailable).
+    eval_scorer: str = "llm"
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -2851,6 +2854,7 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
         eval_prefilter_mode=_normalize_eval_prefilter_mode(
             discovery_raw.get("eval_prefilter_mode")
         ),
+        eval_scorer=_normalize_eval_scorer(discovery_raw.get("eval_scorer")),
         multimodal_evaluation_enabled=_coerce_bool(
             discovery_raw.get("multimodal_evaluation_enabled"),
             default=False,
@@ -2938,6 +2942,13 @@ def _normalize_eval_prefilter_mode(value: object) -> str:
         return _DEFAULT_EVAL_PREFILTER_MODE
     mode = value.strip().lower()
     return mode or _DEFAULT_EVAL_PREFILTER_MODE
+
+
+def _normalize_eval_scorer(value: object) -> str:
+    if not isinstance(value, str):
+        return "llm"
+    mode = value.strip().lower()
+    return mode if mode in {"llm", "learned"} else "llm"
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -5643,6 +5654,7 @@ def _render_config_toml(
             f"{_toml_bool(config.discovery.inspiration_replace_merged_keywords)}",
             f"inspiration_breadth = {_toml_string(config.discovery.inspiration_breadth)}",
             f"eval_prefilter_mode = {_toml_string(config.discovery.eval_prefilter_mode)}",
+            f"eval_scorer = {_toml_string(config.discovery.eval_scorer)}",
             "multimodal_evaluation_enabled = "
             f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
             f"visual_profile_enabled = {_toml_bool(config.discovery.visual_profile_enabled)}",

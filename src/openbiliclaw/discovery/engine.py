@@ -27,6 +27,7 @@ from openbiliclaw.discovery.eval_payload import (
     resolve_local_evaluation_results,
 )
 from openbiliclaw.discovery.eval_reason import normalize_evaluation_reason
+from openbiliclaw.discovery.learned_scorer import LearnedBatchResult, LearnedRelevanceScorer
 from openbiliclaw.discovery.prefilter_audit import (
     PREFILTER_EXPLORE_EXEMPT_STATUS,
     PREFILTER_NO_INTERESTS_STATUS,
@@ -170,6 +171,9 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
 _EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_EVAL_SCORER_DEFAULT = "llm"
+_EVAL_SCORER_MODES = frozenset({"llm", "learned"})
+_LEARNED_SCORER_REASON = "learned relevance scorer"
 _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT = "sparse-json"
 _EVALUATION_CANDIDATE_TRANSPORTS = frozenset({"production", "row-wire-v1", "sparse-json"})
 _EMBEDDING_PREFILTER_MIN_SIMILARITY = 0.2
@@ -1154,6 +1158,8 @@ class ContentDiscoveryEngine:
         multimodal_vision_supported: bool | None = None,
         eval_batch_concurrency: int = _DEFAULT_EVAL_BATCH_CONCURRENCY,
         eval_prefilter_mode: str = _EMBEDDING_PREFILTER_DEFAULT_MODE,
+        eval_scorer: str = _EVAL_SCORER_DEFAULT,
+        learned_scorer: LearnedRelevanceScorer | None = None,
         compact_evaluation_json: bool = False,
         evaluation_candidate_transport: str = _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT,
     ) -> None:
@@ -1174,6 +1180,10 @@ class ContentDiscoveryEngine:
         )
         self.eval_batch_concurrency = max(1, min(16, int(eval_batch_concurrency)))
         self.eval_prefilter_mode = self._normalize_eval_prefilter_mode(eval_prefilter_mode)
+        self._eval_scorer = self._normalize_eval_scorer(eval_scorer)
+        if self._eval_scorer == "learned" and learned_scorer is None:
+            learned_scorer = LearnedRelevanceScorer(embedding_service=embedding_service)
+        self._learned_scorer = learned_scorer
         # Replay-only unless and until the real provider quality/token gate
         # approves compact deterministic evaluator JSON.
         self.compact_evaluation_json = bool(compact_evaluation_json)
@@ -1229,6 +1239,13 @@ class ContentDiscoveryEngine:
         if normalized in _EMBEDDING_PREFILTER_MODES:
             return normalized
         return _EMBEDDING_PREFILTER_DEFAULT_MODE
+
+    @staticmethod
+    def _normalize_eval_scorer(scorer: str) -> str:
+        normalized = str(scorer or "").strip().lower()
+        if normalized in _EVAL_SCORER_MODES:
+            return normalized
+        return _EVAL_SCORER_DEFAULT
 
     @staticmethod
     def _embedding_prefilter_content_text(content: DiscoveredContent) -> str:
@@ -2582,6 +2599,83 @@ class ContentDiscoveryEngine:
         )
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
+
+        # Opt-in learned relevance scorer; default eval_scorer="llm" keeps
+        # this inert, and any learned failure falls through to the LLM path.
+        if self._eval_scorer == "learned" and self._learned_scorer is not None:
+            learned_contents = [eval_contents[i] for i in uncached_indices]
+            learned_result: LearnedBatchResult | None = None
+            try:
+                learned_result = await self._learned_scorer.score_batch(
+                    [content.to_cache_kwargs() for content in learned_contents],
+                    profile,
+                    source_context=source_context,
+                )
+            except Exception:
+                logger.exception(
+                    "eval_batch learned scorer failed; falling back to LLM (source=%s)",
+                    source_context or "mixed",
+                )
+            if (
+                learned_result is not None
+                and learned_result.available
+                and len(learned_result.scores) == len(learned_contents)
+            ):
+                learned_model_scores: dict[int, float] = {}
+                for local_index, raw_score in zip(
+                    uncached_indices, learned_result.scores, strict=True
+                ):
+                    validated = self._validated_model_score(raw_score)
+                    if validated is None:
+                        logger.warning(
+                            "eval_batch learned scorer invalid score %r; using 0.0",
+                            raw_score,
+                        )
+                        score = 0.0
+                    else:
+                        score = validated
+                    content = eval_contents[local_index]
+                    content.relevance_score = score
+                    content.relevance_reason = (
+                        normalize_evaluation_reason(score, _LEARNED_SCORER_REASON) or ""
+                    )
+                    scores[eval_indices[local_index]] = score
+                    learned_model_scores[local_index] = score
+                if not caller_recap_needed:
+                    group_size = max(1, int(batch_size))
+                    for start in range(0, len(uncached_indices), group_size):
+                        group_indices = uncached_indices[start : start + group_size]
+                        group_contents = [eval_contents[i] for i in group_indices]
+                        group_scores = [scores[eval_indices[i]] for i in group_indices]
+                        self._apply_intra_batch_caps(group_contents, group_scores)
+                        for offset, group_score in enumerate(group_scores):
+                            scores[
+                                eval_indices[group_indices[offset]]
+                            ] = float(group_score or 0.0)
+                shadow_raw_scores = {
+                    decision.content_index: learned_model_scores[
+                        shadow_eval_indices[decision.content_index]
+                    ]
+                    for decision in shadow_decisions
+                    if decision.content_index < len(shadow_eval_indices)
+                    and shadow_eval_indices[decision.content_index]
+                    in learned_model_scores
+                }
+                self._complete_prefilter_shadow_decisions(
+                    shadow_decisions,
+                    shadow_contents,
+                    shadow_raw_scores,
+                    persisted=shadow_persisted,
+                )
+                logger.info(
+                    "eval_batch learned scorer: source=%s items=%d",
+                    source_context or "mixed",
+                    len(learned_contents),
+                )
+                return finalize_scores(
+                    effective_batch_size=batch_size,
+                    apply_cached_caps=caller_recap_needed,
+                )
         eval_batch_concurrency = self._effective_eval_batch_concurrency()
         logger.info(
             "eval_batch start: source=%s items=%d batches=%d concurrency=%d (cached=%d)",
