@@ -974,6 +974,31 @@ _RELATED_CHAIN_PER_UP_CAP: int = 3
 class DiscoveryStrategy(ABC):
     """Base class for content discovery strategies."""
 
+    _bound_content_evaluator: ContentDiscoveryEngine | None = None
+
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Use the owning engine for strategy-level candidate evaluation.
+
+        Strategies may also run independently in tests and integrations. Those
+        calls keep the historical, locally constructed default evaluator; once
+        registered, however, evaluation must inherit the owning engine's scorer,
+        embedding, multimodal, cache, and concurrency configuration.
+        """
+
+        self._bound_content_evaluator = evaluator
+
+    def content_evaluator(self) -> ContentDiscoveryEngine:
+        """Return the owning evaluator or a compatible standalone fallback."""
+
+        if self._bound_content_evaluator is not None:
+            return self._bound_content_evaluator
+        return ContentDiscoveryEngine(
+            llm_service=getattr(self, "llm_service", None),
+            database=getattr(self, "database", None),
+            concurrency=getattr(self, "concurrency", None),
+            embedding_service=getattr(self, "embedding_service", None),
+        )
+
     @property
     def source_platform(self) -> str:
         """Canonical platform produced by this strategy.
@@ -1811,6 +1836,9 @@ class ContentDiscoveryEngine:
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
+        bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+        if callable(bind_evaluator):
+            bind_evaluator(self)
         self._strategies = [item for item in self._strategies if item.name != strategy.name]
         self._strategies.append(strategy)
         logger.info("Registered discovery strategy: %s", strategy.name)
@@ -2189,6 +2217,21 @@ class ContentDiscoveryEngine:
         """
         if self._llm_service is None:
             return 0.0
+
+        # Shadow/learned calibration requires a complete learned-vs-LLM pair
+        # and uses LLM batch metadata even for one candidate. Route the single
+        # API through that same audited path instead of silently reverting to
+        # the default Agent-only evaluator.
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        if eval_scorer != "llm":
+            scores = await self.evaluate_content_batch(
+                [content],
+                profile,
+                source_context=source_context or content.source_strategy,
+            )
+            return scores[0] if scores else 0.0
 
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
@@ -3952,6 +3995,13 @@ class ContentDiscoveryEngine:
         keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
+        # Backfill variants are normally dataclass replacements and therefore
+        # do not retain dynamic instance attributes. Binding at every dispatch
+        # makes both primary and backfill strategies inherit the global scorer.
+        for strategy in strategies:
+            bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+            if callable(bind_evaluator):
+                bind_evaluator(self)
         run_entries = [
             (strategy, self._strategy_run_limit(strategy, limit, strategy_limits))
             for strategy in strategies

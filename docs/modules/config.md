@@ -964,15 +964,17 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 #### Web 与插件设置页的「高级功能」
 
-桌面 Web 与浏览器插件 side panel 的设置页都提供独立的「高级功能」Tab：桌面端共 7 个 Tab，插件端共 6 个 Tab；两端固定使用同一套三个 section，字段语义、默认值和保存行为保持一致。
+桌面 Web 与浏览器插件 side panel 的设置页都提供独立的「高级功能」Tab：桌面端共 7 个 Tab，插件端共 6 个 Tab；两端固定使用同一套五个 section，字段语义、默认值和保存行为保持一致。
 
+- **候选评分模式**：把后端 canonical 值 `llm / shadow / learned` 映射为 `Agent（默认） / Shadow（校准观察） / Learned（仅相关性，实验性）`。只改变界面标签，不引入 `agent` wire 值；保存仍写 `discovery.eval_scorer`，并明确提示 Learned 只应在人工运行只读质量门禁并确认通过后启用，且切换只影响后续候选。
 - **推荐增强**：包含 P1 用户视觉画像、P2 弹幕语义、P3 视频关键帧的开关和预热参数。三者都是排序信号加权，不是过滤；P1/P3 依赖图像 Embedding，P2 只需文本 Embedding。P1 每个极性反馈不足 8 条时安全 no-op。关闭任一开关会保留缓存与参数并回退到原排序，不影响现有主流程；关键帧和弹幕目前仅作用于 B 站。
 - **多模态处理**：独立管理「图像 Embedding 能力」和「候选封面参与 LLM 评估」。前者是 P1/P3 的依赖，后者不会改变 P1/P3；Embedding provider、模型、凭据和探测仍在模型 Tab。
 - **搜索词生成**：集中管理经典、混合、灵感三档模式及成本提示；option value、顺序和文案与桌面端 / 插件端一致。
+- **认知循环预算**：管理觉察事件批量、洞察笔记批量与认知输出 token 上限。
 
 两端保存按钮遵循同一状态机：配置无变化时禁用，有输入或程序化草稿修改时启用，请求进行中再次锁定。成功保存并以服务端配置重新回填后恢复禁用；请求失败会保留脏状态并重新允许保存，因此不会因无操作触发完整配置写入，也不会吞掉可重试的修改。
 
-两端加载时都会显式回填 `visual_profile_enabled`、`keyframe_enabled`、`keyframe_max_frames`、`keyframe_fetch_limit`、`danmaku_enabled`、`danmaku_fetch_limit`、`danmaku_max_chars`，保存时在已有 `discovery` 快照展开之后显式写入，数值范围分别为 `keyframe_max_frames=1..12`、两个 fetch limit 为 `1..200`、`danmaku_max_chars=100..2000`，默认值为 `4 / 50 / 50 / 500`。因此关闭开关不会因为保存设置而丢失预热参数或缓存。
+两端加载时都会显式回填 `eval_scorer`、`visual_profile_enabled`、`keyframe_enabled`、`keyframe_max_frames`、`keyframe_fetch_limit`、`danmaku_enabled`、`danmaku_fetch_limit`、`danmaku_max_chars`，保存时在已有 `discovery` 快照展开之后显式写入，数值范围分别为 `keyframe_max_frames=1..12`、两个 fetch limit 为 `1..200`、`danmaku_max_chars=100..2000`，默认值为 `4 / 50 / 50 / 500`。因此模式与关闭开关都不会因为保存设置而丢失其它高级参数或缓存。
 
 视觉相关能力保持显式 opt-in：`[llm.embedding].multimodal_enabled`、`multimodal_evaluation_enabled`、`visual_profile_enabled`、`keyframe_enabled` 的后端默认值、配置样例和两端初始控件均为 `false`。搜索词生成则默认使用“混合”，即 `inspiration_search_enabled=true`、`inspiration_replace_merged_keywords=false`；已有配置里显式保存的值保持不变。
 
@@ -1000,7 +1002,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `inspiration_replace_merged_keywords` | bool | `false` | 实验性替换模式。仅在 `inspiration_search_enabled=true` 且 inspiration provider 可用时生效：due 平台跳过旧 `discovery.keyword_planner` merged call，只通过 search-backed inspiration flow 产词；当 B 站 explore 到期且有补货空间时，也会用同一轮共享 brainstorm / grounding stage 写入 `keyword_kind="explore"` 的探索词池。开 replace 前应先用 `keyword-inspiration-report` 跑 cohort 门禁，避免无质量数据直接替换 |
 | `inspiration_breadth` | str | `"high"` | 探索广度档位（Phase 2 config 收敛，13→4）：`low` / `medium` / `high`。旧的 10 个 `inspiration_*` 细粒度旋钮已删除，其派生成内部常量的有效值由本档位决定（见下表）。**默认 `high`（更宽的素材/轴/关键词产量）**；`medium` 逐项等于旧的 `_DEFAULT_INSPIRATION_*` 默认值，需与收敛前行为逐项对齐时显式设 `medium`。注意 `high` 会把每轮真实 probe 搜索与 LLM 用量放大（daemon 常驻），成本敏感可设 `medium`/`low`。非法档位（非 `low`/`medium`/`high`）→ 配置错误（`ConfigError`），未设置回退 `high` |
 | `eval_prefilter_mode` | string | `"shadow"` | discovery evaluator 的 embedding 预过滤模式：`"off"` 不计算相似度；`"shadow"` 只记录 `prefilter-shadow` would-filter 日志但仍送 LLM；`"enforce"` 将低于相似度阈值的非 explore 候选以低分缓存并跳过 LLM。非法值会被运行时配置校验拦截。上线时先用 shadow 观察 would-filter 中是否仍有高于 `admission_min_score` 的候选，再切 enforce |
-| `eval_scorer` | string | `"llm"` | 候选相关性校准模式。`"llm"`（默认）保持既有批量评估与缓存；`"shadow"` 并跑 learned + 完整 LLM、仍由 LLM 决定 relevance，并写入完整 privacy-safe 对照；`"learned"` 供人工通过只读 gate 后显式启用，仅在完整 LLM 元数据与本批审计成功时由 learned 覆盖 relevance。两种校准模式当前都继续调用 LLM、绕过 normal eval cache，并把同时配置的 prefilter `enforce` 当成 `shadow`，不是降本开关。scorer 不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均回退 LLM。OpenClaw、GET/PUT 配置接口与 daemon 热重载均透传该字段；非法值由运行时配置校验拒绝，旧文件加载则规范化为 `"llm"` |
+| `eval_scorer` | string | `"llm"` | 候选相关性校准模式。`"llm"`（默认）保持既有批量评估与缓存，在桌面 Web / 扩展高级设置中显示为 `Agent（默认）`；`"shadow"` 显示为 `Shadow（校准观察）`，并跑 learned + 完整 LLM、仍由 LLM 决定 relevance，并写入完整 privacy-safe 对照；`"learned"` 显示为 `Learned（仅相关性，实验性）`，供人工运行只读 gate 并确认通过后显式启用，仅在完整 LLM 元数据与本批审计成功时由 learned 覆盖 relevance。UI option value 仍严格使用 canonical enum，不新增 `agent` wire 值。两种校准模式当前都继续调用 LLM、绕过 normal eval cache，并把同时配置的 prefilter `enforce` 当成 `shadow`，不是降本开关。scorer 不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均回退 LLM。OpenClaw、GET/PUT 配置接口与 daemon 热重载均透传该字段；顶层 engine 的注册策略与回填策略继承同一 evaluator，单条评估在校准模式下走 batch 校准路径。切换只影响后续候选，不会重算已有推荐。非法值由运行时配置校验拒绝，旧文件加载则规范化为 `"llm"` |
 | `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；开启后仅当当前 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则自动退回纯文本评估 |
 | `danmaku_enabled` | bool | `false` | 是否启用**弹幕文本**加成（P2）：B 站候选喂给推荐的语义只有 `title` + `description`，而 description 常是"求三连"之类的无信息文本、`body_text` 在 B 站路径恒为空；弹幕是 B 站独有信号，反映观众实际在讨论什么。抓取走 `comment.bilibili.com/{cid}.xml`（**无需鉴权**，`cid` 直接从已有的 `/x/web-interface/view` 响应读，零额外请求），清洗后嵌入为独立排序信号。**纯文本信号，无需多模态嵌入模型**（与 P1/P3 不同）；仅对 B 站视频有效。默认关闭时加成恒 0，排序逐字节一致 |
 | `danmaku_fetch_limit` | int | `50` | 每轮预热处理的视频数上限。合法范围 `1..200` |

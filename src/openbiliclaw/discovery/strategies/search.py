@@ -263,11 +263,7 @@ class SearchStrategy(DiscoveryStrategy):
             raw_candidates = ordered_candidates if recent_request_count else candidates
             return raw_candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         eval_candidates = self.filter_candidates_for_eval(ordered_candidates)
         eval_candidates = trim_candidates_for_llm(
             eval_candidates,

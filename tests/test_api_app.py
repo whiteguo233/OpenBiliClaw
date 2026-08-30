@@ -674,6 +674,54 @@ async def test_copy_ready_target_clamps_and_rebinds_provider_on_rebuild(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_eval_scorer_rebuilds_active_engine_and_registered_strategies(tmp_path) -> None:
+    from openbiliclaw.api.runtime_context import build_runtime_context
+    from openbiliclaw.config import Config
+
+    initial = Config(data_dir=str(tmp_path / "data"))
+    initial.llm.default_provider = "ollama"
+    initial.llm.ollama.model = "llama3"
+    initial.discovery.eval_scorer = "llm"
+    ctx = build_runtime_context(initial)
+
+    agent_engine = ctx.discovery_engine
+    assert agent_engine._eval_scorer == "llm"  # noqa: SLF001
+    assert agent_engine._strategies  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is agent_engine
+        for strategy in agent_engine._strategies  # noqa: SLF001
+    )
+
+    shadow = Config(data_dir=str(tmp_path / "data"))
+    shadow.llm.default_provider = "ollama"
+    shadow.llm.ollama.model = "llama3"
+    shadow.discovery.eval_scorer = "shadow"
+    await ctx.rebuild_from_config(shadow)
+
+    shadow_engine = ctx.discovery_engine
+    assert shadow_engine is not agent_engine
+    assert shadow_engine._eval_scorer == "shadow"  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is shadow_engine
+        for strategy in shadow_engine._strategies  # noqa: SLF001
+    )
+
+    restored = Config(data_dir=str(tmp_path / "data"))
+    restored.llm.default_provider = "ollama"
+    restored.llm.ollama.model = "llama3"
+    restored.discovery.eval_scorer = "llm"
+    await ctx.rebuild_from_config(restored)
+
+    restored_engine = ctx.discovery_engine
+    assert restored_engine is not shadow_engine
+    assert restored_engine._eval_scorer == "llm"  # noqa: SLF001
+    assert all(
+        strategy.content_evaluator() is restored_engine
+        for strategy in restored_engine._strategies  # noqa: SLF001
+    )
+
+
+@pytest.mark.asyncio
 async def test_old_engine_commit_callback_uses_current_controller_after_two_reloads(
     tmp_path,
 ) -> None:

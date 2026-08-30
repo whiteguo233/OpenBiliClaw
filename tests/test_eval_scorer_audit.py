@@ -16,7 +16,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
+from openbiliclaw.discovery.engine import (
+    ContentDiscoveryEngine,
+    DiscoveredContent,
+    DiscoveryStrategy,
+)
 from openbiliclaw.discovery.eval_scorer_audit import (
     LearnedGateReport,
     LearnedShadowDecision,
@@ -218,6 +222,54 @@ class _MetadataLLM:
         )
 
 
+class _EvaluatorProbeStrategy(DiscoveryStrategy):
+    def __init__(self, content_id: str = "BVPROBE") -> None:
+        self.content_id = content_id
+
+    @property
+    def name(self) -> str:
+        return "evaluator_probe"
+
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+    ) -> list[DiscoveredContent]:
+        content = DiscoveredContent(
+            bvid=self.content_id,
+            title="策略候选",
+            description="策略正文",
+            source_strategy="search",
+        )
+        [score] = await self.content_evaluator().evaluate_content_batch(
+            [content],
+            profile,
+            source_context="search",
+        )
+        content.relevance_score = score
+        return [content][:limit]
+
+
+class _BackfillProbeStrategy(DiscoveryStrategy):
+    def __init__(self, backfill: _EvaluatorProbeStrategy) -> None:
+        self.backfill = backfill
+
+    @property
+    def name(self) -> str:
+        return "primary_probe"
+
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+    ) -> list[DiscoveredContent]:
+        del profile, limit
+        return []
+
+    def create_backfill_strategy(self) -> DiscoveryStrategy:
+        return self.backfill
+
+
 def _profile() -> SoulProfile:
     profile = SoulProfile()
     profile.preferences.interests = [InterestTag(name="纪录片", category="知识", weight=1.0)]
@@ -267,6 +319,66 @@ async def test_engine_preserves_llm_metadata_and_persists_complete_pairs(
     serialized = json.dumps(rows, ensure_ascii=False)
     assert "BVPRIVATE" not in serialized
     assert "私密标题" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_registered_and_backfill_strategies_inherit_shadow_evaluator(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "strategy-shadow.db")
+    database.initialize()
+    engine = ContentDiscoveryEngine(
+        llm_service=_MetadataLLM(),
+        database=database,
+        target_primary_count=1,
+        eval_prefilter_mode="off",
+        eval_scorer="shadow",
+        learned_scorer=_StaticLearnedScorer(0.9),  # type: ignore[arg-type]
+    )
+    backfill = _EvaluatorProbeStrategy("BVBACKFILL")
+    engine.register_strategy(_BackfillProbeStrategy(backfill))
+
+    results = await engine.discover(
+        _profile(),
+        strategies=["primary_probe"],
+        limit=1,
+    )
+
+    assert [item.bvid for item in results] == ["BVBACKFILL"]
+    assert results[0].relevance_score == 0.7
+    assert backfill.content_evaluator() is engine
+    rows = database.query_learned_scorer_shadow_audit()
+    assert len(rows) == 1
+    assert float(rows[0]["learned_score"]) == 0.9
+    assert float(rows[0]["llm_score"]) == 0.7
+
+
+@pytest.mark.asyncio
+async def test_single_evaluation_uses_shadow_audit_path(tmp_path: Path) -> None:
+    database = Database(tmp_path / "single-shadow.db")
+    database.initialize()
+    engine = ContentDiscoveryEngine(
+        llm_service=_MetadataLLM(),
+        database=database,
+        eval_prefilter_mode="off",
+        eval_scorer="shadow",
+        learned_scorer=_StaticLearnedScorer(0.9),  # type: ignore[arg-type]
+    )
+    content = DiscoveredContent(
+        bvid="BVSINGLE",
+        title="单条候选",
+        description="单条正文",
+        source_strategy="search",
+    )
+
+    score = await engine.evaluate_content(content, _profile())
+
+    assert score == 0.7
+    assert content.topic_group == "安全元数据"
+    rows = database.query_learned_scorer_shadow_audit()
+    assert len(rows) == 1
+    assert float(rows[0]["learned_score"]) == 0.9
+    assert float(rows[0]["llm_score"]) == 0.7
 
 
 @pytest.mark.asyncio

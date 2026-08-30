@@ -88,11 +88,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
         Returns:
             Discovered content list.
         """
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         seed_descriptors = await self._select_seed_descriptors(profile)
         self.last_intermediates = {
             "seeds": [(bvid, topic) for bvid, topic in seed_descriptors],
@@ -226,9 +222,8 @@ class RelatedChainStrategy(DiscoveryStrategy):
 
             # Evaluate all candidates in batched LLM calls
             date_eligible_bvids = {
-                item.bvid for item in self.filter_candidates_for_eval(
-                    [c for c, _, _, _ in batch_candidates]
-                )
+                item.bvid
+                for item in self.filter_candidates_for_eval([c for c, _, _, _ in batch_candidates])
             }
             batch_candidates = [
                 entry for entry in batch_candidates if entry[0].bvid in date_eligible_bvids

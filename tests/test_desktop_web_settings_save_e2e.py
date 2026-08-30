@@ -43,6 +43,7 @@ def _initial_config() -> dict[str, Any]:
             "embedding": {"provider": "ollama", "model": "bge-m3"},
         },
         "sources": {"bilibili": {"enabled": True}},
+        "discovery": {"eval_scorer": "llm"},
         "scheduler": {
             "pool_source_shares": {
                 "bilibili": 5,
@@ -336,6 +337,28 @@ def test_settings_save_unlocks_before_runtime_apply_finishes(
     page.evaluate("window.__obcPushRuntime({type: 'config_reloaded', revision: 8})")
     expect(status).to_have_text("已修改 1 项，未保存")
     expect(bar).to_have_attribute("data-save-state", "dirty")
+
+
+def test_advanced_evaluator_mode_defaults_to_agent_and_round_trips(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = settings_save_server
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    mode = page.locator("#evalScorer")
+    expect(mode).to_have_value("llm")
+    expect(mode.locator("option:checked")).to_have_text("Agent（默认）")
+
+    mode.select_option("shadow")
+    page.get_by_role("button", name="保存配置").click()
+
+    expect(mode).to_have_value("shadow")
+    assert len(stub.saved_payloads) == 1
+    assert stub.saved_payloads[0]["discovery"]["eval_scorer"] == "shadow"
 
 
 def test_external_runtime_config_event_rehydrates_settings(
@@ -706,10 +729,7 @@ def test_pending_chat_count_toggle_hides_badge(
 
     toggle.uncheck(force=True)
     expect(badge).to_be_hidden()
-    assert (
-        page.evaluate("localStorage.getItem('openbiliclaw.webui.showPendingChatCount')")
-        == "0"
-    )
+    assert page.evaluate("localStorage.getItem('openbiliclaw.webui.showPendingChatCount')") == "0"
 
     page.reload()
     page.get_by_role("button", name="设置", exact=True).click()

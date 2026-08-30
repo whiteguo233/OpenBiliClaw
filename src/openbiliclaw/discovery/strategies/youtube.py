@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.discovery.engine import (
-    ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
@@ -192,11 +191,7 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     async def _evaluate(
         self, candidates: list[DiscoveredContent], profile: SoulProfile, limit: int
     ) -> list[DiscoveredContent]:
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)
@@ -257,11 +252,7 @@ class YoutubeTrendingStrategy(DiscoveryStrategy):
         if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)
@@ -353,11 +344,7 @@ class YoutubeChannelStrategy(DiscoveryStrategy):
         if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         candidates = self.filter_candidates_for_eval(candidates)
         trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
         scores = await evaluator.evaluate_content_batch(trimmed, profile)

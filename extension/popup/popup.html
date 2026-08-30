@@ -7521,6 +7521,19 @@
 
       <div id="settingsPanelAdvanced" class="settings-panel" data-settings-panel="advanced" role="tabpanel" aria-labelledby="settingsTabAdvanced" hidden>
       <div class="settings-section">
+        <h3>候选评分模式</h3>
+        <div class="settings-field">
+          <label for="cfgEvalScorer">评分器模式</label>
+          <select id="cfgEvalScorer" aria-describedby="cfgEvalScorerHint">
+            <option value="llm" selected>Agent（默认）</option>
+            <option value="shadow">Shadow（校准观察）</option>
+            <option value="learned">Learned（仅相关性，实验性）</option>
+          </select>
+        </div>
+        <p class="settings-hint" id="cfgEvalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+      </div>
+
+      <div class="settings-section">
         <h3>推荐增强</h3>
         <p class="settings-hint">P1 用户视觉画像、P2 弹幕语义、P3 视频关键帧本质都是排序信号加权，不是过滤。P1/P3 依赖多模态 image embedding，P2 只需文本 embedding；P1 每个极性反馈不足 8 条时会安全 no-op。关闭开关会保留缓存与参数并回退到原排序，不影响现有主流程；关键帧和弹幕目前仅作用于 B 站。</p>
         <div class="settings-field-row">
