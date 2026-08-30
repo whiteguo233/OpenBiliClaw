@@ -27,6 +27,12 @@ from openbiliclaw.discovery.eval_payload import (
     resolve_local_evaluation_results,
 )
 from openbiliclaw.discovery.eval_reason import normalize_evaluation_reason
+from openbiliclaw.discovery.eval_scorer_audit import (
+    LearnedShadowDecision,
+    classify_learned_context,
+    hash_learned_candidate_identity,
+    sanitize_learned_platform,
+)
 from openbiliclaw.discovery.learned_scorer import LearnedBatchResult, LearnedRelevanceScorer
 from openbiliclaw.discovery.prefilter_audit import (
     PREFILTER_EXPLORE_EXEMPT_STATUS,
@@ -172,7 +178,7 @@ _EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
 _EVAL_SCORER_DEFAULT = "llm"
-_EVAL_SCORER_MODES = frozenset({"llm", "learned"})
+_EVAL_SCORER_MODES = frozenset({"llm", "shadow", "learned"})
 _LEARNED_SCORER_REASON = "learned relevance scorer"
 _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT = "sparse-json"
 _EVALUATION_CANDIDATE_TRANSPORTS = frozenset({"production", "row-wire-v1", "sparse-json"})
@@ -1181,7 +1187,7 @@ class ContentDiscoveryEngine:
         self.eval_batch_concurrency = max(1, min(16, int(eval_batch_concurrency)))
         self.eval_prefilter_mode = self._normalize_eval_prefilter_mode(eval_prefilter_mode)
         self._eval_scorer = self._normalize_eval_scorer(eval_scorer)
-        if self._eval_scorer == "learned" and learned_scorer is None:
+        if self._eval_scorer != "llm" and learned_scorer is None:
             learned_scorer = LearnedRelevanceScorer(embedding_service=embedding_service)
         self._learned_scorer = learned_scorer
         # Replay-only unless and until the real provider quality/token gate
@@ -1695,6 +1701,66 @@ class ContentDiscoveryEngine:
                 len(outcomes),
                 updated,
             )
+
+    def _persist_learned_scorer_shadow_audit(
+        self,
+        contents: Sequence[DiscoveredContent],
+        *,
+        learned_scores: Mapping[int, float],
+        llm_scores: Mapping[int, float],
+        features_digest: str,
+        source_context: str,
+    ) -> bool:
+        """Persist complete privacy-safe scorer pairs and report full success."""
+
+        paired_indices = sorted(set(learned_scores) & set(llm_scores))
+        if not paired_indices or not re.fullmatch(r"[0-9a-f]{64}", features_digest):
+            return False
+        database = getattr(self, "_database", None)
+        recorder = getattr(database, "record_learned_scorer_shadow_audit", None)
+        if not callable(recorder):
+            return False
+        records: list[dict[str, object]] = []
+        try:
+            for content_index in paired_indices:
+                if not 0 <= content_index < len(contents):
+                    continue
+                content = contents[content_index]
+                learned_score = self._clamp_score(learned_scores[content_index])
+                llm_score = self._clamp_score(llm_scores[content_index])
+                threshold = self._admission_threshold_for_item(content)
+                decision = LearnedShadowDecision(
+                    content_index=content_index,
+                    candidate_hash=hash_learned_candidate_identity(self._content_identity(content)),
+                    platform_class=sanitize_learned_platform(content.source_platform or "bilibili"),
+                    context_class=classify_learned_context(
+                        source_context,
+                        content.source_strategy,
+                    ),
+                    learned_score=learned_score,
+                    llm_score=llm_score,
+                    admission_threshold=threshold,
+                    admission_result=llm_score >= threshold,
+                    features_digest=features_digest,
+                )
+                records.append(decision.as_storage_record())
+            if not records:
+                return False
+            inserted = int(recorder(records) or 0)
+        except Exception:
+            logger.warning(
+                "learned scorer shadow telemetry insert failed; learned result remains disabled",
+                exc_info=True,
+            )
+            return False
+        if inserted != len(records):
+            logger.warning(
+                "learned scorer shadow telemetry insert incomplete: expected=%d inserted=%d",
+                len(records),
+                inserted,
+            )
+            return False
+        return True
 
     def _supports_multimodal_evaluation(self) -> bool:
         override = getattr(self, "_multimodal_vision_supported_override", None)
@@ -2378,7 +2444,13 @@ class ContentDiscoveryEngine:
 
         eval_indices = [index for index, _content in eval_pairs]
         eval_contents = [content for _index, content in eval_pairs]
-        normal_cache_enabled = self._batch_normal_cache_eligible(
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        # Calibration modes need one complete learned-vs-LLM pair per candidate.
+        # Do not let an old per-item LLM cache hit suppress either side of that
+        # comparison; the default ``llm`` mode keeps the existing cache behavior.
+        normal_cache_enabled = eval_scorer == "llm" and self._batch_normal_cache_eligible(
             eval_contents,
             source_context=source_context,
         )
@@ -2464,6 +2536,9 @@ class ContentDiscoveryEngine:
         prefilter_mode = self._normalize_eval_prefilter_mode(
             getattr(self, "eval_prefilter_mode", _EMBEDDING_PREFILTER_DEFAULT_MODE)
         )
+        if eval_scorer != "llm" and prefilter_mode == "enforce":
+            logger.info("eval prefilter enforce treated as shadow during learned calibration")
+            prefilter_mode = "shadow"
         filtered_local_indices: set[int] = set()
         shadow_decisions: list[PrefilterShadowDecision] = []
         shadow_contents: list[DiscoveredContent] = []
@@ -2600,9 +2675,14 @@ class ContentDiscoveryEngine:
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
 
-        # Opt-in learned relevance scorer; default eval_scorer="llm" keeps
-        # this inert, and any learned failure falls through to the LLM path.
-        if self._eval_scorer == "learned" and self._learned_scorer is not None:
+        # Calibration modes always continue through the full LLM evaluator. It
+        # remains the source of temporal/topic/style/franchise metadata and the
+        # comparison label written to the learned-scorer audit table. ``shadow``
+        # keeps its relevance score authoritative; ``learned`` replaces only the
+        # relevance score after a complete LLM result is available.
+        learned_model_scores: dict[int, float] = {}
+        learned_features_digest = ""
+        if eval_scorer != "llm" and self._learned_scorer is not None:
             learned_contents = [eval_contents[i] for i in uncached_indices]
             learned_result: LearnedBatchResult | None = None
             try:
@@ -2616,66 +2696,46 @@ class ContentDiscoveryEngine:
                     "eval_batch learned scorer failed; falling back to LLM (source=%s)",
                     source_context or "mixed",
                 )
-            if (
-                learned_result is not None
-                and learned_result.available
-                and len(learned_result.scores) == len(learned_contents)
-            ):
-                learned_model_scores: dict[int, float] = {}
-                for local_index, raw_score in zip(
-                    uncached_indices, learned_result.scores, strict=True
-                ):
-                    validated = self._validated_model_score(raw_score)
-                    if validated is None:
-                        logger.warning(
-                            "eval_batch learned scorer invalid score %r; using 0.0",
-                            raw_score,
-                        )
-                        score = 0.0
-                    else:
-                        score = validated
-                    content = eval_contents[local_index]
-                    content.relevance_score = score
-                    content.relevance_reason = (
-                        normalize_evaluation_reason(score, _LEARNED_SCORER_REASON) or ""
+            if learned_result is not None and learned_result.available:
+                if len(learned_result.scores) != len(learned_contents):
+                    logger.warning(
+                        "eval_batch learned scorer length mismatch; falling back to LLM "
+                        "(expected=%d actual=%d)",
+                        len(learned_contents),
+                        len(learned_result.scores),
                     )
-                    scores[eval_indices[local_index]] = score
-                    learned_model_scores[local_index] = score
-                if not caller_recap_needed:
-                    group_size = max(1, int(batch_size))
-                    for start in range(0, len(uncached_indices), group_size):
-                        group_indices = uncached_indices[start : start + group_size]
-                        group_contents = [eval_contents[i] for i in group_indices]
-                        group_scores = [scores[eval_indices[i]] for i in group_indices]
-                        self._apply_intra_batch_caps(group_contents, group_scores)
-                        for offset, group_score in enumerate(group_scores):
-                            scores[
-                                eval_indices[group_indices[offset]]
-                            ] = float(group_score or 0.0)
-                shadow_raw_scores = {
-                    decision.content_index: learned_model_scores[
-                        shadow_eval_indices[decision.content_index]
+                else:
+                    validated_scores = [
+                        self._validated_model_score(raw_score)
+                        for raw_score in learned_result.scores
                     ]
-                    for decision in shadow_decisions
-                    if decision.content_index < len(shadow_eval_indices)
-                    and shadow_eval_indices[decision.content_index]
-                    in learned_model_scores
-                }
-                self._complete_prefilter_shadow_decisions(
-                    shadow_decisions,
-                    shadow_contents,
-                    shadow_raw_scores,
-                    persisted=shadow_persisted,
-                )
-                logger.info(
-                    "eval_batch learned scorer: source=%s items=%d",
-                    source_context or "mixed",
-                    len(learned_contents),
-                )
-                return finalize_scores(
-                    effective_batch_size=batch_size,
-                    apply_cached_caps=caller_recap_needed,
-                )
+                    if any(score is None for score in validated_scores):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid score; "
+                            "falling back to LLM"
+                        )
+                    elif not re.fullmatch(
+                        r"[0-9a-f]{64}", str(learned_result.features_digest or "")
+                    ):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid features digest; "
+                            "falling back to LLM"
+                        )
+                    else:
+                        learned_model_scores = {
+                            local_index: cast("float", score)
+                            for local_index, score in zip(
+                                uncached_indices,
+                                validated_scores,
+                                strict=True,
+                            )
+                        }
+                        learned_features_digest = str(learned_result.features_digest)
+                        if eval_scorer == "learned":
+                            # Relevance caps must run after the LLM has supplied
+                            # its diversity metadata and learned scores replace
+                            # raw LLM relevance values.
+                            caller_recap_needed = True
         eval_batch_concurrency = self._effective_eval_batch_concurrency()
         logger.info(
             "eval_batch start: source=%s items=%d batches=%d concurrency=%d (cached=%d)",
@@ -2799,6 +2859,35 @@ class ContentDiscoveryEngine:
             batch_indices, batch_scores = result
             for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
                 scores[eval_indices[idx]] = batch_score
+
+        learned_audit_persisted = self._persist_learned_scorer_shadow_audit(
+            eval_contents,
+            learned_scores=learned_model_scores,
+            llm_scores=raw_model_scores,
+            features_digest=learned_features_digest,
+            source_context=source_context,
+        )
+        if eval_scorer == "learned" and learned_model_scores and learned_audit_persisted:
+            applied = 0
+            for local_index, learned_score in learned_model_scores.items():
+                # A valid LLM member proves that temporal and diversity fields
+                # were parsed and applied. Missing/malformed LLM members retain
+                # their conservative 0.0 product result.
+                if local_index not in raw_model_scores:
+                    continue
+                content = eval_contents[local_index]
+                content.relevance_score = learned_score
+                content.relevance_reason = (
+                    normalize_evaluation_reason(learned_score, _LEARNED_SCORER_REASON) or ""
+                )
+                scores[eval_indices[local_index]] = learned_score
+                applied += 1
+            logger.info(
+                "eval_batch learned relevance applied: source=%s items=%d paired=%d",
+                source_context or "mixed",
+                len(learned_model_scores),
+                applied,
+            )
 
         # Cache entries hold raw model scores. Reapply batch-dependent caps
         # against the stable caller grouping whenever a hit or a cached

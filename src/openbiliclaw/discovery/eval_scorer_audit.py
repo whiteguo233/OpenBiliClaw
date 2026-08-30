@@ -36,9 +36,11 @@ LEARNED_OK_PLATFORMS: Final[frozenset[str]] = frozenset(
         "bangumi",
         "bilibili",
         "douyin",
+        "linuxdo",
         "reddit",
         "twitter",
         "unknown",
+        "v2ex",
         "weibo",
         "web",
         "xiaohongshu",
@@ -67,13 +69,13 @@ _CLASS_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True, kw_only=True)
 class LearnedShadowDecision:
-    """One learned-vs-LLM shadow decision, safe to persist before LLM I/O."""
+    """One complete learned-vs-LLM comparison safe for durable storage."""
 
     content_index: int
     candidate_hash: str
     platform_class: str
     context_class: str
-    learned_score: float | None
+    learned_score: float
     llm_score: float
     admission_threshold: float
     admission_result: bool
@@ -107,6 +109,7 @@ class LearnedGateReport:
     reasons: tuple[str, ...]
     total_decisions: int
     joinable_candidates: int
+    telemetry_coverage: float
     spearman: float | None
     admission_delta: float | None
     coverage: float | None
@@ -125,6 +128,7 @@ class LearnedGateReport:
                 "admitted_count": self.admitted_count,
             },
             "metrics": {
+                "telemetry_coverage": self.telemetry_coverage,
                 "spearman": self.spearman,
                 "admission_delta": self.admission_delta,
                 "coverage": self.coverage,
@@ -208,6 +212,7 @@ def _as_finite_float(value: object) -> float | None:
 def _is_joinable(row: Mapping[str, object]) -> bool:
     decision_id = str(row.get("decision_id") or "")
     candidate_hash = str(row.get("candidate_hash") or "")
+    features_digest = str(row.get("features_digest") or "")
     platform = str(row.get("platform_class") or "")
     context = str(row.get("context_class") or "")
     learned = _as_finite_float(row.get("learned_score"))
@@ -215,20 +220,27 @@ def _is_joinable(row: Mapping[str, object]) -> bool:
     threshold = _as_finite_float(row.get("admission_threshold"))
     admitted = _as_bool(row.get("admission_result"))
     if not (
-        decision_id
+        re.fullmatch(r"[0-9a-f]{32}", decision_id)
         and _HASH_RE.fullmatch(candidate_hash)
+        and _HASH_RE.fullmatch(features_digest)
         and platform in LEARNED_OK_PLATFORMS
         and context in LEARNED_OK_CONTEXTS
+        and learned is not None
         and llm is not None
         and threshold is not None
         and admitted is not None
     ):
         return False
-    if not (0.0 <= llm <= 1.0 and 0.0 <= threshold <= 1.0):
+    if not (0.0 <= learned <= 1.0 and 0.0 <= llm <= 1.0 and 0.0 <= threshold <= 1.0):
         return False
-    if admitted != (llm >= threshold):
-        return False
-    return not (learned is not None and not (0.0 <= learned <= 1.0))
+    return admitted == (llm >= threshold)
+
+
+def validate_learned_storage_record(record: Mapping[str, object]) -> None:
+    """Reject malformed or accidentally raw learned-scorer audit fields."""
+
+    if not _is_joinable(record):
+        raise ValueError("learned scorer audit record must be a complete privacy-safe pair")
 
 
 def _rank(values: Sequence[float]) -> list[float]:
@@ -274,6 +286,7 @@ def evaluate_learned_scorer_gate(
     all_rows = list(rows)
     joinable = [row for row in all_rows if _is_joinable(row)]
     total = len(all_rows)
+    telemetry_coverage = len(joinable) / total if total else 0.0
     admitted = sum(_as_bool(row.get("admission_result")) is True for row in joinable)
 
     learned_pairs = [
@@ -294,25 +307,29 @@ def evaluate_learned_scorer_gate(
         scored.append((llm, learned, thr))
 
     admitted_by_llm = sum(1 for llm, _lrn, thr in scored if llm >= thr)
-    admitted_by_learned = sum(
-        1 for _llm, lrn, thr in scored if lrn is not None and lrn >= thr
-    )
+    admitted_by_learned = sum(1 for _llm, lrn, thr in scored if lrn is not None and lrn >= thr)
     admission_delta = (admitted_by_learned / admitted_by_llm - 1.0) if admitted_by_llm else None
 
     llm_admitted = [(llm, _lrn, thr) for llm, _lrn, thr in scored if llm >= thr]
-    learned_covered = sum(
-        1 for _llm, lrn, thr in llm_admitted if lrn is not None and lrn >= thr
-    )
+    learned_covered = sum(1 for _llm, lrn, thr in llm_admitted if lrn is not None and lrn >= thr)
     coverage = (learned_covered / len(llm_admitted)) if llm_admitted else None
 
     reasons: list[str] = []
     if len(joinable) < LEARNED_GATE_MIN_JOINABLE:
         reasons.append("joinable_candidates_below_100")
+    if telemetry_coverage < 1.0:
+        reasons.append("telemetry_coverage_below_1.0")
+    if admitted_by_llm <= 0:
+        reasons.append("admitted_candidates_missing")
     if spearman is None or spearman < LEARNED_GATE_MIN_SPEARMAN:
         reasons.append("spearman_below_0.5_or_missing")
-    if admission_delta is not None and abs(admission_delta) > LEARNED_GATE_MAX_ADMISSION_DELTA:
+    if admission_delta is None:
+        reasons.append("admission_delta_missing")
+    elif abs(admission_delta) > LEARNED_GATE_MAX_ADMISSION_DELTA:
         reasons.append("admission_delta_above_0.02")
-    if coverage is not None and coverage < LEARNED_GATE_MIN_COVERAGE:
+    if coverage is None:
+        reasons.append("coverage_missing")
+    elif coverage < LEARNED_GATE_MIN_COVERAGE:
         reasons.append("coverage_below_0.9")
 
     return LearnedGateReport(
@@ -320,6 +337,7 @@ def evaluate_learned_scorer_gate(
         reasons=tuple(reasons),
         total_decisions=total,
         joinable_candidates=len(joinable),
+        telemetry_coverage=telemetry_coverage,
         spearman=spearman,
         admission_delta=admission_delta,
         coverage=coverage,

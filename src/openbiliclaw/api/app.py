@@ -19639,6 +19639,14 @@ def create_app(
                             detail="discovery.eval_prefilter_mode must be off, shadow, or enforce",
                         )
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
+                if "eval_scorer" in ddata:
+                    eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
+                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                        )
+                    cfg.discovery.eval_scorer = eval_scorer
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(

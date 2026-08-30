@@ -666,7 +666,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 发现之后的统一流程：
 
 - **安全取数** — 后端不代登录、不爬你看不到的内容；所有平台复用你浏览器里已有的登录会话，首轮画像信号只在你点「开始初始化」后按所选来源拉取。账号周期回拉默认关闭，只有显式设置 `source_incremental_enabled=true` 后，已启用来源才会在扩展在线时按全局 / 逐源周期运行；这不影响手动初始化、手动拉取或后台内容发现。抖音仍额外默认关闭，Linux.do 任务只允许 GET，`_t` 仅作布尔登录提示。
-- **连续统一评估** — 各来源原始候选进入同一待评估池，由共享 evaluator 结合灵魂画像、正文和近期负反馈批量打分；默认 3×30 worker 任一完成即补位，调度只计 durable 库存，串行 admission 按实时 headroom 封顶。可选 embedding 预过滤默认先 shadow 观测，确认无误后才 enforce 跳过明显低相似候选。
+- **连续统一评估** — 各来源原始候选进入同一待评估池，由共享 evaluator 结合灵魂画像、正文和近期负反馈批量打分；默认 3×30 worker 任一完成即补位，调度只计 durable 库存，串行 admission 按实时 headroom 封顶。可选 embedding 预过滤默认先 shadow 观测；learned scorer 也先用 `shadow` 与完整 LLM 做隐私安全对照，通过只读门禁后才人工启用 hybrid relevance，当前不减少 LLM 调用。
 - **多样性选择** — 平台配额 → 主题去重 → 风格均衡 → 跨平台混排 → 数量封顶；开箱只启用 B 站，其余平台在设置里显式打开。
 
 > 各平台任务链路、候选池计数、fallback 策略等完整机制见 [内容发现引擎文档](docs/modules/discovery.md)。

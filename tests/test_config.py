@@ -2952,6 +2952,7 @@ class TestDiscoveryConfig:
         )
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "shadow"
+        assert config.discovery.eval_scorer == "llm"
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.visual_profile_enabled is False
         assert config.discovery.keyframe_enabled is False
@@ -2986,6 +2987,7 @@ class TestDiscoveryConfig:
         )
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "shadow"
+        assert config.discovery.eval_scorer == "llm"
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.visual_profile_enabled is False
         assert config.discovery.keyframe_enabled is False
@@ -3058,6 +3060,7 @@ inspiration_replace_merged_keywords = true
 inspiration_search_backends = ["platform_sources", "exa", "you"]
 inspiration_breadth = "high"
 eval_prefilter_mode = "enforce"
+eval_scorer = "shadow"
 multimodal_evaluation_enabled = true
 candidate_eval_concurrency = 3
 multimodal_batch_size = 4
@@ -3087,6 +3090,7 @@ multimodal_image_timeout_seconds = 10
         assert config.discovery.inspiration_search_backends == ("platform_sources", "exa", "you")
         assert config.discovery.inspiration_breadth == "high"
         assert config.discovery.eval_prefilter_mode == "enforce"
+        assert config.discovery.eval_scorer == "shadow"
         assert config.discovery.multimodal_evaluation_enabled is True
         assert config.discovery.candidate_eval_concurrency == 3
         assert config.discovery.multimodal_batch_size == 4
@@ -3219,6 +3223,33 @@ eval_prefilter_mode = "  Shadow  "
         with pytest.raises(ConfigError, match="discovery\\.eval_prefilter_mode"):
             validate_runtime_config(config)
 
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("shadow", "shadow"), ("LEARNED", "learned"), ("unsafe", "llm")],
+    )
+    def test_discovery_eval_scorer_normalizes_from_toml(
+        self,
+        tmp_path: Path,
+        configured: str,
+        expected: str,
+    ) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            f'[discovery]\neval_scorer = "{configured}"\n',
+            encoding="utf-8",
+        )
+
+        assert load_config(toml_path).discovery.eval_scorer == expected
+
+    def test_validate_runtime_config_rejects_invalid_eval_scorer(self) -> None:
+        config = Config()
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "qwen2.5:7b"
+        config.discovery.eval_scorer = "unsafe"
+
+        with pytest.raises(ConfigError, match="discovery\\.eval_scorer"):
+            validate_runtime_config(config)
+
     def test_discovery_missing_table_uses_defaults(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "c.toml"
         toml_path.write_text("[scheduler]\nenabled = true\n", encoding="utf-8")
@@ -3290,6 +3321,7 @@ eval_prefilter_mode = "  Shadow  "
         config.discovery.inspiration_search_backends = ("you",)
         config.discovery.inspiration_breadth = "low"
         config.discovery.eval_prefilter_mode = "enforce"
+        config.discovery.eval_scorer = "shadow"
         config.discovery.multimodal_evaluation_enabled = True
         config.discovery.multimodal_batch_size = 4
         config.discovery.multimodal_image_max_px = 512
@@ -3316,6 +3348,7 @@ eval_prefilter_mode = "  Shadow  "
         assert loaded.discovery.inspiration_search_backends == ("you",)
         assert loaded.discovery.inspiration_breadth == "low"
         assert loaded.discovery.eval_prefilter_mode == "enforce"
+        assert loaded.discovery.eval_scorer == "shadow"
         assert loaded.discovery.multimodal_evaluation_enabled is True
         assert loaded.discovery.multimodal_batch_size == 4
         assert loaded.discovery.multimodal_image_max_px == 512
@@ -3341,6 +3374,7 @@ eval_prefilter_mode = "  Shadow  "
         )
         assert 'inspiration_breadth = "high"' in rendered
         assert 'eval_prefilter_mode = "shadow"' in rendered
+        assert 'eval_scorer = "llm"' in rendered
         assert "multimodal_evaluation_enabled = false" in rendered
         assert "multimodal_batch_size = 8" in rendered
         assert "multimodal_image_max_px = 384" in rendered

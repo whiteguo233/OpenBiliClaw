@@ -2,14 +2,15 @@
 
 This opt-in scorer embeds the candidate content and the profile interest
 labels, then scores each candidate by its maximum cosine similarity to any
-interest anchor, normalised to [0, 1]. While ``eval_scorer="learned"`` it
-replaces the LLM relevance score; the engine routes to the LLM whenever the
-scorer is unavailable, raises, or returns an invalid score.
+interest anchor, normalised to [0, 1]. In calibration modes the engine still
+runs the complete LLM evaluator for temporal and diversity metadata; malformed
+or unavailable learned results leave the LLM relevance score authoritative.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -30,8 +31,8 @@ class LearnedBatchResult:
         scores: One relevance score per input content, in input order.
         available: Whether a learned score was actually produced for this
             batch (False when the model is not ready / skipped).
-        features_digest: Stable digest of the extracted candidate features,
-            used for caching; None when no features were built.
+        features_digest: Stable privacy-safe digest of the scorer inputs,
+            used to bind audit evidence; None when no features were built.
     """
 
     scores: list[float]
@@ -46,18 +47,34 @@ def _content_text(item: Mapping[str, Any]) -> str:
 
 
 def _as_float_vector(value: Any) -> list[float]:
-    """Coerce an embedding result (list/tuple/np array/object) to a float list."""
-    if isinstance(value, (list, tuple)):
-        return [float(v) for v in value if isinstance(v, (int, float))]
-    tail = getattr(value, "tolist", None)
-    if callable(tail):
+    """Return a complete finite embedding vector or ``[]`` when malformed."""
+
+    raw = value
+    if not isinstance(raw, (list, tuple)):
+        tail = getattr(raw, "tolist", None)
+        if not callable(tail):
+            return []
         try:
-            tail = tail()
+            raw = tail()
         except Exception:  # noqa: BLE001
-            tail = None
-    if isinstance(tail, (list, tuple)):
-        return [float(v) for v in tail if isinstance(v, (int, float))]
-    return []
+            return []
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return []
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in raw):
+        return []
+    vector = [float(item) for item in raw]
+    return vector if all(math.isfinite(item) for item in vector) else []
+
+
+def _interest_weight(item: object) -> float:
+    value = getattr(item, "weight", 0.0)
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return weight if math.isfinite(weight) else 0.0
 
 
 class LearnedRelevanceScorer:
@@ -73,12 +90,15 @@ class LearnedRelevanceScorer:
         self._embedding_service = embedding_service
 
     def _interest_labels(self, profile: SoulProfile) -> list[str]:
-        """Return up to ``_MAX_INTEREST_ANCHORS`` distinct interest labels."""
+        """Return the strongest active distinct interest labels."""
         labels: list[str] = []
         seen: set[str] = set()
         preferences = getattr(profile, "preferences", None)
         interests = getattr(preferences, "interests", None) or []
-        for item in interests:
+        ranked = sorted(interests, key=_interest_weight, reverse=True)
+        for item in ranked:
+            if str(getattr(item, "state", "active") or "active").strip().lower() == "archived":
+                continue
             name = str(getattr(item, "name", None) or "").strip()
             if name and name not in seen:
                 labels.append(name)
@@ -116,17 +136,18 @@ class LearnedRelevanceScorer:
                     interest_vectors.append(vector)
             if not interest_vectors:
                 return None
+            dimensions = {len(vector) for vector in interest_vectors}
+            if len(dimensions) != 1:
+                return None
+            expected_dimension = next(iter(dimensions))
 
             scores: list[float] = []
             for item in contents:
-                content_vector = _as_float_vector(
-                    await service.embed(_content_text(item))
-                )
-                if not content_vector:
+                content_vector = _as_float_vector(await service.embed(_content_text(item)))
+                if len(content_vector) != expected_dimension:
                     return None
                 best = max(
-                    cosine_similarity(content_vector, interest)
-                    for interest in interest_vectors
+                    cosine_similarity(content_vector, interest) for interest in interest_vectors
                 )
                 scores.append(_normalise_cosine(float(best)))
         except Exception:  # noqa: BLE001 - fail open to the LLM
@@ -135,7 +156,7 @@ class LearnedRelevanceScorer:
         return LearnedBatchResult(
             scores=scores,
             available=True,
-            features_digest=_features_digest(labels, scores),
+            features_digest=_features_digest(labels, contents),
         )
 
     def extract_candidate_features(
@@ -149,9 +170,15 @@ class LearnedRelevanceScorer:
 
 def _normalise_cosine(similarity: float) -> float:
     """Map cosine in [-1, 1] to [0, 1], clamped."""
+    if not math.isfinite(similarity):
+        raise ValueError("cosine similarity must be finite")
     return max(0.0, min(1.0, (similarity + 1.0) / 2.0))
 
 
-def _features_digest(labels: list[str], scores: list[float]) -> str:
-    payload = "\0".join(labels + [f"{score:.4f}" for score in scores])
+def _features_digest(labels: list[str], contents: Sequence[Mapping[str, Any]]) -> str:
+    """Digest prompt-local scorer inputs without persisting profile/content text."""
+
+    payload = "\0".join(
+        ["learned-features-v1", *labels, *(_content_text(item) for item in contents)]
+    )
     return hashlib.sha256(payload.encode()).hexdigest()

@@ -178,6 +178,7 @@ _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -1139,8 +1140,8 @@ class DiscoveryConfig:
     # Embedding pre-filter rollout for discovery evaluation. ``shadow`` logs
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
-    # Evaluator backend for discovery batches: "llm" (default, unchanged) or
-    # "learned" (opt-in learned relevance scorer; falls back to LLM when unavailable).
+    # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
+    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
     eval_scorer: str = "llm"
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
@@ -2948,7 +2949,7 @@ def _normalize_eval_scorer(value: object) -> str:
     if not isinstance(value, str):
         return "llm"
     mode = value.strip().lower()
-    return mode if mode in {"llm", "learned"} else "llm"
+    return mode if mode in _SUPPORTED_EVAL_SCORER_MODES else "llm"
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -4545,6 +4546,16 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             ConfigIssue(
                 field="discovery.eval_prefilter_mode",
                 message='`discovery.eval_prefilter_mode` 仅支持: "off", "shadow", "enforce"。',
+                severity="blocking",
+            )
+        )
+
+    eval_scorer = str(config.discovery.eval_scorer or "").strip().lower()
+    if eval_scorer not in _SUPPORTED_EVAL_SCORER_MODES:
+        issues.append(
+            ConfigIssue(
+                field="discovery.eval_scorer",
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
                 severity="blocking",
             )
         )

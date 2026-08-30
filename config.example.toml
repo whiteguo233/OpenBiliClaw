@@ -654,7 +654,9 @@ candidate_eval_concurrency = 3
 # enforce = 低相似候选不进 LLM。默认 shadow；先 grep prefilter-shadow，
 # 确认 would-be-filtered 且 LLM 分数 >= admission_min_score 的候选约为 0 后再切 enforce。
 eval_prefilter_mode = "shadow"
-# 候选评估后端："llm"（默认，不改变现状）或 "learned"（opt-in 学习器打分，评分不可用时回退 LLM）。
+# relevance 后端："llm"（默认）；"shadow" 同跑 learned/LLM、以 LLM 为准并落审计；
+# "learned" 使用 learned relevance，但仍由 LLM 提供 temporal/topic/style/franchise 安全元数据。
+# 两种校准模式都会绕过 normal eval cache，且把 prefilter enforce 当成 shadow；当前不减少 LLM 调用。
 eval_scorer = "llm"
 # 可选封面图评估。默认关闭；开启后 discovery evaluator 会在模型支持图像输入时
 # 把已压缩的候选封面一并送入评估器，模型不支持时自动退回纯文本评估。

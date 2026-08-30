@@ -44,6 +44,7 @@ from openbiliclaw.discovery.admission import (
 from openbiliclaw.discovery.eval_scorer_audit import (
     LEARNED_AUDIT_MAX_ROWS,
     LEARNED_AUDIT_RETENTION_DAYS,
+    validate_learned_storage_record,
 )
 from openbiliclaw.discovery.inspiration import (
     AxisRow,
@@ -1331,11 +1332,11 @@ CREATE TABLE IF NOT EXISTS evaluator_learned_scorer_shadow_audit (
     candidate_hash           TEXT NOT NULL,
     platform_class           TEXT NOT NULL,
     context_class            TEXT NOT NULL,
-    learned_score            REAL,
-    llm_score                REAL,
-    admission_threshold      REAL,
-    admission_result         INTEGER,
-    features_digest          TEXT,
+    learned_score            REAL NOT NULL,
+    llm_score                REAL NOT NULL,
+    admission_threshold      REAL NOT NULL,
+    admission_result         INTEGER NOT NULL,
+    features_digest          TEXT NOT NULL,
     created_at               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_learned_shadow_created
@@ -4451,17 +4452,18 @@ class Database:
         """
         params: list[tuple[Any, ...]] = []
         for row in rows:
+            validate_learned_storage_record(row)
             params.append(
                 (
-                    row.get("decision_id"),
-                    row.get("candidate_hash"),
-                    row.get("platform_class"),
-                    row.get("context_class"),
-                    row.get("learned_score"),
-                    row.get("llm_score"),
-                    row.get("admission_threshold"),
-                    row.get("admission_result"),
-                    row.get("features_digest"),
+                    str(row["decision_id"]),
+                    str(row["candidate_hash"]),
+                    str(row["platform_class"]),
+                    str(row["context_class"]),
+                    float(row["learned_score"]),
+                    float(row["llm_score"]),
+                    float(row["admission_threshold"]),
+                    1 if bool(row["admission_result"]) else 0,
+                    str(row["features_digest"]),
                 )
             )
         if not params:
@@ -4505,6 +4507,22 @@ class Database:
             (LEARNED_AUDIT_MAX_ROWS,),
         )
         return inserted
+
+    def query_learned_scorer_shadow_audit(self, *, limit: int = 20_000) -> list[dict[str, Any]]:
+        """Return the bounded privacy-safe learned-vs-LLM comparison cohort."""
+
+        rows = self.conn.execute(
+            """
+            SELECT id, decision_id, candidate_hash, platform_class, context_class,
+                   learned_score, llm_score, admission_threshold, admission_result,
+                   features_digest, created_at
+            FROM evaluator_learned_scorer_shadow_audit
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (max(0, min(LEARNED_AUDIT_MAX_ROWS, int(limit))),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def complete_prefilter_shadow_decisions(
         self,

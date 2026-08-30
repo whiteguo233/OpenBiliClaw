@@ -15824,6 +15824,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 },
                 "discovery": {
                     "eval_prefilter_mode": "enforce",
+                    "eval_scorer": "shadow",
                     "admission_min_score": 0.72,
                 },
                 "storage": {"db_path": "runtime-data/openbiliclaw.db"},
@@ -15909,14 +15910,30 @@ class TestEmbeddingAndCompatProviderE2E:
             "git@github.com:example/OpenBiliClaw.git",
         ]
         assert cfg.discovery.eval_prefilter_mode == "enforce"
+        assert cfg.discovery.eval_scorer == "shadow"
         assert cfg.discovery.admission_min_score == 0.72
         assert response.json()["config"]["discovery"]["eval_prefilter_mode"] == "enforce"
+        assert response.json()["config"]["discovery"]["eval_scorer"] == "shadow"
         assert cfg.storage.db_path == "runtime-data/openbiliclaw.db"
         assert cfg.logging.file_level == "WARNING"
         assert cfg.logging.max_file_size_mb == 123
         assert cfg.logging.aggregate_budget_mb == 456
         assert cfg.logging.unmanaged_truncate_mb == 78
         assert cfg.logging.unmanaged_max_age_days == 9
+
+    def test_put_config_rejects_invalid_eval_scorer(self, monkeypatch, tmp_path) -> None:
+        from openbiliclaw.config import Config
+
+        cfg = Config()
+        client = self._make_client(monkeypatch, tmp_path, cfg)
+
+        response = client.put(
+            "/api/config",
+            json={"discovery": {"eval_scorer": "unsafe"}},
+        )
+
+        assert response.status_code == 422
+        assert cfg.discovery.eval_scorer == "llm"
 
     def test_put_config_clears_deepseek_reasoning_effort(self, monkeypatch, tmp_path) -> None:
         """The settings UIs send an empty string when users disable DeepSeek thinking."""

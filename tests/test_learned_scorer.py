@@ -46,6 +46,11 @@ def test_normalise_cosine_clamps() -> None:
     assert 0.0 <= _normalise_cosine(0.3) <= 1.0
 
 
+def test_normalise_cosine_rejects_non_finite_values() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        _normalise_cosine(float("nan"))
+
+
 async def test_score_batch_returns_available_scores() -> None:
     scorer = LearnedRelevanceScorer(embedding_service=_FakeEmbedding([1.0, 0.0, 0.0]))
     profile = _profile("coding", "math")
@@ -68,6 +73,26 @@ async def test_score_batch_none_without_interests() -> None:
     scorer = LearnedRelevanceScorer(embedding_service=_FakeEmbedding([1.0, 0.0]))
     profile = _profile()
     assert await scorer.score_batch([_item("a", "b")], profile) is None
+
+
+@pytest.mark.parametrize(
+    "vector",
+    ([float("nan"), 1.0], [float("inf"), 1.0], [True, 1.0]),
+)
+async def test_score_batch_fails_open_on_malformed_vectors(vector: list[float]) -> None:
+    scorer = LearnedRelevanceScorer(embedding_service=_FakeEmbedding(vector))
+    assert await scorer.score_batch([_item("a", "b")], _profile("coding")) is None
+
+
+async def test_features_digest_binds_candidate_inputs_not_only_scores() -> None:
+    scorer = LearnedRelevanceScorer(embedding_service=_FakeEmbedding([1.0, 0.0]))
+    first = await scorer.score_batch([_item("first")], _profile("coding"))
+    second = await scorer.score_batch([_item("second")], _profile("coding"))
+
+    assert first is not None
+    assert second is not None
+    assert first.scores == second.scores
+    assert first.features_digest != second.features_digest
 
 
 def test_extract_candidate_features() -> None:

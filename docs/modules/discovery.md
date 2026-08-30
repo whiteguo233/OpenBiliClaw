@@ -164,7 +164,9 @@ LLM precision 清池以减少库存浪费。最终“不展示”的正确性由
 
    之后 evaluator 会按 `[discovery].eval_prefilter_mode` 运行 embedding 预过滤。默认 `shadow` 只计算低相似 would-filter 集合并打 `prefilter-shadow` 日志，所有候选仍进入 LLM，便于统计误杀；`enforce` 才会把非 `explore` 且与 top-256 recall-visible 兴趣标签 + 32 个 compact 兴趣域都低相似的候选写入低分评估缓存并从 LLM batch 中剔除，避免在长尾兴趣召回发生前误杀第 65–256 名兴趣。余弦相似度会夹在 `0..1` 后再映射预筛分数，不会产生负相关性分数。若单批会被过滤超过 50%，会 fail-open 退回全量 LLM 评估，避免坏 embedding 状态掐断供给。
 
-   `[discovery].eval_scorer` 控制候选评估后端：默认 `"llm"` 走既有 LLM 批量评估；`"learned"` 启用 opt-in 特征化学习器打分（`LearnedRelevanceScorer`，接 `evaluate_content_batch()`），学习器不可用 / 抛异常 / 分数长度不符时自动回退 LLM。默认值下行为不变。
+   `[discovery].eval_scorer` 控制候选相关性校准模式。默认 `"llm"` 保持既有批量评估和缓存行为；`"shadow"` 同时运行 `LearnedRelevanceScorer` 与完整 LLM evaluator，但产品相关性仍以 LLM 为准，并把完整、隐私安全的对照对写入审计表；`"learned"` 是人工看过 gate 后的显式 opt-in，只在完整 LLM 成员已提供 temporal / topic / style / franchise 元数据且本批审计完整落库时，用 learned 分数覆盖 relevance。校准模式会绕过 normal eval cache，并把同时配置的 prefilter `enforce` 当成 `shadow`，避免缓存命中或预过滤制造不完整 cohort；因此当前版本的 `"learned"` 仍会调用 LLM，不能作为节省 LLM 成本的开关。上文“worker 只跑 LLM”只描述默认 `llm` 路径；校准模式的 worker 会在同一个 evaluator 阶段运行 learned + LLM。学习器不可用、异常、分数长度不符、非有限值、向量维度不一致、特征摘要非法或审计写入失败时，产品结果都 fail-open 到 LLM。
+
+   learned-vs-LLM 审计只保存随机 decision id、带域分隔的候选身份 hash、有限枚举的平台 / 上下文类别、两路分数、统一 admission 门槛 / 结果和特征输入摘要，不保存标题、正文、URL、作者、原始画像或 provider 响应；表按 30 天 / 2 万行裁剪。`scripts/evaluate_learned_scorer_gate.py` 用只读事务冻结 cohort，且只有 100 条以上完整对照、telemetry coverage=1、至少一个 LLM admission、Spearman≥0.5、admission delta 绝对值≤0.02、admitted coverage≥0.9 且所有指标均存在时才通过。脚本只输出证据，不自动修改配置。
 
    evaluator 的候选输入不再只依赖标题：各来源会尽量映射 `view_count`、`like_count`、`favorite_count` / `collect_count`、`comment_count` / `reply_count`、`share_count`、`danmaku_count`、`retweet_count`、`bookmark_count`、`tags`、`body_text` 等字段。目录型来源的 `rating_score / rating_count / source_rank` 只有真实非零值才进入 prompt；普通视频不会因统一数据结构而多发三个恒为 0 的键。对知乎 / X 这类 text-first 来源，如果 `description` 与 `body_text` 是同一段文本或只是正文前缀，prompt 会省略重复的 `description`；single 与 batch eval 都保留完整 `body_text`。曾实现的 200+100 head/tail 截断在 Reddit 100×3 真实回放中造成 18% admission flip、Spearman 中位数降至 0.192，因此已完整回滚。除 `explore` 外，各发现路径和平台都只提供上下文，不能设置基础分、自动加分、降低门槛或替明显不匹配的候选编造画像关联；单条与 batch evaluator 使用同一规则。
 
@@ -667,7 +669,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
-| evaluator learned scorer shadow 证据门 | ✅ | 配置 `[discovery].eval_scorer`（默认 `llm`）决定候选评估后端：`learned` 用 `LearnedRelevanceScorer` 对候选做 embedding（profile 兴趣锚点最大余弦，归一化 [0,1]）替代 LLM relevance 分；scorer 不可用/异常/长度不符即回退 LLM，默认值下行为不变。`eval_scorer_audit` 以 privacy-safe 字段（decision_id + domain hash + bounded class）记录 learned vs llm 分数与 admission 结果；`scripts/evaluate_learned_scorer_gate.py` 只读冻结 cohort 计算 Spearman / admission-delta / 判别覆盖，从不自动切换。 |
+| evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
 | 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do 的原始候选先写入 `discovery_candidates(pending_eval)`；API runtime 先用 supply fill loop 按 `pending_eval + evaluating` 补足有效水位，入库前过滤历史候选和已缓存内容，再由唯一 `CandidateEvalCoordinator` 按 `[scheduler].eval_min_batch_size / eval_max_wait_seconds`（默认 15 / 90 秒）凑批，以最多 3×30 连续评估并串行 commit/admission；手动 CLI 固定 `1 / 0` 立即 drain。各路径共享 tokenized claim、统一阈值与 projected-inventory 规则。 |
 | 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎、Reddit、Bangumi、微博的原始候选先写入 `discovery_candidates(pending_eval)`；API runtime 先用 supply fill loop 按 `pending_eval + evaluating` 补足有效水位，入库前过滤历史候选和已缓存内容，再由唯一 `CandidateEvalCoordinator` 按 `[scheduler].eval_min_batch_size / eval_max_wait_seconds`（默认 15 / 90 秒）凑批，以最多 3×30 连续评估并串行 commit/admission；手动 CLI 固定 `1 / 0` 立即 drain。各路径共享 tokenized claim、统一阈值与 projected-inventory 规则。 |
@@ -743,6 +745,13 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+### Learned scorer 校准 API
+
+- `LearnedRelevanceScorer.score_batch()` 返回 `LearnedBatchResult(scores, available, features_digest)`；只有完整、有限、维度一致的 embedding 输入才会标记可用。
+- `evaluate_learned_scorer_gate(rows)` 是纯函数，只接受完整的 privacy-safe learned/LLM 对照并返回 `LearnedGateReport`，不会修改运行时配置。
+- `Database.record_learned_scorer_shadow_audit()` 在写入前验证完整性与字段边界；`query_learned_scorer_shadow_audit()` 只返回最多 2 万条有界审计记录。
+- `scripts/evaluate_learned_scorer_gate.py --db <path>` 以只读方式冻结 cohort 并输出可复核 JSON；退出码 0 表示通过，1 表示 gate 关闭。
 
 ### Temporal v2 证据与三态策略
 

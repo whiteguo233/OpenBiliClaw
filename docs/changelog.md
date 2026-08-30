@@ -10,7 +10,7 @@
 
 - **桌面 Web 手机版二维码优先使用手动配置的后端地址**：校园网等存在 AP/客户端隔离或多网卡选错网卡的场景下，`/api/qr-info` 自动探测的局域网 IP 可能手机不可达，而桌面 Web 设置里手动填写的后端地址此前会被自动探测结果覆盖。现在二维码生成时显式配置的后端 host/port 始终优先，用户可填写手机可达的 IP、域名或内网穿透地址后再扫码；未填写时行为保持不变。更新 `tests/test_desktop_web_mobile_entry.py` 静态契约测试。
 
-- **候选评估后端开关（eval_scorer）**：`[discovery].eval_scorer` 默认 `"llm"` 保持既有 LLM 批量评估；`"learned"` 启用 opt-in 特征化学习器打分（不可用 / 抛异常 / 长度不符时回退 LLM）。新增 `LearnedRelevanceScorer` 骨架与 `tests/test_learned_scorer.py`。
+- **learned scorer 安全校准闭环（eval_scorer）**：`[discovery].eval_scorer` 默认 `"llm"` 保持既有行为；新增 `"shadow"` 并跑 learned + 完整 LLM、由 LLM 决定产品 relevance 并落完整隐私安全对照，人工通过只读 gate 后可显式选 `"learned"` hybrid relevance。learned 模式仍保留 LLM temporal / topic / style / franchise 元数据，且审计失败、非法分数 / 向量 / digest 或不完整 LLM 成员均 fail-open；gate 现在拒绝不完整 telemetry、零 admission 和缺失指标。设置 API / OpenClaw / 热重载同步支持三种模式；本版本不减少 LLM 调用。
 
 ## v0.3.213：推荐供给与时效判断修复（2026-08-27）
 
