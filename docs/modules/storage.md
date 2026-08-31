@@ -9,7 +9,7 @@
 - 行为、推荐、候选池、聊天和鉴权状态的 SQLite 表结构管理。
 - 推荐池 `content_cache` 的可换 / raw / pending 计数口径。
 - discovery 待评估池 `discovery_candidates` 的生命周期管理。
-- evaluator prefilter、推荐时效排序的 privacy-safe shadow 审计，以及正式推荐池的时效 eligibility 持久化守卫。
+- evaluator prefilter、learned-vs-LLM、推荐时效排序的 privacy-safe shadow 审计，以及正式推荐池的时效 eligibility 持久化守卫。
 - 跨平台收藏 / 稍后再看的 canonical 本地 membership、元数据快照、native sync 状态和独立任务快照持久化。
 - 事件来源归属的规范化持久化：平台、稳定内容 ID 与归属置信度；旧事件只做可证明的回填，无法确认时保留 `legacy_unknown`。
 - 事件入口幂等回执，以及小红书 / 抖音 / YouTube / 知乎 / Reddit / Linux.do 来源任务首个终态结果的 crash-safe staging。
@@ -103,6 +103,7 @@
 | 来源定向历史缓存读取 | ✅ | `get_unrecommended_content(limit, source_platforms=...)` 在 SQL 平衡与 `LIMIT` 之前按平台过滤，供 source-scoped discovery backfill 使用；空 `source_platform` 的 legacy 行只按 B 站处理，不能跨源补进 B 站 / YouTube / 抖音定向运行。 |
 | discovery 待评估池 | ✅ | `discovery_candidates` 支持 mixed-source enqueue / claim / evaluation / admission，并持久化 `claim_token`、`score_threshold`、`eval_attempts` 与 batch 级 `batch_eval_attempts`；stale-sensitive 完成和释放都匹配 `id + status + claim_token`。 |
 | evaluator prefilter shadow 审计 | ✅ | `evaluator_prefilter_shadow_audit` 用随机 decision id 连接预过滤决策与最终原始 LLM score / admission 结果；只保存 identity hash、类别、数值和 digest，不保存标题、URL、正文、prompt、画像文本或 provider response。每次 insert 同时执行 30 天和 20,000 行双重 retention；任何写入/回填失败由 discovery fail-open，并以 incomplete telemetry 阻断 enforce gate。 |
+| evaluator learned scorer 对照审计 | ✅ | `evaluator_learned_scorer_shadow_audit` 只接受完整 learned/LLM 对照：随机 32 位 hex decision id、SHA-256 candidate/features digest、有限枚举的平台 / 上下文类、有限 `[0,1]` 分数及一致的 admission 结果；不保存标题、正文、URL、作者、画像或 provider 响应。每次写入执行 30 天 / 20,000 行 retention；不完整或隐私边界外记录在 storage 边界直接拒绝。 |
 | 推荐时效排序 shadow 审计 | ✅ | `temporal_ranking_shadow_audit` 只保存一次候选窗口的总数、时间覆盖、bonus 资格数，以及 class/source/age bucket 和 Top10/50/100 before/after 聚合；不保存任何候选 identity 或内容文本。每次写入执行 30 天 / 5,000 行双重 retention，失败不影响推荐。 |
 | 推荐池 temporal v2 三态 | ✅ | discovery admission、canonical pool 读取、等待扫描、snapshot 清退与最终 serve 写事务共用 `discovery.temporal` 的 `eligible/review_due/expired` 纯策略。只有置信度 `>=0.80`、完整、`scope=core`、逐字 grounded 的明确 deadline 已过或 `state=expired/superseded` 才 hard expire；1 / 14 / 60 天及旧 v1 3 / 60 天只触发复审，`versioned` 另设 120 天准入 TTL。`review_due` discovery 行回到 `pending_eval`，已入池行进入 `pool_status='temporal_review_hold'`；`expired` 行才进入 `rejected_temporal_stale` / `stale`。单次生命周期清扫最多持久化 500 条，但所有 canonical 读取和计数先排除整批 review-due / expired 行。 |
 | 时效展示与 backfill 防绕过 | ✅ | `get_recommendations(exclude_processed=True)`、未读计数与主动通知在最终 limit 前过滤后来进入 `review_due/expired` 的历史推荐，默认历史读取保持完整；`get_unrecommended_content()` 只返回 fresh/non-dislike/temporal-eligible 行。cached-backfill 完整往返证据组，普通 raw 重抓、旧缓存、`unknown/0` 或 malformed 结果不能局部洗字段，也不能把 hold/stale 行复活。readiness、pending-copy、topic/franchise/source 统计与 delight count/backlog 同样排除 `temporal_review_hold` / temporal stale，不让不可展示库存继续占配额或计算预算。 |
@@ -487,6 +488,17 @@ counts = db.prefilter_shadow_audit_counts()
 - `query_prefilter_shadow_audit()` 只返回 privacy-safe 列；只读 gate 命令在 SQLite read transaction 中冻结当前最大 audit id，输出聚合 count/recall/strata/fail-open 结果，不初始化数据库、不调用 provider、也不写配置。
 - `get_existing_discovery_candidate_keys(keys)` 返回任意 lifecycle status 下已经出现过的 `candidate_key`；`get_existing_content_cache_ids(ids)` 返回已经进入正式 `content_cache` 的 BVID / `content_id`。两者用于 `DiscoveryCandidatePipeline` 在 enqueue 前过滤历史重复，而不是等 SQLite `INSERT OR IGNORE` 静默吞掉后才发现供给不足。
 - `get_unrecommended_content(limit, source_platforms=None)` 缺省保留跨源兼容读取；传平台集合时先在 SQL 中筛选再取平衡窗口，避免大量高分其它来源占满 `limit * 5` 窗口后把目标来源饿死。空 legacy 平台值只在目标包含 B 站时可见。
+
+### Evaluator Learned Scorer Audit
+
+```python
+inserted = db.record_learned_scorer_shadow_audit(comparison_records)
+rows = db.query_learned_scorer_shadow_audit(limit=20_000)
+```
+
+- `record_learned_scorer_shadow_audit()` 在 SQL 前调用完整 privacy-safe 校验；缺失 learned/LLM 分数、NaN/Inf、非法 hash / 类别 / decision id、越界阈值或与阈值不一致的 admission 结果都会整体拒绝。
+- 表列使用 `NOT NULL` 保存完整对照；引擎只在完整 LLM 成员存在时构造记录，因此 provider / parse 失败不会把 synthetic 0 伪装成标签。
+- 每次写入后裁剪 30 天前和超过 20,000 行的记录。`query_learned_scorer_shadow_audit()` 只返回有界隐私安全字段，供诊断与只读 gate 使用。
 
 ### Temporal Ranking Shadow Audit
 

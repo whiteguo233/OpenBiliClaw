@@ -178,6 +178,7 @@ _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -1139,6 +1140,9 @@ class DiscoveryConfig:
     # Embedding pre-filter rollout for discovery evaluation. ``shadow`` logs
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
+    # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
+    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    eval_scorer: str = "llm"
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -2851,6 +2855,7 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
         eval_prefilter_mode=_normalize_eval_prefilter_mode(
             discovery_raw.get("eval_prefilter_mode")
         ),
+        eval_scorer=_normalize_eval_scorer(discovery_raw.get("eval_scorer")),
         multimodal_evaluation_enabled=_coerce_bool(
             discovery_raw.get("multimodal_evaluation_enabled"),
             default=False,
@@ -2938,6 +2943,13 @@ def _normalize_eval_prefilter_mode(value: object) -> str:
         return _DEFAULT_EVAL_PREFILTER_MODE
     mode = value.strip().lower()
     return mode or _DEFAULT_EVAL_PREFILTER_MODE
+
+
+def _normalize_eval_scorer(value: object) -> str:
+    if not isinstance(value, str):
+        return "llm"
+    mode = value.strip().lower()
+    return mode if mode in _SUPPORTED_EVAL_SCORER_MODES else "llm"
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -4538,6 +4550,16 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
             )
         )
 
+    eval_scorer = str(config.discovery.eval_scorer or "").strip().lower()
+    if eval_scorer not in _SUPPORTED_EVAL_SCORER_MODES:
+        issues.append(
+            ConfigIssue(
+                field="discovery.eval_scorer",
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
+                severity="blocking",
+            )
+        )
+
     return issues
 
 
@@ -5643,6 +5665,7 @@ def _render_config_toml(
             f"{_toml_bool(config.discovery.inspiration_replace_merged_keywords)}",
             f"inspiration_breadth = {_toml_string(config.discovery.inspiration_breadth)}",
             f"eval_prefilter_mode = {_toml_string(config.discovery.eval_prefilter_mode)}",
+            f"eval_scorer = {_toml_string(config.discovery.eval_scorer)}",
             "multimodal_evaluation_enabled = "
             f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
             f"visual_profile_enabled = {_toml_bool(config.discovery.visual_profile_enabled)}",

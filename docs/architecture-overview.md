@@ -96,6 +96,7 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 │ V2EX 身份梯级：PAT verified > browser observed > user accepted；冲突时只暂停账号画像写入 │
 │ 时效生命周期：正文逐字证据 + code-owned 复审时钟 → 可展示 / temporal_review_hold / 过期 │
 │ evaluator prefilter 默认 shadow → 隐私安全决策/原始分数 join → 只读质量 gate（不自动 enforce）│
+│ eval_scorer：llm 默认；shadow/learned hybrid 并跑完整 LLM → 隐私安全对照 → 只读 gate │
 │ cognition named views → task-scoped gate：仅 awareness_confusions compact；其余 legacy │
 │ token diet：偏好逐段真实装箱；洞察 近期/裁决保底 + 相关/重要/多样性加权≤40 → 完整历史 merge │
 │ keyword planner → 24h 安全跨 digest pending 整理 → 缺口/生成/领取（0=硬过期）│

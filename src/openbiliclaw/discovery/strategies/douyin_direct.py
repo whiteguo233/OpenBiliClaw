@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from openbiliclaw.discovery.engine import (
-    ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
@@ -312,11 +311,7 @@ class DouyinDirectStrategy(DiscoveryStrategy):
         ):
             return candidates[:limit]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         candidates = self.filter_candidates_for_eval(candidates)
         eval_candidates = trim_candidates_for_llm(
             candidates,

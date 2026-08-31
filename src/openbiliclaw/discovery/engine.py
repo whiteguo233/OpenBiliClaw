@@ -27,6 +27,13 @@ from openbiliclaw.discovery.eval_payload import (
     resolve_local_evaluation_results,
 )
 from openbiliclaw.discovery.eval_reason import normalize_evaluation_reason
+from openbiliclaw.discovery.eval_scorer_audit import (
+    LearnedShadowDecision,
+    classify_learned_context,
+    hash_learned_candidate_identity,
+    sanitize_learned_platform,
+)
+from openbiliclaw.discovery.learned_scorer import LearnedBatchResult, LearnedRelevanceScorer
 from openbiliclaw.discovery.prefilter_audit import (
     PREFILTER_EXPLORE_EXEMPT_STATUS,
     PREFILTER_NO_INTERESTS_STATUS,
@@ -170,6 +177,9 @@ _RAW_CANDIDATE_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
 _EVAL_BATCH_CACHE_VERSION = "content-eval-v6"
 _EMBEDDING_PREFILTER_DEFAULT_MODE = "shadow"
 _EMBEDDING_PREFILTER_MODES = {"off", "shadow", "enforce"}
+_EVAL_SCORER_DEFAULT = "llm"
+_EVAL_SCORER_MODES = frozenset({"llm", "shadow", "learned"})
+_LEARNED_SCORER_REASON = "learned relevance scorer"
 _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT = "sparse-json"
 _EVALUATION_CANDIDATE_TRANSPORTS = frozenset({"production", "row-wire-v1", "sparse-json"})
 _EMBEDDING_PREFILTER_MIN_SIMILARITY = 0.2
@@ -964,6 +974,31 @@ _RELATED_CHAIN_PER_UP_CAP: int = 3
 class DiscoveryStrategy(ABC):
     """Base class for content discovery strategies."""
 
+    _bound_content_evaluator: ContentDiscoveryEngine | None = None
+
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Use the owning engine for strategy-level candidate evaluation.
+
+        Strategies may also run independently in tests and integrations. Those
+        calls keep the historical, locally constructed default evaluator; once
+        registered, however, evaluation must inherit the owning engine's scorer,
+        embedding, multimodal, cache, and concurrency configuration.
+        """
+
+        self._bound_content_evaluator = evaluator
+
+    def content_evaluator(self) -> ContentDiscoveryEngine:
+        """Return the owning evaluator or a compatible standalone fallback."""
+
+        if self._bound_content_evaluator is not None:
+            return self._bound_content_evaluator
+        return ContentDiscoveryEngine(
+            llm_service=getattr(self, "llm_service", None),
+            database=getattr(self, "database", None),
+            concurrency=getattr(self, "concurrency", None),
+            embedding_service=getattr(self, "embedding_service", None),
+        )
+
     @property
     def source_platform(self) -> str:
         """Canonical platform produced by this strategy.
@@ -1154,6 +1189,8 @@ class ContentDiscoveryEngine:
         multimodal_vision_supported: bool | None = None,
         eval_batch_concurrency: int = _DEFAULT_EVAL_BATCH_CONCURRENCY,
         eval_prefilter_mode: str = _EMBEDDING_PREFILTER_DEFAULT_MODE,
+        eval_scorer: str = _EVAL_SCORER_DEFAULT,
+        learned_scorer: LearnedRelevanceScorer | None = None,
         compact_evaluation_json: bool = False,
         evaluation_candidate_transport: str = _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT,
     ) -> None:
@@ -1174,6 +1211,10 @@ class ContentDiscoveryEngine:
         )
         self.eval_batch_concurrency = max(1, min(16, int(eval_batch_concurrency)))
         self.eval_prefilter_mode = self._normalize_eval_prefilter_mode(eval_prefilter_mode)
+        self._eval_scorer = self._normalize_eval_scorer(eval_scorer)
+        if self._eval_scorer != "llm" and learned_scorer is None:
+            learned_scorer = LearnedRelevanceScorer(embedding_service=embedding_service)
+        self._learned_scorer = learned_scorer
         # Replay-only unless and until the real provider quality/token gate
         # approves compact deterministic evaluator JSON.
         self.compact_evaluation_json = bool(compact_evaluation_json)
@@ -1229,6 +1270,13 @@ class ContentDiscoveryEngine:
         if normalized in _EMBEDDING_PREFILTER_MODES:
             return normalized
         return _EMBEDDING_PREFILTER_DEFAULT_MODE
+
+    @staticmethod
+    def _normalize_eval_scorer(scorer: str) -> str:
+        normalized = str(scorer or "").strip().lower()
+        if normalized in _EVAL_SCORER_MODES:
+            return normalized
+        return _EVAL_SCORER_DEFAULT
 
     @staticmethod
     def _embedding_prefilter_content_text(content: DiscoveredContent) -> str:
@@ -1679,6 +1727,66 @@ class ContentDiscoveryEngine:
                 updated,
             )
 
+    def _persist_learned_scorer_shadow_audit(
+        self,
+        contents: Sequence[DiscoveredContent],
+        *,
+        learned_scores: Mapping[int, float],
+        llm_scores: Mapping[int, float],
+        features_digest: str,
+        source_context: str,
+    ) -> bool:
+        """Persist complete privacy-safe scorer pairs and report full success."""
+
+        paired_indices = sorted(set(learned_scores) & set(llm_scores))
+        if not paired_indices or not re.fullmatch(r"[0-9a-f]{64}", features_digest):
+            return False
+        database = getattr(self, "_database", None)
+        recorder = getattr(database, "record_learned_scorer_shadow_audit", None)
+        if not callable(recorder):
+            return False
+        records: list[dict[str, object]] = []
+        try:
+            for content_index in paired_indices:
+                if not 0 <= content_index < len(contents):
+                    continue
+                content = contents[content_index]
+                learned_score = self._clamp_score(learned_scores[content_index])
+                llm_score = self._clamp_score(llm_scores[content_index])
+                threshold = self._admission_threshold_for_item(content)
+                decision = LearnedShadowDecision(
+                    content_index=content_index,
+                    candidate_hash=hash_learned_candidate_identity(self._content_identity(content)),
+                    platform_class=sanitize_learned_platform(content.source_platform or "bilibili"),
+                    context_class=classify_learned_context(
+                        source_context,
+                        content.source_strategy,
+                    ),
+                    learned_score=learned_score,
+                    llm_score=llm_score,
+                    admission_threshold=threshold,
+                    admission_result=llm_score >= threshold,
+                    features_digest=features_digest,
+                )
+                records.append(decision.as_storage_record())
+            if not records:
+                return False
+            inserted = int(recorder(records) or 0)
+        except Exception:
+            logger.warning(
+                "learned scorer shadow telemetry insert failed; learned result remains disabled",
+                exc_info=True,
+            )
+            return False
+        if inserted != len(records):
+            logger.warning(
+                "learned scorer shadow telemetry insert incomplete: expected=%d inserted=%d",
+                len(records),
+                inserted,
+            )
+            return False
+        return True
+
     def _supports_multimodal_evaluation(self) -> bool:
         override = getattr(self, "_multimodal_vision_supported_override", None)
         if override is not None:
@@ -1728,6 +1836,9 @@ class ContentDiscoveryEngine:
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
+        bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+        if callable(bind_evaluator):
+            bind_evaluator(self)
         self._strategies = [item for item in self._strategies if item.name != strategy.name]
         self._strategies.append(strategy)
         logger.info("Registered discovery strategy: %s", strategy.name)
@@ -2107,6 +2218,21 @@ class ContentDiscoveryEngine:
         if self._llm_service is None:
             return 0.0
 
+        # Shadow/learned calibration requires a complete learned-vs-LLM pair
+        # and uses LLM batch metadata even for one candidate. Route the single
+        # API through that same audited path instead of silently reverting to
+        # the default Agent-only evaluator.
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        if eval_scorer != "llm":
+            scores = await self.evaluate_content_batch(
+                [content],
+                profile,
+                source_context=source_context or content.source_strategy,
+            )
+            return scores[0] if scores else 0.0
+
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
         evaluated_at, evaluation_bucket = content_evaluation_clock()
@@ -2361,7 +2487,13 @@ class ContentDiscoveryEngine:
 
         eval_indices = [index for index, _content in eval_pairs]
         eval_contents = [content for _index, content in eval_pairs]
-        normal_cache_enabled = self._batch_normal_cache_eligible(
+        eval_scorer = self._normalize_eval_scorer(
+            getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
+        )
+        # Calibration modes need one complete learned-vs-LLM pair per candidate.
+        # Do not let an old per-item LLM cache hit suppress either side of that
+        # comparison; the default ``llm`` mode keeps the existing cache behavior.
+        normal_cache_enabled = eval_scorer == "llm" and self._batch_normal_cache_eligible(
             eval_contents,
             source_context=source_context,
         )
@@ -2447,6 +2579,9 @@ class ContentDiscoveryEngine:
         prefilter_mode = self._normalize_eval_prefilter_mode(
             getattr(self, "eval_prefilter_mode", _EMBEDDING_PREFILTER_DEFAULT_MODE)
         )
+        if eval_scorer != "llm" and prefilter_mode == "enforce":
+            logger.info("eval prefilter enforce treated as shadow during learned calibration")
+            prefilter_mode = "shadow"
         filtered_local_indices: set[int] = set()
         shadow_decisions: list[PrefilterShadowDecision] = []
         shadow_contents: list[DiscoveredContent] = []
@@ -2582,6 +2717,68 @@ class ContentDiscoveryEngine:
         )
 
         total_batches = (len(uncached_indices) + batch_size - 1) // batch_size
+
+        # Calibration modes always continue through the full LLM evaluator. It
+        # remains the source of temporal/topic/style/franchise metadata and the
+        # comparison label written to the learned-scorer audit table. ``shadow``
+        # keeps its relevance score authoritative; ``learned`` replaces only the
+        # relevance score after a complete LLM result is available.
+        learned_model_scores: dict[int, float] = {}
+        learned_features_digest = ""
+        if eval_scorer != "llm" and self._learned_scorer is not None:
+            learned_contents = [eval_contents[i] for i in uncached_indices]
+            learned_result: LearnedBatchResult | None = None
+            try:
+                learned_result = await self._learned_scorer.score_batch(
+                    [content.to_cache_kwargs() for content in learned_contents],
+                    profile,
+                    source_context=source_context,
+                )
+            except Exception:
+                logger.exception(
+                    "eval_batch learned scorer failed; falling back to LLM (source=%s)",
+                    source_context or "mixed",
+                )
+            if learned_result is not None and learned_result.available:
+                if len(learned_result.scores) != len(learned_contents):
+                    logger.warning(
+                        "eval_batch learned scorer length mismatch; falling back to LLM "
+                        "(expected=%d actual=%d)",
+                        len(learned_contents),
+                        len(learned_result.scores),
+                    )
+                else:
+                    validated_scores = [
+                        self._validated_model_score(raw_score)
+                        for raw_score in learned_result.scores
+                    ]
+                    if any(score is None for score in validated_scores):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid score; "
+                            "falling back to LLM"
+                        )
+                    elif not re.fullmatch(
+                        r"[0-9a-f]{64}", str(learned_result.features_digest or "")
+                    ):
+                        logger.warning(
+                            "eval_batch learned scorer returned an invalid features digest; "
+                            "falling back to LLM"
+                        )
+                    else:
+                        learned_model_scores = {
+                            local_index: cast("float", score)
+                            for local_index, score in zip(
+                                uncached_indices,
+                                validated_scores,
+                                strict=True,
+                            )
+                        }
+                        learned_features_digest = str(learned_result.features_digest)
+                        if eval_scorer == "learned":
+                            # Relevance caps must run after the LLM has supplied
+                            # its diversity metadata and learned scores replace
+                            # raw LLM relevance values.
+                            caller_recap_needed = True
         eval_batch_concurrency = self._effective_eval_batch_concurrency()
         logger.info(
             "eval_batch start: source=%s items=%d batches=%d concurrency=%d (cached=%d)",
@@ -2705,6 +2902,35 @@ class ContentDiscoveryEngine:
             batch_indices, batch_scores = result
             for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
                 scores[eval_indices[idx]] = batch_score
+
+        learned_audit_persisted = self._persist_learned_scorer_shadow_audit(
+            eval_contents,
+            learned_scores=learned_model_scores,
+            llm_scores=raw_model_scores,
+            features_digest=learned_features_digest,
+            source_context=source_context,
+        )
+        if eval_scorer == "learned" and learned_model_scores and learned_audit_persisted:
+            applied = 0
+            for local_index, learned_score in learned_model_scores.items():
+                # A valid LLM member proves that temporal and diversity fields
+                # were parsed and applied. Missing/malformed LLM members retain
+                # their conservative 0.0 product result.
+                if local_index not in raw_model_scores:
+                    continue
+                content = eval_contents[local_index]
+                content.relevance_score = learned_score
+                content.relevance_reason = (
+                    normalize_evaluation_reason(learned_score, _LEARNED_SCORER_REASON) or ""
+                )
+                scores[eval_indices[local_index]] = learned_score
+                applied += 1
+            logger.info(
+                "eval_batch learned relevance applied: source=%s items=%d paired=%d",
+                source_context or "mixed",
+                len(learned_model_scores),
+                applied,
+            )
 
         # Cache entries hold raw model scores. Reapply batch-dependent caps
         # against the stable caller grouping whenever a hit or a cached
@@ -3769,6 +3995,13 @@ class ContentDiscoveryEngine:
         keyword_ids: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
+        # Backfill variants are normally dataclass replacements and therefore
+        # do not retain dynamic instance attributes. Binding at every dispatch
+        # makes both primary and backfill strategies inherit the global scorer.
+        for strategy in strategies:
+            bind_evaluator = getattr(strategy, "bind_content_evaluator", None)
+            if callable(bind_evaluator):
+                bind_evaluator(self)
         run_entries = [
             (strategy, self._strategy_run_limit(strategy, limit, strategy_limits))
             for strategy in strategies

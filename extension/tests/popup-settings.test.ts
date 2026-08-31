@@ -94,6 +94,7 @@ test("settings page exposes advanced config fields from backend schema", () => {
     "cfgTrendingRefreshMinutes",
     "cfgExploreRefreshMinutes",
     "cfgDiscoveryLimit",
+    "cfgEvalScorer",
     "cfgVisualProfileEnabled",
     "cfgKeyframeEnabled",
     "cfgKeyframeMaxFrames",
@@ -658,8 +659,9 @@ test("advanced settings keep recommendation signals together and preserve disabl
   const modelsPanel =
     popupHtml.match(/<div id="settingsPanelModels"[\s\S]*?<div id="settingsPanelSources"/)?.[0] ?? "";
 
-  assert.equal((advancedPanel.match(/<div class="settings-section">/g) ?? []).length, 4);
+  assert.equal((advancedPanel.match(/<div class="settings-section">/g) ?? []).length, 5);
   for (const id of [
+    "cfgEvalScorer",
     "cfgVisualProfileEnabled",
     "cfgKeyframeEnabled",
     "cfgKeyframeMaxFrames",
@@ -689,6 +691,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
     assert.doesNotMatch(control, /checked/, `${id} must default off`);
   }
   for (const id of [
+    "cfgEvalScorer",
     "cfgKeywordGenerationMode",
     "cfgCandidateEvalConcurrency",
     "cfgMultimodalEvaluationEnabled",
@@ -700,6 +703,14 @@ test("advanced settings keep recommendation signals together and preserve disabl
     assert.doesNotMatch(schedulerPanel, new RegExp(`id="${id}"`), `${id} moved out of scheduler`);
   }
   assert.doesNotMatch(modelsPanel, /id="cfgEmbeddingMultimodalEnabled"/);
+
+  assert.match(
+    advancedPanel,
+    /<select id="cfgEvalScorer" aria-describedby="cfgEvalScorerHint">[\s\S]*?<option value="llm" selected>Agent（默认）<\/option>[\s\S]*?<option value="shadow">Shadow（校准观察）<\/option>[\s\S]*?<option value="learned">Learned（仅相关性，实验性）<\/option>[\s\S]*?<\/select>/,
+  );
+  assert.match(advancedPanel, /id="cfgEvalScorerHint"/);
+  assert.match(advancedPanel, /人工运行质量门禁并确认通过/);
+  assert.match(advancedPanel, /切换不会重算已有推荐/);
 
   for (const [id, min, max, placeholder] of [
     ["cfgKeyframeMaxFrames", "1", "12", "4"],
@@ -714,6 +725,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
   }
 
   for (const field of [
+    'setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm")',
     'visualProfile.checked = cfg.discovery?.visual_profile_enabled === true',
     'keyframe.checked = cfg.discovery?.keyframe_enabled === true',
     'setVal("cfgKeyframeMaxFrames", cfg.discovery?.keyframe_max_frames ?? 4)',
@@ -727,6 +739,7 @@ test("advanced settings keep recommendation signals together and preserve disabl
   const spread = "...(state.runtimeConfig?.discovery || {})";
   assert.ok(popupJs.indexOf(spread) < popupJs.indexOf("visual_profile_enabled:"));
   for (const field of [
+    'eval_scorer: getVal("cfgEvalScorer") || "llm"',
     'visual_profile_enabled: checked("cfgVisualProfileEnabled")',
     'keyframe_enabled: checked("cfgKeyframeEnabled")',
     'keyframe_max_frames: getInt("cfgKeyframeMaxFrames", 4)',

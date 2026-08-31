@@ -17,6 +17,8 @@ Discovery 配置响应与更新白名单同时公开 `keyword_digest_grace_hours
 `0..168`。`PUT /api/config` 拒绝布尔值、非整数和越界值；合法值进入同一次 TOML 持久化与
 runtime apply。`0` 是只关闭跨 digest 关键词复用的回滚值，不会关闭统一 planner 或删除历史行。
 
+Discovery 配置模型也公开 `eval_scorer="llm|shadow|learned"`。`GET /api/config` 返回当前模式；`PUT /api/config` 会小写规范化并只接受这三个值，非法值返回 422 且不落盘。`shadow` 与 `learned` 的运行时安全语义、审计和只读 gate 见 [内容发现引擎](discovery.md)；API 不会因 gate 报告自动改配置。
+
 账号增量配置中的 `scheduler.source_incremental_enabled` 默认返回 `false`。旧配置没有该字段时
 也按关闭处理；每个来源还公开 `sources.<slug>.incremental_enabled`（默认 `false`）。只有通过
 `PUT /api/config` 或 TOML 显式把总开关设为 `true`，且对应来源开关也为 `true`，runtime 才会按
@@ -47,7 +49,7 @@ Phase 2 cognition rollout 在配置 API 中也是 task-scoped：`soul` GET/PUT �
 
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
-| `PUT /api/config` | ✅ | 持久化成功后统一返回 `202 queued`；响应新增 `apply_state`、`apply_revision`，原有 `reloaded` / `rollback_applied` / `restart_required` 保持兼容。改变 canonical `data_dir` 时 `restart_required=true`，新路径仅在完整重启后启用。 |
+| `PUT /api/config` | ✅ | 持久化成功后统一返回 `202 queued`；响应新增 `apply_state`、`apply_revision`，原有 `reloaded` / `rollback_applied` / `restart_required` 保持兼容。`discovery.eval_scorer` 接受 `llm / shadow / learned` 并进入同一次持久化与热重载。改变 canonical `data_dir` 时 `restart_required=true`，新路径仅在完整重启后启用。 |
 | `GET /api/config/apply-status` | ✅ | 返回 `state`、最新请求修订、最后已应用修订、消息、非敏感错误分类和更新时间；不包含配置内容或凭据。`applied` 只确认本进程可应用部分，不取消 PUT 已返回的目录重启要求。 |
 
 guided init 不与待应用配置并行：队列为 `queued/applying` 时 `POST /api/init` 返回 `409 config_applying`；init 已开始时 `PUT /api/config` 仍返回既有 `409 init_running`。

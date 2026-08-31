@@ -9,7 +9,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
     from openbiliclaw.recommendation.publication_preference import PublicationDatePreference
     from openbiliclaw.soul.profile import SoulProfile
-    from openbiliclaw.storage.database import Database
 
 
 # Minimal contract — explore only needs the topic-group-coverage query
@@ -173,11 +172,7 @@ class ExploreStrategy(DiscoveryStrategy):
                         self._rollback_claimed_query(claimed)
                 request_plan = request_plan[:budget]
 
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=cast("Database | None", self.database),
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         search_strategy = SearchStrategy(
             llm_service=self.llm_service,
             bilibili_client=self.bilibili_client,
@@ -276,9 +271,8 @@ class ExploreStrategy(DiscoveryStrategy):
             return [content for content, _, _ in candidates[:limit]]
 
         date_eligible_bvids = {
-            item.bvid for item in self.filter_candidates_for_eval(
-                [content for content, _, _ in candidates]
-            )
+            item.bvid
+            for item in self.filter_candidates_for_eval([content for content, _, _ in candidates])
         }
         candidates = [entry for entry in candidates if entry[0].bvid in date_eligible_bvids]
         scores = await evaluator.evaluate_content_batch(

@@ -110,11 +110,7 @@ class TrendingStrategy(DiscoveryStrategy):
         Returns:
             Discovered content list.
         """
-        evaluator = ContentDiscoveryEngine(
-            llm_service=self.llm_service,
-            database=self.database,
-            concurrency=self.concurrency,
-        )
+        evaluator = self.content_evaluator()
         rids = await self._select_rids(profile)
         self.last_intermediates = {"rids": list(rids)}
         runner = self.concurrency.run_bilibili if self.concurrency is not None else None

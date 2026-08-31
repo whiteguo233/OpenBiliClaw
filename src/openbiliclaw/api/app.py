@@ -17085,6 +17085,7 @@ def create_app(
                 keyword_digest_grace_hours=cfg.discovery.keyword_digest_grace_hours,
                 admission_min_score=cfg.discovery.admission_min_score,
                 eval_prefilter_mode=cfg.discovery.eval_prefilter_mode,
+                eval_scorer=cfg.discovery.eval_scorer,
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 visual_profile_enabled=cfg.discovery.visual_profile_enabled,
@@ -19638,6 +19639,14 @@ def create_app(
                             detail="discovery.eval_prefilter_mode must be off, shadow, or enforce",
                         )
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
+                if "eval_scorer" in ddata:
+                    eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
+                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                        )
+                    cfg.discovery.eval_scorer = eval_scorer
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(

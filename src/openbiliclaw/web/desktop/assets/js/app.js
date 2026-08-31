@@ -9326,6 +9326,7 @@ ${cardFeedbackBarHtml()}`;
       setInput("cognitionMaxTokens", soul.cognition_max_tokens ?? 32768);
 
       const discovery = config.discovery || {};
+      setSelect("evalScorer", discovery.eval_scorer || "llm");
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
       if (multimodalEvaluation) multimodalEvaluation.checked = discovery.multimodal_evaluation_enabled === true;
@@ -10888,6 +10889,7 @@ ${cardFeedbackBarHtml()}`;
         },
         discovery: {
           ...(state.config?.discovery || {}),
+          eval_scorer: $("#evalScorer")?.value || "llm",
           keyword_generation_mode: $("#keywordGenerationMode").value,
           candidate_eval_concurrency: getIntInput("candidateEvalConcurrency", 3),
           multimodal_evaluation_enabled: $("#multimodalEvaluationEnabled")?.checked === true,

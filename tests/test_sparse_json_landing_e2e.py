@@ -629,6 +629,7 @@ def test_all_production_engine_constructors_inherit_sparse_and_never_select_row(
         project_root / "src/openbiliclaw/cli.py",
         project_root / "src/openbiliclaw/api/runtime_context.py",
         project_root / "src/openbiliclaw/integrations/openclaw/bootstrap.py",
+        project_root / "src/openbiliclaw/discovery/engine.py",
         *sorted((project_root / "src/openbiliclaw/discovery/strategies").glob("*.py")),
     ]
     constructor_calls: list[tuple[Path, ast.Call]] = []
@@ -647,7 +648,10 @@ def test_all_production_engine_constructors_inherit_sparse_and_never_select_row(
             if callable_name == "ContentDiscoveryEngine":
                 constructor_calls.append((source_file, node))
 
-    assert len(constructor_calls) == 11
+    # Three application composition roots plus the standalone-strategy
+    # fallback. Registered strategies reuse their owning engine instead of
+    # constructing eight configuration-blind evaluators.
+    assert len(constructor_calls) == 4
     explicit_transport_calls = [
         f"{source_file.relative_to(project_root)}:{node.lineno}"
         for source_file, node in constructor_calls

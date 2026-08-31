@@ -41,6 +41,11 @@ from openbiliclaw.discovery.admission import (
     EXPLORE_STRATEGY,
     effective_admission_threshold,
 )
+from openbiliclaw.discovery.eval_scorer_audit import (
+    LEARNED_AUDIT_MAX_ROWS,
+    LEARNED_AUDIT_RETENTION_DAYS,
+    validate_learned_storage_record,
+)
 from openbiliclaw.discovery.inspiration import (
     AxisRow,
     _normalize_match_text,
@@ -1320,6 +1325,22 @@ CREATE INDEX IF NOT EXISTS idx_prefilter_shadow_created
     ON evaluator_prefilter_shadow_audit(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_prefilter_shadow_platform_context
     ON evaluator_prefilter_shadow_audit(platform_class, context_class, created_at);
+
+CREATE TABLE IF NOT EXISTS evaluator_learned_scorer_shadow_audit (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id              TEXT NOT NULL UNIQUE,
+    candidate_hash           TEXT NOT NULL,
+    platform_class           TEXT NOT NULL,
+    context_class            TEXT NOT NULL,
+    learned_score            REAL NOT NULL,
+    llm_score                REAL NOT NULL,
+    admission_threshold      REAL NOT NULL,
+    admission_result         INTEGER NOT NULL,
+    features_digest          TEXT NOT NULL,
+    created_at               TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_learned_shadow_created
+    ON evaluator_learned_scorer_shadow_audit(created_at, id);
 
 -- Aggregate-only counterfactual for the recommendation temporal bonus. It
 -- intentionally stores no content identity, title, URL, author, or keyword.
@@ -4419,6 +4440,89 @@ class Database:
             (PREFILTER_AUDIT_MAX_ROWS,),
         )
         return inserted
+
+    def record_learned_scorer_shadow_audit(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> int:
+        """Persist learned-vs-LLM shadow decisions for calibration.
+
+        Stores only privacy-safe fields (decision_id + domain hash + bounded
+        classes) plus the learned/LLM scores and admission result.
+        """
+        params: list[tuple[Any, ...]] = []
+        for row in rows:
+            validate_learned_storage_record(row)
+            params.append(
+                (
+                    str(row["decision_id"]),
+                    str(row["candidate_hash"]),
+                    str(row["platform_class"]),
+                    str(row["context_class"]),
+                    float(row["learned_score"]),
+                    float(row["llm_score"]),
+                    float(row["admission_threshold"]),
+                    1 if bool(row["admission_result"]) else 0,
+                    str(row["features_digest"]),
+                )
+            )
+        if not params:
+            return 0
+        connection = self.conn
+        changes_before = connection.total_changes
+        self._execute_many_write(
+            """
+            INSERT OR IGNORE INTO evaluator_learned_scorer_shadow_audit (
+                decision_id,
+                candidate_hash,
+                platform_class,
+                context_class,
+                learned_score,
+                llm_score,
+                admission_threshold,
+                admission_result,
+                features_digest
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            params,
+        )
+        inserted = max(0, connection.total_changes - changes_before)
+        self._execute_write(
+            """
+            DELETE FROM evaluator_learned_scorer_shadow_audit
+            WHERE created_at < datetime('now', ?)
+            """,
+            (f"-{LEARNED_AUDIT_RETENTION_DAYS} days",),
+        )
+        self._execute_write(
+            """
+            DELETE FROM evaluator_learned_scorer_shadow_audit
+            WHERE id IN (
+                SELECT id
+                FROM evaluator_learned_scorer_shadow_audit
+                ORDER BY created_at DESC, id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (LEARNED_AUDIT_MAX_ROWS,),
+        )
+        return inserted
+
+    def query_learned_scorer_shadow_audit(self, *, limit: int = 20_000) -> list[dict[str, Any]]:
+        """Return the bounded privacy-safe learned-vs-LLM comparison cohort."""
+
+        rows = self.conn.execute(
+            """
+            SELECT id, decision_id, candidate_hash, platform_class, context_class,
+                   learned_score, llm_score, admission_threshold, admission_result,
+                   features_digest, created_at
+            FROM evaluator_learned_scorer_shadow_audit
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (max(0, min(LEARNED_AUDIT_MAX_ROWS, int(limit))),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def complete_prefilter_shadow_decisions(
         self,

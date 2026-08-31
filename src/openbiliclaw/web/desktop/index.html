@@ -1169,6 +1169,17 @@
         </div>
 
         <div id="settingsPanelAdvanced" class="settings-panel settings-advanced-panel" data-settings-panel="advanced" role="tabpanel" aria-labelledby="settingsTabAdvanced" hidden>
+          <section class="settings-advanced-section" aria-labelledby="advancedEvaluatorHeading">
+            <div class="settings-advanced-section-head">
+              <p class="settings-section-kicker">Candidate evaluation</p>
+              <h3 id="advancedEvaluatorHeading">候选评分模式</h3>
+            </div>
+            <div class="settings-advanced-fields">
+              <label class="settings-field full"><span>评分器模式</span><select id="evalScorer" aria-describedby="evalScorerHint"><option value="llm" selected>Agent（默认）</option><option value="shadow">Shadow（校准观察）</option><option value="learned">Learned（仅相关性，实验性）</option></select></label>
+            </div>
+            <p class="settings-note-inline" id="evalScorerHint">Agent 沿用完整 AI 评估与缓存，是默认生产模式；Shadow 同时计算 learned 分数但仍由 Agent 决定推荐，用于积累对照；Learned 仅应在人工运行质量门禁并确认通过后，让 learned 分数决定后续候选的相关性。Shadow 与 Learned 当前仍会调用 Agent 生成时效、主题和风格元数据，不是降本开关；切换不会重算已有推荐。</p>
+          </section>
+
           <section class="settings-advanced-section" aria-labelledby="advancedRecommendationHeading">
             <div class="settings-advanced-section-head">
               <p class="settings-section-kicker">Recommendation signals</p>
