@@ -209,6 +209,7 @@ async def run_full_worker() -> None:
     from types import SimpleNamespace
 
     from openbiliclaw.api.runtime_context import build_runtime_context
+    from openbiliclaw.runtime.feedback_scheduler import EventProcessingScheduler
 
     config = load_config()
     runtime_dir = config.data_path / "runtime"
@@ -222,11 +223,17 @@ async def run_full_worker() -> None:
     )
     app = SimpleNamespace(state=SimpleNamespace())
     publisher_task: asyncio.Task[None] | None = None
+    feedback_scheduler: EventProcessingScheduler | None = None
     ctx = None
     try:
         ctx = build_runtime_context(config)
         await ctx.restart_background_tasks(app)
         logger.info("Full worker background tasks started")
+        feedback_scheduler = EventProcessingScheduler(
+            soul_engine_resolver=lambda: getattr(ctx, "soul_engine", None),
+            debounce_seconds=5.0,
+        )
+        feedback_scheduler.start_periodic()
         database = getattr(ctx, "database", None)
         if database is not None:
             publisher_task = asyncio.create_task(
@@ -247,6 +254,10 @@ async def run_full_worker() -> None:
                 if callable(cancel_all):
                     await cancel_all()
         finally:
+            if feedback_scheduler is not None:
+                close = getattr(feedback_scheduler, "close", None)
+                if callable(close):
+                    await close()
             if ctx is not None:
                 database = getattr(ctx, "database", None)
                 close = getattr(database, "close", None)

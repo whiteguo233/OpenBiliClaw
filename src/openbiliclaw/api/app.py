@@ -2809,6 +2809,11 @@ def create_app(
     app.middleware("http")(make_auth_middleware(_get_auth_gate))
 
     def _schedule_post_feedback_tasks() -> None:
+        if (
+            os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1"
+            or os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
+        ):
+            return
         with suppress(Exception):
             feedback_batch_scheduler.schedule()
 
@@ -2980,6 +2985,15 @@ def create_app(
         scheduler without awaiting provider-backed pipeline consumption.
         """
         _bind_runtime_lane_dependencies()
+        full_worker_active = (
+            os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1"
+            or os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
+        )
+        if full_worker_active:
+            logger.info(
+                "External full worker active; API periodic and event-processing loops delegated"
+            )
+            return
         if resume_execution_lanes:
             await _prepare_event_owners()
             await feedback_batch_scheduler.resume(
@@ -2996,15 +3010,6 @@ def create_app(
                 else:  # compatibility with narrow injected scheduler fakes
                     feedback_batch_scheduler.schedule()
                     app.state.event_recovery_task = None
-        full_worker_active = (
-            os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1"
-            or os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
-        )
-        if full_worker_active:
-            logger.info(
-                "External full worker active; API periodic background loops delegated"
-            )
-            return
         restart = ctx.restart_background_tasks
         try:
             restart_signature = inspect.signature(restart)
