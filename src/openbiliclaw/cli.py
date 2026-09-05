@@ -1163,14 +1163,16 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         if os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1":
             import subprocess
 
+            worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}
             worker_process = subprocess.Popen(
                 [sys.executable, "-m", "openbiliclaw.worker"],
                 cwd=os.getcwd(),
+                env=worker_env,
             )
             _print_status_panel(
                 "info",
                 "Worker 进程",
-                f"已启动独立 worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
+                f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
             )
 
         listeners = create_wildcard_listener_sockets(host, port)

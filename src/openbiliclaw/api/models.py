@@ -456,6 +456,12 @@ class RuntimeStatusResponse(BaseModel):
     dialogue_settlement_max_depth: int = 0
     dialogue_settlement_dropped: int = 0
     worker_outbox_depth: int = 0
+    worker_running: bool = False
+    worker_mode: str = "none"
+    worker_pid: int | None = None
+    worker_started_at: str = ""
+    worker_last_heartbeat_at: str = ""
+    worker_heartbeat_age_seconds: float = -1.0
     chat_reply_depth: int = 0
     chat_reply_active: bool = False
     chat_reply_last_error: str = ""

@@ -2996,6 +2996,11 @@ def create_app(
                 else:  # compatibility with narrow injected scheduler fakes
                     feedback_batch_scheduler.schedule()
                     app.state.event_recovery_task = None
+        if os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1":
+            logger.info(
+                "External full worker active; API periodic background loops delegated"
+            )
+            return
         restart = ctx.restart_background_tasks
         try:
             restart_signature = inspect.signature(restart)
@@ -9603,6 +9608,12 @@ def create_app(
         outbox_depth = getattr(recommendation_engine, "serve_outbox_depth", None)
         if callable(outbox_depth):
             payload["worker_outbox_depth"] = int(outbox_depth() or 0)
+        from openbiliclaw.runtime.worker_status import WorkerStatusStore
+
+        worker_status_store = WorkerStatusStore(
+            active_runtime_data_path / "runtime" / "worker_status.json"
+        )
+        payload.update(worker_status_store.status_payload())
         return RuntimeStatusResponse(**payload)
 
     @app.post("/api/agent-bridge")
