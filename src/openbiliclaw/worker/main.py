@@ -227,10 +227,12 @@ async def run_full_worker() -> None:
         ctx = build_runtime_context(config)
         await ctx.restart_background_tasks(app)
         logger.info("Full worker background tasks started")
-        publisher_task = asyncio.create_task(
-            _run_serve_publisher_loop(ctx.database, runtime_dir),
-            name="worker_serve_publisher",
-        )
+        database = getattr(ctx, "database", None)
+        if database is not None:
+            publisher_task = asyncio.create_task(
+                _run_serve_publisher_loop(database, runtime_dir),
+                name="worker_serve_publisher",
+            )
         while True:
             await asyncio.sleep(3600)
     finally:
@@ -239,8 +241,11 @@ async def run_full_worker() -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await publisher_task
         try:
-            if ctx is not None:
-                await ctx.task_registry.cancel_all()
+            task_registry = getattr(ctx, "task_registry", None) if ctx is not None else None
+            if task_registry is not None:
+                cancel_all = getattr(task_registry, "cancel_all", None)
+                if callable(cancel_all):
+                    await cancel_all()
         finally:
             if ctx is not None:
                 database = getattr(ctx, "database", None)
