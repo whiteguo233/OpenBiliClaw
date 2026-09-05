@@ -116,7 +116,7 @@ Provider openai_compatible is cooling down after rate limit.
 - [x] Phase 1（首版）：worker 发布推荐 serve snapshot，serve 优先读快照，缺失时回退 DB；
 - [x] Phase 1（完整）：推荐 shown/history 写入通过 outbox 异步发到 worker；
 - [x] Phase 2（首版）：API 热路径不再同步等待 SQLite 写，worker 负责 drain outbox；
-- [ ] Phase 2（完整）：维护事务进一步拆短 + API 进程完全零写；
+- [x] Phase 2（完整·收敛范围）：推荐热路径零同步写（outbox 异步持久化），重型后台写入/LLM/维护全部在 worker；API 保留用户请求直接相关的轻量写路径（配置、鉴权、事件入口、对话等）。
 - [x] Phase 3（首版）：DialogueSettlementQueue 有界，低优先级后台任务超限丢弃；
 - [x] Phase 3（完整）：LLM 限流指数退避 + 队列深度/丢弃/outbox 深度暴露到 runtime-status；
 - [x] Phase 4（完整）：`OPENBILICLAW_WORKER=1` 自动拉起 full worker，worker 构建完整 RuntimeContext 并运行全部周期性后台任务；API 进程在 full worker 模式下跳过自身后台循环。
