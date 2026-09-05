@@ -167,7 +167,7 @@ class OpenAIProvider(LLMProvider):
             kwargs["extra_body"] = extra_body
 
         try:
-            response = await self._request_with_retry(**kwargs)
+            response = await self._chat_request_with_temperature_compat(**kwargs)
         except LLMProviderError as exc:
             # Retry at most once: after replacement kwargs["response_format"]
             # is no longer json_object, so _uses_json_object returns False.
@@ -181,7 +181,7 @@ class OpenAIProvider(LLMProvider):
                     self._provider_name,
                 )
                 kwargs["response_format"] = _generic_json_schema_response_format()
-                response = await self._request_with_retry(**kwargs)
+                response = await self._chat_request_with_temperature_compat(**kwargs)
             else:
                 raise
         choice = response.choices[0]
@@ -199,7 +199,7 @@ class OpenAIProvider(LLMProvider):
                     kwargs["response_format"].get("type", "?"),
                 )
                 kwargs.pop("response_format")
-                response = await self._request_with_retry(**kwargs)
+                response = await self._chat_request_with_temperature_compat(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
             if (
@@ -223,7 +223,7 @@ class OpenAIProvider(LLMProvider):
                 retry_extra_body = dict(kwargs.get("extra_body") or {})
                 retry_extra_body["thinking"] = {"type": "disabled"}
                 kwargs["extra_body"] = retry_extra_body
-                response = await self._request_with_retry(**kwargs)
+                response = await self._chat_request_with_temperature_compat(**kwargs)
                 choice = response.choices[0]
                 content = choice.message.content or ""
             if not content.strip():
@@ -378,13 +378,41 @@ class OpenAIProvider(LLMProvider):
                 return await self._responses_request_with_retry(**kwargs)
             raise
 
+    async def _chat_request_with_temperature_compat(self, **kwargs: Any) -> Any:
+        """Send a chat request, adapting temperature when the backend rejects it.
+
+        Some OpenAI-compatible providers (for example SenseNova's Kimi route)
+        either reject ``temperature`` entirely or require a specific value.
+        Retry once with the portable fix instead of surfacing a 400 to users.
+        """
+        try:
+            return await self._request_with_retry(**kwargs)
+        except LLMProviderError as exc:
+            if "temperature" in kwargs and self._temperature_rejected(exc):
+                message = str(exc).lower()
+                if "only 1 is allowed" in message:
+                    kwargs["temperature"] = 1
+                else:
+                    kwargs.pop("temperature", None)
+                logger.info(
+                    "%s rejected temperature on chat completion; retrying with compatible value",
+                    self._provider_name,
+                )
+                return await self._request_with_retry(**kwargs)
+            raise
+
     @staticmethod
     def _temperature_rejected(exc: LLMProviderError) -> bool:
         message = str(exc).lower()
         if "temperature" not in message:
             return False
         return (
-            "unsupported" in message or "not supported" in message or "does not support" in message
+            "unsupported" in message
+            or "not supported" in message
+            or "does not support" in message
+            or "only 1 is allowed" in message
+            or "invalid" in message
+            or "not allowed" in message
         )
 
     @staticmethod
