@@ -6992,11 +6992,13 @@ def create_app(
 
     @app.post("/api/bilibili/video/like")
     async def bilibili_video_like(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
         like = bool(payload.get("like", True))
         cfg = _pin_active_runtime_config(load_config())
         cookie = resolve_runtime_cookie(
@@ -7012,16 +7014,20 @@ def create_app(
         try:
             await client.like_video(bvid, like=like)
             return {"ok": True}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             await client.close()
 
     @app.post("/api/bilibili/video/coin")
     async def bilibili_video_coin(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
         multiply = int(payload.get("multiply", 1) or 1)
         select_like = bool(payload.get("select_like", False))
         cfg = _pin_active_runtime_config(load_config())
@@ -7038,16 +7044,20 @@ def create_app(
         try:
             await client.coin_video(bvid, multiply=multiply, select_like=select_like)
             return {"ok": True}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             await client.close()
 
     @app.post("/api/bilibili/video/triple")
     async def bilibili_video_triple(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
         cfg = _pin_active_runtime_config(load_config())
         cookie = resolve_runtime_cookie(
             data_dir=cfg.data_path,
@@ -7062,16 +7072,20 @@ def create_app(
         try:
             await client.triple_video(bvid)
             return {"ok": True, "state": await client.get_video_relation_state(bvid)}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             await client.close()
 
     @app.post("/api/bilibili/video/favorite")
     async def bilibili_video_favorite(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
         favorite = bool(payload.get("favorite", True))
         media_id = payload.get("media_id")
         cfg = _pin_active_runtime_config(load_config())
@@ -7092,6 +7106,8 @@ def create_app(
                 favorite=favorite,
             )
             return {"ok": True, "state": await client.get_video_relation_state(bvid)}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             await client.close()
 
@@ -7099,11 +7115,13 @@ def create_app(
     async def bilibili_video_watch_later(
         payload: Annotated[dict[str, Any], Body()],
     ) -> dict[str, Any]:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
         add = bool(payload.get("add", True))
         cfg = _pin_active_runtime_config(load_config())
         cookie = resolve_runtime_cookie(
@@ -7119,6 +7137,8 @@ def create_app(
         try:
             await client.watch_later_video(bvid, add=add)
             return {"ok": True, "state": await client.get_video_relation_state(bvid)}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             await client.close()
 
