@@ -2048,3 +2048,36 @@ def test_gemini_provider_empty_proxy_is_zero_drift(
     assert isinstance(http_options, dict)
     assert "client_args" not in http_options
     assert "async_client_args" not in http_options
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_retries_when_temperature_must_be_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SenseNova's Kimi route requires temperature=1; retry instead of 400."""
+    provider = object.__new__(OpenAIProvider)
+    provider._provider_name = "openai_compatible"
+    calls: list[dict[str, object]] = []
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        if not calls:
+            calls.append(dict(kwargs))
+            raise LLMProviderError(
+                'openai_compatible request failed: HTTP 400: '
+                'field Temperature invalid, only 1 is allowed for this model'
+            )
+        calls.append(dict(kwargs))
+        return _openai_response("ok")
+
+    provider._request_with_retry = fake_request  # type: ignore[method-assign]
+
+    response = await provider._chat_request_with_temperature_compat(
+        model="kimi-k3",
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0,
+        max_tokens=16,
+    )
+
+    assert response.choices[0].message.content == "ok"
+    assert calls[0]["temperature"] == 0
+    assert calls[1]["temperature"] == 1
