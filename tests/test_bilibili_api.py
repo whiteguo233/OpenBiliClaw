@@ -80,6 +80,18 @@ class RouteAsyncClient:
                 return FakeResponse(payloads.pop(0))
         raise AssertionError(f"Unexpected URL: {url}")
 
+    async def post(
+        self,
+        url: str,
+        data: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
+        self.calls.append((url, data, headers))
+        for path, payloads in self.routes.items():
+            if url.endswith(path):
+                return FakeResponse(payloads.pop(0))
+        raise AssertionError(f"Unexpected URL: {url}")
+
     async def aclose(self) -> None:
         return None
 
@@ -924,3 +936,88 @@ def test_csrf_token_requires_exact_cookie_names() -> None:
 
     with pytest.raises(BilibiliAuthExpiredError):
         client._csrf_token()
+
+
+async def test_post_comment_sends_csrf_and_thread_params() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": 0, "data": {"rpid": 987}}],
+        }
+    )
+    client._client = fake
+
+    result = await client.post_comment(
+        "BV1xx411c7mD", message="  好视频  ", root=12, parent=34
+    )
+
+    assert result["rpid"] == 987
+    post_url, post_data, _headers = fake.calls[-1]
+    assert post_url.endswith("/x/v2/reply/add")
+    assert post_data["oid"] == 12345
+    assert post_data["type"] == 1
+    assert post_data["message"] == "好视频"
+    assert post_data["csrf"] == "csrf123"
+    assert post_data["root"] == "12"
+    assert post_data["parent"] == "34"
+
+
+async def test_post_comment_top_level_omits_thread_params() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": 0, "data": {"rpid": 1}}],
+        }
+    )
+    client._client = fake
+
+    await client.post_comment("BV1xx411c7mD", message="你好")
+
+    _post_url, post_data, _headers = fake.calls[-1]
+    assert "root" not in post_data
+    assert "parent" not in post_data
+
+
+async def test_post_comment_rejects_blank_or_long_message() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="   ")
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="长" * 1001)
+
+
+async def test_post_comment_propagates_api_failure() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/add": [{"code": -403, "data": None}],
+        }
+    )
+    client._client = fake
+
+    with pytest.raises(BilibiliAPIError):
+        await client.post_comment("BV1xx411c7mD", message="你好")
+
+
+async def test_delete_comment_sends_aid_csrf_and_rpid() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 12345}}],
+            "/x/v2/reply/del": [{"code": 0, "data": None}],
+        }
+    )
+    client._client = fake
+
+    await client.delete_comment("BV1xx411c7mD", rpid=987)
+
+    post_url, post_data, _headers = fake.calls[-1]
+    assert post_url.endswith("/x/v2/reply/del")
+    assert post_data["oid"] == 12345
+    assert post_data["type"] == 1
+    assert post_data["rpid"] == "987"
+    assert post_data["csrf"] == "csrf123"

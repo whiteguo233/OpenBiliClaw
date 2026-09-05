@@ -7113,6 +7113,88 @@ def create_app(
         finally:
             await client.close()
 
+    @app.post("/api/bilibili/video/comment")
+    async def bilibili_video_comment(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+
+        bvid = str(payload.get("bvid", "") or "").strip()
+        message = str(payload.get("message", "") or "").strip()
+        root_raw = payload.get("root")
+        parent_raw = payload.get("parent")
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
+        if not message:
+            raise HTTPException(status_code=400, detail="评论内容不能为空")
+        root = int(root_raw) if root_raw not in (None, "", 0) else None
+        parent = int(parent_raw) if parent_raw not in (None, "", 0) else None
+        cfg = _pin_active_runtime_config(load_config())
+        cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        if not cookie:
+            raise HTTPException(status_code=401, detail="B站 Cookie 未配置或已失效")
+        client = BilibiliAPIClient(
+            cookie=cookie,
+            proxy=(getattr(cfg.bilibili, "proxy", None) or None),
+        )
+        try:
+            result = await client.post_comment(
+                bvid,
+                message=message,
+                root=root,
+                parent=parent,
+            )
+            return {
+                "ok": True,
+                "rpid": int(result.get("rpid", 0) or 0),
+            }
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await client.close()
+
+    @app.post("/api/bilibili/video/comment/delete")
+    async def bilibili_video_comment_delete(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
+        from openbiliclaw.bilibili.api import BilibiliAPIClient, BilibiliAPIError
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+
+        bvid = str(payload.get("bvid", "") or "").strip()
+        rpid_raw = payload.get("rpid")
+        if not bvid:
+            raise HTTPException(status_code=400, detail="缺少 bvid")
+        try:
+            rpid = int(rpid_raw) if rpid_raw not in (None, "", 0) else 0
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="rpid 无效") from exc
+        if rpid <= 0:
+            raise HTTPException(status_code=400, detail="缺少 rpid")
+        cfg = _pin_active_runtime_config(load_config())
+        cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        if not cookie:
+            raise HTTPException(status_code=401, detail="B站 Cookie 未配置或已失效")
+        client = BilibiliAPIClient(
+            cookie=cookie,
+            proxy=(getattr(cfg.bilibili, "proxy", None) or None),
+        )
+        try:
+            await client.delete_comment(bvid, rpid)
+            return {"ok": True}
+        except BilibiliAPIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await client.close()
+
     @app.get("/api/bilibili/video/related")
     async def bilibili_video_related(bvid: str = Query(...)) -> dict[str, Any]:
         from openbiliclaw.bilibili.api import BilibiliAPIClient
@@ -7197,6 +7279,42 @@ def create_app(
                 "face": "",
                 "vip": False,
             },
+        }
+
+    @app.post("/api/bilibili/auth/export")
+    async def bilibili_auth_export() -> dict[str, Any]:
+        """Export the backend's Bilibili cookie for the mobile app.
+
+        The mobile client keeps the returned cookie only in memory and uses it
+        for direct read-only Bilibili requests that do not need WBI signing,
+        such as comments. The backend still remains the source of truth for
+        login state and CSRF-protected writes.
+        """
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+
+        cfg = _pin_active_runtime_config(load_config())
+        cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        if not cookie:
+            raise HTTPException(status_code=401, detail="B站 Cookie 未配置或已失效")
+
+        cookies: dict[str, str] = {}
+        for part in cookie.split(";"):
+            key, separator, value = part.strip().partition("=")
+            if separator and key:
+                cookies[key] = value.strip()
+        return {
+            "ok": True,
+            "cookie": cookie,
+            "cookies": cookies,
+            "user_agent": BilibiliAPIClient.DEFAULT_USER_AGENT,
+            "buvid": cookies.get("buvid3", "") or cookies.get("buvid4", "") or "",
+            "user": None,
+            "expires_at": "",
         }
 
     @app.delete("/api/bilibili/auth/session")
@@ -7851,27 +7969,31 @@ def create_app(
                 if str(getattr(d, "domain", "")).strip()
             ]
 
+        raw_likes = _domain_list(getattr(interest_layer, "likes", []))
+        raw_dislikes = _domain_list(getattr(interest_layer, "dislikes", []))
+        raw_favorite_ups = [
+            str(item).strip()
+            for item in getattr(prefs, "favorite_up_users", [])
+            if str(item).strip()
+        ]
+
         likes_out = _cap_keeping_user_added(
-            _domain_list(getattr(interest_layer, "likes", [])),
+            raw_likes,
             _added_domains("likes"),
-            12,
+            50,
             key=lambda d: d.domain,
         )
         dislikes_out = _cap_keeping_user_added(
-            _domain_list(getattr(interest_layer, "dislikes", [])),
+            raw_dislikes,
             _added_domains("dislikes"),
-            8,
+            30,
             key=lambda d: d.domain,
         )
 
         favorite_ups = _cap_keeping_user_added(
-            [
-                str(item).strip()
-                for item in getattr(prefs, "favorite_up_users", [])
-                if str(item).strip()
-            ],
+            raw_favorite_ups,
             _added_list("interest.favorite_up_users"),
-            8,
+            50,
         )
 
         # ── Surface layer ──
@@ -8033,6 +8155,9 @@ def create_app(
             likes=likes_out,
             dislikes=dislikes_out,
             favorite_up_users=favorite_ups,
+            total_likes=len(raw_likes),
+            total_dislikes=len(raw_dislikes),
+            total_favorite_up_users=len(raw_favorite_ups),
             # Role
             life_stage=str(getattr(profile, "life_stage", "")),
             current_phase=str(getattr(profile, "current_phase", "")),

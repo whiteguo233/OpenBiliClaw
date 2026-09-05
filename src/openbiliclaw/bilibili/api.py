@@ -185,6 +185,11 @@ class BilibiliAPIClient:
     """
 
     _BASE_URL = "https://api.bilibili.com"
+    DEFAULT_USER_AGENT: ClassVar[str] = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
     _SEARCH_WEB_LOCATION = 1430654
     # A v_voucher exhaustion is usually recoverable WBI-key churn / mild
     # rate limiting, so it gets a short, escalating back-off. A genuine
@@ -288,11 +293,7 @@ class BilibiliAPIClient:
         self._favorite_folder_locks: dict[str, asyncio.Lock] = {}
         self._client = httpx.AsyncClient(
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
+                "User-Agent": self.DEFAULT_USER_AGENT,
                 "Referer": "https://www.bilibili.com",
             },
             timeout=30.0,
@@ -1369,13 +1370,21 @@ class BilibiliAPIClient:
             await self.add_video_to_favorite(bvid, media_id)
         else:
             aid = await self._resolve_aid(bvid)
+            if media_id is None:
+                # The unfavorite endpoint needs the folder id of the folder
+                # holding the video. Users almost always save to the default
+                # folder, which is the first one returned by list-all.
+                folders = await self.get_favorite_folders()
+                if not folders:
+                    raise BilibiliAPIError("B站没有可用的收藏夹")
+                media_id = folders[0].media_id
             await self._post_json(
                 "/x/v3/fav/resource/deal",
                 data={
                     "rid": aid,
                     "type": 2,
                     "add_media_ids": "",
-                    "del_media_ids": str(media_id or ""),
+                    "del_media_ids": str(media_id),
                     "csrf": self._csrf_token(),
                 },
             )
@@ -1389,6 +1398,53 @@ class BilibiliAPIClient:
                 "/x/v2/history/toview/del",
                 data={"aid": aid, "csrf": self._csrf_token()},
             )
+
+    async def post_comment(
+        self,
+        bvid: str,
+        *,
+        message: str,
+        root: int | None = None,
+        parent: int | None = None,
+    ) -> dict[str, Any]:
+        """Publish a top-level comment, or a reply inside a thread.
+
+        ``root`` is the thread's root reply rpid and ``parent`` the reply
+        being answered (pass neither for a top-level comment). Uses the same
+        authenticated form POST + csrf pattern as the other interaction
+        endpoints (``/x/v2/reply/add``). Returns the API ``data`` object
+        (contains ``rpid`` etc.).
+        """
+        text = str(message).strip()
+        if not text:
+            raise BilibiliAPIError("评论内容不能为空")
+        if len(text) > 1000:
+            raise BilibiliAPIError("评论内容过长（最多 1000 字）")
+        aid = await self._resolve_aid(bvid)
+        data: dict[str, Any] = {
+            "oid": aid,
+            "type": 1,
+            "message": text,
+            "csrf": self._csrf_token(),
+        }
+        if root is not None and int(root) > 0:
+            data["root"] = str(int(root))
+        if parent is not None and int(parent) > 0:
+            data["parent"] = str(int(parent))
+        return await self._post_json("/x/v2/reply/add", data=data)
+
+    async def delete_comment(self, bvid: str, rpid: int) -> None:
+        """Delete one of the current user's comments (``/x/v2/reply/del``)."""
+        aid = await self._resolve_aid(bvid)
+        await self._post_json(
+            "/x/v2/reply/del",
+            data={
+                "oid": aid,
+                "type": 1,
+                "rpid": str(int(rpid)),
+                "csrf": self._csrf_token(),
+            },
+        )
 
     async def get_danmaku_texts(self, cid: int, *, limit: int = 3000) -> list[str]:
         """Fetch raw danmaku strings for one video part.

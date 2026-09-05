@@ -1231,6 +1231,9 @@ class ProfileSummaryResponse(BaseModel):
     likes: list[InterestDomainOut] = Field(default_factory=list)
     dislikes: list[InterestDomainOut] = Field(default_factory=list)
     favorite_up_users: list[str] = Field(default_factory=list)
+    total_likes: int = 0
+    total_dislikes: int = 0
+    total_favorite_up_users: int = 0
     # Role layer
     life_stage: str = ""
     current_phase: str = ""
