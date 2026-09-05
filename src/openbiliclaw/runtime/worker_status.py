@@ -105,7 +105,10 @@ class WorkerStatusStore:
         except (OSError, ValueError) as exc:
             logger.warning("Unable to read worker status: %s", exc)
             return None
-        if not isinstance(raw, dict) or raw.get("version") != _STATUS_VERSION:
+        if not isinstance(raw, dict):
+            return None
+        version = raw.get("version")
+        if version is not None and version != _STATUS_VERSION:
             return None
         return raw
 
