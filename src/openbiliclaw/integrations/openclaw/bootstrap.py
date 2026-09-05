@@ -231,6 +231,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         configured_copy_target,
         max(0, int(getattr(config.scheduler, "pool_target_count", 0) or 0)),
     )
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
     from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 
     recommendation_engine = RecommendationEngine(
@@ -254,6 +255,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         serve_snapshot_store=ServeSnapshotStore(
             config.data_path / "runtime" / "serve_snapshot.json"
         ),
+        serve_outbox=ServeOutbox(config.data_path / "runtime" / "serve_outbox.jsonl"),
     )
 
     from openbiliclaw.discovery.engine import DiscoveryConcurrencyController

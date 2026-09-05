@@ -17,6 +17,7 @@ import asyncio
 import logging
 
 from openbiliclaw.config import load_config
+from openbiliclaw.runtime.serve_outbox import ServeOutbox
 from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 from openbiliclaw.storage.database import Database
 
@@ -47,6 +48,7 @@ async def run_maintenance_worker(
         config.data_path / "runtime" / "serve_snapshot.json",
         max_age_seconds=interval_seconds * 2,
     )
+    outbox = ServeOutbox(config.data_path / "runtime" / "serve_outbox.jsonl")
     try:
         target = int(getattr(config.scheduler, "pool_target_count", 300) or 300)
         raw_ceiling = max(target * 2, target + 120)
@@ -77,6 +79,18 @@ async def run_maintenance_worker(
                 if not getattr(result, "has_more", False):
                     break
                 await asyncio.sleep(0)
+            try:
+                records = outbox.read_all()
+                if records:
+                    for record in records:
+                        rows = list(record.get("recommendation_rows") or [])
+                        bvids = list(record.get("ranked_bvids") or [])
+                        await database.persist_pool_serve_async(rows, bvids)
+                    outbox.clear()
+                    logger.info("drained %d serve outbox batch(es)", len(records))
+            except Exception:
+                logger.exception("Background serve outbox drain failed")
+
             try:
                 snapshot = database.load_pool_serve_snapshot(
                     limit=DEFAULT_SNAPSHOT_CANDIDATE_LIMIT,

@@ -941,6 +941,7 @@ def _build_recommendation_engine() -> Any:
         RecommendationEngine,
         SupportsEmbeddingService,
     )
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
     from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 
     memory = _build_memory_manager()
@@ -1004,6 +1005,7 @@ def _build_recommendation_engine() -> Any:
         serve_snapshot_store=ServeSnapshotStore(
             cfg.data_path / "runtime" / "serve_snapshot.json"
         ),
+        serve_outbox=ServeOutbox(cfg.data_path / "runtime" / "serve_outbox.jsonl"),
     )
 
 

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
+    from openbiliclaw.runtime.serve_outbox import ServeOutbox
     from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
     from openbiliclaw.soul.profile import InterestTag, SoulProfile
@@ -486,6 +487,7 @@ class RecommendationEngine:
         danmaku_max_chars: int = 500,
         bilibili_client: Any | None = None,
         serve_snapshot_store: ServeSnapshotStore | None = None,
+        serve_outbox: ServeOutbox | None = None,
     ) -> None:
         self._llm = llm
         self._database = database
@@ -502,6 +504,7 @@ class RecommendationEngine:
         # prewarm no-ops (the bonus path still works off already-stored text).
         self._bilibili_client = bilibili_client
         self._serve_snapshot_store = serve_snapshot_store
+        self._serve_outbox = serve_outbox
         # In-memory cache of the user's visual-profile centroids (pos/neg),
         # rebuilt in the background by rebuild_visual_profile(). serve() reads
         # this only — never triggers a rebuild or a cover fetch on the hot path.
@@ -1132,16 +1135,36 @@ class RecommendationEngine:
         ranked_bvids = [item.bvid for item in ranked]
         persist_started = time.perf_counter()
         if callable(isolated_persist):
-            persisted = await isolated_persist(recommendation_rows, ranked_bvids)
-            ids = list(persisted.recommendation_ids)
-            # Third-party/legacy storage adapters may still return the older
-            # result shape with recommendation_ids only. Treat that shape as
-            # "all rows committed" until the adapter adopts exact commit
-            # reporting.
-            committed_bvids = getattr(persisted, "committed_bvids", None)
-            temporally_stale_bvids = tuple(getattr(persisted, "temporally_stale_bvids", ()))
-            skipped_bvids = tuple(getattr(persisted, "skipped_bvids", ()))
-            shown_committed = True
+            if self._serve_outbox is not None and self._serve_snapshot_store is not None:
+                # Phase 2: do not block the API hot path on the SQLite writer.
+                # Append the shown/history batch to the outbox and let the
+                # worker process it with its own database connection.
+                await asyncio.to_thread(
+                    self._serve_outbox.append,
+                    recommendation_rows,
+                    ranked_bvids,
+                )
+                ids = [0] * len(recommendations)
+                committed_bvids = tuple(rec.content.bvid for rec in recommendations)
+                temporally_stale_bvids = ()
+                skipped_bvids = ()
+                shown_committed = True
+                logger.info(
+                    "serve(%s) enqueued %d shown row(s) to worker outbox",
+                    label,
+                    len(recommendation_rows),
+                )
+            else:
+                persisted = await isolated_persist(recommendation_rows, ranked_bvids)
+                ids = list(persisted.recommendation_ids)
+                # Third-party/legacy storage adapters may still return the older
+                # result shape with recommendation_ids only. Treat that shape as
+                # "all rows committed" until the adapter adopts exact commit
+                # reporting.
+                committed_bvids = getattr(persisted, "committed_bvids", None)
+                temporally_stale_bvids = tuple(getattr(persisted, "temporally_stale_bvids", ()))
+                skipped_bvids = tuple(getattr(persisted, "skipped_bvids", ()))
+                shown_committed = True
         else:
             committed_bvids = None
             temporally_stale_bvids = ()

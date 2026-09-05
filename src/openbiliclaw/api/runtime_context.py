@@ -985,6 +985,7 @@ class RuntimeContext:
             configured_copy_target,
             max(0, int(getattr(new_config.scheduler, "pool_target_count", 0) or 0)),
         )
+        from openbiliclaw.runtime.serve_outbox import ServeOutbox
         from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 
         new_recommendation_engine = RecommendationEngine(
@@ -1024,6 +1025,7 @@ class RuntimeContext:
             serve_snapshot_store=ServeSnapshotStore(
                 new_config.data_path / "runtime" / "serve_snapshot.json"
             ),
+            serve_outbox=ServeOutbox(new_config.data_path / "runtime" / "serve_outbox.jsonl"),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)

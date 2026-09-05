@@ -114,7 +114,8 @@ Provider openai_compatible is cooling down after rate limit.
 - [x] 创建 worktree / 分支；
 - [x] Phase 0：worker 进程骨架；
 - [x] Phase 1（首版）：worker 发布推荐 serve snapshot，serve 优先读快照，缺失时回退 DB；
-- [ ] Phase 1（完整）：把持久化 shown/feedback 也移出热路径；
-- [ ] Phase 2：写锁隔离；
+- [x] Phase 1（完整）：推荐 shown/history 写入通过 outbox 异步发到 worker；
+- [x] Phase 2（首版）：API 热路径不再同步等待 SQLite 写，worker 负责 drain outbox；
+- [ ] Phase 2（完整）：维护事务进一步拆短 + API 进程完全零写；
 - [ ] Phase 3：有界队列；
 - [ ] Phase 4：完全拆分。
