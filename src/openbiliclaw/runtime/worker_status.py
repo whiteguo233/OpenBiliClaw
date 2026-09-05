@@ -12,7 +12,7 @@ import logging
 import os
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ def _timestamp_to_iso(value: float | None) -> str:
     if not value or value <= 0:
         return ""
     try:
-        return datetime.fromtimestamp(float(value)).astimezone().isoformat()
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
     except (OverflowError, OSError, ValueError):
         return ""
 
