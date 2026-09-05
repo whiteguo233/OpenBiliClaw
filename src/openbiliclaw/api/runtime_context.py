@@ -985,6 +985,8 @@ class RuntimeContext:
             configured_copy_target,
             max(0, int(getattr(new_config.scheduler, "pool_target_count", 0) or 0)),
         )
+        from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
+
         new_recommendation_engine = RecommendationEngine(
             llm=new_llm_service,
             database=self.database,
@@ -1019,6 +1021,9 @@ class RuntimeContext:
                 getattr(getattr(new_config, "discovery", None), "danmaku_max_chars", 500)
             ),
             bilibili_client=new_bilibili_client,
+            serve_snapshot_store=ServeSnapshotStore(
+                new_config.data_path / "runtime" / "serve_snapshot.json"
+            ),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)

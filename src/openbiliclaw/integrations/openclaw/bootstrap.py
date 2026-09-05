@@ -231,6 +231,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         configured_copy_target,
         max(0, int(getattr(config.scheduler, "pool_target_count", 0) or 0)),
     )
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
+
     recommendation_engine = RecommendationEngine(
         llm=llm_service,
         database=database,
@@ -249,6 +251,9 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         danmaku_fetch_limit=config.discovery.danmaku_fetch_limit,
         danmaku_max_chars=config.discovery.danmaku_max_chars,
         bilibili_client=bilibili_client,
+        serve_snapshot_store=ServeSnapshotStore(
+            config.data_path / "runtime" / "serve_snapshot.json"
+        ),
     )
 
     from openbiliclaw.discovery.engine import DiscoveryConcurrencyController

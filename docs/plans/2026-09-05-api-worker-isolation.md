@@ -112,8 +112,9 @@ Provider openai_compatible is cooling down after rate limit.
 ## 6. 当前进度
 
 - [x] 创建 worktree / 分支；
-- [ ] Phase 0：worker 进程骨架；
-- [ ] Phase 1：推荐快照；
+- [x] Phase 0：worker 进程骨架；
+- [x] Phase 1（首版）：worker 发布推荐 serve snapshot，serve 优先读快照，缺失时回退 DB；
+- [ ] Phase 1（完整）：把持久化 shown/feedback 也移出热路径；
 - [ ] Phase 2：写锁隔离；
 - [ ] Phase 3：有界队列；
 - [ ] Phase 4：完全拆分。

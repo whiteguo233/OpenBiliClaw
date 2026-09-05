@@ -1,13 +1,14 @@
-"""Standalone background maintenance worker.
+"""Standalone background maintenance and snapshot worker.
 
-Phase 0 of the API/worker isolation architecture:
+Phase 0/1 of the API/worker isolation architecture:
 
 - The worker owns its own ``Database`` and runs pool maintenance.
+- It publishes an atomically replaced recommendation serve snapshot.
 - It is intended to be launched as a separate process, e.g.
   ``python -m openbiliclaw.worker``.
 - Later phases will expand this process to own discovery/eval,
-  LLM/embedding, dialogue settlement, and recommendation snapshot
-  construction, while the API process becomes read/serve-only.
+  LLM/embedding, dialogue settlement, and the remaining API-side
+  background work, while the API process becomes read/serve-only.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import asyncio
 import logging
 
 from openbiliclaw.config import load_config
+from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_INTERVAL_SECONDS = 60.0
 DEFAULT_MAX_BATCHES_PER_TICK = 10
 DEFAULT_MAX_MUTATIONS_PER_BATCH = 50
+DEFAULT_SNAPSHOT_CANDIDATE_LIMIT = 400
 
 
 async def run_maintenance_worker(
@@ -30,7 +33,7 @@ async def run_maintenance_worker(
     max_batches_per_tick: int = DEFAULT_MAX_BATCHES_PER_TICK,
     max_mutations_per_batch: int = DEFAULT_MAX_MUTATIONS_PER_BATCH,
 ) -> None:
-    """Run pool maintenance in a dedicated process/event loop.
+    """Run pool maintenance and publish a serve snapshot in a separate process.
 
     This is deliberately independent from the API runtime: it uses its own
     database handle and never imports the FastAPI server or the full
@@ -40,6 +43,10 @@ async def run_maintenance_worker(
     config = load_config()
     database = Database(config.data_path / "openbiliclaw.db")
     database.initialize()
+    snapshot_store = ServeSnapshotStore(
+        config.data_path / "runtime" / "serve_snapshot.json",
+        max_age_seconds=interval_seconds * 2,
+    )
     try:
         target = int(getattr(config.scheduler, "pool_target_count", 300) or 300)
         raw_ceiling = max(target * 2, target + 120)
@@ -70,6 +77,20 @@ async def run_maintenance_worker(
                 if not getattr(result, "has_more", False):
                     break
                 await asyncio.sleep(0)
+            try:
+                snapshot = database.load_pool_serve_snapshot(
+                    limit=DEFAULT_SNAPSHOT_CANDIDATE_LIMIT,
+                    curator_history_limit=30,
+                )
+                snapshot_store.save(snapshot)
+                logger.info(
+                    "worker published serve snapshot loaded=%s available=%s raw=%s",
+                    getattr(snapshot, "loaded_count", "?"),
+                    getattr(snapshot, "readiness", {}).get("available", "?"),
+                    getattr(snapshot, "readiness", {}).get("raw", "?"),
+                )
+            except Exception:
+                logger.exception("Background serve snapshot publish failed")
             if not worked:
                 await asyncio.sleep(min(5.0, max(0.0, float(interval_seconds))))
             else:

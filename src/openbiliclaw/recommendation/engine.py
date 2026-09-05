@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
     from openbiliclaw.soul.profile import InterestTag, SoulProfile
     from openbiliclaw.storage.database import Database
@@ -484,6 +485,7 @@ class RecommendationEngine:
         danmaku_fetch_limit: int = 50,
         danmaku_max_chars: int = 500,
         bilibili_client: Any | None = None,
+        serve_snapshot_store: ServeSnapshotStore | None = None,
     ) -> None:
         self._llm = llm
         self._database = database
@@ -499,6 +501,7 @@ class RecommendationEngine:
         # Optional Bilibili client for the danmaku prewarm. None = the danmaku
         # prewarm no-ops (the bonus path still works off already-stored text).
         self._bilibili_client = bilibili_client
+        self._serve_snapshot_store = serve_snapshot_store
         # In-memory cache of the user's visual-profile centroids (pos/neg),
         # rebuilt in the background by rebuild_visual_profile(). serve() reads
         # this only — never triggers a rebuild or a cover fetch on the hot path.
@@ -778,21 +781,15 @@ class RecommendationEngine:
         multiplier = 4 if excluded_bvids else 3
         candidate_limit = max(limit * multiplier, 40) + len(excluded_bvids)
         pool_snapshot_started = time.perf_counter()
-        snapshot_loader = getattr(self._database, "load_pool_serve_snapshot_async", None)
+        snapshot: Any | None = None
         curator_snapshot: tuple[list[dict[str, object]], list[dict[str, object]]] | None = None
-        if callable(snapshot_loader):
-            history_limit = max(1, int(getattr(self._curator, "_history_window", 30)))
-            # Only pass the new keyword when a scope was actually requested:
-            # test doubles and third-party adapters implement the historical
-            # signature, and a cross-platform serve must keep working on them.
-            snapshot_kwargs: dict[str, Any] = {
-                "limit": candidate_limit,
-                "xhs_self_nickname": self._xhs_self_nickname(),
-                "curator_history_limit": history_limit,
-            }
-            if scope:
-                snapshot_kwargs["source_platform"] = scope
-            snapshot = await snapshot_loader(**snapshot_kwargs)
+        if self._serve_snapshot_store is not None and expression_mode == "precomputed":
+            # Phase 1: prefer the worker-published snapshot so serve does not
+            # need to open a fresh SQLite read transaction on every refresh.
+            snapshot = await asyncio.to_thread(self._serve_snapshot_store.load)
+            if snapshot is not None:
+                logger.info("serve(%s) using worker-published snapshot", label)
+        if snapshot is not None:
             pool_readiness = dict(snapshot.readiness)
             candidates = self._enforce_platform_scope(
                 self._rows_to_discovered(list(snapshot.candidate_rows)),
@@ -818,33 +815,72 @@ class RecommendationEngine:
                 list(snapshot.feedback_signals),
             )
         else:
-            # Compatibility path for test doubles and third-party adapters.
-            pool_readiness = await asyncio.to_thread(self._pool_readiness_counts)
-            if int(pool_readiness.get("available", 0)) > 0:
-                # Same rule as the snapshot loader: subclasses and test doubles
-                # override this with the historical signature, so a
-                # cross-platform serve must not hand them a new keyword.
-                loader_kwargs: dict[str, Any] = {
+            snapshot_loader = getattr(self._database, "load_pool_serve_snapshot_async", None)
+            if callable(snapshot_loader):
+                history_limit = max(1, int(getattr(self._curator, "_history_window", 30)))
+                # Only pass the new keyword when a scope was actually requested:
+                # test doubles and third-party adapters implement the historical
+                # signature, and a cross-platform serve must keep working on them.
+                snapshot_kwargs: dict[str, Any] = {
                     "limit": candidate_limit,
-                    "excluded_bvids": excluded_bvids,
+                    "xhs_self_nickname": self._xhs_self_nickname(),
+                    "curator_history_limit": history_limit,
                 }
                 if scope:
-                    loader_kwargs["source_platform"] = scope
-                (
-                    candidates,
-                    loaded_count,
-                    after_exclude_count,
-                    after_disliked_count,
-                    after_viewed_count,
-                ) = await asyncio.to_thread(
-                    partial(self._load_filtered_serve_candidates, profile, **loader_kwargs)
+                    snapshot_kwargs["source_platform"] = scope
+                snapshot = await snapshot_loader(**snapshot_kwargs)
+                pool_readiness = dict(snapshot.readiness)
+                candidates = self._enforce_platform_scope(
+                    self._rows_to_discovered(list(snapshot.candidate_rows)),
+                    scope,
+                )
+                loaded_count = int(snapshot.loaded_count)
+                if snapshot.platform_topups:
+                    logger.info(
+                        "serve platform floor topped up %s",
+                        ", ".join(f"{name}+{count}" for name, count in snapshot.platform_topups),
+                    )
+                if excluded_bvids:
+                    candidates = [item for item in candidates if item.bvid not in excluded_bvids]
+                after_exclude_count = len(candidates)
+                candidates = self._exclude_disliked_topic_candidates_for_serve(candidates, profile)
+                after_disliked_count = len(candidates)
+                if snapshot.seen_bvids:
+                    candidates = [item for item in candidates if item.bvid not in snapshot.seen_bvids]
+                after_viewed_count = len(candidates)
+                candidates = self._filter_candidates_for_publication_serving(candidates)
+                curator_snapshot = (
+                    list(snapshot.curator_signals),
+                    list(snapshot.feedback_signals),
                 )
             else:
-                candidates = []
-                loaded_count = 0
-                after_exclude_count = 0
-                after_disliked_count = 0
-                after_viewed_count = 0
+                # Compatibility path for test doubles and third-party adapters.
+                pool_readiness = await asyncio.to_thread(self._pool_readiness_counts)
+                if int(pool_readiness.get("available", 0)) > 0:
+                    # Same rule as the snapshot loader: subclasses and test doubles
+                    # override this with the historical signature, so a
+                    # cross-platform serve must not hand them a new keyword.
+                    loader_kwargs: dict[str, Any] = {
+                        "limit": candidate_limit,
+                        "excluded_bvids": excluded_bvids,
+                    }
+                    if scope:
+                        loader_kwargs["source_platform"] = scope
+                    (
+                        candidates,
+                        loaded_count,
+                        after_exclude_count,
+                        after_disliked_count,
+                        after_viewed_count,
+                    ) = await asyncio.to_thread(
+                        partial(self._load_filtered_serve_candidates, profile, **loader_kwargs)
+                    )
+                else:
+                    candidates = []
+                    loaded_count = 0
+                    after_exclude_count = 0
+                    after_disliked_count = 0
+                    after_viewed_count = 0
         before_temporal_count = len(candidates)
         candidates = self._exclude_temporally_stale_candidates_for_serve(candidates)
         after_temporal_count = len(candidates)

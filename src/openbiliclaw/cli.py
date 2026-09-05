@@ -941,6 +941,7 @@ def _build_recommendation_engine() -> Any:
         RecommendationEngine,
         SupportsEmbeddingService,
     )
+    from openbiliclaw.runtime.serve_snapshot import ServeSnapshotStore
 
     memory = _build_memory_manager()
     database = _get_runtime_database()
@@ -1000,6 +1001,9 @@ def _build_recommendation_engine() -> Any:
         ),
         danmaku_max_chars=int(getattr(getattr(cfg, "discovery", None), "danmaku_max_chars", 500)),
         bilibili_client=_build_bilibili_client() if _danmaku_on else None,
+        serve_snapshot_store=ServeSnapshotStore(
+            cfg.data_path / "runtime" / "serve_snapshot.json"
+        ),
     )
 
 
