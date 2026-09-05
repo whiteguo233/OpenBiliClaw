@@ -120,4 +120,5 @@ Provider openai_compatible is cooling down after rate limit.
 - [x] Phase 3（首版）：DialogueSettlementQueue 有界，低优先级后台任务超限丢弃；
 - [x] Phase 3（完整）：LLM 限流指数退避 + 队列深度/丢弃/outbox 深度暴露到 runtime-status；
 - [x] Phase 4（完整）：`OPENBILICLAW_WORKER=1` 自动拉起 full worker，worker 构建完整 RuntimeContext 并运行全部周期性后台任务；API 进程在 full worker 模式下跳过自身后台循环。
+- [x] Phase 4（完整·事件处理）：full worker 同时运行 app-owned profile/feedback event-processing 调度，API 进程不再启动 event/feedback 后台任务。
 - [x] Phase 4（可观测）：worker 通过 `data/runtime/worker_status.json` 心跳暴露到 `/api/runtime-status`（`worker_running` / `worker_mode` / `worker_pid` / 上次心跳与年龄）。
