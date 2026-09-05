@@ -9588,6 +9588,21 @@ def create_app(
         payload.update(feedback_batch_scheduler.status_payload())
         payload.update(chat_reply_scheduler.status_payload())
         payload.update(image_fetch_coordinator.status_payload())
+        settlement_queue = getattr(ctx, "dialogue_settlement_queue", None)
+        if settlement_queue is not None:
+            payload["dialogue_settlement_depth"] = int(
+                getattr(settlement_queue, "depth", 0) or 0
+            )
+            payload["dialogue_settlement_max_depth"] = int(
+                getattr(settlement_queue, "max_depth", 0) or 0
+            )
+            payload["dialogue_settlement_dropped"] = int(
+                getattr(settlement_queue, "dropped_jobs", 0) or 0
+            )
+        recommendation_engine = getattr(ctx, "recommendation_engine", None)
+        outbox_depth = getattr(recommendation_engine, "serve_outbox_depth", None)
+        if callable(outbox_depth):
+            payload["worker_outbox_depth"] = int(outbox_depth() or 0)
         return RuntimeStatusResponse(**payload)
 
     @app.post("/api/agent-bridge")

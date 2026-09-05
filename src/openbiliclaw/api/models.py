@@ -452,6 +452,10 @@ class RuntimeStatusResponse(BaseModel):
     event_lane_paused: bool = False
     event_lane_last_error: str = ""
     event_lane_processed: int = 0
+    dialogue_settlement_depth: int = 0
+    dialogue_settlement_max_depth: int = 0
+    dialogue_settlement_dropped: int = 0
+    worker_outbox_depth: int = 0
     chat_reply_depth: int = 0
     chat_reply_active: bool = False
     chat_reply_last_error: str = ""

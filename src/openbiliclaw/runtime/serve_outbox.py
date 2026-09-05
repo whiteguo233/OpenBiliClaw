@@ -66,6 +66,10 @@ class ServeOutbox:
                 records.append(record)
         return records
 
+    def count(self) -> int:
+        """Return the number of buffered serve batches."""
+        return len(self.read_all())
+
     def clear(self) -> None:
         """Remove the outbox after a successful drain."""
         try:

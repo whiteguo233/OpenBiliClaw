@@ -590,12 +590,14 @@ class LLMRegistry:
     """
 
     _RATE_LIMIT_COOLDOWN_SECONDS = 60.0
+    _RATE_LIMIT_MAX_COOLDOWN_SECONDS = 600.0
 
     def __init__(self) -> None:
         self._providers: dict[str, LLMProvider] = {}
         self._provider_types: dict[str, str] = {}
         self._default: str = ""
         self._rate_limited_until: dict[str, float] = {}
+        self._rate_limit_attempts: dict[str, int] = {}
         # A non-empty fallback_provider IS the enable switch — there is no
         # separate boolean (the legacy [llm].fallback_enabled flag was never
         # consulted and has been removed; empty provider = fallback off).
@@ -762,6 +764,7 @@ class LLMRegistry:
                     reasoning_effort=reasoning_effort,
                 )
                 self._rate_limited_until.pop(provider_name, None)
+                self._rate_limit_attempts.pop(provider_name, None)
                 response.instance_id = provider_name
                 return response
             except LLMRateLimitError as exc:
@@ -849,6 +852,7 @@ class LLMRegistry:
                 model=model,
             )
             self._rate_limited_until.pop(target, None)
+            self._rate_limit_attempts.pop(target, None)
             response.instance_id = target
             return response
         except LLMRateLimitError:
@@ -929,6 +933,16 @@ class LLMRegistry:
         return False
 
     def _mark_rate_limited(self, provider_name: str) -> None:
-        self._rate_limited_until[provider_name] = (
-            time.monotonic() + self._RATE_LIMIT_COOLDOWN_SECONDS
+        attempts = self._rate_limit_attempts.get(provider_name, 0) + 1
+        self._rate_limit_attempts[provider_name] = attempts
+        cooldown = min(
+            self._RATE_LIMIT_MAX_COOLDOWN_SECONDS,
+            self._RATE_LIMIT_COOLDOWN_SECONDS * (2 ** (attempts - 1)),
+        )
+        self._rate_limited_until[provider_name] = time.monotonic() + cooldown
+        logger.warning(
+            "Provider %s marked rate-limited; cooldown=%.0fs (attempt=%d)",
+            provider_name,
+            cooldown,
+            attempts,
         )

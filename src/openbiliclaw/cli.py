@@ -1158,7 +1158,21 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         port,
         api_host=host,
     )
+    worker_process: Any | None = None
     try:
+        if os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1":
+            import subprocess
+
+            worker_process = subprocess.Popen(
+                [sys.executable, "-m", "openbiliclaw.worker"],
+                cwd=os.getcwd(),
+            )
+            _print_status_panel(
+                "info",
+                "Worker 进程",
+                f"已启动独立 worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
+            )
+
         listeners = create_wildcard_listener_sockets(host, port)
         if listeners is None:
             uvicorn.run(api_app, host=host, port=port, log_level="info")
@@ -1171,6 +1185,12 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         finally:
             close_listener_sockets(listeners)
     finally:
+        if worker_process is not None:
+            worker_process.terminate()
+            try:
+                worker_process.wait(timeout=5)
+            except Exception:
+                worker_process.kill()
         if tailnet_supervisor is not None:
             tailnet_supervisor.stop()
 

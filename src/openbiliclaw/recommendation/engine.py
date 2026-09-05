@@ -1266,6 +1266,15 @@ class RecommendationEngine:
         """Set the hook run only after the shown-state write commits."""
         self._pool_inventory_commit_callback = callback
 
+    def serve_outbox_depth(self) -> int:
+        """Return the current number of buffered serve-write batches."""
+        if self._serve_outbox is None:
+            return 0
+        try:
+            return int(self._serve_outbox.count() or 0)
+        except Exception:
+            return 0
+
     def _schedule_pool_inventory_commit(self, counts: dict[str, int]) -> None:
         """Notify inventory observers after the response-critical DB commit."""
         coro = self._notify_pool_inventory_commit(counts)
