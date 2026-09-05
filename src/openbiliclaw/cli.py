@@ -1132,6 +1132,13 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     from openbiliclaw.api.app import create_app
     from openbiliclaw.config import load_config
 
+    worker_requested = os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
+    if worker_requested:
+        # The API process must also know that a full background worker is
+        # running; the child worker gets the same flag through the inherited
+        # environment below.
+        os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
+
     api_app = create_app()
     state = getattr(api_app, "state", None)
     if bool(getattr(state, "degraded", False)):
@@ -1160,7 +1167,7 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     )
     worker_process: Any | None = None
     try:
-        if os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1":
+        if worker_requested:
             import subprocess
 
             worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}

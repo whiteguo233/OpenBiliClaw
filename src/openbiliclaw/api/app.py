@@ -2996,7 +2996,11 @@ def create_app(
                 else:  # compatibility with narrow injected scheduler fakes
                     feedback_batch_scheduler.schedule()
                     app.state.event_recovery_task = None
-        if os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1":
+        full_worker_active = (
+            os.environ.get("OPENBILICLAW_FULL_WORKER", "").strip() == "1"
+            or os.environ.get("OPENBILICLAW_WORKER", "").strip() == "1"
+        )
+        if full_worker_active:
             logger.info(
                 "External full worker active; API periodic background loops delegated"
             )
