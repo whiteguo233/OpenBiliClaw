@@ -19,6 +19,8 @@
 
 [项目主页](https://whiteguo233.github.io/OpenBiliClaw/) | [English](README_EN.md) | 中文
 
+国内 AtomGit 托管：[OpenBiliClaw](https://atomgit.com/whiteguo233/OpenBiliClaw)（从 GitHub 自动同步源码）
+
 </div>
 
 > ### 🆕 重要更新：OpenBiliClaw 现在可以装进 DeepSeek Harness

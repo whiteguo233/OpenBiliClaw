@@ -16,6 +16,8 @@
 
 [Homepage](https://whiteguo233.github.io/OpenBiliClaw/) | English | [中文](README.md)
 
+Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/OpenBiliClaw) (automatically synced from GitHub).
+
 </div>
 
 > ### 🆕 Big update: OpenBiliClaw now runs inside DeepSeek Harness
