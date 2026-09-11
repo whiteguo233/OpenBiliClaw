@@ -1853,7 +1853,7 @@ async def test_text_batch_evaluation_bounds_declared_output_tokens() -> None:
     )
 
     assert scores == [0.8] * 8
-    assert llm_service.max_tokens == [8192]
+    assert llm_service.max_tokens == [16384]
 
 
 @pytest.mark.asyncio

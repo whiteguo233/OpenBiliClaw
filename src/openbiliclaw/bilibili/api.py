@@ -513,7 +513,7 @@ class BilibiliAPIClient:
             resp = await self._client.get(f"{self._BASE_URL}/x/web-interface/nav")
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise BilibiliAPIError(str(exc)) from exc
+            raise self._sanitized_http_error("GET", "/x/web-interface/nav", exc) from exc
 
         payload = _json_object(resp.json())
         data = _json_object(payload.get("data", {}))

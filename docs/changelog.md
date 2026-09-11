@@ -17,6 +17,7 @@
 - **新增 AtomGit 国内源码镜像**：中英文 README 补充 [AtomGit 项目入口](https://atomgit.com/whiteguo233/OpenBiliClaw)，镜像从 GitHub 自动同步源码，方便国内访问并满足 G-Star 申请的项目链接展示要求。
 
 - **CI 基线清理（MyPy）**：修复 8 个既有 MyPy 报错（`soul/cognition_cycle.py`、`image_service.py`、`worker/main.py`、`api/app.py`），`mypy src/` 恢复 0 error，CI 不再在 MyPy 步骤阻断后续 pytest。改动仅为类型注解 + 一个鸭子类型 Protocol（`_BackgroundTaskHost`）与一个 TypedDict，无运行时行为变化。
+- **CI 基线清理（pytest）**：MyPy 恢复后 pytest 暴露的 9 个既有失败一并处理，CI 全绿。其中 1 个是真实缺陷：`_get_wbi_keys` 之前把 HTTP 状态码吞成一个无 code 的 `BilibiliAPIError`，导致 watch-later 遇到 412/429 时被误标为 `failed` 而不是 `rate_limited`（现改用 `_sanitized_http_error` 保留码值）；其余 8 个为与近期重构不同步的过期断言（image-fetch 并发上限默认值 4/3→10/8、weibo 测试桩缺 `include_delivered`、desktop `sendChat` 改流式、dialogue respond 调用点新增 `_respond`、candidate eval max_tokens 8192→16384）。
 - **发布状态**：后端源码 / 浏览器插件 / 桌面安装包 / Docker 镜像与聚合 Release 统一为 `v0.3.221`；客户端配套版本为移动端 `v0.3.156+2006`。
 
 ## v0.3.220：Windows 推荐进程修复与保存键扩展（2026-09-09）

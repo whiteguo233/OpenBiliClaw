@@ -77,16 +77,21 @@ def test_desktop_inline_poll_checks_failed_before_stale_reply() -> None:
 
     probe_start = app_js.index("async function pollInlineMessageChatTurn")
     probe_end = app_js.index("function openInlineMessageProbeChat", probe_start)
+    probe_body = app_js[probe_start:probe_end]
+    failed_index = probe_body.index('status === "failed"')
+    completed_index = probe_body.index('status === "completed"')
+    reply_index = probe_body.index(".reply")
+    assert failed_index < completed_index
+    assert failed_index < reply_index
+
+    # sendChat now streams over SSE instead of polling turn status, so the
+    # failed-before-completed ordering no longer applies there. It must still
+    # surface a broken stream instead of leaving the thinking bubble forever.
     chat_start = app_js.index("async function sendChat")
     chat_end = app_js.index("async function refreshRecommendations", chat_start)
-    probe_body = app_js[probe_start:probe_end]
     chat_body = app_js[chat_start:chat_end]
-    for body in (probe_body, chat_body):
-        failed_index = body.index('status === "failed"')
-        completed_index = body.index('status === "completed"')
-        reply_index = body.index(".reply")
-        assert failed_index < completed_index
-        assert failed_index < reply_index
+    assert "streamChatTurn(" in chat_body
+    assert "流式连接中断" in chat_body
 
 
 def test_desktop_auth_probe_times_out_without_assuming_authentication() -> None:

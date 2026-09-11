@@ -400,8 +400,9 @@ def test_weibo_share_count_survives_recommendation_and_delight_http_serializatio
             min_delight_score: float,
             limit: int,
             include_liked: bool = False,
+            include_delivered: bool = False,
         ) -> list[dict[str, Any]]:
-            del min_delight_score, limit
+            del min_delight_score, limit, include_delivered
             assert include_liked is True
             return [
                 {

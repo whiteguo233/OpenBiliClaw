@@ -292,6 +292,7 @@ def test_every_production_dialogue_respond_call_is_behind_stable_lease() -> None
     assert sorted(enclosing_functions) == sorted(
         [
             "_generate_durable_chat_reply",
+            "_respond",
             "_run_avoidance_chat",
             "_run_delight_chat",
             "_run_legacy_chat",
@@ -300,6 +301,6 @@ def test_every_production_dialogue_respond_call_is_behind_stable_lease() -> None
     )
     assert "ctx.dialogue.respond" not in source
     assert "async with _dialogue_execution_lease() as current_dialogue:" in source
-    assert source.count("await _run_with_dialogue_execution(") == 4
+    assert source.count("await _run_with_dialogue_execution(") == 5
     assert 'current_speculator = getattr(ctx.soul_engine, "_speculator", None)' in source
     assert 'current_speculator = getattr(ctx.soul_engine, "_avoidance_speculator", None)' in source
