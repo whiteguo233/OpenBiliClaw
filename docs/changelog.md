@@ -4,6 +4,12 @@
 
 ---
 
+## 未发布
+
+- **补上 B 站扩展任务的 CSRF 门禁**：`GET /api/sources/bili/next-task` 与其它来源的 `next-task` 一样是「pending → in_progress」的领取型 GET，但此前不在 `api/auth.py` 的 `_CSRF_GET_EXACT` 集合里 —— 带 cookie 的跨站顶层导航（`SameSite=Lax` 会随顶层 GET 发送会话 cookie，且 `Sec-Fetch-Site: cross-site` 已使本机免登录 fast path fail-closed）可以在没有 `X-OBC-Auth` 的情况下把一条 pending 的 B 站扩展任务置为 `in_progress`，而扩展永远收不到它，只能等租约回收。现在该路径与其余九个来源一起强制 `X-OBC-Auth`；扩展走 `Authorization: Bearer`（Bearer 豁免 CSRF），不受影响，本机 CLI / 扩展链路无行为变化。同时把 CSRF 回归从手抄路径列表改为**集合相等断言**（`tests/test_api_auth.py`：已注册的 `*/next-task` 路由集合 == `_CSRF_GET_EXACT` 中登记的 claim 路径），后续新增来源漏登记会直接失败，`docs/modules/api-auth.md` 的 CSRF 行同步更正为十个来源。
+
+---
+
 ## v0.3.221：保存 URL 归一化、B 站视频信息回退与 learned scorer 校准（2026-09-11）
 
 - **修复协议相对封面 URL 导致「稍后再看 / 收藏」422（issue #237）**：B 站等上游常见返回 `//i2.hdslb.com/...` 这类协议相对地址，入站 `SavedItemIn` 的 `content_url` / `cover_url` 在 `_validate_http_url` 校验前统一补全为 `https://...` 再入库；三个图形界面共用同一端点，无需各客户端自行兜底，非 HTTP(S)、带凭据、含空白或控制字符等非法值仍照旧拒绝。真实进程 + 真实 HTTP 回归：未修复的 main 提交返回 422，修复后 200 并落库为绝对地址。

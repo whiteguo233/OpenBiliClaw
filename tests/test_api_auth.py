@@ -11,6 +11,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from openbiliclaw import auth_core as ac
 from openbiliclaw.api.app import create_app
+from openbiliclaw.api.auth import _CSRF_GET_EXACT
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
@@ -311,6 +312,38 @@ def test_cookie_unsafe_method_requires_csrf(tmp_path, monkeypatch) -> None:
     assert ok.status_code == 200
 
 
+def _claim_route_paths(app: object) -> list[str]:
+    """Registered claim GETs (``*/next-task``), derived from the app itself.
+
+    Reading the routes instead of hand-copying a list keeps this regression
+    honest when a source is added later: a new ``next-task`` route appears here
+    automatically and must already be covered by the CSRF set.
+    """
+    return sorted(
+        path
+        for path in (str(getattr(route, "path", "")) for route in getattr(app, "routes", []))
+        if path.endswith("/next-task")
+    )
+
+
+def test_csrf_get_set_covers_every_registered_claim_route(tmp_path, monkeypatch) -> None:
+    """Set equality between the exact CSRF paths and the live claim routes.
+
+    Every ``next-task`` endpoint claims (pending → in_progress) and is therefore
+    write-shaped; a source that registers one without listing it in
+    ``_CSRF_GET_EXACT`` would ship an uncovered state change, and a stale entry
+    for a removed route would keep a dead path protected. Both directions fail
+    here.
+    """
+    app, _ = _build_app(tmp_path, monkeypatch)
+
+    registered = set(_claim_route_paths(app))
+    declared = {path for path in _CSRF_GET_EXACT if path.endswith("/next-task")}
+
+    assert registered, "the app under test registers no claim route"
+    assert declared == registered
+
+
 def test_mutating_get_task_claim_requires_csrf(tmp_path, monkeypatch) -> None:
     # /api/sources/*/next-task are GETs that claim+lock a task, so they
     # must be CSRF-protected for cookie auth (review r2#2). The middleware rejects
@@ -319,14 +352,7 @@ def test_mutating_get_task_claim_requires_csrf(tmp_path, monkeypatch) -> None:
     client = _remote(app)
     client.post("/api/auth/login", json={"password": "hunter2"}, headers={"origin": _ORIGIN})
     for path in (
-        "/api/sources/xhs/next-task",
-        "/api/sources/dy/next-task",
-        "/api/sources/yt/next-task",
-        "/api/sources/x/next-task",
-        "/api/sources/zhihu/next-task",
-        "/api/sources/reddit/next-task",
-        "/api/sources/linuxdo/next-task",
-        "/api/sources/v2ex/next-task",
+        *_claim_route_paths(app),
         "/api/recommendations",  # serve() bootstrap-writes rows
         "/api/chat/turns/abc123",  # GET resumes a pending turn
     ):

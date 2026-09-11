@@ -21,7 +21,7 @@
 | 记住登录 | ✅ | `session_ttl_hours=0`（默认）签发无 `exp` token + 超长 cookie `Max-Age`，关浏览器 / 重启后端都不失效。 |
 | HttpOnly cookie 凭据 | ✅ | 默认下发 `obc_session`（`HttpOnly; Path=/; SameSite=Lax`，host-only，`Secure` 仅当对外协议为 HTTPS），同源 fetch / `<img>` / WebSocket 自动携带；前端永不持有 token。 |
 | 跨源 Bearer 逃生通道 | ✅ | 仅当 Origin 命中 `allowed_bearer_origins` 且 `ttl>0`，登录才在 body 返回 token（`sessionStorage`）；同源 / 缺 Origin 一律 cookie-only（后端不变量）。 |
-| CSRF 防护 | ✅ | cookie 鉴权的非安全方法（POST/PUT/PATCH/DELETE）强制 `Origin==Host`（`same_origin()`）+ 头 `X-OBC-Auth: 1`；普通安全方法读取豁免，但 seven state-changing GET `/next-task` claim routes（XHS / 抖音 / YouTube / X / 知乎 / Reddit / V2EX）在精确路径集合中强制 `X-OBC-Auth`，因为领取会 claim+lock；Bearer / 可信本机豁免；WebSocket 握手按 `same_origin` 校验。 |
+| CSRF 防护 | ✅ | cookie 鉴权的非安全方法（POST/PUT/PATCH/DELETE）强制 `Origin==Host`（`same_origin()`）+ 头 `X-OBC-Auth: 1`；普通安全方法读取豁免，但十个 state-changing GET `/next-task` claim routes（B 站 / XHS / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博）与 `/api/recommendations` 在精确路径集合中强制 `X-OBC-Auth`，因为领取会 claim+lock / serve 会 bootstrap 写推荐历史；Bearer / 可信本机豁免；WebSocket 握手按 `same_origin` 校验。`tests/test_api_auth.py` 对「已注册的 claim 路由集合」与 `_CSRF_GET_EXACT` 做集合相等断言，新增来源漏登记会直接失败。 |
 | 撤销纪元 | ✅ | `auth_epoch` 存 SQLite `auth_state` 单行，跨进程事务原子自增、验签实时读。改密 / `--logout-all` / `--rotate-secret` / `POST /api/auth/logout?all=true` 都通过它撤销所有设备。 |
 | 改密即撤销（全通道） | ✅ | `password_fingerprint`（`HMAC(session_secret,"pw:"+明文)` 或 `"ph:"+hash`）在启动 / 重载时比对，变化即 `auth_epoch += 1`；scrypt 随机盐不会造成误撤销，永不过期登录跨重启不被误撤销。 |
 | 登录失败限流 | ✅ | 进程内按真实客户端 IP 计数，15 分钟内失败 ≥5 次锁 15 分钟，`POST /api/auth/login` 返回 429。可信本机不计入。 |
