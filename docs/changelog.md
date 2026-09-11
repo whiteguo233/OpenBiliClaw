@@ -8,6 +8,8 @@
 
 - **补上 B 站扩展任务的 CSRF 门禁**：`GET /api/sources/bili/next-task` 与其它来源的 `next-task` 一样是「pending → in_progress」的领取型 GET，但此前不在 `api/auth.py` 的 `_CSRF_GET_EXACT` 集合里 —— 带 cookie 的跨站顶层导航（`SameSite=Lax` 会随顶层 GET 发送会话 cookie，且 `Sec-Fetch-Site: cross-site` 已使本机免登录 fast path fail-closed）可以在没有 `X-OBC-Auth` 的情况下把一条 pending 的 B 站扩展任务置为 `in_progress`，而扩展永远收不到它，只能等租约回收。现在该路径与其余九个来源一起强制 `X-OBC-Auth`；扩展走 `Authorization: Bearer`（Bearer 豁免 CSRF），不受影响，本机 CLI / 扩展链路无行为变化。同时把 CSRF 回归从手抄路径列表改为**集合相等断言**（`tests/test_api_auth.py`：已注册的 `*/next-task` 路由集合 == `_CSRF_GET_EXACT` 中登记的 claim 路径），后续新增来源漏登记会直接失败，`docs/modules/api-auth.md` 的 CSRF 行同步更正为十个来源。
 
+- **B 站视频信息补分区 id，新增标签读取方法（issue #57 / #232 方向 1）**：`get_video_info()` 补填同一 `/x/web-interface/view` 响应里一直存在、但此前被丢弃的 `tid` / `tid_v2`（零额外请求）；新增 `get_video_tags(bvid, limit=20)`，走 `/x/tag/archive/tags`（网页播放器标签行所用的端点）取标签名，匿名 Cookie 亦可读取，响应远轻于 `/x/web-interface/view/detail`（后者会连带 Card / Related / Reply）。**实测纠正**：2026-09-11 在 8 个分区各取 1 个样本（含 plain `/view` 与 WBI `/x/web-interface/wbi/view` 两种变体）确认 —— 该响应**不含 `tag` 数组**，`tname` / `tname_v2` **恒为空字符串**，因此 `VideoInfo.tags` 在这条路径上保持 `None`，标签只能由 `get_video_tags()` 显式获取；`get_video_info()` 的请求数不变（有回归测试锁定）。集成点（把标签喂给评估 prompt、摇摆区视频才拉标签）留待后续按需接入，本次不改变任何发现/推荐链路行为。
+
 ---
 
 ## v0.3.221：保存 URL 归一化、B 站视频信息回退与 learned scorer 校准（2026-09-11）

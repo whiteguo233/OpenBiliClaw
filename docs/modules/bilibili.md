@@ -28,6 +28,7 @@
 | 弹幕 fetch outcome | ✅ | `get_danmaku_texts_result()` 区分 `success`（可为空）、`no_data` 与 `transient_failure`；HTTP、XML、限速和网络异常保留原因并交给上层重试。HTTP 200 但根元素不是 B 站 `<i>`（包括 HTML challenge）不会伪装成成功空结果。`get_danmaku_texts()` 继续提供只返回文本列表的兼容包装 |
 | 账户侧同步来源 | ✅ | 已支持 history / favorites / following 三类长期信号，供后台低频同步使用；favorites 会按收藏夹分页补齐到预算上限；同步事件会带 `metadata.signal_strength` 供偏好分析区分证据强弱 |
 | 原生收藏 / 稍后再看写入 | ✅ | `BilibiliAPIClient` 新增认证 form POST、exact-title 收藏夹复用/创建、视频收藏和稍后再看写入；`BilibiliNativeSaveAdapter` 将 B 站 application code 归一化为 saved-sync 状态，并已由 `RuntimeContext` 注册到平台中立 `/api/saved/*`。UI 仍属后续任务；默认关闭自动同步，旧 B 站保存端点仍只写本地。 |
+| 分区 id 与视频标签 | ✅ | `get_video_info()` 从同一 `/x/web-interface/view` 响应补填 `tid` / `tid_v2`（零额外请求）；新增 `get_video_tags(bvid)` 走 `/x/tag/archive/tags` 取标签名（匿名可用，响应远轻于 `/x/web-interface/view/detail`）。**实测（2026-09-11，8 个分区各 1 个样本）**：`/view` 响应**不含 `tag` 数组**，`tname` / `tname_v2` **恒为空字符串** —— 因此该路径下 `VideoInfo.tags` 保持 `None`，标签名只能由 `get_video_tags()` 显式获取。 |
 | 3.3 agent-browser 集成 | ✅ | navigate / get_page_content + CLI browser 命令 |
 
 ### Danmaku outcome API
@@ -116,6 +117,9 @@ following = await client.get_following(page=1, page_size=50)  # list[FollowingUs
 
 # 视频
 video = await client.get_video_info("BV1xx411c7mD")  # VideoInfo
+# video.cid / video.tid / video.tid_v2 都来自同一次 /view 响应（零额外请求）
+# video.tags 在该路径下恒为 None：/view 不返回 tag 数组（实测 2026-09-11）
+tags = await client.get_video_tags("BV1xx411c7mD")  # ["三角洲行动", ...]（匿名可用；失败会抛错）
 related = await client.get_related_videos("BV1xx411c7mD")
 
 # 评论
