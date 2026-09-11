@@ -6,6 +6,8 @@
 
 ## v0.3.220：Windows 推荐进程修复与保存键扩展（2026-09-09）
 
+- **修复协议相对封面 URL 导致「稍后再看 / 收藏」422（issue #237，2026-09-11）**：B 站等上游常见返回 `//i2.hdslb.com/...` 这类协议相对地址，入站 `SavedItemIn` 的 `content_url` / `cover_url` 在 `_validate_http_url` 校验前统一补全为 `https://...` 再入库；三端（桌面 / 移动 Web、Flutter 移动端）共用同一端点，无需各客户端自行兜底，非 HTTP(S)、带凭据、含空白或控制字符等非法值仍照旧拒绝。
+
 - **新增 AtomGit 国内源码镜像（2026-09-10）**：中英文 README 补充 [AtomGit 项目入口](https://atomgit.com/whiteguo233/OpenBiliClaw)，镜像从 GitHub 自动同步源码，方便国内访问并满足 G-Star 申请的项目链接展示要求。
 
 - **修复 Windows 端 v0.3.219 启动崩溃（issue #234）**：Windows 的 asyncio/uvicorn 不支持 Unix socket，独立推荐进程改为监听 `127.0.0.1:8423` 回环 TCP，主 API 改用 HTTP 代理；POSIX 仍保留 Unix socket。同时为桌面 Web 的 `renderPoolStatus` 增加 `null` 状态保护。

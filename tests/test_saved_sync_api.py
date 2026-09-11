@@ -158,6 +158,34 @@ def test_save_defaults_to_local_pending(
     assert adapter.calls == []
 
 
+def test_saved_item_normalizes_protocol_relative_urls(
+    saved_sync_client: tuple[TestClient, Database, _FakeBilibiliAdapter],
+) -> None:
+    """Issue #237: protocol-relative upstream URLs must be absorbed at the API boundary."""
+    client, database, _adapter = saved_sync_client
+    relative_cover = "//i2.hdslb.com/bfs/archive/d242044db2f93cb56ec32f8e94bcefddb9187eb1.png"
+
+    response = client.post(
+        "/api/saved/watch_later",
+        json=_saved_item(
+            "BV1RELATIVE",
+            content_url="//www.bilibili.com/video/BV1RELATIVE",
+            cover_url=relative_cover,
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["item_key"] == "bilibili:BV1RELATIVE"
+    row = database.get_saved_membership("watch_later", "bilibili:BV1RELATIVE")
+    assert row is not None
+    assert row["cover_url"] == f"https:{relative_cover}"
+    assert row["content_url"] == "https://www.bilibili.com/video/BV1RELATIVE"
+
+    listing = client.get("/api/saved/watch_later?limit=20&offset=0").json()["items"]
+    assert listing[0]["cover_url"] == f"https:{relative_cover}"
+    assert listing[0]["content_url"] == "https://www.bilibili.com/video/BV1RELATIVE"
+
+
 @pytest.mark.parametrize("content_kind", ["question", "answer", "article"])
 def test_save_accepts_real_zhihu_typed_content_ids(
     saved_sync_client: tuple[TestClient, Database, _FakeBilibiliAdapter],

@@ -1800,6 +1800,12 @@ class SavedItemIn(BaseModel):
     def _validate_optional_http_url(cls, value: str) -> str:
         if not value:
             return value
+        # Upstream platforms (Bilibili, Xiaohongshu, ...) commonly return
+        # protocol-relative URLs such as "//i2.hdslb.com/bfs/archive/x.png".
+        # Absorb that API-boundary difference here instead of asking every
+        # client to prepend a scheme; the normalized value is what gets stored.
+        if value.startswith("//"):
+            value = f"https:{value}"
         return _validate_http_url(value)
 
     @field_validator("content_id")
