@@ -29,7 +29,7 @@ import logging
 import os
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.config import (
     llm_concurrency_from_config as _llm_concurrency_from_config,
@@ -46,8 +46,6 @@ from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from fastapi import FastAPI
-
     from openbiliclaw.config import Config
     from openbiliclaw.soul.dialogue_learn_queue import (
         DialogueDispatcher,
@@ -61,6 +59,17 @@ _BACKGROUND_TASK_CANCEL_TIMEOUT_SECONDS = 1.5
 # timeout in one worker job.  Give it the same 25-minute no-progress envelope
 # as guided preference analysis instead of rolling config.toml back after 30s.
 _DIALOGUE_SETTLEMENT_DRAIN_TIMEOUT_SECONDS = 25 * 60.0
+
+
+class _BackgroundTaskHost(Protocol):
+    """Minimal host object exposing ``.state`` for background-task wiring.
+
+    ``FastAPI`` satisfies this; the headless full worker passes a
+    ``SimpleNamespace`` stand-in because ``restart_background_tasks`` only
+    reads and writes attributes on ``app.state``.
+    """
+
+    state: Any
 
 
 def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
@@ -1836,7 +1845,7 @@ class RuntimeContext:
 
     async def restart_background_tasks(
         self,
-        app: FastAPI,
+        app: _BackgroundTaskHost,
         *,
         run_post_reload_llm_work: bool = True,
     ) -> None:

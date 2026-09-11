@@ -624,7 +624,7 @@ class CognitionCycle:
                 return
             manager = self._confusion_manager()
             rows = db.list_confusions(statuses=["open"], limit=10000)
-            active = [
+            active: list[dict[str, Any]] = [
                 {
                     "id": int(row.get("id", 0) or 0),
                     "status": str(row.get("status", "") or "").strip().lower(),

@@ -32,7 +32,7 @@ def _resize_cover_for_mobile(data: bytes, content_type: str) -> tuple[bytes, str
     try:
         from PIL import Image
 
-        image = Image.open(BytesIO(data))
+        image: Image.Image = Image.open(BytesIO(data))
         if image.width <= 640:
             return data, content_type
         image.thumbnail((640, 640), Image.Resampling.LANCZOS)

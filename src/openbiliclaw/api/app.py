@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, TypedDict, cast
 from urllib.parse import parse_qsl, quote, urlparse, urlsplit, urlunsplit
 from uuid import UUID
 
@@ -271,6 +271,16 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+class _GuidedInitTimeoutKwargs(TypedDict, total=False):
+    """Optional per-stage timeout overrides forwarded to ``run_guided_init()``."""
+
+    collection_timeout_seconds: float
+    profile_analysis_timeout_seconds: float
+    profile_build_timeout_seconds: float
+    discovery_timeout_seconds: float
+
 
 # A local Ollama chat probe can spend ~31 seconds in its documented cold-load
 # retry window before the model answers. The previous 30-second API cap killed
@@ -5605,7 +5615,7 @@ def create_app(
             heartbeat_task = asyncio.create_task(_run_init_heartbeat(coord, run_id))
             enabled = set(ctx.init_prereqs.enabled_platforms())
             effective = _select_init_platforms(enabled, selected_sources)
-            run_guided_init_kwargs: dict[str, float] = {}
+            run_guided_init_kwargs: _GuidedInitTimeoutKwargs = {}
             if init_timeout_minutes is not None and init_timeout_minutes > 0:
                 timeout_seconds = max(1, int(float(init_timeout_minutes) * 60))
                 run_guided_init_kwargs = {
@@ -6870,7 +6880,7 @@ def create_app(
 
             from PIL import Image
 
-            image = Image.open(BytesIO(data))
+            image: Image.Image = Image.open(BytesIO(data))
             if image.width <= 640:
                 return data, content_type
             image.thumbnail((640, 640), Image.Resampling.LANCZOS)
@@ -7491,8 +7501,8 @@ def create_app(
 
         bvid = str(payload.get("bvid", "") or "").strip()
         message = str(payload.get("message", "") or "").strip()
-        root_raw = payload.get("root")
-        parent_raw = payload.get("parent")
+        root_raw: Any = payload.get("root")
+        parent_raw: Any = payload.get("parent")
         if not bvid:
             raise HTTPException(status_code=400, detail="缺少 bvid")
         if not message:
@@ -7535,7 +7545,7 @@ def create_app(
         from openbiliclaw.config import load_config
 
         bvid = str(payload.get("bvid", "") or "").strip()
-        rpid_raw = payload.get("rpid")
+        rpid_raw: Any = payload.get("rpid")
         if not bvid:
             raise HTTPException(status_code=400, detail="缺少 bvid")
         try:
@@ -10992,10 +11002,10 @@ def create_app(
                 )
             )
 
-        async def _event_stream():
+        async def _event_stream() -> AsyncIterator[str]:
             import json as _json
 
-            def sse(event: str, data: dict) -> str:
+            def sse(event: str, data: dict[str, Any]) -> str:
                 return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
             yield sse("phase", {"phase": "thinking", "text": "正在思考…"})
