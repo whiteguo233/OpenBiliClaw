@@ -651,7 +651,8 @@ class BilibiliAPIClient:
 
         Args:
             bvid: Bilibili video BV ID.
-            limit: Maximum number of tag names to return.
+            limit: Maximum number of tag names to return. Non-positive values
+                return an empty list without issuing a request.
 
         Returns:
             Tag names in payload order; blank names are skipped. Returns an
@@ -659,6 +660,9 @@ class BilibiliAPIClient:
             distinguish "no tags" from "fetch failed" must let the
             :class:`BilibiliAPIError` propagate.
         """
+        item_limit = max(0, int(limit))
+        if item_limit == 0:
+            return []
         data = await self._get_json("/x/tag/archive/tags", params={"bvid": bvid})
         tags: list[str] = []
         for item in _json_list(data):
@@ -667,7 +671,7 @@ class BilibiliAPIClient:
             name = str(item.get("tag_name", "") or "").strip()
             if name:
                 tags.append(name)
-            if len(tags) >= max(1, int(limit)):
+            if len(tags) >= item_limit:
                 break
         return tags
 

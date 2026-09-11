@@ -1000,6 +1000,22 @@ async def test_get_video_tags_respects_limit() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, -1])
+async def test_get_video_tags_non_positive_limit_returns_empty_without_request(
+    limit: int,
+) -> None:
+    """``limit`` is a hard maximum, so non-positive values yield no tags — and
+    short-circuit before any HTTP call, matching the other limit helpers.
+    """
+    client = BilibiliAPIClient(cookie="")
+    fake = FakeAsyncClient({"code": 0, "data": [{"tag_name": "标签0"}]})
+    client._client = fake
+
+    assert await client.get_video_tags("BV1xx", limit=limit) == []
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
 async def test_get_video_tags_propagates_api_errors() -> None:
     """A failed tag fetch must stay distinguishable from "this video has no
     tags": the error is not swallowed into an empty list.
