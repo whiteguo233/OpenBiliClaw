@@ -112,6 +112,12 @@ class VideoInfo:
     # present in the /x/web-interface/view payload, so reading it costs
     # nothing extra.
     cid: int = 0
+    # Legacy / v2 zone ids from the same payload. NOTE: the payload's text
+    # labels (``tname`` / ``tname_v2``) come back as empty strings on the live
+    # endpoint, so the numeric ids are the only partition signal actually
+    # delivered; ``get_video_tags()`` is the supported way to get tag names.
+    tid: int = 0
+    tid_v2: int = 0
 
 
 @dataclass
@@ -596,7 +602,15 @@ class BilibiliAPIClient:
             bvid: Bilibili video BV ID.
 
         Returns:
-            VideoInfo dataclass.
+            VideoInfo dataclass. Everything is read from the single
+            ``/x/web-interface/view`` payload — including ``cid`` and the
+            ``tid`` / ``tid_v2`` zone ids, so no extra request is issued.
+
+        Note:
+            The live payload does **not** carry a ``tag`` array, and its text
+            zone labels (``tname`` / ``tname_v2``) are empty strings, so
+            ``VideoInfo.tags`` stays ``None`` here. Use
+            :meth:`get_video_tags` when tag names are needed.
         """
         data = await self.get_video_view_data(bvid)
         stat = _json_object(data.get("stat", {}))
@@ -619,7 +633,43 @@ class BilibiliAPIClient:
             danmaku_count=stat.get("danmaku", 0),
             pub_date=data.get("pubdate", ""),
             cid=int(data.get("cid", 0) or 0),
+            tid=int(data.get("tid", 0) or 0),
+            tid_v2=int(data.get("tid_v2", 0) or 0),
         )
+
+    async def get_video_tags(self, bvid: str, *, limit: int = 20) -> list[str]:
+        """Fetch the public tag names of a video, oldest-published first.
+
+        Uses ``/x/tag/archive/tags`` — the endpoint the web player reads for
+        the tag row under a video. It is anonymous-safe (verified without a
+        Cookie) and far lighter than ``/x/web-interface/view/detail``, which
+        would drag in Card / Related / Reply alongside ``Tags``.
+
+        The ``data`` payload is a bare array of tag objects, not an object, so
+        it is coerced with :func:`_json_list` instead of being indexed as a
+        dict.
+
+        Args:
+            bvid: Bilibili video BV ID.
+            limit: Maximum number of tag names to return.
+
+        Returns:
+            Tag names in payload order; blank names are skipped. Returns an
+            empty list when the video has no tags — callers that need to
+            distinguish "no tags" from "fetch failed" must let the
+            :class:`BilibiliAPIError` propagate.
+        """
+        data = await self._get_json("/x/tag/archive/tags", params={"bvid": bvid})
+        tags: list[str] = []
+        for item in _json_list(data):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("tag_name", "") or "").strip()
+            if name:
+                tags.append(name)
+            if len(tags) >= max(1, int(limit)):
+                break
+        return tags
 
     async def get_play_info(
         self,

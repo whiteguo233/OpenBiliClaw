@@ -883,6 +883,132 @@ async def test_get_video_info_returns_defaults_when_data_is_null() -> None:
     assert info.title == ""
     assert info.up_name == ""
     assert info.view_count == 0
+    assert info.cid == 0
+    assert info.tid == 0
+    assert info.tid_v2 == 0
+    # The live /view payload carries no tag array, so tags stay None here.
+    assert info.tags is None
+
+
+@pytest.mark.asyncio
+async def test_get_video_info_fills_zone_ids_from_the_view_payload() -> None:
+    """``tid`` / ``tid_v2`` ship in ``/x/web-interface/view`` and cost nothing
+    extra; the client must stop dropping them (issue #232, direction 1).
+
+    Live check on 2026-09-11 across eight ranking videos: ``tid`` / ``tid_v2``
+    are always present, while the payload's text labels ``tname`` /
+    ``tname_v2`` are always empty strings and no ``tag`` array exists at all.
+    """
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": {
+                "bvid": "BV1xx",
+                "aid": 1,
+                "cid": 222,
+                "tid": 121,
+                "tid_v2": 2071,
+                "stat": {"view": 10},
+                "owner": {"name": "alice", "mid": 7},
+            },
+        }
+    )
+
+    info = await client.get_video_info("BV1xx")
+
+    assert info.cid == 222
+    assert info.tid == 121
+    assert info.tid_v2 == 2071
+
+
+@pytest.mark.asyncio
+async def test_get_video_info_still_uses_exactly_one_request() -> None:
+    """Filling the extra fields must not add a request: tag names are only
+    fetched by an explicit :meth:`get_video_tags` call, so the hot path
+    (comments, danmaku preheat, play-url) keeps its single ``/view`` round-trip.
+    """
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    fake = FakeAsyncClient({"code": 0, "data": {"bvid": "BV1xx", "tid": 121}})
+    client._client = fake
+
+    await client.get_video_info("BV1xx")
+
+    assert len(fake.calls) == 1
+    assert fake.calls[0][0].endswith("/x/web-interface/view")
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_parses_bare_array_payload() -> None:
+    """``/x/tag/archive/tags`` returns ``data`` as a bare array of tag objects
+    (unlike most endpoints), so it must be coerced with the list helper and the
+    names returned in payload order.
+    """
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(
+        {
+            "code": 0,
+            "data": [
+                {"tag_id": 42642704, "tag_name": "三角洲行动", "type": 1},
+                {"tag_id": 100231797, "tag_name": "三角洲行动二洲年", "type": 3},
+                {"tag_id": 1, "tag_name": "洲彦祖再集结", "type": 3},
+            ],
+        }
+    )
+
+    tags = await client.get_video_tags("BV1eqYx6UE9V")
+
+    assert tags == ["三角洲行动", "三角洲行动二洲年", "洲彦祖再集结"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"code": 0, "data": []}, []),
+        ({"code": 0, "data": None}, []),
+        # Blank / missing / non-string names must not become empty-string tags.
+        (
+            {"code": 0, "data": [{"tag_name": "  "}, {"tag_name": ""}, {}, {"tag_name": None}]},
+            [],
+        ),
+        # Malformed entries are skipped instead of raising mid-payload.
+        (
+            {"code": 0, "data": ["三角洲行动", {"tag_name": "赛博朋克"}, 42]},
+            ["赛博朋克"],
+        ),
+    ],
+)
+async def test_get_video_tags_tolerates_empty_and_malformed_payloads(
+    payload: dict[str, object],
+    expected: list[str],
+) -> None:
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(payload)
+
+    assert await client.get_video_tags("BV1xx") == expected
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_respects_limit() -> None:
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient(
+        {"code": 0, "data": [{"tag_name": f"标签{index}"} for index in range(6)]}
+    )
+
+    assert await client.get_video_tags("BV1xx", limit=2) == ["标签0", "标签1"]
+
+
+@pytest.mark.asyncio
+async def test_get_video_tags_propagates_api_errors() -> None:
+    """A failed tag fetch must stay distinguishable from "this video has no
+    tags": the error is not swallowed into an empty list.
+    """
+    client = BilibiliAPIClient(cookie="")
+    client._client = FakeAsyncClient({"code": -404, "message": "啥都木有"})
+
+    with pytest.raises(BilibiliAPIError):
+        await client.get_video_tags("BV1xx")
 
 
 def test_client_bypasses_env_and_system_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -948,9 +1074,7 @@ async def test_post_comment_sends_csrf_and_thread_params() -> None:
     )
     client._client = fake
 
-    result = await client.post_comment(
-        "BV1xx411c7mD", message="  好视频  ", root=12, parent=34
-    )
+    result = await client.post_comment("BV1xx411c7mD", message="  好视频  ", root=12, parent=34)
 
     assert result["rpid"] == 987
     post_url, post_data, _headers = fake.calls[-1]

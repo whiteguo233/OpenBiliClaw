@@ -4,6 +4,12 @@
 
 ---
 
+## 未发布
+
+- **B 站视频信息补分区 id，新增标签读取方法（issue #57 / #232 方向 1）**：`get_video_info()` 补填同一 `/x/web-interface/view` 响应里一直存在、但此前被丢弃的 `tid` / `tid_v2`（零额外请求）；新增 `get_video_tags(bvid, limit=20)`，走 `/x/tag/archive/tags`（网页播放器标签行所用的端点）取标签名，匿名 Cookie 亦可读取，响应远轻于 `/x/web-interface/view/detail`（后者会连带 Card / Related / Reply）。**实测纠正**：2026-09-11 在 8 个分区各取 1 个样本（含 plain `/view` 与 WBI `/x/web-interface/wbi/view` 两种变体）确认 —— 该响应**不含 `tag` 数组**，`tname` / `tname_v2` **恒为空字符串**，因此 `VideoInfo.tags` 在这条路径上保持 `None`，标签只能由 `get_video_tags()` 显式获取；`get_video_info()` 的请求数不变（有回归测试锁定）。集成点（把标签喂给评估 prompt、摇摆区视频才拉标签）留待后续按需接入，本次不改变任何发现/推荐链路行为。
+
+---
+
 ## v0.3.221：保存 URL 归一化、B 站视频信息回退与 learned scorer 校准（2026-09-11）
 
 - **修复协议相对封面 URL 导致「稍后再看 / 收藏」422（issue #237）**：B 站等上游常见返回 `//i2.hdslb.com/...` 这类协议相对地址，入站 `SavedItemIn` 的 `content_url` / `cover_url` 在 `_validate_http_url` 校验前统一补全为 `https://...` 再入库；三个图形界面共用同一端点，无需各客户端自行兜底，非 HTTP(S)、带凭据、含空白或控制字符等非法值仍照旧拒绝。真实进程 + 真实 HTTP 回归：未修复的 main 提交返回 422，修复后 200 并落库为绝对地址。
