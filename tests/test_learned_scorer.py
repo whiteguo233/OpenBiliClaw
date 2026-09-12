@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openbiliclaw.discovery.bm25 import BM25Index, cjk_tokenize
 from openbiliclaw.discovery.learned_scorer import (
     LearnedBatchResult,
     LearnedRelevanceScorer,
@@ -102,3 +103,31 @@ def test_extract_candidate_features() -> None:
     )
     assert feats["title"] == "hi"
     assert feats["length"] == len("hi there")
+
+
+def test_cjk_tokenize_splits_latin_and_cjk_bigrams() -> None:
+    assert cjk_tokenize("机器学习") == ["机器", "器学", "学习"]
+    assert cjk_tokenize("Machine Learning") == ["machine", "learning"]
+    assert cjk_tokenize("Python3 教程") == ["python3", "教程"]
+    assert cjk_tokenize("hello, world!") == ["hello", "world"]
+    assert cjk_tokenize("一") == ["一"]
+
+
+def test_bm25_index_ranks_lexical_match_highest() -> None:
+    index = BM25Index([cjk_tokenize("机器学习"), cjk_tokenize("烹饪教程")])
+    query = cjk_tokenize("机器学习")
+    assert index.score(query, 0) > index.score(query, 1)
+
+
+def test_bm25_index_empty_docs_are_safe() -> None:
+    assert BM25Index([]).score(["x"], 0) == 0.0
+    assert BM25Index([[]]).score(["x"], 0) == 0.0
+
+
+async def test_score_batch_boosts_lexically_matching_candidate() -> None:
+    scorer = LearnedRelevanceScorer(embedding_service=_FakeEmbedding([1.0, 0.0]), bm25_weight=0.5)
+    profile = _profile("机器学习")
+    result = await scorer.score_batch([_item("机器学习入门教程"), _item("烹饪教程")], profile)
+    assert result is not None
+    assert result.available is True
+    assert result.scores[0] > result.scores[1]
