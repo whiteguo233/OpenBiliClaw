@@ -264,6 +264,13 @@ _DEFAULT_EMBEDDING_MODEL_BY_PROVIDER: dict[str, str] = {
     "openai_compatible": "text-embedding-3-small",
     "dashscope": "qwen3-vl-embedding",
 }
+# The OpenAI SDK refuses to construct a client without a non-empty api_key,
+# but self-hosted / local OpenAI-compatible endpoints (vLLM, LM Studio, a
+# user's own embedding bridge) usually don't check Authorization at all. Use
+# this placeholder so a no-auth endpoint can be configured without inventing
+# a real-looking key; it is never sent to api.openai.com because an empty key
+# is only accepted when the caller supplied an explicit custom base_url.
+_NO_AUTH_OPENAI_API_KEY = "not-needed"
 # Module-level set so the back-compat WARNING fires once per provider per
 # process (not once per build_embedding_service call — runtime_context
 # rebuilds embedding on every PUT /api/config and we don't want to spam).
@@ -514,11 +521,15 @@ def _build_dedicated_embedding_provider(
         )
 
     if candidate == "openai":
-        if not api_key:
+        # api.openai.com requires a key, but an explicit custom base_url may
+        # point at a no-auth self-hosted gateway (vLLM / LM Studio / a local
+        # bridge). Only relax the gate when the caller supplied that base_url
+        # so an empty key can never silently target api.openai.com.
+        if not api_key and not base_url:
             return None
         return (
             OpenAIProvider(
-                api_key=api_key,
+                api_key=api_key or _NO_AUTH_OPENAI_API_KEY,
                 model=effective_model,
                 base_url=base_url,
                 embedding_output_dimensionality=output_dimensionality,
@@ -546,14 +557,14 @@ def _build_dedicated_embedding_provider(
         )
 
     if candidate == "openai_compatible":
-        # Strict — no api_key OR no base_url means we can't construct it.
-        # Unlike "openai", there's no api.openai.com fallback because
-        # this provider's whole reason to exist is the custom base_url.
-        if not api_key or not base_url:
+        # base_url is the whole point of this provider. A key stays optional:
+        # self-hosted / local OpenAI-compatible endpoints frequently don't
+        # authenticate, and the SDK is satisfied by the placeholder above.
+        if not base_url:
             return None
         return (
             OpenAIProvider(
-                api_key=api_key,
+                api_key=api_key or _NO_AUTH_OPENAI_API_KEY,
                 model=effective_model,
                 base_url=base_url,
                 provider_name="openai_compatible",

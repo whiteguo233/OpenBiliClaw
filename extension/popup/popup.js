@@ -8569,7 +8569,8 @@ function bindSettings() {
         EMBEDDING_BASE_URL_HINT[provider] ?? "留空使用默认";
     }
     // Field visibility: ollama doesn't need an api_key; gemini doesn't
-    // use base_url. openai_compatible needs both (it's the whole point).
+    // use base_url. openai_compatible needs base_url (its whole point);
+    // the api_key may stay empty for a no-auth local gateway.
     for (const el of overlay.querySelectorAll("[data-embedding-field]")) {
       const field = el.dataset.embeddingField;
       let visible = true;

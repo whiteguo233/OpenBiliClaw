@@ -5950,6 +5950,53 @@ def test_save_embedding_config_custom_openai_compat(
     assert reloaded.llm.embedding.api_key == "sk-local"
 
 
+def test_interactive_embedding_setup_option4_allows_empty_no_auth_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option 4 tells users a no-auth gateway may leave the API key blank.
+
+    The wizard must pass that empty key through (the registry injects an
+    internal placeholder for the OpenAI SDK) instead of inventing a fake key
+    or writing a config that the backend silently refuses to build."""
+    answers = iter(["4", "http://127.0.0.1:8000/v1", "", "bge-m3"])
+    monkeypatch.setattr(typer, "prompt", lambda *args, **kwargs: next(answers))
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli_module,
+        "_save_embedding_config",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    cli_module._interactive_embedding_setup("openai")
+
+    assert captured == {
+        "provider": "openai",
+        "model": "bge-m3",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "api_key": "",
+    }
+
+
+def test_interactive_embedding_setup_option4_rejects_empty_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option 4 is the custom-endpoint branch, so an empty base_url cannot
+    produce a usable provider. Refuse to save instead of writing a config
+    that silently disables embedding."""
+    answers = iter(["4", "", "sk-ignored", "bge-m3"])
+    monkeypatch.setattr(typer, "prompt", lambda *args, **kwargs: next(answers))
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli_module,
+        "_save_embedding_config",
+        lambda **kwargs: saved.append(kwargs),
+    )
+
+    cli_module._interactive_embedding_setup("openai")
+
+    assert saved == []
+
+
 def test_save_module_overrides_writes_per_module_blocks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

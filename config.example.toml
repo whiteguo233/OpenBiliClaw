@@ -118,6 +118,10 @@ reasoning_effort = "medium"
 # provider: empty = disable embedding; embedding does not implicitly follow the chat chain
 #           "ollama" = local Ollama (no API key needed)
 #           "openai" / "gemini" = remote embeddings
+#           "openai_compatible" = any OpenAI-protocol /v1/embeddings endpoint
+#             (vLLM / LM Studio / OneAPI / self-hosted bridge); base_url is
+#             required, api_key may stay empty for a no-auth local service
+#           "dashscope" = Alibaba Model Studio multimodal embedding
 # model:    matched to provider when empty:
 #             gemini → gemini-embedding-001
 #             openai → text-embedding-3-small
@@ -139,6 +143,8 @@ model = ""
 # v0.3.32+: dedicated embedding credentials. Empty values only borrow the
 # first matching enabled [llm.instances.*] endpoint when fallback_enabled=true
 # (back-compat; emits a one-time WARNING). Ollama doesn't need an api_key.
+# openai_compatible (and "openai" with a custom base_url) also accepts an
+# empty api_key for a no-auth local endpoint.
 # base_url is optional for Ollama (defaults to localhost), OpenAI
 # (defaults to api.openai.com), and Gemini (defaults to the official API).
 api_key = ""

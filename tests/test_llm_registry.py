@@ -300,6 +300,91 @@ def test_openai_compatible_can_serve_as_embedding_provider(tmp_path) -> None:
     assert service._provider._client.api_key == "vllm-token"
 
 
+def test_openai_compatible_embedding_allows_no_auth_local_endpoint(tmp_path) -> None:
+    """Self-hosted OpenAI-compatible gateways frequently run without auth.
+
+    Only ``base_url`` is a hard requirement; an empty ``api_key`` must not
+    silently disable the embedding service. The SDK still needs a non-empty
+    credential, so the builder injects an internal placeholder.
+    """
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai_compatible",
+                model="bge-m3",
+                api_key="",
+                base_url="http://127.0.0.1:8000/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+
+    assert service is not None
+    assert service._provider.name == "openai_compatible"
+    assert str(service._provider._client.base_url).rstrip("/") == "http://127.0.0.1:8000/v1"
+    # A truthy placeholder keeps the OpenAI SDK happy; the local server
+    # ignores the Authorization header.
+    assert service._provider._client.api_key
+
+
+def test_openai_embedding_custom_base_url_allows_empty_key(tmp_path) -> None:
+    """`setup-embedding` option 4 (vLLM / OneAPI / self-hosted) writes
+    provider="openai" + a custom base_url and tells users a no-auth service
+    may leave the key blank. That combination must build a working endpoint
+    instead of returning None and silently disabling embedding."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="bge-m3",
+                api_key="",
+                base_url="http://localhost:9000/v1",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+
+    assert service is not None
+    assert service._provider.name == "openai"
+    assert str(service._provider._client.base_url).rstrip("/") == "http://localhost:9000/v1"
+    assert service._provider._client.api_key
+
+
+def test_openai_embedding_without_key_or_base_url_stays_disabled(tmp_path) -> None:
+    """The no-auth relaxation must not make an empty key silently target
+    api.openai.com: without a custom base_url the provider is still refused."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="openai",
+            openai=LLMProviderConfig(api_key="sk-chat"),
+            embedding=EmbeddingConfig(
+                provider="openai",
+                model="text-embedding-3-small",
+                api_key="",
+                base_url="",
+            ),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+
+    assert build_embedding_service(config, registry) is None
+
+
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_build_llm_registry_registers_gemini() -> None:
     config = Config(

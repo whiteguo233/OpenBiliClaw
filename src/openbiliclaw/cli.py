@@ -2900,6 +2900,12 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
         base_url = typer.prompt(
             "Embedding Base URL(OpenAI 兼容,例如 http://localhost:8000/v1)"
         ).strip()
+        if not base_url:
+            console.print(
+                "[yellow]Base URL 为空,未启用自定义 embedding 服务。"
+                "如需官方 OpenAI,请改选 5 指定 provider。[/yellow]"
+            )
+            return
         api_key = typer.prompt(
             "Embedding API Key(如服务无鉴权可留空)",
             hide_input=True,
@@ -2907,6 +2913,9 @@ def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool =
             show_default=False,
         ).strip()
         model = typer.prompt("Embedding 模型名称", default="bge-m3").strip()
+        # provider="openai" + an explicit base_url keeps the per-model
+        # ``dimensions`` handling for text-embedding-3-* relays; the registry
+        # accepts the empty api_key because a custom base_url is present.
         _save_embedding_config(
             provider="openai",
             model=model,
