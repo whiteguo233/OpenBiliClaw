@@ -6,6 +6,8 @@
 
 ## 未发布
 
+- **learned scorer 融合 BM25 稀疏词面信号（接手补全 [PR #245](https://github.com/whiteguo233/OpenBiliClaw/pull/245)）**：`LearnedRelevanceScorer` 在稠密 cosine 之上融合 BM25 词面匹配（CJK unigram + 字 bigram、拉丁词，纯 Python 无第三方依赖），默认 `bm25_weight=0.3`，构造时校验 `0 ≤ weight ≤ 1`。`features_digest` 升至 `learned-features-v2` 并纳入权重。补全点：① `cjk_tokenize` 同时产出 CJK unigram，单字兴趣词（如「车」）不再永远匹配不到 bigram；② 批内完全无词面命中时不再把稠密分无意义地整体缩放 `(1 - weight)`；③ `bm25_weight` 越界 / 非有限值直接拒绝，避免污染非法分数。原始实现由 [@SummerCaptain](https://github.com/SummerCaptain) 提交，维护者接管后 rebase 到 main 并补齐边界与文档。
+
 - **无鉴权本地 embedding 端点不再被静默禁用**：`setup-embedding` 选项 4（自建 vLLM / OneAPI / OpenAI 兼容网关）允许 API Key 留空，但 `build_embedding_service` 对 `provider="openai"` 仍要求非空 key、对 `openai_compatible` 更是要求 key + base_url 同时存在，于是无鉴权的本地向量服务会在日志里以 “No embedding-capable provider available” 静默降级。现在 `openai` 只在调用方显式提供自定义 `base_url` 时接受空 key，`openai_compatible` 则只把 `base_url` 当硬要求；两者都会在内部注入占位 key 满足 OpenAI SDK，同时保证空 key 绝不会暗落到 api.openai.com。`config.example.toml` 与扩展设置页注释同步说明，新增 registry / CLI 回归测试。
 
 - **补上 B 站扩展任务的 CSRF 门禁**：`GET /api/sources/bili/next-task` 与其它来源的 `next-task` 一样是「pending → in_progress」的领取型 GET，但此前不在 `api/auth.py` 的 `_CSRF_GET_EXACT` 集合里 —— 带 cookie 的跨站顶层导航（`SameSite=Lax` 会随顶层 GET 发送会话 cookie，且 `Sec-Fetch-Site: cross-site` 已使本机免登录 fast path fail-closed）可以在没有 `X-OBC-Auth` 的情况下把一条 pending 的 B 站扩展任务置为 `in_progress`，而扩展永远收不到它，只能等租约回收。现在该路径与其余九个来源一起强制 `X-OBC-Auth`；扩展走 `Authorization: Bearer`（Bearer 豁免 CSRF），不受影响，本机 CLI / 扩展链路无行为变化。同时把 CSRF 回归从手抄路径列表改为**集合相等断言**（`tests/test_api_auth.py`：已注册的 `*/next-task` 路由集合 == `_CSRF_GET_EXACT` 中登记的 claim 路径），后续新增来源漏登记会直接失败，`docs/modules/api-auth.md` 的 CSRF 行同步更正为十个来源。
