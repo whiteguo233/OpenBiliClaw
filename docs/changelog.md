@@ -6,6 +6,8 @@
 
 ## v0.3.221：保存 URL 归一化、B 站视频信息回退与 learned scorer 校准（2026-09-11）
 
+- **learned scorer 引入 BM25 稀疏词面信号（混合排序）**：`LearnedRelevanceScorer` 在稠密 cosine 之外融合 BM25 词面匹配（CJK 字 bigram + 拉丁词，纯 Python、无第三方分词依赖），默认 `bm25_weight=0.3`、仅构造器参数可调；候选与兴趣词存在词面重叠时排序更准，`features_digest` 升至 `learned-features-v2` 并纳入权重以保证审计可追溯。新增 `discovery/bm25.py`（`cjk_tokenize` + 内存 `BM25Index`）。
+
 - **修复协议相对封面 URL 导致「稍后再看 / 收藏」422（issue #237）**：B 站等上游常见返回 `//i2.hdslb.com/...` 这类协议相对地址，入站 `SavedItemIn` 的 `content_url` / `cover_url` 在 `_validate_http_url` 校验前统一补全为 `https://...` 再入库；三个图形界面共用同一端点，无需各客户端自行兜底，非 HTTP(S)、带凭据、含空白或控制字符等非法值仍照旧拒绝。真实进程 + 真实 HTTP 回归：未修复的 main 提交返回 422，修复后 200 并落库为绝对地址。
 
 - **B 站视频信息接口增加 WBI 签名回退**：新增后端 `GET /api/bilibili/video/info`，优先走普通 `/x/web-interface/view`，被 412 风控时回退到 WBI 签名 `/x/web-interface/wbi/view`，保证移动端原生播放页的简介与点赞 / 投币 / 收藏 / 评论数在风控下仍可获取。

@@ -741,7 +741,8 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### Learned scorer 校准 API
 
-- `LearnedRelevanceScorer.score_batch()` 返回 `LearnedBatchResult(scores, available, features_digest)`；只有完整、有限、维度一致的 embedding 输入才会标记可用。
+- `LearnedRelevanceScorer.score_batch()` 返回 `LearnedBatchResult(scores, available, features_digest)`；在稠密 cosine 之上融合 BM25 词面信号（`bm25_weight` 可调），只有完整、有限、维度一致的 embedding 输入才会标记可用。
+- `discovery/bm25.py` 提供 `cjk_tokenize()`（CJK 字 bigram + 拉丁词分词，无第三方依赖）与内存 `BM25Index`。
 - `evaluate_learned_scorer_gate(rows)` 是纯函数，只接受完整的 privacy-safe learned/LLM 对照并返回 `LearnedGateReport`，不会修改运行时配置。
 - `Database.record_learned_scorer_shadow_audit()` 在写入前验证完整性与字段边界；`query_learned_scorer_shadow_audit()` 只返回最多 2 万条有界审计记录。
 - `scripts/evaluate_learned_scorer_gate.py --db <path>` 以只读方式冻结 cohort 并输出可复核 JSON；退出码 0 表示通过，1 表示 gate 关闭。
