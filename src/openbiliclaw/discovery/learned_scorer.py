@@ -1,10 +1,11 @@
 """Learned relevance scorer for the discovery pipeline.
 
 This opt-in scorer embeds the candidate content and the profile interest
-labels, then scores each candidate by its maximum cosine similarity to any
-interest anchor, normalised to [0, 1]. In calibration modes the engine still
-runs the complete LLM evaluator for temporal and diversity metadata; malformed
-or unavailable learned results leave the LLM relevance score authoritative.
+labels, scores each candidate by its maximum cosine similarity to any interest
+anchor, and fuses that dense signal with a lexical BM25 score over the
+candidate text. In calibration modes the engine still runs the complete LLM
+evaluator for temporal and diversity metadata; malformed or unavailable
+learned results leave the LLM relevance score authoritative.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import hashlib
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from openbiliclaw.discovery.bm25 import BM25Index, cjk_tokenize
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -78,16 +81,24 @@ def _interest_weight(item: object) -> float:
 
 
 class LearnedRelevanceScorer:
-    """Embedding-based prototype learned relevance scorer.
+    """Hybrid learned relevance scorer (dense embedding + sparse BM25).
 
-    Scores each candidate by its maximum cosine similarity to any profile
-    interest anchor, normalised to [0, 1]. Returns ``available=False`` when the
-    embedding service is missing, the profile has no usable interest anchors,
-    or candidate embedding fails (allowing the engine to fail open to the LLM).
+    Fuses each candidate's maximum cosine similarity to any profile interest
+    anchor with a lexical BM25 score over the candidate text, weighted by
+    ``bm25_weight``. Returns ``available=False`` when the embedding service is
+    missing, the profile has no usable interest anchors, or candidate embedding
+    fails (allowing the engine to fail open to the LLM).
     """
 
-    def __init__(self, embedding_service: SupportsEmbeddingService | None = None) -> None:
+    def __init__(
+        self,
+        embedding_service: SupportsEmbeddingService | None = None,
+        *,
+        bm25_weight: float = 0.3,
+    ) -> None:
         self._embedding_service = embedding_service
+        # 默认 0.3 未校准：偏重稠密信号，等 learned/shadow 审计数据跑出后回调。
+        self._bm25_weight = bm25_weight
 
     def _interest_labels(self, profile: SoulProfile) -> list[str]:
         """Return the strongest active distinct interest labels."""
@@ -141,7 +152,7 @@ class LearnedRelevanceScorer:
                 return None
             expected_dimension = next(iter(dimensions))
 
-            scores: list[float] = []
+            cosine_scores: list[float] = []
             for item in contents:
                 content_vector = _as_float_vector(await service.embed(_content_text(item)))
                 if len(content_vector) != expected_dimension:
@@ -149,15 +160,50 @@ class LearnedRelevanceScorer:
                 best = max(
                     cosine_similarity(content_vector, interest) for interest in interest_vectors
                 )
-                scores.append(_normalise_cosine(float(best)))
+                cosine_scores.append(_normalise_cosine(float(best)))
+
+            scores = self._fuse_scores(labels, contents, cosine_scores)
         except Exception:  # noqa: BLE001 - fail open to the LLM
             return None
 
         return LearnedBatchResult(
             scores=scores,
             available=True,
-            features_digest=_features_digest(labels, contents),
+            features_digest=_features_digest(labels, contents, self._bm25_weight),
         )
+
+    def _fuse_scores(
+        self,
+        labels: list[str],
+        contents: Sequence[Mapping[str, Any]],
+        cosine_scores: list[float],
+    ) -> list[float]:
+        """Fuse dense cosine scores with sparse BM25 scores by ``bm25_weight``.
+
+        BM25 分数按批内 max 归一化到 [0,1]，与 cosine 直接加权。归一化是批内
+        相对的，单候选时无意义，故单候选 / 权重为 0 时直接返回 cosine 分。
+        """
+        if self._bm25_weight <= 0.0 or len(contents) == 1:
+            return cosine_scores
+        bm25_scores = self._bm25_scores(labels, contents)
+        peak = max(bm25_scores, default=0.0)
+        bm25_norm = [raw / peak for raw in bm25_scores] if peak > 0.0 else bm25_scores
+        dense_weight = 1.0 - self._bm25_weight
+        return [
+            dense_weight * cosine + self._bm25_weight * lexical
+            for cosine, lexical in zip(cosine_scores, bm25_norm, strict=True)
+        ]
+
+    def _bm25_scores(
+        self,
+        labels: list[str],
+        contents: Sequence[Mapping[str, Any]],
+    ) -> list[float]:
+        """Return per-candidate raw BM25 scores against the interest-label query."""
+        query = [token for label in labels for token in cjk_tokenize(label)]
+        docs = [cjk_tokenize(_content_text(item)) for item in contents]
+        index = BM25Index(docs)
+        return [index.score(query, i) for i in range(len(docs))]
 
     def extract_candidate_features(
         self, item: Mapping[str, Any], profile: SoulProfile
@@ -175,10 +221,19 @@ def _normalise_cosine(similarity: float) -> float:
     return max(0.0, min(1.0, (similarity + 1.0) / 2.0))
 
 
-def _features_digest(labels: list[str], contents: Sequence[Mapping[str, Any]]) -> str:
+def _features_digest(
+    labels: list[str],
+    contents: Sequence[Mapping[str, Any]],
+    bm25_weight: float,
+) -> str:
     """Digest prompt-local scorer inputs without persisting profile/content text."""
 
     payload = "\0".join(
-        ["learned-features-v1", *labels, *(_content_text(item) for item in contents)]
+        [
+            "learned-features-v2",
+            str(bm25_weight),
+            *labels,
+            *(_content_text(item) for item in contents),
+        ]
     )
     return hashlib.sha256(payload.encode()).hexdigest()
