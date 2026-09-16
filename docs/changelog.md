@@ -51,6 +51,8 @@
 
 ## v0.3.222：待聊红点开关、BM25 稀疏信号与鉴权补强（2026-09-13）
 
+- **修复普通画像整理簇拒绝对象成员引用**：likes judge prompt 提供 `{name, category}` 成员对象，但普通簇校验此前只登记裸名称，模型原样返回对象便会被误判为 unknown member。普通簇现在按名称消费对象引用，同名异类簇仍使用分类限定键严格校验，并增加完整 `ProfileConsolidator.run()` 回归。
+
 - **PC Web 与插件新增「对话标签红点」开关（默认关闭）**：桌面 Web「聊聊口味」页顶部与插件 popup「对话」页顶部各加一个小开关，控制是否在对应入口显示待聊确认红点；关闭时红点始终隐藏。PC Web 保留「设置 → 前端 → 显示待聊未读数」并与其双向同步，偏好分别存于浏览器 `localStorage`（`openbiliclaw.webui.showPendingChatCount` / `openbiliclaw.popup.showChatPendingBadge`），默认改为不展示。真实后端回归覆盖默认关闭、开启后展示完整去重积压总数（>99 显示 99+）与关闭后隐藏。
 
 - **learned scorer 融合 BM25 稀疏词面信号（接手补全 [PR #245](https://github.com/whiteguo233/OpenBiliClaw/pull/245)）**：`LearnedRelevanceScorer` 在稠密 cosine 之上融合 BM25 词面匹配（CJK unigram + 字 bigram、拉丁词，纯 Python 无第三方依赖），默认 `bm25_weight=0.3`，构造时校验 `0 ≤ weight ≤ 1`。`features_digest` 升至 `learned-features-v2` 并纳入权重。补全点：① `cjk_tokenize` 同时产出 CJK unigram，单字兴趣词（如「车」）不再永远匹配不到 bigram；② 批内完全无词面命中时不再把稠密分无意义地整体缩放 `(1 - weight)`；③ `bm25_weight` 越界 / 非有限值直接拒绝，避免污染非法分数。原始实现由 [@SummerCaptain](https://github.com/SummerCaptain) 提交，维护者接管后 rebase 到 main 并补齐边界与文档。

@@ -1183,7 +1183,7 @@ class ProfileConsolidator:
             if not name:
                 return None
             if isinstance(ref, dict):
-                key = _member_ref_key(ref)
+                key = _member_ref_key(ref) if cluster.member_categories is not None else name
                 if key in record_keys and key not in covered:
                     return key, name
                 return None

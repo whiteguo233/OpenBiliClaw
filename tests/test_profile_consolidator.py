@@ -618,6 +618,47 @@ async def test_likes_judge_payload_carries_category(tmp_path: Path) -> None:
     assert '"category": "科技"' in llm.last_user_input
 
 
+async def test_ordinary_cluster_accepts_object_member_references(tmp_path: Path) -> None:
+    memory = _FakeMemory(
+        {
+            "interests": [
+                _interest("AI工具", 0.91, "科技"),
+                _interest("人工智能工具", 0.86, "科技"),
+            ],
+            "disliked_topics": [],
+        },
+        data_dir=tmp_path,
+    )
+    llm = _StubLLM(
+        {
+            "likes": [
+                {
+                    "cluster_id": "L1",
+                    "op": "merge",
+                    "members": [
+                        {"name": "AI工具", "category": "科技"},
+                        {"name": "人工智能工具", "category": "科技"},
+                    ],
+                    "canonical": "AI工具",
+                }
+            ],
+            "dislikes": [],
+        }
+    )
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding([["AI工具", "人工智能工具"]]),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    assert report.rejected_clusters == []
+    assert len(report.merges) == 1
+    assert [item["name"] for item in memory.get_layer("preference").data["interests"]] == ["AI工具"]
+
+
 async def test_forced_homonym_payload_distinguishes_by_category(tmp_path: Path) -> None:
     memory = _FakeMemory(
         {
