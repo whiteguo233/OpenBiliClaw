@@ -21,7 +21,7 @@
 | 限制请求范围（task / schema / model / tokens） | 降低单次请求的滥用价值 |
 | Key 加密、分片、加固 | 抬高逆向成本，不承诺不可提取 |
 | 本地配额 / rate limit / 用量账本 | 公平性与止损，可被 patch/重装绕过 |
-| SiliconFlow 侧 Key hard cap + 快速轮换/吊销 | **唯一的成本和安全边界** |
+| 专用 SiliconFlow 账号固定余额 + 账号级 rate limit + 低余额熔断 + 账号/Key 轮换 | **唯一的成本和安全边界** |
 | Rust 私有二进制 | 提高 patch 成本，不是安全边界 |
 
 本版之后，不应再出现以下验收口号：
@@ -32,7 +32,7 @@
 
 这些目标在用户完全控制本机的前提下不可达。可承诺的是：
 
-> Key 不以明文出现在源码、配置、日志和静态字符串中；正常用户不会无意暴露 Key；简单复制二进制或调用 Runtime 不能绕过已定义的官方任务范围；最坏情况下的费用由 SiliconFlow 侧 Key cap 兜底。
+> Key 不以明文出现在源码、配置、日志和静态字符串中；正常用户不会无意暴露 Key；简单复制二进制或调用 Runtime 不能绕过已定义的官方任务范围；最坏情况下的费用由专用赞助账号的余额上限兜底（预付费、不自动充值、低水位运行）。
 
 ---
 
@@ -64,14 +64,14 @@
 | 1 | 打开源码/配置找 Key | Key 只在私有 Runtime；Python/config 无 Key | — |
 | 2 | `strings binary` / grep `sk-` | AEAD 包裹 + 分片，无连续明文 | 定期轮换 |
 | 3 | 修改 `sponsored-policy.json` 扩权 | Ed25519 签名，签名校验先于解析 | 防君子 |
-| 4 | 直接 import Python provider 或自写 IPC 调用 | 不防（task/schema 公开） | SiliconFlow 配额 |
-| 5 | 自签 CA 代理 / SSLKEYLOGFILE / hook `SSL_write` | 不防 | 配额 + 轮换 |
-| 6 | 调试器/内存 dump 发请求前的进程 | 不防（zeroize 只减少窗口） | 配额 + 轮换 |
-| 7 | patch Runtime 跳过校验/配额 | 不防 | 配额 + 轮换 |
-| 8 | 删本地账本/重装/多开刷任务 | 本地加固提高成本 | SiliconFlow hard cap |
-| 9 | Prompt injection 借用合法 schema 生成任意文本 | Output Contract 限 token/格式 | 配额 + rate limit |
+| 4 | 直接 import Python provider 或自写 IPC 调用 | 不防（task/schema 公开） | 账号级 rate limit + 余额上限 |
+| 5 | 自签 CA 代理 / SSLKEYLOGFILE / hook `SSL_write` | 不防 | 账号级 rate limit + 余额上限 + 账号轮换 |
+| 6 | 调试器/内存 dump 发请求前的进程 | 不防（zeroize 只减少窗口） | 账号级 rate limit + 余额上限 + 账号轮换 |
+| 7 | patch Runtime 跳过校验/配额 | 不防 | 账号级 rate limit + 余额上限 + 账号轮换 |
+| 8 | 删本地账本/重装/多开刷任务 | 本地加固提高成本 | 账号级 rate limit + 余额上限 |
+| 9 | Prompt injection 借用合法 schema 生成任意文本 | Output Contract 限 token/格式 | 余额上限 + 账号级 rate limit |
 
-**结论：** 第 4-9 项不可能靠客户端解决。实现上要接受它们，并把工程资源投到“限制单次伤害（task/schema/token/model）”和“让赞助方设置总闸（cap/rotate/revoke）”。
+**结论：** 第 4-9 项不可能靠客户端解决。实现上要接受它们，并把工程资源投到“限制单次伤害（task/schema/token/model）”和“用专用账号 + 固定余额 + 账号级限流 + 低余额熔断设总闸”。
 
 ---
 
@@ -240,7 +240,7 @@ def canonical_system_prompt(task_id: str, contract_version: int) -> str:
 - Schema 描述 user message 的结构（含 profile、items、core_memory 等显式字段）；
 - 限额双层：
   - 本地：`max_input_bytes`（Rust 无 tokenizer 时保守按 bytes）、`max_output_tokens`、字段级上限；
-  - 权威：SiliconFlow 侧 token/费用配额；
+  - 权威：专用赞助账号的余额与平台账号级 rate limit；
 - 自由文本字段必须设字段级上限；Schema 不防语义注入，只降低单次输出价值。
 
 ### 5.5 Output Contract
@@ -409,7 +409,7 @@ Public CI 必须包含：
 
 ### 8.2 构建期
 
-> 安全纪律：任何在聊天、issue、PR、工单或文档中出现过的 Key 都视为已泄漏，必须先在 SiliconFlow 控制台吊销并重新生成；Key 只能由 release owner 从控制台直接写入 CI secret/KMS，不经过聊天或仓库。仓库启用 gitleaks/secret scanning 防止回填。
+> 安全纪律：任何在聊天、issue、PR、工单或文档中出现过的 Key 都视为已泄漏：能删除就立即删除；不能删除则停止给该账号充值并按 §13.2 废弃账号，重新生成专用 Key。Key 只能由 release owner 从控制台直接写入 CI secret/KMS，不经过聊天或仓库。仓库启用 gitleaks/secret scanning 防止回填。
 
 1. CI 从 secret/KMS 读取明文 Key，只在构建内存中存在；
 2. `tools/wrap-key` 生成随机 KEK，用 AEAD（ChaCha20-Poly1305 或 AES-256-GCM）包裹 Key；
@@ -458,7 +458,7 @@ Public CI 必须包含：
 1. **公平性**：单机不会无限占用；多 Key 分片时避免一只脚本吃光所有 Key；
 2. **止损**：一般用户无意的大批量任务会被拦下。
 
-它不解决“恶意用户刷额度”——patch / 重装 / 多开都可以绕过。**总闸必须在 SiliconFlow 侧的 Key hard cap。**
+它不解决“恶意用户刷额度”——patch / 重装 / 多开都可以绕过。**总闸在 §9.8 的专用账号余额 + 账号级限流。**
 
 ### 9.2 账本状态
 
@@ -504,16 +504,16 @@ execute(request):
 - 写入可合并/延迟，但进程退出前必须 flush；
 - Runtime 崩溃后恢复时以最后一次成功写入为准，因此 reserve 不能太小。
 
-### 9.5 多 Key 分片（建议）
+### 9.5 多账号/多 Key 分片（建议）
 
 ```text
-key_index = HMAC-SHA256(install_id, "sponsored-key-select") mod len(keys)
+account_index = HMAC-SHA256(install_id, "sponsored-account-select") mod len(accounts)
 ```
 
-- 每把 Key 有独立 cap；
-- 单 Key 泄漏被刷不炸全量，赞助方可在控制台识别并只吊销一把；
-- 攻击者虽然能拿到全部 Key，但总损失被 cap 分割；
-- Key 数量建议 4-8，按 release 轮换。
+- 平台不支持 per-key cap，所以每个分片使用**独立 SiliconFlow 账号**（各自有独立余额与账号级 rate limit），而不是同一账号下的多个 Key；
+- 单账号泄漏/被刷不炸全量，可以把该账号余额自然耗尽后废弃并发布新账号；
+- 攻击者虽然能拿到全部 Key，但总损失被各账号余额之和分割；
+- 账号数量建议 2-4，按 release 轮换；每个账号余额保持低水位。
 
 ### 9.6 限额来源
 
@@ -528,7 +528,21 @@ key_index = HMAC-SHA256(install_id, "sponsored-key-select") mod len(keys)
 - 删除 Keychain / 重装 / 多开进程可以重置本地计数；
 - patch Runtime 可以跳过配额检查；
 - `install_id` 只防“误删文件”，不防“恶意重置”；
-- 因此 §4 的 SiliconFlow 侧 hard cap 是强制项，没有它不上线。
+- 因此不能把本地账本当作成本边界，必须叠加 §9.8 的账号余额模型。
+
+### 9.8 服务端边界：专用余额账号模型（无 per-key cap 的补偿）
+
+官方文档确认：SiliconFlow 的 rate limit 按**用户账号**维度执行，不按 API Key 维度；余额是预付费制，余额耗尽即停止服务。基于这两个事实，设计如下：
+
+1. **专用账号**：Sponsored 流量使用独立 SiliconFlow 账号，不与个人或其他业务共用；账号内只放赞助 Key。
+2. **余额即 hard cap**：不开启任何自动充值/代扣；账号余额就是最坏情况损失上限。按周/双周预算少量充值，保持低水位（例如 100-300 元，按实际消耗调整）。
+3. **账号级限流**：平台账号级 RPM/TPM/RPD/TPD 仍生效，可挡住单 Key 泄漏后的瞬时刷量；免费模型与付费模型的档位不同，需在账号侧确认。
+4. **低余额熔断**：Runtime 定期调用 `GET /v1/user/info` 读取 `balance` / `totalBalance` / `status`；低于 Policy 中的 `balance_floor` 或 `status != normal` 时，返回 `BALANCE_LOW` / `AUTH_FAILED`，关闭 Sponsored 并 fallback。
+5. **人工监控**：项目方用同一 Key 或控制台定期查看余额消耗速率；日消耗突增即按泄漏处理（见 §13.2）。
+6. **轮换 = 换账号/换 Key + 发版**：新账号/新 Key 写进新 Policy；旧账号停止充值，让余额自然耗尽；控制台支持删除 Key 则删除，不支持则废弃账号。
+7. **多账号分片**：按 §9.5 把 install 分到不同账号，降低单次泄漏的爆炸半径。
+
+**限制：** 账号级 rate limit 无法按 Key 细分；`/user/info` 查询也可被 patch 绕过；因此“不自动充值 + 低余额水位”是最后一道、也是唯一可强制执行的边界。
 
 ---
 
@@ -543,6 +557,7 @@ key_index = HMAC-SHA256(install_id, "sponsored-key-select") mod len(keys)
 | `QUOTA_EXCEEDED` | 本地日/月预算耗尽 | deny | 是，但 UI 明确提示 |
 | `RATE_LIMITED` | 本地滑动窗口/上游 429 | deny/退避 | 是，UI 提示 |
 | `AUTH_FAILED` | Key 失效/被吊销/额度耗尽 | disable 本轮 | 是，本地 diagnostics |
+| `BALANCE_LOW` | 账号余额低于 floor / 账号状态异常 | 关闭 Sponsored | 是，本地 diagnostics |
 | `LEDGER_TAMPERED` | 账本 HMAC/generation 异常 | 关闭 Sponsored | 是，本地 diagnostics |
 | `UPSTREAM_ERROR` | SiliconFlow 5xx/网络错误 | 有限重试后 deny | 是 |
 
@@ -652,15 +667,15 @@ task_id / success / failure / latency / error code / token usage / policy versio
 5. 用 Ed25519 私钥签名 Policy；
 6. bundle Core + Runtime + policy + sig，代码签名/notarize；
 7. 发布 manifest 记录三个 SHA 与 policy_version；
-8. 在 SiliconFlow 控制台确认新 Key 额度、旧 Key 状态。
+8. 确认专用账号余额水位、账号级 rate limit 状态、旧账号/旧 Key 处理方式（删除或停止充值）。
 
 ### 13.2 Key 泄漏应急
 
-1. SiliconFlow 侧立刻把泄漏 Key cap 设为 0 或吊销；
-2. 其他分片 Key 保持服务；
-3. 评估泄漏路径，必要时提前发布轮换版本；
+1. 若控制台支持删除/禁用泄漏 Key，立即删除；
+2. 若不支持：停止给该账号充值，把余额水位耗尽后废弃账号（余额即熔断）；
+3. 其他分片账号保持服务；评估泄漏路径，提前发布新账号/新 Key 版本；
 4. 旧版本用户会 fallback 到 BYOK；UI 提示升级可获得免费模型；
-5. 复盘是否本地配额/分片策略需要调整。
+5. 复盘本地配额/分片策略与账号水位。
 
 ### 13.3 Policy 过期
 
@@ -691,9 +706,9 @@ Private：
 
 对抗性测试（明确记录为“预期可绕过”）：
 
-- 用 public prompts 手写合法 IPC 请求 → 期望 PASS，用于验证服务端 cap 是唯一兜底；
+- 用 public prompts 手写合法 IPC 请求 → 期望 PASS，用于验证账号余额/账号级 rate limit 是唯一兜底；
 - 自签 CA 代理 → 期望能抓到 Key，用于验证轮换 runbook；
-- 删除账本 → 期望重置，用于验证多 Key 分片和 cap 必要性。
+- 删除账本 → 期望重置，用于验证多账号分片和余额账号模型的必要性。
 
 ---
 
@@ -701,7 +716,7 @@ Private：
 
 | Phase | 内容 | 产出 |
 | --- | --- | --- |
-| 0 | 与 SiliconFlow 对齐 endpoint、hard cap、rate limit、轮换/吊销、数据政策 | 书面确认 |
+| 0 | 确认专用账号余额水位/不自动充值、账号级 rate limit、Key 删除能力、数据政策 | 书面确认 |
 | 1 | Public contracts、canonicalization、Policy 生成器、goldens | 可生成 unsigned policy |
 | 2 | Private IPC + fake runtime + validator + 错误模型 | PASS/DENY 可跑通，无真实 Key |
 | 3 | Key wrap、账本、真实 endpoint、Python Provider 集成 | 官方版可用 |
@@ -718,12 +733,20 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 1. **Endpoint**：`https://api.siliconflow.cn/v1/chat/completions`，OpenAI-compatible，`Authorization: Bearer <key>`；Runtime 只允许连接该地址（或后续 Policy 声明的 Sponsored endpoint）。
 2. **模型**：`XingChenAGI/Xing4.0-29B`，由 Policy 写死，Python 不可覆盖。
-3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏，必须先吊销再生成新的赞助专用 Key，不进入任何仓库/CI 日志/文档**。
+3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏**：能删除就立即删除；不能删除则停止给该账号充值、按 §13.2 废弃账号，并生成新的赞助专用 Key，不进入任何仓库/CI 日志/文档。
 
-待确认：
+官方文档查证（2026-09-22）：
 
-1. SiliconFlow 控制台能否对赞助专用 Key 设置 hard cap / rate limit，能否查询用量、快速吊销；
-2. `XingChenAGI/Xing4.0-29B` 的上下文窗口、最大输出、是否支持 `response_format={"type":"json_object"}`、是否支持 `temperature` 等参数；
+1. **Rate limit 是账号级，不是 Key 级**：官方文档明确 "Rate Limits are defined at the user account level, not at the API key level"；账号按消费分 L0-L5，L0 为 1000 RPM / 40000 TPM；免费模型 rate limit 固定。来源：[SiliconFlow Rate Limits](https://docs.siliconflow.com/en/userguide/rate-limits/rate-limit-and-upgradation)
+2. **余额是预付费、无自动充值说明**：充值协议说明账户余额用完即无法使用服务，充值包无有效期；这使“专用账号 + 低余额 + 不自动充值”成为实际 hard cap。来源：[用户充值协议](https://docs.siliconflow.com/en/legals/recharge-policy)
+3. **可查询余额**：`GET /v1/user/info` 返回 `balance` / `chargeBalance` / `totalBalance` / `status`，Runtime 可用于低余额熔断。来源：[Retrieve user info](https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info.md)
+4. **JSON Mode**：官方文档称除 DeepSeek R1/V3 外大多数模型支持 `response_format={"type":"json_object"}`；Xing4.0 需要真实 probe 确认。来源：[JSON Mode](https://docs.siliconflow.com/en/userguide/guides/json-mode.md)
+5. **模型**：开放权重为 Xing4.0-29B-A4B，原生 256K context、可扩展 512K，MoE 29B total / 4B active，支持 tool calling；SiliconFlow 侧模型 ID 为 `XingChenAGI/Xing4.0-29B`，实际托管上下文/输出上限需 probe。来源：[GitHub - XingChen-AGI/Xing4.0-29B-A4B](https://github.com/XingChen-AGI/Xing4.0-29B-A4B)
+
+仍待确认：
+
+1. 能否在控制台手动删除/禁用 API Key（决定轮换是否只能靠废弃账号 + 低余额）；
+2. 专用赞助账号是否已存在、当前余额、是否与其他业务共用；
 3. SiliconFlow 对 Sponsored 流量的数据保留/训练政策；
 4. 官方发行平台（macOS arm64/x86_64、Windows、Linux）与签名能力；
 5. v1 是否只做后台结构化任务，Chat 继续 BYOK/Ollama。
