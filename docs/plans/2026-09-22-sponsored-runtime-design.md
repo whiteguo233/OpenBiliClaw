@@ -790,9 +790,9 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 实现进度（2026-09-22）：
 
 - Public Phase 1/2 已完成：contracts / canonicalization / unsigned policy 生成器 / provider / protocol / mock runtime / typed error fallback；`LLMService.execute_sponsored_task()` 路由已接入 `soul.consolidation`，默认关闭，行为与开源构建一致；
-- Private repo `openbiliclaw-sponsored-runtime` 本地 skeleton 已完成并通过 `cargo fmt` / `cargo clippy -D warnings` / `cargo test`：Ed25519 Policy 验签、contract 校验、长度帧 IPC、quota 账本、Key fragment + AEAD unwrap、mock upstream，19 个 Rust 测试通过；
+- Private repo `openbiliclaw-sponsored-runtime` 本地 skeleton 已完成并通过 `cargo fmt` / `cargo clippy -D warnings` / `cargo test`：Ed25519 Policy 验签、contract 校验、长度帧 IPC、quota 账本、Key fragment + AEAD unwrap、mock upstream、真实 SiliconFlow OpenAI-compatible HTTP client（禁 redirect / 超时 / 429/5xx 有界重试），24 个 Rust 测试通过；
 - 已用 Python Provider 对 Rust mock 二进制做跨语言端到端验证：成功路径与 `CONTRACT_MISMATCH` 错误映射均通过；
-- 待完成：真实 SiliconFlow HTTP client、wrapped-key release 注入与签名公钥嵌入、OS 安全存储、打包/签名/notarize。
+- 待完成：wrapped-key release 注入与签名公钥嵌入、OS 安全存储、余额探针、打包/签名/notarize。
 
 ---
 
