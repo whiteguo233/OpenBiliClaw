@@ -542,7 +542,58 @@ account_index = HMAC-SHA256(install_id, "sponsored-account-select") mod len(acco
 6. **轮换 = 换账号/换 Key + 发版**：新账号/新 Key 写进新 Policy；旧账号停止充值，让余额自然耗尽；控制台支持删除 Key 则删除，不支持则废弃账号。
 7. **多账号分片**：按 §9.5 把 install 分到不同账号，降低单次泄漏的爆炸半径。
 
-**限制：** 账号级 rate limit 无法按 Key 细分；`/user/info` 查询也可被 patch 绕过；因此“不自动充值 + 低余额水位”是最后一道、也是唯一可强制执行的边界。
+**限制：** 账号级 rate limit 无法按 Key 细分；`/user/info` 查询也可被 patch 绕过；因此“不自动充值 + 低余额水位”是最后一道、也是唯一可强制执行的边界；控制台可删除 Key，所以泄漏响应可以立即吊销。
+
+### 9.9 容量分配与正常用户可用性策略
+
+原则：Sponsored 额度首先要保证**正常用户的正常使用**。额度紧张时依次做：扩账号/加预算 → 按任务优先级降级 → 提示用户切换其他模型（BYOK / Ollama）。不能靠长期收紧所有用户来省钱。
+
+#### 9.9.1 容量估算
+
+```text
+账号可用 token B = 账号余额 / 模型单价
+单用户日消耗 C_user = Σ(task 日均次数 × task 平均 tokens)
+可支撑活跃用户 N ≈ B / C_user
+```
+
+- 按 30 天预算 + 2-3 倍安全余量估算目标活跃用户数；
+- 账号级 RPM/TPM 决定请求/并发上限，多账号分片可横向扩展总 RPM/TPM；
+- 发布前对每个 Sponsored task 做 token 均值/峰值压测，把实际值写回 Policy。
+
+#### 9.9.2 分级降级（Runtime 本地按账号余额执行）
+
+Runtime 定期调用 `/user/info`，把账号余额映射到 Policy 声明的阈值：
+
+| 级别 | 触发 | 行为 |
+| --- | --- | --- |
+| `normal` | 余额 > `balance_conservation_floor` | 正常支持全部 Sponsored task |
+| `conservation` | 余额低于 `balance_conservation_floor` | 关闭低价值/生成类任务（如文案生成），保留理解、评估、画像等核心任务 |
+| `stopped` | 余额低于 `balance_stop_floor` 或 `status != normal` | 关闭全部 Sponsored，fallback BYOK/Ollama，UI 提示切换模型 |
+
+- 阈值写进签名 Policy，不硬编码；
+- 多个分片账号各自判断；不同分片可处于不同级别；
+- 账号级 429 时本地退避，不重试轰炸；
+- 这是“尽力而为”的协同降级，无后端也能工作（每个客户端都能读到账号余额）。
+
+#### 9.9.3 per-install 配额怎么定
+
+- 以“正常用户不会碰到”为目标：取真实用量的 P99 × 2 作为日/月额度，而不是以省钱为目标；
+- 对异常行为单独限流：超快快节奏、超大输入、同一 task 高频重复；
+- 额度用尽只影响该 install，不阻塞其他用户；
+- 额度值随版本和实测数据调整，不承诺永久固定。
+
+#### 9.9.4 用户可见性
+
+- UI 显示 Sponsored 免费额度状态（可用/降级/暂时不可用）；
+- 额度用尽或被限流时明确提示原因与选项：等待恢复、切换 BYOK、切换到 Ollama；
+- 不暴露账号、余额、Key、内部错误细节。
+
+#### 9.9.5 项目侧监控（无 telemetry）
+
+- Runtime 本地账本记录用量，用户可导出诊断；
+- 项目方按账号余额消耗速率 + 控制台用量做人工/脚本监控（无法精确统计活跃用户）；
+- 预警线：余额合计 < 14 天预测消耗时提前充值/扩账号；单账号日消耗 > 预测 2 倍时排查泄漏；
+- 赞助到期或模型下架时，提前发布 Policy 切换模型或关闭 Sponsored，避免客户端报错。
 
 ---
 
@@ -671,8 +722,8 @@ task_id / success / failure / latency / error code / token usage / policy versio
 
 ### 13.2 Key 泄漏应急
 
-1. 若控制台支持删除/禁用泄漏 Key，立即删除；
-2. 若不支持：停止给该账号充值，把余额水位耗尽后废弃账号（余额即熔断）；
+1. 控制台已确认可以删除/禁用 Key：发现泄漏立即删除泄漏 Key；
+2. 余额低水位仍作为第二道保险：删除前的窗口内，损失上限就是账号当前余额；
 3. 其他分片账号保持服务；评估泄漏路径，提前发布新账号/新 Key 版本；
 4. 旧版本用户会 fallback 到 BYOK；UI 提示升级可获得免费模型；
 5. 复盘本地配额/分片策略与账号水位。
@@ -733,7 +784,9 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 1. **Endpoint**：`https://api.siliconflow.cn/v1/chat/completions`，OpenAI-compatible，`Authorization: Bearer <key>`；Runtime 只允许连接该地址（或后续 Policy 声明的 Sponsored endpoint）。
 2. **模型**：`XingChenAGI/Xing4.0-29B`，由 Policy 写死，Python 不可覆盖。
-3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏**：能删除就立即删除；不能删除则停止给该账号充值、按 §13.2 废弃账号，并生成新的赞助专用 Key，不进入任何仓库/CI 日志/文档。
+3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏**：控制台已确认可以删除/禁用 Key，立即删除即可；新 Key 由 release owner 从控制台直接写入 CI secret/KMS，不进入任何仓库/CI 日志/文档。
+4. **Key 轮换能力**：控制台支持手动删除/禁用 API Key；轮换 = 删除旧 Key + 发布包含新 Key 的版本，低余额水位作为删除前的损失上限。
+5. **容量分配原则**：优先保证正常用户可用；额度不足时先扩账号/加预算，其次按任务优先级降级，最后引导用户切换到 BYOK/Ollama（见 §9.9）。
 
 官方文档查证（2026-09-22）：
 
@@ -745,8 +798,8 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 仍待确认：
 
-1. 能否在控制台手动删除/禁用 API Key（决定轮换是否只能靠废弃账号 + 低余额）；
-2. 专用赞助账号是否已存在、当前余额、是否与其他业务共用；
+1. 专用赞助账号是否已存在、当前余额水位、是否与其他业务共用；
+2. 正常用户容量目标：预计安装量/DAU、人均日任务数、可接受的月度预算；
 3. SiliconFlow 对 Sponsored 流量的数据保留/训练政策；
 4. 官方发行平台（macOS arm64/x86_64、Windows、Linux）与签名能力；
 5. v1 是否只做后台结构化任务，Chat 继续 BYOK/Ollama。
