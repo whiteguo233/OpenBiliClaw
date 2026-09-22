@@ -650,7 +650,9 @@ class SponsoredProvider:
 - Registry 的通用 fallback chain 保持现状，但 Sponsored 错误需按 §10 分类；
 - `health_check()` 本地短路，不发 Runtime。
 
-### 11.3 配置
+### 11.3 配置与当前实现
+
+规划配置（待 `[llm.sponsored]` schema 落地）：
 
 ```toml
 [llm.sponsored]
@@ -660,7 +662,16 @@ fallback_to_user_provider = true
 notify_on_fallback = true
 ```
 
-源码部署下 `runtime_path` 为空 → Sponsored 不可用 → 完全走现有 BYOK 流程，不报错。
+在配置 schema 完成前，Phase 1/2 用环境变量引导，默认关闭：
+
+```text
+OPENBILICLAW_SPONSORED_ENABLED=1
+OPENBILICLAW_SPONSORED_RUNTIME="<runtime command line>"
+```
+
+- 两者缺一 → `LLMService` 完全走现有 BYOK/Ollama，行为与开源版一致；
+- 开发/测试可把 runtime command 指向 `python -m openbiliclaw.llm.sponsored_mock_runtime`；
+- `execute_sponsored_task()` 对可用性/配额/限流错误回退，对 `CONTRACT_MISMATCH` 直接失败并写本地 diagnostics，不花用户自己的模型费用。
 
 ### 11.4 UI 状态
 
