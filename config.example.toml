@@ -182,6 +182,20 @@ cache_high_watermark = 0.9
 # 淘汰停止水位（占用 / 预算 的比例，0..1，需 <= cache_high_watermark）
 cache_low_watermark = 0.7
 
+# 官方发行版内置的 Sponsored Runtime。开源源码部署请保持 enabled=false。
+# 官方安装包把 runtime_path 指向包内的 obc-sponsored-runtime；该进程持有
+# SiliconFlow Sponsored Key，并按签名 policy 限制任务/模型/额度，只回退不中转。
+[llm.sponsored]
+enabled = false
+# 可执行文件路径或命令行（支持带参数）。为空 = Sponsored 不可用，完全走 BYOK/Ollama。
+runtime_path = ""
+# Sponsored 不可用时是否回退到用户自己的 provider（BYOK/Ollama）。
+fallback_to_user_provider = true
+# 回退时是否在日志/UI 提示用户，避免误以为免费额度仍可用。
+notify_on_fallback = true
+# 单次 Sponsored 请求超时（秒），范围 1..3600。
+request_timeout_seconds = 180.0
+
 # Per-module routes. inherit=true 表示完整继承 [llm].default_chain；
 # 需要隔离质量/成本时改为 false，并按优先级填写实例 ID。
 

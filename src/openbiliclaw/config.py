@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from openbiliclaw.sponsored_runtime_state import (
+    DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS,
+    SponsoredRuntimeSettings,
+    install_sponsored_settings,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -520,6 +526,9 @@ class LLMConfig:
     discovery: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     recommendation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
     evaluation: ModuleLLMConfig = field(default_factory=ModuleLLMConfig)
+    # Official-build Sponsored Runtime. Disabled in source deployments; the
+    # settings are installed process-wide by ``load_config_with_diagnostics``.
+    sponsored: SponsoredRuntimeSettings = field(default_factory=SponsoredRuntimeSettings)
 
 
 _LLM_PROVIDER_CONFIG_FIELDS = tuple(field_.name for field_ in fields(LLMProviderConfig))
@@ -2230,6 +2239,18 @@ def _build_config(
             )
         )
 
+    sponsored_raw = llm_raw.get("sponsored", {})
+    if not isinstance(sponsored_raw, dict):
+        sponsored_raw = {}
+    sponsored = SponsoredRuntimeSettings(
+        enabled=bool(sponsored_raw.get("enabled", False)),
+        runtime_path=str(sponsored_raw.get("runtime_path", "") or "").strip(),
+        fallback_to_user_provider=bool(sponsored_raw.get("fallback_to_user_provider", True)),
+        notify_on_fallback=bool(sponsored_raw.get("notify_on_fallback", True)),
+        request_timeout_seconds=_normalize_sponsored_timeout(
+            sponsored_raw.get("request_timeout_seconds")
+        ),
+    )
     llm = LLMConfig(
         default_provider=llm_raw.get("default_provider", "deepseek"),
         concurrency=_normalize_llm_concurrency(llm_raw.get("concurrency")),
@@ -2257,6 +2278,7 @@ def _build_config(
         discovery=_module_config("discovery"),
         recommendation=_module_config("recommendation"),
         evaluation=_module_config("evaluation"),
+        sponsored=sponsored,
     )
     if instance_routing:
         ordered_instance_ids = [
@@ -3811,6 +3833,25 @@ def _normalize_llm_timeout(value: object) -> int:
     return normalized
 
 
+def _normalize_sponsored_timeout(value: object) -> float:
+    """Normalize ``llm.sponsored.request_timeout_seconds`` with a safe fallback."""
+
+    if isinstance(value, bool):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if isinstance(value, int | float):
+        normalized = float(value)
+    elif isinstance(value, str):
+        try:
+            normalized = float(value.strip())
+        except ValueError:
+            return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    else:
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    if not (1.0 <= normalized <= 3600.0):
+        return DEFAULT_SPONSORED_REQUEST_TIMEOUT_SECONDS
+    return normalized
+
+
 def llm_concurrency_from_config(config: object) -> int:
     """Extract LLM concurrency from a config object, with safe fallback.
 
@@ -4314,6 +4355,32 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
                 severity="blocking",
             )
         )
+
+    sponsored = getattr(config.llm, "sponsored", None)
+    if sponsored is not None and sponsored.enabled:
+        runtime_path = str(getattr(sponsored, "runtime_path", "") or "").strip()
+        if not runtime_path:
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=(
+                        "已启用 Sponsored Runtime，但未填写 runtime_path。"
+                        "官方安装包会指向内置 obc-sponsored-runtime；源码部署请保持 enabled=false。"
+                    ),
+                    severity="blocking",
+                )
+            )
+        elif not Path(runtime_path).exists():
+            issues.append(
+                ConfigIssue(
+                    field="llm.sponsored.runtime_path",
+                    message=(
+                        f"未找到 Sponsored Runtime：{runtime_path}。"
+                        "请确认官方安装包完整或关闭 llm.sponsored.enabled。"
+                    ),
+                    severity="warning",
+                )
+            )
 
     incremental_intervals = (
         ("source_incremental_hours", config.scheduler.source_incremental_hours, False),
@@ -5038,6 +5105,7 @@ def load_config_with_diagnostics(
     # _build_discovery ever runs — the values are ignored, never fail-fast.
     diagnostics.issues.extend(_removed_discovery_key_issues(raw))
     config = _build_config(raw, consult_environment=consult_environment)
+    install_sponsored_settings(config.llm.sponsored)
     diagnostics.issues.extend(_collect_config_issues(config))
     return config, diagnostics
 

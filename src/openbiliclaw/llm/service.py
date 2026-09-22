@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -590,10 +591,45 @@ class LLMService:
         return response
 
     def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
-        """Return the injected/env Sponsored provider, or None when disabled."""
+        """Return the Sponsored provider, or None when disabled.
+
+        Resolution order:
+
+        1. an explicitly injected provider (tests / official packaging);
+        2. process-wide ``[llm.sponsored]`` settings installed by config load;
+        3. the development env bootstrap.
+
+        A malformed config or command falls through to the next source instead
+        of breaking normal BYOK calls.
+        """
 
         if self.sponsored_provider is not None:
             return self.sponsored_provider
+
+        from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+        settings = current_sponsored_settings()
+        if settings.enabled and settings.has_runtime:
+            try:
+                command = shlex.split(settings.runtime_path)
+            except ValueError:
+                logger.warning("llm.sponsored.runtime_path is not a valid command line")
+                command = []
+            if command:
+                from .sponsored_provider import SponsoredProvider
+
+                try:
+                    self.sponsored_provider = SponsoredProvider(
+                        command,
+                        request_timeout=settings.request_timeout_seconds,
+                    )
+                    return self.sponsored_provider
+                except ValueError:
+                    logger.warning(
+                        "could not construct Sponsored Runtime from llm.sponsored config",
+                        exc_info=True,
+                    )
+
         from .sponsored_provider import build_sponsored_provider_from_env
 
         provider = build_sponsored_provider_from_env()
