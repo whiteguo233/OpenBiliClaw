@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -46,6 +47,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180.0
 DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 10.0
 _STDERR_TAIL_BYTES = 4096
+
+SPONSORED_ENABLED_ENV = "OPENBILICLAW_SPONSORED_ENABLED"
+SPONSORED_RUNTIME_ENV = "OPENBILICLAW_SPONSORED_RUNTIME"
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 class SponsoredProvider:
@@ -382,3 +387,37 @@ def _coerce_usage(raw: Any) -> dict[str, int] | None:
         except (TypeError, ValueError):
             continue
     return usage or None
+
+
+def build_sponsored_provider_from_env(
+    env: Mapping[str, str] | None = None,
+) -> SponsoredProvider | None:
+    """Build a provider from environment variables, default-off.
+
+    This is the bootstrap seam until ``[llm.sponsored]`` config lands. Both
+    variables are required:
+
+    - ``OPENBILICLAW_SPONSORED_ENABLED``: ``1`` / ``true`` / ``yes`` / ``on``;
+    - ``OPENBILICLAW_SPONSORED_RUNTIME``: command line for the runtime binary
+      (or the Python mock runtime during development).
+    """
+
+    source = env if env is not None else os.environ
+    enabled = str(source.get(SPONSORED_ENABLED_ENV) or "").strip().lower()
+    if enabled not in _TRUTHY_ENV_VALUES:
+        return None
+    command_text = str(source.get(SPONSORED_RUNTIME_ENV) or "").strip()
+    if not command_text:
+        return None
+    try:
+        command = shlex.split(command_text)
+    except ValueError:
+        logger.warning("invalid %s command line", SPONSORED_RUNTIME_ENV)
+        return None
+    if not command:
+        return None
+    try:
+        return SponsoredProvider(command)
+    except ValueError:
+        logger.warning("could not build sponsored provider from environment", exc_info=True)
+        return None
