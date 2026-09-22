@@ -28,6 +28,12 @@ SPONSORED_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 
 CONSOLIDATION_MAX_INPUT_BYTES = 256 * 1024
 CONSOLIDATION_MAX_OUTPUT_TOKENS = 4096
+# Per-install fairness budget derived from *normal user usage*, per the
+# product decision: total account capacity must never be used to tighten a
+# normal user's quota. Increase accounts/budget or degrade gracefully instead.
+# These values are placeholders until real per-task usage is measured; abuse is
+# bounded by the account balance + account-level rate limits, not by making a
+# legitimate user's budget tiny.
 CONSOLIDATION_DAILY_REQUESTS = 200
 CONSOLIDATION_DAILY_TOKENS = 500_000
 
