@@ -409,6 +409,8 @@ Public CI 必须包含：
 
 ### 8.2 构建期
 
+> 安全纪律：任何在聊天、issue、PR、工单或文档中出现过的 Key 都视为已泄漏，必须先在 SiliconFlow 控制台吊销并重新生成；Key 只能由 release owner 从控制台直接写入 CI secret/KMS，不经过聊天或仓库。仓库启用 gitleaks/secret scanning 防止回填。
+
 1. CI 从 secret/KMS 读取明文 Key，只在构建内存中存在；
 2. `tools/wrap-key` 生成随机 KEK，用 AEAD（ChaCha20-Poly1305 或 AES-256-GCM）包裹 Key；
 3. KEK 被拆成 N 个 fragment，散布到 binary 不同位置；fragment 之间可做 XOR / HKDF 组合，不出现连续明文；
@@ -710,11 +712,18 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 ---
 
-## 16. 待确认（endpoint 提供后补全）
+## 16. Endpoint / 模型信息与待确认项
 
-1. Sponsored endpoint 的鉴权方式、路径、是否 OpenAI-compatible；
-2. 是否支持 per-key hard cap / rate limit / 用量查询 / 快速吊销；
-3. 实际模型 ID、上下文窗口、是否支持 `response_format=json_object`；
-4. SiliconFlow 对 Sponsored 流量的数据保留/训练政策；
-5. 官方发行平台（macOS arm64/x86_64、Windows、Linux）与签名能力；
-6. v1 是否只做后台结构化任务，Chat 继续 BYOK/Ollama。
+已确认（2026-09-22）：
+
+1. **Endpoint**：`https://api.siliconflow.cn/v1/chat/completions`，OpenAI-compatible，`Authorization: Bearer <key>`；Runtime 只允许连接该地址（或后续 Policy 声明的 Sponsored endpoint）。
+2. **模型**：`XingChenAGI/Xing4.0-29B`，由 Policy 写死，Python 不可覆盖。
+3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏，必须先吊销再生成新的赞助专用 Key，不进入任何仓库/CI 日志/文档**。
+
+待确认：
+
+1. SiliconFlow 控制台能否对赞助专用 Key 设置 hard cap / rate limit，能否查询用量、快速吊销；
+2. `XingChenAGI/Xing4.0-29B` 的上下文窗口、最大输出、是否支持 `response_format={"type":"json_object"}`、是否支持 `temperature` 等参数；
+3. SiliconFlow 对 Sponsored 流量的数据保留/训练政策；
+4. 官方发行平台（macOS arm64/x86_64、Windows、Linux）与签名能力；
+5. v1 是否只做后台结构化任务，Chat 继续 BYOK/Ollama。
