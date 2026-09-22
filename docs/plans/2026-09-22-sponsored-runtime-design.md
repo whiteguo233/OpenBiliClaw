@@ -652,25 +652,20 @@ class SponsoredProvider:
 
 ### 11.3 配置与当前实现
 
-规划配置（待 `[llm.sponsored]` schema 落地）：
+官方配置（已实现，见 `docs/modules/config.md`）：
 
 ```toml
 [llm.sponsored]
-enabled = true
-runtime_path = "..."            # 官方安装包内置；源码版为空
+enabled = false                  # 源码部署保持 false；官方安装包启用
+runtime_path = ""                # 官方包内 obc-sponsored-runtime 路径/命令行
 fallback_to_user_provider = true
 notify_on_fallback = true
+request_timeout_seconds = 180.0
 ```
 
-在配置 schema 完成前，Phase 1/2 用环境变量引导，默认关闭：
-
-```text
-OPENBILICLAW_SPONSORED_ENABLED=1
-OPENBILICLAW_SPONSORED_RUNTIME="<runtime command line>"
-```
-
-- 两者缺一 → `LLMService` 完全走现有 BYOK/Ollama，行为与开源版一致；
-- 开发/测试可把 runtime command 指向 `python -m openbiliclaw.llm.sponsored_mock_runtime`；
+- `load_config_with_diagnostics()` 把 `[llm.sponsored]` 安装为进程级设置，`LLMService` 在首次需要时懒加载 Runtime 子进程，避免改动 9 个 `LLMService` 构造点；
+- 开发/测试仍可用环境变量兜底：`OPENBILICLAW_SPONSORED_ENABLED=1` + `OPENBILICLAW_SPONSORED_RUNTIME="<runtime command line>"`；
+- 配置 enabled 但 runtime_path 为空 → blocking 配置问题；路径不存在 → warning，不影响 BYOK；
 - `execute_sponsored_task()` 对可用性/配额/限流错误回退，对 `CONTRACT_MISMATCH` 直接失败并写本地 diagnostics，不花用户自己的模型费用。
 
 ### 11.4 UI 状态
