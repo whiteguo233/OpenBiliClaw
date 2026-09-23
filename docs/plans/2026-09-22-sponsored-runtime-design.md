@@ -784,11 +784,11 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 实现进度（2026-09-23）：
 
-- Public Phase 1/2 已完成并在 PR #263（最新 `8681f9bd`）验证：contracts / policy 生成器 / provider / protocol / mock runtime / typed error fallback / `[llm.sponsored]` 配置 / eval harness；`soul.consolidation` 使用独立 JSON-native 精简 prompt、每批 8 簇、16384 max_output，成功响应写入项目 `llm_usage`；
-- Private repo `openbiliclaw-sponsored-runtime`（`main` 最新 `030f11c`）：Policy 验签、contract 校验、IPC、quota 账本（reserve/commit 修正）、Key fragment/公钥 build-time 内嵌、`wrap-key`/`sign-policy`/`public-key`、真实 HTTP client、余额降级、release matrix、对抗测试与 threat model，50 个 Rust 测试通过（另有 1 个 Keychain 测试 `--ignored`）；
-- **真实干净实例验证**：独立临时项目根 + 独立 data_dir + 独立空配置，只挂 Sponsored + 本地 mock BYOK；真实 SiliconFlow/`XingChenAGI/Xing4.0-29B` 下 `profile-consolidate --full --apply` 成功：`merges=19`、`errors=0`、likes 44→26、正确保留「篮球/NBA」；重复运行稳定，全部 consolidation 请求走 sponsored（mock BYOK 0 次 chat 调用），`llm_usage` 与 runtime quota 账本均记录真实 token；
-- 真实 API 暴露并修复：旧长 prompt 与 JSON 输入不兼容导致 repetition；21-32 簇单批不稳定；4096 输出被 thinking 吃光导致空响应；runtime usage key 与项目 recorder 不匹配导致成本账本为 0；quota reserve 漏记 token 导致用量低估；
-- 待完成：release workflow 实跑（protected environment/secrets、notarize/Authenticode、多平台打包），以及基于真实数据的 pilot 质量对比后决定默认启用。
+- Public Phase 1/2 已完成并在 PR #263（最新 `3095d448`）验证：contracts / policy 生成器 / provider / protocol / mock runtime / typed error fallback / `[llm.sponsored]` 配置 / eval harness；**Sponsored 与 BYOK 发送完全相同的旧 system/user prompt，batch 对齐旧流程 32，max_output 对齐 16384**；runtime 只验 system prompt hash、task 白名单、输入字节上限、model/max_output；成功响应写入项目 `llm_usage`；
+- Private repo `openbiliclaw-sponsored-runtime`（`main` 最新 `f354ef5`）：Policy 验签、contract 校验（支持 object schema 或 legacy string payload）、IPC、quota 账本（reserve/commit 修正）、Key fragment/公钥 build-time 内嵌、`wrap-key`/`sign-policy`/`public-key`、真实 HTTP client、余额降级、release matrix、对抗测试与 threat model，52 个 Rust 测试通过（另有 1 个 Keychain 测试 `--ignored`）；
+- **真实干净实例验证**：独立临时项目根 + 独立 data_dir + 独立空配置，只挂 Sponsored + 本地 mock BYOK；旧流程 prompt + `deepseek-ai/DeepSeek-V3.2` 下 `profile-consolidate --full --apply`：21 个嫌疑簇单批成功，`merges=7`、`errors=0`、likes 44→38、0 fallback；runtime 账本 1 请求 / 4502 tokens，项目 `llm_usage` 记录 `sponsored / DeepSeek-V3.2 / 2651+1851`；mock BYOK 0 次 chat 调用；第二次运行稳定无变更；
+- 旧流程 prompt 实测：`XingChenAGI/Xing4.0-29B` 在 8/17/22 簇均出现 repetition 或 0 ops，因此 pilot policy 固定 DeepSeek-V3.2；max_output 4096 会被 thinking 吃光导致空响应，已对齐 16384；runtime usage key 与项目 recorder 已统一；quota reserve 漏记 token 已修；
+- 待完成：release workflow 实跑（protected environment/secrets、notarize/Authenticode、多平台打包），以及基于真实用户数据的 pilot 质量对比后决定默认启用。
 
 ---
 
