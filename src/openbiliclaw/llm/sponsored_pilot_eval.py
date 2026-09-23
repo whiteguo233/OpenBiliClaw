@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
+from openbiliclaw.llm.prompts import build_profile_consolidation_prompt
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.sponsored_provider import SponsoredProvider
@@ -28,6 +29,7 @@ _CONSOLIDATION_SCOPES = ("likes", "dislikes")
 class PilotFixture:
     name: str
     payload: dict[str, Any]
+    user_text: str = ""
 
 
 @dataclass
@@ -40,6 +42,16 @@ class PilotResult:
     usage: dict[str, int] | None = None
     parsed: dict[str, Any] | None = None
     error: str = ""
+
+
+def _legacy_user_text(payload: Mapping[str, Any]) -> str:
+    """Build the unchanged legacy tag-wrapped user message for a fixture."""
+
+    messages = build_profile_consolidation_prompt(
+        likes_clusters=list(payload.get("likes_clusters") or []),
+        dislikes_clusters=list(payload.get("dislikes_clusters") or []),
+    )
+    return str(messages[1]["content"])
 
 
 def _like_member(name: str, weight: float, category: str) -> dict[str, Any]:
@@ -113,7 +125,11 @@ def load_fixtures(path: str) -> list[PilotFixture]:
         if not isinstance(payload, Mapping):
             raise ValueError(f"fixture #{index} has no object payload")
         fixtures.append(
-            PilotFixture(name=str(item.get("name") or f"fixture-{index}"), payload=dict(payload))
+            PilotFixture(
+                name=str(item.get("name") or f"fixture-{index}"),
+                payload=dict(payload),
+                user_text=str(item.get("user_text") or ""),
+            )
         )
     if not fixtures:
         raise ValueError("fixtures file is empty")
@@ -152,9 +168,11 @@ async def run_pilot_eval(
         started = time.perf_counter()
         result = PilotResult(name=fixture.name, ok=False)
         try:
+            user_text = fixture.user_text or _legacy_user_text(fixture.payload)
             response = await provider.execute_task(
                 caller=PILOT_TASK,
                 user_payload=fixture.payload,
+                user_text=user_text,
             )
             result.latency_seconds = time.perf_counter() - started
             result.content = response.content

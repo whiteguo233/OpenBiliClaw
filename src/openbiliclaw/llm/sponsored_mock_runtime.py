@@ -80,6 +80,10 @@ def _validate_execute(frame: Mapping[str, Any]) -> tuple[str, str, str]:
         raise ValueError("CONTRACT_MISMATCH")
     if len(user_text.encode("utf-8")) > contract.max_input_bytes:
         raise ValueError("REQUEST_TOO_LARGE")
+    if contract.request_schema.get("type") == "string":
+        if not user_text.strip():
+            raise ValueError("CONTRACT_MISMATCH")
+        return contract.task_id, user_text, contract.model
     try:
         payload = json.loads(user_text)
     except json.JSONDecodeError as exc:

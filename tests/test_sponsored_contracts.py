@@ -23,7 +23,7 @@ from openbiliclaw.llm.sponsored_tasks import (
 # Golden contract hash. Updating it is the deliberate "you changed a shipped
 # prompt, now re-sign the policy" gate described in the design doc.
 SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256 = (
-    "sha256:4b2323061709d72fcbe745bbdea22f5b78caa4f6e6eb727fa4ddeb9718b3479a"
+    "sha256:4f1ca729a26ce89fa3e41e4f0160b6e2c98aa109cb7bb8c5e42bd1622d0ca4f5"
 )
 
 
@@ -47,10 +47,10 @@ def test_pilot_contract_prompt_matches_golden_hash() -> None:
     assert contract is not None
     assert build_soul_consolidation_system_prompt() == contract.system_prompt
     assert contract.system_prompt_sha256 == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
-    # The JSON-native input/output contract is what keeps Xing4.0 from
-    # echoing the output-schema examples; removal must fail this golden gate.
+    # Sponsored intentionally reuses the legacy prompt bytes; the runtime only
+    # pins the hash. Removing <output_schema> would change the old flow.
     assert "known_distinct_pairs" in contract.system_prompt
-    assert "不要用 likes_clusters" in contract.system_prompt
+    assert "<output_schema>" in contract.system_prompt
 
 
 def test_pilot_contract_resolves_from_caller() -> None:
@@ -61,9 +61,9 @@ def test_pilot_contract_resolves_from_caller() -> None:
     assert DEFAULT_SPONSORED_REGISTRY.resolve_caller("general.chat") is None
 
 
-def test_pilot_schema_is_closed_object() -> None:
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "object"
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["additionalProperties"] is False
+def test_pilot_schema_accepts_legacy_text_payload() -> None:
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "string"
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["minLength"] == 1
 
 
 @pytest.mark.parametrize(
@@ -73,7 +73,8 @@ def test_pilot_schema_is_closed_object() -> None:
         ({"contract_version": 0}, "contract_version"),
         ({"caller": "Soul.Consolidation"}, "lowercase"),
         ({"system_prompt": "  Return JSON.  "}, "not canonical"),
-        ({"request_schema": {"type": "string"}}, "describe a JSON object"),
+        ({"request_schema": {"type": "array"}}, "object or string"),
+        ({"request_schema": {"type": "string", "minLength": 0}}, "require content"),
         (
             {
                 "request_schema": {
@@ -130,10 +131,11 @@ def test_unsigned_policy_is_deterministic_and_complete() -> None:
     task = policy["tasks"]["soul.consolidation.v1"]
     assert task["system_prompt_sha256"] == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
     assert task["message_topology"] == ["system", "user"]
-    assert task["model"] == "XingChenAGI/Xing4.0-29B"
+    assert task["model"] == "deepseek-ai/DeepSeek-V3.2"
     assert task["response_format"] == "json_object"
     assert task["limits"] == {"daily_requests": 200, "daily_tokens": 500_000}
-    assert task["input_schema"]["additionalProperties"] is False
+    assert task["input_schema"]["type"] == "string"
+    assert task["input_schema"]["minLength"] == 1
 
     again = build_unsigned_policy(
         DEFAULT_SPONSORED_REGISTRY,

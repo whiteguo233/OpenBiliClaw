@@ -23,6 +23,7 @@ MOCK_RUNTIME_COMMAND = (
     "openbiliclaw.llm.sponsored_mock_runtime",
 )
 VALID_PAYLOAD = {"likes_clusters": [], "dislikes_clusters": []}
+VALID_USER_TEXT = "<likes_clusters>[]</likes_clusters>\n<dislikes_clusters>[]</dislikes_clusters>"
 
 
 class FakeRegistry:
@@ -52,6 +53,7 @@ async def test_sponsored_path_bypasses_configured_registry() -> None:
         response = await service.execute_sponsored_task(
             caller="soul.consolidation",
             payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
             fallback_system_instruction="legacy system",
             fallback_user_input="legacy user",
         )
@@ -71,6 +73,7 @@ async def test_disabled_sponsored_falls_back_to_configured_registry() -> None:
     response = await service.execute_sponsored_task(
         caller="soul.consolidation",
         payload=VALID_PAYLOAD,
+        user_text=VALID_USER_TEXT,
         fallback_system_instruction="legacy system",
         fallback_user_input="legacy user",
     )
@@ -96,6 +99,7 @@ async def test_availability_error_falls_back_without_hiding_contract_bugs() -> N
         response = await service.execute_sponsored_task(
             caller="soul.consolidation",
             payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
             fallback_system_instruction="legacy system",
             fallback_user_input="legacy user",
         )
@@ -123,6 +127,7 @@ async def test_contract_mismatch_fails_loudly_and_does_not_spend_byok() -> None:
             await service.execute_sponsored_task(
                 caller="soul.consolidation",
                 payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
                 fallback_system_instruction="legacy system",
                 fallback_user_input="legacy user",
             )
@@ -186,6 +191,7 @@ async def test_helper_keeps_legacy_doubles_working() -> None:
         legacy,
         caller="soul.consolidation",
         payload=VALID_PAYLOAD,
+        user_text=VALID_USER_TEXT,
         fallback_system_instruction="legacy system",
         fallback_user_input="legacy user",
         temperature=0.2,
@@ -226,6 +232,7 @@ async def test_sponsored_success_records_usage_for_cost_ledger() -> None:
         response = await service.execute_sponsored_task(
             caller="soul.consolidation",
             payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
             fallback_system_instruction="legacy system",
             fallback_user_input="legacy user",
         )
@@ -236,7 +243,7 @@ async def test_sponsored_success_records_usage_for_cost_ledger() -> None:
     assert recorder.calls
     recorded_response, recorded_caller = recorder.calls[0]
     assert recorded_caller == "soul.consolidation"
-    assert recorded_response.model == "XingChenAGI/Xing4.0-29B"
+    assert recorded_response.model == "deepseek-ai/DeepSeek-V3.2"
     assert recorded_response.usage == {
         "prompt_tokens": 100,
         "completion_tokens": 20,

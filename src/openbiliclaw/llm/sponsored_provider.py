@@ -101,13 +101,17 @@ class SponsoredProvider:
         task_id: str = "",
         contract_version: int | None = None,
         user_payload: Mapping[str, Any],
+        user_text: str | None = None,
         system_prompt: str | None = None,
     ) -> LLMResponse:
         """Run one Sponsored task and return the standardized response.
 
-        ``system_prompt`` is optional and exists for tests and drift checks;
-        production callers must omit it so the contract's canonical prompt is
-        the only prompt the runtime ever sees.
+        Object-schema contracts serialize ``user_payload`` to canonical JSON.
+        String-schema contracts (the pilot) require ``user_text`` so the caller
+        can send the unchanged legacy prompt message. ``system_prompt`` is
+        optional and exists for tests and drift checks; production callers must
+        omit it so the contract's canonical prompt is the only prompt the
+        runtime ever sees.
         """
 
         contract = self._resolve_contract(
@@ -120,7 +124,7 @@ class SponsoredProvider:
                 "system prompt does not match the sponsored contract",
                 task_id=contract.task_id,
             )
-        payload_text = self._serialize_payload(user_payload, contract)
+        payload_text = self._serialize_payload(user_payload, contract, user_text)
 
         async with self._request_lock:
             await self._ensure_started()
@@ -234,24 +238,37 @@ class SponsoredProvider:
         return contract
 
     @staticmethod
-    def _serialize_payload(payload: Mapping[str, Any], contract: SponsoredTaskContract) -> str:
-        if not isinstance(payload, Mapping):
-            raise SponsoredContractMismatchError(
-                "sponsored user payload must be a JSON object",
-                task_id=contract.task_id,
-            )
-        try:
-            text = json.dumps(
-                dict(payload),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        except (TypeError, ValueError) as exc:
-            raise SponsoredContractMismatchError(
-                f"sponsored user payload is not JSON-serializable: {exc}",
-                task_id=contract.task_id,
-            ) from exc
+    def _serialize_payload(
+        payload: Mapping[str, Any],
+        contract: SponsoredTaskContract,
+        user_text: str | None = None,
+    ) -> str:
+        schema_type = contract.request_schema.get("type")
+        if schema_type == "string":
+            if not isinstance(user_text, str) or not user_text.strip():
+                raise SponsoredContractMismatchError(
+                    "string-schema sponsored task requires a non-empty user_text",
+                    task_id=contract.task_id,
+                )
+            text = user_text
+        else:
+            if not isinstance(payload, Mapping):
+                raise SponsoredContractMismatchError(
+                    "sponsored user payload must be a JSON object",
+                    task_id=contract.task_id,
+                )
+            try:
+                text = json.dumps(
+                    dict(payload),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise SponsoredContractMismatchError(
+                    f"sponsored user payload is not JSON-serializable: {exc}",
+                    task_id=contract.task_id,
+                ) from exc
         if len(text.encode("utf-8")) > contract.max_input_bytes:
             raise SponsoredRequestTooLargeError(
                 "sponsored user payload exceeds the contract input budget",
