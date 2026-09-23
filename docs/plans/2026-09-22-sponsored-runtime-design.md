@@ -537,7 +537,7 @@ account_index = HMAC-SHA256(install_id, "sponsored-account-select") mod len(acco
 1. **专用账号**：Sponsored 流量使用独立 SiliconFlow 账号，不与个人或其他业务共用；账号内只放赞助 Key。
 2. **余额即 hard cap**：不开启任何自动充值/代扣；账号余额就是最坏情况损失上限。按周/双周预算少量充值，保持低水位（例如 100-300 元，按实际消耗调整）。
 3. **账号级限流**：平台账号级 RPM/TPM/RPD/TPD 仍生效，可挡住单 Key 泄漏后的瞬时刷量；免费模型与付费模型的档位不同，需在账号侧确认。
-4. **低余额熔断**：Runtime 定期调用 `GET /v1/user/info` 读取 `balance` / `totalBalance` / `status`；低于 Policy 中的 `balance_floor` 或 `status != normal` 时，返回 `BALANCE_LOW` / `AUTH_FAILED`，关闭 Sponsored 并 fallback。
+4. **低余额熔断**：Runtime 定期调用 `GET /v1/user/info` 读取 `balance` / `totalBalance` / `status`；低于 Policy 中的 `balance_floor` 或 `status != normal` 时，返回 `BALANCE_LOW` / `AUTH_FAILED`，关闭 Sponsored 并 fallback。**2026-09 实测：`api.siliconflow.cn` 的 `/v1/user/info` 返回 410/20092 deprecated，`.com` 也不接受 `.cn` Key**；Runtime 对探针失败保持上一状态并打日志，同时把 chat 侧 402 / “余额不足” 映射为 `BALANCE_LOW` 作为兜底。
 5. **人工监控**：项目方用同一 Key 或控制台定期查看余额消耗速率；日消耗突增即按泄漏处理（见 §13.2）。
 6. **轮换 = 换账号/换 Key + 发版**：新账号/新 Key 写进新 Policy；旧账号停止充值，让余额自然耗尽；控制台支持删除 Key 则删除，不支持则废弃账号。
 7. **多账号分片**：按 §9.5 把 install 分到不同账号，降低单次泄漏的爆炸半径。
@@ -806,7 +806,7 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
 1. **Rate limit 是账号级，不是 Key 级**：官方文档明确 "Rate Limits are defined at the user account level, not at the API key level"；账号按消费分 L0-L5，L0 为 1000 RPM / 40000 TPM；免费模型 rate limit 固定。来源：[SiliconFlow Rate Limits](https://docs.siliconflow.com/en/userguide/rate-limits/rate-limit-and-upgradation)
 2. **余额是预付费、无自动充值说明**：充值协议说明账户余额用完即无法使用服务，充值包无有效期；这使“专用账号 + 低余额 + 不自动充值”成为实际 hard cap。来源：[用户充值协议](https://docs.siliconflow.com/en/legals/recharge-policy)
-3. **可查询余额**：`GET /v1/user/info` 返回 `balance` / `chargeBalance` / `totalBalance` / `status`，Runtime 可用于低余额熔断。来源：[Retrieve user info](https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info.md)
+3. **可查询余额**：`GET /v1/user/info` 返回 `balance` / `chargeBalance` / `totalBalance` / `status`，Runtime 可用于低余额熔断。来源：[Retrieve user info](https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info.md)。**2026-09 实测 `.cn` 该端点已 deprecated（410/20092），`.com` 不接受 `.cn` Key；低余额保护当前为 best-effort + chat 402 兜底。**
 4. **JSON Mode**：官方文档称除 DeepSeek R1/V3 外大多数模型支持 `response_format={"type":"json_object"}`；Xing4.0 需要真实 probe 确认。来源：[JSON Mode](https://docs.siliconflow.com/en/userguide/guides/json-mode.md)
 5. **模型**：开放权重为 Xing4.0-29B-A4B，原生 256K context、可扩展 512K，MoE 29B total / 4B active，支持 tool calling；SiliconFlow 侧模型 ID 为 `XingChenAGI/Xing4.0-29B`，实际托管上下文/输出上限需 probe。来源：[GitHub - XingChen-AGI/Xing4.0-29B-A4B](https://github.com/XingChen-AGI/Xing4.0-29B-A4B)
 
