@@ -46,7 +46,7 @@ def test_generator_writes_signed_ready_policy(tmp_path: Path) -> None:
     assert set(policy["tasks"]) == {"soul.consolidation.v1"}
     assert (
         policy["tasks"]["soul.consolidation.v1"]["model"]
-        == "deepseek-ai/DeepSeek-V3.2"
+        == "THUDM/GLM-4-9B-0414"
     )
 
 

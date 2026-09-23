@@ -137,7 +137,7 @@ def test_unsigned_policy_is_deterministic_and_complete() -> None:
     task = policy["tasks"]["soul.consolidation.v1"]
     assert task["system_prompt_sha256"] == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
     assert task["message_topology"] == ["system", "user"]
-    assert task["model"] == "deepseek-ai/DeepSeek-V3.2"
+    assert task["model"] == "THUDM/GLM-4-9B-0414"
     assert task["response_format"] == "json_object"
     assert task["limits"] == {"daily_requests": 200, "daily_tokens": 500_000}
     assert task["input_schema"]["type"] == "string"

@@ -24,12 +24,16 @@ from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_profile_consolidation_prompt
 from .sponsored_contracts import SponsoredContractRegistry, SponsoredTaskContract
 
-# The sponsor account can reach many SiliconFlow models. Xing4.0-29B was
-# measured against the legacy consolidation prompt and degenerated into
-# repetition loops even at 8 clusters, so the pilot uses DeepSeek-V3.2, which
-# followed the unchanged legacy prompt at 17 clusters in one real call
-# (valid JSON, 22 like ops + 2 dislike ops, 56s).
-SPONSORED_MODEL = "deepseek-ai/DeepSeek-V3.2"
+# Free-only sponsorship constraint: the policy must use a model that costs
+# nothing on SiliconFlow. Measured against the unchanged legacy consolidation
+# prompt: DeepSeek-R1-0528-Qwen3-8B is the strongest free candidate when the
+# backend is available, but it currently returns 400 "Model does not exist"
+# for real consolidation payloads; Qwen/Qwen3-8B, GLM-Z1-9B-0414 and
+# Qwen2.5-7B-Instruct misattribute cluster members; Qwen3.5-4B returns 503;
+# Xing4.0-29B degenerates into repetition. GLM-4-9B-0414 is the only free model
+# that stays structurally usable, so it is the pilot default until the free
+# backend picture changes.
+SPONSORED_MODEL = "THUDM/GLM-4-9B-0414"
 SPONSORED_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 
 CONSOLIDATION_MAX_INPUT_BYTES = 256 * 1024

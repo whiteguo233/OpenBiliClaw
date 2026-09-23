@@ -45,7 +45,7 @@ async def test_execute_task_success() -> None:
 
     assert isinstance(response, LLMResponse)
     assert response.provider == "sponsored"
-    assert response.model == "deepseek-ai/DeepSeek-V3.2"
+    assert response.model == "THUDM/GLM-4-9B-0414"
     assert response.usage == {
         "prompt_tokens": 100,
         "completion_tokens": 20,

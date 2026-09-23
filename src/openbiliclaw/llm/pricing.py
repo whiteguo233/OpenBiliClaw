@@ -134,6 +134,12 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # ``openai/gpt-4o`` route as a conservative reference estimate.
         "default": (0.018, 0.072),
     },
+    "sponsored": {
+        # Sponsored traffic is covered by the sponsor account, so the
+        # user-facing cost estimate is always zero regardless of the
+        # upstream model's list price.
+        "default": (0.0, 0.0),
+    },
     "ollama": {
         "default": (0.0, 0.0),
     },

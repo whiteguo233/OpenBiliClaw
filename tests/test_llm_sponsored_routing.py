@@ -243,7 +243,7 @@ async def test_sponsored_success_records_usage_for_cost_ledger() -> None:
     assert recorder.calls
     recorded_response, recorded_caller = recorder.calls[0]
     assert recorded_caller == "soul.consolidation"
-    assert recorded_response.model == "deepseek-ai/DeepSeek-V3.2"
+    assert recorded_response.model == "THUDM/GLM-4-9B-0414"
     assert recorded_response.usage == {
         "prompt_tokens": 100,
         "completion_tokens": 20,
