@@ -782,13 +782,13 @@ Private：
 
 Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 
-实现进度（2026-09-22）：
+实现进度（2026-09-23）：
 
-- Public Phase 1/2 已完成：contracts / canonicalization / unsigned policy 生成器 / provider / protocol / mock runtime / typed error fallback；`LLMService.execute_sponsored_task()` 路由已接入 `soul.consolidation`，默认关闭，行为与开源构建一致；新增离线 eval harness `llm/sponsored_pilot_eval.py` + `scripts/sponsored_pilot_eval.py`，可对 mock/official runtime 冒烟 `soul.consolidation` 输出契约（PR #262/#263）；
-- Private repo `openbiliclaw-sponsored-runtime`（私有仓 `main` 最新 `42bec61`）：Ed25519 Policy 验签、contract 校验、长度帧 IPC、quota 账本（HMAC key 存 macOS Keychain / Linux secret-tool / Windows DPAPI，0600 file fallback，支持旧常量 key 一次性迁移）、Key fragment 与发布公钥 build-time 内嵌、`wrap-key`/`sign-policy`/`public-key` 工具、真实 SiliconFlow HTTP client、`/user/info` 余额探针 + 分级降级、release `prepare + 4 平台 matrix` workflow、对抗预期测试与 `docs/threat-model.md`，46 个 Rust 测试通过（另有 1 个 macOS Keychain 测试 `--ignored` 手动验证通过）；
-- 已用 Python Provider 对 Rust mock 二进制做跨语言端到端验证：成功路径与 `CONTRACT_MISMATCH` 错误映射均通过；
-- Release 链路已本地演练：`wrap-key` → build 内嵌 vault + 公钥 → `sign-policy` → 非 mock 启动验签（无需 `--public-key`）→ unwrap → HTTP 请求发出（dead endpoint 返回 `UPSTREAM_ERROR`）；
-- 待完成：release workflow 实跑（protected environment/secrets、macOS notarize、Windows Authenticode、Linux 打包），以及用真实赞助 Key 跑一次 `soul.consolidation` 质量/延迟回归。
+- Public Phase 1/2 已完成并在 PR #263（最新 `8681f9bd`）验证：contracts / policy 生成器 / provider / protocol / mock runtime / typed error fallback / `[llm.sponsored]` 配置 / eval harness；`soul.consolidation` 使用独立 JSON-native 精简 prompt、每批 8 簇、16384 max_output，成功响应写入项目 `llm_usage`；
+- Private repo `openbiliclaw-sponsored-runtime`（`main` 最新 `030f11c`）：Policy 验签、contract 校验、IPC、quota 账本（reserve/commit 修正）、Key fragment/公钥 build-time 内嵌、`wrap-key`/`sign-policy`/`public-key`、真实 HTTP client、余额降级、release matrix、对抗测试与 threat model，50 个 Rust 测试通过（另有 1 个 Keychain 测试 `--ignored`）；
+- **真实干净实例验证**：独立临时项目根 + 独立 data_dir + 独立空配置，只挂 Sponsored + 本地 mock BYOK；真实 SiliconFlow/`XingChenAGI/Xing4.0-29B` 下 `profile-consolidate --full --apply` 成功：`merges=19`、`errors=0`、likes 44→26、正确保留「篮球/NBA」；重复运行稳定，全部 consolidation 请求走 sponsored（mock BYOK 0 次 chat 调用），`llm_usage` 与 runtime quota 账本均记录真实 token；
+- 真实 API 暴露并修复：旧长 prompt 与 JSON 输入不兼容导致 repetition；21-32 簇单批不稳定；4096 输出被 thinking 吃光导致空响应；runtime usage key 与项目 recorder 不匹配导致成本账本为 0；quota reserve 漏记 token 导致用量低估；
+- 待完成：release workflow 实跑（protected environment/secrets、notarize/Authenticode、多平台打包），以及基于真实数据的 pilot 质量对比后决定默认启用。
 
 ---
 
