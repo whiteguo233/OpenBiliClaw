@@ -797,7 +797,7 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 已确认（2026-09-22）：
 
 1. **Endpoint**：`https://api.siliconflow.cn/v1/chat/completions`，OpenAI-compatible，`Authorization: Bearer <key>`；Runtime 只允许连接该地址（或后续 Policy 声明的 Sponsored endpoint）。
-2. **模型**：`XingChenAGI/Xing4.0-29B`，由 Policy 写死，Python 不可覆盖。
+2. **模型**：pilot policy 固定 `deepseek-ai/DeepSeek-V3.2`，由 Policy 写死，Python 不可覆盖。原候选 `XingChenAGI/Xing4.0-29B` 在旧流程 prompt 下实测 8/17/22 簇均出现 repetition/0 ops，因此不用于 consolidation。
 3. **Key**：`sk-` Bearer 形式；**聊天中出现过的那把 Key 已视为泄漏**：控制台已确认可以删除/禁用 Key，立即删除即可；新 Key 由 release owner 从控制台直接写入 CI secret/KMS，不进入任何仓库/CI 日志/文档。
 4. **Key 轮换能力**：控制台支持手动删除/禁用 API Key；轮换 = 删除旧 Key + 发布包含新 Key 的版本，低余额水位作为删除前的损失上限。
 5. **预算原则**：per-install 预算按正常用户用量独立设定（P99×2），不做总量除法；总量不足时扩账号/加预算，或按 §9.9 分级降级并引导用户切换 BYOK/Ollama。
@@ -808,7 +808,7 @@ Phase 5 永远最低优先级；不要为了 hardening 延后 Phase 1-3。
 2. **余额是预付费、无自动充值说明**：充值协议说明账户余额用完即无法使用服务，充值包无有效期；这使“专用账号 + 低余额 + 不自动充值”成为实际 hard cap。来源：[用户充值协议](https://docs.siliconflow.com/en/legals/recharge-policy)
 3. **可查询余额**：`GET /v1/user/info` 返回 `balance` / `chargeBalance` / `totalBalance` / `status`，Runtime 可用于低余额熔断。来源：[Retrieve user info](https://docs.siliconflow.com/en/api-reference/userinfo/get-user-info.md)。**2026-09 实测 `.cn` 该端点已 deprecated（410/20092），`.com` 不接受 `.cn` Key；低余额保护当前为 best-effort + chat 402 兜底。**
 4. **JSON Mode**：官方文档称除 DeepSeek R1/V3 外大多数模型支持 `response_format={"type":"json_object"}`；Xing4.0 需要真实 probe 确认。来源：[JSON Mode](https://docs.siliconflow.com/en/userguide/guides/json-mode.md)
-5. **模型**：开放权重为 Xing4.0-29B-A4B，原生 256K context、可扩展 512K，MoE 29B total / 4B active，支持 tool calling；SiliconFlow 侧模型 ID 为 `XingChenAGI/Xing4.0-29B`，实际托管上下文/输出上限需 probe。来源：[GitHub - XingChen-AGI/Xing4.0-29B-A4B](https://github.com/XingChen-AGI/Xing4.0-29B-A4B)
+5. **模型**：开放权重为 Xing4.0-29B-A4B，原生 256K context、可扩展 512K，MoE 29B total / 4B active，支持 tool calling；SiliconFlow 侧模型 ID 为 `XingChenAGI/Xing4.0-29B`，但 pilot consolidation 实测不可用（repetition/0 ops），最终改用 `deepseek-ai/DeepSeek-V3.2`。来源：[GitHub - XingChen-AGI/Xing4.0-29B-A4B](https://github.com/XingChen-AGI/Xing4.0-29B-A4B)
 
 仍待确认：
 
