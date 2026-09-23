@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
+from openbiliclaw.diagnostics_alerts import record_diagnostics_alert
 from openbiliclaw.soul.profile import SoulProfile, preference_layer_from_dict
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
@@ -20,6 +22,7 @@ from .concurrency import (
 )
 from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_socratic_dialogue_prompt
+from .sponsored_errors import SponsoredError, is_fallback_allowed
 
 logger = logging.getLogger(__name__)
 DEFAULT_LLM_CONCURRENCY = DEFAULT_TOTAL_LLM_CONCURRENCY
@@ -40,6 +43,7 @@ if TYPE_CHECKING:
     from openbiliclaw.memory.manager import MemoryManager
 
     from .base import LLMResponse
+    from .sponsored_provider import SponsoredProvider
 
 
 _BACKGROUND_ADMISSION_BYPASS: ContextVar[bool] = ContextVar(
@@ -285,6 +289,10 @@ class LLMService:
     # ``complete_socratic_dialogue`` (and suppresses the reply_style line
     # there, since the entire block is swapped).
     dialogue_tone_prompt: str = ""
+    # Optional closed-source Sponsored Runtime client. Default None keeps the
+    # open-source build byte-identical (BYOK / Ollama only); the provider is
+    # injected by configuration, by tests, or lazily by the env bootstrap.
+    sponsored_provider: SponsoredProvider | None = None
     _logged_unknown_override_keys: set[tuple[str, str]] = field(
         default_factory=set, init=False, repr=False
     )
@@ -581,6 +589,144 @@ class LLMService:
                 with suppress(Exception):
                     record_fn(response, caller=caller)
         return response
+
+    def _resolve_sponsored_provider(self) -> SponsoredProvider | None:
+        """Return the Sponsored provider, or None when disabled.
+
+        Resolution order:
+
+        1. an explicitly injected provider (tests / official packaging);
+        2. process-wide ``[llm.sponsored]`` settings installed by config load;
+        3. the development env bootstrap.
+
+        A malformed config or command falls through to the next source instead
+        of breaking normal BYOK calls.
+        """
+
+        if self.sponsored_provider is not None:
+            return self.sponsored_provider
+
+        from openbiliclaw.sponsored_runtime_state import current_sponsored_settings
+
+        settings = current_sponsored_settings()
+        if settings.enabled and settings.has_runtime:
+            try:
+                command = shlex.split(settings.runtime_path)
+            except ValueError:
+                logger.warning("llm.sponsored.runtime_path is not a valid command line")
+                command = []
+            if command:
+                from .sponsored_provider import SponsoredProvider
+
+                try:
+                    self.sponsored_provider = SponsoredProvider(
+                        command,
+                        request_timeout=settings.request_timeout_seconds,
+                    )
+                    return self.sponsored_provider
+                except ValueError:
+                    logger.warning(
+                        "could not construct Sponsored Runtime from llm.sponsored config",
+                        exc_info=True,
+                    )
+
+        from .sponsored_provider import build_sponsored_provider_from_env
+
+        provider = build_sponsored_provider_from_env()
+        if provider is not None:
+            self.sponsored_provider = provider
+        return provider
+
+    def _record_usage(self, response: LLMResponse, *, caller: str) -> None:
+        """Best-effort usage ledger write for paths that bypass complete()."""
+
+        recorder = self.usage_recorder
+        if recorder is None:
+            return
+        record_fn = getattr(recorder, "record", None)
+        if callable(record_fn):
+            with suppress(Exception):
+                record_fn(response, caller=caller)
+
+    async def execute_sponsored_task(
+        self,
+        *,
+        caller: str,
+        payload: Mapping[str, Any],
+        fallback_system_instruction: str,
+        fallback_user_input: str,
+        user_text: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
+        inject_core_memory: bool = False,
+        contract_version: int | None = None,
+    ) -> LLMResponse:
+        """Run a sponsored-eligible task; fall back to the configured provider.
+
+        The caller owns both representations: the structured ``payload`` for
+        the Sponsored Runtime, and the legacy prompt pair for BYOK / Ollama.
+        A missing runtime, quota, rate limit, or auth failure falls back so the
+        feature keeps working; a contract mismatch fails loudly because it
+        means shipped prompt bytes and the signed policy disagree.
+        """
+
+        from .sponsored_tasks import DEFAULT_SPONSORED_REGISTRY
+
+        contract = DEFAULT_SPONSORED_REGISTRY.resolve_caller(caller)
+        provider = self._resolve_sponsored_provider()
+        if contract is not None and provider is not None:
+            try:
+                response = await provider.execute_task(
+                    caller=caller,
+                    contract_version=contract_version,
+                    user_payload=payload,
+                    user_text=user_text,
+                )
+            except SponsoredError as exc:
+                if not is_fallback_allowed(exc):
+                    record_diagnostics_alert(
+                        category="llm",
+                        code="sponsored_contract_mismatch",
+                        message=f"Sponsored contract mismatch for {caller}: {exc.code}",
+                        source="sponsored",
+                        severity="error",
+                    )
+                    raise LLMProviderExecutionError(
+                        f"Sponsored contract mismatch for {caller}: {exc.code}"
+                    ) from exc
+                logger.warning(
+                    "Sponsored task %s unavailable (%s); falling back to configured provider",
+                    caller,
+                    exc.code,
+                )
+                record_diagnostics_alert(
+                    category="llm",
+                    code=f"sponsored_{exc.code.lower()}",
+                    message=f"Sponsored task {caller} unavailable: {exc.code}",
+                    source="sponsored",
+                    severity="warning",
+                )
+            else:
+                self._record_usage(response, caller=caller)
+                return response
+
+        return await self.complete_structured_task(
+            system_instruction=fallback_system_instruction,
+            user_input=fallback_user_input,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            caller=caller,
+            reasoning_effort=reasoning_effort,
+            inject_core_memory=inject_core_memory,
+        )
+
+    async def aclose(self) -> None:
+        """Release the Sponsored Runtime child process, when one exists."""
+
+        provider = self.sponsored_provider
+        if provider is not None:
+            await provider.aclose()
 
     async def complete_structured_task(
         self,

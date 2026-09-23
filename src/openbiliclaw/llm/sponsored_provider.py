@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -46,6 +47,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180.0
 DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 10.0
 _STDERR_TAIL_BYTES = 4096
+
+SPONSORED_ENABLED_ENV = "OPENBILICLAW_SPONSORED_ENABLED"
+SPONSORED_RUNTIME_ENV = "OPENBILICLAW_SPONSORED_RUNTIME"
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 class SponsoredProvider:
@@ -96,13 +101,17 @@ class SponsoredProvider:
         task_id: str = "",
         contract_version: int | None = None,
         user_payload: Mapping[str, Any],
+        user_text: str | None = None,
         system_prompt: str | None = None,
     ) -> LLMResponse:
         """Run one Sponsored task and return the standardized response.
 
-        ``system_prompt`` is optional and exists for tests and drift checks;
-        production callers must omit it so the contract's canonical prompt is
-        the only prompt the runtime ever sees.
+        Object-schema contracts serialize ``user_payload`` to canonical JSON.
+        String-schema contracts (the pilot) require ``user_text`` so the caller
+        can send the unchanged legacy prompt message. ``system_prompt`` is
+        optional and exists for tests and drift checks; production callers must
+        omit it so the contract's canonical prompt is the only prompt the
+        runtime ever sees.
         """
 
         contract = self._resolve_contract(
@@ -115,7 +124,7 @@ class SponsoredProvider:
                 "system prompt does not match the sponsored contract",
                 task_id=contract.task_id,
             )
-        payload_text = self._serialize_payload(user_payload, contract)
+        payload_text = self._serialize_payload(user_payload, contract, user_text)
 
         async with self._request_lock:
             await self._ensure_started()
@@ -229,24 +238,37 @@ class SponsoredProvider:
         return contract
 
     @staticmethod
-    def _serialize_payload(payload: Mapping[str, Any], contract: SponsoredTaskContract) -> str:
-        if not isinstance(payload, Mapping):
-            raise SponsoredContractMismatchError(
-                "sponsored user payload must be a JSON object",
-                task_id=contract.task_id,
-            )
-        try:
-            text = json.dumps(
-                dict(payload),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        except (TypeError, ValueError) as exc:
-            raise SponsoredContractMismatchError(
-                f"sponsored user payload is not JSON-serializable: {exc}",
-                task_id=contract.task_id,
-            ) from exc
+    def _serialize_payload(
+        payload: Mapping[str, Any],
+        contract: SponsoredTaskContract,
+        user_text: str | None = None,
+    ) -> str:
+        schema_type = contract.request_schema.get("type")
+        if schema_type == "string":
+            if not isinstance(user_text, str) or not user_text.strip():
+                raise SponsoredContractMismatchError(
+                    "string-schema sponsored task requires a non-empty user_text",
+                    task_id=contract.task_id,
+                )
+            text = user_text
+        else:
+            if not isinstance(payload, Mapping):
+                raise SponsoredContractMismatchError(
+                    "sponsored user payload must be a JSON object",
+                    task_id=contract.task_id,
+                )
+            try:
+                text = json.dumps(
+                    dict(payload),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError) as exc:
+                raise SponsoredContractMismatchError(
+                    f"sponsored user payload is not JSON-serializable: {exc}",
+                    task_id=contract.task_id,
+                ) from exc
         if len(text.encode("utf-8")) > contract.max_input_bytes:
             raise SponsoredRequestTooLargeError(
                 "sponsored user payload exceeds the contract input budget",
@@ -372,13 +394,62 @@ class SponsoredProvider:
         return env
 
 
+_USAGE_KEY_ALIASES = {
+    "input_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+}
+
+
 def _coerce_usage(raw: Any) -> dict[str, int] | None:
+    """Normalize runtime usage keys to the project's provider convention."""
+
     if not isinstance(raw, Mapping):
         return None
     usage: dict[str, int] = {}
     for key, value in raw.items():
+        normalized_key = _USAGE_KEY_ALIASES.get(str(key), str(key))
         try:
-            usage[str(key)] = int(value)
+            usage[normalized_key] = int(value)
         except (TypeError, ValueError):
             continue
+    if (
+        "prompt_tokens" in usage
+        and "completion_tokens" in usage
+        and "total_tokens" not in usage
+    ):
+        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
     return usage or None
+
+
+def build_sponsored_provider_from_env(
+    env: Mapping[str, str] | None = None,
+) -> SponsoredProvider | None:
+    """Build a provider from environment variables, default-off.
+
+    This is the bootstrap seam until ``[llm.sponsored]`` config lands. Both
+    variables are required:
+
+    - ``OPENBILICLAW_SPONSORED_ENABLED``: ``1`` / ``true`` / ``yes`` / ``on``;
+    - ``OPENBILICLAW_SPONSORED_RUNTIME``: command line for the runtime binary
+      (or the Python mock runtime during development).
+    """
+
+    source = env if env is not None else os.environ
+    enabled = str(source.get(SPONSORED_ENABLED_ENV) or "").strip().lower()
+    if enabled not in _TRUTHY_ENV_VALUES:
+        return None
+    command_text = str(source.get(SPONSORED_RUNTIME_ENV) or "").strip()
+    if not command_text:
+        return None
+    try:
+        command = shlex.split(command_text)
+    except ValueError:
+        logger.warning("invalid %s command line", SPONSORED_RUNTIME_ENV)
+        return None
+    if not command:
+        return None
+    try:
+        return SponsoredProvider(command)
+    except ValueError:
+        logger.warning("could not build sponsored provider from environment", exc_info=True)
+        return None

@@ -70,10 +70,19 @@ class SponsoredTaskContract:
             )
         if not isinstance(self.request_schema, Mapping):
             raise SponsoredContractError("request_schema must be a JSON Schema object")
-        if self.request_schema.get("type") != "object":
-            raise SponsoredContractError("request_schema must describe a JSON object")
-        if self.request_schema.get("additionalProperties") is not False:
-            raise SponsoredContractError("request_schema must set additionalProperties=false")
+        schema_type = self.request_schema.get("type")
+        if schema_type == "object":
+            if self.request_schema.get("additionalProperties") is not False:
+                raise SponsoredContractError(
+                    "object request_schema must set additionalProperties=false"
+                )
+        elif schema_type == "string":
+            if self.request_schema.get("minLength", 1) < 1:
+                raise SponsoredContractError("string request_schema must require content")
+        else:
+            raise SponsoredContractError(
+                "request_schema must describe a JSON object or string"
+            )
         if self.max_input_bytes <= 0:
             raise SponsoredContractError("max_input_bytes must be positive")
         if self.max_output_tokens <= 0:

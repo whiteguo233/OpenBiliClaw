@@ -432,6 +432,33 @@ multimodal_enabled = true   # 封面 image-only 向量；与文本同一空间
 
 说明：DashScope 多模态向量走**原生** `.../multimodal-embedding/multimodal-embedding` 接口，**不是** `compatible-mode/v1/embeddings`。聊天若要用通义，新建 `provider_type = "openai_compatible"` 的聊天实例并指向 `compatible-mode/v1`；embedding 与 chat 凭据可共用同一把 `sk-` Key，但配置段彼此独立。
 
+### `[llm.sponsored]`
+
+官方发行版内置的 **Sponsored Runtime**（`obc-sponsored-runtime`，闭源私有组件）。开源源码部署保持 `enabled=false`，完全走 BYOK / Ollama；官方安装包把 `runtime_path` 指向包内二进制，运行时持有 SiliconFlow Sponsored Key，并按签名 policy 限制 task / schema / model / token 与 per-install 配额。
+
+核心边界：Sponsored 只接受 OpenBiliClaw 已定义的结构化后台任务，不提供通用 Chat；Prompt、画像、推荐数据**直连 SiliconFlow**，不经过 OpenBiliClaw 项目方服务器；Runtime 无端口、无遥测、默认不记录 Prompt/响应。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否启用 Sponsored Runtime。源码部署不要开启；开启但没有 `runtime_path` 会报 blocking 配置问题 |
+| `runtime_path` | string | `""` | 官方包内 `obc-sponsored-runtime` 的路径或命令行（支持带参数）。空 = Sponsored 不可用 |
+| `fallback_to_user_provider` | bool | `true` | Runtime 缺失/崩溃/配额/限流/Key 失效时，是否回退到用户已有 provider（BYOK / Ollama）。契约不一致（prompt hash / schema）不会静默回退，而是本地告警并失败 |
+| `notify_on_fallback` | bool | `true` | 回退时是否提示用户，避免误以为免费额度仍可用 |
+| `request_timeout_seconds` | float | `180.0` | 单次 Sponsored 请求超时（秒），范围 1..3600；非法值回退默认 |
+
+配置样例：
+
+```toml
+[llm.sponsored]
+enabled = true
+runtime_path = "/Applications/OpenBiliClaw.app/Contents/Resources/obc-sponsored-runtime"
+fallback_to_user_provider = true
+notify_on_fallback = true
+request_timeout_seconds = 180.0
+```
+
+实现说明：`load_config_with_diagnostics()` 会把该段安装为进程级设置，`LLMService.execute_sponsored_task()` 在首次需要时懒加载 Runtime 子进程；开发环境仍可用 `OPENBILICLAW_SPONSORED_ENABLED` / `OPENBILICLAW_SPONSORED_RUNTIME` 作为兜底。
+
 #### 配置页服务探测 API（v0.3.114+）
 
 桌面 Web `/web` 与插件 side panel 都可测试单个聊天实例、整条默认链和 embedding。插件可直接新建、编辑、删除实例并调整全局 `default_chain`；模块自定义链在插件中只读展示，需进入 PC Web 编辑。探测走一个**无写入**接口，不会保存 `config.toml`，也不会触发运行时热重载；guided init 运行期间仍可调用，不受 `409 init_running` 写端门控影响。真正保存草稿的 `PUT /api/config` 在 init 期间仍被禁止。

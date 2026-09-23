@@ -29,6 +29,7 @@ MOCK_RUNTIME_COMMAND = (
     "openbiliclaw.llm.sponsored_mock_runtime",
 )
 VALID_PAYLOAD = {"likes_clusters": [], "dislikes_clusters": []}
+VALID_USER_TEXT = "<likes_clusters>[]</likes_clusters>\n<dislikes_clusters>[]</dislikes_clusters>"
 
 
 async def test_execute_task_success() -> None:
@@ -37,14 +38,19 @@ async def test_execute_task_success() -> None:
         response = await provider.execute_task(
             caller="soul.consolidation",
             user_payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
         )
     finally:
         await provider.aclose()
 
     assert isinstance(response, LLMResponse)
     assert response.provider == "sponsored"
-    assert response.model == "XingChenAGI/Xing4.0-29B"
-    assert response.usage == {"input_tokens": 100, "output_tokens": 20}
+    assert response.model == "THUDM/GLM-4-9B-0414"
+    assert response.usage == {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }
     assert json.loads(response.content) == {"likes": [], "dislikes": []}
 
 
@@ -54,11 +60,13 @@ async def test_provider_reuses_one_child_for_multiple_tasks() -> None:
         first = await provider.execute_task(
             caller="soul.consolidation",
             user_payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
         )
         assert provider.runtime_running
         second = await provider.execute_task(
             caller="soul.consolidation",
             user_payload=VALID_PAYLOAD,
+            user_text=VALID_USER_TEXT,
         )
     finally:
         await provider.aclose()
@@ -74,6 +82,7 @@ async def test_local_prompt_mismatch_is_not_fallback_allowed() -> None:
             await provider.execute_task(
                 caller="soul.consolidation",
                 user_payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
                 system_prompt="tampered prompt",
             )
     finally:
@@ -90,6 +99,7 @@ async def test_unknown_caller_is_unsupported() -> None:
             await provider.execute_task(
                 caller="general.chat",
                 user_payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
             )
     finally:
         await provider.aclose()
@@ -105,7 +115,11 @@ async def test_oversized_payload_is_rejected_locally() -> None:
     }
     try:
         with pytest.raises(SponsoredRequestTooLargeError):
-            await provider.execute_task(caller="soul.consolidation", user_payload=payload)
+            await provider.execute_task(
+                caller="soul.consolidation",
+                user_payload=payload,
+                user_text="x" * 300_000,
+            )
     finally:
         await provider.aclose()
 
@@ -113,7 +127,9 @@ async def test_oversized_payload_is_rejected_locally() -> None:
 async def test_missing_runtime_is_unavailable() -> None:
     provider = SponsoredProvider(["/nonexistent/obc-sponsored-runtime"])
     with pytest.raises(SponsoredUnavailableError):
-        await provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD)
+        await provider.execute_task(
+            caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+        )
     await provider.aclose()
 
 
@@ -123,7 +139,9 @@ async def test_broken_runtime_handshake_is_unavailable() -> None:
         handshake_timeout=5.0,
     )
     with pytest.raises(SponsoredUnavailableError):
-        await provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD)
+        await provider.execute_task(
+            caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+        )
     await provider.aclose()
 
 
@@ -152,6 +170,7 @@ async def test_runtime_error_codes_map_to_typed_errors(
             await provider.execute_task(
                 caller="soul.consolidation",
                 user_payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
             )
     finally:
         await provider.aclose()
@@ -168,6 +187,7 @@ async def test_forced_contract_mismatch_is_not_fallback_allowed() -> None:
             await provider.execute_task(
                 caller="soul.consolidation",
                 user_payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
             )
     finally:
         await provider.aclose()
@@ -186,6 +206,7 @@ async def test_runtime_timeout_is_unavailable() -> None:
             await provider.execute_task(
                 caller="soul.consolidation",
                 user_payload=VALID_PAYLOAD,
+                user_text=VALID_USER_TEXT,
             )
     finally:
         await provider.aclose()
@@ -195,9 +216,15 @@ async def test_concurrent_requests_are_serialized_per_child() -> None:
     provider = SponsoredProvider(MOCK_RUNTIME_COMMAND, request_timeout=15.0)
     try:
         responses = await asyncio.gather(
-            provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD),
-            provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD),
-            provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD),
+            provider.execute_task(
+                caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+            ),
+            provider.execute_task(
+                caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+            ),
+            provider.execute_task(
+                caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+            ),
         )
     finally:
         await provider.aclose()
@@ -211,5 +238,7 @@ async def test_concurrent_requests_are_serialized_per_child() -> None:
 async def test_async_context_manager_closes_runtime() -> None:
     async with SponsoredProvider(MOCK_RUNTIME_COMMAND, request_timeout=15.0) as provider:
         assert provider.runtime_running
-        await provider.execute_task(caller="soul.consolidation", user_payload=VALID_PAYLOAD)
+        await provider.execute_task(
+            caller="soul.consolidation", user_payload=VALID_PAYLOAD, user_text=VALID_USER_TEXT
+        )
     assert provider.runtime_running is False

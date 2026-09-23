@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from openbiliclaw.llm.json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from openbiliclaw.llm.prompt_contracts import ensure_json_mode_contract
 from openbiliclaw.llm.sponsored_contracts import (
     SponsoredContractError,
@@ -15,6 +16,7 @@ from openbiliclaw.llm.sponsored_contracts import (
     build_unsigned_policy,
 )
 from openbiliclaw.llm.sponsored_tasks import (
+    CONSOLIDATION_MAX_OUTPUT_TOKENS,
     DEFAULT_SPONSORED_REGISTRY,
     SOUL_CONSOLIDATION_REQUEST_SCHEMA,
     build_soul_consolidation_system_prompt,
@@ -47,6 +49,10 @@ def test_pilot_contract_prompt_matches_golden_hash() -> None:
     assert contract is not None
     assert build_soul_consolidation_system_prompt() == contract.system_prompt
     assert contract.system_prompt_sha256 == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
+    # Sponsored intentionally reuses the legacy prompt bytes; the runtime only
+    # pins the hash. Removing <output_schema> would change the old flow.
+    assert "known_distinct_pairs" in contract.system_prompt
+    assert "<output_schema>" in contract.system_prompt
 
 
 def test_pilot_contract_resolves_from_caller() -> None:
@@ -57,9 +63,13 @@ def test_pilot_contract_resolves_from_caller() -> None:
     assert DEFAULT_SPONSORED_REGISTRY.resolve_caller("general.chat") is None
 
 
-def test_pilot_schema_is_closed_object() -> None:
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "object"
-    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["additionalProperties"] is False
+def test_pilot_schema_accepts_legacy_text_payload() -> None:
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "string"
+    assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["minLength"] == 1
+
+
+def test_pilot_output_budget_matches_legacy_flow() -> None:
+    assert CONSOLIDATION_MAX_OUTPUT_TOKENS == DEFAULT_STRUCTURED_MAX_TOKENS
 
 
 @pytest.mark.parametrize(
@@ -69,7 +79,8 @@ def test_pilot_schema_is_closed_object() -> None:
         ({"contract_version": 0}, "contract_version"),
         ({"caller": "Soul.Consolidation"}, "lowercase"),
         ({"system_prompt": "  Return JSON.  "}, "not canonical"),
-        ({"request_schema": {"type": "string"}}, "describe a JSON object"),
+        ({"request_schema": {"type": "array"}}, "object or string"),
+        ({"request_schema": {"type": "string", "minLength": 0}}, "require content"),
         (
             {
                 "request_schema": {
@@ -126,10 +137,11 @@ def test_unsigned_policy_is_deterministic_and_complete() -> None:
     task = policy["tasks"]["soul.consolidation.v1"]
     assert task["system_prompt_sha256"] == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
     assert task["message_topology"] == ["system", "user"]
-    assert task["model"] == "XingChenAGI/Xing4.0-29B"
+    assert task["model"] == "THUDM/GLM-4-9B-0414"
     assert task["response_format"] == "json_object"
     assert task["limits"] == {"daily_requests": 200, "daily_tokens": 500_000}
-    assert task["input_schema"]["additionalProperties"] is False
+    assert task["input_schema"]["type"] == "string"
+    assert task["input_schema"]["minLength"] == 1
 
     again = build_unsigned_policy(
         DEFAULT_SPONSORED_REGISTRY,

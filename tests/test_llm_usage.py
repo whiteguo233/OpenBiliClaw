@@ -50,6 +50,11 @@ def test_estimate_cost_ollama_is_free() -> None:
     assert estimate_cost("ollama", "llama3", 100000, 50000) == 0.0
 
 
+def test_estimate_cost_sponsored_is_free() -> None:
+    """Sponsored traffic is covered by the sponsor account (0 user cost)."""
+    assert estimate_cost("sponsored", "THUDM/GLM-4-9B-0414", 100000, 50000) == 0.0
+
+
 def test_estimate_cost_handles_negative_token_counts() -> None:
     """Defensive: negative token values clamp to 0 instead of producing
     negative cost."""

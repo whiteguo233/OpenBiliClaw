@@ -19,15 +19,28 @@ from __future__ import annotations
 
 from typing import Any
 
+from .json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_profile_consolidation_prompt
 from .sponsored_contracts import SponsoredContractRegistry, SponsoredTaskContract
 
-SPONSORED_MODEL = "XingChenAGI/Xing4.0-29B"
+# Free-only sponsorship constraint: the policy must use a model that costs
+# nothing on SiliconFlow. Measured against the unchanged legacy consolidation
+# prompt: DeepSeek-R1-0528-Qwen3-8B is the strongest free candidate when the
+# backend is available, but it currently returns 400 "Model does not exist"
+# for real consolidation payloads; Qwen/Qwen3-8B, GLM-Z1-9B-0414 and
+# Qwen2.5-7B-Instruct misattribute cluster members; Qwen3.5-4B returns 503;
+# Xing4.0-29B degenerates into repetition. GLM-4-9B-0414 is the only free model
+# that stays structurally usable, so it is the pilot default until the free
+# backend picture changes.
+SPONSORED_MODEL = "THUDM/GLM-4-9B-0414"
 SPONSORED_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 
 CONSOLIDATION_MAX_INPUT_BYTES = 256 * 1024
-CONSOLIDATION_MAX_OUTPUT_TOKENS = 4096
+# Keep the sponsored output budget identical to the legacy consolidation flow
+# (`DEFAULT_STRUCTURED_MAX_TOKENS`). If real runs show output truncation, raise
+# this shared value/policy; do not compensate with a different prompt.
+CONSOLIDATION_MAX_OUTPUT_TOKENS = DEFAULT_STRUCTURED_MAX_TOKENS
 # Per-install fairness budget derived from *normal user usage*, per the
 # product decision: total account capacity must never be used to tighten a
 # normal user's quota. Increase accounts/budget or degrade gracefully instead.
@@ -38,83 +51,22 @@ CONSOLIDATION_DAILY_REQUESTS = 200
 CONSOLIDATION_DAILY_TOKENS = 500_000
 
 
-def _pair_schema() -> dict[str, Any]:
-    return {
-        "type": "array",
-        "minItems": 2,
-        "maxItems": 2,
-        "items": {"type": "string", "maxLength": 256},
-    }
-
-
-def _known_distinct_pairs_schema() -> dict[str, Any]:
-    return {
-        "type": "array",
-        "maxItems": 500,
-        "items": _pair_schema(),
-    }
-
-
+# Sponsored v1 for this pilot sends the *legacy* tag-wrapped user message
+# unchanged. The runtime cannot re-derive that text without embedding prompt
+# logic in Rust, so the contract validates it as a size-bounded string while
+# still pinning the canonical system-prompt hash and task whitelist.
 SOUL_CONSOLIDATION_REQUEST_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "OpenBiliClaw sponsored request: soul.consolidation.v1",
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["likes_clusters", "dislikes_clusters"],
-    "properties": {
-        "likes_clusters": {
-            "type": "array",
-            "maxItems": 200,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["cluster_id", "members"],
-                "properties": {
-                    "cluster_id": {"type": "string", "maxLength": 128},
-                    "known_distinct_pairs": _known_distinct_pairs_schema(),
-                    "members": {
-                        "type": "array",
-                        "maxItems": 500,
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": ["name", "weight", "category"],
-                            "properties": {
-                                "name": {"type": "string", "maxLength": 512},
-                                "weight": {
-                                    "type": "number",
-                                    "minimum": -1_000_000,
-                                    "maximum": 1_000_000,
-                                },
-                                "category": {"type": "string", "maxLength": 128},
-                            },
-                        },
-                    },
-                },
-            },
-        },
-        "dislikes_clusters": {
-            "type": "array",
-            "maxItems": 200,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["cluster_id", "members"],
-                "properties": {
-                    "cluster_id": {"type": "string", "maxLength": 128},
-                    "known_distinct_pairs": _known_distinct_pairs_schema(),
-                    "members": {
-                        "type": "array",
-                        "maxItems": 500,
-                        "items": {"type": "string", "maxLength": 512},
-                    },
-                },
-            },
-        },
-    },
+    "title": "OpenBiliClaw sponsored request: soul.consolidation.v1 (legacy text)",
+    "type": "string",
+    "minLength": 1,
 }
 
 
+# The sponsored contract intentionally reuses the legacy consolidation system
+# prompt and the legacy tag-wrapped user message unchanged. The runtime pins
+# the system-prompt hash and size but does not rewrite the text; BYOK/Ollama
+# and Sponsored therefore send byte-identical prompts for this task.
 def build_soul_consolidation_system_prompt() -> str:
     """Return the exact canonical system prompt the provider must send.
 
