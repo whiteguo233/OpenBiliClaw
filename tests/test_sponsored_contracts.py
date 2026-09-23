@@ -23,7 +23,7 @@ from openbiliclaw.llm.sponsored_tasks import (
 # Golden contract hash. Updating it is the deliberate "you changed a shipped
 # prompt, now re-sign the policy" gate described in the design doc.
 SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256 = (
-    "sha256:4f1ca729a26ce89fa3e41e4f0160b6e2c98aa109cb7bb8c5e42bd1622d0ca4f5"
+    "sha256:4b2323061709d72fcbe745bbdea22f5b78caa4f6e6eb727fa4ddeb9718b3479a"
 )
 
 
@@ -47,6 +47,10 @@ def test_pilot_contract_prompt_matches_golden_hash() -> None:
     assert contract is not None
     assert build_soul_consolidation_system_prompt() == contract.system_prompt
     assert contract.system_prompt_sha256 == SOUL_CONSOLIDATION_SYSTEM_PROMPT_SHA256
+    # The JSON-native input/output contract is what keeps Xing4.0 from
+    # echoing the output-schema examples; removal must fail this golden gate.
+    assert "known_distinct_pairs" in contract.system_prompt
+    assert "不要用 likes_clusters" in contract.system_prompt
 
 
 def test_pilot_contract_resolves_from_caller() -> None:

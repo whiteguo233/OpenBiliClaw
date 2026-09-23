@@ -92,6 +92,10 @@ _NO_MERGE_PAIRS_CAP = 16000
 # and every cluster gets rejected); batches keep each response small
 # and a single failed batch only loses its own clusters.
 _JUDGE_CLUSTER_BATCH = 32
+# Sponsored Xing4.0-29B degenerates into repetition loops on the wide batch
+# (verified against the real API); the JSON-native sponsored prompt stays
+# stable at 8 clusters per call.
+_SPONSORED_JUDGE_CLUSTER_BATCH = 8
 # Anti-generalization guard for canonical names. Bare umbrella words
 # would turn a specific avoid-pattern into a broad content ban.
 _BANNED_GENERIC_CANONICALS = frozenset(
@@ -537,7 +541,7 @@ class ProfileConsolidator:
         ]
         report.clusters_sent = len(clusters)
         if clusters and self._llm_service is not None:
-            report.llm_batches = _batch_count(len(clusters), _JUDGE_CLUSTER_BATCH)
+            report.llm_batches = _batch_count(len(clusters), self._judge_batch_size())
 
         # ── Stage 2: LLM judgement ─────────────────────────────────────────
         valid_ops: list[dict[str, object]] = []
@@ -1045,6 +1049,14 @@ class ProfileConsolidator:
 
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
+    def _judge_batch_size(self) -> int:
+        """Clusters per judge call; Sponsored runs use a smaller batch."""
+
+        uses_sponsored = getattr(self._llm_service, "uses_sponsored_for", None)
+        if callable(uses_sponsored) and uses_sponsored("soul.consolidation"):
+            return _SPONSORED_JUDGE_CLUSTER_BATCH
+        return _JUDGE_CLUSTER_BATCH
+
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.
 
@@ -1055,9 +1067,9 @@ class ProfileConsolidator:
         if self._llm_service is None:
             return {}
         ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
+        batch_size = self._judge_batch_size()
         batches = [
-            clusters[i : i + _JUDGE_CLUSTER_BATCH]
-            for i in range(0, len(clusters), _JUDGE_CLUSTER_BATCH)
+            clusters[i : i + batch_size] for i in range(0, len(clusters), batch_size)
         ]
         last_error: Exception | None = None
         succeeded = 0

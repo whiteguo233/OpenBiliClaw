@@ -377,15 +377,30 @@ class SponsoredProvider:
         return env
 
 
+_USAGE_KEY_ALIASES = {
+    "input_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+}
+
+
 def _coerce_usage(raw: Any) -> dict[str, int] | None:
+    """Normalize runtime usage keys to the project's provider convention."""
+
     if not isinstance(raw, Mapping):
         return None
     usage: dict[str, int] = {}
     for key, value in raw.items():
+        normalized_key = _USAGE_KEY_ALIASES.get(str(key), str(key))
         try:
-            usage[str(key)] = int(value)
+            usage[normalized_key] = int(value)
         except (TypeError, ValueError):
             continue
+    if (
+        "prompt_tokens" in usage
+        and "completion_tokens" in usage
+        and "total_tokens" not in usage
+    ):
+        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
     return usage or None
 
 

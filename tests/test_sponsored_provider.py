@@ -44,7 +44,11 @@ async def test_execute_task_success() -> None:
     assert isinstance(response, LLMResponse)
     assert response.provider == "sponsored"
     assert response.model == "XingChenAGI/Xing4.0-29B"
-    assert response.usage == {"input_tokens": 100, "output_tokens": 20}
+    assert response.usage == {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }
     assert json.loads(response.content) == {"likes": [], "dislikes": []}
 
 

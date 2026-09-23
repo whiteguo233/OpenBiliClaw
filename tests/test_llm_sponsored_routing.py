@@ -203,3 +203,42 @@ async def test_helper_keeps_legacy_doubles_working() -> None:
             "inject_core_memory": False,
         }
     ]
+
+
+async def test_sponsored_success_records_usage_for_cost_ledger() -> None:
+    class FakeRecorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[LLMResponse, str]] = []
+
+        def record(self, response: LLMResponse, *, caller: str = "") -> None:
+            self.calls.append((response, caller))
+
+    registry = FakeRegistry(LLMResponse(content="legacy", provider="openai"))
+    recorder = FakeRecorder()
+    provider = SponsoredProvider(MOCK_RUNTIME_COMMAND, request_timeout=15.0)
+    service = LLMService(
+        registry=registry,  # type: ignore[arg-type]
+        memory=FakeMemory(),  # type: ignore[arg-type]
+        sponsored_provider=provider,
+        usage_recorder=recorder,
+    )
+    try:
+        response = await service.execute_sponsored_task(
+            caller="soul.consolidation",
+            payload=VALID_PAYLOAD,
+            fallback_system_instruction="legacy system",
+            fallback_user_input="legacy user",
+        )
+    finally:
+        await service.aclose()
+
+    assert response.provider == "sponsored"
+    assert recorder.calls
+    recorded_response, recorded_caller = recorder.calls[0]
+    assert recorded_caller == "soul.consolidation"
+    assert recorded_response.model == "XingChenAGI/Xing4.0-29B"
+    assert recorded_response.usage == {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+    }

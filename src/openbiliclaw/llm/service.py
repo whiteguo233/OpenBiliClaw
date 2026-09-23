@@ -637,6 +637,30 @@ class LLMService:
             self.sponsored_provider = provider
         return provider
 
+    def uses_sponsored_for(self, caller: str) -> bool:
+        """Whether ``caller`` has a signed contract and an available runtime.
+
+        Used by task pipelines that need a smaller batch (and thus smaller
+        prompts) when the Sponsored model is the executor.
+        """
+
+        from .sponsored_tasks import DEFAULT_SPONSORED_REGISTRY
+
+        if DEFAULT_SPONSORED_REGISTRY.resolve_caller(caller) is None:
+            return False
+        return self._resolve_sponsored_provider() is not None
+
+    def _record_usage(self, response: LLMResponse, *, caller: str) -> None:
+        """Best-effort usage ledger write for paths that bypass complete()."""
+
+        recorder = self.usage_recorder
+        if recorder is None:
+            return
+        record_fn = getattr(recorder, "record", None)
+        if callable(record_fn):
+            with suppress(Exception):
+                record_fn(response, caller=caller)
+
     async def execute_sponsored_task(
         self,
         *,
@@ -665,7 +689,7 @@ class LLMService:
         provider = self._resolve_sponsored_provider()
         if contract is not None and provider is not None:
             try:
-                return await provider.execute_task(
+                response = await provider.execute_task(
                     caller=caller,
                     contract_version=contract_version,
                     user_payload=payload,
@@ -694,6 +718,9 @@ class LLMService:
                     source="sponsored",
                     severity="warning",
                 )
+            else:
+                self._record_usage(response, caller=caller)
+                return response
 
         return await self.complete_structured_task(
             system_instruction=fallback_system_instruction,
