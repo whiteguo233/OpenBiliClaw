@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_profile_consolidation_prompt
 from .sponsored_contracts import SponsoredContractRegistry, SponsoredTaskContract
@@ -32,11 +33,10 @@ SPONSORED_MODEL = "deepseek-ai/DeepSeek-V3.2"
 SPONSORED_ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 
 CONSOLIDATION_MAX_INPUT_BYTES = 256 * 1024
-# Match the legacy consolidation budget (`DEFAULT_STRUCTURED_MAX_TOKENS`).
-# 4096 was too small for Xing4.0's thinking: the model spent the whole budget
-# on reasoning and returned empty content, which the runtime maps to
-# UPSTREAM_ERROR.
-CONSOLIDATION_MAX_OUTPUT_TOKENS = 16384
+# Keep the sponsored output budget identical to the legacy consolidation flow
+# (`DEFAULT_STRUCTURED_MAX_TOKENS`). If real runs show output truncation, raise
+# this shared value/policy; do not compensate with a different prompt.
+CONSOLIDATION_MAX_OUTPUT_TOKENS = DEFAULT_STRUCTURED_MAX_TOKENS
 # Per-install fairness budget derived from *normal user usage*, per the
 # product decision: total account capacity must never be used to tighten a
 # normal user's quota. Increase accounts/budget or degrade gracefully instead.

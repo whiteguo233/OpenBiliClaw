@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from openbiliclaw.llm.json_utils import DEFAULT_STRUCTURED_MAX_TOKENS
 from openbiliclaw.llm.prompt_contracts import ensure_json_mode_contract
 from openbiliclaw.llm.sponsored_contracts import (
     SponsoredContractError,
@@ -15,6 +16,7 @@ from openbiliclaw.llm.sponsored_contracts import (
     build_unsigned_policy,
 )
 from openbiliclaw.llm.sponsored_tasks import (
+    CONSOLIDATION_MAX_OUTPUT_TOKENS,
     DEFAULT_SPONSORED_REGISTRY,
     SOUL_CONSOLIDATION_REQUEST_SCHEMA,
     build_soul_consolidation_system_prompt,
@@ -64,6 +66,10 @@ def test_pilot_contract_resolves_from_caller() -> None:
 def test_pilot_schema_accepts_legacy_text_payload() -> None:
     assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["type"] == "string"
     assert SOUL_CONSOLIDATION_REQUEST_SCHEMA["minLength"] == 1
+
+
+def test_pilot_output_budget_matches_legacy_flow() -> None:
+    assert CONSOLIDATION_MAX_OUTPUT_TOKENS == DEFAULT_STRUCTURED_MAX_TOKENS
 
 
 @pytest.mark.parametrize(
