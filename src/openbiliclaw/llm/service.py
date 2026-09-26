@@ -20,6 +20,7 @@ from .concurrency import (
     PrioritySemaphore,
     coerce_total_concurrency,
 )
+from .prompt_contracts import ensure_json_mode_contract
 from .prompts import build_socratic_dialogue_prompt
 
 logger = logging.getLogger(__name__)
@@ -475,25 +476,6 @@ class LLMService:
             return None
         return None
 
-    @staticmethod
-    def _structured_json_contract(system_instruction: str) -> str:
-        """Ensure JSON-mode instructions carry a lowercase ``json`` token.
-
-        Some OpenAI-compatible endpoints reject ``response_format=json_object``
-        unless a message contains the literal lowercase token. Preserve an
-        existing instruction's meaning by normalizing its uppercase ``JSON``
-        spelling first; only append the minimal contract token when no such
-        spelling exists.
-        """
-
-        instruction = system_instruction.strip()
-        if "json" in instruction:
-            return instruction
-        normalized = instruction.replace("JSON", "json")
-        if "json" in normalized:
-            return normalized
-        return f"{normalized}\n\njson" if normalized else "json"
-
     def _core_memory_blocks(self, inject_core_memory: bool) -> tuple[str, str]:
         """Return ``(stable_block, volatile_block)`` for core-memory injection.
 
@@ -662,7 +644,7 @@ class LLMService:
         callers asking for more than the floor keep their budget.
         """
         return await self.complete_with_core_memory(
-            system_instruction=self._structured_json_contract(system_instruction),
+            system_instruction=ensure_json_mode_contract(system_instruction),
             user_input=user_input,
             history=history,
             temperature=temperature,
@@ -751,7 +733,7 @@ class LLMService:
         # the text path; see MIN_STRUCTURED_MAX_TOKENS.
         max_tokens = max(int(max_tokens), MIN_STRUCTURED_MAX_TOKENS)
         stable_block, volatile_block = self._core_memory_blocks(inject_core_memory)
-        parts = [self._structured_json_contract(system_instruction)]
+        parts = [ensure_json_mode_contract(system_instruction)]
         if stable_block:
             parts.append("以下是当前用户的 core memory，请作为理解背景：")
             parts.append(stable_block)
