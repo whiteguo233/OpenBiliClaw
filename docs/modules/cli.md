@@ -349,7 +349,7 @@ $ openbiliclaw start --host 0.0.0.0 --port 9000
 
 适合本地直接运行或调试场景。若只希望本机访问，把 `[api].host` 改为 `127.0.0.1`，或启动时传 `--host 127.0.0.1`。
 
-默认使用四进程后台模式：主 API 之外会拉起 `full worker`、`discovery worker`、独立推荐进程和独立图片代理。需要回退到旧的单 API 进程模式时，设置 `OPENBILICLAW_WORKER=0`（`false` / `no` / `off` 也可）。
+默认使用四进程后台模式：主 API 之外会拉起 `full worker`、`discovery worker`、独立推荐进程和独立图片代理。需要回退到旧的单 API 进程模式时，设置 `OPENBILICLAW_WORKER=0`（`false` / `no` / `off` 也可）。退出时（含 SIGINT 与 SIGTERM，如 `docker stop` / `pkill` / launchd / systemd）主进程都会 terminate 并回收这四个子进程，不会留下孤儿。
 
 四个子进程的 stdout/stderr 会显式重定向落盘到 `logs/child-{worker,discovery-worker,recommendation,image-service}.log`（append）。这是 Windows 桌面包（`pythonw.exe`，无控制台）的必需行为：不显式传标准流时子进程拿不到任何句柄，一写输出就静默退出。`child-*.log` 按 unmanaged 日志策略清理（单文件超 200MB 截断、超 30 天删除、logs/ 总预算 500MB，见 `logs-prune`）。
 
