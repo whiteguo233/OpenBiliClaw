@@ -10,9 +10,11 @@ import inspect
 import json
 import os
 import re
+import signal
 import sys
 import threading
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1141,6 +1143,38 @@ def _worker_mode_requested() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def _raise_systemexit_on_signal(signum: int, frame: Any) -> None:
+    """信号处理器:把信号转成 ``SystemExit(128 + signum)``,让 finally 能执行。"""
+    raise SystemExit(128 + signum)
+
+
+def _install_sigterm_cleanup_hook() -> Callable[[], None]:
+    """安装 SIGTERM → SystemExit 钩子,返回恢复原处理器的回调。
+
+    uvicorn(``Server.capture_signals``)优雅退出时会恢复它启动时保存的
+    "原始"信号处理器,然后 ``signal.raise_signal`` 重发捕获的信号:
+    SIGINT 重发后变成 KeyboardInterrupt 异常,能穿过 ``_run_api_server``
+    的 finally;SIGTERM 重发后落到 SIG_DFL 默认处置,进程被直接杀死,
+    finally 里的子进程 terminate 逻辑被跳过,4 个后台子进程变成
+    PPID=1 的孤儿(docker stop / pkill / launchd / systemd 都是 SIGTERM)。
+    在 uvicorn 启动前把 SIGTERM 处理器换成抛 ``SystemExit(143)`` 的钩子,
+    uvicorn 保存/恢复的"原始处理器"就是这个钩子,重发时异常穿过
+    finally,子进程得以清理。SIGINT 现有行为已正确,不动。
+
+    仅在主线程安装(``signal.signal`` 只允许主线程调用);非主线程返回
+    no-op 回调。
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    previous = signal.signal(signal.SIGTERM, _raise_systemexit_on_signal)
+
+    def _restore() -> None:
+        signal.signal(signal.SIGTERM, previous)
+
+    return _restore
+
+
 def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     """Run the local FastAPI service used by the browser extension."""
     import uvicorn
@@ -1188,6 +1222,9 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     discovery_worker_process: Any | None = None
     recommendation_process: Any | None = None
     image_service_process: Any | None = None
+    # 必须在 uvicorn 启动前装上,uvicorn 保存/恢复的"原始处理器"才是钩子;
+    # 两条 uvicorn 启动路径(uvicorn.run / server.run)都被外层 finally 覆盖。
+    restore_sigterm_handler = _install_sigterm_cleanup_hook()
     try:
         if worker_requested:
             import subprocess
@@ -1296,6 +1333,10 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         finally:
             close_listener_sockets(listeners)
     finally:
+        # 先恢复原 SIGTERM 处理器再清理:清理最长 ~20s,期间再次收到
+        # SIGTERM 应走默认处置立即退出,而不是在 finally 里再抛异常
+        # 打断剩余子进程的 terminate。
+        restore_sigterm_handler()
         if recommendation_process is not None:
             recommendation_process.terminate()
             try:

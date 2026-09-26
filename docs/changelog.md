@@ -2,6 +2,11 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 修复：SIGTERM 退出留下四个孤儿子进程（2026-09-27，fix/sigterm-child-orphans）
+
+- **SIGTERM 下 finally 不执行（严重）**：`openbiliclaw start` / `serve-api` 的 `_run_api_server` 在 finally 里 terminate 四个后台子进程（worker / discovery_worker / recommendation_server / image_service），但实测 SIGTERM（`docker stop` / `pkill` / launchd / systemd）下 finally 从未执行，子进程变成 PPID=1 的孤儿继续占用端口。根因是 uvicorn `Server.capture_signals`：退出时恢复"原始"信号处理器并 `raise_signal` 重发捕获信号——SIGINT 重发后变成 KeyboardInterrupt 能穿过 finally，SIGTERM 重发后落到 SIG_DFL 进程立即死亡。现 `_run_api_server` 在 uvicorn 启动前安装 `_install_sigterm_cleanup_hook()`（SIGTERM 处理器抛 `SystemExit(143)`），uvicorn 保存/恢复的"原始处理器"即该钩子，重发时异常穿过 finally 完成子进程清理并以约定退出码 143 退出；外层 finally 先恢复原处理器再做清理（清理期间再次 SIGTERM 走默认处置立即退出），两条 uvicorn 启动路径（`uvicorn.run` / `server.run`）均覆盖；仅主线程安装，非主线程为 no-op。SIGINT 行为不变。回归：`tests/test_cli_sigterm.py` 4 条（钩子退出码、安装/恢复、非主线程 no-op、subprocess 模拟 uvicorn restore+raise_signal 全链路断言退出码 143 且清理标记写出）。
+- **文档同步**：`docs/modules/cli.md`（start 进程段落补 SIGTERM 清理说明）。
+
 ## 修复：移动端聊一聊 SSE 僵尸流假死（2026-09-25，fix/mobile-stream-watchdog）
 
 - **服务端 SSE 心跳**：`/api/chat/agent/stream` 与旧 `/api/chat/stream` 的事件流统一经 `_sse_heartbeat_wrap` 包装——相邻事件静默超过 10 秒（`_SSE_HEARTBEAT_INTERVAL_SECONDS`，含首字节前的 LLM 首跳）即发一行 SSE 注释 `: ping`。此前事件间完全静默，代理缓冲 / NAT idle / 网络切换把连接掐死不报错时客户端永久挂起。心跳推进用 shielded task 包住内部迭代，超时不会取消在飞的 LLM 调用；三端 SSE 解析器本就跳过注释行。回归：`test_chat_agent_stream_api.py::test_agent_stream_emits_heartbeat_during_silent_gap`（慢 LLM 静默期断言收到 ping 且事件完好）。
