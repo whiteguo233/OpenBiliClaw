@@ -345,6 +345,28 @@ def migration_recovery_data_dir(*, project_root: Path | None = None) -> Path | N
     return None
 
 
+def _windows_runtime_lock(handle: BinaryIO, msvcrt_module: Any) -> bool:
+    """Apply the Windows one-byte ``msvcrt.locking`` runtime lock.
+
+    锁已被别的实例持有时,Windows 在上锁前的 ``read`` 这一步就会直接抛
+    ``PermissionError``——所以整个 seek/read/write/lock 序列都按失败即
+    关闭句柄并返回 False 处理,让调用方走「已有实例在运行」的优雅分支
+    而不是带回溯崩溃。返回 False 时 ``handle`` 已被关闭。
+    """
+    try:
+        handle.seek(0)
+        if handle.read(1) == b"":
+            handle.seek(0)
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
+        return False
+    return True
+
+
 def _try_acquire_runtime_lock(path: Path) -> BinaryIO | None:
     """Acquire one non-blocking OS file lock, returning its live handle."""
     try:
@@ -399,17 +421,7 @@ def _try_acquire_runtime_lock(path: Path) -> BinaryIO | None:
         if os.name == "nt":
             import msvcrt
 
-            msvcrt_module = cast("Any", msvcrt)
-            handle.seek(0)
-            if handle.read(1) == b"":
-                handle.seek(0)
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
-            try:
-                msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_NBLCK, 1)
-            except OSError:
-                handle.close()
+            if not _windows_runtime_lock(handle, cast("Any", msvcrt)):
                 return None
         else:
             import fcntl

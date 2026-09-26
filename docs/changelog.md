@@ -2,6 +2,12 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 修复：Windows pythonw 下子进程标准流缺失导致推荐页 502（2026-09-26，fix/pythonw-child-stdio）
+
+- **子进程 stdout/stderr 显式落盘（严重）**：Windows 桌面包用 `pythonw.exe`（无控制台）跑 `cli start`，`_run_api_server` 此前用 `subprocess.Popen([sys.executable, "-m", ...])` 拉起 4 个后台子进程但不传 stdout/stderr；Windows 上 Python 默认 `close_fds=True`，子 `pythonw` 的 `sys.stdout`/`sys.stderr` 为 `None`，`recommendation_server` 与 `image_service` 一写标准流就抛异常静默退出（stderr 同为 None，连堆栈都留不下），推荐页因此 502 空白。现统一走新辅助函数 `cli._spawn_background_child(name, module, env)`，把每个子进程的 stdout/stderr 重定向到 `logs/child-<name>.log`（append，utf-8）；这些文件落在 `logging_setup` 既有 unmanaged 清理策略内（超 200MB 截断、超 30 天删除、总预算 500MB）。回归：`tests/test_cli_child_stdio.py` 3 条（重定向参数与日志路径、命名、Popen 失败时句柄不泄漏）。
+- **迁移运行时锁 Windows 分支 PermissionError**：`storage/migration.py` `_try_acquire_runtime_lock` 的 `os.name == "nt"` 分支此前在 `msvcrt.locking` 上锁前先 `handle.read(1)`，锁已被别的实例持有时 Windows 在 read 这一步直接抛 PermissionError，第二个实例以回溯崩溃退出而不是走「检测到已有实例在运行」的优雅分支。现把 seek/read/write/lock 整段抽为 `_windows_runtime_lock`，任一步 OSError 都关闭句柄并返回 None。回归：同文件 3 条（成功上锁、read 抛 PermissionError、locking 失败）。
+- **文档同步**：`docs/modules/cli.md`（子进程控制台输出落盘 `logs/child-*.log` 及清理策略）。
+
 ## 修复：移动端聊一聊 SSE 僵尸流假死（2026-09-25，fix/mobile-stream-watchdog）
 
 - **服务端 SSE 心跳**：`/api/chat/agent/stream` 与旧 `/api/chat/stream` 的事件流统一经 `_sse_heartbeat_wrap` 包装——相邻事件静默超过 10 秒（`_SSE_HEARTBEAT_INTERVAL_SECONDS`，含首字节前的 LLM 首跳）即发一行 SSE 注释 `: ping`。此前事件间完全静默，代理缓冲 / NAT idle / 网络切换把连接掐死不报错时客户端永久挂起。心跳推进用 shielded task 包住内部迭代，超时不会取消在飞的 LLM 调用；三端 SSE 解析器本就跳过注释行。回归：`test_chat_agent_stream_api.py::test_agent_stream_emits_heartbeat_during_silent_gap`（慢 LLM 静默期断言收到 ping 且事件完好）。
