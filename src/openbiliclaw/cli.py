@@ -10,6 +10,7 @@ import inspect
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import uuid
@@ -1141,6 +1142,39 @@ def _worker_mode_requested() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def _spawn_background_child(name: str, module: str, env: dict[str, str]) -> subprocess.Popen[bytes]:
+    """拉起一个后台子进程,并把它的 stdout/stderr 落盘到 logs/child-<name>.log。
+
+    Windows 桌面包用 ``pythonw.exe``(无控制台)跑 ``cli start``:Windows 上
+    Python 默认 ``close_fds=True``,不显式传 stdout/stderr 时子进程拿不到
+    任何标准句柄,子 ``pythonw`` 的 ``sys.stdout`` / ``sys.stderr`` 为
+    ``None``——recommendation_server / image_service 一写标准流就抛异常
+    静默退出(stderr 也是 None,连堆栈都留不下)。所以这里必须显式把两个
+    标准流重定向到日志文件。
+
+    Popen 返回时句柄已经 fork/CreateProcess 传给子进程,父进程保留自己的
+    副本到进程退出由 OS 回收,不做额外生命周期管理。``child-*.log`` 属于
+    logging_setup 的 unmanaged 清理策略(超 200MB 截断、超 30 天删除、
+    logs/ 总预算 500MB),无需单独轮转。
+    """
+    from openbiliclaw.config import load_config
+
+    log_dir = load_config().logging.directory_path
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"child-{name}.log", "a", encoding="utf-8")  # noqa: SIM115 - 句柄须交给子进程,进程生命周期内保持打开
+    try:
+        return subprocess.Popen(
+            [sys.executable, "-m", module],
+            cwd=os.getcwd(),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    except Exception:
+        log_file.close()
+        raise
+
+
 def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     """Run the local FastAPI service used by the browser extension."""
     import uvicorn
@@ -1190,40 +1224,24 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
     image_service_process: Any | None = None
     try:
         if worker_requested:
-            import subprocess
-
             worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}
-            worker_process = subprocess.Popen(
-                [sys.executable, "-m", "openbiliclaw.worker"],
-                cwd=os.getcwd(),
-                env=worker_env,
-            )
+            worker_process = _spawn_background_child("worker", "openbiliclaw.worker", worker_env)
             _print_status_panel(
                 "info",
                 "Worker 进程",
                 f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
             )
 
-
-
             # Dedicated discovery runtime worker: runs the same
             # ContinuousRefreshController as the API used to, but in a separate
             # process so HTTP endpoints never compete with discovery/eval.
-            import subprocess as _subprocess
-
             discovery_env = {
                 **os.environ,
                 "OPENBILICLAW_DISCOVERY_WORKER": "1",
                 "OPENBILICLAW_FULL_WORKER": "1",
             }
-            discovery_worker_process = _subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "openbiliclaw.discovery_worker",
-                ],
-                cwd=os.getcwd(),
-                env=discovery_env,
+            discovery_worker_process = _spawn_background_child(
+                "discovery-worker", "openbiliclaw.discovery_worker", discovery_env
             )
             _print_status_panel(
                 "info",
@@ -1231,25 +1249,16 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
                 f"已启动独立 discovery worker pid={discovery_worker_process.pid}",
             )
 
-
             # Dedicated recommendation API process on a Unix socket. The main
             # API proxies /api/recommendations/* here so full recommendation
             # ranking runs on its own process/CPU without extra TCP ports.
-            import subprocess as _subprocess
-
             recommendation_env = {
                 **os.environ,
                 "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
                 "OPENBILICLAW_FULL_WORKER": "1",
             }
-            recommendation_process = _subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "openbiliclaw.recommendation_server",
-                ],
-                cwd=os.getcwd(),
-                env=recommendation_env,
+            recommendation_process = _spawn_background_child(
+                "recommendation", "openbiliclaw.recommendation_server", recommendation_env
             )
             _print_status_panel(
                 "info",
@@ -1260,16 +1269,8 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
         # Dedicated image proxy process: image fetching/compression lives here,
         # so it cannot squeeze recommendation serving / reshuffle / chat APIs.
-        import subprocess
-
-        image_service_process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "openbiliclaw.image_service",
-            ],
-            cwd=os.getcwd(),
-            env={**os.environ},
+        image_service_process = _spawn_background_child(
+            "image-service", "openbiliclaw.image_service", {**os.environ}
         )
         _print_status_panel(
             "info",
