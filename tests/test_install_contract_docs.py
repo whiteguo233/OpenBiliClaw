@@ -73,32 +73,38 @@ def test_one_line_installers_default_to_lan_accessible_backend() -> None:
 
 def test_docs_make_auto_init_primary_for_all_install_channels() -> None:
     readme = _read("README.md")
+    installation_doc = _read("docs/installation.md")
     docker_doc = _read("docs/docker-deployment.md")
     agent_doc = _read("docs/agent-install.md")
 
-    assert "自动运行 init" in readme
+    assert "](docs/installation.md)" in readme
+    assert "自动运行 init" in installation_doc
     assert "agent_bootstrap.py --mode docker" in docker_doc
     assert "init_complete" in agent_doc
     assert "手动 fallback" in docker_doc
 
 
-def test_readmes_explain_macos_first_launch_security_bypass() -> None:
+def test_readmes_link_to_installation_guides_with_macos_first_launch_help() -> None:
     readme = _read("README.md")
     readme_en = _read("README_EN.md")
+    installation_doc = _read("docs/installation.md")
+    installation_doc_en = _read("docs/installation.en.md")
 
-    assert "macOS 安全阻挡" in readme
-    assert "Control-click" in readme
-    assert "隐私与安全性" in readme
-    assert "已损坏" in readme
-    assert "xattr -dr com.apple.quarantine" in readme
-    assert "codesign --force" not in readme
+    assert "](docs/installation.md#desktop)" in readme
+    assert "macOS 安全阻挡" in installation_doc
+    assert "Control-click" in installation_doc
+    assert "隐私与安全性" in installation_doc
+    assert "已损坏" in installation_doc
+    assert "xattr -dr com.apple.quarantine" in installation_doc
+    assert "codesign --force" not in installation_doc
 
-    assert "macOS security blocking" in readme_en
-    assert "Control-click" in readme_en
-    assert "Privacy & Security" in readme_en
-    assert "is damaged and can't be opened" in readme_en
-    assert "xattr -dr com.apple.quarantine" in readme_en
-    assert "codesign --force" not in readme_en
+    assert "](docs/installation.en.md#desktop)" in readme_en
+    assert "macOS security blocking" in installation_doc_en
+    assert "Control-click" in installation_doc_en
+    assert "Privacy & Security" in installation_doc_en
+    assert "is damaged and can't be opened" in installation_doc_en
+    assert "xattr -dr com.apple.quarantine" in installation_doc_en
+    assert "codesign --force" not in installation_doc_en
 
 
 def test_docker_docs_promote_human_one_line_installer_contract() -> None:

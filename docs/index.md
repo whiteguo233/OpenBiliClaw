@@ -4,18 +4,27 @@
 
 ## 👤 我是用户
 
-- [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
-- [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 把 OpenBiliClaw 装进 DeepSeek Harness：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置）+ 22 个 Agent Bridge 工具，Agent 也能读推荐、答探测、闭环学习
-- [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App（Android / iOS / Web / 桌面），[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
-- [常见问题 FAQ](faq.md) — macOS 安全阻挡、插件连不上后端、embedding 配置、跨机器迁移、手机访问等高频问题
+从这里开始：
+
+- [项目主页](index.html) — 先看推荐结果、推荐理由和反馈体验，再选择安装方式
+- [安装指南](installation.md) / [English](installation.en.md) — 安装桌面后端与浏览器插件，配置模型和内容来源，完成第一次初始化
+- [常见问题 FAQ](faq.md) — 安装阻挡、后端连接、embedding、手机访问与数据迁移
+- [隐私权政策](privacy.md) — 哪些数据保存在本机，何时会发送给你选择的模型服务商
+
+### 下载与更新
+
 - [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — Latest Release 的 `openbiliclaw-v*` 聚合页，下载浏览器插件 zip / Safari dmg 和桌面安装包；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
-- [国内下载（123 云盘）](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) — 当前 v0.3.221 的 7 个包，分享永久有效并可直接打开下载；[Gitee v0.3.221 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.221) 提供国内镜像附件与源码入口
-- [隐私权政策](privacy.md) — 插件数据收集披露、本地优先数据流与明文迁移包说明
+- [国内下载（123 云盘，v0.3.221 镜像）](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) — 该分享提供 v0.3.221 的 7 个安装包；[Gitee v0.3.221 发行版](https://gitee.com/whiteguo233/openbiliclaw/releases/tag/openbiliclaw-v0.3.221) 提供同版本镜像附件与源码。镜像不代表当前最新版，下载前请与 GitHub Releases 核对版本
 - [变更日志](changelog.md) — 各版本交付记录
-- [Docker 部署指南](docker-deployment.md) — 手动 Docker / docker compose 部署步骤
-- [Safari Web Extension 构建](safari-extension-build.md) — macOS 上 `build:safari` / `package:safari`、`safari-web-extension-converter` 转 Xcode 工程、Developer ID 签名 + notarization、`extension-v*` 发版链与限制矩阵
+
+### 客户端与其他安装方式
+
+- [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 在 DeepSeek Harness 中查看推荐、内容库、对话、画像和设置，连接同一个 OpenBiliClaw 后端
+- [Flutter 移动客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile) — 独立仓库的原生 App；[Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 提供 Android 签名 APK 与 iOS 自签名 IPA，连接同一本地后端
+- [Docker 部署指南](docker-deployment.md) — 预构建镜像与源码构建的部署步骤
+- [Safari Web Extension 构建](safari-extension-build.md) — macOS 构建、签名、分发与限制说明
+- [应用内 Tailnet](modules/tailnet.md) — 让 Android / iOS 原生 App 从外网连接电脑后端；不覆盖 Flutter Web / 桌面构建
 - [可选 HTTPS 部署](https-deployment.md) — 公网域名 Caddy 自动证书，以及可信 LAN 的 TLS profile / 本地 CA 流程
-- [应用内 Tailnet](modules/tailnet.md) — 电脑端内嵌 tsnet helper，与 `OpenBiliClaw-mobile` Android / iOS 原生 App 组成私网远程链路；不覆盖其 Web / 桌面 Flutter 构建，无需系统 Tailscale
 - [OpenClaw 接入最短指南](openclaw-quickstart.md) — 把 OpenBiliClaw 接进 OpenClaw / AI 编码助手
 - [Agent Bridge 能力契约](agent-integration.md) — `agent-bridge/v2` 能力协商、宿主别名与新功能同步清单
 
@@ -34,11 +43,12 @@
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [手动端到端联调](manual-e2e.md) — CLI、插件与 SQLite 的真实联调步骤
-- [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体读取的短部署契约,配合 README 的短粘贴语句
+- [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体读取的短部署契约,配合安装指南中的 AI 部署粘贴语句
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
 - [后端自动更新 SPEC](specs/auto-update.md) — 后端源码自动应用、默认关闭的更新开关、git 安全边界与插件商店原生更新边界
 - [Chrome Web Store 商店页文案](chrome-webstore-listing.md) — 可直接复制到商店后台的项目入口、安装使用说明和隐私引导
-- [主页 SEO 维护指南](seo.md) — Search Console / Bing 提交清单、sitemap / OG / JSON-LD 长期维护要点
+- [主页与 SEO 维护指南](seo.md) — 首页信息层级、中英同步、Search Console / Bing 提交与 sitemap / OG / JSON-LD 维护
+- [产品演示素材指南](media-guide.md) — 现有截图与 GIF 清单、真实录屏分镜、隐私检查和交付规格
 
 ## 可视化架构图
 

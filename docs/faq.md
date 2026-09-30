@@ -25,7 +25,7 @@ xattr -dr com.apple.quarantine "$APP"
 
 ### Firefox 安装 `-firefox.zip` 提示「未通过验证 / could not be verified」？
 
-`-firefox.zip` 是未签名开发包，只用于 `about:debugging` 临时加载。普通 Firefox 用户请优先安装 release 里的已签名 `openbiliclaw-extension-v*-firefox.xpi`（若该版本提供）；临时加载方式见 README 的 Firefox 折叠说明。
+`-firefox.zip` 是未签名开发包，只用于 `about:debugging` 临时加载。普通 Firefox 用户请优先安装 release 里的已签名 `openbiliclaw-extension-v*-firefox.xpi`（若该版本提供）；临时加载方式见[安装指南的 Firefox 说明](installation.md#firefox)。
 
 ### Chrome 应用商店的版本比 GitHub Releases 旧？
 
@@ -55,11 +55,17 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
 ### 初始化需要哪些前置条件？
 
-三样：① 至少一个已登录且能拉到信号的内容平台（B 站默认勾选，可换成小红书 / 抖音 / YouTube / X / 知乎 / Reddit）；② 一个可用的 LLM provider（自己的 API Key）；③ embedding 服务（桌面包内置，其他安装方式可用 Ollama）。引导初始化会先真实验证 LLM 和 embedding 再开跑，不会硬跑出空画像。
+需要三项：
+
+1. 至少一个能读取到你的兴趣信号的内容来源。按所选来源完成登录、填写公开账号或导入数据；并非所有来源都要求登录。具体方式以初始化页面和[来源文档](modules/source-auth.md)为准。
+2. 一个可用的 LLM 服务。云端服务通常需要你自己的 API Key；也可配置支持的本地模型服务。
+3. 一个可用的 embedding（向量）服务。桌面精简版首启会自动下载 `bge-m3`；`-with-embedding` 完整版已内置该模型。其他安装方式可用 Ollama 或兼容的 embedding 服务。
+
+引导初始化会先真实验证 LLM 和 embedding 再开跑，不会硬跑出空画像。内置向量模型不等于内置用于理解、推荐和对话的 LLM；两者都要可用。完整步骤见[安装指南](installation.md)。
 
 ### 不想为 embedding 单独配 API Key？
 
-装一次 [Ollama](https://ollama.com/download)，然后运行 `openbiliclaw setup-embedding`，向导会自动拉取 `bge-m3`（约 568MB，CPU 可跑）并写入配置。桌面安装包已内置，无需额外操作。
+桌面包会管理本地 embedding 服务：精简版首启自动下载 `bge-m3`（约 1.1GB，CPU 可跑），`-with-embedding` 完整版已内置模型，可跳过首次模型下载。源码安装可先装 [Ollama](https://ollama.com/download)，再运行 `openbiliclaw setup-embedding` 自动拉取模型并写入配置。这里无需单独的 embedding API Key；LLM 仍需按所选服务配置。
 
 ### 手机打不开移动端 Web（`/m/`）？
 
@@ -73,17 +79,14 @@ docker compose -f docker-compose.prebuilt.yml up -d
 OpenBiliClaw 自己成为一个 tailnet 节点，不安装系统级 Tailscale、不创建全局 VPN。该能力
 不包括 `OpenBiliClaw-mobile` 的 Web / Linux / macOS / Windows Flutter 构建。
 
-桌面安装包已内置 helper，但托盘程序首版不提供 `tailnet` CLI。先完整退出应用，编辑
-`~/OpenBiliClaw/config.toml`（Windows 为 `%USERPROFILE%\OpenBiliClaw\config.toml`）：
+桌面安装包已内置 helper。在运行后端的电脑上打开桌面 Web，或打开连接该本机后端的
+浏览器插件，进入「设置 → 通用 → 应用内 Tailnet 远程访问」，打开开关并确认节点名。
+入网凭据留空时，首次重启会打开 Tailscale 登录页；也可在本机设置页提交 Auth Key，或
+OAuth Client Secret + 已授权设备 tag。保存后需要**完整退出并重启** OpenBiliClaw。
+建议同时开启「局域网访问密码」。
 
-```toml
-[tailnet]
-enabled = true
-hostname = "openbiliclaw-host"
-```
-
-然后重新启动；首次会打开 Tailscale 登录页。建议同时在本机 Web 设置中开启「局域网访问
-密码」。源码 / 一句话安装使用 CLI：
+设置页不可用时可回退到手工配置；路径、三种入网方式与凭据边界见
+[Tailnet 模块的启用说明](modules/tailnet.md#启用)。源码 / 一句话安装使用 CLI：
 
 ```bash
 # 需要 Go 1.26.6
@@ -115,8 +118,8 @@ macOS 主应用仍兼容 10.15+，但 Go 1.26.6 helper 的实测 `minos` 是 12.
 1. 桌面安装包应能直接找到 helper；从菜单打开运行日志，并检查运行目录的
    `data/tailnet/status.json`。源码安装先确认 `go version` 为 1.26.6，再运行
    `openbiliclaw tailnet build-helper`，并用 `openbiliclaw tailnet status` 查看最近状态。
-2. 出现 `needs_login` 时，用电脑浏览器打开日志 / status 中显示的 Tailscale URL。启动窗口
-   关闭并不会替代登录。
+2. 出现 `needs_login` /「等待登录」时，在电脑上完成启动入口打开的 Tailscale 登录流程。
+   设置页只展示脱敏状态，不回显登录 URL 或凭据；关闭启动窗口不会替代登录。
 3. 确认两端属于同一 tailnet，ACL / grants 允许手机节点访问电脑节点的 API 端口。
 4. 确认 `[api].host` 是 loopback / localhost / wildcard，而不是单独的 LAN IP。
 5. 自动化环境可由启动父进程提供短期 `OPENBILICLAW_TAILNET_AUTH_KEY`。它只经 stdin 交给
@@ -127,7 +130,8 @@ macOS 主应用仍兼容 10.15+，但 Go 1.26.6 helper 的实测 `minos` 是 12.
    伪装成成功。Auth Key 与 `OPENBILICLAW_TAILNET_HELPER` 只是 runtime-only 控制，不属于配置。
 
 源码 / 一句话安装的 `openbiliclaw tailnet disable` 会保留 `data/tailnet/` 节点身份；桌面包
-则完整退出、把 `[tailnet].enabled` 改为 `false` 后重新启动，同样保留身份，所以下次启用通常
+可在「设置 → 通用」关闭 Tailnet 并完整重启，也可手工把 `[tailnet].enabled` 改为 `false`
+后重启。两种方式同样保留身份，所以下次启用通常
 不需重新登录。确实要重置身份时，先完整退出 OpenBiliClaw，在 Tailscale 管理台移除旧节点，
 再安全删除本机 `data/tailnet/`；这会不可逆地丢失该节点身份。跨机器 `.obcbackup` 刻意不
 包含该目录，新电脑应作为新节点登录。

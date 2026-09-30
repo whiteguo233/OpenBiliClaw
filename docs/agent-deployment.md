@@ -4,7 +4,7 @@
 
 这份文档写给**AI 编码智能体**（Claude Code / Codex CLI / OpenClaw / Cursor Agent 等），同时也适合人类维护者作为部署参考。
 
-当用户在 README 里看到那段复制粘贴的 "Agent deployment prompt"，把它整段粘贴给任意一个编码智能体时，智能体要能够仅凭这段文字独立完成 OpenBiliClaw 后端的完整部署、配置补齐和健康自检。本文是那段 prompt 的完整操作契约。
+当用户在[安装指南的 AI 部署入口](installation.md#ai-install)看到那段复制粘贴的 "Agent deployment prompt"，把它整段粘贴给任意一个编码智能体时，智能体要能够仅凭这段文字独立完成 OpenBiliClaw 后端的完整部署、配置补齐和健康自检。本文是那段 prompt 的完整操作契约。
 
 ---
 

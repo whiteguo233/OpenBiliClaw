@@ -253,8 +253,8 @@ def test_release_completeness_always_checks_safari_dmg() -> None:
 
 def test_user_docs_explain_aggregate_release_entrypoint() -> None:
     docs = {
-        "README.md": read_text("README.md"),
-        "README_EN.md": read_text("README_EN.md"),
+        "docs/installation.md": read_text("docs/installation.md"),
+        "docs/installation.en.md": read_text("docs/installation.en.md"),
         "docs/index.md": read_text("docs/index.md"),
         "docs/modules/extension.md": read_text("docs/modules/extension.md"),
         "docs/modules/runtime.md": read_text("docs/modules/runtime.md"),
@@ -263,6 +263,8 @@ def test_user_docs_explain_aggregate_release_entrypoint() -> None:
     for relative_path, content in docs.items():
         assert "openbiliclaw-v*" in content, f"{relative_path} must mention the aggregate tag"
 
-    assert "聚合" in docs["README.md"]
-    assert "aggregate" in docs["README_EN.md"].lower()
+    assert "](docs/installation.md)" in read_text("README.md")
+    assert "](docs/installation.en.md)" in read_text("README_EN.md")
+    assert "聚合" in docs["docs/installation.md"]
+    assert "aggregate" in docs["docs/installation.en.md"].lower()
     assert "Latest Release" in docs["docs/index.md"]
