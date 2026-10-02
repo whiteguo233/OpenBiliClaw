@@ -2,10 +2,14 @@
 (() => {
   const english = {
     skip: "Skip to content", navLabel: "Main navigation", navPreview: "Product", navHow: "How it works", navDocs: "Docs",
-    getStarted: "Get started", heroEyebrow: "OPEN SOURCE · LOCAL FIRST · YOUR DISCOVERY AGENT",
-    heroLine1: "Good content.", heroLine2: "Found for you.",
-    heroLead: "Running on your computer, OpenBiliClaw discovers content across Bilibili, Xiaohongshu, YouTube and more. It explains each recommendation and learns from your feedback.",
+    getStarted: "Get started", heroEyebrow: "OPEN SOURCE · LOCAL FIRST · A CONTENT COMPANION YOU CAN TEACH",
+    heroLine1: "Less of the same.", heroLine2: "More of what fits you.",
+    heroLead: "Running on your computer, OpenBiliClaw turns your interests into a profile you can inspect and correct. It actively searches across platforms, explains each recommendation and learns from your feedback.",
     seeProduct: "Watch the walkthrough", heroNote: "Data stays on your machine by default. You choose the model service.",
+    painAria: "Common frustrations and the control you gain",
+    pain1Title: "Lots of scrolling. Little you actually want.", pain1Text: "Describe your topic, depth and taste so discovery starts with your needs.",
+    pain2Title: "The same research, repeated on every platform.", pain2Text: "Use one interest profile to find videos, articles, discussions and open-source projects.",
+    pain3Title: "One click, followed by more of the same.", pain3Text: "Inspect what it misunderstood. Edit your profile or explain why something missed the mark.",
     previewLabel: "It starts with a recommendation", previewControls: "Choose a product screenshot",
     tabHome: "Recommendations", tabLibrary: "Library", tabMobile: "Mobile",
     captionHome: "Desktop recommendations · Existing real recommendations in an isolated recording environment",
@@ -30,13 +34,33 @@
     viewOriginal: "Full-size image", sourcesLabel: "Bring your interests together, across platforms.", sourcesAria: "Content sources",
     bilibili: "Bilibili", xiaohongshu: "Xiaohongshu", douyin: "Douyin", zhihu: "Zhihu", weibo: "Weibo",
     sourcesNote: "Discovery, sign-in and initialization support vary by source. Connect the ones you use.",
-    whyEyebrow: "DISCOVER. UNDERSTAND. REFINE.", whyTitle: "Good recommendations\ncome with a reason.",
-    featureFindTitle: "Let it do the finding", featureFindText: "Start with your interests. Search across platforms, follow related content and explore subjects you haven't tried yet.",
-    featureFindDetail: "Search · Related discoveries · Multiple sources",
-    featureReasonTitle: "Understand the connection", featureReasonText: "Each recommendation includes an explanation. See how a piece of content connects to your interests before deciding to open it.",
-    featureReasonDetail: "Clear reasons · Your interests · Your choice",
-    featureLearnTitle: "Give feedback that matters", featureLearnText: "Like it, dismiss it, or chat about what you want to see. Feedback informs future learning, and you can inspect and adjust your profile.",
-    featureLearnDetail: "Explicit feedback · Conversation · Profile edits",
+    whyEyebrow: "UNDERSTAND ME → FIND FOR ME → LEARN FROM MY CORRECTIONS", whyTitle: "Have a say in\nhow it understands you.",
+    whyIntro: "A click rarely captures your real interests. OpenBiliClaw makes its understanding visible in a profile you can inspect, discuss and edit, then use for future discovery and recommendations.",
+    featureProfileTitle: "See how it sees you", featureProfileText: "Authorized history, favorites and feedback help form a profile. Inspect your interests and content preferences to see whether it understands what you actually enjoy.",
+    featureProfileDetail: "Your corrections persist; AI profile rebuilds do not simply overwrite them.",
+    featureFindTitle: "Send your taste along", featureFindText: "Your profile informs search queries, candidate evaluation and recommendation reasons. It also explores related content and adjacent topics, proposing new interest directions for you to confirm.",
+    featureFindDetail: "Every recommendation gives a reason so you can judge the fit.",
+    featureLearnTitle: "Explain what missed the mark", featureLearnText: "Like, dismiss or block an author, or describe specific preferences in conversation. Your corrections inform your profile and future discovery, giving you more ways to express yourself than clicks alone.",
+    featureLearnDetail: "Likes and dismissals are soft signals; use profile edits or conversation for lasting preferences.",
+    profileEyebrow: "A PROFILE YOU CAN INSPECT", profileTitle: "“Understands you” should be visible.",
+    profileText: "Your profile is a correctable model inference. The page shows inferred traits and preferences, with an editing option so you can correct misunderstandings or describe changing interests.",
+    profileLink: "How the profile informs recommendations", profileAlt: "Existing repository screenshot of the OpenBiliClaw profile, showing user traits and an Edit profile button",
+    profileCaption: "Existing repository profile screenshot · Different version from the walkthroughs · Click for full size",
+    scenariosEyebrow: "ILLUSTRATIVE USE CASES", scenariosTitle: "Turn “find something good”\ninto personal preferences.",
+    scenariosIntro: "These are examples of needs you can express, showing how the product might fit your routine. They are not generated results or promises of an outcome.",
+    scenario1Label: "ILLUSTRATIVE USE CASE / LEARN A SKILL", scenario1Title: "You want to play guitar, not keep shopping for one.",
+    scenario1Request: "“I'm a beginner. Find structured practice and clear technique tutorials, with less gear promotion.”",
+    scenario1Text: "Explain both your learning stage and the style you enjoy. Read recommendation reasons to judge the fit, then correct what missed the mark.",
+    scenario2Label: "ILLUSTRATIVE USE CASE / RESEARCH ACROSS SOURCES", scenario2Title: "Researching local AI tools, from how they work to trying them yourself.",
+    scenario2Request: "“Find explanations and in-depth articles about local AI tools, along with open-source projects I can try.”",
+    scenario2Text: "Connect the sources you need and let the same interest profile inform different types of discovery, without explaining your interests from scratch on every platform.",
+    scenario3Label: "ILLUSTRATIVE USE CASE / CHANGING INTERESTS", scenario3Title: "What you enjoyed before isn't what you want today.",
+    scenario3Request: "“Less gameplay lately, more photography composition. I want to understand why a frame is arranged that way.”",
+    scenario3Text: "Use explicit feedback, conversation and profile edits to express the change and give future discovery a chance to catch up.",
+    fitEyebrow: "IS IT A FIT FOR YOU?", fitTitle: "Willing to teach it.\nReady for more control.",
+    fitText: "If you explore across platforms, have lasting interests and are willing to spend some time connecting models and sources and correcting your profile, OpenBiliClaw is worth trying.",
+    fitEffort: "Discovery needs a running backend. Cloud model costs depend on your provider and usage; local models need suitable hardware. Results depend on source availability, interest signals and model capabilities.",
+    fitNote: "It provides its own recommendation interface; it does not change the native feeds on Bilibili or other platforms. The project is under active development, with initial setup and ongoing feedback part of the experience.",
     howEyebrow: "HOW IT WORKS", howTitle: "Your choice of models.\nYour computer at the center.",
     howIntro: "The extension connects your platforms. A local backend handles understanding, discovery and recommendations. Desktop, mobile and other clients share that service.",
     flowAria: "How OpenBiliClaw works and where data goes", flowSourceLabel: "CONTENT & SIGNALS", flowSourceTitle: "Your connected sources",
@@ -65,6 +89,9 @@
   };
   const nodes = [...document.querySelectorAll("[data-i18n]")].map(node => ({node, original: node.innerHTML}));
   const ariaNodes = [...document.querySelectorAll("[data-i18n-aria]")].map(node => ({node, original: node.getAttribute("aria-label")}));
+  const altNodes = [...document.querySelectorAll("[data-i18n-alt]")].map(node => ({node, original: node.alt}));
+  const structuredDataNode = document.querySelector('script[type="application/ld+json"]');
+  const structuredData = JSON.parse(structuredDataNode.textContent);
   const links = [...document.querySelectorAll("[data-href-en]")].map(node => ({node, original: node.getAttribute("href")}));
   const metaNodes = [...document.querySelectorAll('meta[name="description"], meta[property^="og:"], meta[name^="twitter:"]')].map(node => ({node, original: node.content}));
   const originalTitle = document.title;
@@ -118,8 +145,9 @@
       else node.innerHTML = original;
     });
     ariaNodes.forEach(({node, original}) => node.setAttribute("aria-label", isEnglish ? english[node.dataset.i18nAria] : original));
+    altNodes.forEach(({node, original}) => { node.alt = isEnglish ? english[node.dataset.i18nAlt] : original; });
     links.forEach(({node, original}) => node.setAttribute("href", isEnglish ? node.dataset.hrefEn : original));
-    document.title = isEnglish ? "OpenBiliClaw — Your local-first content discovery agent" : originalTitle;
+    document.title = isEnglish ? "OpenBiliClaw — A cross-platform content companion you can teach" : originalTitle;
     metaNodes.forEach(({node, original}) => {
       const name = node.getAttribute("property") || node.getAttribute("name");
       let value = original;
@@ -129,10 +157,18 @@
         if (name === "og:locale") value = "en_US";
         if (name === "og:locale:alternate") value = "zh_CN";
         if (["og:image", "og:image:secure_url", "twitter:image"].includes(name)) value = original.replace("social-preview-zh.png", "social-preview-en.png");
-        if (["og:image:alt", "twitter:image:alt"].includes(name)) value = "OpenBiliClaw, a local-first cross-platform content discovery agent";
+        if (["og:image:alt", "twitter:image:alt"].includes(name)) value = "OpenBiliClaw social preview";
       }
       node.content = value;
     });
+    const localizedData = structuredClone(structuredData);
+    if (isEnglish) {
+      const software = localizedData["@graph"].find(item => item["@type"] === "SoftwareApplication");
+      software.description = english.heroLead;
+      software.alternateName = ["OpenBiliClaw cross-platform AI content companion"];
+      localizedData["@graph"].find(item => item["@type"] === "WebSite").inLanguage = "en";
+    }
+    structuredDataNode.textContent = JSON.stringify(localizedData);
     toggle.textContent = isEnglish ? "中文" : "EN";
     toggle.setAttribute("aria-label", isEnglish ? "切换到中文" : "Switch to English");
     showPreview(activePreview);

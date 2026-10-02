@@ -2,37 +2,93 @@
 
 # 🦀 OpenBiliClaw
 
-**Let worthwhile content find its way to you.**
+**Less repetitive scrolling. More discoveries that fit you.**
 
-A personalized content discovery Agent that runs on your computer, finds content across platforms, and explains why it picked it for you.
+An **AI content companion** that listens to your preferences, remembers your interests, and searches across platforms for you.<br/>
+It runs on your computer and uses a profile you can inspect and correct to guide discovery and recommendations.
 
 [![Release](https://img.shields.io/github/v/release/whiteguo233/OpenBiliClaw?filter=openbiliclaw-v*&style=flat-square&label=Release&color=success)](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/whiteguo233/OpenBiliClaw/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whiteguo233/OpenBiliClaw/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[**Get started**](#quick-start) · [**Product preview**](#product-preview) · [**Docs**](docs/index.md) · [Website](https://whiteguo233.github.io/OpenBiliClaw/?lang=en) · [中文](README.md)
+[**Why use it**](#why-openbiliclaw) · [**What makes it different**](#what-makes-it-different) · [**Product preview**](#product-preview) · [**Get started**](#quick-start) · [Website](https://whiteguo233.github.io/OpenBiliClaw/?lang=en) · [中文](README.md)
 
 </div>
 
+## Why OpenBiliClaw?
+
+You open several apps, scroll through plenty of posts, and still find little you want to spend time on. When you want to learn something new, you have to invent search terms, switch platforms, and judge each result yourself.
+
+OpenBiliClaw puts some of that discovery and filtering into an agent that builds an ongoing understanding of your taste—and lets you correct it:
+
+| A problem you might recognize | How OpenBiliClaw approaches it |
+|---|---|
+| **Plenty to scroll through, plenty left to filter.** A relevant title says little about whether the depth or teaching style suits you. | Use interests, content style, and topics to avoid when evaluating candidates. Read a personal recommendation reason before deciding to open one. |
+| **Your interests are scattered across platforms.** Tutorials, practical experiences, and open-source projects live in different places. | Bring signals from connected sources into one profile, then use it to discover videos, articles, posts, and public projects across platforms. |
+| **You want something new but don't know what to search for.** Familiar topics keep appearing while unfamiliar finds remain out of reach. | Generate search directions from your profile, follow related content, and explore other fields. Confirm or reject suggested new interests. |
+| **A recommendation gets you wrong, and a click doesn't explain why.** Brief curiosity about a topic needn't become a lasting preference. | Inspect and edit your profile, explain preferences in conversation, and use item feedback or topic exclusions to guide future filtering. |
+
+## What makes it different?
+
+### 1. An understanding of you that you can inspect and change
+
+Start with authorized signals such as history, favorites, and follows. Over time, build a profile of **interests, content preferences, topics to avoid, and recent context**. See how the system understands you, edit its assumptions, or add context through conversation.
+
+**Manual corrections are stored separately and survive later AI profile rebuilds.** A trait you remove stays suppressed even if the model infers it again.
+
+This understanding informs search directions, candidate evaluation, and recommendation wording. “Interested in guitar” becomes more useful when it also captures **wanting guided practice, preferring clear explanations, and not wanting gear reviews right now**.
+
 <p align="center">
-  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="OpenBiliClaw desktop home screenshot with content cards, recommendation explanations, and feedback controls" /></a>
+  <a href="docs/images/desktop-profile.png"><img src="docs/images/desktop-profile.png" width="900" alt="Existing desktop profile screenshot showing a portrait, traits, and the Edit profile control" /></a>
   <br/>
-  <sub>One feed for content across platforms, with a reason and a feedback action for each recommendation.</sub>
+  <sub>An existing repository screenshot from a different UI version than the walkthrough below. Profile descriptions are model inferences you can correct.</sub>
 </p>
 
-## What can it do for you?
+### 2. Active discovery across platforms, guided by your taste
 
-### Discover across platforms
+While the backend is running, it searches on your configured schedule, follows related content, and explores new directions. Candidates are evaluated against your personal preferences. Choose sources, adjust their proportions, and confirm interests beyond familiar subjects.
 
-Connect interests from Bilibili, Xiaohongshu, YouTube, and other sources, then actively search and explore new content. Choose your sources and adjust their proportions to build a feed around your interests.
+Exploration ranges from nearby subjects to connections across fields. When the system proposes an interest, you can **confirm it, reject it, defer it, or discuss it**, helping shape where it searches next.
 
-### Understand each recommendation
+**You can encounter a creator, project, or topic before you know its name or the right search term.** Bilibili, Xiaohongshu, YouTube, GitHub, and other sources offer different types of content. Discovery, login, and initialization capabilities vary; see [sources and clients](#sources-and-clients).
 
-Each card includes an explanation informed by your profile. Inspect how the system understands you, or start a conversation about a piece of content to help it understand what fits.
+These controls affect recommendations inside OpenBiliClaw. They do not change the algorithms behind each platform's own home feed.
 
-### Keep learning from your feedback
+### 3. Reasons you can judge, feedback you can explain
 
-Likes, not-interested actions, and natural-language conversations inform future recommendations. Favorites, watch later, and history keep useful finds close at hand, while your interest profile evolves through use.
+Recommendations explain their connection to your interests. If one misses, mark it Not interested or discuss the content: is the topic wrong, the style unhelpful, or the timing off? Preferences expressed in conversation are analyzed, and some inferences ask for confirmation. Explicit profile edits and topics to avoid inform subsequent filtering.
+
+Item feedback and lasting preferences are handled separately. Limits on newly confirmed interests and diversity controls help keep one direction from taking over a batch. **Learning and discovery take time; submitting feedback does not guarantee that the next screen changes immediately.**
+
+### 4. Keep control of what you build up
+
+Profiles, recommendations, conversations, and saved content stay on your own backend by default. Choose model services, data sources, and interfaces. Desktop, phone, and extension share that backend, and [Agent Bridge](docs/agent-integration.md) exposes recommendations and profiles to your existing AI assistant.
+
+Self-hosting gives you control over what the system learns, what to correct, and which model to use, while retaining your accumulated data. Cloud model services still receive the content needed for their calls; see [privacy at a glance](#privacy-at-a-glance).
+
+## Where it fits into your day
+
+These are **usage scenarios and example preference statements** explaining existing capabilities. They are not inputs or generated results from the recordings, testimonials, or promised outcomes.
+
+### Develop a hobby with some depth
+
+> “I'm learning guitar. I want beginner lessons I can practice along with, explained slowly and clearly. Skip gear reviews for now.”
+
+Conversation and profile edits capture the learning direction, style, and exclusions for subsequent discovery and evaluation.
+
+### Explore a subject across platforms
+
+> “I'm exploring local AI tools. I want explanations of how they work, plus open-source projects I can actually try.”
+
+Discover different content types from enabled sources, assess recommendation reasons in one place, and save useful finds for later.
+
+### Let recommendations follow a change in interests
+
+> “I'm taking a break from gameplay videos. I'd like more photography, especially explanations of composition.”
+
+Adjust profile interests and exclusions, then refine them with feedback. You can express a new direction without repeated clicks.
+
+**A good fit if:** you often look for content across platforms, have specific preferences, and want recommendations you can inspect and correct. Expect to configure models, keep a backend running, and wait for initialization. Cloud models may incur costs; results depend on the model, source availability, and the signals already collected.
 
 > OpenBiliClaw started with Bilibili, which is where “Bili” comes from. It now works across content platforms, with model services and sources that you choose.
 
@@ -48,7 +104,7 @@ Start with an existing recommendation: **expand its explanation → save to Watc
 
 [**Watch the full recording (25 s, Chinese / English captions)**](https://whiteguo233.github.io/OpenBiliClaw/?lang=en#demo) · [Transcript and recording notes](docs/media/README.md)
 
-Recorded against the real backend, showing existing recommendations and a local save. The UI is in Chinese; English captions explain the actions. Recording scope and content sources are documented in the notes.
+Recorded against the real backend, showing existing recommendations and a local save. Profile learning, cross-platform discovery, and recommendation generation are not recorded here. The UI is in Chinese; English captions explain the actions. Recording scope and content sources are documented in the notes.
 
 <details>
 <summary>Mobile Web recording: like feedback and the shared library</summary>
@@ -65,6 +121,12 @@ Tap Like in Mobile Web and confirm the feedback is accepted, then open the same 
 
 <details>
 <summary>More recorded screenshots: explanations, library, and Mobile Web</summary>
+
+**Desktop recommendations** — Content from different sources with a reason for each recommendation.
+
+<p align="center">
+  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="Desktop recommendations with Bilibili and GitHub cards, explanations, and feedback controls" /></a>
+</p>
 
 **Expand an explanation** — Read why a piece of content was recommended.
 
