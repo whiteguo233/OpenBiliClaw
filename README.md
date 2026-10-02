@@ -2,153 +2,93 @@
 
 # 🦀 OpenBiliClaw
 
-**少刷重复的推荐，多发现合你口味的内容。**
+**通用个性化内容推荐 Agent——本地运行、跨平台理解你、只为你一个人构建**
 
-一个能听你讲偏好、记住你的兴趣、替你跨平台找内容的 **AI 内容朋友**。<br/>
-在你的电脑上运行，把可查看、可纠正的个人画像用到发现和推荐中。
+从你的跨平台使用、反馈和对话中持续深化画像，带着对你的理解，主动寻找你会喜欢、也可能从未想到的内容。
 
 [![Release](https://img.shields.io/github/v/release/whiteguo233/OpenBiliClaw?filter=openbiliclaw-v*&style=flat-square&label=Release&color=success)](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/whiteguo233/OpenBiliClaw/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/whiteguo233/OpenBiliClaw/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[**为什么用它**](#为什么做-openbiliclaw) · [**它有什么不同**](#它有什么不同) · [**产品预览**](#产品预览) · [**开始使用**](#快速开始) · [项目官网](https://whiteguo233.github.io/OpenBiliClaw/) · [English](README_EN.md)
+[**看产品演示**](#产品预览) · [**开始使用**](#快速开始) · [**为什么需要它**](#为什么需要-openbiliclaw) · [项目官网](https://whiteguo233.github.io/OpenBiliClaw/) · [English](README_EN.md)
 
 </div>
-
-## 为什么做 OpenBiliClaw？
-
-打开了几个 App，刷过很多条内容，最后却没有找到真正想看的东西。想学点新东西时，又得自己想关键词、换平台搜，再逐条判断质量。
-
-OpenBiliClaw 想把这部分寻找和筛选交给一个长期了解你、也能被你纠正的 Agent：
-
-| 你可能遇到的问题 | 在 OpenBiliClaw 里怎么处理 |
-|---|---|
-| **刷了很多，还得自己筛。** 标题看着相关，点进去才发现讲法、深度不合适。 | 把兴趣、内容风格和避雷偏好用于候选评估，推荐时附上与你的关联理由，帮你决定值不值得打开。 |
-| **兴趣散在几个平台。** 在 B 站学原理，在小红书找经验，在 GitHub 找项目，每次都要重新找。 | 让已连接来源的信号进入同一份画像，再用它跨平台发现视频、文章、帖子和公开项目。 |
-| **想看点新的，却不知道该搜什么。** 熟悉的话题反复出现，陌生的好内容又搜不到。 | 从画像生成搜索方向，结合关联内容和跨领域探索寻找候选；你可以确认或否定新兴趣。 |
-| **被理解错了，却说不清怎么改。** 临时点开一个话题，并不代表想一直看。 | 查看、编辑画像，说明具体偏好；用单条反馈、话题避雷或对话纠正，影响后续筛选。 |
-
-## 它有什么不同？
-
-### 1. 它对你的理解，可以摊开来看，也可以改
-
-从你授权的历史、收藏、关注等来源信号起步，逐步形成包含**兴趣层次、内容风格、避雷项和近期状态**的画像。你能看到它如何理解你，也能直接修改判断或通过对话补充背景。
-
-**手动修正会独立保存，后续 AI 重建画像时仍然保留。** 你删掉的特质，也不会因为模型再次推断到它就直接回来。
-
-这份理解会参与后续搜索方向、候选评估和推荐表达。比如同样是“喜欢吉他”，**想跟练、喜欢系统讲解、暂时不想看器材测评**，是值得继续区分的偏好。
-
-<p align="center">
-  <a href="docs/images/desktop-profile.png"><img src="docs/images/desktop-profile.png" width="900" alt="OpenBiliClaw 既有桌面画像截图：人格描述、核心特质与编辑画像入口" /></a>
-  <br/>
-  <sub>仓库既有画像截图，界面版本与下方本次操作实录不同。画像是可纠正的模型推断。</sub>
-</p>
-
-### 2. 带着你的口味，主动去不同平台找
-
-后端运行时，会按配置持续搜索、跟进关联内容并探索新方向，再把候选放到同一套个人偏好下评估。你可以选择内容来源、调整平台比例，也可以在熟悉的兴趣之外确认新的探索方向。
-
-探索会从相近领域走向跨领域联想。系统提出的新兴趣，你可以选择**确认喜欢、确认不喜欢、暂时搁置或继续聊聊**，逐步决定它该往哪里找。
-
-**你不必先知道某个作者、项目或精确关键词，才有机会遇见它。** B 站、小红书、YouTube、GitHub 等来源各自负责提供不同类型的内容；发现、登录和初始化能力的区别见[来源说明](#支持的内容来源与客户端)。
-
-这些控制作用于 OpenBiliClaw 自己的推荐入口，不会修改各平台原生首页的推荐算法。
-
-### 3. 推荐带着理由，反馈能说得更具体
-
-每条推荐会说明它与你的兴趣有什么关系。看着不对，可以点「不感兴趣」，也可以从内容继续聊：是话题不喜欢、讲法不合适，还是当前不想看？对话中的偏好会经过分析，部分推断会请你确认；明确的画像修改和避雷项用于后续筛选。
-
-单条反馈与长期偏好分开处理，新确认兴趣还有占比保护和多样性约束，减少一个方向短期占满推荐的情况。**学习和内容发现需要时间，提交反馈不代表下一屏一定立刻改变。**
-
-### 4. 这份长期积累，由你掌握
-
-画像、推荐、对话和收藏默认保存在自己的后端。模型服务、采集来源和推荐入口由你选择；桌面、手机与插件共享同一套后端，还可通过 [Agent Bridge](docs/agent-integration.md) 在现有 AI 助手中访问推荐和画像。
-
-自托管的价值是能决定系统了解什么、如何改、用哪个模型，并保留持续积累的资料。使用云端模型时，必要内容仍会发送给所选服务商，详见[隐私速览](#隐私速览)。
-
-## 放到日常里，它可以怎么用？
-
-下面是**使用场景与偏好表达示例**，用于说明如何使用已有能力；不代表实录中的输入、生成结果或效果承诺。
-
-### 认真培养一个爱好
-
-> “最近在学吉他，想看能跟练的基础课，偏好讲得慢、讲得清楚的内容，先别推器材测评。”
-
-通过对话和画像编辑保留学习方向、风格与避雷偏好，供后续发现和评估使用。
-
-### 围绕一个方向跨平台探索
-
-> “我在了解本地 AI 工具，既想看原理讲解，也想找到能动手试的开源项目。”
-
-在你启用的来源里发现不同内容类型，统一呈现推荐理由；选中有用的内容放进稍后再看。
-
-### 让推荐跟上兴趣变化
-
-> “最近不想看游戏实况了，想多接触摄影，喜欢讲构图思路的内容。”
-
-调整画像中的兴趣和避雷项，结合后续反馈逐步校准；新方向不必靠反复点击来表达。
-
-**最适合这样的你：** 经常跨平台找内容，有自己的口味，希望推荐能被解释和纠正，也愿意配置模型、让后端持续运行。首次初始化需要等待，云端模型可能产生费用；推荐质量仍受模型、来源可用性和已有信号影响。
-
-> 项目从 B 站起步，因此保留了 Bili 这个名字。现在它面向多个内容平台，由你选择模型服务和内容来源。
 
 <a id="-功能预览"></a>
 
 ## 产品预览
 
-从一条已有推荐开始：**展开理由 → 加入稍后再看 → 在内容库确认保存**。
+**先看它怎么用：刷跨平台推荐 → 看理由、给反馈 → 在插件和手机继续看 → 了解画像、兴趣探索与对话。**
 
 <p align="center">
-  <a href="https://whiteguo233.github.io/OpenBiliClaw/#demo"><img src="docs/media/recommendation-save.gif" width="960" alt="24 秒真实桌面操作：展开推荐理由、加入稍后再看，再打开内容库确认保存" /></a>
+  <a href="https://whiteguo233.github.io/OpenBiliClaw/#demo"><img src="docs/media/product-tour.gif" width="960" alt="OpenBiliClaw 产品导览：桌面推荐、浏览器插件、手机 Web、个人画像、认知风格、兴趣探针与对话" /></a>
 </p>
 
-[**观看完整实录（25 秒，中英字幕）**](https://whiteguo233.github.io/OpenBiliClaw/#demo) · [文字稿与素材说明](docs/media/README.md)
+[**观看完整产品导览（70 秒，中英字幕）**](https://whiteguo233.github.io/OpenBiliClaw/#demo) · [文字稿与素材说明](docs/media/README.md)
 
-这段实录展示真实后端上的推荐查看与本地保存。画像学习、跨平台发现和推荐生成没有在这段视频中录制；界面原文为中文，录制范围与内容来源见素材说明。
+上方 GIF 用 20 秒预览八个章节；完整导览由**真实操作录屏与仓库已公开的功能截图**编排而成，带有逐段介绍。桌面、插件和手机的查看、保存与反馈使用真实本地后端；画像与对话部分展示已有界面，不代表在这段视频内完成了画像学习或推荐生成。
 
-<details>
-<summary>手机端操作实录：喜欢反馈与共享内容库</summary>
+### 桌面、浏览器插件、手机，随时刷一刷
 
-在手机 Web 点「喜欢」，确认反馈提交成功，再打开同一后端的内容库，查看桌面端保存的记录。
+**桌面 Web：** 在大屏浏览跨平台内容，展开推荐理由，点「喜欢」「不感兴趣」，或保存到内容库、从某条内容继续聊。
 
 <p align="center">
-  <a href="https://whiteguo233.github.io/OpenBiliClaw/#mobile-demo"><img src="docs/media/mobile-feedback.gif" width="280" alt="约 20 秒手机 Web 实录：提交喜欢反馈，再打开共享内容库查看桌面保存记录" /></a>
+  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="真实桌面推荐首页：不同来源的内容卡片、推荐理由，以及喜欢、稍后再看和聊天入口" /></a>
 </p>
 
-[观看手机实录（约 20 秒）](https://whiteguo233.github.io/OpenBiliClaw/#mobile-demo) · [文字稿与素材说明](docs/media/README.md)
+[桌面完整实录：展开理由 → 稍后再看 → 内容库确认（25 秒）](docs/media/recommendation-walkthrough.mp4)
 
-</details>
+<table>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/live-extension-recommend.jpg"><img src="docs/images/live-extension-recommend.jpg" width="280" alt="浏览器插件推荐面板：在浏览器内查看内容与推荐理由" /></a><br/>
+      <b>浏览器插件</b><br/>
+      <sub>在浏览器里打开推荐面板，反馈、收藏、对话；连接已授权的平台会话。</sub><br/>
+      <a href="docs/media/extension-walkthrough.mp4">插件实录：刷跨平台推荐 → 内容库（18 秒）</a>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/live-mobile-recommend.jpg"><img src="docs/images/live-mobile-recommend.jpg" width="280" alt="真实手机 Web 推荐页：以手机布局浏览推荐，底部切换内容库、聊天与画像" /></a><br/>
+      <b>手机 Web</b><br/>
+      <sub>扫码连接同一后端，随手刷推荐、给反馈，继续看桌面保存的内容。</sub><br/>
+      <a href="https://whiteguo233.github.io/OpenBiliClaw/#mobile-demo">手机实录：喜欢反馈与共享内容库（约 20 秒）</a>
+    </td>
+  </tr>
+</table>
 
-<details>
-<summary>更多真实截图：推荐理由、内容库与手机 Web</summary>
+插件录屏将真实扩展页面独立打开，便于看清操作；手机截图来自移动端 Web。另有 [Flutter 原生客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)与 [DeepSeek Harness 插件](https://github.com/whiteguo233/dsh-openbiliclaw)，都连接同一套后端；客户端能力见[下方说明](#支持的内容来源与客户端)。
 
-**桌面推荐首页** — 同一页查看不同来源的内容与推荐理由。
+### 看它怎样理解你，也和它聊一聊
 
-<p align="center">
-  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="真实桌面推荐首页：B 站与 GitHub 内容卡片、推荐理由与反馈入口" /></a>
-</p>
+推荐之外，你可以看到 Agent 对你的长期理解、内容口味与新兴趣猜测，也能从推荐内容发起对话。点图可查看原图。
 
-**展开推荐理由** — 阅读一条内容为什么被推荐。
+<table>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/screenshot-profile-portrait.png"><img src="docs/images/screenshot-profile-portrait.png" width="280" alt="灵魂画像界面：自然语言人格素描与核心特质" /></a><br/>
+      <b>灵魂画像</b><br/>
+      <sub>看看它如何理解你的兴趣、特质与深层需求，也可以纠正这些判断。</sub>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/screenshot-profile-style.png"><img src="docs/images/screenshot-profile-style.png" width="280" alt="认知风格界面：信息处理方式、学习偏好和内容口味" /></a><br/>
+      <b>认知风格与内容口味</b><br/>
+      <sub>关注喜欢什么，也关注适合怎样的讲法、深度和表达；另有长期价值偏好。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/screenshot-interest-probe.png"><img src="docs/images/screenshot-interest-probe.png" width="280" alt="兴趣探针界面：从现有理解提出新的兴趣方向，并提供确认、否定与继续聊聊入口" /></a><br/>
+      <b>兴趣探针</b><br/>
+      <sub>主动提出你可能喜欢的新方向，听听理由，再确认、否定或继续聊。</sub>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <a href="docs/images/mobile-chat.png"><img src="docs/images/mobile-chat.png" width="280" alt="手机对话界面：围绕内容与兴趣展开对话，与其他客户端共享聊天历史" /></a><br/>
+      <b>围绕内容继续聊</b><br/>
+      <sub>说说哪里有趣、为什么不喜欢，或聊一个新话题，让理解在对话中继续深化。</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <a href="docs/images/live-desktop-reason.jpg"><img src="docs/images/live-desktop-reason.jpg" width="960" alt="真实桌面推荐页：第一条内容的推荐理由已展开" /></a>
-</p>
-
-**内容库** — 在「稍后再看」中找到刚保存的内容。
-
-<p align="center">
-  <a href="docs/images/live-desktop-library.jpg"><img src="docs/images/live-desktop-library.jpg" width="960" alt="真实桌面内容库：稍后再看列表中显示已保存的内容" /></a>
-</p>
-
-**手机 Web** — 连接同一后端，在手机布局中查看推荐。
-
-<p align="center">
-  <a href="docs/images/live-mobile-recommend.jpg"><img src="docs/images/live-mobile-recommend.jpg" width="280" alt="真实手机 Web 推荐页：连接同一后端展示推荐卡片" /></a>
-</p>
-
-点开截图查看原图。手机画面来自移动端 Web，原生 Flutter 客户端见下方客户端列表。
-
-</details>
+这组为仓库既有功能截图，界面版本与上方实录有所不同。画像是模型推断；手动修正会保留，后续 AI 重建不会直接覆盖。更多界面：[桌面画像](docs/images/desktop-profile.png) · [价值偏好与兴趣](docs/images/screenshot-profile-values.png) · [真实内容库](docs/images/live-desktop-library.jpg)。
 
 ## 快速开始
 
@@ -173,6 +113,19 @@ OpenBiliClaw 想把这部分寻找和筛选交给一个长期了解你、也能�
 | 开发与调试 | [手动安装](docs/installation.md#manual) |
 | 手机跨网络、远程浏览器 | [应用内 Tailnet](docs/modules/tailnet.md) · [HTTPS 部署](docs/https-deployment.md) |
 | 国内下载 | [v0.3.221 历史镜像与版本说明](docs/installation.md#desktop)；当前版本以 GitHub Release 为准 |
+
+## 为什么需要 OpenBiliClaw？
+
+推荐系统连接内容与用户，也同时服务平台的留存、创作者生态、商业收入等目标。**这些目标如何权衡，通常由平台决定。** 而你的兴趣又散在不同平台，没有一个推荐入口能从你自己的完整视角出发。
+
+OpenBiliClaw 想让推荐系统重新站到用户这一边：**先理解你，再带着这份理解主动找内容；这个 Agent 只为你一个人构建。**
+
+- **先懂你，再找内容。** 从授权的使用行为、反馈与对话中，逐步形成兴趣、认知风格、价值偏好与深层需求的理解。五层记忆将事件、偏好、觉察、洞察和灵魂画像连接起来；画像是可以查看、纠正的模型推断。
+- **主动探索你还没想到的兴趣。** 根据已有理解提出跨领域联想，再让真实内容与反馈验证。例如从机械表联想到建筑美学、从量子物理联想到哲学，是这类探索的方向示意。新兴趣可以确认、否定或搁置。
+- **在持续使用中进化。** 使用与反馈进入记忆，记忆深化画像，画像指导发现，推荐与对话带来新的理解。后端运行时，这个闭环按配置持续推进；学习与内容发现需要时间。
+- **跨平台寻找，积累归你。** 将多个来源的信号用于同一份画像，从不同平台寻找内容。画像、推荐、对话和收藏默认保存在自己的后端；模型与来源由你选择，数据可以迁移，代码可以定制。云端模型调用的边界见[隐私速览](#隐私速览)。
+
+> 项目从 B 站起步，因此保留了 Bili 这个名字；现在它面向多个内容平台。这些能力作用于 OpenBiliClaw 的推荐入口，不会修改各平台原生首页的算法。
 
 ## 支持的内容来源与客户端
 

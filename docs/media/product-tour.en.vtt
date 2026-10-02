@@ -1,0 +1,33 @@
+WEBVTT
+
+00:00.000 --> 00:10.000
+Desktop Web: browse recommendations across sources
+and expand a recommendation's explanation.
+
+00:10.000 --> 00:20.000
+Browser extension: scroll through recommendations,
+with explanations and a shared library.
+
+00:20.000 --> 00:30.000
+Mobile Web: like a recommendation.
+The same backend keeps your saved content together.
+
+00:30.000 --> 00:40.000
+Profile: inspect how the agent understands you.
+Existing screenshot; model inferences can be corrected.
+
+00:40.000 --> 00:48.000
+Content taste: cognitive style, pace, and depth preferences.
+Existing interface screenshot.
+
+00:48.000 --> 00:57.000
+Interest probes: respond to a new direction.
+Existing interface screenshot.
+
+00:57.000 --> 01:05.000
+Chat: discuss content and share your preferences.
+Existing interface screenshot.
+
+01:05.000 --> 01:10.000
+Library: return to content saved for later.
+Desktop, extension, and mobile connect to the same backend.

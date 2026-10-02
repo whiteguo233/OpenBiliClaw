@@ -17,47 +17,18 @@
   "verification": {
     "feedback_http_status": 200,
     "feedback_persisted": "like",
-    "saved_memberships_observed": 3
+    "saved_memberships_observed": 3,
+    "extension_console_errors": 0,
+    "extension_console_warnings": 0
   },
-  "encoding": "H.264 MP4, original timing, no audio. Desktop GIF is the continuous 0.5s–24.5s excerpt at 10 fps; mobile GIF covers the complete recording at 10 fps. Cursor visualization provided by Playwright.",
+  "encoding": "H.264 MP4 with no audio. The three individual walkthroughs retain their original timing. Desktop GIF is the continuous 0.5s–24.5s excerpt at 10 fps; mobile GIF covers the complete recording at 10 fps; extension GIF covers the complete recording at 8 fps. Product tour is an edited 70-second overview with explanatory chapter cards; its 20-second GIF is a separate selection of eight 2.5-second excerpts at 8 fps, with no acceleration within excerpts.",
   "assets": [
     {
-      "file": "media/mobile-feedback.mp4",
-      "bytes": 353979,
-      "sha256": "b57e0a3a566bc62f9355eaa7bf6f155d9841db3968b5bd0be33e2794a7ffa54e",
-      "duration_seconds": 20.45,
-      "width": 430,
-      "height": 932,
-      "codec": "h264",
-      "frame_rate": "20/1"
-    },
-    {
-      "file": "media/recommendation-walkthrough.mp4",
-      "bytes": 1530074,
-      "sha256": "77ac228a1e1ccd59685c3535e72946e40bc0b4fe012257302e6c94be8b06c7fe",
-      "duration_seconds": 25.3,
-      "width": 1440,
-      "height": 960,
-      "codec": "h264",
-      "frame_rate": "20/1"
-    },
-    {
-      "file": "media/mobile-feedback.gif",
-      "bytes": 1918982,
-      "sha256": "1d472eb9e1905503380e137b9cf10585455ae3316797e3b52ebb4d79cdfb6c4f",
-      "width": 430,
-      "height": 932,
-      "frames": 205,
-      "duration_seconds": 20.5
-    },
-    {
-      "file": "media/recommendation-save.gif",
-      "bytes": 3412400,
-      "sha256": "ded89d3aa5ce52b698f380384542f9e9899ea619e7171564668f30513edd1ea2",
-      "width": 960,
-      "height": 640,
-      "frames": 240,
-      "duration_seconds": 24.0
+      "file": "images/desktop-profile.png",
+      "bytes": 376931,
+      "sha256": "1348162173b4a8a09b69631e72451f023c98c27d29f50c20ddcf1ed493a0a341",
+      "width": 1600,
+      "height": 1000
     },
     {
       "file": "images/live-demo-poster.jpg",
@@ -88,6 +59,20 @@
       "height": 960
     },
     {
+      "file": "images/live-extension-library.jpg",
+      "bytes": 90079,
+      "sha256": "f7950bc3afaae50cd0d4b1ecbf064889a13767fda4656e8d2b1f9a7f7fd91243",
+      "width": 560,
+      "height": 1040
+    },
+    {
+      "file": "images/live-extension-recommend.jpg",
+      "bytes": 113847,
+      "sha256": "11f087690e3e576a9f57afc3e766f8bda94613661f7fd77cdc18d70db056632f",
+      "width": 560,
+      "height": 1040
+    },
+    {
       "file": "images/live-mobile-feedback.jpg",
       "bytes": 107248,
       "sha256": "a60c039d4b3bc8c45d601c60e2aff97eb3a40e68006d96989a422263e087ad7c",
@@ -109,9 +94,89 @@
       "height": 932
     },
     {
+      "file": "images/mobile-chat.png",
+      "bytes": 592197,
+      "sha256": "415fa8e9a8f7f4813a86931f85167dfa815b6e42adcd09f7066b8826ad327d62",
+      "width": 640,
+      "height": 1385
+    },
+    {
+      "file": "images/product-tour-poster.jpg",
+      "bytes": 166665,
+      "sha256": "d72226e7240330c5a5ffb5621f67db49bbd2f241d973a7dd61d69b679065436d",
+      "width": 1440,
+      "height": 810
+    },
+    {
+      "file": "images/screenshot-interest-probe.png",
+      "bytes": 564597,
+      "sha256": "caefe5e435b9124e3fa45c29f971ac8c66e180efb08a00968852a35837a00803",
+      "width": 840,
+      "height": 1800
+    },
+    {
+      "file": "images/screenshot-profile-style.png",
+      "bytes": 120572,
+      "sha256": "ce734c7ac6b450e576d6cb46b52d5804fc682ca5ea2b50618b7dcbe0a152919d",
+      "width": 826,
+      "height": 956
+    },
+    {
+      "file": "media/extension-walkthrough.en.vtt",
+      "bytes": 354,
+      "sha256": "d5c50e1e110da063336a03a57fb5d06845a57a9a9c89b4de8210be2d1b2ee079"
+    },
+    {
+      "file": "media/extension-walkthrough.gif",
+      "bytes": 883797,
+      "sha256": "a98db8f337075875fe724e15fed3ae35af50ac970780355ce6ce3e97d80b2212",
+      "width": 360,
+      "height": 669,
+      "frames": 143,
+      "duration_seconds": 17.88
+    },
+    {
+      "file": "media/extension-walkthrough.mp4",
+      "bytes": 392817,
+      "sha256": "de9e704cd52be2762579c5c38e2e5ac14ed6f625670ed1c268aae32c1dc3e889",
+      "duration_seconds": 17.85,
+      "width": 560,
+      "height": 1040,
+      "codec": "h264",
+      "frame_rate": "20/1",
+      "frames": 357,
+      "audio": false
+    },
+    {
+      "file": "media/extension-walkthrough.zh.vtt",
+      "bytes": 371,
+      "sha256": "12b93e47ec8c46a253950015d803cb6ef71691438284715d2cc0e49875cdeb20"
+    },
+    {
       "file": "media/mobile-feedback.en.vtt",
       "bytes": 303,
       "sha256": "61608e47fdacb31827f0ca83187f2c168ca299c342836de4c826ab28a7b1496d"
+    },
+    {
+      "file": "media/mobile-feedback.gif",
+      "bytes": 1918982,
+      "sha256": "1d472eb9e1905503380e137b9cf10585455ae3316797e3b52ebb4d79cdfb6c4f",
+      "width": 430,
+      "height": 932,
+      "frames": 205,
+      "duration_seconds": 20.5
+    },
+    {
+      "file": "media/mobile-feedback.mp4",
+      "bytes": 353979,
+      "sha256": "b57e0a3a566bc62f9355eaa7bf6f155d9841db3968b5bd0be33e2794a7ffa54e",
+      "duration_seconds": 20.45,
+      "width": 430,
+      "height": 932,
+      "codec": "h264",
+      "frame_rate": "20/1",
+      "frames": 409,
+      "audio": false
     },
     {
       "file": "media/mobile-feedback.zh.vtt",
@@ -119,14 +184,146 @@
       "sha256": "7d834a2777483ad674e6443b95d58594a1bd7f1858728a6f899d806f48672451"
     },
     {
+      "file": "media/product-tour.en.vtt",
+      "bytes": 936,
+      "sha256": "ec7fe871c2d7e082ecb777e373cbcfff9c28e697fb13f48a29a5d5d4d8b480e9"
+    },
+    {
+      "file": "media/product-tour.gif",
+      "bytes": 948966,
+      "sha256": "8cdb3e999d17f412ac0cb15b2100011dd65e55bcea39342951b04f5e4ed83624",
+      "width": 960,
+      "height": 540,
+      "frames": 160,
+      "duration_seconds": 20.01
+    },
+    {
+      "file": "media/product-tour.mp4",
+      "bytes": 843812,
+      "sha256": "3bf6130ec26026b94f719662a32148322adcf08cc8228d7c5f85a58fe96fcc02",
+      "duration_seconds": 70.0,
+      "width": 1440,
+      "height": 810,
+      "codec": "h264",
+      "frame_rate": "20/1",
+      "frames": 1400,
+      "audio": false
+    },
+    {
+      "file": "media/product-tour.zh.vtt",
+      "bytes": 822,
+      "sha256": "ee8273806d7d3b21c8f69c6df4bbb542d8ee0019cea7b28c13424c76f93451c7"
+    },
+    {
+      "file": "media/recommendation-save.gif",
+      "bytes": 3412400,
+      "sha256": "ded89d3aa5ce52b698f380384542f9e9899ea619e7171564668f30513edd1ea2",
+      "width": 960,
+      "height": 640,
+      "frames": 240,
+      "duration_seconds": 24.0
+    },
+    {
       "file": "media/recommendation-walkthrough.en.vtt",
       "bytes": 375,
       "sha256": "f3f68b2f8de802b8f91ca12625763d6354ac8ec52517afc7fb3626856061dbd7"
+    },
+    {
+      "file": "media/recommendation-walkthrough.mp4",
+      "bytes": 1530074,
+      "sha256": "77ac228a1e1ccd59685c3535e72946e40bc0b4fe012257302e6c94be8b06c7fe",
+      "duration_seconds": 25.3,
+      "width": 1440,
+      "height": 960,
+      "codec": "h264",
+      "frame_rate": "20/1",
+      "frames": 506,
+      "audio": false
     },
     {
       "file": "media/recommendation-walkthrough.zh.vtt",
       "bytes": 371,
       "sha256": "dff094e86c752ebb1e892a3a6b599871317ae6c4dd7cd2c59cef5896ffb05607"
     }
-  ]
+  ],
+  "extension_runtime_commit": "baa17514",
+  "extension_capture": "Unmodified Chromium extension built from the repository, with its real service worker. The extension page is opened as a standalone tab for legibility; no native browser side-panel shell is shown. It uses the same isolated backend.",
+  "extension_flow": [
+    "read the Bilibili guitar recommendation",
+    "scroll to GitHub and physics recommendations",
+    "open the shared library with three previously saved items"
+  ],
+  "product_tour": {
+    "description": "An edited overview combining real recording excerpts with existing public repository screenshots. On-screen chapter explanations are added outside the unchanged embedded product UI. The four screenshot chapters use an earlier interface version and do not demonstrate new model replies, profile generation or learning in this session.",
+    "timeline": [
+      {
+        "start_seconds": 0,
+        "end_seconds": 10,
+        "topic": "desktop",
+        "kind": "recording_excerpt",
+        "source": "media/recommendation-walkthrough.mp4",
+        "gif_excerpt_start_within_chapter_seconds": 4,
+        "source_start_seconds": 0
+      },
+      {
+        "start_seconds": 10,
+        "end_seconds": 20,
+        "topic": "extension",
+        "kind": "recording_excerpt",
+        "source": "media/extension-walkthrough.mp4",
+        "gif_excerpt_start_within_chapter_seconds": 4,
+        "source_start_seconds": 0
+      },
+      {
+        "start_seconds": 20,
+        "end_seconds": 30,
+        "topic": "mobile",
+        "kind": "recording_excerpt",
+        "source": "media/mobile-feedback.mp4",
+        "gif_excerpt_start_within_chapter_seconds": 4,
+        "source_start_seconds": 0
+      },
+      {
+        "start_seconds": 30,
+        "end_seconds": 40,
+        "topic": "profile",
+        "kind": "existing_public_screenshot",
+        "source": "images/desktop-profile.png",
+        "gif_excerpt_start_within_chapter_seconds": 0
+      },
+      {
+        "start_seconds": 40,
+        "end_seconds": 48,
+        "topic": "taste",
+        "kind": "existing_public_screenshot",
+        "source": "images/screenshot-profile-style.png",
+        "gif_excerpt_start_within_chapter_seconds": 0
+      },
+      {
+        "start_seconds": 48,
+        "end_seconds": 57,
+        "topic": "probe",
+        "kind": "existing_public_screenshot",
+        "source": "images/screenshot-interest-probe.png",
+        "gif_excerpt_start_within_chapter_seconds": 0
+      },
+      {
+        "start_seconds": 57,
+        "end_seconds": 65,
+        "topic": "chat",
+        "kind": "existing_public_screenshot",
+        "source": "images/mobile-chat.png",
+        "gif_excerpt_start_within_chapter_seconds": 0
+      },
+      {
+        "start_seconds": 65,
+        "end_seconds": 70,
+        "topic": "library",
+        "kind": "recording_excerpt",
+        "source": "media/recommendation-walkthrough.mp4",
+        "gif_excerpt_start_within_chapter_seconds": 0,
+        "source_start_seconds": 20.3
+      }
+    ]
+  }
 }

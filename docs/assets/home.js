@@ -2,65 +2,45 @@
 (() => {
   const english = {
     skip: "Skip to content", navLabel: "Main navigation", navPreview: "Product", navHow: "How it works", navDocs: "Docs",
-    getStarted: "Get started", heroEyebrow: "OPEN SOURCE · LOCAL FIRST · A CONTENT COMPANION YOU CAN TEACH",
-    heroLine1: "Less of the same.", heroLine2: "More of what fits you.",
-    heroLead: "Running on your computer, OpenBiliClaw turns your interests into a profile you can inspect and correct. It actively searches across platforms, explains each recommendation and learns from your feedback.",
-    seeProduct: "Watch the walkthrough", heroNote: "Data stays on your machine by default. You choose the model service.",
-    painAria: "Common frustrations and the control you gain",
-    pain1Title: "Lots of scrolling. Little you actually want.", pain1Text: "Describe your topic, depth and taste so discovery starts with your needs.",
-    pain2Title: "The same research, repeated on every platform.", pain2Text: "Use one interest profile to find videos, articles, discussions and open-source projects.",
-    pain3Title: "One click, followed by more of the same.", pain3Text: "Inspect what it misunderstood. Edit your profile or explain why something missed the mark.",
-    previewLabel: "It starts with a recommendation", previewControls: "Choose a product screenshot",
-    tabHome: "Recommendations", tabLibrary: "Library", tabMobile: "Mobile",
-    captionHome: "Desktop recommendations · Existing real recommendations in an isolated recording environment",
-    captionLibrary: "Desktop library · Find the content saved for later",
-    captionMobile: "Mobile Web · Recommendations from the same recording backend",
-    altHome: "OpenBiliClaw desktop showing existing recommendations and their reasons in an isolated recording environment",
-    altLibrary: "OpenBiliClaw desktop library showing content saved to watch later",
-    altMobile: "OpenBiliClaw Mobile Web showing recommendations from the same backend",
-    demoEyebrow: "A REAL WALKTHROUGH", demoTitle: "From a recommendation\nto your watch-later list.",
-    demoSummary: "Read why a piece of content was recommended, save it for later, and find it in your library. Press play to follow along.",
-    demoVideoLabel: "Screen recording of browsing a recommendation and saving it for later",
-    demoFallback: "Your browser cannot play this video. Use the download link below to watch it.",
-    demoCaption: "25 seconds · Press play · 中文 / English captions", demoDownload: "Download video", demoStepsLabel: "Walkthrough steps",
-    demoStep1: "Read the recommendation reason", demoStep2: "Add it to watch later", demoStep3: "Find it in the library",
-    demoContext: "Existing real recommendations in an isolated recording environment, demonstrating browsing and saving locally. No model was connected during recording; live generation and learning are not shown.",
-    demoTranscript: "Transcript & recording notes",
-    mobileDemoTitle: "On your phone: feedback and a shared library",
-    mobileDemoVideoLabel: "Screen recording of liking a recommendation on mobile and opening the shared library",
-    mobileDemoCaption: "20 seconds · Press play · Bilingual captions", mobileDemoStepsLabel: "Mobile walkthrough steps",
-    mobileDemoStep1: "Tap Like to submit feedback", mobileDemoStep2: "Open the library to find the item saved on desktop",
-    mobileDemoContext: "The phone and desktop connect to the same recording backend. This shows feedback submission and the shared library, not an updated profile or new recommendations.",
-    viewOriginal: "Full-size image", sourcesLabel: "Bring your interests together, across platforms.", sourcesAria: "Content sources",
-    bilibili: "Bilibili", xiaohongshu: "Xiaohongshu", douyin: "Douyin", zhihu: "Zhihu", weibo: "Weibo",
+    getStarted: "Get started", heroEyebrow: "OPEN SOURCE · RUNS LOCALLY · BUILT FOR YOU ALONE",
+    heroLine1: "A self-evolving", heroLine2: "content discovery agent",
+    heroLead: "Running on your computer, it deepens its understanding through your activity, feedback and conversations, then searches across platforms. It explains each recommendation and learns from your feedback.",
+    seeProduct: "Watch the product tour", demoTitle: "See OpenBiliClaw in action.", tourLabel: "70-second product tour · 中文 / English captions",
+    demoVideoLabel: "OpenBiliClaw product tour showing desktop, browser extension, Mobile Web and key features",
+    demoFallback: "Your browser cannot play this video. Use the download link below to watch it.", demoDownload: "Download video",
+    tourCaption: "Browse recommendations · Read reasons · Profiles & exploration · Chat · Save across clients",
+    tourContext: "Edited from real screen recordings and existing repository screenshots.", demoTranscript: "Transcript & media notes",
+    screensEyebrow: "CHOOSE YOUR PREFERRED INTERFACE", screensTitle: "Browse on desktop, in the extension, or on your phone.",
+    screensIntro: "Connect to the same backend to read recommendations, give feedback and save content.",
+    surfaceDesktopAlt: "Desktop Web recommendations showing cross-platform content cards and recommendation reasons",
+    surfaceDesktopTitle: "Desktop Web", surfaceDesktopText: "Browse on a larger screen, expand reasons, search and filter.", surfaceDesktopLink: "Watch desktop actions ↓",
+    surfaceExtensionAlt: "OpenBiliClaw browser extension showing recommendation cards and feedback controls",
+    surfaceExtensionTitle: "Browser extension", surfaceExtensionText: "Read recommendations inside your browser, with feedback and library access.", surfaceExtensionLink: "Watch extension actions ↓",
+    surfaceMobileAlt: "Mobile Web recommendations showing reasons, Like and save controls",
+    surfaceMobileTitle: "Mobile Web", surfaceMobileText: "Browse, tap Like and open your shared library in a phone browser.", surfaceMobileLink: "Watch mobile actions ↓",
+    desktopDemoTitle: "Desktop recording: reasons → watch later → library (25 seconds)", desktopDemoVideoLabel: "Real desktop recording of browsing recommendations and saving content",
+    desktopDemoCaption: "25 seconds · Real screen recording · Bilingual captions",
+    extensionDemoTitle: "Extension recording: browse recommendations → read reasons → library (18 seconds)", extensionDemoVideoLabel: "Real browser extension recording of recommendations, reasons and the library",
+    extensionDemoCaption: "18 seconds · Extension page recording · Bilingual captions",
+    mobileDemoTitle: "Mobile recording: Like → shared library (20 seconds)", mobileDemoVideoLabel: "Real Mobile Web recording of Like feedback and the shared library",
+    mobileDemoCaption: "20 seconds · Mobile Web recording · Bilingual captions",
+    featuresEyebrow: "MORE THAN A RECOMMENDATION LIST", featuresTitle: "Profiles, exploration, conversation and a library.", imageHint: "Click an image for full size ↗",
+    profileAlt: "User profile screen showing values and personality traits", profileTitle: "Inspect and adjust your profile", profileText: "See how it understands you. Model inferences can be checked and corrected.",
+    styleAlt: "Content style screen showing preferences for formats and styles of expression", styleTitle: "Describe your taste in content", styleText: "Beyond topics, it considers preferred formats, style and depth.",
+    probeAlt: "Interest probes screen showing new directions and ways to respond", probeTitle: "Explore new directions", probeText: "Confirm, reject, postpone or discuss suggested interests.",
+    chatAlt: "Mobile Web conversation screen showing chat messages and the input field", chatTitle: "Talk about what you want to see", chatText: "Describe specific preferences, with feedback and conversation informing future understanding.",
+    featureImageNote: "These are existing repository screenshots. Their interface version may differ from the recordings.",
+    libraryAlt: "Desktop library showing recommendation items saved to watch later", libraryEyebrow: "SAVE SOMETHING FOR LATER", libraryTitle: "Watch later, favorites and history.",
+    libraryText: "Save a recommendation worth keeping. Desktop and mobile connect to the same backend, so you can return to the same records.", libraryCaption: "The screenshot shows Watch Later in the desktop library.",
+    sourcesLabel: "Discover across platforms.", sourcesAria: "Content sources", bilibili: "Bilibili", xiaohongshu: "Xiaohongshu", douyin: "Douyin", zhihu: "Zhihu", weibo: "Weibo",
     sourcesNote: "Discovery, sign-in and initialization support vary by source. Connect the ones you use.",
-    whyEyebrow: "UNDERSTAND ME → FIND FOR ME → LEARN FROM MY CORRECTIONS", whyTitle: "Have a say in\nhow it understands you.",
-    whyIntro: "A click rarely captures your real interests. OpenBiliClaw makes its understanding visible in a profile you can inspect, discuss and edit, then use for future discovery and recommendations.",
-    featureProfileTitle: "See how it sees you", featureProfileText: "Authorized history, favorites and feedback help form a profile. Inspect your interests and content preferences to see whether it understands what you actually enjoy.",
-    featureProfileDetail: "Your corrections persist; AI profile rebuilds do not simply overwrite them.",
-    featureFindTitle: "Send your taste along", featureFindText: "Your profile informs search queries, candidate evaluation and recommendation reasons. It also explores related content and adjacent topics, proposing new interest directions for you to confirm.",
-    featureFindDetail: "Every recommendation gives a reason so you can judge the fit.",
-    featureLearnTitle: "Explain what missed the mark", featureLearnText: "Like, dismiss or block an author, or describe specific preferences in conversation. Your corrections inform your profile and future discovery, giving you more ways to express yourself than clicks alone.",
-    featureLearnDetail: "Likes and dismissals are soft signals; use profile edits or conversation for lasting preferences.",
-    profileEyebrow: "A PROFILE YOU CAN INSPECT", profileTitle: "“Understands you” should be visible.",
-    profileText: "Your profile is a correctable model inference. The page shows inferred traits and preferences, with an editing option so you can correct misunderstandings or describe changing interests.",
-    profileLink: "How the profile informs recommendations", profileAlt: "Existing repository screenshot of the OpenBiliClaw profile, showing user traits and an Edit profile button",
-    profileCaption: "Existing repository profile screenshot · Different version from the walkthroughs · Click for full size",
-    scenariosEyebrow: "ILLUSTRATIVE USE CASES", scenariosTitle: "Turn “find something good”\ninto personal preferences.",
-    scenariosIntro: "These are examples of needs you can express, showing how the product might fit your routine. They are not generated results or promises of an outcome.",
-    scenario1Label: "ILLUSTRATIVE USE CASE / LEARN A SKILL", scenario1Title: "You want to play guitar, not keep shopping for one.",
-    scenario1Request: "“I'm a beginner. Find structured practice and clear technique tutorials, with less gear promotion.”",
-    scenario1Text: "Explain both your learning stage and the style you enjoy. Read recommendation reasons to judge the fit, then correct what missed the mark.",
-    scenario2Label: "ILLUSTRATIVE USE CASE / RESEARCH ACROSS SOURCES", scenario2Title: "Researching local AI tools, from how they work to trying them yourself.",
-    scenario2Request: "“Find explanations and in-depth articles about local AI tools, along with open-source projects I can try.”",
-    scenario2Text: "Connect the sources you need and let the same interest profile inform different types of discovery, without explaining your interests from scratch on every platform.",
-    scenario3Label: "ILLUSTRATIVE USE CASE / CHANGING INTERESTS", scenario3Title: "What you enjoyed before isn't what you want today.",
-    scenario3Request: "“Less gameplay lately, more photography composition. I want to understand why a frame is arranged that way.”",
-    scenario3Text: "Use explicit feedback, conversation and profile edits to express the change and give future discovery a chance to catch up.",
-    fitEyebrow: "IS IT A FIT FOR YOU?", fitTitle: "Willing to teach it.\nReady for more control.",
-    fitText: "If you explore across platforms, have lasting interests and are willing to spend some time connecting models and sources and correcting your profile, OpenBiliClaw is worth trying.",
-    fitEffort: "Discovery needs a running backend. Cloud model costs depend on your provider and usage; local models need suitable hardware. Results depend on source availability, interest signals and model capabilities.",
-    fitNote: "It provides its own recommendation interface; it does not change the native feeds on Bilibili or other platforms. The project is under active development, with initial setup and ongoing feedback part of the experience.",
+    whyEyebrow: "WHY OPENBILICLAW", whyTitle: "Put recommendations back on the user's side.",
+    whyIntro: "Built for you alone, connecting interests from different platforms in a system of your own.",
+    featureProfileTitle: "Understand the person first", featureProfileText: "Authorized activity, feedback and conversation form a profile that informs search, evaluation and recommendations.",
+    featureFindTitle: "Find across platforms", featureFindText: "Search actively, follow related content and explore adjacent interests. Recommendations include reasons, and the choice stays with you.",
+    featureLearnTitle: "Keep learning through use", featureLearnText: "Likes, dismissals and specific corrections inform later learning. You can inspect and edit your profile; AI rebuilds do not simply overwrite manual corrections.",
+    learningLoopLabel: "Continuous learning loop", loopSignals: "Activity signals", loopProfile: "Deepen the profile", loopDiscover: "Discover actively", loopRecommend: "Explain recommendations", loopFeedback: "Feedback & conversation ↺",
+    documentationLabel: "Learn more", architectureLink: "System architecture ↗", profileUsageLink: "How profiles inform recommendations ↗", documentationLink: "All documentation ↗",
     howEyebrow: "HOW IT WORKS", howTitle: "Your choice of models.\nYour computer at the center.",
     howIntro: "The extension connects your platforms. A local backend handles understanding, discovery and recommendations. Desktop, mobile and other clients share that service.",
     flowAria: "How OpenBiliClaw works and where data goes", flowSourceLabel: "CONTENT & SIGNALS", flowSourceTitle: "Your connected sources",
@@ -96,31 +76,41 @@
   const metaNodes = [...document.querySelectorAll('meta[name="description"], meta[property^="og:"], meta[name^="twitter:"]')].map(node => ({node, original: node.content}));
   const originalTitle = document.title;
   const toggle = document.getElementById("language-toggle");
-  const image = document.getElementById("preview-image");
-  const caption = document.getElementById("preview-caption");
-  const fullSize = document.getElementById("preview-original");
   const demoVideos = [...document.querySelectorAll(".demo-player video")];
-  const mobileDemo = document.getElementById("mobile-demo");
-  const previews = {
-    home: {file: "live-desktop-home.jpg", width: 1440, height: 960, alt: "altHome", caption: "captionHome", zhAlt: image.alt, zhCaption: caption.textContent},
-    library: {file: "live-desktop-library.jpg", width: 1440, height: 960, alt: "altLibrary", caption: "captionLibrary", zhAlt: "OpenBiliClaw 桌面内容库：已加入稍后再看的内容", zhCaption: "桌面内容库 · 找到刚刚保存的稍后再看内容"},
-    mobile: {file: "live-mobile-recommend.jpg", width: 430, height: 932, alt: "altMobile", caption: "captionMobile", zhAlt: "OpenBiliClaw 移动端 Web：来自同一后端的推荐内容", zhCaption: "移动端 Web · 连接同一个录制后端查看推荐"},
-  };
+  // Keep a clear, keyboard-accessible poster until playback is requested.
+  // The original video node and native controls remain in place throughout.
+  const playCovers = demoVideos.map(video => {
+    const shell = document.createElement("div");
+    shell.className = "media-start-shell";
+    video.before(shell);
+    shell.append(video);
+    const originalTabIndex = video.getAttribute("tabindex");
+    video.tabIndex = -1;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "media-start-cover";
+    const poster = document.createElement("img");
+    poster.src = video.poster;
+    poster.alt = "";
+    const label = document.createElement("span");
+    label.className = "media-start-label";
+    button.append(poster, label);
+    shell.append(button);
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      video.play().catch(() => { button.disabled = false; });
+    });
+    video.addEventListener("play", () => {
+      const restoreFocus = document.activeElement === button;
+      button.remove();
+      if (originalTabIndex === null) video.removeAttribute("tabindex");
+      else video.setAttribute("tabindex", originalTabIndex);
+      if (restoreFocus) video.focus();
+    }, {once: true});
+    return {video, button, label};
+  });
+  const recordingDemos = [...document.querySelectorAll(".recording-demo")];
   let language = "zh";
-  let activePreview = "home";
-  function showPreview(key) {
-    const preview = previews[key];
-    if (!preview) return;
-    activePreview = key;
-    image.parentElement.dataset.format = key === "mobile" ? "portrait" : "landscape";
-    image.src = `images/${preview.file}`;
-    image.width = preview.width;
-    image.height = preview.height;
-    image.alt = language === "en" ? english[preview.alt] : preview.zhAlt;
-    caption.textContent = language === "en" ? english[preview.caption] : preview.zhCaption;
-    fullSize.href = image.getAttribute("src");
-    document.querySelectorAll("[data-preview]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.preview === key)));
-  }
   function setDemoCaptionLanguage(videos = demoVideos) {
     // Only caption selection changes: keep the media node, source and playback state intact.
     videos.forEach(video => {
@@ -131,10 +121,11 @@
       });
     });
   }
-  function revealMobileDemo() {
-    if (location.hash !== "#mobile-demo") return;
-    mobileDemo.open = true;
-    requestAnimationFrame(() => mobileDemo.scrollIntoView({block: "start", behavior: "instant"}));
+  function revealRecording() {
+    const recording = recordingDemos.find(item => `#${item.id}` === location.hash);
+    if (!recording) return;
+    recording.open = true;
+    requestAnimationFrame(() => recording.scrollIntoView({block: "start", behavior: "instant"}));
   }
   function setLanguage(value) {
     language = value === "en" ? "en" : "zh";
@@ -147,7 +138,7 @@
     ariaNodes.forEach(({node, original}) => node.setAttribute("aria-label", isEnglish ? english[node.dataset.i18nAria] : original));
     altNodes.forEach(({node, original}) => { node.alt = isEnglish ? english[node.dataset.i18nAlt] : original; });
     links.forEach(({node, original}) => node.setAttribute("href", isEnglish ? node.dataset.hrefEn : original));
-    document.title = isEnglish ? "OpenBiliClaw — A cross-platform content companion you can teach" : originalTitle;
+    document.title = isEnglish ? "OpenBiliClaw — A self-evolving cross-platform content discovery agent" : originalTitle;
     metaNodes.forEach(({node, original}) => {
       const name = node.getAttribute("property") || node.getAttribute("name");
       let value = original;
@@ -165,13 +156,16 @@
     if (isEnglish) {
       const software = localizedData["@graph"].find(item => item["@type"] === "SoftwareApplication");
       software.description = english.heroLead;
-      software.alternateName = ["OpenBiliClaw cross-platform AI content companion"];
+      software.alternateName = ["OpenBiliClaw self-evolving content discovery agent"];
       localizedData["@graph"].find(item => item["@type"] === "WebSite").inLanguage = "en";
     }
     structuredDataNode.textContent = JSON.stringify(localizedData);
+    playCovers.forEach(({video, button, label}) => {
+      label.textContent = isEnglish ? "▶ Play video" : "▶ 播放视频";
+      button.setAttribute("aria-label", `${isEnglish ? "Play" : "播放"}: ${video.getAttribute("aria-label")}`);
+    });
     toggle.textContent = isEnglish ? "中文" : "EN";
     toggle.setAttribute("aria-label", isEnglish ? "切换到中文" : "Switch to English");
-    showPreview(activePreview);
     setDemoCaptionLanguage();
   }
   let savedLanguage;
@@ -187,14 +181,11 @@
       history.replaceState(null, "", url);
     } catch { /* Language switching also works in a local file preview. */ }
   });
-  document.querySelectorAll("[data-preview]").forEach(button => button.addEventListener("click", () => showPreview(button.dataset.preview)));
   demoVideos.forEach(video => video.addEventListener("loadedmetadata", () => setDemoCaptionLanguage([video])));
-  mobileDemo.addEventListener("toggle", () => {
-    if (!mobileDemo.open) mobileDemo.querySelector("video").pause();
-  });
-  window.addEventListener("hashchange", revealMobileDemo);
-  revealMobileDemo();
+  recordingDemos.forEach(recording => recording.addEventListener("toggle", () => {
+    if (!recording.open) recording.querySelector("video").pause();
+  }));
+  window.addEventListener("hashchange", revealRecording);
+  revealRecording();
   toggle.hidden = false;
-  document.getElementById("preview-controls").hidden = false;
-  document.getElementById("preview-controls").parentElement.classList.add("has-controls");
 })();
