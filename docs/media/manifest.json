@@ -1,0 +1,132 @@
+{
+  "recorded_on": "2026-10-02",
+  "runtime_version": "0.3.224",
+  "runtime_commit": "e53f0d3e",
+  "capture": "Real browser interactions with the unmodified FastAPI backend, in an isolated data directory. Six reviewed historical recommendations and matching public content records were selected from an existing real profile; no API responses were mocked.",
+  "data_scope": "Original titles, reasons and timestamps retained. Personal profile, browsing events, conversations, configuration and credentials were not copied. Model generation and learning were not recorded.",
+  "desktop_flow": [
+    "expand the recommendation reason",
+    "save to Watch Later",
+    "open the local library and confirm the saved item"
+  ],
+  "mobile_flow": [
+    "submit Like feedback to the same backend",
+    "open the shared Watch Later library"
+  ],
+  "mobile_capture": "430 x 932 browser viewport showing the mobile web client; not a physical-device or Flutter recording.",
+  "verification": {
+    "feedback_http_status": 200,
+    "feedback_persisted": "like",
+    "saved_memberships_observed": 3
+  },
+  "encoding": "H.264 MP4, original timing, no audio. Desktop GIF is the continuous 0.5s–24.5s excerpt at 10 fps; mobile GIF covers the complete recording at 10 fps. Cursor visualization provided by Playwright.",
+  "assets": [
+    {
+      "file": "media/mobile-feedback.mp4",
+      "bytes": 353979,
+      "sha256": "b57e0a3a566bc62f9355eaa7bf6f155d9841db3968b5bd0be33e2794a7ffa54e",
+      "duration_seconds": 20.45,
+      "width": 430,
+      "height": 932,
+      "codec": "h264",
+      "frame_rate": "20/1"
+    },
+    {
+      "file": "media/recommendation-walkthrough.mp4",
+      "bytes": 1530074,
+      "sha256": "77ac228a1e1ccd59685c3535e72946e40bc0b4fe012257302e6c94be8b06c7fe",
+      "duration_seconds": 25.3,
+      "width": 1440,
+      "height": 960,
+      "codec": "h264",
+      "frame_rate": "20/1"
+    },
+    {
+      "file": "media/mobile-feedback.gif",
+      "bytes": 1918982,
+      "sha256": "1d472eb9e1905503380e137b9cf10585455ae3316797e3b52ebb4d79cdfb6c4f",
+      "width": 430,
+      "height": 932,
+      "frames": 205,
+      "duration_seconds": 20.5
+    },
+    {
+      "file": "media/recommendation-save.gif",
+      "bytes": 3412400,
+      "sha256": "ded89d3aa5ce52b698f380384542f9e9899ea619e7171564668f30513edd1ea2",
+      "width": 960,
+      "height": 640,
+      "frames": 240,
+      "duration_seconds": 24.0
+    },
+    {
+      "file": "images/live-demo-poster.jpg",
+      "bytes": 223594,
+      "sha256": "79bcb604c4db460216872742fb2f32c5a37bbe402800e41b9f71b6424f9d3cd4",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "images/live-desktop-home.jpg",
+      "bytes": 230524,
+      "sha256": "f0c356f3d463b8e272af1f1070015dffc85356060a326903326650ce7b90fd8c",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "images/live-desktop-library.jpg",
+      "bytes": 134264,
+      "sha256": "f61e826e10a5440b386dc7b153aaf810b4d76bb9fa855402f929f9dc45a855fe",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "images/live-desktop-reason.jpg",
+      "bytes": 223594,
+      "sha256": "79bcb604c4db460216872742fb2f32c5a37bbe402800e41b9f71b6424f9d3cd4",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "images/live-mobile-feedback.jpg",
+      "bytes": 107248,
+      "sha256": "a60c039d4b3bc8c45d601c60e2aff97eb3a40e68006d96989a422263e087ad7c",
+      "width": 430,
+      "height": 932
+    },
+    {
+      "file": "images/live-mobile-library.jpg",
+      "bytes": 63789,
+      "sha256": "4ee9b977d23c2b0fa95502a6baf637b8340357612f15e1a017eea21ae2ceefb0",
+      "width": 430,
+      "height": 932
+    },
+    {
+      "file": "images/live-mobile-recommend.jpg",
+      "bytes": 107447,
+      "sha256": "4f286086d38916612af2e6dfbf9f9285b0fea62007f4d8dd589a697bd37ebac4",
+      "width": 430,
+      "height": 932
+    },
+    {
+      "file": "media/mobile-feedback.en.vtt",
+      "bytes": 303,
+      "sha256": "61608e47fdacb31827f0ca83187f2c168ca299c342836de4c826ab28a7b1496d"
+    },
+    {
+      "file": "media/mobile-feedback.zh.vtt",
+      "bytes": 311,
+      "sha256": "7d834a2777483ad674e6443b95d58594a1bd7f1858728a6f899d806f48672451"
+    },
+    {
+      "file": "media/recommendation-walkthrough.en.vtt",
+      "bytes": 375,
+      "sha256": "f3f68b2f8de802b8f91ca12625763d6354ac8ec52517afc7fb3626856061dbd7"
+    },
+    {
+      "file": "media/recommendation-walkthrough.zh.vtt",
+      "bytes": 371,
+      "sha256": "dff094e86c752ebb1e892a3a6b599871317ae6c4dd7cd2c59cef5896ffb05607"
+    }
+  ]
+}

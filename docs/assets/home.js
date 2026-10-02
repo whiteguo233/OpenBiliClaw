@@ -5,15 +5,28 @@
     getStarted: "Get started", heroEyebrow: "OPEN SOURCE · LOCAL FIRST · YOUR DISCOVERY AGENT",
     heroLine1: "Good content.", heroLine2: "Found for you.",
     heroLead: "Running on your computer, OpenBiliClaw discovers content across Bilibili, Xiaohongshu, YouTube and more. It explains each recommendation and learns from your feedback.",
-    seeProduct: "See the product", heroNote: "Data stays on your machine by default. You choose the model service.",
+    seeProduct: "Watch the walkthrough", heroNote: "Data stays on your machine by default. You choose the model service.",
     previewLabel: "It starts with a recommendation", previewControls: "Choose a product screenshot",
-    tabHome: "Recommendations", tabFeedback: "Reasons & feedback", tabProfile: "Interest profile",
-    captionHome: "Desktop recommendations · Actual screenshot; content varies with your profile",
-    captionFeedback: "Recommendation reasons and feedback · Actual browser extension screenshot",
-    captionProfile: "Your interest profile · Actual desktop screenshot",
-    altHome: "OpenBiliClaw desktop with recommendation reasons, content cards and feedback controls",
-    altFeedback: "Browser extension showing why a video was recommended and a written feedback form",
-    altProfile: "OpenBiliClaw desktop interest profile and preferences",
+    tabHome: "Recommendations", tabLibrary: "Library", tabMobile: "Mobile",
+    captionHome: "Desktop recommendations · Existing real recommendations in an isolated recording environment",
+    captionLibrary: "Desktop library · Find the content saved for later",
+    captionMobile: "Mobile Web · Recommendations from the same recording backend",
+    altHome: "OpenBiliClaw desktop showing existing recommendations and their reasons in an isolated recording environment",
+    altLibrary: "OpenBiliClaw desktop library showing content saved to watch later",
+    altMobile: "OpenBiliClaw Mobile Web showing recommendations from the same backend",
+    demoEyebrow: "A REAL WALKTHROUGH", demoTitle: "From a recommendation\nto your watch-later list.",
+    demoSummary: "Read why a piece of content was recommended, save it for later, and find it in your library. Press play to follow along.",
+    demoVideoLabel: "Screen recording of browsing a recommendation and saving it for later",
+    demoFallback: "Your browser cannot play this video. Use the download link below to watch it.",
+    demoCaption: "25 seconds · Press play · 中文 / English captions", demoDownload: "Download video", demoStepsLabel: "Walkthrough steps",
+    demoStep1: "Read the recommendation reason", demoStep2: "Add it to watch later", demoStep3: "Find it in the library",
+    demoContext: "Existing real recommendations in an isolated recording environment, demonstrating browsing and saving locally. No model was connected during recording; live generation and learning are not shown.",
+    demoTranscript: "Transcript & recording notes",
+    mobileDemoTitle: "On your phone: feedback and a shared library",
+    mobileDemoVideoLabel: "Screen recording of liking a recommendation on mobile and opening the shared library",
+    mobileDemoCaption: "20 seconds · Press play · Bilingual captions", mobileDemoStepsLabel: "Mobile walkthrough steps",
+    mobileDemoStep1: "Tap Like to submit feedback", mobileDemoStep2: "Open the library to find the item saved on desktop",
+    mobileDemoContext: "The phone and desktop connect to the same recording backend. This shows feedback submission and the shared library, not an updated profile or new recommendations.",
     viewOriginal: "Full-size image", sourcesLabel: "Bring your interests together, across platforms.", sourcesAria: "Content sources",
     bilibili: "Bilibili", xiaohongshu: "Xiaohongshu", douyin: "Douyin", zhihu: "Zhihu", weibo: "Weibo",
     sourcesNote: "Discovery, sign-in and initialization support vary by source. Connect the ones you use.",
@@ -59,10 +72,12 @@
   const image = document.getElementById("preview-image");
   const caption = document.getElementById("preview-caption");
   const fullSize = document.getElementById("preview-original");
+  const demoVideos = [...document.querySelectorAll(".demo-player video")];
+  const mobileDemo = document.getElementById("mobile-demo");
   const previews = {
-    home: {file: "desktop-home.png", width: 1600, height: 1000, alt: "altHome", caption: "captionHome", zhAlt: image.alt, zhCaption: caption.textContent},
-    feedback: {file: "screenshot-recommend-feedback.png", width: 808, height: 1060, alt: "altFeedback", caption: "captionFeedback", zhAlt: "浏览器插件里的推荐理由与文字反馈表单", zhCaption: "推荐理由与反馈 · 浏览器插件实际运行截图"},
-    profile: {file: "desktop-profile.png", width: 1600, height: 1000, alt: "altProfile", caption: "captionProfile", zhAlt: "OpenBiliClaw 桌面端的兴趣画像与偏好", zhCaption: "兴趣画像 · 桌面端实际运行截图"},
+    home: {file: "live-desktop-home.jpg", width: 1440, height: 960, alt: "altHome", caption: "captionHome", zhAlt: image.alt, zhCaption: caption.textContent},
+    library: {file: "live-desktop-library.jpg", width: 1440, height: 960, alt: "altLibrary", caption: "captionLibrary", zhAlt: "OpenBiliClaw 桌面内容库：已加入稍后再看的内容", zhCaption: "桌面内容库 · 找到刚刚保存的稍后再看内容"},
+    mobile: {file: "live-mobile-recommend.jpg", width: 430, height: 932, alt: "altMobile", caption: "captionMobile", zhAlt: "OpenBiliClaw 移动端 Web：来自同一后端的推荐内容", zhCaption: "移动端 Web · 连接同一个录制后端查看推荐"},
   };
   let language = "zh";
   let activePreview = "home";
@@ -70,7 +85,7 @@
     const preview = previews[key];
     if (!preview) return;
     activePreview = key;
-    image.parentElement.dataset.format = key === "feedback" ? "portrait" : "landscape";
+    image.parentElement.dataset.format = key === "mobile" ? "portrait" : "landscape";
     image.src = `images/${preview.file}`;
     image.width = preview.width;
     image.height = preview.height;
@@ -78,6 +93,21 @@
     caption.textContent = language === "en" ? english[preview.caption] : preview.zhCaption;
     fullSize.href = image.getAttribute("src");
     document.querySelectorAll("[data-preview]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.preview === key)));
+  }
+  function setDemoCaptionLanguage(videos = demoVideos) {
+    // Only caption selection changes: keep the media node, source and playback state intact.
+    videos.forEach(video => {
+      video.querySelectorAll("track").forEach(track => {
+        const selected = track.srclang.split("-")[0] === language;
+        track.default = selected;
+        track.track.mode = selected ? "showing" : "disabled";
+      });
+    });
+  }
+  function revealMobileDemo() {
+    if (location.hash !== "#mobile-demo") return;
+    mobileDemo.open = true;
+    requestAnimationFrame(() => mobileDemo.scrollIntoView({block: "start", behavior: "instant"}));
   }
   function setLanguage(value) {
     language = value === "en" ? "en" : "zh";
@@ -106,6 +136,7 @@
     toggle.textContent = isEnglish ? "中文" : "EN";
     toggle.setAttribute("aria-label", isEnglish ? "切换到中文" : "Switch to English");
     showPreview(activePreview);
+    setDemoCaptionLanguage();
   }
   let savedLanguage;
   try { savedLanguage = localStorage.getItem("openbiliclaw-home-lang"); } catch { /* Storage is optional. */ }
@@ -121,6 +152,12 @@
     } catch { /* Language switching also works in a local file preview. */ }
   });
   document.querySelectorAll("[data-preview]").forEach(button => button.addEventListener("click", () => showPreview(button.dataset.preview)));
+  demoVideos.forEach(video => video.addEventListener("loadedmetadata", () => setDemoCaptionLanguage([video])));
+  mobileDemo.addEventListener("toggle", () => {
+    if (!mobileDemo.open) mobileDemo.querySelector("video").pause();
+  });
+  window.addEventListener("hashchange", revealMobileDemo);
+  revealMobileDemo();
   toggle.hidden = false;
   document.getElementById("preview-controls").hidden = false;
   document.getElementById("preview-controls").parentElement.classList.add("has-controls");

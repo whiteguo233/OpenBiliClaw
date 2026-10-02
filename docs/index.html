@@ -83,8 +83,9 @@
         "license": "https://github.com/whiteguo233/OpenBiliClaw/blob/main/LICENSE",
         "image": "https://whiteguo233.github.io/OpenBiliClaw/images/social-preview-zh.png",
         "screenshot": [
-          "https://whiteguo233.github.io/OpenBiliClaw/images/desktop-home.png",
-          "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-recommend-feedback.png",
+          "https://whiteguo233.github.io/OpenBiliClaw/images/live-desktop-home.jpg",
+          "https://whiteguo233.github.io/OpenBiliClaw/images/live-desktop-library.jpg",
+          "https://whiteguo233.github.io/OpenBiliClaw/images/live-mobile-recommend.jpg",
           "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-profile-values.png",
           "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-profile-style.png",
           "https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-chat.png"
@@ -157,7 +158,7 @@
           <p class="lead" data-i18n="heroLead">在你的电脑上运行，从 B 站、小红书、YouTube 等平台发现内容，解释为什么推荐给你，并根据你的反馈持续调整。</p>
           <div class="actions">
             <a class="button" href="#install"><span data-i18n="getStarted">开始使用</span><span aria-hidden="true">↗</span></a>
-            <a class="text-link" href="#screens"><span data-i18n="seeProduct">看看实际界面</span><span aria-hidden="true">↓</span></a>
+            <a class="text-link" href="#demo"><span data-i18n="seeProduct">观看操作实录</span><span aria-hidden="true">↓</span></a>
           </div>
           <p class="micro" data-i18n="heroNote">数据默认保存在本机。模型服务由你选择。</p>
         </div>
@@ -166,18 +167,18 @@
         <div class="preview-toolbar">
           <span class="preview-label"><span class="status-dot" aria-hidden="true"></span><span data-i18n="previewLabel">从一条推荐开始</span></span>
           <div class="preview-controls" id="preview-controls" role="group" aria-label="选择截图" data-i18n-aria="previewControls" hidden>
-            <button type="button" data-preview="home" aria-pressed="true" data-i18n="tabHome">推荐首页</button>
-            <button type="button" data-preview="feedback" aria-pressed="false" data-i18n="tabFeedback">理由与反馈</button>
-            <button type="button" data-preview="profile" aria-pressed="false" data-i18n="tabProfile">兴趣画像</button>
+            <button type="button" data-preview="home" aria-pressed="true" data-i18n="tabHome">推荐</button>
+            <button type="button" data-preview="library" aria-pressed="false" data-i18n="tabLibrary">内容库</button>
+            <button type="button" data-preview="mobile" aria-pressed="false" data-i18n="tabMobile">手机端</button>
           </div>
         </div>
         <figure class="preview-figure">
           <div class="preview-stage">
-            <img id="preview-image" src="images/desktop-home.png" alt="OpenBiliClaw 桌面推荐首页：推荐理由、内容卡片和反馈入口" width="1600" height="1000" fetchpriority="high" decoding="async" />
+            <img id="preview-image" src="images/live-desktop-home.jpg" alt="独立录制环境中的 OpenBiliClaw 桌面推荐页：已有推荐与推荐理由" width="1440" height="960" fetchpriority="high" decoding="async" />
           </div>
           <figcaption>
-            <span id="preview-caption" aria-live="polite" data-i18n="captionHome">桌面推荐首页 · 实际运行截图，内容随个人画像变化</span>
-            <a id="preview-original" href="images/desktop-home.png" target="_blank" rel="noopener"><span data-i18n="viewOriginal">查看原图</span> <span aria-hidden="true">↗</span></a>
+            <span id="preview-caption" aria-live="polite" data-i18n="captionHome">桌面推荐页 · 独立录制环境中的已有真实推荐</span>
+            <a id="preview-original" href="images/live-desktop-home.jpg" target="_blank" rel="noopener"><span data-i18n="viewOriginal">查看原图</span> <span aria-hidden="true">↗</span></a>
           </figcaption>
         </figure>
       </div>
@@ -188,6 +189,58 @@
         </ul>
         <p class="micro" data-i18n="sourcesNote">不同来源支持的发现、登录与初始化能力不同，按需连接即可。</p>
       </div>
+    </section>
+
+    <section class="section container demo-section" id="demo" aria-labelledby="demo-title">
+      <div class="section-heading split-heading">
+        <div><p class="eyebrow" data-i18n="demoEyebrow">真实操作实录</p><h2 id="demo-title" data-i18n="demoTitle">从一条推荐，<br />到稍后再看。</h2></div>
+        <p class="section-intro" id="demo-summary" data-i18n="demoSummary">读推荐理由，保存感兴趣的内容，再到内容库里找到它。点击播放，跟着走一遍。</p>
+      </div>
+      <figure class="demo-player">
+        <!-- Recorded against existing real recommendations in an isolated environment.
+             Keep this video outside data-i18n containers so language changes preserve playback. -->
+        <video id="demo-video" controls playsinline preload="none" poster="images/live-demo-poster.jpg" aria-label="推荐内容浏览与保存的实际操作录屏" data-i18n-aria="demoVideoLabel" aria-describedby="demo-summary demo-context">
+          <source src="media/recommendation-walkthrough.mp4" type="video/mp4" />
+          <track kind="captions" src="media/recommendation-walkthrough.zh.vtt" srclang="zh-CN" label="中文" default />
+          <track kind="captions" src="media/recommendation-walkthrough.en.vtt" srclang="en" label="English" />
+          <p data-i18n="demoFallback">当前浏览器无法播放这段视频，可使用下方链接下载观看。</p>
+        </video>
+        <figcaption>
+          <span data-i18n="demoCaption">25 秒 · 手动播放 · 中文 / English 字幕</span>
+          <a href="media/recommendation-walkthrough.mp4" download><span data-i18n="demoDownload">下载视频</span> <span aria-hidden="true">↓</span></a>
+        </figcaption>
+      </figure>
+      <ol class="demo-steps" aria-label="演示操作步骤" data-i18n-aria="demoStepsLabel">
+        <li><span class="number" aria-hidden="true">01 /</span><span data-i18n="demoStep1">读推荐理由</span></li>
+        <li><span class="number" aria-hidden="true">02 /</span><span data-i18n="demoStep2">加入稍后再看</span></li>
+        <li><span class="number" aria-hidden="true">03 /</span><span data-i18n="demoStep3">打开内容库确认</span></li>
+      </ol>
+      <p class="micro demo-context" id="demo-context" data-i18n="demoContext">独立录制环境中的已有真实推荐，演示浏览和本地保存；录制时未连接模型，不展示实时生成或学习。</p>
+      <a class="text-link" href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/media/README.md#逐步文字稿" data-i18n="demoTranscript">文字稿与素材来源</a>
+      <details class="mobile-demo" id="mobile-demo">
+        <summary data-i18n="mobileDemoTitle">手机端：反馈与共享内容库</summary>
+        <div class="mobile-demo-body">
+          <figure class="demo-player mobile-demo-player">
+            <video id="mobile-demo-video" controls playsinline preload="none" poster="images/live-mobile-recommend.jpg" aria-label="手机端提交喜欢反馈并查看共享内容库的实际操作录屏" data-i18n-aria="mobileDemoVideoLabel" aria-describedby="mobile-demo-context">
+              <source src="media/mobile-feedback.mp4" type="video/mp4" />
+              <track kind="captions" src="media/mobile-feedback.zh.vtt" srclang="zh-CN" label="中文" default />
+              <track kind="captions" src="media/mobile-feedback.en.vtt" srclang="en" label="English" />
+              <p data-i18n="demoFallback">当前浏览器无法播放这段视频，可使用下方链接下载观看。</p>
+            </video>
+            <figcaption>
+              <span data-i18n="mobileDemoCaption">20 秒 · 手动播放 · 双语字幕</span>
+              <a href="media/mobile-feedback.mp4" download><span data-i18n="demoDownload">下载视频</span> <span aria-hidden="true">↓</span></a>
+            </figcaption>
+          </figure>
+          <div class="mobile-demo-copy">
+            <ol class="demo-steps mobile-demo-steps" aria-label="手机端演示步骤" data-i18n-aria="mobileDemoStepsLabel">
+              <li><span class="number" aria-hidden="true">01 /</span><span data-i18n="mobileDemoStep1">点一次「喜欢」，提交反馈</span></li>
+              <li><span class="number" aria-hidden="true">02 /</span><span data-i18n="mobileDemoStep2">打开内容库，找到桌面保存的内容</span></li>
+            </ol>
+            <p class="micro demo-context" id="mobile-demo-context" data-i18n="mobileDemoContext">手机与桌面连接同一个录制后端。这段实录展示反馈提交和共享内容库，不代表画像或推荐已更新。</p>
+          </div>
+        </div>
+      </details>
     </section>
 
     <section class="section container" id="why" aria-labelledby="why-title">

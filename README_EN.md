@@ -15,7 +15,7 @@ A personalized content discovery Agent that runs on your computer, finds content
 </div>
 
 <p align="center">
-  <a href="docs/images/desktop-home.png"><img src="docs/images/desktop-home.png" width="960" alt="OpenBiliClaw desktop home screenshot with content cards, recommendation explanations, and feedback controls" /></a>
+  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="OpenBiliClaw desktop home screenshot with content cards, recommendation explanations, and feedback controls" /></a>
   <br/>
   <sub>One feed for content across platforms, with a reason and a feedback action for each recommendation.</sub>
 </p>
@@ -40,27 +40,53 @@ Likes, not-interested actions, and natural-language conversations inform future 
 
 ## Product preview
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="docs/images/screenshot-recommend.png"><img src="docs/images/screenshot-recommend.png" width="230" alt="Extension recommendations with content cards and personal explanations" /></a><br/>
-      <b>Read a recommendation</b><br/>
-      <sub>See the content and why it might fit you</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/images/screenshot-chat.png"><img src="docs/images/screenshot-chat.png" width="230" alt="Extension chat for discussing interests and giving natural-language feedback" /></a><br/>
-      <b>Talk about your preferences</b><br/>
-      <sub>Explain what you want in your own words</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/images/mobile-recommend.png"><img src="docs/images/mobile-recommend.png" width="230" alt="Mobile Web recommendations connected to the same backend" /></a><br/>
-      <b>Continue on your phone</b><br/>
-      <sub>The same recommendations and profile</sub>
-    </td>
-  </tr>
-</table>
+Start with an existing recommendation: **expand its explanation → save to Watch later → confirm it in the Content library**.
 
-Click an image for the full view. More screenshots: [desktop cards](docs/images/desktop-cards.png), [profile](docs/images/desktop-profile.png), and the [project website](https://whiteguo233.github.io/OpenBiliClaw/?lang=en).
+<p align="center">
+  <a href="https://whiteguo233.github.io/OpenBiliClaw/?lang=en#demo"><img src="docs/media/recommendation-save.gif" width="960" alt="24-second desktop recording: expand a recommendation explanation, save it to Watch later, and confirm it in the Content library" /></a>
+</p>
+
+[**Watch the full recording (25 s, Chinese / English captions)**](https://whiteguo233.github.io/OpenBiliClaw/?lang=en#demo) · [Transcript and recording notes](docs/media/README.md)
+
+Recorded against the real backend, showing existing recommendations and a local save. The UI is in Chinese; English captions explain the actions. Recording scope and content sources are documented in the notes.
+
+<details>
+<summary>Mobile Web recording: like feedback and the shared library</summary>
+
+Tap Like in Mobile Web and confirm the feedback is accepted, then open the same backend's Content library to see items saved from the desktop.
+
+<p align="center">
+  <a href="https://whiteguo233.github.io/OpenBiliClaw/?lang=en#mobile-demo"><img src="docs/media/mobile-feedback.gif" width="280" alt="About 20 seconds of Mobile Web: submit like feedback, then open the shared Content library to view items saved from the desktop" /></a>
+</p>
+
+[Watch the mobile recording (about 20 s)](https://whiteguo233.github.io/OpenBiliClaw/?lang=en#mobile-demo) · [Transcript and recording notes](docs/media/README.md)
+
+</details>
+
+<details>
+<summary>More recorded screenshots: explanations, library, and Mobile Web</summary>
+
+**Expand an explanation** — Read why a piece of content was recommended.
+
+<p align="center">
+  <a href="docs/images/live-desktop-reason.jpg"><img src="docs/images/live-desktop-reason.jpg" width="960" alt="Desktop recommendations with the first card's explanation expanded" /></a>
+</p>
+
+**Content library** — Find the saved item under Watch later.
+
+<p align="center">
+  <a href="docs/images/live-desktop-library.jpg"><img src="docs/images/live-desktop-library.jpg" width="960" alt="Desktop Content library showing saved items in the Watch later list" /></a>
+</p>
+
+**Mobile Web** — View recommendations in the phone layout, connected to the same backend.
+
+<p align="center">
+  <a href="docs/images/live-mobile-recommend.jpg"><img src="docs/images/live-mobile-recommend.jpg" width="280" alt="Mobile Web recommendation cards connected to the same backend" /></a>
+</p>
+
+Click a screenshot to view it at full size. The phone image shows Mobile Web; see the client list below for the native Flutter app.
+
+</details>
 
 ## Quick Start
 

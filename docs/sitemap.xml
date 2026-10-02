@@ -12,13 +12,13 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://whiteguo233.github.io/OpenBiliClaw/" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://whiteguo233.github.io/OpenBiliClaw/" />
     <image:image>
-      <image:loc>https://whiteguo233.github.io/OpenBiliClaw/images/desktop-home.png</image:loc>
+      <image:loc>https://whiteguo233.github.io/OpenBiliClaw/images/live-desktop-home.jpg</image:loc>
       <image:title>OpenBiliClaw 桌面推荐首页</image:title>
       <image:caption>OpenBiliClaw desktop recommendations</image:caption>
     </image:image>
     <image:image>
-      <image:loc>https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-recommend-feedback.png</image:loc>
-      <image:title>推荐卡片和反馈按钮</image:title>
+      <image:loc>https://whiteguo233.github.io/OpenBiliClaw/images/live-desktop-library.jpg</image:loc>
+      <image:title>内容库里的稍后再看</image:title>
     </image:image>
     <image:image>
       <image:loc>https://whiteguo233.github.io/OpenBiliClaw/images/screenshot-profile-values.png</image:loc>

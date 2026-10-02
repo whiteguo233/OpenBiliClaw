@@ -15,7 +15,7 @@
 </div>
 
 <p align="center">
-  <a href="docs/images/desktop-home.png"><img src="docs/images/desktop-home.png" width="960" alt="OpenBiliClaw 真实桌面推荐首页：内容卡片、推荐理由与反馈入口" /></a>
+  <a href="docs/images/live-desktop-home.jpg"><img src="docs/images/live-desktop-home.jpg" width="960" alt="OpenBiliClaw 真实桌面推荐首页：内容卡片、推荐理由与反馈入口" /></a>
   <br/>
   <sub>把跨平台的内容放到同一个推荐页，每条推荐都能看理由、给反馈。</sub>
 </p>
@@ -40,27 +40,53 @@
 
 ## 产品预览
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="docs/images/screenshot-recommend.png"><img src="docs/images/screenshot-recommend.png" width="230" alt="插件推荐页：内容卡片和朋友式推荐理由" /></a><br/>
-      <b>读一条推荐</b><br/>
-      <sub>看内容，也看它为什么适合你</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/images/screenshot-chat.png"><img src="docs/images/screenshot-chat.png" width="230" alt="插件聊天页：通过自然语言反馈调整兴趣" /></a><br/>
-      <b>聊聊你的偏好</b><br/>
-      <sub>用自己的话说明想看什么</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/images/mobile-recommend.png"><img src="docs/images/mobile-recommend.png" width="230" alt="移动端 Web 推荐页：在手机查看同一后端的内容" /></a><br/>
-      <b>在手机接着看</b><br/>
-      <sub>连接同一后端，共享推荐与画像</sub>
-    </td>
-  </tr>
-</table>
+从一条已有推荐开始：**展开理由 → 加入稍后再看 → 在内容库确认保存**。
 
-点开图片查看原图；更多界面见 [桌面卡片](docs/images/desktop-cards.png)、[画像页面](docs/images/desktop-profile.png) 和 [项目官网](https://whiteguo233.github.io/OpenBiliClaw/)。
+<p align="center">
+  <a href="https://whiteguo233.github.io/OpenBiliClaw/#demo"><img src="docs/media/recommendation-save.gif" width="960" alt="24 秒真实桌面操作：展开推荐理由、加入稍后再看，再打开内容库确认保存" /></a>
+</p>
+
+[**观看完整实录（25 秒，中英字幕）**](https://whiteguo233.github.io/OpenBiliClaw/#demo) · [文字稿与素材说明](docs/media/README.md)
+
+这段实录展示真实后端上的推荐查看与本地保存。界面原文为中文；录制范围与内容来源见素材说明。
+
+<details>
+<summary>手机端操作实录：喜欢反馈与共享内容库</summary>
+
+在手机 Web 点「喜欢」，确认反馈提交成功，再打开同一后端的内容库，查看桌面端保存的记录。
+
+<p align="center">
+  <a href="https://whiteguo233.github.io/OpenBiliClaw/#mobile-demo"><img src="docs/media/mobile-feedback.gif" width="280" alt="约 20 秒手机 Web 实录：提交喜欢反馈，再打开共享内容库查看桌面保存记录" /></a>
+</p>
+
+[观看手机实录（约 20 秒）](https://whiteguo233.github.io/OpenBiliClaw/#mobile-demo) · [文字稿与素材说明](docs/media/README.md)
+
+</details>
+
+<details>
+<summary>更多真实截图：推荐理由、内容库与手机 Web</summary>
+
+**展开推荐理由** — 阅读一条内容为什么被推荐。
+
+<p align="center">
+  <a href="docs/images/live-desktop-reason.jpg"><img src="docs/images/live-desktop-reason.jpg" width="960" alt="真实桌面推荐页：第一条内容的推荐理由已展开" /></a>
+</p>
+
+**内容库** — 在「稍后再看」中找到刚保存的内容。
+
+<p align="center">
+  <a href="docs/images/live-desktop-library.jpg"><img src="docs/images/live-desktop-library.jpg" width="960" alt="真实桌面内容库：稍后再看列表中显示已保存的内容" /></a>
+</p>
+
+**手机 Web** — 连接同一后端，在手机布局中查看推荐。
+
+<p align="center">
+  <a href="docs/images/live-mobile-recommend.jpg"><img src="docs/images/live-mobile-recommend.jpg" width="280" alt="真实手机 Web 推荐页：连接同一后端展示推荐卡片" /></a>
+</p>
+
+点开截图查看原图。手机画面来自移动端 Web，原生 Flutter 客户端见下方客户端列表。
+
+</details>
 
 ## 快速开始
 
