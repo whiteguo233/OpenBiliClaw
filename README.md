@@ -686,6 +686,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 | **小红书** | 被动收集 · 搜索 · 创作者订阅 · 初始化导入 | 插件在已登录页面读取，零后端爬取 |
 | **抖音** | 初始化导入 · 搜索 · 热点 · 推荐流 | CLI/daemon 共用正式 producer，插件后台 tab 模拟 DOM 操作，候选统一进入待评估池 |
 | **YouTube** | 初始化导入 · Takeout 离线导入 · 搜索 / 热门 / 频道 | 插件读画像信号，日常发现后端直连补池 |
+| **TikTok**（实验性） | 话题标签 · 创作者 | yt-dlp 匿名读取公开列表，后端直连补池；无登录态、无扩展依赖 |
 | **X（Twitter）** | 初始化导入 · 搜索 · For-You · 关注作者 | discovery 使用服务端只读 cookie 重放；原生书签 executor 已接入但未实号验证 |
 | **知乎** | 初始化导入 · 搜索 · 热榜 · 推荐 · 作者 · 相关 | 插件在已登录 tab 内读取，返回文字卡片 |
 | **Reddit** | 初始化导入 · 搜索 · 热门 · Subreddit · 相关 | discovery 默认 rdt-cli；Saved executor 已接入但未实号验证 |
@@ -734,6 +735,7 @@ OpenBiliClaw/
 │   │   ├── xhs_tasks          # 小红书插件任务队列 / bootstrap_profile
 │   │   ├── dy_tasks           # 抖音插件任务队列 / bootstrap_profile + search + hot + feed
 │   │   ├── yt_tasks           # YouTube 插件任务队列 / bootstrap_profile
+│   │   ├── tiktok             # TikTok yt-dlp 匿名客户端（实验性，issue #88）
 │   │   ├── zhihu_tasks        # 知乎插件任务队列 / bootstrap_events + search/hot/feed/creator/related
 │   │   ├── reddit_tasks       # Reddit bootstrap 插件任务 / extension fallback discovery / rdt 默认 discovery helpers
 │   │   ├── linuxdo_tasks      # Linux.do 同源只读 bootstrap / 五路 discovery 任务

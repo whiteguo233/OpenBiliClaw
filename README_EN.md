@@ -689,6 +689,7 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Xiaohongshu** | passive collection · search · creator subscriptions · init import | Extension reads your logged-in pages; zero backend crawling |
 | **Douyin** | init import · search · hot · feed | CLI and daemon share the formal producer; extension background tabs fetch candidates for the unified eval pool |
 | **YouTube** | init import · Takeout offline import · search / trending / channel | Extension reads profile signals; steady-state refill is backend-direct |
+| **TikTok** (experimental) | hashtag · creator | yt-dlp anonymously reads public listings with backend-direct refill; no login, no extension dependency |
 | **X (Twitter)** | init import · search · For-You · followed authors | Server-side read-only cookie replay for discovery; native bookmark executor's first real favorite finished `synced` |
 | **Zhihu** | init import · search · hot · feed · creator · related | Extension reads logged-in tabs; renders as text cards |
 | **Reddit** | init import · search · hot · subreddit · related | Backend rdt-cli for discovery by default; Saved executor is fixture-tested, but the first real write remains uncertain after a 2xx response lacked old-DOM confirmation |

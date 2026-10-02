@@ -4,6 +4,12 @@
 
 ## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
 
+### 功能：新增 TikTok 内容源（yt-dlp 轻量后端，实验性，issue #88）
+
+- 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。
+- 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
+- `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
+
 ### 修复：最新聊天链路真实请求复验（2026-10-02）
 
 - 整合最新 main 的逐字输出与链接摄取，以及此前聊天修复分支；修复插件漏显示 delta、首轮 GET 抢先触发后台补算、窄窗口待聊列表挤没卡片操作区。

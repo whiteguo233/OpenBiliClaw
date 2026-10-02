@@ -186,6 +186,7 @@ from openbiliclaw.api.models import (
     SourceVerifyResponse,
     StorageConfigOut,
     TailnetConfigOut,
+    TiktokSourceConfigOut,
     TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
@@ -661,6 +662,7 @@ _SOURCE_SHARE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -678,6 +680,7 @@ _INIT_SOURCE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -17841,6 +17844,12 @@ def create_app(
                 "",
                 "YouTube 当前按公开源接入，后端不保存 Cookie。",
             ),
+            tiktok=item(
+                "tiktok",
+                "Cookie",
+                "",
+                "TikTok 当前按公开源接入（yt-dlp 匿名抓取），后端不保存 Cookie。",
+            ),
             twitter=item("twitter", "Cookie", tw_cookie, "X 当前 resolved Cookie。"),
             zhihu=item(
                 "zhihu",
@@ -19984,6 +19993,16 @@ def create_app(
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                     **_source_date_pref_out_kwargs(cfg.sources.youtube),
                 ),
+                tiktok=TiktokSourceConfigOut(
+                    enabled=cfg.sources.tiktok.enabled,
+                    tags=list(cfg.sources.tiktok.tags),
+                    creators=list(cfg.sources.tiktok.creators),
+                    daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
+                    daily_user_budget=cfg.sources.tiktok.daily_user_budget,
+                    request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.tiktok.min_interval_minutes,
+                    **_source_date_pref_out_kwargs(cfg.sources.tiktok),
+                ),
                 twitter=TwitterSourceConfigOut(
                     enabled=cfg.sources.twitter.enabled,
                     mode=cfg.sources.twitter.mode,
@@ -22037,6 +22056,27 @@ def create_app(
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
 
+                tt_data = sources_data.get("tiktok")
+                if isinstance(tt_data, dict):
+                    if "enabled" in tt_data:
+                        cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    for list_key in ("tags", "creators"):
+                        raw_list = tt_data.get(list_key)
+                        if isinstance(raw_list, list):
+                            setattr(
+                                cfg.sources.tiktok,
+                                list_key,
+                                tuple(str(item).strip() for item in raw_list if str(item).strip()),
+                            )
+                    for key in (
+                        "daily_tag_budget",
+                        "daily_user_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tt_data:
+                            setattr(cfg.sources.tiktok, key, int(tt_data[key]))
+
                 tw_data = sources_data.get("twitter")
                 if isinstance(tw_data, dict):
                     if "enabled" in tw_data:
@@ -22864,6 +22904,7 @@ def create_app(
                 "xiaohongshu": cfg.sources.xiaohongshu,
                 "douyin": cfg.sources.douyin,
                 "youtube": cfg.sources.youtube,
+                "tiktok": cfg.sources.tiktok,
                 "twitter": cfg.sources.twitter,
                 "zhihu": cfg.sources.zhihu,
                 "reddit": cfg.sources.reddit,

@@ -258,6 +258,14 @@ CREDENTIAL_SPECS: dict[str, CredentialSpec] = {
         form_label="YouTube",
         help_text="YouTube 按公开源接入，不需要登录，也没有任何凭据要填。",
     ),
+    "tiktok": CredentialSpec(
+        slug="tiktok",
+        kinds=(),
+        unverified_reason="TikTok 按公开源接入（yt-dlp 匿名抓取），不需要也不接受任何凭据。",
+        form_kind="none",
+        form_label="TikTok",
+        help_text="TikTok 按公开源接入，不需要登录，也没有任何凭据要填。",
+    ),
     "bangumi": CredentialSpec(
         slug="bangumi",
         # ``kinds=()``: the unified write endpoint does not accept Bangumi's

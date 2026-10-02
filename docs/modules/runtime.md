@@ -53,6 +53,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | embedding 后台预热 | ✅ | refresh 完成前只保证候选入池与文案可用；`prewarm_supergroup_embeddings()` / `prewarm_pool_mmr_embeddings()` 作为后台 task 运行，慢本地 embedding 后端不会占住 refresh lock 或让界面长时间停在“正在补货”。v0.3.124+（lever 4）：`prewarm_pool_mmr_embeddings()` 返回值区分良性冷启动与真故障——`-1`（无 embedding service / 空池，没东西可暖）让启动重试包装器 `_safe_prewarm_pool_mmr_embeddings` 平静跳过(不再每次装机刷 5 行 `warmed=0 — retry`)，`0`（有候选但全嵌入失败＝后端不可达）才重试到底并在放弃时打 WARNING 点名 embedding 后端不可达、MMR 降级。v0.3.148+ search / trending / explore / `KeywordPlanner` 的 query profile summary 也只通过 `EmbeddingService.lookup_cached()` 读取已缓存向量来保持 interest / dislike 多样性；缺缓存时按权重顺序降级，绝不在查询生成热路径新发 embedding 请求。 |
 | 视觉 / 弹幕 prewarm wiring | ✅ | `RecommendationEngine`、CLI、RuntimeContext 和 OpenClaw 均透传 `keyframe_fetch_limit` / `danmaku_fetch_limit`；prewarm 只领取当前可服务池，结果区分成功空与瞬时失败，provenance 或 sampling 变化自动重建/重嵌入 |
 | YouTube 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立运行 `yt_search` / `yt_trending` / `yt_channel`，只在 YouTube 平台族低于 quota 时由 `_loop_youtube_producer()` tick，按每日 ledger 和 `min_interval_minutes` 控制执行。 |
+| TikTok 后台 discovery producer（实验性） | ✅ | `TiktokDiscoveryProducer` 独立运行 `tiktok_tag` / `tiktok_user`，只在 TikTok 平台族低于 quota 时由 `_loop_tiktok_producer()` tick；镜像 YouTube producer 的每日执行 ledger、`min_interval_minutes` 节流与统一 candidate pipeline 入队，yt-dlp 匿名取数，无扩展 / Cookie 依赖。 |
 | X 后台 discovery producer | ✅ | `XDiscoveryProducer.produce_if_due()` 在 X 平台族低于 quota 且源健康就绪时，由独立 loop tick 触发 `search` / `feed`（For-You）/ `creator`（账号订阅）三个策略；按 `daily_*_budget` / `min_interval_minutes` / `request_interval_seconds` 节流，For-You 压到很低的每日频次并在连续失败后自动暂停。只 enqueue raw candidates 进 `discovery_candidates`，不写 `content_cache`、不调评估器。`enabled=false` 时是 no-op，不 import `twitter_cli`。 |
 | Reddit 后台 discovery producer | ✅ | `RedditDiscoveryProducer.produce_if_due()` 在 Reddit 平台族低于 quota 且 `[sources.reddit].enabled=true` 时，默认通过随 OpenBiliClaw 安装的 `rdt-cli` 登录态命令后端触发 `search` / `hot` / `subreddit` / `related` 四个分支；已连接插件会同步 `reddit_session` 到 rdt-cli credential store，命令后端不可用或未登录时 fallback 到已安装浏览器插件的真实 `reddit.com` 登录态任务。四个分支各自有独立 daily budget，默认每类 300。producer 只 enqueue raw candidates 到 `discovery_candidates`，不写 `content_cache`、不同步跑 LLM 评估，正式 admission 由共享 evaluator 异步完成。 |
 | Bangumi 后台 discovery producer | ✅ | `BangumiDiscoveryProducer.produce_if_due()` 在 Bangumi 平台族低于 quota 且启用时，调用官方匿名 API 执行 `search / ranked / latest`。它共享关键词 claim/use/fail 生命周期，按 UTC 日条目预算、类型 cursor、最小间隔与持久化 `429 Retry-After` cooldown 调度；429 rollback 在途/未执行关键词。browse 的非零旧 cursor 若因 total 缩小触发 `invalid_request`，先持久化归零再有界重试一次。跨 mode 去重并应用最终 limit 后才按保留候选的 strategy 扣预算，重复/截断条目不占额度。只 enqueue raw candidates。`RuntimeContext` 在 generation 构建/热重载时拥有并关闭 `BangumiClient`，GET 状态页通过独立本地查询读取 cooldown/run ledger，不构造 producer。显式 CLI discover 只服从来源开关，不服从 daemon scheduler 总开关。 |
@@ -541,6 +542,16 @@ result = await producer.produce_if_due(limit=20)
 - `throttled`：距离上次执行未达到 `min_interval_minutes`。
 - `budget_exhausted`：当天 `yt_search` / `yt_trending` / `yt_channel` 的执行 ledger 已耗尽。
 - `disabled` / `no_profile` / `error`：分别表示配置关闭、画像不可用或所有策略失败。
+
+### TiktokDiscoveryProducer
+
+```python
+from openbiliclaw.runtime.tiktok_producer import TiktokDiscoveryProducer
+
+result = await producer.produce_if_due(limit=20)
+```
+
+`TiktokDiscoveryProducer` 与 `YoutubeDiscoveryProducer` 完全同构（实验性 TikTok 源，yt-dlp 匿名后端）：调度 `tiktok_tag` / `tiktok_user`，`tiktok_discovery_runs` 每日执行 ledger + `min_interval_minutes` 节流 + pool 缺口门；`reason` 取值与 YouTube producer 相同（`ok` / `throttled` / `budget_exhausted` / `pool_full` / `disabled` / `no_profile` / `error`）。统一关键词规划器 flag 开启时，`tiktok_tag` 走 claim → 注入（搜索词压缩为 hashtag）→ `used` / `failed` 的 fetch-only 生命周期，P1.8 keyword id 随候选传递用于 yield 回填。
 
 ### XDiscoveryProducer
 

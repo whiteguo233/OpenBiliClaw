@@ -71,6 +71,7 @@ VERIFY_ACTIONS: dict[str, VerifyAction] = {
     "xiaohongshu": "browser_heartbeat",
     "douyin": "live_probe",
     "youtube": "none",
+    "tiktok": "none",
     "twitter": "live_probe",
     "zhihu": "browser_heartbeat",
     "reddit": "local_file",

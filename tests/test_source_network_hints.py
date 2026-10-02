@@ -61,16 +61,23 @@ def _hint_strings() -> tuple[str, ...]:
 def test_overseas_platform_list_is_the_verified_one() -> None:
     """Pins the classification a human verified against the transport code.
 
-    bangumi / youtube / twitter / reddit sit outside the GFW; the CN-direct
-    families must never join them, because pitfall rule 1 forces those to
-    ignore proxies entirely.
+    bangumi / youtube / tiktok / twitter / reddit sit outside the GFW; the
+    CN-direct families must never join them, because pitfall rule 1 forces
+    those to ignore proxies entirely.
     """
-    assert {"bangumi", "github", "youtube", "twitter", "reddit"} == OVERSEAS_EGRESS_PLATFORMS
+    assert {
+        "bangumi",
+        "github",
+        "youtube",
+        "tiktok",
+        "twitter",
+        "reddit",
+    } == OVERSEAS_EGRESS_PLATFORMS
     for family in ("bilibili", "xiaohongshu", "douyin", "zhihu"):
         assert not requires_overseas_network(family), f"{family} is CN-direct"
     # Aliases resolve too — a caller passing "bgm" / "x" / "yt" must not slip
     # through as an unknown platform and silently lose the advisory.
-    for alias in ("bgm", "x", "yt", "rd"):
+    for alias in ("bgm", "x", "yt", "rd", "tt"):
         assert requires_overseas_network(alias), alias
 
 

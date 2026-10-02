@@ -207,6 +207,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "xiaohongshu": 1,
     "douyin": 1,
     "youtube": 1,
+    "tiktok": 1,
     "twitter": 1,
     "zhihu": 1,
     "reddit": 1,
@@ -1289,6 +1290,29 @@ class YoutubeSourceConfig(SourceDatePreferenceConfig):
 
 
 @dataclass
+class TiktokSourceConfig(SourceDatePreferenceConfig):
+    """TikTok experimental source configuration.
+
+    TikTok steady-state discovery runs through a backend-direct runtime
+    producer backed by yt-dlp (no login, no browser extension, no cookie):
+    hashtag listing via ``tiktok:tag`` and creator uploads via ``tiktok:user``.
+    yt-dlp ships no TikTok *search* extractor, so keyword-planner words are
+    mapped onto hashtags instead of a search endpoint. ``tags`` / ``creators``
+    seed the two strategies; the budget knobs cap per-day execution units.
+    """
+
+    enabled: bool = False
+    # Baseline hashtags for the tag strategy (without the leading ``#``).
+    tags: tuple[str, ...] = ()
+    # TikTok creator handles for the user strategy (``@`` prefix optional).
+    creators: tuple[str, ...] = ()
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
+@dataclass
 class TwitterSourceConfig(SourceDatePreferenceConfig):
     """X (Twitter) direct-cookie discovery configuration.
 
@@ -1555,6 +1579,7 @@ class SourcesConfig:
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
     douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
     youtube: YoutubeSourceConfig = field(default_factory=YoutubeSourceConfig)
+    tiktok: TiktokSourceConfig = field(default_factory=TiktokSourceConfig)
     twitter: TwitterSourceConfig = field(default_factory=TwitterSourceConfig)
     zhihu: ZhihuSourceConfig = field(default_factory=ZhihuSourceConfig)
     reddit: RedditSourceConfig = field(default_factory=RedditSourceConfig)
@@ -1972,6 +1997,7 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
         ("xiaohongshu", sources.xiaohongshu),
         ("douyin", sources.douyin),
         ("youtube", sources.youtube),
+        ("tiktok", sources.tiktok),
         ("twitter", sources.twitter),
         ("zhihu", sources.zhihu),
         ("reddit", sources.reddit),
@@ -2350,6 +2376,7 @@ def _build_config(
     xhs_raw = sources_raw.get("xiaohongshu", {})
     douyin_raw = sources_raw.get("douyin", {})
     youtube_raw = sources_raw.get("youtube", {})
+    tiktok_raw = sources_raw.get("tiktok", {})
     twitter_raw = sources_raw.get("twitter", {})
     zhihu_raw = sources_raw.get("zhihu", {})
     reddit_raw = sources_raw.get("reddit", {})
@@ -2392,6 +2419,15 @@ def _build_config(
             daily_channel_budget=int(youtube_raw.get("daily_channel_budget", 0)),
             request_interval_seconds=int(youtube_raw.get("request_interval_seconds", 2)),
             min_interval_minutes=max(0, int(youtube_raw.get("min_interval_minutes", 3))),
+        ),
+        tiktok=TiktokSourceConfig(
+            enabled=bool(tiktok_raw.get("enabled", False)),
+            tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
+            creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
+            daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
+            daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
+            request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
+            min_interval_minutes=max(0, int(tiktok_raw.get("min_interval_minutes", 3))),
         ),
         twitter=TwitterSourceConfig(
             enabled=bool(twitter_raw.get("enabled", False)),
@@ -2614,6 +2650,7 @@ def _build_config(
         xiaohongshu=xhs_raw,
         douyin=douyin_raw,
         youtube=youtube_raw,
+        tiktok=tiktok_raw,
         twitter=twitter_raw,
         zhihu=zhihu_raw,
         reddit=reddit_raw,
@@ -4287,6 +4324,7 @@ _SOURCE_DATE_PREFERENCE_SLUGS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "zhihu",
     "reddit",
@@ -5925,6 +5963,16 @@ def _render_config_toml(
             f"min_interval_minutes = {config.sources.youtube.min_interval_minutes}",
             *_render_source_date_preference_lines(config.sources.youtube),
             "",
+            "[sources.tiktok]",
+            f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
+            f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
+            f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
+            f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
+            f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",
+            f"min_interval_minutes = {config.sources.tiktok.min_interval_minutes}",
+            *_render_source_date_preference_lines(config.sources.tiktok),
+            "",
             "[sources.twitter]",
             f"enabled = {_toml_bool(config.sources.twitter.enabled)}",
             f"mode = {_toml_string(config.sources.twitter.mode)}",
@@ -6152,6 +6200,7 @@ def _render_config_toml(
             f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
             f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             f"youtube = {int(config.scheduler.pool_source_shares.get('youtube', 1))}",
+            f"tiktok = {int(config.scheduler.pool_source_shares.get('tiktok', 1))}",
             f"twitter = {int(config.scheduler.pool_source_shares.get('twitter', 1))}",
             f"zhihu = {int(config.scheduler.pool_source_shares.get('zhihu', 1))}",
             f"reddit = {int(config.scheduler.pool_source_shares.get('reddit', 1))}",

@@ -255,8 +255,8 @@
     // 首次成功读到库存快照之前是"未知"，不能把还没读到伪装成 0。
     const PLATFORM_COUNT_UNKNOWN_TEXT = "—";
     const PLATFORM_COUNT_UNKNOWN_LABEL = "库存待读取";
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX" };
-    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex" };
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", tiktok: "TikTok", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", weibo: "微博", wb: "微博", twitter: "X (Twitter)", x: "X (Twitter)", github: "GitHub", gh: "GitHub", zhihu: "知乎", reddit: "Reddit", rd: "Reddit", bangumi: "Bangumi", bgm: "Bangumi", linuxdo: "Linux.do", "linux.do": "Linux.do", v2ex: "V2EX", v2: "V2EX" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "tiktok", tt: "tiktok", wb: "weibo", weibo: "weibo", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter", gh: "github", github: "github", zh: "zhihu", zhihu: "zhihu", rd: "reddit", reddit: "reddit", bgm: "bangumi", bangumi: "bangumi", linuxdo: "linuxdo", "linux.do": "linuxdo", v2: "v2ex", v2ex: "v2ex" };
     const textCardContentTypes = new Set(["tweet", "thread", "answer", "article", "question", "post", "comment", "repository"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must

@@ -8168,6 +8168,7 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
         "xiaohongshu": "小红书",
         "douyin": "抖音",
         "youtube": "YouTube",
+        "tiktok": "TikTok",
     }
     return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
 
@@ -14103,6 +14104,7 @@ def keyword_inspiration_dry_run(
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "twitter",
         "github",
         "zhihu",

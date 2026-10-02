@@ -179,6 +179,190 @@ def _build_yt_scraper_client() -> Any:
     return YtScraperClient()
 
 
+def build_tiktok_discovery_strategies(
+    *,
+    config: Any,
+    client: Any,
+    llm_service: Any,
+    concurrency: Any,
+    database: Database | None = None,
+    strategy_unit_budget: dict[str, int] | None = None,
+) -> list[Any]:
+    """Build TikTok discovery strategies from `[sources.tiktok]` config."""
+
+    from openbiliclaw.discovery.strategies.tiktok import (
+        TiktokTagStrategy,
+        TiktokUserStrategy,
+    )
+
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    tt_date_preference = publication_date_preference_for_source(tt_cfg)
+    budgets = strategy_unit_budget or {}
+    scheduler = getattr(config, "scheduler", None)
+    default_run_budget = max(1, int(getattr(scheduler, "discovery_limit", 30)))
+
+    def _strategy_budget(strategy: str, attr: str) -> int:
+        if strategy in budgets:
+            return int(budgets[strategy])
+        configured = int(getattr(tt_cfg, attr, 0))
+        return default_run_budget if configured <= 0 else configured
+
+    tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
+    user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
+    return [
+        TiktokTagStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            tags=tuple(getattr(tt_cfg, "tags", ()) or ()),
+            tags_per_run=max(1, tag_budget),
+            date_preference=tt_date_preference,
+        ),
+        TiktokUserStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            creators=tuple(getattr(tt_cfg, "creators", ()) or ()),
+            max_creators=max(0, user_budget),
+            date_preference=tt_date_preference,
+        ),
+    ]
+
+
+def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
+    """Return the execution units consumed by one TikTok strategy run."""
+    name = str(getattr(strategy, "name", ""))
+    intermediates = getattr(strategy, "last_intermediates", {}) or {}
+    if name == "tiktok_tag":
+        tags = intermediates.get("tags")
+        if isinstance(tags, list):
+            return len(tags)
+    if name == "tiktok_user":
+        creators = intermediates.get("creators")
+        if isinstance(creators, list):
+            return len(creators)
+    return max(0, int(fallback))
+
+
+def _build_tiktok_client() -> Any:
+    from openbiliclaw.sources.tiktok import TiktokClient
+
+    return TiktokClient()
+
+
+def build_tiktok_discovery_producer(
+    *,
+    config: Any,
+    database: Any,
+    soul_engine: Any,
+    discovery_engine: Any,
+    llm_service: Any,
+    concurrency: Any,
+    candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
+) -> Any | None:
+    """Build the runtime TikTok producer if TikTok discovery is enabled."""
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        return None
+    scheduler = getattr(config, "scheduler", None)
+    if not bool(getattr(scheduler, "enabled", True)):
+        return None
+    if not hasattr(database, "conn"):
+        logger.info("tiktok producer disabled: database does not expose sqlite connection")
+        return None
+
+    from openbiliclaw.runtime.tiktok_producer import (
+        TiktokDiscoveryProducer,
+        TiktokStrategyRunResult,
+    )
+
+    try:
+        tt_client = _build_tiktok_client()
+    except ImportError as exc:
+        logger.info("tiktok producer disabled: TikTok dependencies unavailable: %s", exc)
+        return None
+
+    async def _discover(
+        profile: Any,
+        *,
+        strategy: str,
+        unit_budget: int,
+        result_limit: int,
+        queries: list[str] | None = None,
+        keyword_ids: dict[str, int] | None = None,
+    ) -> TiktokStrategyRunResult:
+        strategies = build_tiktok_discovery_strategies(
+            config=config,
+            client=tt_client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            strategy_unit_budget={strategy: unit_budget},
+        )
+        selected = [item for item in strategies if item.name == strategy]
+        if not selected:
+            return TiktokStrategyRunResult(items=[], units_used=0, source_counts={})
+
+        selected_strategy = selected[0]
+        discovery_engine.register_strategy(selected_strategy)
+        # Unified keyword planner injection (P1.7): forward claimed words to the
+        # engine as ``keywords``; the engine maps them onto the strategy's
+        # ``queries`` param (only ``tiktok_tag`` declares it, and maps them onto
+        # hashtags). ``None`` keeps the legacy self-generating behavior.
+        inject: dict[str, Any] = {}
+        if queries is not None:
+            inject["keywords"] = list(queries)
+        # P1.8 yield provenance: forward the keyword→id map so the engine stamps
+        # each produced item's ``source_keyword_id`` for admit-time backfill.
+        if keyword_ids:
+            inject["keyword_ids"] = dict(keyword_ids)
+        produce_fn = getattr(discovery_engine, "produce_candidates", None)
+        if callable(produce_fn):
+            raw_items = await produce_fn(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        else:
+            raw_items = await discovery_engine.discover(
+                profile,
+                strategies=[strategy],
+                limit=max(1, int(result_limit)),
+                **inject,
+            )
+        items = [
+            item
+            for item in raw_items
+            if str(getattr(item, "source_platform", "")) == "tiktok"
+            or str(getattr(item, "source_strategy", "")).startswith("tiktok_")
+        ]
+        units_used = _tiktok_strategy_units_used(
+            selected_strategy,
+            fallback=max(0, int(unit_budget)),
+        )
+        return TiktokStrategyRunResult(
+            items=items,
+            units_used=units_used,
+            source_counts={strategy: len(items)},
+        )
+
+    return TiktokDiscoveryProducer(
+        database=database,
+        soul_engine=soul_engine,
+        discover=_discover,
+        enabled=True,
+        min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
+        daily_tag_budget=int(getattr(tt_cfg, "daily_tag_budget", 0)),
+        daily_user_budget=int(getattr(tt_cfg, "daily_user_budget", 0)),
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+    )
+
+
 def _build_dialogue_settlement_dispatcher(
     soul_engine: Any,
     api_handlers: Mapping[DialogueJobKind, DialogueDispatcher] | None = None,
@@ -1364,6 +1548,7 @@ class RuntimeContext:
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
+        new_tiktok_producer: Any = None
         new_x_producer: Any = None
         new_zhihu_producer: Any = None
         new_reddit_producer: Any = None
@@ -1446,6 +1631,16 @@ class RuntimeContext:
                 candidate_pipeline=new_candidate_pipeline,
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
+                concurrency=concurrency,
+                keyword_fetch=new_keyword_fetch,
+            )
+            new_tiktok_producer = build_tiktok_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                discovery_engine=new_discovery_engine,
+                candidate_pipeline=new_candidate_pipeline,
+                llm_service=new_llm_service,
                 concurrency=concurrency,
                 keyword_fetch=new_keyword_fetch,
             )
@@ -1726,6 +1921,7 @@ class RuntimeContext:
             xhs_producer=new_xhs_producer,
             douyin_producer=new_douyin_producer,
             youtube_producer=new_youtube_producer,
+            tiktok_producer=new_tiktok_producer,
             x_producer=new_x_producer,
             zhihu_producer=new_zhihu_producer,
             reddit_producer=new_reddit_producer,
@@ -1878,6 +2074,7 @@ class RuntimeContext:
         for producer in (
             new_douyin_producer,
             new_youtube_producer,
+            new_tiktok_producer,
             new_zhihu_producer,
             new_bangumi_producer,
             new_github_producer,

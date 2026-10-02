@@ -366,6 +366,25 @@ request_interval_seconds = 2
 # YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
 min_interval_minutes = 3
 
+# ── TikTok 专用配置（实验性）──
+# 轻量 yt-dlp 后端：无需登录、无 Cookie、不依赖浏览器扩展。
+# 发现面以 yt-dlp 的 TikTok extractor 为准：话题标签列表（tiktok:tag）+
+# 创作者视频列表（tiktok:user）；yt-dlp 没有 TikTok 搜索 extractor，因此
+# 关键词规划器产出的词会被映射为话题标签而不是搜索词。
+# enabled=false 时 pool_source_shares 中的 tiktok 配额会被丢弃（避免池子卡在低于目标）。
+# TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
+[sources.tiktok]
+enabled = false
+# 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
+tags = []
+# 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
+creators = []
+daily_tag_budget = 0                     # 0 = 不设每日上限
+daily_user_budget = 0                    # 0 = 不设每日上限
+request_interval_seconds = 2
+# TikTok producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
+min_interval_minutes = 3
+
 # ── X (Twitter) 专用配置 ──
 # 设为 false 后：后端不再生成 X 搜索/推荐流/账号订阅任务，
 # pool_source_shares 中的 twitter 配额会被丢弃（避免池子卡在低于目标）。
@@ -634,6 +653,7 @@ bilibili = 5
 xiaohongshu = 1
 douyin = 1
 youtube = 1
+tiktok = 1
 twitter = 1
 zhihu = 1
 reddit = 1

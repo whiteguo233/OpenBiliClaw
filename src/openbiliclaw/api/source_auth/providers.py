@@ -662,6 +662,30 @@ def auth_youtube(ctx: SourceAuthContext) -> SourceAuthContract:
     )
 
 
+# ── TikTok ───────────────────────────────────────────────────────────
+
+
+def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
+    """TikTok: a public source that legitimately needs no login.
+
+    Same shape as YouTube (invariant I3): the yt-dlp backed discovery path
+    reads public hashtag / creator listings anonymously, so there is no
+    credential and ``verify_method`` stays ``none``.
+    """
+    return SourceAuthContract(
+        auth_required=False,
+        credential="none",
+        credential_origin="none",
+        verification="unverified",
+        verify_method="none",
+        verify_ttl_seconds=None,
+        can_verify_now=False,
+        detail="公开源 · 无需登录。",
+        legacy_state="no_auth",
+        legacy_logged_in=True,
+    )
+
+
 # ── Weibo ───────────────────────────────────────────────────────────
 
 
@@ -2059,6 +2083,7 @@ SOURCE_AUTH_PROVIDERS: dict[str, Callable[[SourceAuthContext], SourceAuthContrac
     "xiaohongshu": auth_xiaohongshu,
     "douyin": auth_douyin,
     "youtube": auth_youtube,
+    "tiktok": auth_tiktok,
     "twitter": auth_twitter,
     "zhihu": auth_zhihu,
     "reddit": auth_reddit,

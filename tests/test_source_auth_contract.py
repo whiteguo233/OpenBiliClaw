@@ -1563,6 +1563,9 @@ _EXPECTED_VERIFY_METHODS = {
     "xiaohongshu": "browser_heartbeat",
     "douyin": "live_probe",
     "youtube": "none",
+    # TikTok is a yt-dlp anonymous public source exactly like YouTube: no
+    # credential exists, so there is nothing to verify (invariant I3).
+    "tiktok": "none",
     "twitter": "live_probe",
     "zhihu": "browser_heartbeat",
     "reddit": "local_file",

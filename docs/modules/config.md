@@ -651,7 +651,7 @@ daemon，保留当前 v2 文件和自动备份，再由操作者显式把导出�
 
 ### `[sources.<name>]` 发布日期偏好
 
-所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `twitter` / `zhihu` /
+所有来源（`bilibili` / `xiaohongshu` / `douyin` / `youtube` / `tiktok` / `twitter` / `zhihu` /
 `reddit` / `bangumi` / `github` / `linuxdo` / `v2ex` / `weibo`）都支持以下四个字段，默认
 `"all"` = 不按发布日期过滤：
 
@@ -830,6 +830,20 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 | `daily_channel_budget` | int | `0` | `yt_channel` 每天最多选择的订阅频道数；`0` 表示不设每日上限，本轮频道数由平台缺口 / `discovery_limit` 决定 |
 | `request_interval_seconds` | int | `2` | 预留的 YouTube 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
 | `min_interval_minutes` | int | `3` | `YoutubeDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
+
+### `[sources.tiktok]`
+
+TikTok discovery 配置（实验性，issue #88）。走轻量 yt-dlp 后端：不登录、不用 Cookie、不依赖浏览器扩展，steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_tag` / `tiktok_user` 两个策略。yt-dlp 没有 TikTok 搜索 extractor，统一关键词规划器产出的搜索词会被压缩成无空格 hashtag 后走 `tiktok:tag` 通道。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否让 TikTok 参与候选池配比和后台 discovery；实验性来源，默认关闭，只能显式 opt-in |
+| `tags` | list[str] | `[]` | `tiktok_tag` 的常驻 hashtag（不带 `#`）；画像 / 规划器生成的标签在此之上叠加，按 `tags_per_run` 截断 |
+| `creators` | list[str] | `[]` | `tiktok_user` 跟踪的创作者 handle（`@` 前缀可省略）；TikTok 无账号 bootstrap，创作者列表完全由配置维护 |
+| `daily_tag_budget` | int | `0` | `tiktok_tag` 每天最多执行的话题标签批次数；`0` 表示不设每日上限 |
+| `daily_user_budget` | int | `0` | `tiktok_user` 每天最多抓取的创作者数；`0` 表示不设每日上限 |
+| `request_interval_seconds` | int | `2` | 预留的 TikTok 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |
+| `min_interval_minutes` | int | `3` | `TiktokDiscoveryProducer` 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都允许检查执行 |
 
 ### `[sources.twitter]`
 
@@ -1069,7 +1083,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub 等其余十一个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub 等其余十二个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1077,6 +1091,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
 | `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
 | `youtube` | int | `1` | YouTube 平台族占比；`yt_search` / `yt_trending` / `yt_channel` 统一计入该族 |
+| `tiktok` | int | `1` | TikTok 平台族占比；`tiktok_tag` / `tiktok_user` 统一计入该族 |
 | `twitter` | int | `1` | X (Twitter) 平台族占比；`search` / `feed`（For-You）/ `creator`（账号订阅）三个策略统一计入该族 |
 | `github` | int | `1` | GitHub 平台族占比；`github-search` / `github-ranked` / `github-latest` 统一计入该族，`gh` alias 在写入前归一化 |
 | `zhihu` | int | `1` | 知乎平台族占比；插件 `zhihu-search` / `zhihu-hot` / `zhihu-feed` / `zhihu-creator` / `zhihu-related` 候选统一计入该族 |
@@ -1088,7 +1103,7 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音、YouTube、X、知乎与 Reddit 分别由既有正式 producer 补 raw candidates；GitHub 低于目标且 `[sources.github].enabled=true` 时，`GitHubDiscoveryProducer` 通过官方 REST API 执行 `search / ranked / latest`，按 canonical 去重与最终保留数扣预算，并遵守持久 cooldown。Bangumi 继续直连官方匿名 API；Linux.do 继续入队同源扩展任务。所有来源都只把 raw candidates 交给共享 evaluator/admission。
 
-`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十二平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
+`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十三平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
 
 ### `[discovery]`
 

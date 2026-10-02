@@ -51,7 +51,7 @@ class SourceAuthContract(BaseModel):
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、tiktok、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
