@@ -103,7 +103,7 @@
 | 来源 raw material 统计 | ✅ | `count_pool_raw_material_by_source()` 合并 `content_cache` raw rows 和 `discovery_candidates` 待评估候选，供 raw ceiling headroom 使用。 |
 | 有界库存维护与历史恢复 | ✅ | `maintain_pool_inventory(max_mutations=50)` 在独立短连接 `BEGIN IMMEDIATE` 中先恢复仍合格且能净增 canonical available 的历史 `suppressed` 结果，再统一 stale / explore / topic / source / raw 维护；恢复数受当批 `raw_ceiling - raw_before` headroom 约束，raw 已满或超限时先裁剪、绝不继续恢复。单事务最多修改 50 行，只有确有 deferred victim，或裁剪释放 headroom 后仍可继续恢复时才返回 `has_more=True`；protected/token-owned excess 无可裁剪 victim 时以稳定 WARNING 结束，不再形成恢复/裁剪振荡。已满 topic 不参与恢复，排名窗口试探失败会在同一事务还原。维护连接只等写锁 75ms，交互写入优先；每批仍保护 canonical available 底线并在不变量失败时整体回滚。**整笔事务共享一份测量基准**：事务开始时取一次 `maintenance_now` 并在 temporal transition 后快照一次动态 delight 阈值，before/after 两次 canonical availability 扫描、恢复规划与全部 trim planner 都经 `_now=` / `_delight_threshold=` 使用这组固定输入——否则逐次取时钟会让跨越 `temporal_valid_until` 的行、以及被事务自身 `pool_status` 写入移动的百分位样本伪造一次库存下降，池子低于 target 时不变量（floor=`min(before, target)`）会把健康批次永远回滚（2026-08 现场：连续 652 次回滚、stale 清不掉、suppressed 无法恢复）。回滚时 `PoolMaintenanceResult` 如实填报被回滚批次的 trim/恢复计数与 `mutation_count`（语义见 `rolled_back` 说明），不再返回伪造的全零字段。 |
 | 换批读写隔离与时效复核 | ✅ | `PoolServeSnapshot` 在专属单线程 serve worker 上先用只读 preflight 计算 temporal v2 三态；命中 `review_due` / `expired` 时才在短写事务中分别持久化为 `temporal_review_hold` / `stale`，再用一次只读事务统一读取 readiness、候选、平台补位、持久化已看账本和 curator 信号。同一快照只物化一次 `seen_items`，并按账本最新 event id 缓存结果，写入新浏览事件后自动失效。`persist_pool_serve_async()` 用另一条短事务重读最终选中行和完整证据组，只有仍为 `fresh` 且 disposition 为 `eligible` 的条目才原子写入 recommendation + shown，并返回实际 committed/stale/skipped BVID。serve 与 maintenance 使用不同 executor、不同 SQLite 连接，不把共享 `Database.conn` 直接跨线程并发访问。 |
-| 十二平台来源族归一化 | ✅ | `sources.platforms` 以可枚举规则统一 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 的别名、策略前缀和 URL host；`gh` 只在边界归一为 `github`，持久层不写 alias。pool accounting、已看身份与 URL 推断共用同一口径。 |
+| 十三平台来源族归一化 | ✅ | `sources.platforms` 以可枚举规则统一 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 与 Web 的别名、策略前缀和 URL host；`gh` 只在边界归一为 `github`，持久层不写 alias。pool accounting、已看身份与 URL 推断共用同一口径。 |
 | 来源定向历史缓存读取 | ✅ | `get_unrecommended_content(limit, source_platforms=...)` 在 SQL 平衡与 `LIMIT` 之前按平台过滤，供 source-scoped discovery backfill 使用；空 `source_platform` 的 legacy 行只按 B 站处理，不能跨源补进 B 站 / YouTube / 抖音定向运行。 |
 | discovery 待评估池 | ✅ | `discovery_candidates` 支持 mixed-source enqueue / claim / evaluation / admission，GitHub 行使用 `source_platform="github"`、`source_strategy="github-search|github-ranked|github-latest"`、`content_type="repository"`。队列持久化 `claim_token`、`score_threshold`、`eval_attempts` 与 batch 级 `batch_eval_attempts`；stale-sensitive 完成和释放都匹配 `id + status + claim_token`。 |
 | evaluator prefilter shadow 审计 | ✅ | `evaluator_prefilter_shadow_audit` 用随机 decision id 连接预过滤决策与最终原始 LLM score / admission 结果；只保存 identity hash、类别、数值和 digest，不保存标题、URL、正文、prompt、画像文本或 provider response。每次 insert 同时执行 30 天和 20,000 行双重 retention；任何写入/回填失败由 discovery fail-open，并以 incomplete telemetry 阻断 enforce gate。 |
@@ -312,7 +312,7 @@ url_platform = infer_source_platform_from_url(
 )  # "zhihu"
 ```
 
-`CANONICAL_SOURCE_FAMILIES` 固定按 `bilibili / xiaohongshu / douyin / youtube / twitter / zhihu / reddit / bangumi / linuxdo / v2ex / weibo / github` 枚举。别名归一包括 `bili`、`xhs/rednote`、`dy/tiktok`、`yt`、`x`、`zh/知乎`、`rd`、`bgm`、`linux.do`、`v2ex`、`wb/微博` 与 `gh`；strategy 归类使用 B 站精确 key 与其他平台前缀，URL 推断只匹配解析后的精确 host 或其子域，不扫描整条 URL 子串。GitHub URL 只能推断来源族，repository canonical identity 仍必须来自官方 API numeric ID。数据库保留 `_pool_source_family()`、`_normalize_source_platform_key()` 私有兼容入口，但两者均委托该规则表。
+`CANONICAL_SOURCE_FAMILIES` 固定按 `bilibili / xiaohongshu / douyin / youtube / twitter / zhihu / reddit / bangumi / linuxdo / v2ex / weibo / github / web` 枚举。别名归一包括 `bili`、`xhs/rednote`、`dy/tiktok`、`yt`、`x`、`zh/知乎`、`rd`、`bgm`、`linux.do`、`v2ex`、`wb/微博` 与 `gh`；strategy 归类使用 B 站精确 key 与其他平台前缀，URL 推断只匹配解析后的精确 host 或其子域，不扫描整条 URL 子串。GitHub URL 只能推断来源族，repository canonical identity 仍必须来自官方 API numeric ID。数据库保留 `_pool_source_family()`、`_normalize_source_platform_key()` 私有兼容入口，但两者均委托该规则表。
 
 ### Saved Memberships And Native State
 
@@ -531,6 +531,27 @@ cursor、全局 `Retry-After` cooldown，以及被 401 拒绝 PAT 的单向 fing
 native-save ledger，用户初始化事件只进通用 `events/seen_items`。
 
 `source_producer_runs` 是抖音 / YouTube / X / 知乎 / Reddit / Linux.do / 微博七个 producer 共用的**节流地板账本**（`platform` / `discovered` / `created_at`），取代这些来源原先记在进程内的 `_last_run_at`。共享 helper 只写入 `discovered > 0` 的轮次，因此同时解决两个反向缺陷：落库让地板在后端重启后依然有效，只记产出让零产出的轮次不再白白锁死一个完整 `min_interval_minutes`。XHS 与 Bangumi 继续使用各自持久 runtime state / run ledger；V2EX 的 `v2ex_discovery_runs` / `v2ex_discovery_state` 另存分支预算、来源 cursor、Topic/Reply 增强请求 units 和 rate-limit cooldown；微博还另存 `weibo_discovery_runs` / `weibo_discovery_state` / `weibo_tasks`，GitHub 则使用上节的专用 discovery ledger。共享读写收口在 `runtime/producer_cadence.py`，未接数据库构造的 producer 回落到进程内时间戳。
+
+### Web Recipe State
+
+Web 的用户计划和运行状态分表保存，避免 API 可编辑配置与 worker checkpoint 混在同一信任边界：
+
+| 表 | 内容与写入者 |
+| --- | --- |
+| `source_recipes` | API / typed compiler 保存 recipe ID、计划、开关、权重、owner 与最近 fetch 信息 |
+| `web_source_state` | runtime 保存健康、稳定 error、HTTP validators、sitemap cursor、next fetch、完整性、计数及 token-fenced lease |
+| `web_source_seen` | runtime 保存 recipe-scoped item key、canonical URL、内容 hash 和观察时间；默认只保留最近 10,000 行 |
+
+recipe 的 execution fingerprint 覆盖 strategy、入口、allowlist、取数上限、详情预算、listing plan
+与 backend plan version。fingerprint 改变时旧 state / seen 原子失效；只改名称、interval、权重或
+enabled 不重置 checkpoint。删除用户 recipe 同时清理其 state / seen。
+
+`claim_due_web_recipes()` 以数据库事务原子取得 lease token；续租和最终提交都必须匹配
+token，过期 worker 不能写回。只有完整 `ok / empty / not_modified` 结果提交 validator/cursor；
+partial 结果不推进 checkpoint。candidate 成功交给共享 pipeline 后才 mark seen，避免 enqueue 失败
+造成永久漏取。`GET /api/sources` 与 status 只投影安全 runtime 摘要，不返回 validator、cursor
+或 lease。完整数据流见 [Web 来源文档](web.md)。
+
 
 V2EX bootstrap 另使用 `v2ex_tasks` 保存可领取、分批合并和 staged 完成状态。`v2ex_favorite_snapshot_items` 以 `(username_key, scope, item_key)` 保存当前收藏代次和连续缺失计数，`v2ex_favorite_snapshot_runs` 保证同一任务 / scope 的集合比较只执行一次，`v2ex_favorite_snapshot_effects` 是 `retract|restore` durable outbox；首次 init 的完整 scope 会种基线，此后仍只有扩展 canonical debug 中对应 `scope_complete=true` 才允许推进缺失。`v2ex_affinity_evidence`、`v2ex_node_affinity` 和 `v2ex_affinity_snapshot_effects` 按 resolved username 分区并以 item/effect key 保证重放幂等；投入阅读使用 `engaged_view:topic:<id>`，所以同一 Topic 重复阅读只增加一次 `engaged_view_count`。`auth_state` 只保存布尔登录心跳、公开 observed/accepted username、当前 active profile username，以及已验证 PAT username + 当前 PAT 的单向 fingerprint；不保存 PAT 或 Cookie。账号切换先把新账号导入事件标为 inactive，完整 Soul 构建提交后由 `activate_v2ex_profile_identity()` 原子切换账号 scoped 事件 owner；未携带 `source_identity` 的本地反馈 / 被动阅读事实保持可用，不会被误归旧账号。PAT / 浏览器身份读取分别受 6 小时 / 72 小时 freshness 约束，明确 PAT 拒绝和浏览器登出会删除匹配声明，网络错误不会。任务结果服务端会再次净化，不把 HTML、headers 或未知字段落盘。
 

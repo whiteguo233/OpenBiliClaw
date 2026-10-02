@@ -724,16 +724,20 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 
 ### `[sources.browser]`
 
-通用 Web / 自定义网页源使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
+历史 `web_extract` / 自定义网页实验使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
 
-> 当前小红书和抖音稳定链路都走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。这里的 CDP 配置主要用于没有专用插件 / API adapter 的网页源。
+> 当前正式通用 Web 来源不读取本段：canonical Web 只运行匿名、recipe-bounded 的
+> `feed / sitemap / listing` HTTP lane，不使用 CDP、Playwright、登录 Cookie 或 JavaScript。
+> 小红书和抖音稳定链路也走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `cdp_url` | string | `""` | 预启动 Chrome 的 CDP 端点，例如 `"http://localhost:9222"`。设置后优先走 Playwright `connect_over_cdp` 复用你手动登录的会话；留空则回退到 agent-browser（无登录态） |
 | `headed` | bool | `false` | agent-browser 回退路径是否显示窗口 |
 
-> **仅在通用 Web / 自定义网页源需要登录态时使用 CDP。** 普通 B 站 / 小红书 / 抖音使用路径不需要配置这里。
+> **仅在显式调用历史 `web_extract` 兼容实验时使用 CDP。** typed Web recipe API 不接受
+> `web_extract`，正式 producer 也不会把 CDP 当作失败 fallback。普通 B 站 / 小红书 / 抖音
+> 使用路径同样不需要配置这里。
 >
 > 启动步骤：
 > 1. 安装 Playwright：`pip install 'openbiliclaw[browser]'`
@@ -1003,6 +1007,25 @@ V2EX 是匿名公开 discovery 源，支持官方匿名 JSON API / Feed，以及
 
 平台特例：抖音只要本地 Cookie 存在即显示 `unverified`，必须由实际抖音任务确认；小红书 / 知乎优先使用插件上报的 `logged_in + updated_at`，知乎仅在从未收到浏览器心跳时回落最近任务历史；Reddit `backend="rdt"` 只读取本地 credential 文件。Bangumi 不探测登录，状态由本地开关与最近 producer run ledger 计算。Linux.do 的公开发现始终匿名可用，扩展 `_t` 布尔心跳只决定个人 bookmarks / likes / read-history 是否可尝试；V2EX 匿名时为 `no_auth`，配置 PAT 后由 live probe 区分验证结论，不会把 PAT 状态误写成浏览器登录态。GitHub 匿名时同样为 `no_auth`，PAT 的 live probe 只提高凭据验证强度；当前 PAT 的正式 discovery 401 会让 profile / bootstrap 轴显示 unavailable，但指纹不匹配的旧标记在令牌轮换后失效，且任何 PAT 失败都不得把独立匿名 discovery 误报为不可用。`xsec_token` 只是小红书内容 URL 的访问令牌，不会据此判断账号已登录。
 
+### `[sources.web]`
+
+正式通用 Web 来源只跟随显式保存的公开 `feed / sitemap / listing` recipe。`[sources.web]`
+只保存全局 kill switch 和 transport/runtime ceiling；入口 URL、exact origin allowlist、间隔、
+item/page/detail 预算及 listing selector 属于 `/api/sources` recipe，不写在本段。
+
+| 键 | 类型 | 默认值 | 允许范围 | 说明 |
+|----|------|--------|----------|------|
+| `enabled` | bool | `true` | — | Web 全局紧急开关；没有 enabled Web recipe 时仍不预留 pool quota |
+| `request_timeout_seconds` | int | `15` | `1..60` | 单个资源的全流程 deadline（含 DNS、robots、redirect 与 body 读取）；不是整轮 recipe 的无限等待预算 |
+| `max_response_bytes` | int | `2097152` | `65536..5000000` | 普通响应解码后的字节上限；robots 另有更小的内部上限 |
+| `max_redirects` | int | `5` | `0..10` | 每个资源的 redirect 上限；每一跳仍须命中 recipe origin 并重新通过 DNS/robots 校验 |
+| `lease_seconds` | int | `300` | `30..3600` | recipe 初始 runtime lease；producer 会按有界请求预算续租，过期 worker 不能提交结果 |
+
+`GET /api/config` / `PUT /api/config` 与 TOML loader 使用同一字段和边界。创建 recipe 是实际
+opt-in：`enabled=true` 本身不会自动探测任何 URL。公开 HTTP transport 固定 `trust_env=false`，
+因此 `[network].mode` 和 `[sources.browser]` 都不改变 Web recipe 的出口或 auth 边界。完整 recipe、
+robots fail-closed、socket DNS pin 与状态语义见 [通用 Web 来源文档](web.md)。
+
 ### `[scheduler]`
 
 TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为真实布尔值。`enabled`、`pause_on_extension_disconnect`、`profile_consolidation_enabled`、`profile_consolidation_archive_enabled`、`auto_update_enabled`、`auto_update_allow_prerelease` 接受常见 `true/false/1/0`；空字符串或无法识别的值回到各字段默认值，绝不会把字符串 `""` 留到 API 响应后再触发类型校验错误。
@@ -1069,7 +1092,9 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 
 ### `[scheduler.pool_source_shares]`
 
-候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub 等其余十一个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+候选池按平台族做保底配比，默认 Bilibili 权重为 `5`，GitHub / Web 等其余十二个 canonical source 权重均为 `1`。旧配置缺少后续新增的平台 key 时会自动补齐默认 share；关闭的平台保留配置值但从运行时有效配比中剔除，剩余平台重新归一化吃满 `pool_target_count`。默认安装只启用 Bilibili，因此初始有效配比仍只有 Bilibili。
+
+Web 仅在全局开关开启且至少存在一个 enabled recipe 时参与有效份额；它不参与画像初始化。Web typed recipe 由 `/api/sources` 或经写确认的 `create_source` 保存，不进入 `/api/config` payload。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1084,11 +1109,12 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `bangumi` | int | `1` | Bangumi 平台族占比；`bangumi-search` / `bangumi-ranked` / `bangumi-latest` 统一计入该族 |
 | `linuxdo` | int | `1` | Linux.do 平台族占比；`linuxdo-search` / `linuxdo-hot` / `linuxdo-feed` / `linuxdo-creator` / `linuxdo-related` 统一计入该族 |
 | `v2ex` | int | `1` | V2EX 平台族占比；`v2ex-search` / `v2ex-node` / `v2ex-tab` / `v2ex-hot` / `v2ex-latest` 统一计入该族 |
+| `web` | int | `1` | 通用 Web 平台族占比；`web-feed` / `web-sitemap` / `web-listing` 统一计入该族，仅在全局开关和 enabled recipe 同时存在时生效 |
 | `weibo` | int | `1` | 微博平台族占比；`weibo-search` / `weibo-hot` / `weibo-creator` 统一计入该族 |
 
 运行时会拆分两套 quota：前端可换来源目标用于补货和 `reactivate_under_quota_pool_sources()` 的缺口判断；raw ceiling 来源目标用于 `trim_pool_source_overflow()` / `trim_pool_to_target_count()` 的硬成本边界。小平台低于可换目标时，会优先保护 / 复活它们的候选，但不会超过 raw headroom；任一平台族 raw material 高于 raw ceiling 配额时，才会先压回配额内。B 站低于后台低水位且 `[sources.bilibili].enabled=true` 时，才由 B 站 discovery 补货；小缺口优先 `search + related_chain`，更深缺口再跑 `trending/explore`。抖音、YouTube、X、知乎与 Reddit 分别由既有正式 producer 补 raw candidates；GitHub 低于目标且 `[sources.github].enabled=true` 时，`GitHubDiscoveryProducer` 通过官方 REST API 执行 `search / ranked / latest`，按 canonical 去重与最终保留数扣预算，并遵守持久 cooldown。Bangumi 继续直连官方匿名 API；Linux.do 继续入队同源扩展任务。所有来源都只把 raw candidates 交给共享 evaluator/admission。
 
-`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出十二平台候选池比例建议；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
+`openbiliclaw init` 会按用户选择写回可参与画像初始化的来源开关：知乎、Reddit、Linux.do、V2EX 与微博可通过扩展任务导入个人事件，Bangumi 按其账号解析规则读取收藏，GitHub 则用公开用户名或 verified PAT identity 读取 **公开** starred repositories。没有个人身份时，GitHub 仍可匿名 discovery，但不能单独提供画像信号。微博公开 discovery 不需要登录，但作为唯一画像来源时必须先收到已登录微博扩展 heartbeat。Bilibili 默认启用，也可手动关闭。交互式初始化会按事件量给出候选池比例建议，并动态计入存在有效 enabled recipe 的 Web discovery 来源；插件设置页与桌面 Web 均可编辑开关和比例，并通过 `/api/config/source-share-suggestion` 重新生成建议值。
 
 ### `[discovery]`
 
@@ -1295,7 +1321,7 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：展示实例、全局调用链与四个模块链摘要，允许调整全局并发 / 超时、测试默认链，并跳转桌面 Web 完整编辑；插件保存其他字段时不会回写或压扁实例路由
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`，以及小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub 的来源配置
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十二个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十三个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 高级功能（桌面 Web 与插件设置页均有「认知循环预算」区块）：`soul.awareness_event_batch_size`、`soul.insight_note_batch_size`、`soul.cognition_max_tokens`（issue #169）
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 

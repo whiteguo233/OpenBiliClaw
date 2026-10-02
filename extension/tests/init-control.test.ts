@@ -467,6 +467,9 @@ test("init source roster derives from shared capability-aware INIT_SOURCE_KEYS (
   assert.ok(shared.SOURCE_KEYS.includes("weibo"));
   assert.ok(shared.INIT_SOURCE_KEYS.includes("weibo"));
   assert.ok(INIT_SOURCE_OPTIONS.some((o) => o.key === "weibo"));
+  assert.ok(shared.SOURCE_KEYS.includes("web"));
+  assert.ok(!shared.INIT_SOURCE_KEYS.includes("web"));
+  assert.ok(!INIT_SOURCE_OPTIONS.some((o) => o.key === "web"));
   // Labels come from the shared module too.
   for (const opt of INIT_SOURCE_OPTIONS) {
     assert.equal(opt.label, shared.sourceLabel(opt.key));

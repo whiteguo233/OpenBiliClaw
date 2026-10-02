@@ -24,6 +24,7 @@ class TestBuildAgentToolRegistry:
             "query_discovery_pool",
             "get_config",
             "list_sources",
+            "probe_web_source",
             # soft_write
             "write_memory",
             "submit_feedback",
@@ -47,6 +48,7 @@ class TestBuildAgentToolRegistry:
             "query_discovery_pool",
             "get_config",
             "list_sources",
+            "probe_web_source",
         }
         soft = registry.filter_by_permission("soft_write")
         assert {"write_memory", "submit_feedback", "save_item"}.issubset(set(soft.names))

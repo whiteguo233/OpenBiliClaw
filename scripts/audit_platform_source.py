@@ -69,8 +69,10 @@ TRANSPORT_KINDS = (
     "external-cli",
     "sdk",
     "hybrid",
+    "web-http",
 )
 TRANSPORT_OWNERS = ("backend", "browser", "extension", "external-cli", "shared", "none")
+HOST_POLICIES = ("static", "recipe-allowlist")
 VERIFY_ACTION_VALUES = (
     "live_probe",
     "passive_health",
@@ -262,6 +264,7 @@ class PlatformContract:
     canonical_slug: str
     display_name: str
     integration_level: IntegrationLevel
+    host_policy: str
     aliases: tuple[str, ...]
     hosts: tuple[str, ...]
     content_types: tuple[str, ...]
@@ -479,8 +482,8 @@ def load_contract(path: Path) -> PlatformContract:
         raise ContractError(f"cannot read contract {path}: {exc}") from exc
 
     schema_version = raw.get("schema_version")
-    if schema_version != 1:
-        raise ContractError("schema_version must be 1")
+    if schema_version not in {1, 2}:
+        raise ContractError("schema_version must be 1 or 2")
     slug = _text(raw, "canonical_slug")
     if re.fullmatch(r"[a-z][a-z0-9_-]{1,63}", slug) is None:
         raise ContractError("canonical_slug must be a lowercase source key")
@@ -493,8 +496,24 @@ def load_contract(path: Path) -> PlatformContract:
             field="integration_level",
         ),
     )
+    host_policy = (
+        "static"
+        if schema_version == 1
+        else _choice(
+            _text(raw, "host_policy"),
+            HOST_POLICIES,
+            field="host_policy",
+        )
+    )
     aliases = _strings(raw, "aliases", context="contract", allow_empty=True)
-    hosts = _strings(raw, "hosts", context="contract")
+    hosts = _strings(
+        raw,
+        "hosts",
+        context="contract",
+        allow_empty=host_policy == "recipe-allowlist",
+    )
+    if host_policy == "recipe-allowlist" and hosts:
+        raise ContractError("host_policy='recipe-allowlist' requires hosts=[]")
     for host in hosts:
         _validate_hostname(host, field="hosts")
     content_types = _strings(raw, "content_types", context="contract")
@@ -558,6 +577,10 @@ def load_contract(path: Path) -> PlatformContract:
                 "transport.entrypoints is fail-closed to implementation source files under "
                 f"src/openbiliclaw/ or extension/src/: {entrypoint!r}"
             )
+    if transport.kind == "web-http" and schema_version != 2:
+        raise ContractError("transport.kind='web-http' requires schema_version=2")
+    if transport.kind == "web-http" and host_policy != "recipe-allowlist":
+        raise ContractError("transport.kind='web-http' requires host_policy='recipe-allowlist'")
     invalid_route_aliases = [
         alias for alias in transport.route_aliases if ROUTE_KEY_RE.fullmatch(alias) is None
     ]
@@ -1065,10 +1088,11 @@ def load_contract(path: Path) -> PlatformContract:
             raise ContractError(f"{capability} needs at least one exact exclusion test reference")
 
     return PlatformContract(
-        schema_version=1,
+        schema_version=schema_version,
         canonical_slug=slug,
         display_name=display_name,
         integration_level=level,
+        host_policy=host_policy,
         aliases=aliases,
         hosts=hosts,
         content_types=content_types,
@@ -2209,6 +2233,7 @@ class Inventory:
     def _canonical_registry(self) -> AuditResult:
         slug = self.contract.canonical_slug
         constant = "PLATFORM_" + re.sub(r"[^A-Za-z0-9]", "_", slug).upper()
+        family_values = self._family_rule_values()
         requirements: list[tuple[str, Evidence | None]] = [
             (
                 f"{constant}={slug!r} in canonical platforms registry",
@@ -2219,6 +2244,14 @@ class Inventory:
                 self._family_rule_value("family", slug),
             ),
         ]
+        if self.contract.host_policy == "recipe-allowlist":
+            has_static_hosts = any(field == "url_hosts" for field, _value in family_values)
+            requirements.append(
+                (
+                    "recipe-allowlist family has no static url_hosts",
+                    None if has_static_hosts else self._family_rule_value("family", slug),
+                )
+            )
         for alias in self.contract.aliases:
             requirements.append(
                 (
@@ -4036,13 +4069,19 @@ def build_payload(
 ) -> dict[str, Any]:
     counts = {status: sum(result.status == status for result in results) for status in STATUS_ORDER}
     required_missing = sum(result.required and result.status == "MISSING" for result in results)
+    contract_payload = asdict(contract)
+    if contract.schema_version == 1:
+        # Preserve the schema-v1 JSON surface byte-for-byte at the field level.
+        # ``host_policy='static'`` is an internal compatibility default; only
+        # schema v2 makes that policy part of the machine-readable contract.
+        contract_payload.pop("host_policy", None)
     return {
         "tool": "platform-source-registration-inventory",
         "disclaimer": DISCLAIMER,
         "repository_root": str(root),
         "contract_path": str(contract_path),
         "diff_base": diff_base or None,
-        "contract": asdict(contract),
+        "contract": contract_payload,
         "summary": {
             **counts,
             "required_missing": required_missing,

@@ -60,9 +60,12 @@ BUILTIN_TOOL_WHITELISTS: dict[str, set[str]] = {
         "query_discovery_pool",
         "get_watch_history",
         "list_sources",
+        "probe_web_source",
         "get_config",
         "submit_feedback",
         "save_item",
+        "create_source",
+        "toggle_source",
     },
     "taste-explorer": {
         "get_profile",
@@ -81,6 +84,7 @@ BUILTIN_TOOL_WHITELISTS: dict[str, set[str]] = {
     },
     "system-steward": {
         "list_sources",
+        "probe_web_source",
         "get_config",
         "create_source",
         "toggle_source",
@@ -180,8 +184,8 @@ def test_builtin_whitelists_match_registered_tools() -> None:
     for skill in catalog.definitions:
         missing = set(skill.tools) - set(registry.names)
         assert not missing, f"{skill.name} 白名单引用了未注册的工具: {missing}"
-        # Hard-write tools stay exclusive to the system steward.
-        if skill.name != "system-steward":
+        # Source approval cards are also available in the default companion.
+        if skill.name not in {"system-steward", "taste-companion"}:
             for tool_name in skill.tools:
                 tool = registry.get(tool_name)
                 assert tool is not None

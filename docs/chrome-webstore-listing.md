@@ -59,6 +59,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 把跨平台候选统一筛选，在侧边栏、PC Web 和移动 Web 中展示推荐及推荐理由。
 - 展示可查看、可纠正的私有画像，并通过喜欢、少来点、不感兴趣和聊天反馈继续调整推荐。
 - 在配置页分别展示“来源是否启用”和“接入状态”；“凭据已就绪”“状态待验证”“无需登录”含义不同，不会把仅保存在本地的令牌冒充成实时登录成功。
+- 在「公开 Web」卡片创建、启停和删除 typed recipe，查看最近运行状态；只允许 exact origin、受限 selector 和有界抓取参数，后端拒绝原因会原样显示。
 
 重要说明：
 - 插件不是独立云服务；需要本地后端运行后才有完整体验。
@@ -72,6 +73,8 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 插件在 `bgm.tv` / `bangumi.tv` 上申请的 host permission 仅用于账号身份识别：读取页面公开的用户 uid 与用户名，实现零配置识别你的 Bangumi 账号；在这两个站点上不读取 Cookie、不采集浏览行为，也不上传任何个人令牌。Bangumi 内容本身由本地后端通过官方匿名只读 API 获取。
 - 插件在 `*.v2ex.com` 上申请的 host permission 仅用于只读 Topic / Node 阅读事件，以及你主动触发的四类初始化或增量任务：本人主题、本人公开回复、收藏主题和收藏 Node。插件只检查 A2 Cookie 是否存在并向你配置的后端发送登录布尔值，不访问、存储或发送 Cookie 值；任务只返回有界的公开渲染字段，不返回页面 HTML、请求头、CSRF / once、私信或浏览器完整历史。V2EX 公开发现由本地后端通过官方只读 API / Feed 完成；OpenBiliClaw 不向 V2EX 发帖、回复、感谢、收藏、取消收藏或关注 Node。
 - GitHub 不申请任何新增 host permission、content script、Cookie 或来源任务能力；公开 repository discovery 与公开 starred 初始化均由本地后端调用官方 REST API。插件只展示配置、状态和 repository 文字卡，本地收藏不会调用 GitHub Star。
+
+- 通用 Web recipe 完全由本地后端以匿名有界 HTTP 执行；插件设置页只管理计划，不在任意网站 tab 中执行抓取。每个 recipe 的 exact origin allowlist 同时是网络权限边界，请求遵守 robots fail-closed、逐跳公共 DNS 校验与 socket pin；不读取 Cookie / Authorization、不访问登录态页面、不运行 JavaScript，也不自动递归 crawl。
 - 「个人通讯」采集范围除侧边栏聊天消息外，还包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）。
 
 > **发版待办（商店后台隐私披露表单）**：Chrome Web Store 与 Firefox AMO 的数据用途申报中，「个人通讯 / Personal communications」条目需更新描述，覆盖新增的用户提交评论与弹幕正文采集（Firefox manifest 已声明 `personalCommunications`，无需改动权限，仅需同步商店后台文案）。

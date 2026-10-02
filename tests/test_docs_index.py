@@ -24,8 +24,14 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceLinuxdoText" in html
     assert "sourceWeiboTitle" in html
     assert "sourceWeiboText" in html
-    assert "十二类平台来源与开放 Web" in html
-    assert "Twelve platform sources and the open web" in html
+    assert "十二类平台来源与公开 Web 订阅" in html
+    assert "Twelve platform sources and public Web subscriptions" in html
+    assert "sourceWebTitle" in html
+    assert "sourceWebText" in html
+    assert "在「聊一聊」粘贴网站 URL" in html
+    assert "确认订阅后加入内容发现" in html
+    assert "Paste a website URL in Chat" in html
+    assert "approve the subscription to add it to discovery" in html
     source_cards = re.findall(r'data-source="([a-z0-9_-]+)"', html)
     assert source_cards == [
         "bilibili",

@@ -30,7 +30,7 @@ Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo23
 
 ## OpenBiliClaw in 10 Seconds
 
-A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, and the open web — without handing your profile to another platform.
+A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, and public Web subscriptions — without handing your profile to another platform.
 
 | Cross-platform | Local-first | Trainable |
 |---|---|---|
@@ -79,7 +79,7 @@ local Web settings as defense in depth (source installs may also use `openbilicl
 
 ## Why OpenBiliClaw?
 
-> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub and the open web, with more platforms on the roadmap.
+> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub and public Web subscriptions, with more platforms on the roadmap.
 
 Recommendation systems are essentially a **middleman** — the platform sits between millions of videos and millions of users, matching and distributing content at scale. Modern systems are far more sophisticated than "just optimizing CTR": they jointly weigh click-through rate, completion rate, like/coin probability, dwell time, user retention, creator ecosystem health, ad revenue, and a dozen other objectives, compressing them into a single weighted ranking score. Sounds scientific, but here's the catch: **the weights are set by the platform, and the optimization targets ultimately serve the platform** — user satisfaction is valued as a means to retention and monetization, not as an end in itself. You think you're choosing content, but really the middleman decides what you get to see. The result: recommendations look more and more like what you've already watched, and the occasional surprise is pure luck.
 
@@ -316,7 +316,7 @@ The macOS app still targets 10.15+. Only the optional Tailnet helper built with 
 measured minimum of macOS 12; on 10.15 / 11 the local app continues normally while this remote edge
 is unavailable.
 
-It bundles local Ollama + `bge-m3` embedding (works out of the box), the default source dependencies including X's `twitter-cli` and Reddit's `rdt-cli`, and the default-off embedded Tailnet helper. The latter lets the desktop app join your tailnet without installing system Tailscale. Enable it from Desktop Web or the browser extension's **Settings → General**, choose browser login, an Auth Key, or an OAuth Client Secret plus an authorized device tag, then fully restart the app. Reddit's rdt command backend prefers the connected extension's synced `reddit_session`; `rdt login` remains a manual fallback, and unauthenticated runs fall back to extension tasks. It lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files. If a broken `config.toml` / `config.local.toml` prevents startup, the desktop package backs the bad file up as `*.invalid`, regenerates the default config, then opens `/setup/` so initialization can run again; `data/` is left untouched.
+It bundles local Ollama + `bge-m3` embedding (works out of the box), the default source dependencies including X's `twitter-cli` and Reddit's `rdt-cli`, Public Web's bounded `httpx` / direct `httpcore` transport, and the default-off embedded Tailnet helper. The latter lets the desktop app join your tailnet without installing system Tailscale. Enable it from Desktop Web or the browser extension's **Settings → General**, choose browser login, an Auth Key, or an OAuth Client Secret plus an authorized device tag, then fully restart the app. Reddit's rdt command backend prefers the connected extension's synced `reddit_session`; `rdt login` remains a manual fallback, and unauthenticated runs fall back to extension tasks. It lives in the **macOS menu bar / Windows system tray**; right-click for "Open Web UI / View runtime logs / Quit". Data uses the same directory as the AI / script installers: `~/OpenBiliClaw` (macOS / Linux) / `%USERPROFILE%\OpenBiliClaw` (Windows), and survives upgrades and uninstalls. Data from older packaged builds under `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` is copied back on first launch without overwriting existing files. If a broken `config.toml` / `config.local.toml` prevents startup, the desktop package backs the bad file up as `*.invalid`, regenerates the default config, then opens `/setup/` so initialization can run again; `data/` is left untouched.
 
 > ⚠️ **macOS security blocking (the app isn't signed / notarized yet)**:
 > - The current Release is ad-hoc signed but not notarized. On first launch, if macOS blocks either the install helper or the app, right-click / Control-click that item → "Open" → click "Open" again in the dialog; or allow it under "System Settings → Privacy & Security" with "Open Anyway".
@@ -432,8 +432,9 @@ OpenBiliClaw does not store your platform passwords or bypass login. Login-requi
 | **Bangumi** | No login required; optionally enter a public username for public collections, or a personal token for private ones; the extension only does account identity recognition on bgm.tv / bangumi.tv (no cookies, no browsing capture) | Without a username, Bangumi cannot be the only profile-init source, but anonymous search/ranked/date discovery still works |
 | **V2EX** | No login required; optionally configure a PAT; guided init / incremental tasks use the extension to read public rendered fields for topics, replies, favorite topics, and favorite nodes | Anonymous search/node/tab/hot/latest discovery still works without the extension; favorite scopes require an actual logged-in browser session |
 | **GitHub** | No login required; optionally enter a public username for public starred repositories. A PAT only improves rate limits and verifies identity through `/user` | Anonymous search/ranked/latest discovery still works without identity, but GitHub cannot initialize a profile alone; browser cookies are never read |
+| **Generic Web** | Login is neither required nor supported; paste a URL in desktop Web / extension for a read-only probe, then explicitly add a public feed / sitemap / listing recipe | A probe only returns a draft and Adopt does not save; with no enabled recipe nothing is scheduled and Web takes no pool share; mobile has no source settings, and logged-in/JS pages are unsupported |
 
-Xiaohongshu, Douyin, YouTube, Zhihu, and Linux.do use Chrome extension tasks; Reddit defaults to backend-installed rdt-cli for steady-state discovery and keeps the extension for init signals; X discovery uses server-side cookie replay. GitHub always uses the backend official REST client for public repositories and never enters an extension task. Linux.do requests are same-origin GETs inside real site tabs; `_t` is reduced to a login boolean and neither cookie values nor raw responses are uploaded. Reddit/X, YouTube, Xiaohongshu, Douyin, and Zhihu native-save executors are wired 6/6 and fixture-tested; in the 2026-07-14 real-account regression, every platform''s favorite and watch-later/favorite-fallback path finished `synced/already_synced`. YouTube uses named playlists; current Zhihu exposes a global `收藏 / 已收藏` toggle with the target label `知乎收藏`, and both an initially saved state and fresh-document verification are strictly read-only so the extension never blindly clicks Save again. Linux.do and GitHub expose no native write-back. `[sources.browser].cdp_url` remains available only for generic Web / custom webpage fetching.
+Xiaohongshu, Douyin, YouTube, Zhihu, and Linux.do use Chrome extension tasks; Reddit defaults to backend-installed rdt-cli for steady-state discovery and keeps the extension for init signals; X discovery uses server-side cookie replay. GitHub always uses the backend official REST client for public repositories and never enters an extension task. Linux.do requests are same-origin GETs inside real site tabs; `_t` is reduced to a login boolean and neither cookie values nor raw responses are uploaded. Reddit/X, YouTube, Xiaohongshu, Douyin, and Zhihu native-save executors are wired 6/6 and fixture-tested; in the 2026-07-14 real-account regression, every platform''s favorite and watch-later/favorite-fallback path finished `synced/already_synced`. YouTube uses named playlists; current Zhihu exposes a global `收藏 / 已收藏` toggle with the target label `知乎收藏`, and both an initially saved state and fresh-document verification are strictly read-only so the extension never blindly clicks Save again. Linux.do and GitHub expose no native write-back. `[sources.browser].cdp_url` is reserved for the historical `web_extract` browser experiment; formal Web recipes use bounded anonymous HTTP without CDP or browser fallback.
 
 </details>
 
@@ -645,6 +646,8 @@ Publication date preference: `[sources.<name>].recommendation_date_*` per source
 
 Remote Android / iOS app: `App (embedded tsnet) → user's tailnet → desktop Go tsnet helper → 127.0.0.1:<effective server port> → FastAPI`; enrollment follows `local settings UI → PUT /api/config (write-only credential) → private one-shot staging → stdin → helper`. The port normally comes from `[api].port` and follows startup / packaged `OPENBILICLAW_PORT` overrides. This path is default-off, needs no system Tailscale on the computer, exposes no Funnel/Serve, and migrates neither node identity nor staged credentials.
 
+Web authoring: chat `probe_web_source` / settings / CLI → read-only URL preview → confirmed `create_source` / explicit Add → shared typed recipe → bounded public HTTP producer → shared evaluation.
+
 > 📖 [Architecture Overview](docs/architecture-overview.md)
 
 ### Optional visual and danmaku prewarming
@@ -692,7 +695,9 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Bangumi** | public-collection init · search · ranked · date browse | Official anonymous read-only API; no cookie/token, and date results may include unreleased subjects |
 | **V2EX** | search · Node · Tab · hot · latest | Official anonymous API / JSON Feed; optional PAT for API 2.0 enrichment; Topic text cards |
 | **GitHub** | starred-repository init · search · ranked · latest | Official REST API; anonymous with an optional PAT, public repositories only, text cards |
-| **Generic Web** | browser + LLM extraction | Adapts to any webpage |
+| **Generic Web** | read-only pasted-URL probe · explicit RSS/Atom/JSON Feed · Sitemap · static Listing recipes | Bounded anonymous backend HTTP; probing only creates preview drafts and adoption still requires an explicit Add; exact origins, fail-closed robots, and DNS socket pinning; no login state, JS rendering, or arbitrary crawl ([boundary](docs/modules/web.md)) |
+
+Public Web can also be added from “Let’s chat”: provide a public URL, preview the discovered feed / sitemap / static listing plan, then approve the exact `create_source` request. A read-only `probe_web_source` never saves or schedules a source. Approved recipes join the same Web producer and candidate pipeline as settings-created sources; login, JavaScript rendering and arbitrary crawling remain unsupported.
 
 What happens after discovery:
 
@@ -727,7 +732,7 @@ OpenBiliClaw/
 │   ├── youtube/               # Google Takeout import parser
 │   ├── api/                   # Local FastAPI (config rollback / degraded mode / popup API)
 │   ├── tls_proxy.py           # Default-off LAN/self-managed HTTPS edge
-│   ├── runtime/               # Refresh, feedback coalescing, presence gate, shared CLI/desktop autostart reconcile, Ollama, degraded RuntimeContext
+│   ├── runtime/               # Refresh, Web producer, feedback coalescing, presence gate, shared CLI/desktop autostart reconcile, Ollama, degraded RuntimeContext
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
 │   └── storage/               # Data storage layer

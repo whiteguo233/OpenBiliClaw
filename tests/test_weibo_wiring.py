@@ -240,4 +240,8 @@ def test_guided_init_backend_roster_includes_logged_in_weibo() -> None:
 
     assert "weibo" in share_roster
     assert "weibo" in init_roster
-    assert init_roster == share_roster
+    # Public Web recipes participate in discovery shares, but have no account
+    # login or guided-init stage. Keep every account-backed source in order.
+    assert "web" in share_roster
+    assert "web" not in init_roster
+    assert init_roster == tuple(source for source in share_roster if source != "web")

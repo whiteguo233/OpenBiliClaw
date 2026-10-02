@@ -1305,6 +1305,7 @@ test("startChatTurn posts durable chat turn metadata", async () => {
     subject_id: "BV1DL",
     subject_title: "复杂系统入门",
     message: "我想聊聊这条",
+    streaming: false,
   });
   assert.equal(result.status, "pending");
 });

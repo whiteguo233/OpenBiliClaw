@@ -2360,6 +2360,7 @@ class Database:
         self._ensure_seen_items_ledger()
         self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
+        self._ensure_web_source_tables()
         self._ensure_xhs_observed_urls_table()
         self._ensure_discovery_candidate_columns()
         self._normalize_legacy_style_keys()
@@ -14946,6 +14947,63 @@ class Database:
             );
         """)
 
+    def _ensure_web_source_tables(self) -> None:
+        """Create backend-owned cadence and seen ledgers for Web recipes."""
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS web_source_state (
+                recipe_id              TEXT PRIMARY KEY,
+                status                 TEXT NOT NULL DEFAULT 'never_run',
+                last_error_code        TEXT NOT NULL DEFAULT '',
+                etag                   TEXT NOT NULL DEFAULT '',
+                last_modified          TEXT NOT NULL DEFAULT '',
+                validator_url          TEXT NOT NULL DEFAULT '',
+                plan_fingerprint       TEXT NOT NULL DEFAULT '',
+                cursor_json            TEXT NOT NULL DEFAULT '{}',
+                retry_cursor_json      TEXT NOT NULL DEFAULT '{}',
+                last_attempt_at        TEXT NOT NULL DEFAULT '',
+                last_success_at        TEXT NOT NULL DEFAULT '',
+                last_productive_at     TEXT NOT NULL DEFAULT '',
+                next_fetch_at          TEXT NOT NULL DEFAULT '',
+                consecutive_failures   INTEGER NOT NULL DEFAULT 0,
+                scope_complete         INTEGER NOT NULL DEFAULT 0,
+                lease_token            TEXT NOT NULL DEFAULT '',
+                lease_until            TEXT NOT NULL DEFAULT '',
+                last_discovered_count  INTEGER NOT NULL DEFAULT 0,
+                last_enqueued_count    INTEGER NOT NULL DEFAULT 0,
+                updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_source_state_due
+                ON web_source_state (next_fetch_at, lease_until);
+            CREATE TABLE IF NOT EXISTS web_source_seen (
+                recipe_id       TEXT NOT NULL,
+                item_key        TEXT NOT NULL,
+                canonical_url   TEXT NOT NULL DEFAULT '',
+                content_hash    TEXT NOT NULL DEFAULT '',
+                first_seen_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (recipe_id, item_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_web_source_seen_item_key
+                ON web_source_seen (item_key);
+        """)
+        state_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(web_source_state)").fetchall()
+        }
+        if "validator_url" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN validator_url TEXT NOT NULL DEFAULT ''"
+            )
+        if "plan_fingerprint" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN plan_fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+        if "retry_cursor_json" not in state_columns:
+            self.conn.execute(
+                "ALTER TABLE web_source_state ADD COLUMN retry_cursor_json "
+                "TEXT NOT NULL DEFAULT '{}'"
+            )
+
     def _ensure_xhs_observed_urls_table(self) -> None:
         """Create the xhs_observed_urls table if it does not exist."""
         self.conn.executescript("""
@@ -21070,6 +21128,9 @@ class Database:
         """Insert or update a source recipe."""
         import json as _json
 
+        if str(recipe.get("source_type") or "").strip().lower() == "web":
+            self._save_web_source_recipe(recipe)
+            return
         self._execute_write(
             """
             INSERT INTO source_recipes (id, source_type, name, strategy, config,
@@ -21095,18 +21156,148 @@ class Database:
             ),
         )
 
+    def _save_web_source_recipe(self, recipe: dict[str, Any]) -> None:
+        """Upsert Web config and invalidate only state made stale by the change."""
+
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        recipe_id = str(recipe["id"])
+        raw_config = recipe.get("config")
+        incoming_config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+        incoming_fingerprint = self._web_recipe_execution_fingerprint(
+            str(recipe.get("strategy") or ""), incoming_config
+        )
+        incoming_interval = self._web_recipe_interval_minutes(incoming_config)
+        changed_at = datetime.now(UTC).isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT source_type, strategy, config FROM source_recipes WHERE id = ?",
+                (recipe_id,),
+            ).fetchone()
+            if existing is not None and str(existing["source_type"]).strip().lower() != "web":
+                raise ValueError("recipe id is already owned by another source family")
+            previous_fingerprint = ""
+            previous_interval = incoming_interval
+            if existing is not None:
+                try:
+                    previous_config = json.loads(str(existing["config"] or "{}"))
+                except (TypeError, ValueError):
+                    previous_config = {}
+                typed_previous_config = previous_config if isinstance(previous_config, dict) else {}
+                previous_fingerprint = self._web_recipe_execution_fingerprint(
+                    str(existing["strategy"] or ""),
+                    typed_previous_config,
+                )
+                previous_interval = self._web_recipe_interval_minutes(typed_previous_config)
+            conn.execute(
+                """
+                INSERT INTO source_recipes (
+                    id, source_type, name, strategy, config, target_share,
+                    enabled, created_by, created_at
+                ) VALUES (?, 'web', ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    strategy = excluded.strategy,
+                    config = excluded.config,
+                    target_share = excluded.target_share,
+                    enabled = excluded.enabled
+                """,
+                (
+                    recipe_id,
+                    str(recipe["name"]),
+                    str(recipe["strategy"]),
+                    json.dumps(incoming_config, ensure_ascii=False, sort_keys=True),
+                    int(recipe.get("target_share", 4)),
+                    int(recipe.get("enabled", True)),
+                    str(recipe.get("created_by", "system")),
+                    recipe.get("created_at") or None,
+                ),
+            )
+            if existing is not None and previous_fingerprint != incoming_fingerprint:
+                conn.execute("DELETE FROM web_source_state WHERE recipe_id = ?", (recipe_id,))
+                conn.execute("DELETE FROM web_source_seen WHERE recipe_id = ?", (recipe_id,))
+            elif existing is not None and previous_interval != incoming_interval:
+                # Cadence is deliberately outside the execution fingerprint:
+                # changing it must preserve validators, cursor and seen rows.
+                # Clear the old deadline so the new cadence takes effect with
+                # one immediate run; an in-flight completion re-reads the same
+                # current config below before scheduling its following run.
+                conn.execute(
+                    """
+                    UPDATE web_source_state
+                    SET next_fetch_at = '', updated_at = ?
+                    WHERE recipe_id = ?
+                    """,
+                    (changed_at, recipe_id),
+                )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _web_recipe_execution_fingerprint(strategy: str, config: Mapping[str, Any]) -> str:
+        """Return a stable digest for fields that affect Web network/extraction state."""
+
+        execution_config = {
+            key: config.get(key)
+            for key in (
+                "entry_url",
+                "allowed_origins",
+                "max_items",
+                "max_pages",
+                "detail_fetch_limit",
+                "listing",
+                "plan_version",
+            )
+        }
+        material = json.dumps(
+            {"strategy": str(strategy).strip().lower(), "config": execution_config},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _web_recipe_interval_minutes(config: Mapping[str, Any], *, fallback: int = 30) -> int:
+        """Return the effective Web cadence used by persisted recipe state."""
+
+        raw_value = config.get("interval_minutes", fallback)
+        if isinstance(raw_value, bool):
+            return max(5, int(fallback))
+        try:
+            return max(5, int(raw_value))
+        except (TypeError, ValueError):
+            return max(5, int(fallback))
+
     def get_all_recipes(self) -> list[dict[str, Any]]:
         """Return all source recipes."""
         self._ensure_fresh_read()
         rows = self.conn.execute("SELECT * FROM source_recipes ORDER BY created_at").fetchall()
         return [self._row_to_recipe(row) for row in rows]
 
-    def get_enabled_recipes(self) -> list[dict[str, Any]]:
-        """Return only enabled source recipes."""
+    def get_enabled_recipes(self, source_type: str | None = None) -> list[dict[str, Any]]:
+        """Return enabled recipes, optionally restricted to one source family."""
         self._ensure_fresh_read()
-        rows = self.conn.execute(
-            "SELECT * FROM source_recipes WHERE enabled = 1 ORDER BY created_at"
-        ).fetchall()
+        if source_type is None:
+            rows = self.conn.execute(
+                "SELECT * FROM source_recipes WHERE enabled = 1 ORDER BY created_at"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM source_recipes
+                WHERE enabled = 1 AND source_type = ?
+                ORDER BY created_at
+                """,
+                (str(source_type).strip().lower(),),
+            ).fetchall()
         return [self._row_to_recipe(row) for row in rows]
 
     def update_recipe(self, recipe_id: str, **fields: Any) -> bool:
@@ -21132,11 +21323,457 @@ class Database:
 
     def delete_recipe(self, recipe_id: str) -> bool:
         """Delete a recipe by id. Returns True if a row was deleted."""
-        cursor = self._execute_write(
-            "DELETE FROM source_recipes WHERE id = ?",
-            (recipe_id,),
+        # Lightweight test/embedding facades historically initialized only the
+        # generic recipe table. Keep deletion compatible while ensuring Web's
+        # backend-owned ledgers exist before the atomic cleanup transaction.
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute("DELETE FROM source_recipes WHERE id = ?", (recipe_id,))
+            if int(cursor.rowcount or 0) > 0:
+                conn.execute("DELETE FROM web_source_state WHERE recipe_id = ?", (recipe_id,))
+                conn.execute("DELETE FROM web_source_seen WHERE recipe_id = ?", (recipe_id,))
+            conn.commit()
+            return int(cursor.rowcount or 0) > 0
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def claim_due_web_recipes(
+        self,
+        *,
+        limit: int,
+        now: datetime | None = None,
+        lease_seconds: int = 300,
+        force: bool = False,
+        exclude_recipe_ids: Sequence[str] = (),
+    ) -> list[dict[str, Any]]:
+        """Atomically lease enabled Web recipes whose own cadence is due."""
+        claim_limit = max(0, int(limit))
+        if claim_limit <= 0:
+            return []
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        lease_until = (current + timedelta(seconds=max(30, int(lease_seconds)))).isoformat()
+        token = secrets.token_urlsafe(24)
+        excluded_ids = tuple(
+            dict.fromkeys(str(recipe_id) for recipe_id in exclude_recipe_ids if str(recipe_id))
         )
-        return cursor.rowcount > 0
+        exclusion_sql = ""
+        from openbiliclaw.sources.web_recipe import (
+            WEB_RECIPE_PLAN_VERSION,
+            WEB_RECIPE_STRATEGIES,
+            is_compiled_public_web_recipe,
+        )
+
+        strategy_values = tuple(sorted(WEB_RECIPE_STRATEGIES))
+        strategy_placeholders = ", ".join("?" for _ in strategy_values)
+        query_params: list[Any] = [
+            int(bool(force)),
+            now_text,
+            now_text,
+            *strategy_values,
+            WEB_RECIPE_PLAN_VERSION,
+        ]
+        if excluded_ids:
+            placeholders = ", ".join("?" for _ in excluded_ids)
+            exclusion_sql = f"AND recipes.id NOT IN ({placeholders})"
+            query_params.extend(excluded_ids)
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            candidate_rows = conn.execute(
+                f"""
+                SELECT recipes.*
+                FROM source_recipes AS recipes
+                LEFT JOIN web_source_state AS state ON state.recipe_id = recipes.id
+                WHERE recipes.enabled = 1
+                  AND LOWER(TRIM(recipes.source_type)) = 'web'
+                  AND (? = 1 OR COALESCE(state.next_fetch_at, '') = '' OR state.next_fetch_at <= ?)
+                  AND (COALESCE(state.lease_until, '') = '' OR state.lease_until <= ?)
+                  AND LOWER(TRIM(recipes.strategy)) IN ({strategy_placeholders})
+                  AND json_valid(recipes.config)
+                  AND json_extract(recipes.config, '$.plan_version') = ?
+                  {exclusion_sql}
+                ORDER BY COALESCE(state.last_attempt_at, '') ASC,
+                         recipes.created_at ASC,
+                         recipes.id ASC
+                """,
+                tuple(query_params),
+            ).fetchall()
+            rows = [
+                row
+                for row in candidate_rows
+                if is_compiled_public_web_recipe(self._row_to_recipe(row))
+            ][:claim_limit]
+            if not rows:
+                conn.commit()
+                return []
+            for row in rows:
+                try:
+                    raw_config = json.loads(str(row["config"] or "{}"))
+                except (TypeError, ValueError):
+                    raw_config = {}
+                claimed_plan_fingerprint = self._web_recipe_execution_fingerprint(
+                    str(row["strategy"] or ""),
+                    raw_config if isinstance(raw_config, dict) else {},
+                )
+                conn.execute(
+                    """
+                    INSERT INTO web_source_state (
+                        recipe_id, status, last_attempt_at, lease_token,
+                        lease_until, plan_fingerprint, updated_at
+                    ) VALUES (?, 'running', ?, ?, ?, ?, ?)
+                    ON CONFLICT(recipe_id) DO UPDATE SET
+                        status = 'running',
+                        last_attempt_at = excluded.last_attempt_at,
+                        lease_token = excluded.lease_token,
+                        lease_until = excluded.lease_until,
+                        plan_fingerprint = excluded.plan_fingerprint,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(row["id"]),
+                        now_text,
+                        token,
+                        lease_until,
+                        claimed_plan_fingerprint,
+                        now_text,
+                    ),
+                )
+            conn.commit()
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+        claimed = [self._row_to_recipe(row) for row in rows]
+        for recipe in claimed:
+            recipe["lease_token"] = token
+            recipe["lease_until"] = lease_until
+            recipe_config = recipe.get("config")
+            if not isinstance(recipe_config, dict):
+                recipe_config = {}
+            recipe["plan_fingerprint"] = self._web_recipe_execution_fingerprint(
+                str(recipe.get("strategy") or ""),
+                recipe_config,
+            )
+        return claimed
+
+    def complete_web_recipe_fetch(
+        self,
+        recipe_id: str,
+        *,
+        lease_token: str,
+        plan_fingerprint: str = "",
+        status: str,
+        discovered_count: int,
+        enqueued_count: int,
+        interval_minutes: int,
+        etag: str = "",
+        last_modified: str = "",
+        validator_url: str = "",
+        cursor: Mapping[str, Any] | None = None,
+        retry_cursor: Mapping[str, Any] | None = None,
+        error_code: str = "",
+        retry_after_seconds: int = 0,
+        scope_complete: bool = True,
+        seen_items: Sequence[Mapping[str, Any]] = (),
+        seen_keep: int = 10_000,
+        now: datetime | None = None,
+    ) -> bool:
+        """Atomically fence one Web handoff and advance only safe state.
+
+        Partial/degraded/error results retain the last committed HTTP
+        validators and canonical cursor. A separate recovery cursor may advance
+        so one bad sitemap branch cannot starve independent branches; the
+        adapter clears it only after every unit in the current root topology
+        completes cleanly. It is written under the same lease/plan fence. Items may still
+        have been handed to the shared candidate pipeline; their source-scoped
+        seen rows and checkpoints are committed together only while the claimed
+        plan and lease remain current.
+        """
+        normalized_status = str(status).strip().lower()
+        if normalized_status not in {
+            "ok",
+            "empty",
+            "not_modified",
+            "degraded",
+            "login_required",
+            "rate_limited",
+            "failed",
+        }:
+            raise ValueError(f"unsupported Web fetch status: {status}")
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        safe_commit = normalized_status in {"ok", "empty", "not_modified"} and scope_complete
+        productive = int(enqueued_count) > 0
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT state.*, recipes.strategy AS recipe_strategy,
+                       recipes.config AS recipe_config
+                FROM web_source_state AS state
+                JOIN source_recipes AS recipes ON recipes.id = state.recipe_id
+                WHERE state.recipe_id = ?
+                  AND state.lease_token = ?
+                  AND state.lease_until > ?
+                  AND recipes.enabled = 1
+                  AND LOWER(TRIM(recipes.source_type)) = 'web'
+                """,
+                (recipe_id, lease_token, now_text),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return False
+            try:
+                recipe_config = json.loads(str(row["recipe_config"] or "{}"))
+            except (TypeError, ValueError):
+                recipe_config = {}
+            from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
+
+            typed_recipe_config = recipe_config if isinstance(recipe_config, dict) else {}
+            if not is_compiled_public_web_recipe(
+                {
+                    "source_type": "web",
+                    "strategy": str(row["recipe_strategy"] or ""),
+                    "config": typed_recipe_config,
+                }
+            ):
+                conn.commit()
+                return False
+            current_plan_fingerprint = self._web_recipe_execution_fingerprint(
+                str(row["recipe_strategy"] or ""),
+                typed_recipe_config,
+            )
+            claimed_plan_fingerprint = str(row["plan_fingerprint"] or "")
+            if (
+                not claimed_plan_fingerprint
+                or claimed_plan_fingerprint != current_plan_fingerprint
+                or (plan_fingerprint and plan_fingerprint != claimed_plan_fingerprint)
+            ):
+                conn.commit()
+                return False
+            current_interval = self._web_recipe_interval_minutes(
+                typed_recipe_config,
+                fallback=interval_minutes,
+            )
+            delay_seconds = (
+                max(1, int(retry_after_seconds))
+                if retry_after_seconds > 0
+                else current_interval * 60
+            )
+            next_fetch_at = (current + timedelta(seconds=delay_seconds)).isoformat()
+            seen_values = [
+                (
+                    recipe_id,
+                    str(item.get("item_key") or ""),
+                    str(item.get("canonical_url") or ""),
+                    str(item.get("content_hash") or ""),
+                    now_text,
+                    now_text,
+                )
+                for item in seen_items
+                if str(item.get("item_key") or "")
+            ]
+            if seen_values:
+                conn.executemany(
+                    """
+                    INSERT INTO web_source_seen (
+                        recipe_id, item_key, canonical_url, content_hash,
+                        first_seen_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(recipe_id, item_key) DO UPDATE SET
+                        canonical_url = excluded.canonical_url,
+                        content_hash = excluded.content_hash,
+                        last_seen_at = excluded.last_seen_at
+                    """,
+                    seen_values,
+                )
+                keep_count = max(100, min(100_000, int(seen_keep)))
+                conn.execute(
+                    """
+                    DELETE FROM web_source_seen
+                    WHERE recipe_id = ? AND item_key NOT IN (
+                        SELECT item_key FROM web_source_seen
+                        WHERE recipe_id = ?
+                        ORDER BY last_seen_at DESC, item_key ASC
+                        LIMIT ?
+                    )
+                    """,
+                    (recipe_id, recipe_id, keep_count),
+                )
+            committed_etag = (
+                str(etag)
+                if safe_commit and (etag or normalized_status != "not_modified")
+                else str(row["etag"] or "")
+            )
+            committed_last_modified = (
+                str(last_modified)
+                if safe_commit and (last_modified or normalized_status != "not_modified")
+                else str(row["last_modified"] or "")
+            )
+            committed_validator_url = (
+                str(validator_url)
+                if safe_commit and normalized_status in {"ok", "empty"}
+                else str(row["validator_url"] or "")
+            )
+            committed_cursor = (
+                json.dumps(dict(cursor or {}), ensure_ascii=False, sort_keys=True)
+                if safe_commit
+                else str(row["cursor_json"] or "{}")
+            )
+            committed_retry_cursor = (
+                "{}"
+                if safe_commit
+                else (
+                    json.dumps(dict(retry_cursor), ensure_ascii=False, sort_keys=True)
+                    if retry_cursor
+                    else str(row["retry_cursor_json"] or "{}")
+                )
+            )
+            successful = normalized_status in {"ok", "empty", "not_modified"}
+            last_success_at = now_text if successful else str(row["last_success_at"] or "")
+            last_productive_at = now_text if productive else str(row["last_productive_at"] or "")
+            failures = 0 if successful else int(row["consecutive_failures"] or 0) + 1
+            updated = conn.execute(
+                """
+                UPDATE web_source_state SET
+                    status = ?, last_error_code = ?, etag = ?, last_modified = ?,
+                    validator_url = ?,
+                    cursor_json = ?, retry_cursor_json = ?,
+                    last_success_at = ?, last_productive_at = ?,
+                    next_fetch_at = ?, consecutive_failures = ?, scope_complete = ?,
+                    lease_token = '', lease_until = '', last_discovered_count = ?,
+                    last_enqueued_count = ?, updated_at = ?
+                WHERE recipe_id = ? AND lease_token = ?
+                """,
+                (
+                    normalized_status,
+                    str(error_code or ""),
+                    committed_etag,
+                    committed_last_modified,
+                    committed_validator_url,
+                    committed_cursor,
+                    committed_retry_cursor,
+                    last_success_at,
+                    last_productive_at,
+                    next_fetch_at,
+                    failures,
+                    int(bool(scope_complete)),
+                    max(0, int(discovered_count)),
+                    max(0, int(enqueued_count)),
+                    now_text,
+                    recipe_id,
+                    lease_token,
+                ),
+            )
+            if int(updated.rowcount or 0) != 1:
+                conn.rollback()
+                return False
+            if successful:
+                conn.execute(
+                    "UPDATE source_recipes SET last_fetched_at = ? WHERE id = ?",
+                    (now_text, recipe_id),
+                )
+            conn.commit()
+            return True
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def renew_web_recipe_lease(
+        self,
+        recipe_id: str,
+        *,
+        lease_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend a still-current lease; expired or replaced workers fail closed."""
+
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        now_text = current.isoformat()
+        lease_until = (current + timedelta(seconds=max(30, int(lease_seconds)))).isoformat()
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE web_source_state
+                SET lease_until = ?, updated_at = ?
+                WHERE recipe_id = ? AND lease_token = ? AND lease_until > ?
+                  AND EXISTS (
+                      SELECT 1 FROM source_recipes
+                      WHERE id = ? AND enabled = 1 AND LOWER(TRIM(source_type)) = 'web'
+                  )
+                """,
+                (
+                    lease_until,
+                    now_text,
+                    recipe_id,
+                    lease_token,
+                    now_text,
+                    recipe_id,
+                ),
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0) == 1
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_web_source_state(self, recipe_id: str) -> dict[str, Any] | None:
+        """Return one recipe's health/cursor ledger without exposing lease state writes."""
+        self._ensure_web_source_tables()
+        self.conn.commit()
+        self._ensure_fresh_read()
+        row = self.conn.execute(
+            "SELECT * FROM web_source_state WHERE recipe_id = ?", (recipe_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        try:
+            result["cursor"] = json.loads(str(result.pop("cursor_json") or "{}"))
+        except (TypeError, ValueError):
+            result["cursor"] = {}
+        try:
+            result["retry_cursor"] = json.loads(str(result.pop("retry_cursor_json") or "{}"))
+        except (TypeError, ValueError):
+            result["retry_cursor"] = {}
+        result["scope_complete"] = bool(result.get("scope_complete"))
+        return result
+
+    def web_seen_item_keys(self, recipe_id: str, item_keys: Sequence[str]) -> set[str]:
+        """Return item keys already observed inside one Web recipe scope."""
+        unique = list(dict.fromkeys(str(key) for key in item_keys if str(key)))
+        if not unique:
+            return set()
+        placeholders = ", ".join("?" for _ in unique)
+        self._ensure_fresh_read()
+        rows = self.conn.execute(
+            f"""
+            SELECT item_key FROM web_source_seen
+            WHERE recipe_id = ? AND item_key IN ({placeholders})
+            """,
+            (recipe_id, *unique),
+        ).fetchall()
+        return {str(row["item_key"]) for row in rows}
 
     @staticmethod
     def _row_to_recipe(row: Any) -> dict[str, Any]:

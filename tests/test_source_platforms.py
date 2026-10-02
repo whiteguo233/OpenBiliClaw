@@ -41,6 +41,8 @@ from openbiliclaw.sources.zhihu_tasks import ZHIHU_DISCOVERY_SCOPE_STRATEGIES
         ("", "linuxdo-related", "linuxdo"),
         ("wb", "weibo-hot", "weibo"),
         ("v2", "v2ex-node", "v2ex"),
+        ("web", "web-feed", "web"),
+        ("", "web_extract", "web"),
     ],
 )
 def test_source_family_aliases(platform: str, source: str, expected: str) -> None:
@@ -60,6 +62,7 @@ def test_registry_contains_every_runtime_platform() -> None:
         "bangumi",
         "linuxdo",
         "v2ex",
+        "web",
         "weibo",
     )
 
@@ -177,3 +180,14 @@ def test_source_content_id_extraction_uses_stable_metadata_keys() -> None:
     assert extract_source_content_id({"bvid": "BV1TEST", "title": "视频"}) == "BV1TEST"
     assert extract_source_content_id({"content_id": None}) == ""
     assert extract_source_content_id({"repository_id": 307213173}) == "307213173"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/articles/123",
+        "https://unknown.example.net/feed.xml",
+    ],
+)
+def test_unknown_url_is_not_implicitly_classified_as_web(url: str) -> None:
+    assert infer_source_platform_from_url(url) == ""

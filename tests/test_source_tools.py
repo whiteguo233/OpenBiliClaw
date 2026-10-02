@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
+from openbiliclaw.agent.tools.source_tools import build_source_tool_registry
 from openbiliclaw.sources.tools import SOURCE_TOOLS, SourceToolDispatcher
 from openbiliclaw.storage.database import Database
 
@@ -42,6 +45,50 @@ class TestSourceToolDispatcher:
         assert recipes[0]["config"]["query"] == "机械键盘"
         assert recipes[0]["created_by"] == "agent"
 
+    @pytest.mark.parametrize("source_type", ["web", " WEB "])
+    def test_legacy_dialogue_refuses_web_writes(self, tmp_path: Path, source_type: str) -> None:
+        db = self._make_db(tmp_path)
+        dispatcher = SourceToolDispatcher(db)
+        result = dispatcher.dispatch(
+            {
+                "name": "create_source",
+                "arguments": {
+                    "source_type": source_type,
+                    "name": "Example",
+                    "strategy": "feed",
+                    "url": "https://news.example.com/feed.xml",
+                },
+            }
+        )
+        assert "确认卡" in result
+        assert db.get_all_recipes() == []
+
+    def test_legacy_dialogue_refuses_web_toggle_and_does_not_offer_async_probe(
+        self, tmp_path: Path
+    ) -> None:
+        db = self._make_db(tmp_path)
+        build_source_tool_registry(db).dispatch_sync(
+            "create_source",
+            {
+                "source_type": "web",
+                "url": "https://news.example.com/feed.xml",
+                "strategy": "feed",
+            },
+        )
+        recipe = db.get_all_recipes()[0]
+        result = SourceToolDispatcher(db).dispatch(
+            {
+                "name": "toggle_source",
+                "arguments": {
+                    "id": recipe["id"],
+                    "enabled": False,
+                },
+            }
+        )
+        assert "确认卡" in result
+        assert db.get_all_recipes()[0]["enabled"]
+        assert "probe_web_source" not in {tool["name"] for tool in SOURCE_TOOLS}
+
     def test_list_sources_empty(self, tmp_path: Path) -> None:
         db = self._make_db(tmp_path)
         dispatcher = SourceToolDispatcher(db)
@@ -69,7 +116,7 @@ class TestSourceToolDispatcher:
         db.save_source_recipe(
             {
                 "id": "r1",
-                "source_type": "web",
+                "source_type": "xiaohongshu",
                 "name": "测试",
                 "strategy": "feed",
             }

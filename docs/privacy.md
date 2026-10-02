@@ -1,7 +1,7 @@
 # OpenBiliClaw 隐私权政策
 
 生效日期：2026-05-31
-更新日期：2026-08-31
+更新日期：2026-10-02
 
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问已启用浏览器接入的受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。GitHub v1 来源只由后端通过 GitHub 官方 REST API 读取公开仓库，不在 GitHub 页面运行内容脚本，也不申请 GitHub 主机权限或下发浏览器任务。
 
@@ -18,6 +18,7 @@ OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器�
 | 网络记录 | 受支持平台的页面 URL、页面标题、访问时间、视频 / 笔记 / 页面 ID | 识别用户正在浏览的内容，生成行为事件和推荐上下文 |
 | 用户活动 | 点击、搜索、滚动、停留时长、观看时长、喜欢 / 不喜欢、收藏、稍后再看、关注等行为 | 构建和更新兴趣画像，改进推荐排序，过滤不感兴趣内容 |
 | 网站内容 | 页面上可见的文字、封面图 URL、视频 / 笔记标题、作者、标签、描述、链接、统计信息等元数据 | 理解内容主题、生成候选池、去重和解释推荐理由 |
+| 用户显式配置的公开 Web recipe 内容 | recipe 名称、入口 URL、exact allowed origins、受限 selector，以及公开 Feed / Sitemap / 静态列表返回的标题、作者、摘要、链接和明确发布时间 | 由本地后端生成 Web discovery 候选；不作为账号行为或画像事件，不读取 Cookie / token / 登录态页面 |
 | V2EX 只读任务字段 | Topic / Node 的公开 ID、标题、URL、作者、Node、时间、回复摘录，以及布尔登录状态 | 执行用户主动触发的四个 bootstrap scope、聚合讨论事件和生成 Node 偏好；不用于站内写操作 |
 | GitHub 后端只读字段 | 公开仓库的数值 ID、`node_id`、名称、作者、公开 URL、描述、topics、语言、许可证、统计与时间字段；初始化时还可使用公开 username 及其公开 starred 仓库 | 通过 GitHub 官方 REST API 完成公开仓库发现、去重、推荐和用户主动触发的画像初始化；服务端查询强制 `is:public`，返回行仍会再次拒绝非公开仓库，不执行 Star 或其他站内写操作 |
 | 个人通讯 | 用户在 OpenBiliClaw 插件侧边栏聊天框中主动输入的消息；以及用户在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（提交成功后经网络层采集，仅送本机后端） | 与用户配置的本地后端聊天接口交互，帮助查看画像、推荐和设置；用户亲手写的评论 / 弹幕是最强的兴趣表达之一，用于更准确地构建兴趣画像 |
@@ -69,6 +70,17 @@ OpenBiliClaw 使用上述数据来：
 
 OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有或运营的远程服务器，也不会内置第三方分析、广告或遥测端点。
 
+用户在桌面 Web 或插件「公开 Web」中显式粘贴 URL 并点击探测时，本地后端会先向该 URL 的
+exact origin 发送匿名有界 GET（包括 robots），只为识别公开 Feed、Sitemap 或确定性静态列表并
+返回有界样例与 recipe 草稿；探测不写 recipe、候选、seen、cursor、memory 或 profile。「采用」
+只把草稿回填到本地表单，用户仍须显式点击「添加网站」才保存。保存后，后端才会按 recipe
+调度同一安全链路。所有请求都不携带浏览器 Cookie、Authorization、登录态或环境代理，逐跳服从
+exact origin、robots fail-closed、公共 DNS/socket pin、响应大小和 MIME/parser 上限；插件只调用
+用户自己的后端，不获得或使用任意网站 host permission 来执行这些请求。正式解析出的公开内容会
+进入本地候选池；若用户配置云端 LLM / embedding，后续统一候选评估可能按下段说明把必要内容
+发送给该用户选择的服务商。当前没有无人确认的自动保存、任意 URL 递归 crawl、登录页面或
+JavaScript 执行能力。
+
 数据迁移请求只允许后端验证为本机 loopback 的调用；浏览器请求还必须具备同源意图并明确拒绝扩展 Origin，无 Origin 的本机 CLI / curl 调用仍可通过同一显式请求头契约。导出文件由本机后端返回给本机客户端，导入文件只上传到用户自己的本机后端；OpenBiliClaw 开发者不会接收迁移包。用户后续主动把文件复制到 U 盘、局域网、聊天工具或云盘时，相应传输与保留由用户和所选服务控制。
 
 如果用户在后端中配置了云端大模型、embedding 服务或其他第三方 API，后端可能会把完成画像、总结、推荐解释或语义处理所需的内容发送给这些用户配置的服务提供方。这属于用户后端配置产生的数据流，不是插件直接调用远程代码或遥测服务。用户应同时查看所选服务提供方的隐私政策。
@@ -106,6 +118,10 @@ OpenBiliClaw 插件本身不会把数据发送到 OpenBiliClaw 开发者拥有�
 | 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
 
 `http://127.0.0.1/*` 和 `http://localhost/*` 用于连接用户自己的本机 OpenBiliClaw 后端。内容采集脚本只声明在受支持内容平台上运行；发布包不声明 `http://*/*`、`https://*/*` 或 `<all_urls>` 这类所有网站权限。
+
+公开 Web recipe 的上游请求由本地后端发出，不通过扩展 content script，所以该能力不会为扩展
+新增 `<all_urls>` 或 recipe 站点 host permission。桌面 Web / 插件中的 editor 只把 typed recipe
+提交给用户自己的后端。
 
 抖音初始化任务需要识别当前登录账号，才能读取该账号公开可见的发布、收藏、点赞和关注分页。插件可从页面公开的 `#RENDER_DATA` 读取显式登录状态与候选 `sec_uid`，但不会把它直接当成最终身份；同页 MAIN world 会以 `credentials: "include"` 调用抖音同源只读 `/aweme/v1/web/user/profile/self/` 接口，只有该接口正面确认的公开 `sec_uid` 才用于分页与同 tab 缓存，冲突时也以它为准。常驻 fetch / XHR tap 不从页面被动请求 URL 提取或记录 `sec_user_id`；只有用户触发 bootstrap 后，页面消息桥才会传递经 `profile/self` 确认的公开 `sec_uid`、请求关联字段和为任务解析出的分页条目。桥不会传递 Cookie、CSRF token，也不会把未裁剪的原始接口响应对象直接转发。两侧 listener 的同窗口同源检查用于减少误接收，不把同页消息误称为可信授权边界。`sec_uid` 仅用于本次用户授权的抖音 bootstrap 分页，结果仍只发送给用户配置的 OpenBiliClaw 后端。
 

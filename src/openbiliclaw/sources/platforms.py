@@ -22,6 +22,7 @@ PLATFORM_BANGUMI = "bangumi"
 PLATFORM_LINUXDO = "linuxdo"
 PLATFORM_V2EX = "v2ex"
 PLATFORM_WEIBO = "weibo"
+PLATFORM_WEB = "web"
 
 # Source attribution is deliberately small.  ``exact`` means the producer
 # supplied the platform, ``inferred`` means it came from a canonical URL, and
@@ -188,6 +189,11 @@ SOURCE_FAMILY_RULES = (
         platform_aliases=frozenset({"v2ex", "v2"}),
         source_prefixes=("v2ex-", "v2ex_"),
         url_hosts=("v2ex.com",),
+    ),
+    SourceFamilyRule(
+        family=PLATFORM_WEB,
+        platform_aliases=frozenset({"web"}),
+        source_prefixes=("web-", "web_"),
     ),
     SourceFamilyRule(
         family=PLATFORM_WEIBO,

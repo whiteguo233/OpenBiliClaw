@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom</title>
+  <entry>
+    <id>tag:blog.example.com,2026:beta</id>
+    <title>Beta release notes</title>
+    <link rel="self" href="https://blog.example.com/atom/beta" />
+    <link rel="alternate" type="text/html" href="/posts/beta?fbclid=tracker" />
+    <author><name>Bob</name></author>
+    <published>2026-08-11T23:48:35+00:00</published>
+    <content type="html">&lt;p&gt;Beta &lt;em&gt;details&lt;/em&gt;.&lt;/p&gt;</content>
+  </entry>
+</feed>

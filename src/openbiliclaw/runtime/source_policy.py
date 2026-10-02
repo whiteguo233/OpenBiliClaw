@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
+
+from openbiliclaw.sources.web_recipe import is_compiled_public_web_recipe
+
+logger = logging.getLogger(__name__)
 
 SOURCE_ORDER = (
     "bilibili",
@@ -18,6 +23,7 @@ SOURCE_ORDER = (
     "bangumi",
     "linuxdo",
     "v2ex",
+    "web",
     "weibo",
 )
 DEFAULT_SOURCE_ENABLED = {
@@ -33,6 +39,7 @@ DEFAULT_SOURCE_ENABLED = {
     "linuxdo": False,
     "v2ex": False,
     "weibo": False,
+    "web": False,
 }
 DEFAULT_POOL_SOURCE_SHARES = {
     "bilibili": 5,
@@ -47,28 +54,75 @@ DEFAULT_POOL_SOURCE_SHARES = {
     "linuxdo": 1,
     "v2ex": 1,
     "weibo": 1,
+    "web": 1,
 }
 
 
-def source_enabled_map(config: Any) -> dict[str, bool]:
-    """Return enabled state for pool-accounted discovery sources."""
+def enabled_source_recipe_available(database: Any, source: str) -> bool:
+    """Return whether storage has an enabled recipe usable by this source."""
+    getter = getattr(database, "get_enabled_recipes", None)
+    if not callable(getter):
+        return False
+    try:
+        try:
+            recipes = getter(source_type=source)
+        except TypeError:
+            recipes = [
+                recipe
+                for recipe in getter()
+                if str(recipe.get("source_type") or "").strip().lower() == source
+            ]
+        if source == "web":
+            return any(is_compiled_public_web_recipe(recipe) for recipe in recipes)
+        return bool(recipes)
+    except Exception:
+        logger.debug("enabled source-recipe lookup failed: source=%s", source, exc_info=True)
+        return False
+
+
+def source_enabled_map(
+    config: Any,
+    *,
+    enabled_recipe_available: Callable[[str], bool] | None = None,
+) -> dict[str, bool]:
+    """Return enabled state for pool-accounted discovery sources.
+
+    Generic Web is recipe-driven, so its config switch alone cannot reserve
+    candidate-pool capacity.  Callers that can inspect recipe storage provide
+    ``enabled_recipe_available``; omitting it keeps Web disabled and therefore
+    fail-closed when no enabled recipe has been observed.
+    """
 
     sources_cfg = getattr(config, "sources", None)
     enabled: dict[str, bool] = {}
     for source in SOURCE_ORDER:
         source_cfg = getattr(sources_cfg, source, None) if sources_cfg is not None else None
         default = DEFAULT_SOURCE_ENABLED[source]
-        enabled[source] = bool(getattr(source_cfg, "enabled", default))
+        configured = bool(getattr(source_cfg, "enabled", default))
+        if source == "web":
+            recipe_available = enabled_recipe_available is not None and bool(
+                enabled_recipe_available(source)
+            )
+            enabled[source] = configured and recipe_available
+        else:
+            enabled[source] = configured
     return {source: enabled.get(source, False) for source in SOURCE_ORDER}
 
 
-def effective_pool_source_shares(config: Any) -> dict[str, int]:
+def effective_pool_source_shares(
+    config: Any,
+    *,
+    enabled_recipe_available: Callable[[str], bool] | None = None,
+) -> dict[str, int]:
     """Return configured source shares after disabled sources are removed."""
 
     scheduler = getattr(config, "scheduler", None)
     raw_shares = getattr(scheduler, "pool_source_shares", None)
     shares = _normalize_shares(raw_shares)
-    enabled = source_enabled_map(config)
+    enabled = source_enabled_map(
+        config,
+        enabled_recipe_available=enabled_recipe_available,
+    )
     return {source: share for source, share in shares.items() if enabled.get(source, False)}
 
 

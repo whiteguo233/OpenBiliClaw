@@ -922,6 +922,7 @@ class SourcesStatusResponse(BaseModel):
     github: SourceStatusItem = Field(default_factory=SourceStatusItem)
     linuxdo: SourceStatusItem = Field(default_factory=SourceStatusItem)
     v2ex: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    web: SourceStatusItem = Field(default_factory=SourceStatusItem)
     weibo: SourceStatusItem = Field(default_factory=SourceStatusItem)
 
 
@@ -1096,6 +1097,7 @@ class SourcesCredentialsResponse(BaseModel):
     github: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     linuxdo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     v2ex: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    web: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     weibo: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
 
 
@@ -2490,6 +2492,67 @@ class WeiboSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 10
 
 
+class WebSourceConfigOut(BaseModel):
+    enabled: bool = True
+    request_timeout_seconds: int = Field(default=15, ge=1, le=60)
+    max_response_bytes: int = Field(default=2_097_152, ge=65_536, le=5_000_000)
+    max_redirects: int = Field(default=5, ge=0, le=10)
+    lease_seconds: int = Field(default=300, ge=30, le=3600)
+
+
+class WebProbeIn(BaseModel):
+    """Read-only request to infer public-Web source recipes from one URL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: Annotated[
+        StrictStr,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
+    ]
+
+
+class WebProbeSampleOut(BaseModel):
+    """Bounded preview item produced while probing a candidate recipe."""
+
+    title: str
+    content_url: str
+    author_name: str = ""
+    published_at: str = ""
+
+
+class WebProbeRecipeOut(BaseModel):
+    """Editable payload that still requires the normal create compiler."""
+
+    name: str
+    strategy: Literal["feed", "sitemap", "listing"]
+    config: dict[str, object]
+    target_share: int
+    enabled: bool
+
+
+class WebProbeCandidateOut(BaseModel):
+    """One observed public discovery option for a submitted URL."""
+
+    strategy: Literal["feed", "sitemap", "listing"]
+    entry_url: str
+    discovery_method: Literal["direct", "html_alternate", "well_known", "html_structure"]
+    confidence: Literal["high", "medium"]
+    detail: str
+    sample_items: list[WebProbeSampleOut] = Field(default_factory=list)
+    recipe: WebProbeRecipeOut
+
+
+class WebProbeResponse(BaseModel):
+    """Stable, body-free result of public-Web URL probing."""
+
+    status: Literal["ready", "no_match"]
+    detail: str
+    requested_url: str
+    final_url: str
+    page_title: str
+    candidates: list[WebProbeCandidateOut] = Field(default_factory=list)
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
@@ -2503,6 +2566,7 @@ class SourcesConfigOut(BaseModel):
     github: GitHubSourceConfigOut = Field(default_factory=GitHubSourceConfigOut)
     linuxdo: LinuxdoSourceConfigOut = Field(default_factory=LinuxdoSourceConfigOut)
     v2ex: V2EXSourceConfigOut = Field(default_factory=V2EXSourceConfigOut)
+    web: WebSourceConfigOut = Field(default_factory=WebSourceConfigOut)
     weibo: WeiboSourceConfigOut = Field(default_factory=WeiboSourceConfigOut)
 
 

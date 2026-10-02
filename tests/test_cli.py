@@ -5279,6 +5279,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
     }
@@ -5326,6 +5327,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
     }

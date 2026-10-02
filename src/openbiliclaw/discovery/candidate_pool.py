@@ -177,6 +177,12 @@ def discovered_content_to_candidate_write(
         # raw upstream row.  Prefer it over a caller-provided payload copy so
         # untrusted/raw metadata cannot shadow authoritative provenance.
         payload["source_metadata"] = dict(item.source_metadata)
+    source_recipe_id = str(getattr(item, "source_recipe_id", "") or "").strip()
+    source_site = str(getattr(item, "source_site", "") or "").strip()
+    if source_recipe_id:
+        payload.setdefault("source_recipe_id", source_recipe_id)
+    if source_site:
+        payload.setdefault("source_site", source_site)
     if item.engagement_available and "engagement_available" not in payload:
         payload["engagement_available"] = list(item.engagement_available)
     raw_discovery_lane = str(getattr(item, "discovery_lane", "") or "").strip().lower()
@@ -366,5 +372,7 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         body_text=str(row.get("body_text") or ""),
         content_type=str(row.get("content_type") or "video"),
         source_metadata=source_metadata,
+        source_recipe_id=str(decoded_payload.get("source_recipe_id") or ""),
+        source_site=str(decoded_payload.get("source_site") or ""),
         source_keyword_id=_coerce_optional_int(row.get("source_keyword_id")),
     )

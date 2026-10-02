@@ -195,6 +195,19 @@ def _without_exclusions(text: str, *keys: str) -> str:
     return "".join(line for line in text.splitlines(keepends=True) if not line.startswith(prefixes))
 
 
+def _recipe_allowlist_contract(text: str = CONTRACT) -> str:
+    return (
+        text.replace("schema_version = 1", "schema_version = 2", 1)
+        .replace(
+            'integration_level = "discovery-only"\n',
+            'integration_level = "discovery-only"\nhost_policy = "recipe-allowlist"\n',
+            1,
+        )
+        .replace('hosts = ["example.test"]', "hosts = []", 1)
+        .replace('kind = "official-api"', 'kind = "web-http"', 1)
+    )
+
+
 def _fixture_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     files = {
@@ -307,6 +320,8 @@ def test_complete_fixture_passes_registration_check_but_keeps_manual_open(
     assert result.returncode == 0, result.stderr or result.stdout
     payload = _payload(result)
     assert payload["tool"] == "platform-source-registration-inventory"
+    assert payload["contract"]["schema_version"] == 1
+    assert "host_policy" not in payload["contract"]
     assert payload["summary"]["required_missing"] == 0
     assert payload["summary"]["registration_check_passed"] is True
     assert payload["summary"]["MANUAL"] > 0
@@ -332,6 +347,115 @@ def test_complete_fixture_passes_registration_check_but_keeps_manual_open(
             continue
         assert item["evidence"], item["capability"]
         assert all(evidence["path"] and evidence["line"] >= 1 for evidence in item["evidence"])
+
+
+def test_schema_v2_recipe_allowlist_accepts_empty_hosts_and_web_http(
+    tmp_path: Path,
+) -> None:
+    repo, contract = _fixture_repo(tmp_path)
+    contract.write_text(_recipe_allowlist_contract(), encoding="utf-8")
+    platforms = repo / "src/openbiliclaw/sources/platforms.py"
+    platforms.write_text(
+        platforms.read_text(encoding="utf-8").replace(
+            '    url_hosts=("example.test",),\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(contract, "--check", "--json")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = _payload(result)
+    assert payload["contract"]["schema_version"] == 2
+    assert payload["contract"]["host_policy"] == "recipe-allowlist"
+    assert payload["contract"]["hosts"] == []
+    assert payload["contract"]["transport"]["kind"] == "web-http"
+    canonical = next(
+        item for item in payload["results"] if item["capability"] == "canonical.registry"
+    )
+    assert canonical["status"] == "PASS"
+
+
+def test_schema_v1_keeps_static_hosts_and_rejects_web_http(tmp_path: Path) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "empty-hosts")
+    contract.write_text(
+        CONTRACT.replace('hosts = ["example.test"]', "hosts = []", 1),
+        encoding="utf-8",
+    )
+
+    empty_hosts = _run(contract, "--json")
+
+    assert empty_hosts.returncode == 2
+    assert "contract.hosts must not be empty" in empty_hosts.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "web-http")
+    contract.write_text(
+        CONTRACT.replace('kind = "official-api"', 'kind = "web-http"', 1),
+        encoding="utf-8",
+    )
+
+    web_http = _run(contract, "--json")
+
+    assert web_http.returncode == 2
+    assert "transport.kind='web-http' requires schema_version=2" in web_http.stderr
+
+
+def test_schema_v2_recipe_allowlist_rejects_static_contract_or_registry_hosts(
+    tmp_path: Path,
+) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "contract-host")
+    contract.write_text(
+        _recipe_allowlist_contract().replace("hosts = []", 'hosts = ["example.test"]', 1),
+        encoding="utf-8",
+    )
+
+    static_contract_host = _run(contract, "--json")
+
+    assert static_contract_host.returncode == 2
+    assert "host_policy='recipe-allowlist' requires hosts=[]" in static_contract_host.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "registry-host")
+    contract.write_text(_recipe_allowlist_contract(), encoding="utf-8")
+
+    static_registry_host = _run(contract, "--check", "--json")
+
+    assert static_registry_host.returncode == 1
+    canonical = next(
+        item
+        for item in _payload(static_registry_host)["results"]
+        if item["capability"] == "canonical.registry"
+    )
+    assert canonical["status"] == "MISSING"
+    assert "recipe-allowlist family has no static url_hosts" in canonical["detail"]
+
+
+def test_schema_v2_requires_a_known_host_policy(tmp_path: Path) -> None:
+    _repo, contract = _fixture_repo(tmp_path / "missing")
+    contract.write_text(
+        CONTRACT.replace("schema_version = 1", "schema_version = 2", 1),
+        encoding="utf-8",
+    )
+
+    missing = _run(contract, "--json")
+
+    assert missing.returncode == 2
+    assert "host_policy must be a non-empty string" in missing.stderr
+
+    _repo, contract = _fixture_repo(tmp_path / "unknown")
+    contract.write_text(
+        _recipe_allowlist_contract().replace(
+            'host_policy = "recipe-allowlist"',
+            'host_policy = "wildcard"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    unknown = _run(contract, "--json")
+
+    assert unknown.returncode == 2
+    assert "host_policy must be one of" in unknown.stderr
 
 
 def test_generic_status_route_does_not_substitute_for_concrete_source_roster(

@@ -1424,6 +1424,7 @@
     .source-card-logo[data-source-logo="zhihu"] { background: #0084ff; }
     .source-card-logo[data-source-logo="reddit"] { background: #ff4500; }
     .source-card-logo[data-source-logo="bangumi"] { background: #f09199; }
+    .source-card-logo[data-source-logo="web"] { background: #2563eb; }
     .source-card-head { min-width: 0; display: grid; gap: 4px; }
     .source-card-name { color: var(--fg); font-weight: 750; line-height: 1.25; }
     .source-card .source-status-badges { justify-content: flex-start; }
@@ -1446,6 +1447,47 @@
     .source-seg .seg-note { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.5; }
     /* 卡内的字段行按内容自适应，避免单字段被挤成 1/4 宽把长环境变量名截断 */
     .source-seg .inline-row { grid-column: auto; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .web-recipe-manager { gap: var(--space-3); }
+    .web-probe-panel { display: grid; gap: var(--space-3); padding: var(--space-3); border: 1px solid color-mix(in oklab, var(--accent), var(--border) 72%); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface-2), var(--accent) 5%); }
+    .web-probe-head { display: grid; gap: 4px; }
+    .web-probe-head > strong { color: var(--fg); font-size: var(--text-sm); }
+    .web-probe-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); }
+    .web-probe-input-row .settings-field { min-width: 0; }
+    .web-probe-input-row .pill-btn { min-height: 42px; white-space: nowrap; }
+    .web-probe-status:empty { display: none; }
+    .web-probe-status[data-tone="pending"] { color: var(--accent-strong); }
+    .web-probe-candidates { display: grid; gap: var(--space-2); }
+    .web-probe-candidates[hidden] { display: none; }
+    .web-probe-candidate { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+    .web-probe-candidate-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+    .web-probe-candidate-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+    .web-probe-candidate-title strong { color: var(--fg); }
+    .web-probe-confidence { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-pill); color: var(--muted); font-size: 11px; font-weight: 750; }
+    .web-probe-confidence[data-confidence="high"] { border-color: color-mix(in oklab, var(--success), var(--border-soft) 55%); background: color-mix(in oklab, var(--surface), var(--success) 9%); color: color-mix(in oklab, var(--success), var(--fg) 34%); }
+    .web-probe-candidate-detail, .web-probe-candidate-url, .web-probe-sample-meta { margin: 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.45; overflow-wrap: anywhere; }
+    .web-probe-candidate-url { font-family: var(--font-mono); font-size: 12px; }
+    .web-probe-samples { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .web-probe-sample { display: grid; gap: 2px; padding: 7px var(--space-2); border-radius: var(--radius-sm); background: var(--surface-2); }
+    .web-probe-sample a, .web-probe-sample-title { color: var(--fg); font-size: var(--text-sm); font-weight: 650; text-decoration: none; overflow-wrap: anywhere; }
+    .web-probe-sample a:hover { color: var(--accent-strong); text-decoration: underline; }
+    .web-probe-empty { margin: 0; padding: var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); font-size: var(--text-sm); }
+    .web-probe-adopt { justify-self: start; }
+    .web-recipe-form { display: grid; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+    .web-recipe-list { display: grid; gap: var(--space-2); }
+    .web-recipe-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .web-recipe-item-main { min-width: 0; display: grid; gap: 4px; }
+    .web-recipe-item-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+    .web-recipe-item-title strong { color: var(--fg); }
+    .web-recipe-item-meta { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+    .web-recipe-item-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+    .web-recipe-item-actions .pill-btn { min-height: 34px; padding-inline: var(--space-3); }
+    .web-recipe-status { font-size: 11px; font-weight: 700; color: var(--muted); }
+    .web-recipe-status[data-tone="success"] { color: var(--success); }
+    .web-recipe-status[data-tone="warning"] { color: var(--warning); }
+    .web-recipe-status[data-tone="error"] { color: var(--danger); }
+    .web-recipe-listing-fields { display: grid; gap: var(--space-2); margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .web-recipe-listing-fields[hidden] { display: none; }
+    .web-recipe-listing-fields legend { padding: 0 var(--space-2); color: var(--muted); font-size: var(--text-sm); font-weight: 700; }
     .source-cred-box { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: color-mix(in oklab, var(--surface), var(--bg) 42%); }
     .source-cred-line { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--text-sm); }
     .source-cred-box .source-credential-value { font-family: var(--font-mono); font-size: 12px; }
@@ -1690,6 +1732,10 @@
       .source-card-share { display: none; }
       .source-card-enable select { min-width: 78px; }
       .source-card-body { padding: var(--space-3); gap: var(--space-4); }
+      .web-probe-input-row { grid-template-columns: 1fr; }
+      .web-probe-input-row .pill-btn { width: 100%; }
+      .web-recipe-item { grid-template-columns: 1fr; }
+      .web-recipe-item-actions { justify-content: flex-start; }
       .branch-table[data-branch-toggles="on"] .branch-head, .branch-table[data-branch-toggles="on"] .branch-row { grid-template-columns: 22px minmax(0, 1fr) 92px; }
       .branch-table[data-branch-toggles="off"] .branch-head, .branch-table[data-branch-toggles="off"] .branch-row { grid-template-columns: minmax(0, 1fr) 92px; }
       .branch-head > span:last-child, .branch-hint { display: none; }

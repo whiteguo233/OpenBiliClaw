@@ -56,7 +56,7 @@ def test_desktop_linuxdo_uses_shared_status_contract_without_cookie_input() -> N
 
 
 def test_desktop_source_cards_are_siblings_not_nested() -> None:
-    """Keep the Linux.do/V2EX cards from becoming a malformed nested DOM."""
+    """Keep the Linux.do/V2EX/Web cards from becoming a malformed nested DOM."""
     html = (ROOT / "src/openbiliclaw/web/desktop/index.html").read_text(encoding="utf-8")
 
     linuxdo_attr = html.index('data-source-status="linuxdo"')
@@ -65,17 +65,26 @@ def test_desktop_source_cards_are_siblings_not_nested() -> None:
     source_list_end = html.index('<div class="source-aux-card">', v2ex_start)
     source_list = html[linuxdo_start:source_list_end]
 
-    assert source_list.count('<article class="source-status-row source-card"') == 2
+    assert source_list.count('<article class="source-status-row source-card"') == 3
     assert source_list.count('data-source-status="linuxdo"') == 1
     assert source_list.count('data-source-status="v2ex"') == 1
+    assert source_list.count('data-source-status="web"') == 1
     assert source_list.index('data-source-status="linuxdo"') < source_list.index(
         'data-source-status="v2ex"'
     )
     assert source_list.index("</article>") < source_list.index(
         '<article class="source-status-row source-card" data-source-status="v2ex"'
     )
+    v2ex_card = source_list.index(
+        '<article class="source-status-row source-card" data-source-status="v2ex"'
+    )
+    web_card = source_list.index(
+        '<article class="source-status-row source-card" data-source-status="web"'
+    )
+    assert source_list.index("</article>", v2ex_card) < web_card
     assert 'id="shareLinuxdo"' in source_list
     assert 'id="shareV2EX"' in source_list
+    assert 'id="shareWeb"' in source_list
 
 
 def test_desktop_linuxdo_recommendations_have_label_text_card_and_canonical_url() -> None:
@@ -86,6 +95,13 @@ def test_desktop_linuxdo_recommendations_have_label_text_card_and_canonical_url(
     assert 'urlHostMatches(url, ["linux.do"])' in js
     assert "https://linux.do/t/${encodeURIComponent(topicId)}" in js
     assert '"post"' in js
+
+
+def test_desktop_web_recipe_manager_hides_legacy_browser_extract_rows() -> None:
+    js = (ROOT / "src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert '["feed", "sitemap", "listing"].includes' in js
+    assert "item?.config?.plan_version" in js
 
 
 def test_linuxdo_saved_sync_uses_the_public_platform_label() -> None:

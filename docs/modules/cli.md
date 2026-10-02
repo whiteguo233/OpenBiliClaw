@@ -70,6 +70,8 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `keyword-inspiration-report` | 输出 inspiration / merged 关键词 cohort 对比和 replace 启用门禁判定 | ✅ |
 | `profile-consolidate` | LLM 整理合并画像里重复的喜欢 / 讨厌主题；也支持一级分类词表迁移（默认 dry-run；`--apply` 写入；`--revert <run_id>` 回滚） | ✅ |
 | `discover` | 手动触发发现 | ✅ |
+| `probe-web <URL>` | 只读探测公开 URL，预览 Feed / Sitemap / 静态列表 recipe 草稿；不保存或启用来源 | ✅ |
+| `discover-web --recipe-id <id>` | 只读预览一个已保存的公开 Web recipe；不写候选、seen、cursor 或 memory | ✅ |
 | `discover-douyin` | 单独调试抖音 search / hot / feed 内容发现 | ✅ |
 | `discover-zhihu` | 单独触发知乎插件搜索 discovery，并把候选写入待评估池 | ✅ |
 | `discover-zhihu-hot` | 单独触发知乎热榜 discovery，并把候选写入待评估池 | ✅ |
@@ -1232,7 +1234,7 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex、weibo（别名 `wb`）与 web，分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。
 
 手动 `discover` 是一次性进程，其 candidate pipeline 固定 `eval_min_batch_size=1`、`eval_max_wait_seconds=0`，立即 drain 本次已入队候选；只有常驻 API daemon 才读取 `[scheduler]` 的默认 15 / 90 秒聚合策略。这样 CLI 不会在退出时遗失只存在内存里的凑批等待状态。
 
@@ -1334,10 +1336,10 @@ V2EX 内容发现
 
 选项：
 
-- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin`、`zhihu`、`reddit`、`bangumi`、`github`（兼容 `gh`）、`linuxdo`、`v2ex` 或 `weibo`（兼容 `wb`）
+- `--source, -s`：`bilibili`（默认）、`xiaohongshu`、`douyin`、`zhihu`、`reddit`、`bangumi`、`github`（兼容 `gh`）、`linuxdo`、`v2ex`、`weibo`（兼容 `wb`）或 `web`
 - `--strategy, -S`：仅对 Bilibili 生效，可多次传或逗号分隔，取值 `search` / `trending` / `explore` / `related_chain`
 - `--limit, -n`：发现结果条数上限，默认 `30`
-- `--force`：xiaohongshu / Bangumi / GitHub / V2EX 可用；忽略本地最小调度间隔，但仍遵循持久化远端 cooldown
+- `--force`：xiaohongshu / Bangumi / GitHub / V2EX / 微博 / Web 可用；忽略本地最小调度间隔，但仍遵循持久化远端 cooldown
 
 抖音 discovery 需要 `[sources.douyin].enabled = true`。`discover --source douyin` 现在直接调用与 daemon 相同的正式 `DouyinDiscoveryProducer`：统一关键词 claim、插件 search / hot / feed、`DiscoveryCandidatePipeline` 待评估入池和关键词终态都与后台一致；显式手动命令只绕过 `[scheduler].enabled` 这个后台总开关，来源开关、source mode、预算、候选池上限和 producer cadence 仍然生效。Cookie 解析顺序是：先读 `cookie_env` 指向的环境变量（默认 `OPENBILICLAW_DOUYIN_COOKIE`，适合调试覆盖），再读浏览器扩展同步的 `data/douyin_cookie.json`。初始化画像的 `init --yes-douyin` 不受这个配置影响，仍走浏览器扩展任务桥。知乎 discovery 需要 `[sources.zhihu].enabled = true`，并依赖已登录知乎的浏览器扩展；`discover --source zhihu` 会读取 `[sources.zhihu].source_modes`，不会使用 `--strategy`。Reddit discovery 需要 `[sources.reddit].enabled = true`；默认 `backend="rdt"`，优先使用 rdt-cli 登录态命令后端，不使用 CDP/临时浏览器；rdt / opencli 不可用时自动复用 OpenBiliClaw 插件所在浏览器的 Reddit 登录态，也可在配置页显式切到 `extension`。Linux.do discovery 需要 `[sources.linuxdo].enabled = true` 和在线扩展；公开分支不要求登录，个人 bootstrap 才要求 `/session/current.json` 返回正面账号身份。
 
@@ -1358,6 +1360,82 @@ $ openbiliclaw discover-douyin \
 `discover-douyin` 的 `--source` 只接受 `search` / `hot` / `feed`；不传时默认三者都跑。`--keyword` 不传时从 Soul 画像兴趣生成搜索词；`hot` 会自动取 hot board 热词，不需要手动传关键词；`feed` 直接从抖音首页推荐流召回，不需要关键词。插件链路的一次命令共享一个 wall-clock wait budget：首个 search / hot / feed 等待到期后，剩余分支不再串行各等 180 秒。超时任务会原子落成 `failed + wait_timeout`（上层取消为 `wait_cancelled`），CLI 返回非零并提示检查扩展在线状态或调大 `OPENBILICLAW_DY_DISCOVERY_SEARCH_WAIT_SECONDS`；该任务不会继续留在 `pending`。
 
 xiaohongshu 渠道并不直接抓取内容，而是调用 `XhsTaskProducer.produce_if_due()` 将 Soul 画像改写成关键词写入 `xhs_tasks` 表，由浏览器扩展的后台调度器在隐藏 Tab 中抓取。新配置默认每日搜索预算 20、producer 间隔 20 分钟；pending + in-progress 搜索任务达到 5 条时返回 `backlog`，不会继续生成关键词。若返回 `throttled` 可加 `--force` 跳过本次 producer 时间闸，但 `--force` 不会绕过积压门、每日预算、领取端 ±25% 抖动或平台风控冷却；若返回 `no_profile` 需先执行 `openbiliclaw init`。
+
+### `openbiliclaw discover --source web`
+
+这是 Web 的正式手动补池入口：它构造真实 `WebSourceAdapter`、`WebDiscoveryProducer` 与
+`DiscoveryCandidatePipeline`，领取到期 recipe，把成功 handoff 的 canonical 内容写入
+`discovery_candidates(pending_eval)`，并按 producer 契约提交 recipe seen、validator/cursor 与
+runtime 状态。它与后台 producer 走同一条数据链，不是下节的无状态 preview。
+
+```bash
+openbiliclaw discover --source web --limit 30
+openbiliclaw discover --source web --limit 30 --force
+```
+
+`--limit/-n` 限制本轮总发现数；每个 recipe 自己的 item/page/detail ceiling 仍优先。
+`--force` 只忽略普通 cadence，不绕过全局/recipe 开关、活动 lease、exact-origin、robots、DNS pin
+或其它请求预算。`--strategy` 对 Web 不生效，因为策略已经冻结在各 recipe 的
+`feed / sitemap / listing` 中。
+
+退出码适合脚本判断：`ok`、`valid_empty`（合法空、304 或全为已见内容）与 `throttled` 返回 0；
+`partial`、`disabled`、`no_recipes` 与 error 返回 1。部分成功时已经安全入池的候选会保留，但任一
+degraded / login-required / rate-limited / failed recipe 都会让整体返回 1，不能被同轮其它 recipe
+的产出掩盖。命令要求项目通用 runtime/模型配置能通过启动门；这不表示 Web HTTP 取数本身调用
+LLM，候选仍由后续共享 evaluator 异步评估。
+
+### `openbiliclaw probe-web`
+
+在还没有 recipe 时，只读探测一个匿名公开 URL：
+
+```bash
+$ openbiliclaw probe-web https://engineering.example.com/
+Web 网站自动探测
+只读探测 · 预览后再保存
+探测摘要
+  状态       ready
+  持久化     未创建 recipe，未写候选池、seen、cursor 或 memory
+```
+
+探测固定使用用户输入 URL 的 exact origin，按直接 Feed/Sitemap、HTML 声明的同源 Feed、
+同源 `/sitemap.xml`、确定性静态列表结构的顺序收集有界候选与样例。它匿名执行，不接受登录态，
+不运行 JavaScript，也不会扩展为递归 crawl；robots、公共 DNS、socket pin、redirect、MIME、
+响应体与共享 deadline 继续生效。`[sources.web].enabled=false` 不会阻止这条 authoring probe，
+因为它既不调度来源也不写数据库。
+
+`ready` 且至少有一个候选时退出 0；`no_match`、无候选或安全/网络错误退出 1。输出中的方案只是
+compiler-ready 草稿。CLI 永远不会代替用户创建 recipe；请在桌面 Web 或插件中采用方案、检查
+权限与预算，再显式点击「添加网站」，或自行把草稿提交到 `POST /api/sources`。
+
+### `openbiliclaw discover-web`
+
+只读执行一个已经保存且启用的公开 Web recipe：
+
+```bash
+$ openbiliclaw discover-web --recipe-id 37f3f80e-ff66-4b02-a143-5de2962db881 --limit 20
+Web Recipe 只读预览
+执行摘要
+  Recipe ID  37f3f80e-ff66-4b02-a143-5de2962db881
+  状态       ok
+  持久化     未写入候选池、seen、cursor、memory
+```
+
+命令先检查 `[sources.web].enabled=true`、recipe 存在且 `enabled=true`，再用当前 typed
+compiler 重新验证数据库中的 recipe。正式可用 strategy 只有 `feed / sitemap / listing`；
+网络仍遵循 recipe exact-origin allowlist、robots fail-closed、公共 DNS + socket pin、timeout、
+响应字节和 redirect 上限。`--limit/-n` 允许 `1..50`，并继续受 recipe 自己的 `max_items`
+上限约束。
+
+这是诊断 preview，不是正式补池命令。执行时传入空 runtime state，因此不读取或推进 scheduler
+拥有的 ETag、Last-Modified 和 sitemap cursor；也不会写 `discovery_candidates`、
+`web_source_seen`、`content_cache`、memory 或 profile。`ok / empty / not_modified` 正常退出；
+robots、DNS、登录墙、challenge、MIME、解析或上游错误会显示稳定错误并返回非零退出码。
+
+这条命令不接受任意 URL；未保存 URL 应改用上一节的 `probe-web <URL>`。两条诊断命令都不
+接受登录态或 JavaScript 页面，也不写 candidate 或 recipe。正式手动补池使用
+`openbiliclaw discover --source web`；后台 `WebDiscoveryProducer` 也会按 cadence 自动补池。
+recipe 通过桌面 Web / 插件的「设置 → 平台源 → 公开 Web」编辑器管理，或直接调用
+`POST/PUT/DELETE /api/sources`；完整字段与安全边界见[通用 Web 来源](web.md)。
 
 ### `openbiliclaw discover-zhihu`
 
@@ -1640,3 +1718,7 @@ $ openbiliclaw db-repair
 ### Stub 命令的输出约定
 
 当前仍是 stub 的命令会统一使用”开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
+
+### 初始化中的 Web 份额建议
+
+初始化 CLI 的候选池份额建议同步查询当前有效 enabled Web recipe；Web 不作为画像初始化来源，但已有有效 recipe 可参与后续 discovery 配额，停用最后一个 recipe 后立即排除。新增 Web 来源仍通过图形端 Agent 审批卡或来源设置页；`openbiliclaw chat` 不包含本轮新增的 probe / 审批能力。

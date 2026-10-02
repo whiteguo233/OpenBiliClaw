@@ -33,6 +33,7 @@
 - [GitHub 来源文档](modules/github.md) / [冻结契约](platform-source-contract.github.toml) / [验收记录](platform-source-acceptance.github.md) — 官方只读 REST API、公开 repository discovery、starred repositories 初始化与三端文字卡
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
+- [通用 Web 来源文档](modules/web.md) — 粘贴 URL 的只读 authoring probe、显式 feed / sitemap / static listing recipe、匿名安全传输、状态账本、formal discover 与确认保存边界
 - [手动端到端联调](manual-e2e.md) — CLI、插件与 SQLite 的真实联调步骤
 - [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体读取的短部署契约,配合 README 的短粘贴语句
 - [Agent 部署详细说明](agent-deployment.md) — 给人看的详细版本 + 所有 JSON 事件/错误码/排查表
@@ -56,12 +57,13 @@
 | LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十二来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
 | 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository source 为本分支 🧪 接线，验收见专用 ledger |
+| 通用 Web 接入 | [modules/web.md](modules/web.md) | `src/openbiliclaw/sources/web_probe.py` + `web_recipe.py` + `web_public.py` + `web_adapter.py` + `runtime/web_producer.py` | ✅ Phase B capability increment：桌面/插件/CLI URL probe 只生成草稿，采用不保存；Phase A formal discovery 仍只运行显式公开 feed / sitemap / listing recipe |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
 | GitHub 接入 | [modules/github.md](modules/github.md) | `src/openbiliclaw/sources/github*.py` + `runtime/github_producer.py` | 🧪 官方匿名/可选 PAT API + public starred init + repository search/ranked/latest 已接线；真实门禁以 [acceptance ledger](platform-source-acceptance.github.md) 为准 |
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |
 | V2EX 接入 | [modules/v2ex.md](modules/v2ex.md) | `src/openbiliclaw/sources/v2ex*.py` + `runtime/v2ex_producer.py` + 扩展任务桥 | ✅ 匿名 API/Feed + 可选 PAT + 四个只读 bootstrap scope + Topic 回复聚合 |
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
-| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十二来源契约正交化 + `verify_method` 证据强度 + 一键验证；GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
+| 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十三来源契约正交化 + `verify_method` 证据强度 + 一键验证；GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
 | 记忆系统 | [modules/memory.md](modules/memory.md) | `src/openbiliclaw/memory/` | ✅ 完成 |

@@ -213,6 +213,7 @@ _DEFAULT_POOL_SOURCE_SHARES = {
     "bangumi": 1,
     "linuxdo": 1,
     "v2ex": 1,
+    "web": 1,
     "weibo": 1,
     "github": 1,
 }
@@ -1474,6 +1475,22 @@ class WeiboSourceConfig(SourceDatePreferenceConfig):
     min_interval_minutes: int = 10
 
 
+@dataclass
+class WebSourceConfig:
+    """Global kill switch and transport ceilings for public Web recipes.
+
+    The switch defaults on because creating an explicit, validated recipe is
+    the opt-in action.  Pool policy still reserves no Web capacity while the
+    database contains no enabled Web recipe.
+    """
+
+    enabled: bool = True
+    request_timeout_seconds: int = 15
+    max_response_bytes: int = 2_097_152
+    max_redirects: int = 5
+    lease_seconds: int = 300
+
+
 V2EX_ALLOWED_SOURCE_MODES = frozenset({"search", "node", "tab", "hot", "latest"})
 V2EX_CONFIG_INTEGER_LIMITS: dict[str, tuple[int, int]] = {
     "daily_search_budget": (0, 100_000),
@@ -1562,6 +1579,7 @@ class SourcesConfig:
     github: GitHubSourceConfig = field(default_factory=GitHubSourceConfig)
     linuxdo: LinuxdoSourceConfig = field(default_factory=LinuxdoSourceConfig)
     v2ex: V2EXSourceConfig = field(default_factory=V2EXSourceConfig)
+    web: WebSourceConfig = field(default_factory=WebSourceConfig)
     weibo: WeiboSourceConfig = field(default_factory=WeiboSourceConfig)
 
 
@@ -2357,6 +2375,7 @@ def _build_config(
     github_raw = sources_raw.get("github", {})
     linuxdo_raw = sources_raw.get("linuxdo", {})
     v2ex_raw = sources_raw.get("v2ex", {})
+    web_raw = sources_raw.get("web", {})
     weibo_raw = sources_raw.get("weibo", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
@@ -2582,6 +2601,17 @@ def _build_config(
             bootstrap_max_pages_per_scope=min(
                 100, max(1, int(v2ex_raw.get("bootstrap_max_pages_per_scope", 20)))
             ),
+        ),
+        web=WebSourceConfig(
+            enabled=bool(web_raw.get("enabled", True)),
+            request_timeout_seconds=min(
+                60, max(1, int(web_raw.get("request_timeout_seconds", 15)))
+            ),
+            max_response_bytes=min(
+                5_000_000, max(65_536, int(web_raw.get("max_response_bytes", 2_097_152)))
+            ),
+            max_redirects=min(10, max(0, int(web_raw.get("max_redirects", 5)))),
+            lease_seconds=min(3600, max(30, int(web_raw.get("lease_seconds", 300)))),
         ),
         weibo=WeiboSourceConfig(
             enabled=bool(weibo_raw.get("enabled", False)),
@@ -6033,6 +6063,13 @@ def _render_config_toml(
             f"bootstrap_max_pages_per_scope = {config.sources.v2ex.bootstrap_max_pages_per_scope}",
             *_render_source_date_preference_lines(config.sources.v2ex),
             "",
+            "[sources.web]",
+            f"enabled = {_toml_bool(config.sources.web.enabled)}",
+            f"request_timeout_seconds = {config.sources.web.request_timeout_seconds}",
+            f"max_response_bytes = {config.sources.web.max_response_bytes}",
+            f"max_redirects = {config.sources.web.max_redirects}",
+            f"lease_seconds = {config.sources.web.lease_seconds}",
+            "",
             "[sources.weibo]",
             f"enabled = {_toml_bool(config.sources.weibo.enabled)}",
             f"source_modes = {_toml_str_list(list(config.sources.weibo.source_modes))}",
@@ -6159,6 +6196,7 @@ def _render_config_toml(
             f"github = {int(config.scheduler.pool_source_shares.get('github', 1))}",
             f"linuxdo = {int(config.scheduler.pool_source_shares.get('linuxdo', 1))}",
             f"v2ex = {int(config.scheduler.pool_source_shares.get('v2ex', 1))}",
+            f"web = {int(config.scheduler.pool_source_shares.get('web', 1))}",
             f"weibo = {int(config.scheduler.pool_source_shares.get('weibo', 1))}",
             "",
             "[discovery]",

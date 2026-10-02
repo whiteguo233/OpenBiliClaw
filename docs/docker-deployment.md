@@ -60,9 +60,11 @@ OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当
 - **Bangumi**：匿名 search / ranked / 按日期 discovery 直接使用官方只读 API，无需登录、Cookie、token 或扩展 host permission。若要让公开收藏参与初始化画像，请在 `/setup/` 或设置页显式填写公开用户名；未填用户名时 Bangumi 不能作为唯一画像初始化来源。
 - **GitHub**：匿名 `search / ranked / latest` 直接使用官方 REST API，只接收公开 repository，无需浏览器登录、Cookie、扩展 host permission 或任务桥。若要让 public starred repositories 参与初始化，请在 `/setup/` 或设置页填写公开用户名；PAT 可选且只用于提额和 `/user` 身份核验。容器不会读取宿主机 `GITHUB_TOKEN` / `GH_TOKEN`，如需 PAT，必须在 backend 服务显式传入固定专用变量 `OPENBILICLAW_GITHUB_TOKEN` 或通过 GitHub 凭据表单保存。
 - **微博**：后端以项目自有 `httpx` client 和仅存内存的匿名 visitor 会话读取公开 search / hot-as-query-seed / creator 内容；公开路径无需登录。若在 guided init 选择微博，宿主机浏览器需登录 `m.weibo.cn`，扩展在隔离同源任务页只读收藏、关注和 mentions，并仅回传布尔登录态、uid 与规范化事件；Cookie 不进入容器，个人 bootstrap 当前为 init-only。
-- **CDP 说明**：小红书、抖音、YouTube、知乎和 Reddit 插件 fallback 都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
+- **通用 Web**：桌面 Web / 插件可把用户显式粘贴的 URL 交给容器后端做只读 authoring probe，只在 exact origin 内按 Feed → Sitemap → 确定性静态列表返回草稿与样例；「采用」只回填，显式添加才保存。正式调度只访问已保存 recipe 明确允许的公开 `feed / sitemap / listing` origin，服从 robots、公共 DNS/socket pin 与有界响应/parser，不读取宿主机浏览器登录态。当前不支持探测后自动保存、递归 crawl、登录页面或 JavaScript 渲染。
+- **CDP 说明**：小红书、抖音、YouTube、知乎和 Reddit 插件 fallback 都走 Chrome 插件任务链路，不需要额外启动 CDP 调试 Chrome。`[sources.browser].cdp_url` 只保留给历史 `web_extract` 浏览器实验；正式 Web recipe 不使用 CDP，也不会在 HTTP 失败时回退到浏览器。
 
-详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
+详见 [Web 来源文档](modules/web.md)与[配置参考](modules/config.md)。这次 Web 接入没有增加 Docker
+依赖、额外容器、浏览器启动参数或安装步骤。
 
 ## 快速开始
 
@@ -146,7 +148,7 @@ AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外
 - 默认 embedding 是 `ollama` + `bge-m3`，Docker 里写成 compose 网络地址 `http://ollama:11434/v1`，指向随 compose 启动的 sidecar。如果你手动填了其他 embedding endpoint，不会被覆盖。
 - **后端不再等 sidecar 拉完模型才启动**：`bge-m3` 首次下载（~568MB）期间后端已经可用，`/setup/` 的前置检查会显示 embedding 尚未就绪，拉取完成后自动通过。模型下载失败时 sidecar 守护进程仍在，重启 compose 会自动重试。
 - B 站登录态推荐用浏览器扩展：扩展装在**宿主机浏览器**里，不在容器里。你登录 bilibili.com 后，扩展会把 Cookie 自动 POST 到 `127.0.0.1:8420` 的后端接口。
-- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli` 和 Reddit 的 `rdt-cli` 已内置。
+- 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi / V2EX / 微博 / GitHub 都默认关闭，只有你在 `/setup/` 或设置页明确开启才会进入适用链路；需要个人浏览器信号的来源仍需在宿主机浏览器里装扩展并登录对应站点；Bangumi 与 GitHub 使用官方匿名只读 API，GitHub 不依赖扩展；微博公开请求匿名、个人 bootstrap 走扩展同源任务。镜像通过 pip 安装项目，X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及 Web 传输的 `httpx[socks]>=0.27,<1` / `httpcore>=1,<2` 已内置；Web 全局开关默认开启，但没有 enabled recipe 时不取数、不占 quota，无需浏览器服务。
 - `[tailnet]` 也保持默认关闭。即使从宿主机挂载一个自行编译的 helper，容器网络 / 状态目录 / 生命周期仍不属于首版受支持路径；本指南不提供这种半自定义部署的可用性承诺。
 
 ### 可选公网域名自动 HTTPS（最简方案）

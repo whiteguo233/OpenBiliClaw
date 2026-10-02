@@ -1,0 +1,14 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example JSON Feed",
+  "items": [
+    {
+      "id": "post-gamma",
+      "url": "https://journal.example.com/posts/gamma?gclid=tracker",
+      "title": "Gamma field notes",
+      "content_html": "<p>Gamma <strong>details</strong>.</p>",
+      "date_published": "2026-08-09T10:30:00Z",
+      "authors": [{"name": "Carol"}]
+    }
+  ]
+}

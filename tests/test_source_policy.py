@@ -1,5 +1,7 @@
 """Tests for discovery source policy helpers."""
 
+from types import SimpleNamespace
+
 from openbiliclaw.config import Config
 from openbiliclaw.runtime.source_policy import (
     DEFAULT_POOL_SOURCE_SHARES,
@@ -29,6 +31,7 @@ def test_source_enabled_map_reads_bilibili_switch() -> None:
         "linuxdo": False,
         "weibo": False,
         "v2ex": False,
+        "web": False,
     }
 
 
@@ -48,8 +51,44 @@ def test_default_enabled_sources_make_xiaohongshu_opt_in() -> None:
         "linuxdo": False,
         "weibo": False,
         "v2ex": False,
+        "web": False,
     }
     assert effective_pool_source_shares(config) == {"bilibili": 5}
+
+
+def test_web_source_requires_config_switch_and_enabled_recipe() -> None:
+    config = Config()
+    config.sources.web = SimpleNamespace(enabled=True)
+
+    assert source_enabled_map(config)["web"] is False
+    assert (
+        source_enabled_map(
+            config,
+            enabled_recipe_available=lambda source: source == "web",
+        )["web"]
+        is True
+    )
+
+    config.sources.web.enabled = False
+    assert (
+        source_enabled_map(
+            config,
+            enabled_recipe_available=lambda source: source == "web",
+        )["web"]
+        is False
+    )
+
+
+def test_web_share_is_reserved_only_when_an_enabled_recipe_exists() -> None:
+    config = Config()
+    config.sources.web = SimpleNamespace(enabled=True)
+    config.scheduler.pool_source_shares = {"bilibili": 5, "web": 2}
+
+    assert effective_pool_source_shares(config) == {"bilibili": 5}
+    assert effective_pool_source_shares(
+        config,
+        enabled_recipe_available=lambda source: source == "web",
+    ) == {"bilibili": 5, "web": 2}
 
 
 def test_effective_pool_source_shares_drop_disabled_bilibili() -> None:

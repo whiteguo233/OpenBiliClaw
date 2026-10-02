@@ -511,6 +511,18 @@ bootstrap_replies_limit = 300
 bootstrap_favorites_limit = 300
 bootstrap_max_pages_per_scope = 20
 
+# ── 通用公开 Web 发现（无需登录）──
+# 用户通过 /api/sources 或对话工具显式添加 feed / sitemap / listing recipe。
+# enabled 是全局紧急开关；没有启用的 Web recipe 时不会预留候选池份额。
+# 第一版仅允许公开 HTTP(S)、端口 80/443 和 recipe 明示的 origin；不复用 Cookie，
+# 不执行网页脚本，也不会把网页内容交给浏览器 Agent。Ego Lite 仅预留为未来可选 transport。
+[sources.web]
+enabled = true
+request_timeout_seconds = 15
+max_response_bytes = 2097152
+max_redirects = 5
+lease_seconds = 300
+
 # ── 微博公开发现 + 登录态初始化（只读）──
 # 后端公开 search / hot / creator 只在内存中申请短期访客会话，不读取、上传或保存用户登录 Cookie。
 # 若在 guided init 中选择微博，浏览器插件会在已登录的 m.weibo.cn 同源任务页读取收藏、关注和 mentions，
@@ -641,6 +653,7 @@ bangumi = 1
 github = 1
 linuxdo = 1
 v2ex = 1
+web = 1
 weibo = 1
 
 # ── 统一关键词规划器 / Discover 背压 (P1) ──

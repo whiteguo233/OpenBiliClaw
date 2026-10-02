@@ -168,3 +168,16 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 ```
+
+## Web 来源的对话入口
+
+```text
+聊一聊（桌面 / 移动 / 插件） → probe_web_source(url, strategy?) → 只读草稿 / 样例
+                           → create_source hard-write 审批卡 → 批准后 typed compiler
+设置页显式添加 / API ────────────────────────────────────────┘
+                     → source_recipes → token-fenced WebDiscoveryProducer
+                     → exact origin / robots / public DNS + socket pin
+                     → feed / sitemap / static listing parser → 共享待评估池
+```
+
+Web 保持 discovery-only；CLI chat、本轮未使用的 Ego Lite、登录态与 JavaScript 渲染均不在此链路。

@@ -33,7 +33,7 @@ test("popup exposes the shared count formatter + stats builder", () => {
 test("recommendation card appends the stats element", () => {
   const renderRecommendations = popupJs.slice(
     popupJs.indexOf("function renderRecommendations"),
-    popupJs.indexOf("function renderRecommendations") + 4000,
+    popupJs.indexOf("function getDisplayedRecommendationBvids"),
   );
   assert.match(
     renderRecommendations,
@@ -62,6 +62,14 @@ test("stats element only renders when non-empty", () => {
   // Empty stats string ⇒ no element created.
   assert.match(appendFn, /if \(!text\) return;/);
   assert.match(appendFn, /className = "recommendation-stats"/);
+});
+
+test("public Web cards never render structurally unavailable engagement counts", () => {
+  const statsFn = popupJs.slice(
+    popupJs.indexOf("function recommendationStats"),
+    popupJs.indexOf("function recommendationStats") + 500,
+  );
+  assert.match(statsFn, /if \(isPublicWebSource\(item\)\) return "";/);
 });
 
 test("delight normalizer threads the raw count fields through", () => {

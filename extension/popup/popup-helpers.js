@@ -50,6 +50,7 @@ function normalizeSourcePlatform(value, url = "") {
     "linux.do": "linuxdo",
     v2: "v2ex",
     v2ex: "v2ex",
+    web: "web",
   };
   if (aliases[key]) return aliases[key];
   if (key) return key;
@@ -66,7 +67,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (urlHostMatches(url, ["bgm.tv", "bangumi.tv"])) return "bangumi";
   if (urlHostMatches(url, ["linux.do"])) return "linuxdo";
   if (urlHostMatches(url, ["v2ex.com"])) return "v2ex";
-  return "";
+  return lowerUrl ? "web" : "";
 }
 
 export function normalizeProbeType(type) {
@@ -182,11 +183,23 @@ const PLATFORM_DISPLAY_NAMES = {
   "linux.do": "Linux.do",
   v2: "V2EX",
   v2ex: "V2EX",
+  web: "网页",
 };
 
 export function platformDisplayName(value) {
   const key = normalizeText(value).toLowerCase();
   return PLATFORM_DISPLAY_NAMES[key] || normalizeText(value);
+}
+
+const WEB_SOURCE_STRATEGY_LABELS = {
+  "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
+  "web-sitemap": "网页站点地图（Sitemap）",
+  "web-listing": "网页列表页",
+};
+
+export function getSourceStrategyLabel(value) {
+  const text = normalizeText(value);
+  return WEB_SOURCE_STRATEGY_LABELS[text.toLowerCase()] || text;
 }
 
 /**
@@ -206,8 +219,12 @@ export function platformDisplayName(value) {
 export function formatRecommendationAuthorLine(item) {
   const name = normalizeText(item?.up_name) || normalizeText(item?.author_name);
   if (!name) return "";
-  const platform = normalizeSourcePlatform(item?.source_platform) || "bilibili";
+  const platform = normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili";
   return platform === "bilibili" ? `这位 UP：${name}` : name;
+}
+
+export function isPublicWebSource(item) {
+  return normalizeSourcePlatform(item?.source_platform, item?.content_url) === "web";
 }
 
 export function buildVideoUrl(bvid) {
@@ -237,6 +254,7 @@ export function buildContentUrl(item) {
   if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
+  if (platform === "web") return "";
   return buildVideoUrl(vid);
 }
 
@@ -247,10 +265,11 @@ export function buildRecommendationClickPayload(item, contentUrl = "") {
     bvid,
     content_id: contentId,
     content_url: normalizeText(contentUrl) || normalizeText(item?.content_url),
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
+    source_platform:
+      normalizeSourcePlatform(item?.source_platform, item?.content_url) || "bilibili",
     title: normalizeText(item?.title),
     recommendation_id: typeof item?.id === "number" ? item.id : null,
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     up_name: normalizeText(item?.up_name),
   };
 }
@@ -344,7 +363,7 @@ export function normalizeRecommendation(item) {
         : DEFAULT_CREATOR_NAME),
     cover_url: normalizeCoverUrl(item?.cover_url),
     expression: normalizeText(item?.expression),
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
     content_id: contentId,
@@ -945,7 +964,7 @@ export function normalizeRuntimeStatus(status) {
     last_discovered_count: Number(status?.last_discovered_count ?? 0),
     last_replenished_count: Number(status?.last_replenished_count ?? 0),
     recent_pool_topics: Array.isArray(status?.recent_pool_topics)
-      ? status.recent_pool_topics.map(normalizeText).filter(Boolean)
+      ? status.recent_pool_topics.map(getSourceStrategyLabel).filter(Boolean)
       : [],
     manual_refresh_state: normalizeText(status?.manual_refresh_state) || "idle",
     manual_refresh_message: normalizeText(status?.manual_refresh_message),
@@ -985,7 +1004,7 @@ export function mergeRuntimeStatusEvent(status, event) {
     next.last_discovered_count = Number(event.last_discovered_count);
   }
   if (Array.isArray(event?.recent_pool_topics)) {
-    next.recent_pool_topics = event.recent_pool_topics.map(normalizeText).filter(Boolean);
+    next.recent_pool_topics = event.recent_pool_topics.map(getSourceStrategyLabel).filter(Boolean);
   }
   return next;
 }

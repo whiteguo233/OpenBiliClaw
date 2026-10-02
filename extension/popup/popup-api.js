@@ -418,6 +418,44 @@ export async function fetchSourcesStatus() {
   return requestJson("/sources/status", { method: "GET" });
 }
 
+export async function fetchSourceRecipes() {
+  return requestJson("/sources", { method: "GET", timeoutMs: 12_000 });
+}
+
+export async function probeWebSource(url) {
+  return requestJson("/sources/web/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: String(url || "").trim() }),
+    timeoutMs: 65_000,
+  });
+}
+
+export async function createWebSourceRecipe(recipe) {
+  return requestJson("/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...recipe, source_type: "web" }),
+    timeoutMs: 15_000,
+  });
+}
+
+export async function updateWebSourceRecipe(recipeId, changes) {
+  return requestJson(`/sources/${encodeURIComponent(String(recipeId || ""))}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+    timeoutMs: 15_000,
+  });
+}
+
+export async function deleteWebSourceRecipe(recipeId) {
+  return requestJson(`/sources/${encodeURIComponent(String(recipeId || ""))}`, {
+    method: "DELETE",
+    timeoutMs: 15_000,
+  });
+}
+
 export async function fetchV2exIdentity() {
   return requestJson("/sources/v2ex/identity", { method: "GET", timeoutMs: 12_000 });
 }

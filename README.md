@@ -33,7 +33,7 @@
 
 ## 10 秒看懂 OpenBiliClaw
 
-一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 与开放 Web 找内容。
+一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 与公开 Web 订阅 找内容。
 
 | 跨平台 | 本地优先 | 可调教 |
 |---|---|---|
@@ -103,7 +103,7 @@
 
 而且每个平台都是一座孤岛。你在 B 站看了三年机械键盘，小红书完全不知道；你在小红书种草的咖啡器具，B 站从来不会推给你。你的兴趣被割裂在不同平台的数据库里，没有人帮你把它们连起来。
 
-**OpenBiliClaw 反过来。** 它是一个本地运行的 AI Agent——先深度理解你，再根据对你的理解**跨平台**主动搜寻你会喜欢的内容。项目从 B 站起步，现已覆盖小红书、抖音、YouTube、X（Twitter）、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 和开放 Web：
+**OpenBiliClaw 反过来。** 它是一个本地运行的 AI Agent——先深度理解你，再根据对你的理解**跨平台**主动搜寻你会喜欢的内容。项目从 B 站起步，现已覆盖小红书、抖音、YouTube、X（Twitter）、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 和公开 Web 订阅：
 
 ### 🧠 先懂你，再找内容
 
@@ -319,7 +319,7 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 macOS 主应用继续以 10.15+ 为兼容目标；只有 Go 1.26.6 构建的可选 Tailnet helper 实测要求
 macOS 12+。10.15 / 11 会只降级远程 Tailnet，本机应用功能仍照常。
 
-安装包自带本地 Ollama + `bge-m3` embedding，开箱即用；也内置默认内容源依赖，包括 X 的 `twitter-cli`、Reddit 的 `rdt-cli`，以及默认关闭的应用内 Tailnet helper。后者让电脑端应用自己加入用户的 tailnet，不安装系统 Tailscale。请在电脑本机的桌面 Web 或浏览器插件「设置 → 通用」中开启 Tailnet，选择网页登录、Auth Key 或 OAuth Client Secret 入网并完整重启；OAuth 方式还需填写该 OAuth Client 已获准使用的设备 tag。Reddit rdt 命令后端会优先使用已连接插件同步的 `reddit_session`，插件不可用时可手动运行 `rdt login`，未登录会 fallback 插件。启动后常驻 **macOS 菜单栏 / Windows 系统托盘**，右键可「打开 Web 界面 / 查看运行日志 / 退出」。数据与 AI / 脚本安装复用同一个目录：`~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级或卸载不会动它；旧安装包曾写入的 `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` 会在新版本首次启动时非覆盖拷贝回来。若 `config.toml` / `config.local.toml` 损坏导致启动失败，桌面包会把坏文件备份为 `*.invalid` 并重新生成默认配置，随后打开 `/setup/` 重新初始化；`data/` 不会被删除。
+安装包自带本地 Ollama + `bge-m3` embedding，开箱即用；也内置默认内容源依赖，包括 X 的 `twitter-cli`、Reddit 的 `rdt-cli`、Web 安全传输使用的受限 `httpx` / 直接 `httpcore` socket backend，以及默认关闭的应用内 Tailnet helper。后者让电脑端应用自己加入用户的 tailnet，不安装系统 Tailscale。请在电脑本机的桌面 Web 或浏览器插件「设置 → 通用」中开启 Tailnet，选择网页登录、Auth Key 或 OAuth Client Secret 入网并完整重启；OAuth 方式还需填写该 OAuth Client 已获准使用的设备 tag。Reddit rdt 命令后端会优先使用已连接插件同步的 `reddit_session`，插件不可用时可手动运行 `rdt login`，未登录会 fallback 插件。启动后常驻 **macOS 菜单栏 / Windows 系统托盘**，右键可「打开 Web 界面 / 查看运行日志 / 退出」。数据与 AI / 脚本安装复用同一个目录：`~/OpenBiliClaw`（macOS / Linux）/ `%USERPROFILE%\OpenBiliClaw`（Windows），升级或卸载不会动它；旧安装包曾写入的 `~/Library/Application Support/OpenBiliClaw` / `%LOCALAPPDATA%\OpenBiliClaw` 会在新版本首次启动时非覆盖拷贝回来。若 `config.toml` / `config.local.toml` 损坏导致启动失败，桌面包会把坏文件备份为 `*.invalid` 并重新生成默认配置，随后打开 `/setup/` 重新初始化；`data/` 不会被删除。
 
 > ⚠️ **macOS 安全阻挡（应用尚未签名 / 公证）**：
 > - 当前 Release 是 ad-hoc signed、未 notarized。首次打开安装助手或应用时如果提示“无法验证开发者”或“未经安全验证”，请右键 / Control-click 对应项目 →「打开」→ 在弹窗里再点「打开」；也可以到「系统设置 → 隐私与安全性」点击「仍要打开」。
@@ -434,8 +434,9 @@ OpenBiliClaw 不保存你的平台密码，也不替你绕过登录。需登录�
 | **Bangumi** | 无需登录；可选填公开用户名读取公开收藏，或填个人令牌读取私密收藏；插件在 bgm.tv / bangumi.tv 仅做账号身份自动识别（不读 Cookie、不采集浏览行为） | 未填用户名时不能把 Bangumi 作为唯一画像初始化来源，但匿名 search / ranked / 按日期 discovery 仍可用 |
 | **V2EX** | 无需登录；可选填 PAT；guided init / 增量任务在扩展中读取本人主题、本人回复、收藏主题和收藏 Node 的公开渲染字段 | 未连接扩展时仍可匿名 search / node / tab / hot / latest discovery；收藏 scope 需要实际登录态 |
 | **GitHub** | 无需登录；可选填公开用户名读取公开 starred repositories，PAT 只用于提额和 `/user` 身份核验 | 未填身份时仍可匿名 search / ranked / latest discovery，但不能把 GitHub 作为唯一画像初始化来源；不读取浏览器 Cookie |
+| **通用 Web** | 无需也不支持登录；可在桌面 Web / 插件粘贴 URL 只读探测，再显式添加公开 feed / sitemap / listing recipe | 探测只返回草稿且「采用」不保存；没有 enabled recipe 时不调度、不占候选池份额；移动端无来源设置面，登录态与 JS 页面不支持 |
 
-小红书、抖音、YouTube、知乎和 Linux.do 走 Chrome 插件任务链路，Reddit 日常 discovery 默认走随后端安装的 rdt-cli、初始化信号仍走插件，X 的 discovery 走服务端 cookie 重放；GitHub 则始终由后端官方 REST client 只读公开 repository，不进入插件任务。Linux.do 上游请求全部在真实站点 tab 内以同源 GET 执行，`_t` 只作登录布尔，Cookie 值和原始响应不会上传。Reddit/X、YouTube、小红书、抖音与知乎原生保存 executor 已 6/6 接入并通过 fixture 测试；2026-07-14 的真实账号回归中，六平台 favorite 与 watch-later/fallback 均得到 `synced/already_synced`。当前知乎收藏页已使用全局 `收藏 / 已收藏` 切换，目标文案为 `知乎收藏`；已收藏初始态和二次验证都严格只读，扩展不会重复点击保存。Linux.do 与 GitHub 不提供任何站内写回。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
+小红书、抖音、YouTube、知乎和 Linux.do 走 Chrome 插件任务链路，Reddit 日常 discovery 默认走随后端安装的 rdt-cli、初始化信号仍走插件，X 的 discovery 走服务端 cookie 重放；GitHub 则始终由后端官方 REST client 只读公开 repository，不进入插件任务。Linux.do 上游请求全部在真实站点 tab 内以同源 GET 执行，`_t` 只作登录布尔，Cookie 值和原始响应不会上传。Reddit/X、YouTube、小红书、抖音与知乎原生保存 executor 已 6/6 接入并通过 fixture 测试；2026-07-14 的真实账号回归中，六平台 favorite 与 watch-later/fallback 均得到 `synced/already_synced`。当前知乎收藏页已使用全局 `收藏 / 已收藏` 切换，目标文案为 `知乎收藏`；已收藏初始态和二次验证都严格只读，扩展不会重复点击保存。Linux.do 与 GitHub 不提供任何站内写回。`[sources.browser].cdp_url` 只服务历史 `web_extract` 浏览器实验；正式 Web recipe 使用匿名有界 HTTP，不使用 CDP，也不会在失败时回退到浏览器。
 
 </details>
 
@@ -620,7 +621,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 - 🧠 **五层灵魂画像** — 事件→偏好→觉察→洞察→灵魂，推断 MBTI、认知风格和深层需求（[详解](docs/modules/soul.md)）
 - 🔮 **兴趣探针** — 基于心理学桥接主动猜测你可能喜欢的未知领域，猜对升级为正式兴趣，猜错安静退出
 - 🧭 **避雷探针** — 主动确认你想避开的内容形态和风格边界，确认后才写入过滤偏好
-- 🌐 **跨平台内容源** — B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 通用 Web，兴趣不再被单一平台割裂（[详解](docs/modules/discovery.md)）
+- 🌐 **跨平台内容源** — B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 公开 Web 订阅，兴趣不再被单一平台割裂（[详解](docs/modules/discovery.md)）
 - 🎯 **智能多样性** — 主题配额 + 跨平台混排 + 小源保护，告别「一刷都是 AI」
 - ⚡ **「换一批」瞬间响应且默认去重** — reshuffle ~0.6s；当前卡、推荐历史和持久化已看账本三层排除，连续刷不卡顿也不靠“忽略当前”开关
 - 💬 **有温度的推荐理由** — 像朋友一样解释为什么你会喜欢，而不是「因为你看过类似视频」
@@ -646,6 +647,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 发布日期偏好：`[sources.<name>].recommendation_date_*` 按来源配置 → 发现阶段 LLM 评估前硬过滤范围外候选 → 有效库存 → PoolCurator → 范围外软降分 / 严格 serving 忽略（候选保留）；严格模式下推 B 站搜索边界
 
 远程 Android / iOS App：`App（内嵌 tsnet）→ 用户 tailnet → 电脑端 Go tsnet helper → 127.0.0.1:<有效 server port> → FastAPI`；入网控制流为 `本机设置页 → PUT /api/config（凭据只写）→ 私有单次暂存 → stdin → helper`。有效端口通常为 `[api].port`，也跟随启动参数 / 桌面 `OPENBILICLAW_PORT` 覆盖；入口默认关闭，电脑无需系统 Tailscale，无 Funnel/Serve，节点身份和暂存凭据都不进入迁移包。
+
+Web 来源：聊一聊 `probe_web_source` / 设置 / CLI → 只读 URL 预览 → 确认 `create_source` / 显式添加 → 共享 typed recipe → 匿名有界 HTTP producer → 统一评估。
 
 > 📖 [架构总览图](docs/architecture-overview.md)
 
@@ -689,7 +692,9 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 | **Bangumi** | 公开收藏初始化 · 搜索 · 排名 · 按日期浏览 | 官方匿名只读 API；无需 Cookie/token，日期结果可能含未播条目 |
 | **V2EX** | 搜索 · Node · Tab · 热门 · 最新 | 官方匿名 API / JSON Feed；PAT 可选增强 API 2.0，Topic 为无封面文字卡 |
 | **GitHub** | starred repositories 初始化 · 搜索 · 排名 · 最新 | 官方 REST API；匿名可用、PAT 可选，强制只读公开 repository，无封面文字卡 |
-| **通用 Web** | 浏览器 + LLM 抽取 | 适配任意网页 |
+| **通用 Web** | 粘贴 URL 只读探测 · 显式 RSS/Atom/JSON Feed · Sitemap · 静态 Listing recipe | 后端匿名有界 HTTP；探测仅生成预览草稿，采用后仍须显式添加；exact origin、robots fail-closed、DNS socket pin；不支持登录态、JS 渲染或任意 crawl（[边界](docs/modules/web.md)） |
+
+也可以在「聊一聊」中提供公开网址，请 Agent 探测 feed / sitemap / 静态列表并预览方案，再确认具体的 `create_source` 请求。只读 `probe_web_source` 不保存、不调度；确认后的 recipe 与设置页新建来源复用同一 typed compiler、Web producer 和统一候选评估链路。登录态、JavaScript 渲染和任意全站抓取不在支持范围内。
 
 发现之后的统一流程：
 
@@ -733,11 +738,14 @@ OpenBiliClaw/
 │   │   ├── zhihu_tasks        # 知乎插件任务队列 / bootstrap_events + search/hot/feed/creator/related
 │   │   ├── reddit_tasks       # Reddit bootstrap 插件任务 / extension fallback discovery / rdt 默认 discovery helpers
 │   │   ├── linuxdo_tasks      # Linux.do 同源只读 bootstrap / 五路 discovery 任务
-│   │   └── web_adapter        # 通用 Web (Playwright + LLM)
+│   │   ├── web_probe          # 用户触发的 exact-origin URL 探测 / recipe 草稿
+│   │   ├── web_recipe         # Web typed recipe compiler / 权限计划
+│   │   ├── web_public         # 匿名安全 HTTP + feed/sitemap/listing parser
+│   │   └── web_adapter        # canonical Web 候选归一化
 │   ├── youtube/               # YouTube Takeout 离线导入解析
 │   ├── api/                   # 本地 FastAPI (配置回滚 / 降级模式 / popup API)
 │   ├── tls_proxy.py           # 默认关闭的 LAN/self-managed HTTPS 入口
-│   ├── runtime/               # 后台刷新、feedback 合并、presence gate、CLI/桌面共享 autostart 对账、Ollama、降级 RuntimeContext
+│   ├── runtime/               # 后台刷新、Web producer、feedback 合并、presence gate、CLI/桌面共享 autostart 对账、Ollama、降级 RuntimeContext
 │   ├── bilibili/              # B 站接入层 (WBI 签名 · 速率控制)
 │   ├── llm/                   # 多模型 LLM 适配 + 结构化 JSON 容错
 │   └── storage/               # 数据存储层

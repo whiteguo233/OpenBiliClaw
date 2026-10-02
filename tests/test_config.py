@@ -210,6 +210,7 @@ class TestConfigDefaults:
             "bangumi": 1,
             "github": 1,
             "linuxdo": 1,
+            "web": 1,
             "weibo": 1,
             "v2ex": 1,
         }
@@ -1848,6 +1849,7 @@ youtube = 3
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
     }
@@ -2421,6 +2423,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
     }
@@ -2439,6 +2442,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "bangumi": 1,
         "github": 1,
         "linuxdo": 1,
+        "web": 1,
         "weibo": 1,
         "v2ex": 1,
     }

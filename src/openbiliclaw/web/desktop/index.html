@@ -1211,6 +1211,80 @@
               </div>
             </article>
 
+            <article class="source-status-row source-card" data-source-status="web" data-open="0">
+              <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-web">
+                <span class="source-card-logo" data-source-logo="web" aria-hidden="true">W</span>
+                <span class="source-card-head">
+                  <strong class="source-card-name">Web</strong>
+                  <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
+                  <p class="src-detail">加载中…</p>
+                  <span class="source-card-hint-slot"></span>
+                </span>
+                <span class="source-card-right">
+                  <label class="source-card-share"><span>占比</span><input id="shareWeb" value="1" inputmode="numeric" aria-label="Web 候选池占比"></label>
+                  <label class="source-card-enable"><span class="sr-only">启用 Web</span><select id="webEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
+                  <span class="source-card-chev" aria-hidden="true">▾</span>
+                </span>
+              </div>
+              <div class="source-card-body" id="sourceCardBody-web">
+                <section class="source-seg">
+                  <h4>公开网页发现</h4>
+                  <p class="seg-note">添加一个明确入口，后端会按 Feed、Sitemap 或列表页 recipe 定时发现内容。仅访问你批准的公开 origin，遵守 robots.txt；不带 Cookie、不登录，也不执行网页脚本。</p>
+                  <div class="inline-row">
+                    <label class="settings-field"><span>请求超时（秒）</span><input id="webRequestTimeout" type="number" min="1" max="60" value="15"></label>
+                    <label class="settings-field"><span>单次响应上限（字节）</span><input id="webMaxResponseBytes" type="number" min="65536" max="5000000" value="2097152"></label>
+                    <label class="settings-field"><span>最多重定向</span><input id="webMaxRedirects" type="number" min="0" max="10" value="5"></label>
+                    <label class="settings-field"><span>任务租约（秒）</span><input id="webLeaseSeconds" type="number" min="30" max="3600" value="300"></label>
+                  </div>
+                </section>
+                <section class="source-seg web-recipe-manager" aria-labelledby="webRecipeHeading">
+                  <h4 id="webRecipeHeading">网站 Recipe</h4>
+                  <div id="webProbePanel" class="web-probe-panel" aria-busy="false">
+                    <div class="web-probe-head">
+                      <strong>粘贴网站 URL，自动找入口</strong>
+                      <p class="seg-note" id="webProbeHelp">会尝试识别 Feed、Sitemap 和静态列表结构。探测只生成候选方案，采用后仍需检查并点击「添加网站」才会保存。</p>
+                    </div>
+                    <div class="web-probe-input-row">
+                      <label class="settings-field full"><span>网站 URL</span><input id="webProbeUrl" type="url" maxlength="4096" required autocomplete="url" inputmode="url" placeholder="https://example.com" aria-describedby="webProbeHelp webProbeStatus" form="webProbeStandaloneForm" data-settings-ignore-dirty></label>
+                      <button class="pill-btn primary" id="webProbeButton" type="submit" form="webProbeStandaloneForm">自动探测</button>
+                    </div>
+                    <span class="settings-probe-status web-probe-status" id="webProbeStatus" aria-live="polite" aria-atomic="true" aria-busy="false"></span>
+                    <div id="webProbeCandidates" class="web-probe-candidates" role="list" aria-label="可采用的网站发现方案" hidden></div>
+                  </div>
+                  <div id="webRecipeList" class="web-recipe-list" aria-live="polite"><p class="seg-note">正在读取已配置网站…</p></div>
+                  <div id="webRecipeForm" class="web-recipe-form" role="group" aria-labelledby="webRecipeHeading">
+                    <div class="inline-row">
+                      <label class="settings-field"><span>名称</span><input id="webRecipeName" maxlength="120" required placeholder="例如：Django 官方博客"></label>
+                      <label class="settings-field"><span>发现方式</span><select id="webRecipeStrategy"><option value="feed">Feed（RSS / Atom / JSON Feed）</option><option value="sitemap">Sitemap</option><option value="listing">列表页</option></select></label>
+                    </div>
+                    <label class="settings-field full"><span>入口 URL</span><input id="webRecipeUrl" type="url" maxlength="4096" required placeholder="https://example.com/feed.xml"></label>
+                    <label class="settings-field full"><span>额外允许的 Origin（可选，每行一个）</span><textarea id="webRecipeOrigins" rows="2" placeholder="https://www.example.com"></textarea></label>
+                    <div class="inline-row">
+                      <label class="settings-field"><span>抓取间隔（分钟）</span><input id="webRecipeInterval" type="number" min="5" max="10080" value="30"></label>
+                      <label class="settings-field"><span>每轮最多条目</span><input id="webRecipeMaxItems" type="number" min="1" max="50" value="20"></label>
+                      <label class="settings-field"><span>每轮最多页面</span><input id="webRecipeMaxPages" type="number" min="1" max="5" value="1"></label>
+                      <label class="settings-field"><span>详情页上限</span><input id="webRecipeDetailLimit" type="number" min="0" max="20" value="10"></label>
+                      <label class="settings-field"><span>Recipe 权重</span><input id="webRecipeShare" type="number" min="1" max="20" value="4"></label>
+                    </div>
+                    <fieldset id="webRecipeListingFields" class="web-recipe-listing-fields" hidden>
+                      <legend>列表页选择器</legend>
+                      <p class="seg-note">使用简单的 tag、<code>.class</code> 或 <code>#id</code> 后代选择器；不支持脚本、伪类或属性选择器。</p>
+                      <div class="inline-row">
+                        <label class="settings-field"><span>条目选择器</span><input id="webRecipeItemSelector" maxlength="256" placeholder="article"></label>
+                        <label class="settings-field"><span>链接选择器</span><input id="webRecipeLinkSelector" maxlength="256" value="a"></label>
+                        <label class="settings-field"><span>标题选择器（可选）</span><input id="webRecipeTitleSelector" maxlength="256" placeholder="h2"></label>
+                        <label class="settings-field"><span>明确空列表选择器（可选）</span><input id="webRecipeEmptySelector" maxlength="256" placeholder=".empty-state"></label>
+                      </div>
+                    </fieldset>
+                    <div class="settings-probe-row">
+                      <button class="pill-btn primary" id="webRecipeCreate" type="submit">添加网站</button>
+                      <span class="settings-probe-status" id="webRecipeMessage" aria-live="polite"></span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </article>
+
           </div>
 
           <div class="source-aux-card">
@@ -1557,6 +1631,8 @@
           </span>
         </div>
       </form>
+      <form id="webRecipeStandaloneForm" hidden></form>
+      <form id="webProbeStandaloneForm" hidden></form>
       </section>
 
       <div class="llm-instance-dialog" id="llmInstanceDialog" role="dialog" aria-modal="true" aria-labelledby="llmInstanceDialogTitle" hidden>

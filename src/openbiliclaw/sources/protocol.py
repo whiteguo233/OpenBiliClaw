@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
@@ -43,6 +43,43 @@ class SourceRecipe:
     created_by: str = "system"
     created_at: str = ""
     last_fetched_at: str = ""
+
+
+SourceFetchStatus = Literal[
+    "ok",
+    "empty",
+    "not_modified",
+    "degraded",
+    "login_required",
+    "rate_limited",
+    "failed",
+]
+
+
+@dataclass
+class SourceFetchResult:
+    """Structured source outcome used by durable recipe schedulers.
+
+    A naked empty list cannot say whether a source was truly empty, unchanged,
+    blocked by login, rate limited, or broken.  Existing adapters may keep the
+    legacy ``fetch() -> list`` protocol; recipe-driven producers use this
+    result when an adapter exposes ``fetch_result``.
+    """
+
+    items: list[DiscoveredContent] = field(default_factory=list)
+    status: SourceFetchStatus = "ok"
+    scope_complete: bool = True
+    etag: str = ""
+    last_modified: str = ""
+    validator_url: str = ""
+    cursor: dict[str, Any] = field(default_factory=dict)
+    # Degraded sitemap runs carry a bounded recovery frontier and clean-sweep
+    # proof. The durable canonical cursor and HTTP validators remain untouched
+    # until every unit in the current root topology completes without error.
+    retry_cursor: dict[str, Any] = field(default_factory=dict)
+    error_code: str = ""
+    retry_after_seconds: int = 0
+    detail: str = ""
 
 
 @runtime_checkable

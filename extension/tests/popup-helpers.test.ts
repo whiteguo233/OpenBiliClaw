@@ -25,6 +25,7 @@ import {
   getRecommendationCardKind,
   getNextExpandedCognitionIndex,
   getRuntimeRefreshSubmissionState,
+  getSourceStrategyLabel,
   getSubmissionProgressMessage,
   mergeDelightCandidate,
   normalizeCognitionUpdateCard,
@@ -44,6 +45,7 @@ import {
   normalizeRecommendation,
   normalizeProfileSummary,
   normalizeRuntimeStatus,
+  isPublicWebSource,
   platformDisplayName,
   resolveInitBangumiUsername,
   resolveInitGitHubUsername,
@@ -97,8 +99,48 @@ test("platformDisplayName maps known platforms and passes through unknown", () =
   assert.equal(platformDisplayName("bgm"), "Bangumi");
   assert.equal(platformDisplayName("gh"), "GitHub");
   assert.equal(platformDisplayName("linuxdo"), "Linux.do");
+  assert.equal(platformDisplayName("web"), "网页");
   assert.equal(platformDisplayName("newtube"), "newtube");
   assert.equal(platformDisplayName(""), "");
+});
+
+test("public Web cards keep their URL and do not fabricate a Bilibili link", () => {
+  const url = "https://example.com/posts/public-web";
+  const item = normalizeRecommendation({
+    id: 46,
+    content_id: "sha256:cafe",
+    content_url: url,
+    source_platform: "web",
+    content_type: "article",
+    topic_label: "web-feed",
+  });
+
+  assert.equal(item.source_platform, "web");
+  assert.equal(item.topic_label, "网页订阅（RSS/Atom/JSON Feed）");
+  assert.equal(platformDisplayName(item.source_platform), "网页");
+  assert.equal(buildContentUrl(item), url);
+  assert.equal(isPublicWebSource(item), true);
+  assert.equal(
+    buildContentUrl(normalizeRecommendation({
+      content_id: "sha256:missing",
+      source_platform: "web",
+      content_type: "article",
+    })),
+    "",
+  );
+  assert.equal(
+    normalizeRecommendation({ content_url: "https://example.net/posts/1" }).source_platform,
+    "web",
+  );
+  assert.equal(
+    buildRecommendationClickPayload({
+      content_id: "sha256:inferred",
+      content_url: "https://example.net/posts/1",
+    }).source_platform,
+    "web",
+  );
+  assert.equal(getSourceStrategyLabel("web-sitemap"), "网页站点地图（Sitemap）");
+  assert.equal(getSourceStrategyLabel("web-listing"), "网页列表页");
 });
 
 test("Bangumi cards keep canonical subject links and catalog metadata", () => {
@@ -449,14 +491,14 @@ test("normalizeRecommendation infers X source from URL when source is missing", 
   assert.equal(item.source_platform, "twitter");
 });
 
-test("normalizeRecommendation does not infer X from lookalike domains", () => {
+test("normalizeRecommendation routes X lookalikes to generic Web", () => {
   const item = normalizeRecommendation({
     id: 12,
     content_url: "https://notx.com/h/status/1790000000000000004",
     title: "not X",
   });
 
-  assert.equal(item.source_platform, "bilibili");
+  assert.equal(item.source_platform, "web");
 });
 
 test("getRecommendationCardKind renders a text card for tweet/thread items", () => {

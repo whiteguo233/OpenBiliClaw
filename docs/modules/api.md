@@ -147,6 +147,53 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 配置 / accepted 证据不一致时账号投影暂停但公开 discovery 不停。端点不接收或保存 Cookie 值、
 页面 HTML、私信或 CSRF 字段。
 
+## Web recipe 与来源状态
+
+通用 Web 是匿名、discovery-only 的 recipe 来源。只读 probe 可以从用户粘贴的公开 URL 生成
+待检查的 `feed / sitemap / listing` 草稿；正式端点仍只管理用户显式确认保存的计划。它不会把
+任意 URL 自动变成 crawl，也不会接受 Cookie、token、登录心跳或 JavaScript 执行配置。字段、
+安全传输和 parser 契约见
+[Web 来源文档](web.md)。
+
+| 方法与路径 | 状态 | 契约 |
+|---|---|---|
+| `GET /api/sources` | ✅ | 列出 recipe；Web 行附只读 `runtime` 摘要，但不返回 ETag、Last-Modified、cursor 或 lease token |
+| `POST /api/sources/web/probe` | ✅ 只读 | body 只接受 `{url}`；按 exact origin、robots、公共 DNS/socket pin 与共享 deadline 有界识别直接 Feed/Sitemap、HTML alternate、`/sitemap.xml` 和保守静态列表，返回 `ready/no_match`、样例与 compiler-ready 草稿；不写 recipe/state/seen/candidate。guided init 与 LLM degraded recovery 中仍可使用，非法 URL/未知字段为 422 |
+| `POST /api/sources` | ✅ | `source_type="web"` 时用 typed compiler 校验可编辑字段、入口 URL、exact-origin allowlist、预算和 listing selector；未知字段及 server-owned 字段返回 422 |
+| `PUT /api/sources/{recipe_id}` | ✅ | 部分更新可编辑顶层字段；一旦携带 `config` 就必须提交可独立编译的完整 config，不支持 nested patch。执行计划 fingerprint 改变时清理该 recipe 的旧 checkpoint 与 seen，名称、cadence、权重或开关变化不伪装成计划变化 |
+| `DELETE /api/sources/{recipe_id}` | ✅ | 删除用户 recipe，并清理对应 Web state / seen；system recipe 仍不可删 |
+| `GET /api/sources/status` | ✅ | 纯本地聚合全局 Web 开关、enabled recipe 数与已观察运行健康；无 recipe 或从未成功运行时为 `discovery_state="unverified"`，不会假报 ready，也不因轮询出网 |
+| `GET /api/sources/credentials` | ✅ | Web 返回 `form.kind="none"`，明确没有凭据输入面 |
+| `POST /api/sources/web/verify` | ✅ | 固定为 `verify_method="none"`；不会借显式验证动作访问用户 recipe |
+| `POST /api/sources/web/credential` | ✅ 拒绝 | Web 不支持任何 credential kind，拒绝 Cookie、token 与 login state 写入 |
+
+`POST /api/sources/web/probe` 的候选按 `feed → sitemap → deterministic listing` 能力顺序发现；
+HTML 页面里的同源 `rel="alternate"` 是 feed 分支，`/sitemap.xml` 是 sitemap 分支。响应中的
+`recipe` 已通过当前 compiler，但仍只是客户端可检查的草稿。`ready` 不代表已创建来源，
+`no_match` 也不代表可放宽到浏览器或登录态；只有后续独立的 `POST /api/sources` 才会写入。
+该端点被精确加入 guided init 与 LLM degraded recovery 的只读 allowlist，不会因此放开其它
+recipe CRUD。
+
+请求模型只有一个去除首尾空白后的严格字符串 `url`（长度 `1..4096`），未知字段、private-IP
+literal、userinfo、非默认端口、专属平台 URL 或其它 compiler 拒绝的目标返回 422。成功响应固定为：
+
+- 顶层 `status=ready|no_match`、安全截断的 `detail`、`requested_url`、`final_url`、
+  `page_title` 与 `candidates[]`；
+- 每个 candidate 含 `strategy=feed|sitemap|listing`、`entry_url`、
+  `discovery_method=direct|html_alternate|well_known|html_structure`、
+  `confidence=high|medium`、`detail`、最多 3 条
+  `sample_items[{title,content_url,author_name,published_at}]` 与 `recipe`；
+- `recipe` 只含可编辑的 `name / strategy / config / target_share / enabled`，默认
+  `target_share=4`、`enabled=true`；最小 `config` 至少含 `entry_url`，listing 草稿另含受限 selector。
+
+安全取数失败、登录墙、challenge 或没有识别到结构都会收敛为 HTTP 200 + `no_match`，不会回传
+上游 body 或 DNS 诊断。进程内最多同时执行 2 个 probe；无排队槽时返回 429
+`web_probe_busy` 与 `Retry-After: 1`，不会建立无界内存等待队列。
+
+legacy `state="no_auth"` / `logged_in=true` 只表示无需凭据；取数是否可用必须读独立
+`discovery_state`。聚合结果可为 `disabled / unverified / partial / rate_limited / error / ready`；
+只有所有 enabled recipe 都已有完整 `ok / empty / not_modified` 成功证据时才可进入 ready。
+
 ## V2EX 浏览器任务桥
 
 | 方法与路径 | 状态 | 契约 |
@@ -357,6 +404,13 @@ durable reply 的可见终态使用 `WHERE status='pending'` compare-and-swap：
 
 popup、移动 Web 与桌面 Web 只有 durable 对话中的假设卡片保留 confirm/reject/discuss/defer 主动动作，并共享上述按需轮询 helper；同步 `200` 不启动额外轮询。三端画像/认知更新区均只读。`openbiliclaw questions` 也只发 GET 并展示列表。`POST /api/insights/feedback` 仍为旧客户端保留并转发共同队列，但新客户端不再调用它；因此“对话是唯一主动 UI 确认入口”与 legacy 兼容同时成立。
 
+带 `turn_id` 的 `POST /api/chat/agent/stream` 与 durable worker 在同一执行 lease
+内复查终态并完成落库。客户端 GET 轮询触发 worker 与 SSE 同时到达时，只执行
+一轮模型和工具；等待者及完成后的重试回放已存 `agent_events`（包括审批结局）和
+`done`，失败回合回放 `error`。没有 `turn_id` 的临时对话仍是每次独立执行。
+批准/拒绝可以先于最终回复完成；保存整轮事件时会保留并去重此前落库的
+`approval_result`，使完成后的历史与重连保持执行结局。
+
 ## Runtime stream 保活与重连
 
 `GET ws://.../api/runtime-stream` 在 20 秒没有业务事件时发送 `{"type":"runtime.heartbeat","sent_at":"..."}`。心跳与普通事件共用唯一 writer，避免并发 `send_json`；鉴权撤销仍在每次发送前和 15 秒 watchdog 中 fail closed。桌面 Web 收到心跳即确认“实时连接正常”，异常 close 则显示“实时流重连中”、记录 close code/reason，并按 3 秒节奏重连；页面进入后台时仍按 visibility 生命周期主动关闭，不把该主动关闭显示成后端离线。
@@ -394,3 +448,11 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 ### 活动动态的交互隔离（2026-09-07）
 
 已实现：`GET /api/activity-feed` 的 runtime、认知和数据库聚合在工作线程完成，异步锁串行进入既有 TTL 缓存，避免并发重复扫描真实候选历史阻塞主 HTTP 事件循环。公开响应结构不变。真实验收见 [报告](../verification/2026-09-07-recommendation-live.md)。
+
+### 对话 Web 来源入口
+
+`POST /api/chat/agent/stream` 在默认口味伙伴与系统管家中暴露只读 `probe_web_source`，返回一个候选、可选策略、最多两个样例与完整 `create_source_arguments`。`create_source(source_type="web", ...)` 继续使用已有 hard-write 审批端点和三端审批卡；只有批准后才经同一 typed compiler 保存到 `/api/sources` 列表。探测与拒绝审批不写 recipe。独立 `/api/sources/web/probe` 的多候选响应契约保持不变。
+
+### Web 来源份额建议
+
+`GET /api/config/source-share-suggestion` 与 `POST /api/config/source-share-suggestion` 都按当前数据库中的 enabled Web recipe 计算有效来源；新增或停用最后一个 Web recipe 后，下一次建议立即变化。POST 仍结合尚未保存的表单来源开关，Web 总开关和有效 recipe 必须同时满足；不把只有全局开关的全新安装计为已有 Web 供给。

@@ -476,6 +476,12 @@ class AgentLoop:
 
 def _summarize_tool_call(name: str, arguments: dict[str, Any], *, max_chars: int = 120) -> str:
     """One-line human summary of a tool call for the collapsed step view."""
+    if name == "probe_web_source":
+        return f"探测网站 {arguments.get('url', '')}"[:max_chars]
+    if name == "create_source" and arguments.get("source_type", "web") == "web":
+        label = str(arguments.get("name") or "Web 网站")[:40]
+        strategy = arguments.get("strategy", "feed")
+        return f"添加网站「{label}」({strategy})：{arguments.get('url', '')}"[:max_chars]
     if arguments:
         args_text = ", ".join(f"{key}={value!r}" for key, value in arguments.items())
         summary = f"{name}({args_text})"

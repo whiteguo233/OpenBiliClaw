@@ -20,6 +20,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
 | Windows 后台子进程不再弹控制台窗口 | ✅ | 新增 `openbiliclaw/proc.py::no_window_kwargs()`：Windows 下返回 `creationflags=CREATE_NO_WINDOW`，其它平台返回空 dict，可无条件 splat。后端自行发起的全部外部命令都已接入——Reddit 的 `rdt` / `opencli`（含状态探测与每个关键词一条的发现命令）、自动更新的 `git`、`agent-browser` 版本探测与命令、mcporter 灵感检索、SQLite 修复用的 `sqlite3` / `lsof`、托管 ollama 退出用的 `taskkill`。用户在终端主动敲的命令（`openbiliclaw` CLI、`codex login`、dev 用 optimizer）保持原样，它们本来就有自己的控制台且需要交互提示。`tests/test_proc_no_window.py` 用 AST 扫描 `src/` 全量守住这条约定：任何新的 `subprocess.run` / `Popen` / `create_subprocess_exec` 漏掉该 kwarg 即测试失败（`os.name == "nt"` 分支的 else 支路自动豁免）。第三方库自己起的孙进程不在该 flag 覆盖范围内，已知的一处是 rdt-cli 凭据超 TTL 时的 `uv run --with browser-cookie3`，靠 `_RDT_CREDENTIAL_TTL_SECONDS` 比 rdt 阈值提前 6 小时判过期来规避（见 `sources/reddit_tasks.py` 常量注释）。X 的 twitter-cli 与 YouTube 的 yt-dlp 均为进程内库调用，不起子进程。 |
 | 后台 worker 降级等待与存活看护（issue #250） | ✅ | 四进程桌面版在配置无法构造任何 LLM 实例时不再让子进程崩溃弹窗：`worker.main.run_full_worker()` 用 `build_llm_registry(load_config())` 纯构造探针（无网络）每 15s 重读 `config.toml` 重试，等待期心跳继续写 `worker_status.json`，成功后才构建完整 runtime；`discovery_worker.run_discovery_worker()` 同样探针门 + 重试（失败尝试的 degraded 数据库会先关闭），拿不到 `runtime_controller.run_forever` 只记日志，不再抛未捕获 `RuntimeError`。`recommendation_server.wait_for_buildable_llm()` 在 `create_app()` 前同样等待可构造配置，主 API 恢复后推荐进程自动开始服务（不再永久 degraded）。`packaging/entry.py` 的子进程分发捕获异常并写 `desktop.log` 后 `SystemExit(1)`，窗口化构建因此不会再弹 PyInstaller 对话框；父进程用 `proc.ChildProcessSupervisor` 每 5s 巡检后端子进程，崩溃后按 2/4/8/...（上限 60s）退避重启，子进程存活 ≥5 分钟重置退避，退出时逆序 terminate→kill。API 侧 `RuntimeContext.full_worker_expected()` / `warn_if_full_worker_heartbeat_stale()` 在已委托但心跳文件存在且过期时打 WARNING（启动窗口无心跳文件不误报）；`/api/runtime-status` 继续用 `worker_running` / `worker_heartbeat_age_seconds` 暴露该降级状态。回归测试见 `tests/test_worker_degraded_boot.py` 与 `tests/test_proc_supervisor.py`。 |
@@ -55,6 +56,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | GitHub 后台 discovery producer | 🧪 接线；验收见 ledger | `GitHubDiscoveryProducer.produce_if_due()` 在 GitHub 平台族低于 quota 且启用时，只执行当前 `source_modes` 选择的公开 repository `search / ranked / latest`。CLI、正式 producer 与 inspiration backend 共用 public query sanitizer，强制 `is:public`，normalizer 再拒绝 `private=true`；可选 PAT 只用于提额和身份校验，401 后按指纹记录拒绝并退回匿名公开发现。producer 复用 canonical 关键词 claim/use/rollback，按最终去重且真正 enqueue 的候选扣 UTC 日预算，持久化 page cursor/run ledger。来源级 `Retry-After` cooldown 由 formal 与 inspiration 路径共用，任一路径限流都会让另一条 fail-closed 跳过；本地 status 也只聚合当前启用 modes，关闭分支不制造 `unverified`。它只把 `content_type="repository"` raw candidates 交给共享 evaluator，没有插件任务、Cookie、后台账号增量、媒体抓取或任何 GitHub 写操作。本行只记录实现边界；真实 API / E2E 证据状态以 [`platform-source-acceptance.github.md`](../platform-source-acceptance.github.md) 为准。 |
 | Linux.do 后台 discovery producer | ✅（真实 Chrome E2E） | `LinuxdoDiscoveryProducer.produce_if_due()` 在 Linux.do 平台族低于 quota 且启用时，按 source_modes 入队 search / hot / feed / creator / related 任务。真实站点访问只发生在扩展的 `linux.do` 同源标签页，全部为 JSON GET；候选只 enqueue raw rows。搜索复用统一 keyword claim，结构化 rate-limit/network/timeout/access/login 失败会回滚 claim；creator/related 从近期和同轮结果取种子。2026-08-09 已完成安装版热更新、五路任务与正式候选管线 E2E。 |
 | V2EX 后台 discovery producer | ✅ | `V2EXDiscoveryProducer.produce_if_due()` 在 V2EX 平台族低于 quota 且启用时，按 `search / node / tab / hot / latest` 调用匿名 API / Feed；共享关键词 claim、Node/Tab 配置、分支日预算、最小间隔和持久化 rate-limit cooldown。PAT 存在时由 `V2EXClient` 使用 API 2.0，401/403 自动降级匿名。Topic 经 `v2ex_topic_to_content()` 转为文字卡后只 enqueue raw candidates，LLM 评估由共享 coordinator 执行；Node producer 未配置 allowlist 时可使用 `v2ex_node_affinity` 排序。 |
+| Web 后台 discovery producer | ✅ Phase A | `WebDiscoveryProducer.produce_if_due()` 只消费 enabled typed recipe；在全局开关、Web quota、recipe cadence 与原子 lease 都满足时，按 recipe 权重有界公平调度公开 feed / sitemap / static listing。网络与 parser 结果先经过 token fencing，再将新 canonical URL enqueue 到共享候选池；完整成功才推进 validator/cursor，partial 不烧 checkpoint。没有 enabled recipe 时 Web 不占 quota。 |
 | X 源健康状态机 | ✅ | `storage/x_health.py` 的 `XSourceHealthStore` 持久化 `ok` / `missing_cookie` / `expired_cookie`(401) / `blocked`(403) / `rate_limited`(429) 五态；按 code 分别退避，429 带 `cooldown_until` 自愈，401/403/missing 须等用户重新登录 x.com 才恢复；连续 For-You 失败触发 `feed_allowed()=false` 自动暂停。状态经 `GET /api/sources/x/status` 暴露到插件设置页。 |
 | 运行时频率配置 | ✅ | `refresh_check_interval_seconds`、行为触发阈值、trending / explore 间隔、单轮发现上限、惊喜队列加载数量、主动推送间隔和 speculator idle tick 都从 `[scheduler]` 读取，配置热重载后重建 runtime 生效。 |
 | 惊喜永久消费 | ✅ | `mark_delight_sent()` 只表示通知已送达并维护冷却，不置 `delight_seen`，因此已推送但未看过的候选仍可被 popup 重灌；`mark_delight_seen()` 供用户主动叉掉时委托 storage 写 canonical `seen_items` 并置 `delight_seen`，随后更新主动惊喜冷却。两种动作分开，避免“通知出现过”被误当成“用户看过”。 |
@@ -497,7 +499,7 @@ status = service.get_runtime_status()
 
 `get_runtime_status()` 经 `/api/runtime-status` 下发 `last_account_sync_error_kind`、`last_account_sync_issues`、仅供诊断的原始 `last_account_sync_error`，以及后端统一计算的 `last_account_sync_message` / `last_account_sync_severity`。多阶段失败会按「域 + 原因」合并成逐项中文说明；全部属于登录生命周期或限流时为 warning，混入网络、接口、画像配置等故障时为 error。文案只在确实可自行恢复时承诺下一轮重试，需用户修复 Cookie、API Key、模型名或连接时给出对应动作；X-only 问题明确说明 B 站等来源不受影响。旧状态文件没有 issue 列表时继续回退旧 kind/detail 文案，畸形或未知 issue 会在 MemoryManager 与 runtime 边界归一化。桌面 Web 消费这些后端成品字段选择 warning/error 样式；扩展 popup / 移动 Web / CLI 目前不展示此横幅。
 
-桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十二个平台中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
+桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十三个来源族（含公开 Web）中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
 
 **X 定时增量**：仅在 `[sources.twitter].enabled=true` 且 `sources.x_auth.resolve_x_cookie` 解析到 Cookie 时，两处装配点才构造 `XClient`；同一 6h 周期内在 B 站各阶段之后拉取 likes / bookmarks（各上限 200，`_X_FETCH_LIMIT`），分别映射为 `like` / `favorite` 事件（`source_platform="twitter"`）。去重用状态集合 `x_like_ids` / `x_bookmark_ids`（归一化 tweet ID，取 URL 的 `/status/<id>` 尾段，兼容 `x.com/i/status/<id>` 与 `x.com/<handle>/status/<id>` 两种形态，集合上限 2000 保最新）；集合为空的首轮从 events 表已持久化的 X 事件播种，init 之后、首轮之前新增的 like 仍会正常发事件。API runtime 把 discovery producer 的同一 `XSourceHealthStore` 注入账号同步；OpenClaw 构造与 Cookie 指纹绑定的同类 store。每轮出网前先查 `is_ready()`，已在 429 cooldown、缺/过期 Cookie 或 403 block 时直接跳过；likes 首个失败会 `record_error()` 并在 store 变为不可用后取消 bookmarks，成功则 `record_success()`。X 子路径失败只记入 errors + WARN，不影响 B 站同步，反之亦然。
 
@@ -592,6 +594,23 @@ result = await producer.produce_if_due(limit=20)
 ```
 
 V2EX producer 是公开只读 discovery 的正式 runtime / CLI 入口。它按 `[sources.v2ex].source_modes` 轮转 `search / node / tab / hot / latest`，使用统一关键词 planner、Node/Tab 配置、分支预算和持久化节流。`search` 优先复用已配置 Exa / You provider 发送 `site:v2ex.com/t` 查询并用官方 Topic 详情补全；provider 无结果或失败时回退官方 latest/hot 有界匹配。PAT 只增强 API 2.0 访问，401/403 会清除本轮 PAT、对应已验证身份并继续匿名；所有 Topic 通过共享 `DiscoveryCandidatePipeline` 入 `discovery_candidates(pending_eval)`，不在 producer 内联调用 evaluator。每日预算只按共享池全局去重 / 预筛后真正保留的候选扣费，HTTP 请求、详情增强和已知重复不扣。producer 会在共享评估前用 `detail_fetch_limit` 有界补齐不完整 Topic，并仅在 PAT 可用时用 `reply_enrichment_limit` 读取 Reply 第一页生成确定性讨论摘要；`max_topic_chars` / `max_reply_digest_chars` 在 normalizer 边界裁剪，Reply 不单独入池。浏览器 bootstrap 由 `V2EXTaskQueue` 负责领取和 staged 完成，事件入口聚合用户自己的 Reply；runtime 只读取 active profile identity 的 Node Affinity，不能被刚观察到的另一账号替换。`v2ex_incremental_hours` 排队增量任务，首次完整 guided 快照种下收藏基线，后续完整 scope 由 `V2EXFavoriteSnapshotStore` 执行连续两次缺失确认并通过 durable effect 生成 retraction / restore。
+
+### WebDiscoveryProducer
+
+`WebDiscoveryProducer` 是正式 Web recipe 的后台入口。它只在 `[sources.web].enabled=true`、
+存在 enabled recipe 且统一候选池有 Web 缺口时运行；没有 recipe 时 source policy 会移除 Web
+share。producer 先按轮转起点和 `target_share` 为 recipe 分配有界额度，再逐条原子 claim 到期
+recipe，未实际执行的 recipe 不会提前持有 lease。
+
+每条 recipe 由 `WebSourceAdapter` 通过 `SafeWebTransport` 执行匿名公开 HTTP，并按
+`feed / sitemap / listing` 走确定性 parser。网络返回后 producer 必须续租且核对 claim token，
+失去 lease 的 worker 不能 enqueue 或提交状态。canonical URL 成功交给共享 pipeline 后才写
+`web_source_seen`；enqueue 调用失败不烧掉重试机会。`ok / empty / not_modified` 且
+`scope_complete=true` 才推进 ETag、Last-Modified 或 sitemap cursor；degraded/partial 轮次可以
+保留已经安全解析的候选，但沿用上次完整 checkpoint。daemon 与
+`openbiliclaw discover --source web` 都走这条正式 producer；后者的 `--force` 只绕过 cadence。
+`discover-web --recipe-id` 则直接从空 state 只读预览，不写候选或 checkpoint。完整差异、安全
+边界和状态字段见 [Web 来源文档](web.md)。
 
 ### BilibiliExtensionSearchProducer
 
@@ -706,3 +725,7 @@ Expression copy 与 candidate evaluation 对 rate-limit、timeout、connection�
 | 遗留队列恢复 | `ServeOutbox.append()` 用独立原子发布的 batch 文件；`claim_batches()` 将旧 JSONL 纳入独立批次，`acknowledge(batch)` 只删除该已提交批次。失败保留待重试，处理中新增批次不会被清空。升级时需一起重启旧 API / worker，不能混跑仍写旧 JSONL 的旧版本。 |
 
 公开 API：`ServeOutbox.read_all()/count()` 兼容读取遗留文件和新 spool；worker 排空流程使用逐批 ACK，`clear()` 只用于显式清理。普通推荐不再产生 outbox 记录；worker 快照仍可用于观察，不能作为已消费状态的权威来源。没有新增配置或依赖。
+
+### 对话创建 Web recipe
+
+「聊一聊」经 `create_source` 审批保存的 Web recipe 与设置页创建的计划共用 `source_recipes`，由同一个 `WebDiscoveryProducer` 在到期、来源开关、配额与 lease 允许时领取。probe 和待审批请求不进入调度；保存成功只表示计划已落库，后续健康状态以 producer 实际运行结果为准。

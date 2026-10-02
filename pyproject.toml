@@ -25,7 +25,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx[socks]>=0.27",
+    "httpx[socks]>=0.27,<1",
+    # Public-Web discovery owns a pinned network backend through httpcore's
+    # documented transport primitives; declare and bound it directly instead
+    # of relying on httpx's transitive dependency.
+    "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
     "bilibili-api-python>=16",

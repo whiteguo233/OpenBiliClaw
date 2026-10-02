@@ -842,6 +842,11 @@ class DiscoveredContent:
     # identifiers and source-specific card metadata can survive the candidate
     # and content-cache pipeline without widening the shared schema per source.
     source_metadata: dict[str, object] = field(default_factory=dict)
+    # Recipe provenance is metadata, never part of Web's canonical item key.
+    # It survives candidate evaluation in raw_payload so operators can trace
+    # which explicit subscription authorized and discovered an item.
+    source_recipe_id: str = ""
+    source_site: str = ""
     # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
     # that produced this item (unified keyword planner). ``None`` for every
     # non-search / legacy / flag-off path — the admit-time yield backfill is a

@@ -23,12 +23,12 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | M1 JSON Schema 工具注册表 | ✅ | `agent/tools/registry.py`：`Tool`（name / description / JSON Schema parameters / permission_level / handler）+ `ToolRegistry`（注册、按 skill 白名单 `subset()`、按权限 `filter_by_permission()`、`llm_schemas()` 渲染 OpenAI 格式、`legacy_schemas()` 渲染旧扁平格式、参数校验 + 同步/异步 dispatch） |
-| M1 SOURCE_TOOLS 迁移 | ✅ | `agent/tools/source_tools.py` 是 create_source / list_sources / toggle_source 的唯一事实来源（JSON Schema + 权限级：list=read，create/toggle=hard_write）；`sources/tools.py` 保留 `SOURCE_TOOLS` 旧扁平结构与 `SourceToolDispatcher` 同步接口，委托同一组 handler |
+| M1 SOURCE_TOOLS 迁移 | ✅ | `agent/tools/source_tools.py` 是 probe_web_source / create_source / list_sources / toggle_source 的唯一事实来源（JSON Schema + 权限级：probe/list=read，create/toggle=hard_write）；`sources/tools.py` 保留 `SOURCE_TOOLS` 旧扁平结构与 `SourceToolDispatcher` 同步接口，委托同一组 handler |
 | M1 原生 function calling | ✅ | 见 [llm 模块](llm.md)：OpenAI 系 chat-completions flavor 原生 FC，其余 provider 走 prompt 模拟兜底 |
 | M1 多跳 AgentLoop | ✅ | `agent/loop.py`：`AgentLoop.run()` 异步生成器逐跳产出事件，默认 64 跳上限（`[agent]` 配置），超限后无工具收尾汇报 |
 | M2 SSE 流式接线 | ✅ | 新端点 `POST /api/chat/agent/stream` 真流式转发 `AgentEvent`；`SocraticDialogue.stream_agent_reply()` 复用 persona prompt / 历史 / 学习队列；loop 事件随 turn 落 `payload.agent_events`；旧 `/api/chat` 与 `/api/chat/stream` 保持共存 |
 | M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 也逐 token 输出；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
-| M3 v1 工具集（14 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
+| M3 v1 工具集（新增 Web probe 后 15 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
 | M7 L2 审批门 | ✅ | `agent/approvals.py`：loop 拦截 hard_write 调用 → `approval_request` SSE 事件 + durable 审批记录（JSON 文件存储，免迁移）；`/api/chat/approvals` 端点批准（立即返回 + 后台任务二次 dispatch 真执行，幂等）/拒绝；审计落 `profile_update_ledger`。见下文「L2 审批门（M7）」 |
@@ -50,7 +50,7 @@ agent/
 │   └── system-steward/    # 系统管家
 └── tools/
     ├── registry.py      # Tool / ToolResult / ToolRegistry / validate_tool_arguments
-    ├── source_tools.py  # 订阅源管理三工具的 JSON Schema 定义与 handler
+    ├── source_tools.py  # 订阅源管理及只读 Web probe 的 JSON Schema 定义与 handler
     ├── common.py        # 共享错误类型（组件缺失）与输出辅助
     ├── context.py       # AgentToolContext + build_agent_tool_registry（v1 总装）
     ├── skill_tools.py   # suggest_skill 元工具（agent 建议切换 skill）
@@ -124,7 +124,7 @@ registry.register(Tool(
 ))
 
 registry.llm_schemas()      # OpenAI tools 格式，给原生 FC
-registry.legacy_schemas()   # 旧扁平格式（SOURCE_TOOLS 兼容）
+registry.legacy_schemas()   # 旧扁平格式（SOURCE_TOOLS 兼容形状（legacy 不暴露异步 probe））
 registry.subset([...])               # skill 白名单子集
 registry.filter_by_permission("soft_write")  # 权限上限过滤
 
@@ -145,7 +145,7 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 工具所需的运行时组件引用（`database` / `soul_engine` / `memory_manager` /
 `recommendation_engine` / `config` / `event_ingress` / `saved_sync_service`，
 字段名与 `api/runtime_context.py` 对齐，生产接线在后续里程碑完成）。
-`build_agent_tool_registry(ctx)` 总装全部 14 个工具；除源管理三工具
+`build_agent_tool_registry(ctx)` 总装全部 15 个工具；除源管理与 Web probe 四工具
 （构造期绑定 database，无 database 时不注册）外，所有工具始终注册，
 组件缺失时 handler 抛 `ToolComponentUnavailableError`，由 dispatch 映射为
 机器可读的 `handler_error` 结果回填模型。
@@ -163,12 +163,34 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 | `write_memory` | soft_write | 写记忆到各层 `agent_notes` 命名空间（event/preference/awareness/insight），不覆盖引擎字段，soul 层禁写 |
 | `submit_feedback` | soft_write | 推荐反馈（like/dislike/dismiss/comment），复用 `POST /api/feedback` 同款 durable 事件流入（event_ingress 幂等 + 推荐行投影 + 轻量认知钩子） |
 | `save_item` | soft_write | 本地收藏/稍后再看（`SavedSyncService.save_local(auto_sync=False)`，不同步平台账号） |
-| `create_source` | hard_write | 创建订阅源（M1 已有） |
+| `probe_web_source` | read | 只读探测公开 URL；可用 strategy 筛选方案，返回一个候选、可选策略、最多两个样例与完整 `create_source_arguments`，结果控制在默认 4000 字符内 |
+| `create_source` | hard_write | 创建订阅源；`source_type="web"` 使用共享 typed compiler 校验扁平参数；确认卡批准后才保存，重复相同 recipe 返回已有来源且不重新启用已停用项 |
 | `toggle_source` | hard_write | 订阅源开关（M1 已有） |
 | `update_config` | hard_write | 配置修改（M7 起真写入）：白名单内已存在标量键（文本/数字/布尔），密钥类与路径/存储类一律拒绝；批准后经 `config_persist_hook` 落 config.toml（失败回滚）并触发 `config_reload_hook` 热重载 |
 
 上下文策略是「不塞数据，给入口」：工具按需查询系统数据，结果全部有
 长度上限（截断并标注）。
+
+### 对话新增 Web 来源（capability increment）
+
+桌面 Web、移动 Web 与插件的「聊一聊」共用同一 Agent 工具与已有审批卡。默认口味伙伴和
+系统管家都可执行以下链路；CLI `chat` 仍走旧对话路径，本轮不接入该 Agent 能力，CLI 用户
+可使用独立的 `probe-web`、`discover-web` 与 `discover --source web` 命令。
+
+```text
+用户提供公开 URL → probe_web_source(url, strategy?) [read]
+                   → 一个推荐候选 + available_strategies + 最多 2 个样例
+                   → 完整 create_source_arguments（扁平 typed Web 配置）
+                   → create_source(source_type="web", ...) [hard_write]
+                   → 持久审批卡 → 用户批准 → build_web_recipe → source_recipes
+                   → 到期 WebDiscoveryProducer → 统一候选评估 / 推荐
+```
+
+Agent 展示草稿后调用 `create_source` 生成具体审批卡，不先追加一轮口头批准。
+probe、拒绝审批与待审批状态都不保存来源或开始调度；批准后的执行仍经过同一 compiler、
+exact-origin / robots / public DNS + socket pin 边界。同样的 recipe 重复创建会返回已有项，
+不会借此重新启用用户已停用的来源。Web 仍为匿名公开 discovery-only；不读取登录态、
+不执行 JavaScript，也不生成账号画像初始化事件。
 
 ### Skill 体系（M4）
 
@@ -200,10 +222,10 @@ source=builtin|custom）与 `SkillCatalog`（`get` / `default` /
 
 | name | 显示名 | 工具白名单 |
 |------|--------|-----------|
-| `taste-companion` | 口味伙伴（默认） | 全部 read + soft_write 共 11 个（无 hard_write） |
+| `taste-companion` | 口味伙伴（默认） | read + soft_write，并允许 `probe_web_source` 与需确认的 `create_source / toggle_source`；可直接在日常对话中新增 Web 来源 |
 | `taste-explorer` | 口味探寻师 | get_profile / read_memory / write_memory / search_history / submit_feedback（苏格拉底式追问人设） |
 | `bangumi-advisor` | 追番顾问 | get_profile / read_memory / get_recommendations / get_watch_history / save_item / submit_feedback |
-| `system-steward` | 系统管家 | list_sources / get_config + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
+| `system-steward` | 系统管家 | probe_web_source / list_sources / get_config + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
 
 **会话绑定与切换**：`POST /api/chat/agent/stream` 请求体新增可选 `skill`
 字段（空 = 默认口味伙伴，未知名返回 422）。选中 skill 后：loop 的工具集 =
@@ -260,6 +282,14 @@ streaming turn 创建时服务端在 payload 写入 `agent_stream`（+ 可选 `a
 完成的这类 turn 会**重跑同一多跳 loop**（同 skill、同工具子集）并把事件流
 落进 `agent_events`，回放行为与交互路径一致；agent loop 未接线的降级
 runtime 才退回 legacy 单跳回复。
+
+交互流与兜底 worker 在同一个对话执行 lease 内重读 durable turn。若轮询先完成
+该回合，或客户端重试已完成的流请求，服务端回放已存的 `agent_events`
+（含后续追加的 `approval_result`）与 `done`，不重复调用模型、工具或创建审批卡；
+失败回合回放已存步骤与 `error`。成功/失败落库在释放 lease 前完成，避免等待者
+接手时仍看到 pending。准入超时不会用空事件覆盖先执行 worker 的记录。
+用户可在最终回复生成前批准或拒绝；保存整轮事件时按 `approval_id` 保留已经
+落库的审批结局，避免后到的模型回复把确认卡恢复成待批准状态。
 
 ### L2 审批门（M7）
 
@@ -384,3 +414,13 @@ skill?)` 元工具（read 级、无副作用，注册进每个 skill 子集，�
 `loop_max_steps`（默认 64）、`tool_result_max_chars`（默认 4000）、
 `session_title_enabled`（默认 true）、`task_max_steps`（M6 后台任务跳数预算，
 默认 32）。
+
+
+### 旧版聊天与 Web 确认边界
+
+`SOURCE_TOOLS` 保留三个同步工具；异步 `probe_web_source` 只在 AgentLoop 中注册。
+旧 `/api/chat`、流式回退及 CLI chat 的 `SourceToolDispatcher` 拒绝创建、启停 Web
+recipe，并引导到支持确认卡的新版聊一聊或设置页，防止从无审批入口绕过用户确认。
+其他平台原有同步行为保持兼容。Web probe 根据当前 `agent.tool_result_max_chars`
+预算返回一个完整候选；长样例先整体省略，创建计划本身超预算则明确失败，不向模型发送
+截断的 JSON 或残缺的创建参数。

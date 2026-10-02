@@ -383,6 +383,7 @@ class ContinuousRefreshController:
     bangumi_producer: Any | None = None
     linuxdo_producer: Any | None = None
     v2ex_producer: Any | None = None
+    web_producer: Any | None = None
     weibo_producer: Any | None = None
     github_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
@@ -524,6 +525,11 @@ class ContinuousRefreshController:
     _last_llm_budget_warned_at: float = field(default=-float("inf"), init=False, repr=False)
     _startup_maintenance_completed: bool = field(default=False, init=False)
     _last_pool_maintenance_succeeded: bool = field(default=False, init=False)
+    # Recipe-driven sources can change availability without a config reload.
+    # Keep this final in the public constructor to avoid shifting older optional
+    # positional parameters. The API runtime supplies a live projection so a
+    # Web share appears only while the global switch and an enabled recipe exist.
+    pool_source_shares_provider: Callable[[], Mapping[str, int]] | None = None
 
     _signal_event_types = [
         "view",
@@ -1616,6 +1622,7 @@ class ContinuousRefreshController:
             "bangumi": self._tick_bangumi_producer,
             "linuxdo": self._tick_linuxdo_producer,
             "v2ex": self._tick_v2ex_producer,
+            "web": self._tick_web_producer,
             "weibo": self._tick_weibo_producer,
             "github": self._tick_github_producer,
         }
@@ -1741,6 +1748,7 @@ class ContinuousRefreshController:
             ├─ _loop_reddit_producer()   60s   Reddit command-backed discovery when under quota
             ├─ _loop_bangumi_producer()  60s   Bangumi official-API discovery when under quota
             ├─ _loop_linuxdo_producer()  60s   Linux.do extension discovery when under quota
+            ├─ _loop_web_producer()      60s   bounded public-Web recipe discovery
             ├─ _loop_weibo_producer()    60s   Weibo guest-session discovery when under quota
             ├─ _loop_github_producer()   60s   GitHub public repository discovery when under quota
             ├─ _loop_proactive_push()    60s   delight + interest probe
@@ -1789,6 +1797,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_bangumi_producer()),
             asyncio.create_task(self._loop_linuxdo_producer()),
             asyncio.create_task(self._loop_v2ex_producer()),
+            asyncio.create_task(self._loop_web_producer()),
             asyncio.create_task(self._loop_weibo_producer()),
             asyncio.create_task(self._loop_github_producer()),
             asyncio.create_task(self._loop_proactive_push()),
@@ -2146,6 +2155,17 @@ class ContinuousRefreshController:
                 await self._tick_github_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_web_producer(self) -> None:
+        """Run bounded anonymous Web recipes when their source quota is underfilled."""
+
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_web_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
     async def _loop_keyword_planner(self) -> None:
         """P1.6: deficit-pulled merged keyword generation (flag-gated).
 
@@ -2427,6 +2447,14 @@ class ContinuousRefreshController:
         return await self._tick_platform_producer(
             source_family="github",
             producer=self.github_producer,
+        )
+
+    async def _tick_web_producer(self) -> dict[str, object]:
+        """Invoke public-Web recipe discovery when its source quota has a deficit."""
+
+        return await self._tick_platform_producer(
+            source_family="web",
+            producer=self.web_producer,
         )
 
     async def _tick_soul_pipeline(self) -> None:
@@ -3880,6 +3908,8 @@ class ContinuousRefreshController:
                 stranded.append("linuxdo")
             elif source == "v2ex" and self.v2ex_producer is None:
                 stranded.append("v2ex")
+            elif source == "web" and self.web_producer is None:
+                stranded.append("web")
             elif source == "weibo" and self.weibo_producer is None:
                 stranded.append("weibo")
             elif source not in {
@@ -3894,6 +3924,7 @@ class ContinuousRefreshController:
                 "bangumi",
                 "linuxdo",
                 "v2ex",
+                "web",
                 "weibo",
             }:
                 # Unknown source family with an explicit share.
@@ -3908,7 +3939,16 @@ class ContinuousRefreshController:
             )
 
     def _normalized_pool_source_shares(self) -> dict[str, int]:
-        raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES
+        raw: Mapping[str, int] = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES
+        provider = self.pool_source_shares_provider
+        if callable(provider):
+            try:
+                projected = provider()
+            except Exception:
+                logger.debug("live pool source-share projection failed", exc_info=True)
+            else:
+                if isinstance(projected, Mapping):
+                    raw = projected
         normalized: dict[str, int] = {}
         for source in _PLATFORM_SOURCE_ORDER:
             try:

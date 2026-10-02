@@ -38,8 +38,13 @@ from openbiliclaw.runtime.account_sync import AccountSyncService
 from openbiliclaw.runtime.event_ingress import EventIngressService
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
-from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+from openbiliclaw.runtime.source_policy import (
+    effective_pool_source_shares,
+    enabled_source_recipe_available,
+)
+from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
 from openbiliclaw.soul.engine import SoulEngine
+from openbiliclaw.sources.web_adapter import WebSourceAdapter
 from openbiliclaw.storage.database import Database
 
 from .operations import OpenClawAdapter
@@ -316,6 +321,15 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     discovery_engine.register_strategy(related_strategy)
     discovery_engine.register_strategy(explore_strategy)
 
+    web_cfg = getattr(getattr(config, "sources", None), "web", None)
+    web_adapter = WebSourceAdapter(
+        llm_service=llm_service,
+        request_timeout_seconds=float(getattr(web_cfg, "request_timeout_seconds", 15)),
+        max_response_bytes=int(getattr(web_cfg, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_cfg, "max_redirects", 5)),
+    )
+    discovery_engine.register_adapter(web_adapter)
+
     discovery_cfg = getattr(config, "discovery", None)
     admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.60) or 0.60)
     set_admission_min_score = getattr(database, "set_admission_min_score", None)
@@ -359,6 +373,24 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         concurrency=concurrency,
         candidate_pipeline=candidate_pipeline,
     )
+    web_producer = WebDiscoveryProducer(
+        database=database,
+        adapter=web_adapter,
+        candidate_pipeline=candidate_pipeline,
+        enabled=bool(getattr(web_cfg, "enabled", True)),
+        lease_seconds=int(getattr(web_cfg, "lease_seconds", 300)),
+        request_timeout_seconds=int(getattr(web_cfg, "request_timeout_seconds", 15)),
+        soul_engine=soul_engine,
+    )
+
+    def _source_shares() -> dict[str, int]:
+        return effective_pool_source_shares(
+            config,
+            enabled_recipe_available=lambda source: enabled_source_recipe_available(
+                database, source
+            ),
+        )
+
     runtime_controller: ContinuousRefreshController
 
     async def _drain_one_shot_expression_copy(profile: Any) -> int:
@@ -414,7 +446,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         recommendation_engine=recommendation_engine,
         discovery_candidate_pipeline=candidate_pipeline,
         pool_target_count=config.scheduler.pool_target_count,
-        pool_source_shares=effective_pool_source_shares(config),
+        pool_source_shares=_source_shares(),
+        pool_source_shares_provider=_source_shares,
         signal_event_threshold=int(getattr(config.scheduler, "signal_event_threshold", 6)),
         trending_refresh_minutes=int(getattr(config.scheduler, "trending_refresh_minutes", 3)),
         explore_refresh_minutes=int(getattr(config.scheduler, "explore_refresh_minutes", 3)),
@@ -425,6 +458,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_limit=int(getattr(config.scheduler, "discovery_limit", 30)),
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
+        web_producer=web_producer,
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,

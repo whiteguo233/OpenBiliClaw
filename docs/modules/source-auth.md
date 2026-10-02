@@ -2,7 +2,7 @@
 
 ## 概述
 
-`src/openbiliclaw/api/source_auth/` 回答一个问题：**每个平台来源的凭据现在能不能用，以及这个结论有多可信。**
+`src/openbiliclaw/api/source_auth/` 回答一个问题：**每个平台来源是否需要凭据、凭据现在能不能用，以及这个结论有多可信。**
 
 它存在的原因是旧实现把四个互相独立的问题挤进了一个 `state` 字符串。结果是多个平台在设置页并排显示同一个「凭据已就绪」，而背后的证据强度天差地别——B 站只做本地 Cookie 结构检查，小红书、知乎与 Linux.do 使用浏览器心跳，Reddit 读取本地凭据文件，X 既有被动健康记录也能显式只读探测，Bangumi、GitHub 与 V2EX 则匿名可用但支持可选令牌。用户无从分辨「真的能用」和「只是填了个值」，这份契约因此把凭据存在、验证结论与证据强度拆开表达。
 
@@ -15,6 +15,7 @@
 | 正交契约 `SourceAuthContract` | 四个维度互不覆盖：要不要凭据 / 凭据在不在 / 验证结论 / **结论有多硬** | ✅ |
 | 每平台 provider | `providers.py` 的纯函数 provider 取代旧 if/elif 聚合器 | ✅ |
 | Bangumi / GitHub / Linux.do / V2EX 接入契约 | 四者公开能力均可匿名；Bangumi / GitHub / V2EX 支持可选令牌，Linux.do 个人能力使用浏览器心跳与任务历史 | ✅ 见下方各来源说明 |
+| Web 匿名来源契约 | Web 没有账号或可选凭据；legacy `no_auth` 与独立 discovery health 分开，未运行不冒充 ready | ✅ 见 [Web 的接入](#web-的接入) |
 | 显式验证动作 | `POST /api/sources/{slug}/verify`，所有已注册来源共享三态结果 | ✅ |
 | 并发安全的本地状态读取 | X 健康表首建单飞，读写使用短生命周期 SQLite connection；状态轮询不共享 connection | ✅ |
 | 统一凭据写入 | `POST /api/sources/{slug}/credential`，写入即校验，7 条老端点转发 | ✅ |
@@ -51,7 +52,7 @@ class SourceAuthContract(BaseModel):
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、web、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
@@ -148,6 +149,18 @@ GitHub 还可只从固定的 `OPENBILICLAW_GITHUB_TOKEN` 读取，不接受可�
 **X 的显式验证是只读探针。** `POST /api/sources/twitter/verify` 复用统一 `live_probe` 框架，调用 `XClient.probe()` → `twitter-cli.fetch_me()`；成功或明确 401 会写回与 discovery 共用的 `XSourceHealthStore`，403 / 429 与其它传输异常保持 `blocked` / `rate_limited` / 待判定语义，不把无法判定写成 Cookie 失效。保存 Cookie 本身仍只做 `auth_token` / `ct0` 结构校验，避免每次扩展同步都主动出网。
 
 **X 健康表不能在状态请求的共享 connection 上做任何工作。** `/api/sources/status` 是同步 handler，会被 FastAPI 线程池并发执行；`check_same_thread=False` 只允许 connection 跨线程使用，不代表同一个 connection 可以同时 `CREATE/PRAGMA/SELECT`。真实 30 并发请求曾有 3 次返回 500（`sqlite3.Connection returned NULL`）。`XSourceHealthStore` 现对每个 `Database` 实例只单飞执行一次 schema 初始化，且初始化、读取、成功/失败写入、人工冷却覆盖均使用 `Database.open_connection()` 的短连接；`record_error()` 的计数读取与更新位于同一 `BEGIN IMMEDIATE` 事务，既避开共享 connection，也不丢连续 429 计数。
+
+## Web 的接入
+
+Web 是完全匿名的 discovery-only 来源：`auth_required=false`、`credential="none"`、
+`credential_origin="none"`、`verify_method="none"`、`can_verify_now=false`。它没有可选账号能力，
+所以 `GET /api/sources/credentials` 返回 `form.kind="none"`；统一 credential 写入口会拒绝 Web，
+verify 动作固定返回无法验证，不会借按钮访问任意 recipe 或上游站点。
+
+legacy `state="no_auth"` / `logged_in=true` 只兼容旧客户端对“无需登录”的表达，不是成功取数
+证据。Web 另有 `discovery_state` 聚合全局开关、enabled recipe 数及本地运行账本：无 recipe、
+从未运行、partial、限流、失败和 ready 保持可区分。`GET /api/sources/status` 纯本地读取，不触发
+DNS、robots 或 HTTP。Web 的 recipe、transport 与状态语义见 [Web 来源文档](web.md)。
 
 ## Linux.do 的接入
 

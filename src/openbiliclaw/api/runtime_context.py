@@ -40,7 +40,10 @@ from openbiliclaw.config import (
 )
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
-from openbiliclaw.runtime.source_policy import effective_pool_source_shares
+from openbiliclaw.runtime.source_policy import (
+    effective_pool_source_shares,
+    enabled_source_recipe_available,
+)
 from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 if TYPE_CHECKING:
@@ -72,8 +75,17 @@ class _BackgroundTaskHost(Protocol):
     state: Any
 
 
-def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
-    return effective_pool_source_shares(config)
+def _pool_source_shares_from_config(
+    config: Any,
+    *,
+    database: Any | None = None,
+) -> dict[str, int]:
+    """Project source shares without reserving Web quota for zero recipes."""
+
+    return effective_pool_source_shares(
+        config,
+        enabled_recipe_available=lambda source: enabled_source_recipe_available(database, source),
+    )
 
 
 def _persist_agent_config(config: Any) -> str:
@@ -1243,6 +1255,22 @@ class RuntimeContext:
         xiaohongshu_adapter = XiaohongshuAdapter()
         new_discovery_engine.register_adapter(xiaohongshu_adapter)
 
+        # Register the deterministic anonymous public-Web adapter.  The
+        # adapter is always present in the formal registry so recipe CRUD and
+        # explicit discover can resolve ``source_type=web`` consistently; the
+        # producer and pool-share projection below remain independently gated
+        # by ``[sources.web].enabled`` and enabled recipe availability.
+        from openbiliclaw.sources.web_adapter import WebSourceAdapter
+
+        web_cfg = getattr(getattr(new_config, "sources", None), "web", None)
+        web_adapter = WebSourceAdapter(
+            llm_service=new_llm_service,
+            request_timeout_seconds=float(getattr(web_cfg, "request_timeout_seconds", 15)),
+            max_response_bytes=int(getattr(web_cfg, "max_response_bytes", 2_097_152)),
+            max_redirects=int(getattr(web_cfg, "max_redirects", 5)),
+        )
+        new_discovery_engine.register_adapter(web_adapter)
+
         # Register X (Twitter) adapter — server-side cookie replay, like
         # Bilibili / Douyin-direct (a real fetch(), NOT an extension stub).
         # Gated on [sources.twitter].enabled. The branch is the ONLY place
@@ -1307,6 +1335,7 @@ class RuntimeContext:
         new_github_producer: Any = None
         new_linuxdo_producer: Any = None
         new_v2ex_producer: Any = None
+        new_web_producer: Any = None
         new_weibo_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.bilibili_producer import BilibiliExtensionSearchProducer
@@ -1440,6 +1469,17 @@ class RuntimeContext:
                 soul_engine=new_soul_engine,
                 candidate_pipeline=new_candidate_pipeline,
                 keyword_fetch=new_keyword_fetch,
+            )
+            from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
+
+            new_web_producer = WebDiscoveryProducer(
+                database=self.database,
+                adapter=web_adapter,
+                candidate_pipeline=new_candidate_pipeline,
+                enabled=bool(getattr(web_cfg, "enabled", True)),
+                lease_seconds=int(getattr(web_cfg, "lease_seconds", 300)),
+                request_timeout_seconds=int(getattr(web_cfg, "request_timeout_seconds", 15)),
+                soul_engine=new_soul_engine,
             )
             if new_bangumi_client is not None:
                 from openbiliclaw.runtime.bangumi_producer import BangumiDiscoveryProducer
@@ -1642,7 +1682,14 @@ class RuntimeContext:
             keyword_fetch=new_keyword_fetch,
             source_incremental_sync=new_source_incremental_sync,
             pool_target_count=new_config.scheduler.pool_target_count,
-            pool_source_shares=_pool_source_shares_from_config(new_config),
+            pool_source_shares=_pool_source_shares_from_config(
+                new_config,
+                database=self.database,
+            ),
+            pool_source_shares_provider=lambda: _pool_source_shares_from_config(
+                new_config,
+                database=self.database,
+            ),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
             trending_refresh_minutes=int(
                 getattr(new_config.scheduler, "trending_refresh_minutes", 3)
@@ -1669,6 +1716,7 @@ class RuntimeContext:
             github_producer=new_github_producer,
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
+            web_producer=new_web_producer,
             weibo_producer=new_weibo_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
@@ -1819,6 +1867,7 @@ class RuntimeContext:
             new_github_producer,
             new_linuxdo_producer,
             new_v2ex_producer,
+            new_web_producer,
             new_weibo_producer,
         ):
             if producer is not None:

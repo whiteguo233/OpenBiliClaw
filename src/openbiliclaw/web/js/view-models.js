@@ -170,6 +170,13 @@ const SOURCE_ALIAS_MAP = {
   "linux.do": "linuxdo",
   v2: "v2ex",
   v2ex: "v2ex",
+  web: "web",
+};
+
+const WEB_SOURCE_STRATEGY_LABEL_MAP = {
+  "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
+  "web-sitemap": "网页站点地图（Sitemap）",
+  "web-listing": "网页列表页",
 };
 
 const RUNTIME_TOPIC_LABEL_MAP = {
@@ -304,10 +311,16 @@ export function getSourceLabel(source) {
   return SOURCE_LABEL_MAP[source] || source || "Web";
 }
 
+export function getSourceStrategyLabel(value) {
+  const text = normalizeText(value);
+  return WEB_SOURCE_STRATEGY_LABEL_MAP[text.toLowerCase()] || text;
+}
+
 function formatRuntimeTopicLabel(value) {
   const text = normalizeText(value);
   if (!text) return "";
   const key = text.toLowerCase();
+  if (WEB_SOURCE_STRATEGY_LABEL_MAP[key]) return WEB_SOURCE_STRATEGY_LABEL_MAP[key];
   if (RUNTIME_TOPIC_LABEL_MAP[key]) return RUNTIME_TOPIC_LABEL_MAP[key];
   if (key.startsWith("xhs-extension-")) return "小红书";
   if (key.startsWith("dy-plugin-") || key.startsWith("douyin-")) return "抖音";
@@ -375,6 +388,7 @@ export function buildContentUrl(item) {
   if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
+  if (platform === "web") return "";
   return buildVideoUrl(vid);
 }
 
@@ -388,7 +402,7 @@ export function buildRecommendationClickPayload(item, contentUrl = "") {
     source_platform: normalizeSourcePlatform(item),
     title: normalizeText(item?.title),
     recommendation_id: typeof item?.id === "number" ? item.id : null,
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     up_name: normalizeText(item?.up_name),
   };
 }
@@ -412,7 +426,7 @@ export function normalizeRecommendation(item) {
         : DEFAULT_CREATOR_NAME),
     cover_url: normalizeCoverUrl(item?.cover_url),
     expression: normalizeText(item?.expression),
-    topic_label: normalizeText(item?.topic_label),
+    topic_label: getSourceStrategyLabel(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
     content_id: contentId,
@@ -492,6 +506,7 @@ export function formatCountCn(n) {
 // Build the "▶ … · 👍 … · 💬 … · ⭐ … · 弹幕 …" stats line. Only counts
 // > 0 appear; when nothing qualifies the result is "" (render nothing).
 export function recommendationStats(item) {
+  if (normalizeSourcePlatform(item) === "web") return "";
   const segments = [];
   const sourceRank = Math.trunc(Number(item?.source_rank) || 0);
   if (item?.view_count > 0) segments.push(`▶ ${formatCountCn(item.view_count)}`);

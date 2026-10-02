@@ -28,6 +28,10 @@
 - `docker` + `docker compose`（部署后端首选）
 - 另一份已经配好的 OpenBiliClaw 目录（用来复用 API Key 和 Cookie）
 
+通用 Web 不增加系统级前置条件：默认匿名 transport 使用项目依赖中的
+`httpx[socks]>=0.27,<1` 与直接声明的 `httpcore>=1,<2` socket backend；本地安装、Docker 与桌面
+打包都会自动安装。不要为 Web recipe 额外安装 Node、Playwright、Ego Lite 或 CDP 浏览器。
+
 用户通常会在**项目目录外**直接发起这个部署，例如：
 
 ```bash

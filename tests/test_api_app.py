@@ -15677,6 +15677,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "bangumi": 4,
             "github": 1,
             "linuxdo": 1,
+            "web": 1,
             "weibo": 1,
             "v2ex": 1,
         }
@@ -16342,6 +16343,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "reddit": 1,
             "bangumi": 1,
             "linuxdo": 1,
+            "web": 1,
             "weibo": 1,
             "v2ex": 1,
         }
@@ -16514,6 +16516,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": 0,
                 "linuxdo": 0,
                 "github": 0,
+                "web": 0,
                 "unknown": 0,
             },
             "enabled_sources": {
@@ -16527,6 +16530,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": False,
                 "linuxdo": False,
                 "github": False,
+                "web": False,
                 "weibo": False,
                 "v2ex": False,
             },
@@ -16671,6 +16675,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": 0,
                 "linuxdo": 0,
                 "github": 0,
+                "web": 0,
                 "unknown": 0,
             },
             "enabled_sources": {
@@ -16684,6 +16689,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "bangumi": False,
                 "linuxdo": False,
                 "github": False,
+                "web": False,
                 "weibo": False,
                 "v2ex": False,
             },

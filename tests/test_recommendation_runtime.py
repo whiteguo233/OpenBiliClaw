@@ -26,6 +26,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_recommendation_transport_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore both transport keys after helpers write directly to os.environ."""
+    # delenv(..., raising=False) does not register an undo when a key is absent.
+    # The transport selector can then create a PORT/SOCK key that outlives the
+    # test, making unrelated API tests proxy to a server that does not exist.
+    # Setting empty values records the original state (including absence), while
+    # retaining the selector's normal "not configured" interpretation.
+    monkeypatch.setenv(RECOMMENDATION_SOCK_ENV, "")
+    monkeypatch.setenv(RECOMMENDATION_PORT_ENV, "")
+
+
 def _hold_loopback_port(port: int = 0) -> socket.socket:
     """Bind and hold a 127.0.0.1 port so probes see it as occupied."""
     held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

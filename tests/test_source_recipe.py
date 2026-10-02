@@ -235,17 +235,19 @@ class TestSourceRecipeAPI:
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)
 
-        client.post(
+        created = client.post(
             "/api/sources",
             json={
-                "id": "test-id",
                 "source_type": "web",
                 "name": "原名",
                 "strategy": "feed",
+                "config": {"entry_url": "https://example.com/feed.xml"},
             },
-        )
+        ).json()["recipe"]
 
-        response = client.put("/api/sources/test-id", json={"name": "新名", "enabled": False})
+        response = client.put(
+            f"/api/sources/{created['id']}", json={"name": "新名", "enabled": False}
+        )
         assert response.status_code == 200
 
         recipes = client.get("/api/sources").json()["items"]
@@ -261,18 +263,17 @@ class TestSourceRecipeAPI:
         app = create_app(memory_manager=object(), database=db, soul_engine=object())
         client = TestClient(app)
 
-        client.post(
+        created = client.post(
             "/api/sources",
             json={
-                "id": "del-me",
                 "source_type": "web",
                 "name": "待删",
                 "strategy": "feed",
-                "created_by": "user",
+                "config": {"entry_url": "https://example.com/feed.xml"},
             },
-        )
+        ).json()["recipe"]
 
-        response = client.delete("/api/sources/del-me")
+        response = client.delete(f"/api/sources/{created['id']}")
         assert response.status_code == 200
         assert client.get("/api/sources").json()["items"] == []
 

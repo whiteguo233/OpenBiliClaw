@@ -531,7 +531,7 @@ _EXTENSION_PRESENCE_REQUIRED_WARNING = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Mapping
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
     from http.server import ThreadingHTTPServer
 
 
@@ -541,7 +541,7 @@ def _print_page_title(title: str, subtitle: str = "") -> None:
     console.print(Panel.fit(body, border_style="cyan"))
 
 
-def _print_status_panel(kind: str, title: str, body: str) -> None:
+def _print_status_panel(kind: str, title: str, body: str | Text) -> None:
     """Render a status panel with consistent visual semantics."""
     styles = {
         "success": "green",
@@ -553,7 +553,7 @@ def _print_status_panel(kind: str, title: str, body: str) -> None:
     console.print(Panel(body, title=title, border_style=styles.get(kind, "cyan")))
 
 
-def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
+def _print_key_value_table(title: str, rows: Sequence[tuple[str, str | Text]]) -> None:
     """Render a key-value table for status-like commands."""
     table = Table(title=title, show_header=False, box=None, pad_edge=False)
     table.add_column("key", style="bold cyan", no_wrap=True)
@@ -561,6 +561,15 @@ def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
     for key, value in rows:
         table.add_row(key, value)
     console.print(table)
+
+
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _plain_terminal_text(value: object, *, style: str | None = None) -> Text:
+    """Render untrusted text literally after removing terminal controls."""
+    sanitized = _TERMINAL_CONTROL_RE.sub("", str(value))
+    return Text(sanitized, style=style) if style is not None else Text(sanitized)
 
 
 def _format_pause_on_disconnect_status(*, enabled: bool, grace_seconds: int) -> str:
@@ -8087,10 +8096,18 @@ def _maybe_update_init_source_shares(event_counts: Mapping[str, int]) -> None:
 
     try:
         from openbiliclaw.config import load_config, save_config
-        from openbiliclaw.runtime.source_policy import source_enabled_map
+        from openbiliclaw.runtime.source_policy import (
+            enabled_source_recipe_available,
+            source_enabled_map,
+        )
 
         cfg = load_config()
-        enabled_sources = source_enabled_map(cfg)
+        enabled_sources = source_enabled_map(
+            cfg,
+            enabled_recipe_available=lambda source: enabled_source_recipe_available(
+                _get_runtime_database(), source
+            ),
+        )
         selected = _select_init_source_shares(
             event_counts,
             enabled_sources=enabled_sources,
@@ -16071,6 +16088,378 @@ def discover_douyin(
     )
 
 
+@app.command("discover-web")
+def discover_web(
+    recipe_id: str = typer.Option(
+        ...,
+        "--recipe-id",
+        help="要只读预览的已保存 Web recipe ID。",
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=50, help="预览条数上限。"),
+) -> None:
+    """只读执行一个已保存的公开 Web recipe；不写候选、游标或 memory。"""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.protocol import SourceRecipe
+    from openbiliclaw.sources.web_adapter import WebSourceAdapter
+    from openbiliclaw.sources.web_recipe import (
+        WebRecipeValidationError,
+        build_web_recipe,
+        is_compiled_public_web_recipe,
+        web_recipe_payload_from_existing,
+    )
+
+    selected_id = recipe_id.strip()
+    if not selected_id:
+        raise typer.BadParameter("recipe ID 不能为空。", param_hint="--recipe-id")
+
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+    if web_config is None or not bool(getattr(web_config, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    try:
+        stored = next(
+            (
+                row
+                for row in database.get_all_recipes()
+                if str(row.get("id") or "") == selected_id
+                and str(row.get("source_type") or "").strip().lower() == "web"
+            ),
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary with actionable failure
+        _print_status_panel("error", "无法读取 Web recipe", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+    if stored is None:
+        _print_status_panel(
+            "warning",
+            "找不到 Web recipe",
+            f"没有 ID 为 {selected_id!r} 的 Web recipe；可先通过来源设置创建。",
+        )
+        raise typer.Exit(code=1)
+    if not is_compiled_public_web_recipe(stored):
+        _print_status_panel(
+            "warning",
+            "不是正式公开 Web recipe",
+            "该 ID 属于历史 web_extract 浏览器抽取配置；只读预览仅接受 "
+            "feed、sitemap 或 listing recipe。",
+        )
+        raise typer.Exit(code=1)
+    if not bool(stored.get("enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web recipe 未启用",
+            "这个 recipe 不会被调度；请先启用后再做只读预览。",
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        editable = web_recipe_payload_from_existing(stored, {})
+        compiled = build_web_recipe(
+            editable,
+            recipe_id=selected_id,
+            created_by=str(stored.get("created_by") or "user"),
+        )
+    except WebRecipeValidationError as exc:
+        _print_status_panel("error", "Web recipe 不符合当前安全契约", str(exc))
+        raise typer.Exit(code=1) from exc
+    recipe = SourceRecipe(**compiled)
+    adapter = WebSourceAdapter(
+        llm_service=None,
+        request_timeout_seconds=float(getattr(web_config, "request_timeout_seconds", 15)),
+        max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_config, "max_redirects", 5)),
+    )
+    try:
+        result = asyncio.run(
+            adapter.fetch_result(
+                recipe,
+                cast("Any", None),
+                limit=limit,
+                # Deliberately empty: a preview neither consumes nor commits the
+                # scheduler-owned validators/cursor in web_source_state.
+                state={},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel("error", "Web recipe 预览失败", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+
+    _print_page_title("Web Recipe 只读预览", f"{recipe.name} · {recipe.strategy}")
+    _print_key_value_table(
+        "执行摘要",
+        [
+            ("Recipe ID", recipe.id),
+            ("状态", result.status),
+            ("发现条数", str(len(result.items))),
+            ("范围完整", "是" if result.scope_complete else "否"),
+            ("持久化", "未写入候选池、seen、cursor、memory"),
+        ],
+    )
+    if result.error_code:
+        console.print(f"  [yellow]错误代码：{result.error_code}[/yellow]")
+    if result.detail:
+        console.print(f"  [dim]{result.detail}[/dim]")
+    for index, item in enumerate(result.items[:limit], start=1):
+        _print_key_value_table(
+            f"发现 {index}",
+            [
+                ("标题", str(getattr(item, "title", "") or "（暂无）")),
+                _content_author_row(item),
+                ("来源策略", str(getattr(item, "source_strategy", "") or recipe.strategy)),
+                ("链接", str(getattr(item, "content_url", "") or "（暂无）")),
+            ],
+        )
+
+    if result.status not in {"ok", "empty", "not_modified"}:
+        _print_status_panel(
+            "warning",
+            "Web recipe 预览未完整成功",
+            result.detail or result.error_code or result.status,
+        )
+        raise typer.Exit(code=1)
+    if not result.items:
+        _print_status_panel(
+            "info",
+            "本次没有可预览内容",
+            result.detail or f"上游返回状态：{result.status}。",
+        )
+
+
+@app.command("probe-web")
+def probe_web(
+    url: str = typer.Argument(..., help="要只读探测的公开网站或 Feed/Sitemap URL。"),
+) -> None:
+    """Probe one public URL and print typed Web recipe candidates without saving."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.web_probe import probe_public_web_url
+
+    requested_url = url.strip()
+    if not requested_url:
+        raise typer.BadParameter("URL 不能为空。", param_hint="URL")
+
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+
+    try:
+        result = asyncio.run(
+            probe_public_web_url(
+                requested_url,
+                timeout_seconds=float(getattr(web_config, "request_timeout_seconds", 15)),
+                max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+                max_redirects=int(getattr(web_config, "max_redirects", 5)),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel(
+            "error",
+            "网站自动探测失败",
+            _plain_terminal_text(str(exc)[:240]),
+        )
+        raise typer.Exit(code=1) from exc
+
+    _print_page_title("Web 网站自动探测", "只读探测 · 预览后再保存")
+    _print_key_value_table(
+        "探测摘要",
+        [
+            ("请求 URL", _plain_terminal_text(result.requested_url)),
+            ("最终 URL", _plain_terminal_text(result.final_url or "（未取得）")),
+            ("页面标题", _plain_terminal_text(result.page_title or "（未提供）")),
+            ("状态", result.status),
+            ("候选方案", str(len(result.candidates))),
+            ("持久化", "未创建 recipe，未写候选池、seen、cursor 或 memory"),
+        ],
+    )
+    if result.detail:
+        console.print(_plain_terminal_text(f"  {result.detail}", style="dim"))
+    for index, candidate in enumerate(result.candidates, start=1):
+        _print_key_value_table(
+            f"方案 {index}",
+            [
+                ("策略", candidate.strategy),
+                ("置信度", candidate.confidence),
+                ("发现方式", candidate.discovery_method),
+                ("入口", _plain_terminal_text(candidate.entry_url)),
+                (
+                    "建议名称",
+                    _plain_terminal_text(candidate.recipe.get("name") or "（未命名）"),
+                ),
+                ("说明", _plain_terminal_text(candidate.detail)),
+            ],
+        )
+        for sample_index, sample in enumerate(candidate.sample_items[:3], start=1):
+            _print_key_value_table(
+                f"  内容预览 {sample_index}",
+                [
+                    ("标题", _plain_terminal_text(sample.title or "（暂无）")),
+                    ("作者", _plain_terminal_text(sample.author_name or "（暂无）")),
+                    (
+                        "发布时间",
+                        _plain_terminal_text(sample.published_at or "（暂无）"),
+                    ),
+                    ("链接", _plain_terminal_text(sample.content_url or "（暂无）")),
+                ],
+            )
+
+    if result.status != "ready" or not result.candidates:
+        _print_status_panel(
+            "info",
+            "没有找到可直接采用的 Web 方案",
+            _plain_terminal_text(result.detail or "可在桌面 Web 或插件里手动填写 typed recipe。"),
+        )
+        raise typer.Exit(code=1)
+    _print_status_panel(
+        "success",
+        "已生成可编辑方案，但尚未保存",
+        "请在桌面 Web 或插件的「设置 → 平台源 → 公开 Web」检查并采用方案，再点击「添加网站」。",
+    )
+
+
+def _run_web_formal_discovery(*, limit: int, force: bool = False) -> None:
+    """Run one formal public-Web cycle through the shared candidate pipeline."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.runtime.web_producer import WebDiscoveryProducer
+    from openbiliclaw.sources.web_adapter import WebSourceAdapter
+
+    _require_runtime_config()
+    config = load_config()
+    web_config = getattr(getattr(config, "sources", None), "web", None)
+    if web_config is None or not bool(getattr(web_config, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在配置页或 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    soul_engine = _build_soul_engine()
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    request_timeout_seconds = int(getattr(web_config, "request_timeout_seconds", 15))
+    adapter = WebSourceAdapter(
+        llm_service=None,
+        request_timeout_seconds=float(request_timeout_seconds),
+        max_response_bytes=int(getattr(web_config, "max_response_bytes", 2_097_152)),
+        max_redirects=int(getattr(web_config, "max_redirects", 5)),
+    )
+    producer = WebDiscoveryProducer(
+        database=database,
+        adapter=adapter,
+        candidate_pipeline=candidate_pipeline,
+        enabled=True,
+        lease_seconds=int(getattr(web_config, "lease_seconds", 300)),
+        request_timeout_seconds=request_timeout_seconds,
+        soul_engine=soul_engine,
+    )
+    try:
+        result = asyncio.run(producer.produce_if_due(limit=limit, force=force))
+    except Exception as exc:  # noqa: BLE001 - stable CLI failure surface
+        _print_status_panel("error", "Web discovery 执行失败", str(exc)[:240])
+        raise typer.Exit(code=1) from exc
+
+    reason = str(result.get("reason") or "error")
+    discovered = int(cast("Any", result.get("discovered") or 0))
+    enqueued = int(cast("Any", result.get("enqueued") or 0))
+    raw_recipe_results = result.get("recipe_results")
+    recipe_results = raw_recipe_results if isinstance(raw_recipe_results, dict) else {}
+    recipe_summaries: list[str] = []
+    recipe_statuses: set[str] = set()
+    for recipe_id, raw_outcome in recipe_results.items():
+        outcome = raw_outcome if isinstance(raw_outcome, dict) else {}
+        status = str(outcome.get("status") or "unknown")
+        recipe_statuses.add(status)
+        error_code = str(outcome.get("error_code") or "")
+        recipe_summary = f"{recipe_id}:{status}"
+        if error_code:
+            recipe_summary += f" error={error_code}"
+        recipe_summaries.append(recipe_summary)
+    recipe_status_text = "、".join(recipe_summaries) or "（本轮未领取 recipe）"
+    if reason == "ok" and recipe_statuses & {
+        "degraded",
+        "login_required",
+        "rate_limited",
+        "failed",
+    }:
+        # The producer deliberately preserves successful handoffs from peer
+        # recipes.  Keep that data, but do not let productive supply hide a
+        # degraded/failed sibling from CLI automation.
+        reason = "partial"
+
+    _print_page_title("Web 内容发现", "正式 producer · recipes · candidate pipeline")
+    if reason in {"ok", "valid_empty", "partial"}:
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "web"),
+                ("调度结果", reason),
+                ("Recipe 状态", recipe_status_text),
+            ],
+        )
+        if reason == "ok":
+            for index, item in enumerate(
+                getattr(candidate_pipeline, "last_admitted_items", ())[:5],
+                start=1,
+            ):
+                _print_discovered_content_preview(item, index)
+            return
+        if reason == "valid_empty":
+            _print_status_panel(
+                "info",
+                "Web discovery 有效完成但没有新候选",
+                "已观察到合法空结果、未修改响应，或本轮内容均已见过。",
+            )
+            return
+        _print_status_panel(
+            "warning",
+            "Web discovery 部分完成",
+            "已成功入池的候选会保留；未完整的 recipe 不会把本轮 scope/validator/cursor "
+            f"误记为完整。详情：{recipe_status_text}",
+        )
+        raise typer.Exit(code=1)
+
+    if reason == "throttled":
+        _print_status_panel(
+            "info",
+            "Web discovery 尚未到期",
+            "所有启用 recipe 都仍在调度间隔或冷却期内；可使用 --force 忽略普通间隔，"
+            "但不会绕过活动 lease。",
+        )
+        return
+    if reason == "no_recipes":
+        _print_status_panel(
+            "warning",
+            "没有启用的 Web recipe",
+            "请先在桌面端或扩展来源设置中添加并启用 Feed、Sitemap 或静态列表 recipe。",
+        )
+        raise typer.Exit(code=1)
+    if reason == "disabled":
+        _print_status_panel(
+            "warning",
+            "Web 公开发现未启用",
+            "请先在配置页或 config.toml 中启用 [sources.web].enabled。",
+        )
+        raise typer.Exit(code=1)
+    _print_status_panel(
+        "error",
+        "Web discovery 未完整成功",
+        f"调度结果：{reason}；recipe 详情：{recipe_status_text}",
+    )
+    raise typer.Exit(code=1)
+
+
 @app.command()
 def discover(
     source: str = typer.Option(
@@ -16079,7 +16468,7 @@ def discover(
         "-s",
         help=(
             "触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu、reddit、"
-            "bangumi、github（别名 gh）、linuxdo、v2ex 或 weibo。"
+            "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 web。"
         ),
         case_sensitive=False,
     ),
@@ -16088,7 +16477,7 @@ def discover(
     force: bool = typer.Option(
         False,
         "--force",
-        help="xiaohongshu / bangumi / github / v2ex / weibo：忽略最小调度间隔强制执行一次。",
+        help="xiaohongshu / bangumi / github / v2ex / weibo / web：忽略最小调度间隔强制执行一次。",
     ),
 ) -> None:
     """手动触发内容发现（按来源选择渠道）."""
@@ -16186,11 +16575,21 @@ def discover(
         _run_weibo_discovery(limit=limit, force=force)
         return
 
+    if source_normalized == "web":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "web 渠道按各 recipe 保存的 feed / sitemap / listing 策略执行，已忽略策略过滤。",
+            )
+        _run_web_formal_discovery(limit=limit, force=force)
+        return
+
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
             "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、github（gh）、"
-            "linuxdo、v2ex、weibo。"
+            "linuxdo、v2ex、weibo、web。"
         )
 
     active_strategies = _normalize_strategy_names(strategies)
