@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from openbiliclaw.agent.tools import AgentToolContext, ToolRegistry
 from openbiliclaw.agent.tools.bilibili_tools import build_bilibili_tools
 from openbiliclaw.agent.tools.config_tools import build_config_tools
-from openbiliclaw.config import Config
+from openbiliclaw.config import Config, load_config, save_config
 from openbiliclaw.storage.database import Database
 
 if TYPE_CHECKING:
@@ -145,7 +147,40 @@ class TestGetConfig:
 
 class TestUpdateConfig:
     def _ctx(self, **hooks: Any) -> AgentToolContext:
-        return AgentToolContext(config=Config(), **hooks)
+        config = Config()
+        config.llm.default_provider = "ollama"
+        config.llm.ollama.model = "test-model"
+        return AgentToolContext(config=config, **hooks)
+
+    async def test_invalid_runtime_config_never_reaches_disk(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.toml"
+        reloaded: list[Any] = []
+        ctx = self._ctx(
+            config_persist_hook=lambda cfg: save_config(cfg, path),
+            config_reload_hook=lambda cfg: reloaded.append(cfg),
+        )
+        save_config(ctx.config, path)
+        original = path.read_text()
+        result = await _registry(build_config_tools, ctx=ctx).dispatch(
+            "update_config", {"key": "llm.default_provider", "value": "nonexistent-provider"}
+        )
+        assert not result.ok
+        assert "llm.default_provider" in result.content
+        assert ctx.config.llm.default_provider == "ollama"
+        assert path.read_text() == original
+        assert reloaded == []
+
+    @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+    async def test_nonfinite_numeric_config_is_rejected(self, value: str) -> None:
+        persisted: list[Any] = []
+        ctx = self._ctx(config_persist_hook=lambda cfg: persisted.append(cfg))
+        original = ctx.config.discovery.admission_min_score
+        result = await _registry(build_config_tools, ctx=ctx).dispatch(
+            "update_config", {"key": "discovery.admission_min_score", "value": value}
+        )
+        assert not result.ok
+        assert ctx.config.discovery.admission_min_score == original
+        assert not persisted
 
     async def test_real_write_applies_persists_and_reloads(self) -> None:
         persisted: list[str] = []
@@ -169,7 +204,7 @@ class TestUpdateConfig:
         result = await _registry(build_config_tools, ctx=ctx).dispatch(
             "update_config", {"key": "llm.deepseek.api_key", "value": "sk-x"}
         )
-        assert result.ok
+        assert not result.ok
         assert "敏感" in result.content
         assert ctx.config.llm.deepseek.api_key != "sk-x"
 
@@ -178,7 +213,7 @@ class TestUpdateConfig:
         result = await _registry(build_config_tools, ctx=ctx).dispatch(
             "update_config", {"key": "data_dir", "value": "/elsewhere"}
         )
-        assert result.ok
+        assert not result.ok
         assert "不允许" in result.content
 
     async def test_unknown_key_refused(self) -> None:
@@ -186,7 +221,7 @@ class TestUpdateConfig:
         result = await _registry(build_config_tools, ctx=ctx).dispatch(
             "update_config", {"key": "llm.no_such_field", "value": "x"}
         )
-        assert result.ok
+        assert not result.ok
         assert "不存在" in result.content
 
     async def test_bool_coercion(self) -> None:
@@ -204,7 +239,7 @@ class TestUpdateConfig:
         result = await _registry(build_config_tools, ctx=ctx).dispatch(
             "update_config", {"key": "scheduler.auto_update_enabled", "value": "maybe"}
         )
-        assert result.ok
+        assert not result.ok
         assert "布尔" in result.content
 
     async def test_persist_failure_rolls_back(self) -> None:
@@ -219,6 +254,48 @@ class TestUpdateConfig:
         assert not result.ok
         assert result.error == "handler_error"
         assert ctx.config.language == before
+
+    @pytest.mark.parametrize("rollback_failure", ["", "persist", "reload"])
+    async def test_reload_failure_compensates_disk_and_runtime(
+        self, tmp_path: Path, rollback_failure: str
+    ) -> None:
+        path = tmp_path / "config.toml"
+        reloaded: list[str] = []
+        ctx = self._ctx()
+        before = ctx.config.language
+        save_config(ctx.config, path)
+
+        def persist(candidate: Config) -> Path:
+            if candidate.language == before and rollback_failure == "persist":
+                raise OSError("rollback disk unavailable")
+            return save_config(candidate, path)
+
+        async def reload(candidate: Config) -> None:
+            reloaded.append(candidate.language)
+            if candidate.language == before and rollback_failure == "reload":
+                raise RuntimeError("rollback runtime unavailable")
+            # A runtime can publish the candidate before a later restart step
+            # fails, so rollback must restore both components and the file.
+            ctx.config = candidate
+            if candidate.language == "en-US":
+                raise RuntimeError("candidate runtime restart failed")
+
+        ctx.config_persist_hook = persist
+        ctx.config_reload_hook = reload
+        result = await _registry(build_config_tools, ctx=ctx).dispatch(
+            "update_config", {"key": "language", "value": "en-US"}
+        )
+
+        assert not result.ok
+        assert "candidate runtime restart failed" in result.content
+        assert reloaded == ["en-US", before]
+        assert load_config(path).language == ("en-US" if rollback_failure == "persist" else before)
+        assert ctx.config.language == ("en-US" if rollback_failure == "reload" else before)
+        if rollback_failure:
+            assert (
+                f"rollback {'disk' if rollback_failure == 'persist' else 'runtime'} unavailable"
+                in result.content
+            )
 
     async def test_missing_persist_hook_is_unavailable(self) -> None:
         result = await _registry(build_config_tools, ctx=self._ctx()).dispatch(

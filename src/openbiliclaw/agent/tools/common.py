@@ -9,6 +9,7 @@ maps the raise to a machine-readable ``handler_error`` result.
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any
 
 
@@ -58,3 +59,34 @@ def short(value: Any, limit: int = 80) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+def render_content_reference(row: dict[str, Any]) -> str:
+    """Keep exact action identifiers beside a content row's readable summary.
+
+    Native content IDs and signed URLs must survive read → save/feedback
+    chains. Cache ``bvid`` is a storage key on non-Bilibili platforms, so
+    prefer ``content_id`` and strip only a matching platform namespace as
+    a legacy fallback. Pool rows have no recommendation ID; never invent one.
+    """
+    platform = str(row.get("source_platform") or "bilibili").strip().lower()
+    content_id = str(row.get("content_id") or "").strip()
+    if not content_id:
+        content_id = str(row.get("bvid") or "").strip().removeprefix(f"{platform}:")
+    reference: dict[str, Any] = {"source_platform": platform}
+    if content_id:
+        reference["content_id"] = content_id
+    for key in ("content_url", "content_type", "title"):
+        if row.get(key):
+            reference[key] = str(row[key])
+    author = row.get("author_name") or row.get("up_name")
+    if author:
+        reference["author_name"] = str(author)
+    recommendation_id = row.get("recommendation_id")
+    if (
+        isinstance(recommendation_id, int)
+        and not isinstance(recommendation_id, bool)
+        and recommendation_id > 0
+    ):
+        reference["recommendation_id"] = recommendation_id
+    return "\n    定位信息: " + json.dumps(reference, ensure_ascii=False, sort_keys=True)

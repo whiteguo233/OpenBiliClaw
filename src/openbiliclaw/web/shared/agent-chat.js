@@ -304,6 +304,44 @@
     return Array.isArray(run?.steps) ? run.steps.length : 0;
   }
 
+  /** Keep an open rejection editor (including draft/focus) across polling renders. */
+  function captureApprovalDrafts(root) {
+    const drafts = [];
+    for (const card of root?.querySelectorAll("[data-approval-id], [data-agent-approval-id]") || []) {
+      const editor = card.querySelector(".agent-approval-reject");
+      const input = editor?.querySelector("input.agent-approval-reason");
+      if (!editor || editor.hidden || !input) continue;
+      drafts.push({
+        id: card.dataset.approvalId || card.dataset.agentApprovalId,
+        editor,
+        input,
+        actionsHidden: card.querySelector(".agent-approval-actions")?.hidden === true,
+        focused: input.ownerDocument?.activeElement === input,
+      });
+    }
+    return drafts;
+  }
+
+  function restoreApprovalDrafts(root, drafts = []) {
+    const cards = [...root?.querySelectorAll("[data-approval-id], [data-agent-approval-id]") || []];
+    for (const draft of drafts) {
+      const card = cards.find((item) => (item.dataset.approvalId || item.dataset.agentApprovalId) === draft.id);
+      if (!card || !card.querySelector('[data-agent-approval-action="approve"], [data-approval-action="approve"]')) continue;
+      const actions = card.querySelector(".agent-approval-actions");
+      const editor = card.querySelector(".agent-approval-reject");
+      if (editor) editor.replaceWith(draft.editor);
+      else actions?.after(draft.editor);
+      if (actions) actions.hidden = draft.actionsHidden;
+      // A live stream may have folded its surrounding process since the user
+      // opened this editor. Keep the active decision visible until it settles.
+      for (let parent = card.parentElement; parent && parent !== root; parent = parent.parentElement) {
+        if (parent.tagName === "DETAILS") parent.open = true;
+      }
+      if (draft.focused) draft.input.focus({ preventScroll: true });
+      cards.splice(cards.indexOf(card), 1);
+    }
+  }
+
   // ── Skills ───────────────────────────────────────────────────
   function normalizeChatSkill(raw) {
     if (!raw || typeof raw !== "object") return null;
@@ -733,6 +771,8 @@
     agentRunFromEvents,
     agentEventsFromTurn,
     agentRunStepCount,
+    captureApprovalDrafts,
+    restoreApprovalDrafts,
     normalizeChatSkill,
     normalizeChatSkillList,
     skillDisplayTitle,

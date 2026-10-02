@@ -18,6 +18,8 @@ class TestBuildAgentToolRegistry:
             # read
             "get_profile",
             "read_memory",
+            "search_web",
+            "read_webpage",
             "search_history",
             "get_recommendations",
             "get_watch_history",
@@ -33,6 +35,7 @@ class TestBuildAgentToolRegistry:
             "create_source",
             "toggle_source",
             "update_config",
+            "delete_memory",
         }
         assert expected.issubset(set(registry.names))
 
@@ -42,6 +45,8 @@ class TestBuildAgentToolRegistry:
         assert set(read_only.names) == {
             "get_profile",
             "read_memory",
+            "search_web",
+            "read_webpage",
             "search_history",
             "get_recommendations",
             "get_watch_history",

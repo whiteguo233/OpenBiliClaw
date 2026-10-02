@@ -358,10 +358,14 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                  → visible completion CAS
                    transient/cancel → pending + bounded in-place retry; explicit invalid → failed CAS
   direct chat/probes → same lease through response + ctx-dependent side effects
-  chat agent loop (「聊一聊」) → POST /api/chat/agent/stream → same dialogue lease
-                 → AgentLoop(caller=agent.chat, interactive lane) multi-hop tool calling
-                 → SSE thinking/tool_call/tool_result/approval_request/final → payload.agent_events replay
-                 → hard_write call → ApprovalStore pending card → approve endpoint re-dispatch + ledger audit
+  chat agent loop (「聊一聊」) → POST /api/chat/agent/stream → API-owned durable producer
+                 → session metadata.persona → turn-frozen agent_persona (expression only)
+                 → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
+                 → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
+                 → completion CAS + learning/effects; repeated turn → persisted event replay
+                 → hard_write call → ApprovalStore pending card → approve endpoint re-dispatch → config_update_hook → settings apply queue / last-good + ledger audit
+                   → five known agent knobs only: replace loop; other changes: drain owners + rebuild
                  → start_background_task confirm → POST /api/chat/tasks
                  → read-only AgentLoop(caller=agent.task, interactive lane) → steps → agent_tasks
                  → terminal report → agent_task_summary durable turn in source session
@@ -415,6 +419,8 @@ local、base；入网凭据 / helper path 仅为 runtime-only。本功能不配�
 浏览器扩展可直接使用 `http://100.x`；首版远端消费面只包括已内嵌 tsnet 的 Android / iOS 原生
 App，不包括 Web / Linux / macOS / Windows Flutter 构建，且建议叠加 API 密码门禁。helper 构建
 会移除 Tailscale logtail 上传和未用的管理 Web UI，但控制面 / DERP 的隐私边界仍保留。
+
+Durable agent stream 的执行任务归 API application；HTTP 断连只结束 SSE 订阅，原执行继续并逐事件持久化。稳定对话 lease 内重读 turn 终态，完成请求重试直接回放，避免重复调用模型和工具；应用关闭后仍 pending 的 turn 由 durable worker 恢复。短期上下文按会话隔离，长期记忆共享，回复目标 binding 贯穿 prompt 与学习。
 
 对话回复与其后的 11-kind learning/settlement 是相邻但独立的 lane：Web/API durable runtime
 先由 app-owned 单 worker 按 `chat_turns.rowid` 领取 pending，再在稳定

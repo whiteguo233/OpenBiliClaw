@@ -8,17 +8,22 @@
   re-dispatches it after user approval. The write is deliberately narrow
   (v1): only existing scalar (str/int/float/bool) leaf fields, and any key
   containing a secret or path/storage marker is refused outright. A
-  successful write mutates the live ``Config``, persists it through
-  ``ctx.config_persist_hook`` (with rollback on failure) and triggers the
-  runtime hot-reload through ``ctx.config_reload_hook``.
+  successful production write uses ``ctx.config_update_hook`` to submit a
+  scalar patch through the API settings transaction. Compatibility callers
+  retain persist/reload hooks, operating on a copy rather than the live config
+  and compensating both persisted and runtime config when reload fails.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
+from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
+
+from openbiliclaw.config import validate_runtime_config
 
 from .common import ToolComponentUnavailableError, maybe_await, require_component, truncate_text
 from .registry import Tool
@@ -149,6 +154,8 @@ def _update_config_denial(key: str) -> str | None:
     if key in _UPDATE_CONFIG_EXPLICIT_DENY:
         return f"配置项 {key} 会影响数据存储位置，不允许通过对话修改，请在设置页操作。"
     for segment in segments:
+        if segment.startswith("_"):
+            return f"配置项 {key} 不是公开配置字段，不允许通过对话修改。"
         lowered = segment.lower()
         if any(marker in lowered for marker in _SENSITIVE_MARKERS):
             return f"配置项 {key} 属于密钥/凭据类敏感字段，一律不允许通过对话修改。"
@@ -191,9 +198,12 @@ def _coerce_config_value(raw: str, current: Any) -> tuple[bool, Any]:
             return False, f"无法把「{raw}」解析为整数"
     if isinstance(current, float):
         try:
-            return True, float(raw.strip())
+            value = float(raw.strip())
         except ValueError:
             return False, f"无法把「{raw}」解析为数字"
+        if not math.isfinite(value):
+            return False, "配置数字必须是有限值，不能为 NaN 或无穷大"
+        return True, value
     if isinstance(current, str):
         return True, raw
     return False, "该配置项不是普通标量（文本/数字/布尔），暂不支持通过对话修改"
@@ -208,28 +218,45 @@ async def _update_config(ctx: AgentToolContext, args: dict[str, Any]) -> str:
     denial = _update_config_denial(key)
     if denial is not None:
         logger.info("update_config refused (whitelist): %s", key)
-        return denial
+        raise ValueError(denial)
 
     resolved = _resolve_config_leaf(config, key)
     if resolved is None:
-        return f"配置项不存在: {key}。可用 get_config 查看当前配置结构。"
-    owner, leaf, current = resolved
+        raise ValueError(f"配置项不存在: {key}。可用 get_config 查看当前配置结构。")
+    _owner, leaf, current = resolved
 
     coerced, new_value = _coerce_config_value(raw_value, current)
     if not coerced:
-        return f"配置项 {key} 修改失败: {new_value}"
-    if new_value == current:
+        raise ValueError(f"配置项 {key} 修改失败: {new_value}")
+    update_hook = getattr(ctx, "config_update_hook", None)
+    if new_value == current and not callable(update_hook):
         return f"配置项 {key} 已是目标值 {raw_value}，无需修改。"
+
+    candidate = deepcopy(config)
+    candidate_leaf = _resolve_config_leaf(candidate, key)
+    assert candidate_leaf is not None
+    owner = candidate_leaf[0]
+    setattr(owner, leaf, new_value)
+    validate_runtime_config(candidate)
+
+    # Production applies one field through the API's durable config queue.
+    # It reloads the latest disk revision and never mutates the live Config
+    # before runtime handoff succeeds.
+    if callable(update_hook):
+        outcome = await maybe_await(update_hook(key, new_value))
+        return f"已更新配置 {key}: {current!r} → {new_value!r}。{outcome}"
 
     persist_hook = getattr(ctx, "config_persist_hook", None)
     if not callable(persist_hook):
         raise ToolComponentUnavailableError("组件不可用: config_persist_hook 未初始化")
 
-    setattr(owner, leaf, new_value)
+    previous_config = deepcopy(config)
     try:
-        saved_path = persist_hook(config)
+        # save_config validates selected persistence fields only. Validate the
+        # runtime contract first so a typo cannot replace a working LLM route
+        # on disk and strand the very conversation performing the change.
+        saved_path = persist_hook(candidate)
     except Exception:
-        setattr(owner, leaf, current)
         logger.exception("update_config persist failed, rolled back: %s", key)
         raise
 
@@ -237,12 +264,34 @@ async def _update_config(ctx: AgentToolContext, args: dict[str, Any]) -> str:
     reload_hook = getattr(ctx, "config_reload_hook", None)
     if callable(reload_hook):
         try:
-            await maybe_await(reload_hook(config))
-        except Exception:
+            await maybe_await(reload_hook(candidate))
+        except Exception as reload_error:
             logger.warning("update_config hot-reload failed: %s", key, exc_info=True)
-            reload_note = "热重载失败，重启后生效。"
+            rollback_errors: list[str] = []
+            try:
+                persist_hook(previous_config)
+            except Exception as exc:
+                logger.exception("update_config file rollback failed: %s", key)
+                rollback_errors.append(f"配置文件恢复失败: {exc}")
+            # Reload can publish the candidate before a subsequent step fails.
+            # Always attempt runtime compensation, even if restoring disk fails.
+            try:
+                await maybe_await(reload_hook(previous_config))
+            except Exception as exc:
+                logger.exception("update_config runtime rollback failed: %s", key)
+                rollback_errors.append(f"运行时恢复失败: {exc}")
+            else:
+                ctx.config = previous_config
+            if rollback_errors:
+                raise RuntimeError(
+                    f"热重载失败: {reload_error}；{'；'.join(rollback_errors)}。"
+                    "请检查配置文件与运行状态。"
+                ) from reload_error
+            raise
     else:
         reload_note = "运行时未接线热重载，重启后生效。"
+
+    ctx.config = candidate
 
     logger.info("update_config applied: %s = %r (reason: %s)", key, new_value, reason or "-")
     suffix = f"（原因: {reason}）" if reason else ""

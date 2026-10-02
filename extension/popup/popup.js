@@ -155,6 +155,7 @@ import {
   streamChatTurn,
   streamAgentChatTurn,
   fetchChatSkills,
+  fetchChatPersonas,
   fetchChatSessions,
   createChatSession,
   updateChatSession,
@@ -214,6 +215,8 @@ if (!agentChat) {
 }
 const {
   applyAgentEvent,
+  captureApprovalDrafts,
+  restoreApprovalDrafts,
   applyApprovalRecordToRun,
   agentEventsFromTurn,
   agentRunFromEvents,
@@ -405,6 +408,11 @@ const elements = {
   chatSubpanelSessions: document.getElementById("chatSubpanelSessions"),
   chatSubpanelTasks: document.getElementById("chatSubpanelTasks"),
   chatSkillSelect: document.getElementById("chatSkillSelect"),
+  chatPersonaToggle: document.getElementById("chatPersonaToggle"),
+  chatPersonaDialog: document.getElementById("chatPersonaDialog"),
+  chatPersonaList: document.getElementById("chatPersonaList"),
+  chatPersonaStatus: document.getElementById("chatPersonaStatus"),
+  chatPersonaExamplePrompt: document.getElementById("chatPersonaExamplePrompt"),
   chatApprovalsToggle: document.getElementById("chatApprovalsToggle"),
   chatApprovalsCount: document.getElementById("chatApprovalsCount"),
   chatApprovalsList: document.getElementById("chatApprovalsList"),
@@ -581,6 +589,7 @@ let offlineBackendPoller = null;
 const backendConnectionCoordinator = createBackendConnectionCoordinator({
   checkBackendStatus,
   onStatusChange(status) {
+    const wasOnline = state.online;
     state.online = status !== "offline";
     setStatus(status);
     if (status === "offline") {
@@ -588,6 +597,12 @@ const backendConnectionCoordinator = createBackendConnectionCoordinator({
       return;
     }
     offlineBackendPoller?.stop();
+    if (!wasOnline && state.activeTab === "chat") {
+      // Chat may have opened before the first health check completed.
+      void refreshChatSkills();
+      void refreshChatPersonas();
+      void refreshChatSessions();
+    }
   },
 });
 offlineBackendPoller = createOfflineBackendPoller({
@@ -611,6 +626,7 @@ const CHAT_POLL_DEADLINE_MS = 180_000;
 const activeChatPolls = new Map();
 let chatHistoryRefreshTimer = null;
 let chatHistoryHydrationInFlight = false;
+let chatHistoryHydrationGeneration = 0;
 let lastChatHistorySignature = null;
 const watchLaterToggles = createSavedToggleRegistry({
   labels: {
@@ -718,6 +734,12 @@ let popupSessionSkills = (() => {
   }
 })();
 let popupChatSkills = [];
+let popupChatPersonas = [];
+let popupPersonaExamplePrompt = "";
+let popupPersonaError = "";
+let popupPersonaRevision = 0;
+let popupSessionsRequestGeneration = 0;
+const popupPersonaSaving = new Set();
 let agentLoopAvailable = true;
 // Live process-flow runs keyed by turn_id; settled runs stay until the
 // durable history snapshot (payload.agent_events) replaces them.
@@ -1008,6 +1030,7 @@ function setActiveTab(requestedTab, { libraryTab = "" } = {}) {
     void refreshPendingConfirmations();
     void hydrateChatHistory();
     void refreshChatSkills();
+    void refreshChatPersonas();
     void refreshChatApprovals();
     void refreshAgentTasks();
     syncPopupTasksPolling();
@@ -5819,6 +5842,7 @@ let dialogueContextSelection = readContextSelection(
   "extension-popup",
 );
 let retainedChatDraft = "";
+const popupChatDrafts = new Map();
 
 function popupContextStorage() {
   try { return globalThis.localStorage; } catch { return null; }
@@ -5978,6 +6002,7 @@ function popupAgentRunHasContent(run) {
 function updatePopupAgentRunDom(turnId) {
   if (!(elements.chatMessages instanceof HTMLElement)) return;
   const run = popupAgentRuns.get(turnId);
+  if (run?.sessionId && run.sessionId !== popupChatSessionId) return;
   let slot = elements.chatMessages.querySelector(
     `[data-turn-id="${CSS.escape(turnId)}"][data-part="agent-run"]`,
   );
@@ -5999,23 +6024,44 @@ function updatePopupAgentRunDom(turnId) {
       elements.chatMessages.append(slot);
     }
   }
+  const approvalDrafts = captureApprovalDrafts(slot);
   slot.innerHTML = renderAgentRunMarkup(run, { compact: true, collapsed: run.settled });
+  restoreApprovalDrafts(slot, approvalDrafts);
   scrollChatMessagesToBottom();
 }
 
 async function popupDriveAgentStream(turn, { onUpdate, onDone } = {}) {
   const run = createAgentRun();
+  const sessionId = turn.session_id || popupChatSessionId;
+  run.sessionId = sessionId;
   popupAgentRuns.set(turn.turn_id, run);
   popupStreamingTurnIds.add(turn.turn_id);
   try {
     const done = await streamAgentChatTurn({
       turnId: turn.turn_id,
-      sessionId: popupChatSessionId,
-      skill: currentPopupSkill(),
+      sessionId,
+      skill: turn.payload?.agent_skill || "",
       session: turn.session || CHAT_SESSION,
       message: turn.message || "",
       onEvent(name, data) {
+        if (name === "delta") {
+          if (run.settled) return;
+          const step = Number(data?.step) || 1;
+          if (run.streamingStep !== step) run.streamingReply = "";
+          run.streamingStep = step;
+          run.streamingReply = (run.streamingReply || "") + String(data?.text || "");
+          onUpdate?.({ ...turn, session_id: sessionId, status: "processing" });
+          return;
+        }
+        if (name === "thinking") {
+          // Intermediate hop text belongs in the process flow, not the reply.
+          run.streamingReply = "";
+        }
         applyAgentEvent(run, name, data);
+        if (name === "final" || name === "done") run.streamingReply = run.finalText;
+        if (name === "thinking" || name === "final" || name === "done") {
+          onUpdate?.({ ...turn, session_id: sessionId, status: "processing" });
+        }
         updatePopupAgentRunDom(turn.turn_id);
         if (name === "approval_request") void refreshChatApprovals();
       },
@@ -6051,6 +6097,94 @@ async function refreshChatSkills() {
     // Cosmetic; keep the last list.
   }
   renderChatSkillSelect();
+}
+
+function currentPopupPersona() {
+  const session = popupChatSessions.find((item) => item.session_id === popupChatSessionId);
+  return String(session?.metadata?.persona || "natural");
+}
+
+function rememberPopupChatSession(session) {
+  const index = popupChatSessions.findIndex((item) => item.session_id === session?.session_id);
+  if (!session?.session_id) return;
+  if (session.session_id === popupChatSessionId && index >= 0
+    && popupChatSessions[index]?.metadata?.persona !== session.metadata?.persona
+    && !popupPersonaSaving.has(session.session_id)) popupPersonaError = "";
+  if (index >= 0) popupChatSessions[index] = session;
+  else popupChatSessions.push(session);
+}
+
+async function refreshChatPersonas() {
+  if (!state.online) return;
+  const revision = popupPersonaRevision;
+  try {
+    const catalog = await fetchChatPersonas();
+    popupChatPersonas = catalog.personas;
+    popupPersonaExamplePrompt = catalog.examplePrompt;
+    if (revision === popupPersonaRevision && !popupPersonaError.startsWith("尚未确认")) popupPersonaError = "";
+  } catch {
+    popupPersonaError = "暂时无法加载聊天风格，请稍后重试。";
+  }
+  renderPopupPersonaPicker();
+}
+
+function renderPopupPersonaPicker() {
+  const selected = currentPopupPersona();
+  const saving = popupPersonaSaving.has(popupChatSessionId);
+  const persona = popupChatPersonas.find((item) => item.id === selected);
+  if (elements.chatPersonaToggle) {
+    elements.chatPersonaToggle.textContent = `风格 · ${saving ? "保存中…" : (persona?.title || "自然朋友")}`;
+    elements.chatPersonaToggle.disabled = !state.online;
+    elements.chatPersonaToggle.setAttribute("aria-busy", String(saving));
+  }
+  if (!elements.chatPersonaDialog?.open) return;
+  elements.chatPersonaExamplePrompt.textContent = popupPersonaExamplePrompt ? `例如你说：“${popupPersonaExamplePrompt}”` : "";
+  elements.chatPersonaExamplePrompt.hidden = !popupPersonaExamplePrompt;
+  elements.chatPersonaStatus.textContent = saving ? "正在保存…" : popupPersonaError;
+  const key = JSON.stringify([selected, saving, popupChatPersonas]);
+  if (elements.chatPersonaList.dataset.renderKey === key) return;
+  elements.chatPersonaList.dataset.renderKey = key;
+  const focused = document.activeElement?.dataset?.chatPersona;
+  elements.chatPersonaList.innerHTML = popupChatPersonas.map((item) => `
+    <button type="button" class="chat-persona-option" data-chat-persona="${agentChat.escapeHtml(item.id)}"
+      aria-pressed="${item.id === selected}" ${saving ? "disabled" : ""}>
+      <strong>${agentChat.escapeHtml(item.title)}${item.id === selected ? ' <span>当前</span>' : ""}</strong>
+      <span>${agentChat.escapeHtml(item.description)}</span>
+      <span class="chat-persona-example">示例：${agentChat.escapeHtml(item.example)}</span>
+    </button>`).join("");
+  if (focused) {
+    [...elements.chatPersonaList.querySelectorAll("[data-chat-persona]")]
+      .find((button) => button.dataset.chatPersona === focused)?.focus();
+  }
+}
+
+async function selectPopupPersona(personaId) {
+  const sessionId = popupChatSessionId;
+  if (popupPersonaSaving.has(sessionId) || !popupChatPersonas.some((item) => item.id === personaId)) return;
+  popupPersonaSaving.add(sessionId);
+  popupPersonaRevision += 1;
+  popupPersonaError = "";
+  renderPopupPersonaPicker();
+  try {
+    const session = await updateChatSession(sessionId, { persona: personaId });
+    if (session?.session_id !== sessionId || session?.metadata?.persona !== personaId) {
+      throw new Error("服务未确认所选风格，请重试。");
+    }
+    rememberPopupChatSession(session);
+    if (sessionId === popupChatSessionId) {
+      elements.chatPersonaDialog.close();
+      setChatStatus("聊天风格已保存，用于本会话的新消息。", "success");
+    }
+  } catch {
+    if (sessionId === popupChatSessionId) {
+      popupPersonaError = "尚未确认风格已保存，请刷新或重试。";
+      setChatStatus(popupPersonaError, "error");
+    }
+  } finally {
+    popupPersonaRevision += 1;
+    popupPersonaSaving.delete(sessionId);
+    renderPopupPersonaPicker();
+  }
 }
 
 function renderChatSkillSelect() {
@@ -6129,22 +6263,29 @@ function renderChatApprovals() {
     elements.chatApprovalsToggle.setAttribute("aria-expanded", String(popupApprovalsExpanded));
   }
   if (elements.chatApprovalsList instanceof HTMLElement) {
+    const approvalDrafts = captureApprovalDrafts(elements.chatApprovalsList);
     elements.chatApprovalsList.hidden = !popupApprovalsExpanded;
     // 列表同时展示执行中的审批（无按钮，只显示「执行中…」状态）。
     elements.chatApprovalsList.innerHTML = [...popupPendingApprovals, ...popupApprovalExecutingOverrides.values()]
       .map((approval) => renderApprovalCardMarkup(approval, { compact: true }))
       .join("");
+    restoreApprovalDrafts(elements.chatApprovalsList, approvalDrafts);
   }
 }
 
 async function refreshChatSessions() {
   if (!state.online) return;
+  const generation = ++popupSessionsRequestGeneration;
+  const revision = popupPersonaRevision;
   try {
-    popupChatSessions = await fetchChatSessions();
+    const sessions = await fetchChatSessions();
+    if (generation !== popupSessionsRequestGeneration || revision !== popupPersonaRevision || popupPersonaSaving.size) return;
+    popupChatSessions = sessions;
   } catch {
     // Keep the last list while offline.
   }
   if (popupChatSubtab === "sessions") renderChatSessionsPanel();
+  renderPopupPersonaPicker();
 }
 
 function renderChatSessionsPanel() {
@@ -6167,12 +6308,25 @@ function renderChatSessionsPanel() {
 
 async function switchPopupChatSession(sessionId) {
   if (!sessionId) return;
+  if (sessionId !== popupChatSessionId) {
+    popupChatDrafts.set(popupChatSessionId, elements.chatInput?.value ?? retainedChatDraft);
+    retainedChatDraft = popupChatDrafts.get(sessionId) || "";
+    if (elements.chatInput) elements.chatInput.value = retainedChatDraft;
+  }
+  elements.chatPersonaDialog?.close();
+  popupPersonaError = "";
   popupChatSessionId = sessionId;
+  renderPopupPersonaPicker();
+  chatHistoryHydrationGeneration += 1;
+  chatHistoryHydrationInFlight = false;
   try {
     localStorage.setItem(POPUP_CHAT_SESSION_STORAGE_KEY, sessionId);
   } catch { /* storage unavailable */ }
   lastChatHistorySignature = null;
-  popupAgentRuns.clear();
+  elements.chatMessages?.replaceChildren();
+  dialogueTurnsById.clear();
+  elements.chatSendButton.disabled = false;
+  elements.chatSendButton.textContent = "发出去";
   setChatSubtab("chat");
   await hydrateChatHistory();
   renderChatSkillSelect();
@@ -6337,7 +6491,7 @@ async function handlePopupApprovalAction(button) {
   if (action === "reject") {
     card.querySelector(".agent-approval-reject")?.removeAttribute("hidden");
     card.querySelector(".agent-approval-actions")?.setAttribute("hidden", "");
-    card.querySelector(".agent-approval-reason")?.focus();
+    card.querySelector("input.agent-approval-reason")?.focus();
     return;
   }
   if (action === "reject-cancel") {
@@ -6364,7 +6518,7 @@ async function handlePopupApprovalAction(button) {
         setChatStatus(ok ? "已批准并执行。" : "批准了，但执行失败。", ok ? "success" : "error");
       }
     } else if (action === "reject-submit") {
-      const reason = card.querySelector(".agent-approval-reason")?.value?.trim() || "";
+      const reason = card.querySelector("input.agent-approval-reason")?.value?.trim() || "";
       await rejectChatApproval(approvalId, reason);
       settlePopupApprovalCard(card, "已拒绝，不会执行。", true);
       setPopupRunApprovalStatus(approvalId, "rejected");
@@ -6677,6 +6831,8 @@ function renderChatTurn(turn) {
   if (!turn?.turn_id || !(elements.chatMessages instanceof HTMLElement)) {
     return;
   }
+  if (String(turn.scope || "chat") === "chat" &&
+    String(turn.session_id || "default") !== popupChatSessionId) return;
   dialogueTurnsById.set(turn.turn_id, turn);
   if (isCardTurn(turn) || isQuestionTurn(turn)) {
     renderStructuredDialogueTurn(turn);
@@ -6729,10 +6885,12 @@ function renderChatTurn(turn) {
       else if (userPart instanceof HTMLElement) userPart.after(slot);
       else elements.chatMessages.append(slot);
     }
+    const approvalDrafts = captureApprovalDrafts(slot);
     slot.innerHTML = renderAgentRunMarkup(agentRun, {
       compact: true,
       collapsed: agentRun.settled || turn.status === "completed",
     });
+    restoreApprovalDrafts(slot, approvalDrafts);
   }
   if (turn.reply_to_turn_id && !elements.chatMessages.querySelector(
     `[data-reply-quote-for="${CSS.escape(turn.turn_id)}"]`,
@@ -6765,6 +6923,19 @@ function renderChatTurn(turn) {
       replaceChatThinkingPlaceholder(assistantPart, message);
     } else {
       appendChatMessage("助手", message, {
+        turnId: turn.turn_id,
+        part: "assistant",
+      });
+    }
+    return;
+  }
+  // Keep live tokens on their own run so background history refreshes and
+  // switching away and back can restore an unfinished reply.
+  if (typeof agentRun?.streamingReply === "string") {
+    if (assistantPart instanceof HTMLElement) {
+      replaceChatThinkingPlaceholder(assistantPart, agentRun.streamingReply);
+    } else {
+      appendChatMessage("助手", agentRun.streamingReply, {
         turnId: turn.turn_id,
         part: "assistant",
       });
@@ -6850,13 +7021,17 @@ function applyTurnToMessage(turn) {
   };
 }
 
-function pollChatTurnUntilSettled(turnId, { onUpdate, onDone } = {}) {
+function pollChatTurnUntilSettled(turnId, { initialTurn = null, onUpdate, onDone } = {}) {
   if (!turnId || activeChatPolls.has(turnId)) return;
   const startedAt = Date.now();
+  let nextTurn = initialTurn?.turn_id === turnId ? initialTurn : null;
 
   async function tick() {
     try {
-      const turn = await fetchChatTurn(turnId);
+      // A GET can wake the durable fallback worker. Start from the turn the
+      // create/history request already returned so the live stream wins first.
+      const turn = nextTurn || await fetchChatTurn(turnId);
+      nextTurn = null;
       onUpdate?.(turn);
       if (turn.status === "completed" || turn.status === "failed") {
         activeChatPolls.delete(turnId);
@@ -6876,8 +7051,12 @@ function pollChatTurnUntilSettled(turnId, { onUpdate, onDone } = {}) {
           } catch (error) {
             if (Number(error?.status) === 503) {
               agentLoopAvailable = false;
+            } else {
+              // A dropped agent connection must recover the durable agent
+              // turn; executing it through the legacy endpoint loses its skill
+              // and multi-hop tool contract.
+              throw error;
             }
-            // Other stream failures fall through to the legacy stream/poll.
           }
         }
         let accumulated = "";
@@ -6950,24 +7129,33 @@ async function hydrateChatHistory() {
   }
   if (chatHistoryHydrationInFlight) return;
   chatHistoryHydrationInFlight = true;
+  const sessionId = popupChatSessionId;
+  const generation = ++chatHistoryHydrationGeneration;
+  const personaRevision = popupPersonaRevision;
   const messages = elements.chatMessages;
   const shouldStickToBottom = isChatMessagesNearBottom();
   const previousScrollTop = messages.scrollTop;
   try {
     // M9: read the active multi-session conversation; older backends without
     // the sessions endpoint fall back to the legacy flat history.
-    const payload = await fetchChatSessionDetail(popupChatSessionId, { limit: 100 })
+    const payload = await fetchChatSessionDetail(sessionId, { limit: 100 })
       .catch((error) => {
         if (Number(error?.status) === 404 || Number(error?.status) === 405) {
           return fetchChatTurns({ session: CHAT_SESSION, limit: 100 });
         }
         throw error;
       });
+    if (generation !== chatHistoryHydrationGeneration || sessionId !== popupChatSessionId) return;
+    if (payload.session && personaRevision === popupPersonaRevision && !popupPersonaSaving.has(sessionId)) {
+      rememberPopupChatSession(payload.session);
+      renderPopupPersonaPicker();
+    }
     const nextTurns = selectDialogueTurns(payload.items || []);
     const signature = chatHistorySignature(nextTurns);
     if (signature === lastChatHistorySignature) return;
     lastChatHistorySignature = signature;
     const openEvidence = openChatEvidenceTurnIds();
+    const approvalDrafts = captureApprovalDrafts(elements.chatMessages);
     suppressChatAutoScroll = true;
     try {
       elements.chatMessages.replaceChildren();
@@ -6981,11 +7169,13 @@ async function hydrateChatHistory() {
         renderChatTurn(turn);
         if (isDialogueReplyTurn(turn) && (turn.status === "pending" || turn.status === "processing")) {
           pollChatTurnUntilSettled(turn.turn_id, {
+            initialTurn: turn,
             onUpdate: renderChatTurn,
             onDone: refreshAfterChatTurn,
           });
         }
       }
+      restoreApprovalDrafts(elements.chatMessages, approvalDrafts);
       await validateDialogueContext({ announce: true });
       renderDialogueContextBar();
     } finally {
@@ -7008,7 +7198,7 @@ async function hydrateChatHistory() {
   } catch {
     // History is opportunistic; core panel loading should continue offline.
   } finally {
-    chatHistoryHydrationInFlight = false;
+    if (generation === chatHistoryHydrationGeneration) chatHistoryHydrationInFlight = false;
   }
 }
 
@@ -8660,7 +8850,12 @@ async function handlePendingConfirmationOpen(button) {
       },
     });
     if (turn?.turn_id) {
+      // The pending list can consume the whole message viewport in a compact
+      // popup. Once opened, give the card room so its actions are reachable.
+      state.pendingConfirmations.expanded = false;
+      renderPendingConfirmations();
       renderChatTurn(turn);
+      scrollChatMessagesToBottom();
       await selectDialogueContext(turn.turn_id);
     }
     await Promise.all([hydrateChatHistory(), refreshPendingConfirmations()]);
@@ -8736,6 +8931,23 @@ function bindDialogueConfirmations() {
       );
     });
   }
+  elements.chatPersonaToggle?.addEventListener("click", () => {
+    popupPersonaError = "";
+    elements.chatPersonaDialog.showModal();
+    renderPopupPersonaPicker();
+    void refreshChatPersonas();
+  });
+  elements.chatPersonaDialog?.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target === elements.chatPersonaDialog || target?.closest("[data-persona-close]")) {
+      elements.chatPersonaDialog.close();
+    } else if (target?.closest("[data-persona-retry]")) {
+      void refreshChatPersonas();
+    } else {
+      const button = target?.closest("[data-chat-persona]");
+      if (button) void selectPopupPersona(button.dataset.chatPersona);
+    }
+  });
   for (const button of [elements.chatSubtabChat, elements.chatSubtabSessions, elements.chatSubtabTasks]) {
     if (button instanceof HTMLButtonElement) {
       button.addEventListener("click", () => setChatSubtab(button.dataset.chatSubtab || "chat"));
@@ -8857,6 +9069,10 @@ function bindChat() {
 
   elements.chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (popupPersonaSaving.has(popupChatSessionId)) {
+      setChatStatus("正在保存聊天风格，请稍后发送。", "info");
+      return;
+    }
     const message = elements.chatInput.value.trim();
     if (!message) {
       setHint("先说一句你的想法、偏好或者最近状态。", "error");
@@ -8869,6 +9085,8 @@ function bindChat() {
     }
 
     const turnId = createClientTurnId("chat");
+    const sessionId = popupChatSessionId;
+    const skill = currentPopupSkill();
     const replyToTurnId = dialogueContextSelection?.reply_to_turn_id || "";
     retainedChatDraft = "";
     appendChatMessage("你", message, { turnId, part: "user" });
@@ -8892,9 +9110,13 @@ function bindChat() {
         replyToTurnId,
         message,
         streaming: true,
-        sessionId: popupChatSessionId,
-        skill: currentPopupSkill(),
+        sessionId,
+        skill,
       });
+      if (sessionId !== popupChatSessionId) {
+        pollChatTurnUntilSettled(turn.turn_id, { initialTurn: turn, onUpdate: renderChatTurn });
+        return;
+      }
       clearSlowStatusTimer();
       renderChatTurn(turn);
       setHint("收到，阿B 正在整理。", "success");
@@ -8902,8 +9124,10 @@ function bindChat() {
         await refreshAfterChatTurn();
       } else {
         pollChatTurnUntilSettled(turn.turn_id, {
+          initialTurn: turn,
           onUpdate: renderChatTurn,
           async onDone(doneTurn) {
+            if (sessionId !== popupChatSessionId) return;
             if (doneTurn.status === "completed") {
               setHint("这句记下了。", "success");
             }
@@ -8913,6 +9137,7 @@ function bindChat() {
         setChatStatus(getSubmissionProgressMessage("chat", "waiting_reply"), "info");
       }
     } catch (error) {
+      if (sessionId !== popupChatSessionId) return;
       clearSlowStatusTimer();
       retainedChatDraft = message;
       elements.chatInput.value = message;
@@ -8927,9 +9152,11 @@ function bindChat() {
       setChatStatus(contextErrorMessage(error), "error");
       setHint(contextErrorMessage(error), "error");
     } finally {
-      clearSlowStatusTimer();
-      elements.chatSendButton.disabled = false;
-      elements.chatSendButton.textContent = "发出去";
+      if (sessionId === popupChatSessionId) {
+        clearSlowStatusTimer();
+        elements.chatSendButton.disabled = false;
+        elements.chatSendButton.textContent = "发出去";
+      }
     }
   });
 }

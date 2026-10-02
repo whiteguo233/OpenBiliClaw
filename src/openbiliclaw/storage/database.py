@@ -3561,6 +3561,23 @@ class Database:
         )
         return cursor.rowcount == 1
 
+    def set_chat_session_persona(self, session_id: str, *, persona: str) -> bool:
+        """Atomically replace only the persona key, preserving other metadata."""
+        cursor = self._execute_write(
+            """
+            UPDATE chat_sessions
+            SET metadata = json_set(
+                    CASE WHEN json_valid(metadata) THEN
+                        CASE WHEN json_type(metadata) = 'object' THEN metadata ELSE '{}' END
+                    ELSE '{}' END,
+                    '$.persona', ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (persona, session_id.strip()),
+        )
+        return cursor.rowcount == 1
+
     def touch_chat_session(self, session_id: str) -> bool:
         """Bump one session's last-message activity timestamp."""
         cursor = self._execute_write(
@@ -3706,6 +3723,41 @@ class Database:
                 (session or "popup", ref, ref),
             ).fetchone()
             return self._normalize_chat_turn_row(row) if row is not None else None
+        finally:
+            conn.close()
+
+    def get_chat_confirmation_refs(self, *, session: str) -> set[str]:
+        """Read active confirmation identities for one surface in a single query.
+
+        Uses the same scope, status and payload conditions as
+        ``get_chat_confirmation_turn`` without opening one connection per
+        hypothesis when a chat client polls its pending-confirmation list.
+        """
+        conn = self.open_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT subject_id
+                FROM chat_turns
+                WHERE session = ?
+                  AND status = 'completed'
+                  AND json_valid(payload)
+                  AND json_extract(payload, '$.ref') = subject_id
+                  AND (
+                        (
+                            scope = 'hypothesis'
+                            AND json_extract(payload, '$.type') = 'card'
+                            AND json_extract(payload, '$.state') IN ('pending', 'discussing')
+                        )
+                        OR (
+                            scope = 'confusion'
+                            AND json_extract(payload, '$.type') = 'question'
+                        )
+                      )
+                """,
+                (session or "popup",),
+            ).fetchall()
+            return {str(row["subject_id"]) for row in rows}
         finally:
             conn.close()
 

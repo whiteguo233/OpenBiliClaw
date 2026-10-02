@@ -102,6 +102,7 @@
 | 4.4 觉察层 + 洞察层 | ✅ | 觉察笔记、洞察假设、反馈更新 |
 | 4.5 核心记忆加载 | ✅ | 统一摘要裁剪 + 所有 Soul LLM 调用自动注入 |
 | 9.2 画像更新 | ✅ | 反馈达到阈值后自动重分析偏好，并持久化反馈处理状态 |
+| 显式聊天笔记 | ✅ | agent_notes 命名空间支持检索、带旧值校验的写/删；文件锁内原子发布，普通系统重建保留笔记，旧快照不能复活已删项；有界引用用于后续 Agent chat |
 | 对话学习状态 | ✅ | `dialogue` 事件 + `insight_candidates.json`，支撑聊天信号的受控学习 |
 | 持续刷新状态 | ✅ | `discovery_runtime.json` 记录候选池刷新、通知游标、最近处理事件位置、正向/负向 probe 冷却、probe distance 历史和短期探索 buffer |
 | 认知变化状态 | ✅ | `cognition_updates.json` 记录关键认知变化、通知状态和来源 |
@@ -500,3 +501,39 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 13. **认知变化单独留痕**：`cognition_updates.json` 保存系统最近形成的关键理解变化，既供插件通知使用，也让画像页能回显”最近记住了什么”
 14. **账户同步状态单独持久化**：`account_sync_state.json` 记录 history / favorites / following 的增量游标、已见 ID 集合、稳定签名与有界的 `{stage,kind}` 错误清单，既避免每轮全量重灌事件层和同秒历史游标导致重复画像分析，也让 runtime-status 无需解析原始异常文本即可定位失败环节
 15. **多源 bootstrap 去重与调度状态独立持久化**：`source_bootstrap_state.json` 保存 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / 微博已见 bootstrap identity key（每源最新 5,000）及七个周期来源的 `source_incremental` 调度投影，不塞进画像 JSON；V2EX key 额外按 resolved username 隔离。`update_source_bootstrap_state(mutator)` 在同一进程锁、跨进程文件锁内读改写并以 `os.replace` 发布。task-result 保留首份 canonical 原始结果，durable ingress 成功后再按响应顺序写 seen-key，失败时不翻 terminal，可由租约重领修复；V2EX 收藏撤回作为 `feedback/retraction` 弱证据进入同一事件层，折价历史 positive 而不删除事实。GitHub starred init 直接生成 `favorite` 事件，不占用这份扩展任务状态，也不声明增量调度。
+
+### 显式聊天笔记与自动记忆
+
+用户通过聊天明确保存的笔记仍存四个非 soul 层的 `agent_notes`，不新增存储层。
+`MemoryLayer.save()` 在共享 JSON 文件锁内保存普通字段并保留磁盘最新笔记；
+笔记专用 CAS 写入口才允许修改该命名空间。磁盘成功后更新内存，失败不报告成功。
+自动画像/偏好重建可刷新自己的字段，不能覆盖用户笔记或复活已删除项。
+
+`MemoryManager.render_agent_notes_prompt()` 为允许 read_memory 的 Agent chat 提供
+有限条数和长度的结构化引用，空笔记不增加上下文。原始用户消息、历史与学习载荷
+仍保存原文；此块不进入 system。更正/删除只处理明确定位的笔记，不声称清除了
+过去聊天记录、自动提取的偏好或画像。
+
+聊天笔记公开接口（`MemoryManager`；保存于现有四层的 `agent_notes`，不修改系统画像字段）：
+
+```python
+def list_agent_notes(
+    self, *, layer: str = "", key: str = "", keyword: str = ""
+) -> list[dict[str, str]]: ...
+
+def write_agent_note(
+    self, layer: str, key: str, value: str, *, expected_value: str | None = None
+) -> None: ...
+
+def delete_agent_note(
+    self, layer: str, key: str, *, expected_value: str
+) -> None: ...
+
+def render_agent_notes_prompt(self) -> str: ...
+```
+
+`layer` 的可写值为 `event`、`preference`、`awareness`、`insight`；查询时空字符串表示跨四层。查询按更新时间倒序返回 `layer/key/value/updated_at`，`key` 精确匹配，`keyword` 搜索键名与正文。创建或无原值条件的同值重试不覆盖已有不同内容；更正须匹配 `expected_value`，删除经工具审批后仍重新校验原值。失败抛出真实错误，原子落盘成功前不发布内存更改。
+
+`render_agent_notes_prompt()` 无笔记返回空字符串；否则返回引用数据说明及完整 JSON，最多 8 条、整体 3,000 字符，单条长正文标记 `value_truncated`；完整值通过 `read_memory` 查询。该方法不改变 `render_core_memory_prompt()`，由聊天入口按 `read_memory` 权限注入 user context。
+
+`read_memory` 的笔记列表保留有界 JSON 分页；精确 `layer/key` 查询若 JSON 转义使完整原值超过 Agent 工具结果预算，返回定位信息头及完整未转义正文，不截断用于 `expected_value` 的内容。`write_memory` 成功结果回显刚保存的完整新值。上下文笔记标明是本轮开始快照，本轮后续成功工具结果优先，不能把旧快照解读成存储回退。

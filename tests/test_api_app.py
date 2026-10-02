@@ -1649,6 +1649,7 @@ class TestBackendAPI:
         assert 'href="/web/assets/css/classic.css?v=' in response.text
         assert 'src="/web/assets/js/app.js?v=' in response.text
         assert 'src="/web/assets/js/chat-agent-core.js?v=' in response.text
+        assert 'src="/shared/agent-chat.js?v=' in response.text
 
     def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:
         from fastapi.testclient import TestClient
@@ -14325,6 +14326,78 @@ class TestPendingDialogueConfirmations:
                 "message": message,
             },
         )
+
+    def test_pending_poll_reuses_dedup_without_caching_mutable_card_data(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        title = "用户可能通过机械键盘组装过程获得自主创作与掌控的满足感"
+        self._seed_hypothesis(memory, title, 0.9)
+        self._seed_hypothesis(memory, title + "并探索不同轴体", 0.8)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        first = client.get("/api/chat/pending-confirmations").json()
+        assert first["total"] == 1
+        assert calls
+        calls.clear()
+        insight = memory.get_layer("insight")
+        insight.data["hypotheses"][0]["confidence"] = 0.95
+        insight.save()
+        second = client.get("/api/chat/pending-confirmations").json()
+        assert second["items"][0]["confidence"] == 0.95
+        assert calls == [], "unchanged ordered titles must not repeat quadratic fuzzy matching"
+
+        self._seed_hypothesis(
+            memory, "用户对长距离徒步的兴趣可能来自身体挑战与自然环境的恢复感", 0.7
+        )
+        third = client.get("/api/chat/pending-confirmations").json()
+        assert third["total"] == 2, "a changed title snapshot must invalidate the cached selection"
+
+    def test_pending_dedup_skips_impossible_string_matches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from difflib import SequenceMatcher
+
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, chr(0x4E00 + index) * 40, 0.9)
+        calls: list[None] = []
+        original_ratio = SequenceMatcher.ratio
+
+        def counted_ratio(matcher: SequenceMatcher) -> float:
+            calls.append(None)
+            return original_ratio(matcher)
+
+        monkeypatch.setattr(SequenceMatcher, "ratio", counted_ratio)
+        body = client.get("/api/chat/pending-confirmations").json()
+        assert body["total"] == 30
+        assert calls == [], "disjoint titles cannot reach the similarity threshold"
+
+    def test_pending_session_filter_does_not_open_one_connection_per_hypothesis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, memory, _engine, _dialogue = self._build(tmp_path)
+        for index in range(30):
+            self._seed_hypothesis(memory, f"独立短假设{index}", 0.9)
+        connections: list[None] = []
+        original_open = memory._database.open_connection
+
+        def counted_open():  # type: ignore[no-untyped-def]
+            connections.append(None)
+            return original_open()
+
+        monkeypatch.setattr(memory._database, "open_connection", counted_open)
+        body = client.get("/api/chat/pending-confirmations?session=popup").json()
+        assert body["total"] == 30
+        assert len(connections) <= 3, "session filtering must use one batch of active references"
 
     def test_pending_list_filters_high_priority_caps_at_ten_and_has_count_only(
         self,

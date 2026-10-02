@@ -199,6 +199,47 @@ test("Markdown rendering escapes raw HTML and rejects unsafe links", () => {
   assert.doesNotMatch(markup, /<script>/i);
 });
 
+test("bare public source URLs are clickable without swallowing surrounding prose", () => {
+  const markup = dialogue!.renderMarkdown(
+    "来源：https://www.iana.org/help/example-domains。\n" +
+    "参考 (https://example.com/wiki/A_(B))，以及 https://example.com/a?x=1&y=2. 后文",
+  );
+
+  assert.match(markup, /href="https:\/\/www\.iana\.org\/help\/example-domains"/);
+  assert.match(markup, /href="https:\/\/example\.com\/wiki\/A_\(B\)"/);
+  assert.match(markup, /href="https:\/\/example\.com\/a\?x=1&amp;y=2"/);
+  assert.match(markup, /<\/a>。/);
+  assert.match(markup, /<\/a>\)，/);
+  assert.match(markup, /<\/a>\. 后文/);
+  assert.equal((markup.match(/target="_blank" rel="noopener noreferrer"/g) ?? []).length, 3);
+});
+
+test("source autolinks do not nest links or link code and preserve formatting", () => {
+  const markup = dialogue!.renderMarkdown(
+    "[https://example.com/label](https://example.com/target)\n" +
+    "`https://example.com/inline` **https://example.com/bold**\n\n" +
+    "```text\nhttps://example.com/fenced\n```",
+  );
+
+  assert.equal((markup.match(/<a /g) ?? []).length, 2);
+  assert.match(markup, /href="https:\/\/example\.com\/target"[^>]*>https:\/\/example\.com\/label<\/a>/);
+  assert.match(markup, /<code>https:\/\/example\.com\/inline<\/code>/);
+  assert.match(markup, /<pre><code class="language-text">https:\/\/example\.com\/fenced<\/code><\/pre>/);
+  assert.match(markup, /<strong><a href="https:\/\/example\.com\/bold"/);
+});
+
+test("autolinks escape attributes and never activate unsafe schemes or raw HTML", () => {
+  const markup = dialogue!.renderMarkdown(
+    'https://example.com/a?x=" onclick="alert(1) <img src=x onerror=alert(1)> ' +
+    'javascript:alert(1) data:text/html,evil ftp://example.com/a https:// https://[invalid]/a',
+  );
+
+  assert.equal((markup.match(/<a /g) ?? []).length, 1);
+  assert.match(markup, /href="https:\/\/example\.com\/a\?x="/);
+  assert.doesNotMatch(markup, /<img|<script|href="(?:javascript|data|ftp):|<a [^>]* onclick=/i);
+  assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
 test("confusion question enters the flow as a pure assistant turn", () => {
   const markup = dialogue!.renderTurnMarkup(
     {

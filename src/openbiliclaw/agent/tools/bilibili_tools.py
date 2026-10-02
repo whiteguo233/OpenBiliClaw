@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .common import clamp_int, maybe_await, require_component, short
+from .common import clamp_int, maybe_await, render_content_reference, require_component, short
 from .registry import Tool
 
 if TYPE_CHECKING:
@@ -38,6 +38,8 @@ def build_bilibili_tools(ctx: AgentToolContext) -> list[Tool]:
                 "查询本地记录的内容历史：clicked 已点击 / shown 已展示未点 / "
                 "removed 已移除或点踩 / favorite 收藏清单 / watch_later 稍后再看。"
                 "只读本地数据层，不触发真实抓取。"
+                "定位信息含内容 ID、平台和链接；推荐历史还含可用于 submit_feedback 的"
+                " recommendation_id（如存在），不要把列表序号当成 ID。"
             ),
             permission_level="read",
             parameters={
@@ -78,6 +80,7 @@ async def _get_watch_history(ctx: AgentToolContext, args: dict[str, Any]) -> str
                 else ""
             )
             + f" [{str(item.get('source_platform') or 'bilibili').strip().lower()}]"
+            + render_content_reference(item)
             for item in items
         ]
         return f"{label}的内容（最近 {len(items)} 条，共 {total} 条）：\n" + "\n".join(lines)
@@ -96,6 +99,7 @@ async def _get_watch_history(ctx: AgentToolContext, args: dict[str, Any]) -> str
                 else ""
             )
             + (f" 备注:{short(row.get('note'), 30)}" if str(row.get("note") or "").strip() else "")
+            + render_content_reference(row)
             for row in rows
         ]
         return f"{label}（{len(rows)} 条）：\n" + "\n".join(lines)

@@ -164,6 +164,10 @@ body.chat-view-active .back-to-top {
   gap: 12px;
 }
 
+@media (max-width: 360px) {
+  .status-right { gap: 6px; }
+}
+
 .status-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
@@ -1520,6 +1524,21 @@ body.chat-view-active .back-to-top {
   border-radius: 14px;
   background: var(--surface-strong);
 }
+
+.chat-pending[hidden] { display: none; }
+
+/* Keep the conversation and composer inside the keyboard's visual viewport.
+   Pending approvals stay reachable; only shell navigation is folded away. */
+body.chat-view-active.chat-keyboard-active {
+  position: fixed;
+  top: var(--chat-visible-top, 0px);
+  height: var(--chat-visible-height, 100%);
+}
+body.chat-view-active.chat-keyboard-active #status-bar,
+body.chat-view-active.chat-keyboard-active #tab-bar { display: none; }
+body.chat-view-active.chat-keyboard-active #app { padding-top: 6px; }
+body.chat-view-active.chat-keyboard-active .chat-pending { max-height: 28%; }
+body.chat-view-active.chat-keyboard-active .chat-input { max-height: 88px; min-height: 44px; }
 
 .chat-pending-toggle {
   flex: 0 0 auto;
@@ -3003,8 +3022,8 @@ body.auth-locked #tab-bar {
 }
 
 .chat-agent-skill-chip {
-  min-height: 32px;
-  padding: 4px 12px;
+  min-height: 44px;
+  padding: 4px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   background: var(--brand-soft);
@@ -3014,7 +3033,14 @@ body.auth-locked #tab-bar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  text-align: left;
 }
+
+.chat-agent-skill-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.chat-agent-persona-label { font-size: 11px; color: var(--text-secondary); }
 
 .chat-agent-session-title {
   flex: 1;
@@ -3310,6 +3336,31 @@ body.auth-locked #tab-bar {
 .agent-skill-row.is-active { border-color: var(--line-strong); background: var(--brand-soft); }
 .agent-skill-row-title { font-size: 13px; font-weight: 600; color: var(--text-main); }
 .agent-skill-row-desc { font-size: 12px; color: var(--text-secondary); }
+
+.agent-preferences-panel .agent-drawer-close { min-width: 44px; min-height: 44px; }
+.agent-preferences-panel .agent-drawer-list { min-height: 0; grid-auto-rows: max-content; }
+.agent-preference-tabs { display: flex; gap: 8px; padding: 8px 12px 0; }
+.agent-preference-tabs button {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 13px;
+}
+.agent-preference-tabs button[aria-selected="true"] { background: var(--brand-soft); border-color: var(--line-strong); }
+.agent-preference-hint, .agent-preference-status, .agent-preference-error {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.agent-preference-error { color: var(--danger, #c0392b); }
+.agent-persona-row { min-height: 44px; overflow-wrap: anywhere; }
+.agent-persona-row:disabled { opacity: 0.65; cursor: default; }
+.agent-persona-example { font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+.agent-persona-retry { min-height: 44px; }
 
 .agent-task-row {
   display: flex;

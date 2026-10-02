@@ -68,7 +68,7 @@ test("popup drives the agent stream first and falls back to the legacy stream on
 
 test("popup wires session switching, approvals, task center and summary cards", () => {
   assert.match(popupJs, /async function switchPopupChatSession\(/);
-  assert.match(popupJs, /fetchChatSessionDetail\(popupChatSessionId/);
+  assert.match(popupJs, /fetchChatSessionDetail\(sessionId/);
   assert.match(popupJs, /async function refreshChatApprovals\(/);
   assert.match(popupJs, /renderApprovalCardMarkup\(approval, \{ compact: true \}\)/);
   assert.match(popupJs, /async function refreshAgentTasks\(/);

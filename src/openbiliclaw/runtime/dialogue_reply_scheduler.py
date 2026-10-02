@@ -101,7 +101,12 @@ class DialogueExecutionCoordinator:
                     timeout,
                 )
                 if not admitted:
-                    raise DialogueLeaseTimeoutError()
+                    message = (
+                        "系统正在重载配置，请稍后再试。"
+                        if self._paused
+                        else "对话通道正忙，请稍后查看回复。"
+                    )
+                    raise DialogueLeaseTimeoutError(message)
             self._active = True
         try:
             yield

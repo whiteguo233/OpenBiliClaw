@@ -15,6 +15,7 @@ import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openbiliclaw.api.app import create_app, fallback_session_title, generate_session_title
@@ -234,6 +235,121 @@ def test_generate_session_title_falls_back_on_bad_json() -> None:
 # --- API integration ---
 
 
+def test_persona_catalog_and_session_preferences_are_independent_metadata(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    database = app.state.runtime_context.database
+    database.create_chat_session(session_id="old", metadata={"skill": "taste-explorer"})
+    with TestClient(app) as client:
+        catalog_response = client.get("/api/chat/personas").json()
+        assert catalog_response["example_prompt"] == "今天有点累，想休息。"
+        catalog = catalog_response["personas"]
+        assert [(item["id"], item["title"]) for item in catalog] == [
+            ("natural", "自然朋友"),
+            ("concise", "简洁直接"),
+            ("warm", "温柔倾听"),
+            ("playful", "轻松幽默"),
+            ("analytical", "理性分析"),
+            ("socratic", "循循善诱"),
+        ]
+        assert [item["id"] for item in catalog if item["default"]] == ["natural"]
+        assert all(
+            set(item) == {"id", "title", "description", "example", "default"} for item in catalog
+        )
+        assert all(item["description"] and item["example"] for item in catalog)
+        old = client.get("/api/chat/sessions/old").json()["session"]
+        assert old["metadata"] == {"skill": "taste-explorer", "persona": "natural"}
+        # Reads expose a default but do not rewrite existing session metadata.
+        assert database.get_chat_session("old")["metadata"] == {"skill": "taste-explorer"}
+
+        created = client.post(
+            "/api/chat/sessions",
+            json={
+                "session_id": "styled",
+                "metadata": {
+                    "persona": "warm",
+                    "skill": "system-steward",
+                    "nested": {"keep": True},
+                },
+            },
+        ).json()
+        assert created["metadata"]["persona"] == "warm"
+        for item in catalog:
+            changed = client.patch("/api/chat/sessions/styled", json={"persona": item["id"]})
+            assert changed.status_code == 200
+            assert changed.json()["metadata"] == {
+                "persona": item["id"],
+                "skill": "system-steward",
+                "nested": {"keep": True},
+            }
+        sessions = client.get("/api/chat/sessions").json()["items"]
+        assert {row["session_id"]: row["metadata"]["persona"] for row in sessions} == {
+            "old": "natural",
+            "styled": "socratic",
+            DEFAULT_CHAT_SESSION_ID: "natural",
+        }
+        assert (
+            client.patch("/api/chat/sessions/missing", json={"persona": "warm"}).status_code == 404
+        )
+
+    # Preference survives a new storage owner rather than an in-memory cache.
+    reopened = Database(tmp_path / "openbiliclaw.db")
+    reopened.initialize()
+    assert reopened.get_chat_session("styled")["metadata"]["persona"] == "socratic"
+    reopened.close()
+
+
+@pytest.mark.parametrize("invalid", ["unknown", "", " Warm ", None, 1, {"id": "warm"}])
+def test_invalid_persona_has_no_session_side_effects(tmp_path: Path, invalid: object) -> None:
+    app = _app(tmp_path)
+    database = app.state.runtime_context.database
+    database.create_chat_session(session_id="s", title="原名", metadata={"keep": 1})
+    before = database.get_chat_session("s")
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/chat/sessions/s",
+            json={
+                "persona": invalid,
+                "title": "不该改名",
+                "archived": True,
+            },
+        )
+        assert response.status_code == 422
+        assert database.get_chat_session("s") == before
+        response = client.post(
+            "/api/chat/sessions",
+            json={
+                "session_id": "invalid",
+                "metadata": {"persona": invalid},
+            },
+        )
+        assert response.status_code == 422
+        assert database.get_chat_session("invalid") is None
+
+
+def test_persona_write_preserves_latest_metadata_and_handles_old_values(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    database.create_chat_session(session_id="s", metadata={"persona": "old-template", "other": 1})
+    second = Database(tmp_path / "openbiliclaw.db")
+    second.initialize()
+    database.get_chat_session("s")
+    # An unrelated metadata writer may commit after an API preflight read.
+    second.conn.execute(
+        "UPDATE chat_sessions SET metadata=json_set(metadata, '$.other', 2) WHERE session_id='s'"
+    )
+    second.conn.commit()
+    assert database.set_chat_session_persona("s", persona="warm")
+    assert database.get_chat_session("s")["metadata"] == {"persona": "warm", "other": 2}
+    assert not database.set_chat_session_persona("missing", persona="warm")
+    for old_value in ("bad json", "[]", "null"):
+        second.conn.execute(
+            "UPDATE chat_sessions SET metadata=? WHERE session_id='s'", (old_value,)
+        )
+        second.conn.commit()
+        assert database.set_chat_session_persona("s", persona="concise")
+        assert database.get_chat_session("s")["metadata"] == {"persona": "concise"}
+    second.close()
+
+
 def test_session_endpoints_create_list_patch_get(tmp_path: Path) -> None:
     app = _app(tmp_path)
     with TestClient(app) as client:
@@ -242,7 +358,7 @@ def test_session_endpoints_create_list_patch_get(tmp_path: Path) -> None:
         session = created.json()
         session_id = session["session_id"]
         assert session["title"] == ""
-        assert session["metadata"] == {"skill": "口味伙伴"}
+        assert session["metadata"] == {"skill": "口味伙伴", "persona": "natural"}
         assert session["archived"] is False
 
         listed = client.get("/api/chat/sessions")

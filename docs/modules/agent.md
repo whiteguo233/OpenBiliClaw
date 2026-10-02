@@ -26,12 +26,31 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | M1 SOURCE_TOOLS 迁移 | ✅ | `agent/tools/source_tools.py` 是 probe_web_source / create_source / list_sources / toggle_source 的唯一事实来源（JSON Schema + 权限级：probe/list=read，create/toggle=hard_write）；`sources/tools.py` 保留 `SOURCE_TOOLS` 旧扁平结构与 `SourceToolDispatcher` 同步接口，委托同一组 handler |
 | M1 原生 function calling | ✅ | 见 [llm 模块](llm.md)：OpenAI 系 chat-completions flavor 原生 FC，其余 provider 走 prompt 模拟兜底 |
 | M1 多跳 AgentLoop | ✅ | `agent/loop.py`：`AgentLoop.run()` 异步生成器逐跳产出事件，默认 64 跳上限（`[agent]` 配置），超限后无工具收尾汇报 |
-| M2 SSE 流式接线 | ✅ | 新端点 `POST /api/chat/agent/stream` 真流式转发 `AgentEvent`；`SocraticDialogue.stream_agent_reply()` 复用 persona prompt / 历史 / 学习队列；loop 事件随 turn 落 `payload.agent_events`；旧 `/api/chat` 与 `/api/chat/stream` 保持共存 |
-| M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 也逐 token 输出；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
-| M3 v1 工具集（新增 Web probe 后 15 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
+| M2 SSE 流式接线 | ✅ | 新端点 `POST /api/chat/agent/stream` 真流式转发 `AgentEvent`；`SocraticDialogue.stream_agent_reply()` 复用 persona prompt / 历史 / 学习队列；除 `delta` 外的 loop 事件随 turn 落 `payload.agent_events`；旧 `/api/chat` 与 `/api/chat/stream` 保持共存 |
+| M2.5 token 级流式（issue #83） | ✅ | `LLMProvider.stream_complete()` / `stream_complete_with_tools()`（基类一次性回退，OpenAI 系 chat-completions flavor 真流式）→ `LLMService.stream_complete_with_native_tools()` / `stream_socratic_dialogue()` → `AgentLoop` 每跳产出 `delta` 事件（工具调用阶段内容同样逐 token 流出，该跳若带 tool_calls 则由 `thinking` 全文接管）→ SSE `delta` 事件（不落 `agent_events`）；`SocraticDialogue.respond_stream()` 让 legacy `/api/chat/stream` 与 CLI `chat` 在无工具配置下逐 token 输出（工具回合保持一次性最终回复）；registry 流式链只在**首个 delta 之前**允许 fallback（已吐字后失败直接上抛，避免重复文本） |
+| M3 扩展工具集（含 Web probe 共 18 个） | ✅ | 见下文「v1 标准工具集」：`AgentToolContext` + `build_agent_tool_registry()` 总装，read / soft_write / hard_write 三级权限，handler 全部防御性降级 |
+| 公开网页与聊天笔记 | ✅ | search_web/read_webpage 按需联网并保留来源；agent_notes 可检索、CAS 更正和审批删除，后续聊天按权限注入有界引用 |
+| 会话聊天风格 | ✅ | 六种表达模板独立于功能角色；会话持久化、发送时冻结，三端选择与示例预览，工具权限保持 |
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
 | M7 L2 审批门 | ✅ | `agent/approvals.py`：loop 拦截 hard_write 调用 → `approval_request` SSE 事件 + durable 审批记录（JSON 文件存储，免迁移）；`/api/chat/approvals` 端点批准（立即返回 + 后台任务二次 dispatch 真执行，幂等）/拒绝；审计落 `profile_update_ledger`。见下文「L2 审批门（M7）」 |
+
+## 聊天风格：与功能角色独立
+
+`agent/persona.py` 定义六个表达模板：`natural` 自然朋友（默认）、`concise` 简洁直接、
+`warm` 温柔倾听、`playful` 轻松幽默、`analytical` 理性分析、`socratic` 循循善诱。
+`GET /api/chat/personas` 返回标题、说明、同题回复示例与 `example_prompt`；模板不增加
+工具，所有权限仍由所选 skill 决定。用户可以组合任意功能角色和聊天风格。
+
+会话选择通过 `PATCH /api/chat/sessions/{id}` 的 `persona` 写入 `metadata.persona`；
+创建 agent chat turn 时冻结到服务端保留字段 `payload.agent_persona`，SSE、重试和
+后台恢复均读取冻结值。缺失或旧存量风格按 natural 处理，非法新选择返回 422。
+切换只影响新消息，不触发配置重载或额外 LLM 调用。
+
+公开 helpers：`resolve_chat_persona()` 读取兼容默认，`validate_chat_persona()` 校验
+新输入，`chat_persona_instruction()` 返回可选表达层。natural 维持原 prompt；显式
+其他风格优先于旧全局语气中冲突的表达规则，用户当前篇幅要求与事实、工具、审批规则
+始终优先。所有模板都保持简单问题简答，不强制追问或展开分析。
 
 ## 模块结构
 
@@ -40,6 +59,7 @@ agent/
 ├── loop.py              # AgentLoop + AgentEvent（多跳循环与事件模型，含 M7 审批拦截）
 ├── approvals.py         # ApprovalStore + ApprovalRecord（M7 审批台账，JSON 文件持久化）
 ├── orchestrator.py      # 既有空壳编排器（未接 loop）
+├── persona.py           # 独立表达模板目录（不授予工具权限）
 ├── skill.py             # SkillDefinition / SkillCatalog / SKILL.md 加载（M4）
 │                        # + 既有 Skill ABC / SkillRegistry 代码技能骨架（未使用）
 ├── tasks.py             # AgentTaskRunner + propose_suggestion / start_background_task 元工具（M6）
@@ -54,8 +74,10 @@ agent/
     ├── common.py        # 共享错误类型（组件缺失）与输出辅助
     ├── context.py       # AgentToolContext + build_agent_tool_registry（v1 总装）
     ├── skill_tools.py   # suggest_skill 元工具（agent 建议切换 skill）
+    ├── web_search_tools.py  # search_web：Exa 公开 MCP
+    ├── web_reading.py       # read_webpage：公开 URL 正文读取
     ├── profile_tools.py     # get_profile
-    ├── memory_tools.py      # read_memory / write_memory / search_history
+    ├── memory_tools.py      # read_memory / write_memory / delete_memory / search_history
     ├── recommendation_tools.py  # get_recommendations / query_discovery_pool
     ├── bilibili_tools.py    # get_watch_history（本地数据层）
     ├── feedback_tools.py    # submit_feedback / save_item（soft_write）
@@ -145,7 +167,7 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 工具所需的运行时组件引用（`database` / `soul_engine` / `memory_manager` /
 `recommendation_engine` / `config` / `event_ingress` / `saved_sync_service`，
 字段名与 `api/runtime_context.py` 对齐，生产接线在后续里程碑完成）。
-`build_agent_tool_registry(ctx)` 总装全部 15 个工具；除源管理与 Web probe 四工具
+`build_agent_tool_registry(ctx)` 总装全部 18 个工具；除源管理与 Web probe 四工具
 （构造期绑定 database，无 database 时不注册）外，所有工具始终注册，
 组件缺失时 handler 抛 `ToolComponentUnavailableError`，由 dispatch 映射为
 机器可读的 `handler_error` 结果回填模型。
@@ -153,23 +175,33 @@ result = registry.dispatch_sync("save_note", {...})  # 旧同步调用方
 | 工具 | 权限 | 说明 |
 |------|------|------|
 | `get_profile` | read | 当前生效画像（洋葱模型，`SoulEngine.get_profile()` ⊕ 用户覆盖，markdown 渲染） |
-| `read_memory` | read | 记忆五层读取（core 摘要或 event/preference/awareness/insight/soul 原始 JSON，可截断） |
+| `read_memory` | read | 记忆五层/core 摘要；layer=agent_notes 按 key/keyword 检索明确保存的笔记，offset 分页；精确查询保留完整 layer/key/value，转义导致过长时改用原文输出 |
+| `search_web` | read | 按公开 query 搜索网页，返回标题、完整 URL、摘要与来源，失败不伪装成无结果 |
+| `read_webpage` | read | 阅读 HTTP(S) 公开 HTML/文本，逐跳校验并绑定公开 IP，返回最终 URL、标题、正文和截断状态 |
 | `search_history` | read | 历史对话（`chat_turns` 新增 `Database.search_chat_turns()`）+ 行为事件（`query_events`）关键词/时间范围检索 |
-| `get_recommendations` | read | 推荐池头部只读预览（`get_pool_candidates` / `get_pool_candidates_for_platform`），不消耗池、不标记已展示 |
-| `get_watch_history` | read | 本地内容历史（clicked/shown/removed 投影）与收藏/稍后再看清单，不触发真实抓取 |
+| `get_recommendations` | read | 推荐池头部只读预览（`get_pool_candidates` / `get_pool_candidates_for_platform`），返回内容身份与完整链接供保存使用，不消耗池、不标记已展示 |
+| `get_watch_history` | read | 本地内容历史（clicked/shown/removed 投影）与收藏/稍后再看清单，返回内容身份及实际推荐记录 ID（如有），不触发真实抓取 |
 | `query_discovery_pool` | read | discovery 候选池库存：可服务数、待处理数、有货平台、可选抽样 |
 | `get_config` | read | 配置只读，api_key/cookie/token/password 等键递归打码 |
-| `list_sources` | read | 订阅源列表（M1 已有） |
-| `write_memory` | soft_write | 写记忆到各层 `agent_notes` 命名空间（event/preference/awareness/insight），不覆盖引擎字段，soul 层禁写 |
+| `list_sources` | read | 订阅源列表，含 ID、查询词/URL，支持区分同名订阅后精确开关 |
+| `write_memory` | soft_write | 写记忆到各层 `agent_notes` 命名空间（event/preference/awareness/insight），更正现有项必须提供匹配的 expected_value，不覆盖引擎字段，soul 层禁写 |
 | `submit_feedback` | soft_write | 推荐反馈（like/dislike/dismiss/comment），复用 `POST /api/feedback` 同款 durable 事件流入（event_ingress 幂等 + 推荐行投影 + 轻量认知钩子） |
 | `save_item` | soft_write | 本地收藏/稍后再看（`SavedSyncService.save_local(auto_sync=False)`，不同步平台账号） |
 | `probe_web_source` | read | 只读探测公开 URL；可用 strategy 筛选方案，返回一个候选、可选策略、最多两个样例与完整 `create_source_arguments`，结果控制在默认 4000 字符内 |
 | `create_source` | hard_write | 创建订阅源；`source_type="web"` 使用共享 typed compiler 校验扁平参数；确认卡批准后才保存，重复相同 recipe 返回已有来源且不重新启用已停用项 |
+| `delete_memory` | hard_write | 按 layer/key/expected_value 删除一条聊天笔记，批准时再次核对原值；不删除聊天历史或系统画像 |
 | `toggle_source` | hard_write | 订阅源开关（M1 已有） |
-| `update_config` | hard_write | 配置修改（M7 起真写入）：白名单内已存在标量键（文本/数字/布尔），密钥类与路径/存储类一律拒绝；批准后经 `config_persist_hook` 落 config.toml（失败回滚）并触发 `config_reload_hook` 热重载 |
+| `update_config` | hard_write | 配置修改（M7 起真写入）：白名单内已存在标量键（文本/数字/布尔），密钥类与路径/存储类一律拒绝；批准后经 API `config_update_hook` 提交单字段补丁，复用设置页保存锁、应用队列与 last-good 回滚；实际热重载失败会返回失败并结束审批为 failed |
 
-上下文策略是「不塞数据，给入口」：工具按需查询系统数据，结果全部有
-长度上限（截断并标注）。
+大体量画像/历史由工具按需查询，结果有长度上限。少量显式保存的聊天笔记
+通过 `render_agent_notes_prompt()` 作为有界 JSON 引用进入当前用户上下文；只有
+chat scope 且当前角色含 read_memory 才注入，不进入 system 指令或学习原始消息。
+
+内容读取工具在每条摘要后提供 JSON「定位信息」：`content_id` /
+`source_platform` / `content_url` / `content_type` / `title` / `author_name`
+保留原始身份和完整链接，供模型继续调用 `save_item`。历史投影中存在真实
+`recommendation_id` 时一并返回，供 `submit_feedback` 使用；未展示的推荐池
+候选不伪造推荐记录 ID，也不能把列表序号或缓存键用作反馈 ID。
 
 ### 对话新增 Web 来源（capability increment）
 
@@ -222,18 +254,19 @@ source=builtin|custom）与 `SkillCatalog`（`get` / `default` /
 
 | name | 显示名 | 工具白名单 |
 |------|--------|-----------|
-| `taste-companion` | 口味伙伴（默认） | read + soft_write，并允许 `probe_web_source` 与需确认的 `create_source / toggle_source`；可直接在日常对话中新增 Web 来源 |
-| `taste-explorer` | 口味探寻师 | get_profile / read_memory / write_memory / search_history / submit_feedback（苏格拉底式追问人设） |
-| `bangumi-advisor` | 追番顾问 | get_profile / read_memory / get_recommendations / get_watch_history / save_item / submit_feedback |
-| `system-steward` | 系统管家 | probe_web_source / list_sources / get_config + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
+| `taste-companion` | 口味伙伴（默认） | 原有查询/反馈/收藏 + search_web/read_webpage/probe_web_source + 可审批的 delete_memory/create_source/toggle_source；可在日常对话中新增 Web 来源 |
+| `taste-explorer` | 口味探寻师 | get_profile / read_memory / write_memory / delete_memory / search_history / submit_feedback / search_web / read_webpage（访谈角色） |
+| `bangumi-advisor` | 追番顾问 | get_profile / read_memory / get_recommendations / get_watch_history / save_item / submit_feedback / search_web / read_webpage |
+| `system-steward` | 系统管家 | probe_web_source / list_sources / get_config / search_web / read_webpage + hard_write 三件套（create_source / toggle_source / update_config；人设强调改动需用户批准） |
 
 **会话绑定与切换**：`POST /api/chat/agent/stream` 请求体新增可选 `skill`
 字段（空 = 默认口味伙伴，未知名返回 422）。选中 skill 后：loop 的工具集 =
 `agent_tool_registry.subset(skill.tools)` + `suggest_skill` 元工具；system
-prompt = 基础 socratic 人设 ⊕ skill 人设 ⊕ 其他 skill 清单
+prompt = 按当前请求调整深度的共享聊天人设 ⊕ skill 人设 ⊕ 其他 skill 清单
 （`_layer_skill_system_prompt()`，dialogue.py）⊕ **Agent 工作纪律**
 （`_AGENT_LOOP_GROUND_RULES`，所有 skill 共享的三条硬约束：① 工具纪律——
-需要数据必须实际发起 tool_call，严禁在正文描述/编造工具调用与结果，没调
+已有对话足以回答时无需为补充背景查询画像或记忆，仅查必要数据并复用本轮结果；
+需要查询或修改数据必须实际发起 tool_call，严禁在正文描述/编造工具调用与结果，没调
 工具就不得声称查过/改过；② 记忆归属——记忆/画像/历史来自跨会话共享底座，
 无明确依据不得断言行事发生在本对话；③ 会话边界——「本对话/第一回合」指
 当前会话，上下文窗口只是当前会话近期）。会话中切换就是下一回合带
@@ -241,6 +274,14 @@ prompt = 基础 socratic 人设 ⊕ skill 人设 ⊕ 其他 skill 清单
 （`agent/tools/skill_tools.py`）：模型输出工具调用（`skill` + `reason`），
 前端把该 `tool_call` 事件渲染成切换卡片，用户确认后以下一回合的 `skill`
 字段生效——agent 自身不能切换。skill 列表见 `GET /api/chat/skills`。
+
+共享聊天人设由 `build_socratic_dialogue_prompt(..., socratic=False)` 提供：简单问题
+直接答清楚，寒暄/致谢一句结束，简单事实给结果；尊重用户指定长度，每句只保留必要要点，
+不把长串逗号/括号当作简答。摘要默认不输出内部置信度/权重，但保留影响结论的不确定性；
+复杂任务充分分析并执行必要步骤。澄清只针对影响
+正确性/执行的缺口或当前访谈角色的探索需求，不给每个角色叠加无条件的苏格拉底追问。
+`taste-explorer` 自身的访谈职责不变。此调整在原有模型调用中生效，没有关键词路由
+或额外分类调用，不降低工具、步数、输出 token 或实例 reasoning 预算。
 
 ### 服务层入口
 
@@ -269,7 +310,7 @@ prompt = 基础 socratic 人设 ⊕ skill 人设 ⊕ 其他 skill 清单
 | `step_limit_reached` | `type` / `step` / `text` | 达到步数上限时发一次，**随后必跟一个 `final`**（无工具收尾汇报） |
 | `final` | `type` / `step` / `text` | 最终答复，每个 run 恰好一个；发完后流进入收尾 |
 | `done` | `reply` / `turn_id` / `skill` | 终端事件（端点级，非 loop 事件）；`reply` 即 `final.text`，`skill` 是本回合实际生效的 skill 名 |
-| `error` | `error` | 失败的唯一事件（安全文案），发出后流结束；LLM 异常时带 `turn_id` 的 turn 置为 `failed`。租约准入超时（热重载窗口，30 秒预算）时文案为「系统正在重载配置，请稍后再试」，此时 loop 未开始、turn **保持 pending** 并由兜底 worker 在 lane 恢复后重跑 agent loop 完成 |
+| `error` | `error` | 失败的唯一事件（安全文案），发出后流结束；LLM 异常时带 `turn_id` 的 turn 置为 `failed`。租约准入超时（30 秒预算）按 paused/active 区分「正在重载配置」与「对话通道正忙」，此时 loop 未开始、turn **保持 pending** 并由兜底 worker 在 lane 恢复后重跑 agent loop 完成 |
 
 `step` 从 1 开始编号。turn 落库时关键步骤（含 thinking / tool_call /
 tool_result / approval_request / step_limit_reached / final）以相同 dict 结构写入
@@ -278,10 +319,12 @@ tool_result / approval_request / step_limit_reached / final）以相同 dict 结
 实时渲染，**不写入** `agent_events`（避免每轮数百条片段撑大 turn 行），回放文本
 由 `thinking` / `final` 全文重建。
 streaming turn 创建时服务端在 payload 写入 `agent_stream`（+ 可选 `agent_skill`）
-标记（属客户端不可伪造的保留键）：交互流断连后由 durable 兜底 worker
-完成的这类 turn 会**重跑同一多跳 loop**（同 skill、同工具子集）并把事件流
-落进 `agent_events`，回放行为与交互路径一致；agent loop 未接线的降级
-runtime 才退回 legacy 单跳回复。
+标记（属客户端不可伪造的保留键）：同进程交互流断连后，API 持有的执行任务
+继续运行原 loop，逐事件落 `agent_events` 并完成 turn。重复请求在对话租约内
+重新读取终态，直接重放已存事件和回复。尚未开始执行或进程重启留下的 pending
+turn 由 durable worker 使用原 skill 补答；进程崩溃仍遵循至少一次恢复语义，
+不能把网络断连的去重保证理解为跨崩溃的工具 exactly-once 保证。
+未知 turn 返回 404，消息、会话或 skill 冲突返回 409。
 
 交互流与兜底 worker 在同一个对话执行 lease 内重读 durable turn。若轮询先完成
 该回合，或客户端重试已完成的流请求，服务端回放已存的 `agent_events`
@@ -293,7 +336,11 @@ runtime 才退回 legacy 单跳回复。
 
 ### L2 审批门（M7）
 
-hard_write 工具（create_source / toggle_source / update_config）在 agent loop
+系统管家在用户改动目标和参数明确后直接调用写工具生成审批卡；该调用只提交
+提案。用户在卡片上批准才触发执行，无须先在聊天中重复口头确认。回复中仅在
+取得真实审批 ID 后声称卡片已生成。
+
+hard_write 工具（create_source / toggle_source / update_config / delete_memory）在 agent loop
 里**绝不直接执行**：接线了 approval gate 的 `AgentLoop` 拦截这类调用，把
 「待批准动作」登记进 `ApprovalStore`（`agent/approvals.py`），流出
 `approval_request` 事件，并把「此操作需用户批准，已提交审批 #id」作为
@@ -307,11 +354,17 @@ hard_write 工具（create_source / toggle_source / update_config）在 agent lo
 HTTP 请求内同步执行；前端轮询 `GET /api/chat/approvals` 观察
 `executing → executed / failed` 的进展。
 
+审批登记前先校验工具 JSON Schema；参数错误作为 `ok=false` 的工具结果
+回填模型修正，不生成注定执行失败的审批卡。
+
 **存储**：`ApprovalStore` 是单 JSON 文件存储（`{data_dir}/chat_approvals.json`，
 tmp + os.replace 原子写，进程内 threading.Lock 串行化），刻意不动
 `storage/database.py`（免迁移）；`path=None` 时为纯内存（测试）。生产接线
-（`api/runtime_context.py`）在热重载间**复用同一 store 实例**（ backing 文件
-路径相同即保留），保证状态机只有一份内存权威；读路径（get/list）只在惰性
+（`api/runtime_context.py`）在热重载间**复用同一 store 实例**：文件从
+`Config.data_path` 定位，按规范路径比较，项目相对路径和符号链接别名（例如
+macOS 的 `/tmp` 与 `/private/tmp`）指向同文件时仍保留实例，避免配置批准
+触发重建时误走崩溃恢复、把 `executing` 回退为 `approved`，保证状态机只有
+一份内存权威；读路径（get/list）只在惰性
 过期真的改变了记录时才落盘，避免热重载窗口内并存的旧实例把文件写回旧态。
 记录字段：approval_id（`ap_*`）/ tool_name / arguments / summary（做什么）/
 reason（为什么，取参数的 `reason`）/ impact（影响说明，来自 `Tool.impact_hint`）/
@@ -343,10 +396,12 @@ best-effort：台账写入失败不阻塞审批动作。
 true/false/1/0/yes/no/on/off）；键任一段命中密钥类标记（api_key / cookie /
 token / secret / password / credential / sessdata / access_key）或路径/存储类
 标记（dir / path / file / database 分词匹配，外加显式 `data_dir`）一律拒绝。
-写入顺序：改 live Config → `config_persist_hook` 落盘（失败即回滚内存值并抛错）
-→ `config_reload_hook` 触发热重载（生产接线 = app 层
-`_rebuild_runtime_with_lane_handoff`，经 `ctx.config_reload_delegate` 委托；
-未接线时结果文案注明重启后生效）。
+写入顺序：内存副本校验 → API `config_update_hook(key, value)` → 锁内加载最新磁盘配置并应用单字段补丁 → 快照/保存 → 同一 config apply queue → 等待实际生效或回滚。成功才更新 last-good；等待期间不改 live Config，失败/被较新修订替代均返回失败。脱离 API 的兼容调用仍使用 persist/reload hooks；reload 失败时补偿保存旧配置并尝试恢复旧运行时，保留原始错误。任一补偿失败会分别报告文件或运行时恢复失败，避免把部分写入当作已完整回滚。
+
+落盘前必须通过 `validate_runtime_config`，无效 provider 等配置不能破坏现有
+可用配置；校验失败与持久化失败均回滚原值。非有限数字（NaN/Infinity）和
+私有属性路径一律拒绝。白名单、字段与类型校验失败均返回 `ok=false`，使
+审批准确落到 `failed`，不会显示为已经执行成功。
 
 ### 任务中心（M6，durable 后台任务）
 
@@ -396,16 +451,22 @@ skill?)` 元工具（read 级、无副作用，注册进每个 skill 子集，�
   bypass_semaphore=True, approval_gate=chat_approval_store)`（M4 起从 M1 的源管理
   三工具升级为全量 v1 工具集；M7 起挂审批门），同时暴露
   `ctx.agent_tool_registry`（端点按 skill 做 `subset()`）、`ctx.agent_tool_context`
-  （M7：update_config 的 persist/reload hook 载体）、`ctx.chat_approval_store`
+  （M7：update_config 的统一 apply hook 与兼容 persist/reload hook 载体）、`ctx.chat_approval_store`
   （M7：`{data_dir}/chat_approvals.json`）与 `ctx.skill_catalog`
   （内置 + `data/skills/`），随热重载原子 swap；`ctx.config_reload_delegate`
   由 `create_app` 启动时一次性指向 `_rebuild_runtime_with_lane_handoff`，
   不随 rebuild 覆盖。
+- API 的 `_bind_runtime_lane_dependencies()` 在启动和热重载后把 app-owned
+  `EventIngressService` 接到当前 `agent_tool_context.event_ingress`，确保反馈工具
+  使用与 HTTP 反馈端点相同的持久化、幂等和认知唤醒入口；同时接入统一
+  `config_update_hook`，批准后的配置修改与设置页使用同一应用和回滚事务。
 - 端点在 `DialogueExecutionCoordinator` 租约内运行整个 loop（与旧单跳路径
   串行），历史与学习由 `SocraticDialogue.stream_agent_reply()` 在
   `_respond_lock` 下完成：user turn 先 append（失败回滚）、socratic system
   prompt 作为 loop 的 system instruction、完成后 append agent 答复并按
   learning mode 提交学习任务。
+- Agent 短期历史按 `session_id` 从 durable turns 恢复，长期画像和记忆共享；
+  canonical binding 同时进入模型 prompt、学习任务和回复后的对象结算。
 - `[agent] loop_enabled = false` 时端点返回 503；旧端点不受影响。
 
 ## 配置
@@ -415,7 +476,6 @@ skill?)` 元工具（read 级、无副作用，注册进每个 skill 子集，�
 `session_title_enabled`（默认 true）、`task_max_steps`（M6 后台任务跳数预算，
 默认 32）。
 
-
 ### 旧版聊天与 Web 确认边界
 
 `SOURCE_TOOLS` 保留三个同步工具；异步 `probe_web_source` 只在 AgentLoop 中注册。
@@ -424,3 +484,19 @@ recipe，并引导到支持确认卡的新版聊一聊或设置页，防止从�
 其他平台原有同步行为保持兼容。Web probe 根据当前 `agent.tool_result_max_chars`
 预算返回一个完整候选；长样例先整体省略，创建计划本身超预算则明确失败，不向模型发送
 截断的 JSON 或残缺的创建参数。
+
+### 公开网页与笔记操作边界
+
+`search_web` 使用固定 Exa 公开 MCP 端点 `https://mcp.exa.ai/mcp`，复用现有
+Exa 结果解析器与 `[network]` 出站路由，不依赖本机 mcporter 或新增密钥配置。公开端点有上游限流，依据 [Exa 官方 MCP 文档](https://exa.ai/docs/get-started/exa-mcp)。
+仅发送模型为本次请求给出的 query；没有后台自动附加画像、历史或笔记的逻辑。
+上游限流、协议错误、超时与真正空结果分别报告，不隐式串联多家服务拉长等待。
+
+`read_webpage` 只读取公开 HTTP(S) 的 HTML/纯文本；不会执行页面 JavaScript、
+携带登录 Cookie、访问私网或读取本地文件。每次重定向重新校验地址，连接固定
+到已验证的公开 IP，同时验证原域名 TLS 证书。体积、时间与跳转数均有上限。
+搜索摘要和网页正文都是引用资料，不成为工具授权或修改记忆的指令。
+
+三端继续使用现有工具过程、Markdown 来源链接及审批卡；CLI `chat` 和 OpenClaw
+legacy 对话不切换到 AgentLoop，不在本次新增工具覆盖范围。后台任务保持 read-only，
+可查询公开网页，但不会直接写/删记忆。

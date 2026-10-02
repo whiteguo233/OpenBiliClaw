@@ -317,8 +317,19 @@
                 <span id="chatSkillName">口味伙伴</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
               </button>
+              <button class="chat-persona-chip" id="chatPersonaChip" type="button" aria-expanded="false" aria-controls="chatPersonaPicker" title="选择当前会话的聊天风格">
+                <span>风格 · <span id="chatPersonaName">自然朋友</span></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
               <span class="chat-session-name" id="chatSessionName"></span>
             </div>
+            <section class="chat-persona-picker" id="chatPersonaPicker" aria-label="选择聊天风格" hidden>
+              <div class="chat-persona-heading"><h3>聊天风格</h3><button class="pill-btn" id="chatPersonaClose" type="button">收起</button></div>
+              <p class="chat-persona-help">选择阿B说话的方式，角色继续决定能帮你做什么。保存后用于当前会话的下一条消息。</p>
+              <div id="chatPersonaOptions"></div>
+              <div class="chat-persona-preview" id="chatPersonaPreview" aria-live="polite"></div>
+              <div class="chat-persona-footer"><p id="chatPersonaStatus" role="status" aria-live="polite"></p><button class="pill-btn primary" id="chatPersonaSave" type="button">应用到当前会话</button></div>
+            </section>
             <div class="dialogue-pending">
               <button id="desktopPendingToggle" type="button" aria-expanded="false" aria-controls="desktopPendingConfirmations">
                 <span class="dialogue-pending-toggle-title">待聊确认 <span class="dialogue-pending-toggle-count" id="desktopPendingCount">0</span></span>
@@ -1799,6 +1810,7 @@
        status, the setup wizard); served from /shared because /web is rooted at
        web/desktop. -->
   <script src="/shared/dialogue-confirmation.js" defer></script>
+  <script src="/shared/agent-chat.js" defer></script>
   <script src="/shared/source-status.js" defer></script>
   <script src="/web/assets/js/chat-agent-core.js" defer></script>
   <script src="/web/assets/js/app.js" defer></script>

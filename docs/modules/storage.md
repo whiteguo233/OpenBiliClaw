@@ -73,6 +73,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |
 | 推荐读取事务内复用 | ✅ | 隔离快照和库存读取复用同一事务的动态阈值及相同 SQL 原始行；每次仍执行完整资格过滤与独立 topic window，事务结束清空。 |
 | Tailnet 节点身份 / helper / 待用凭据迁移隔离 | ✅ | `data/tailnet/` 同时属于导出排除根与目标应用保留根；`.obcbackup` 不含 tsnet 私钥、状态或 `.bootstrap-credential.json`。后者只在本机设置页提交后以私有权限等待下一次启动，仅在 helper 进入 `ready` 后删除（失败/卡住保留以便重试）。目标保留根含嵌套 symlink 时 fail closed。`data/bin/` 的任何大小写变体在导出与导入都被排除；只保留目标机 exact native helper 普通文件，POSIX 还要求原文件可执行再恢复 `0700`，来源包不能迁入 executable。 |
 | 观看完播判定（2026-07-27+） | ✅ | `events.inferred_satisfaction` 现在也覆盖 `view`：`sources/event_format._classify_view_completion` **只判正向**——完播 ≥`_FINISHED_WATCH_MIN_RATIO`（0.8）且观看 ≥15 秒记 `positive/finished_watch`，其余保持 `unknown/fallback`。低完播刻意不判负（自动播放 / 误点 / 预告 / 重看进度重置都长这样），否则会污染 `recent_negative_exemplars` 并影响内容评估。阈值校准见常量注释；改动 `watch_seconds` 来源后需重新校准 |
@@ -89,6 +90,7 @@
 | Turn relation + immutable binding（2026-08-01） | ✅ | `chat_turns.reply_to_turn_id TEXT NOT NULL DEFAULT ''` 与普通索引采用 additive、幂等迁移；旧行保持空 relation。API 在 capture canonical target 后同步写 user row，`payload.dialogue_binding` 只保存 server-owned `bound/ordinary/detached` binding 与完整 digest；客户端同名事实不会直接写入。context preview 是只读查询，retry 比较已存 normalized request，避免同 turn id 改 target、message 或 generation。 |
 | Durable reply CAS 与完整恢复扫描 | ✅ | `complete_chat_turn()` / `fail_chat_turn()` 都以 `WHERE status='pending'` compare-and-swap 并返回是否真正改变一行，重复 completion、迟到 failure 与崩溃后重放不能覆盖首个可见终态。`list_pending_chat_turn_page(after_rowid, limit)` 以不可变 rowid 分页，startup 不再静默截断 1000 条；`count_pending_chat_turns()` 提供 runtime status 的真实 backlog。取消、provider/config/timeout/rate-limit 等瞬态错误不调用 failure CAS，row 保持 pending 供同一 app worker 或下次进程恢复。 |
 | Agent loop 事件流随 turn 落库（M2） | ✅ | `store_chat_turn_agent_events(turn_id, events=...)` 用 `json_set` 把 `POST /api/chat/agent/stream` 一次运行的整段 `AgentEvent.to_dict()` 序列（thinking / tool_call / tool_result / step_limit_reached / final）写入 `chat_turns.payload.agent_events`（JSON 数组），供历史回放；复用 payload JSON 列，无 schema 迁移。`agent_events` 是 server-owned 键，`ChatTurnIn` 拒绝客户端伪造同名 payload |
+| 会话风格持久化 | ✅ | 复用 `chat_sessions.metadata.persona`，`set_chat_session_persona()` 通过 SQL JSON 单键原子更新保留其他 metadata；无需迁移。回合风格存 `chat_turns.payload.agent_persona`，不随会话后续选择变化 |
 | 多会话模型 `chat_sessions`（M5） | ✅ | `chat_sessions(session_id PK, title, archived, metadata JSON, created_at, updated_at, last_message_at)` 承载「聊一聊」会话实体；`metadata` 是 additive JSON bag，预留 skill 绑定字段（M4 约定）。`chat_turns.session_id TEXT NOT NULL DEFAULT ''` 由 `_ensure_chat_turns_table()` 幂等补列并建 `(session_id, created_at, turn_id)` 索引，旧行保持 `''`、由默认会话（well-known `session_id='default'`，初始化时 `ensure_default_chat_session()` 保证存在，可改名、不可归档）收编——默认会话的归属谓词为 `session_id IN ('', 'default')`，历史全部保留可查。CRUD：`create_chat_session()`（幂等）/ `get_chat_session()` / `list_chat_sessions()`（按 `last_activity` = COALESCE(last_message_at, 最新 turn created_at, updated_at) 倒序，并列时 turn_count 多的在前；每行带 120 字符 `last_message_preview`、`turn_count`、`active_turns`=pending 数）/ `rename_chat_session()` / `set_chat_session_archived()`（归档默认会话抛 `ValueError`）。`create_chat_turn(session_id=...)` 落归属并 bump `last_message_at`，`complete/fail_chat_turn()` 的 CAS 成功后同步 bump 所属会话活跃时间。`list_chat_turns_by_session(session_id, scope, limit, offset)` 返回 `(display-order rows, total)` 供详情分页。 |
 | Durable 任务中心 `agent_tasks`（M6，schema v8） | ✅ | `agent_tasks(task_id PK, session_id 来源会话, title, prompt, status, skill, progress 摘要, report, suggestions JSON, steps JSON, error, created_at, started_at, finished_at, updated_at)` + `(status, created_at)` / `(session_id, created_at)` 索引；`_ensure_agent_tasks_table()` 幂等建表，schema version 7 → 8。`status` ∈ pending/running/completed/failed/cancelled/**interrupted**（服务重启/热重载中断，终态不自动恢复）。`steps` 是内联 JSON 数组执行记录（AgentEvent 形状），上限 200 条 / 200_000 字符、单条 text ≤2000 字符，超限以 `steps_truncated` 标记收尾；`suggestions` 上限 20 条；`report` ≤8000 字符。CRUD：`create_agent_task()`（幂等）/ `get_agent_task()` / `list_agent_tasks(status, session_id, limit, offset)` 返回 `(newest-first rows, total)`，非法 status 抛 `ValueError` / `update_agent_task_status()`（CAS，默认只允许从 active 态转移，入 running 打 `started_at`、入终态打 `finished_at`）/ `append_agent_task_step()`（终态拒写，顺带更新 `progress`）/ `set_agent_task_report()`（CAS 从 active 态落 completed + report + suggestions，迟到报告不覆盖先到的取消/失败）/ `interrupt_stale_agent_tasks()`（启动时把上一进程遗留的 pending/running 标 interrupted）。任务完成/失败后由 runner 往来源会话写 `payload.type="agent_task_summary"` 的 durable chat turn 作汇总消息。 |
 | 态势门控 shadow 采数 + 代理折价（v0.3.176+） | ✅ | 认知画像流水线 Phase 3 / Wave B 遗留。`posture_gate_shadow_stats()` 从 `profile_update_ledger` 汇总 enforce save-time 校验所需的 shadow 判定统计：最早**有效**判定时间（`gate_verdict IN (shadow_accept, shadow_downgrade, shadow_reject)`，不含 `shadow_error`）+ 近 14 天 / 近 7 天有效判定数。`discount_events_by_confusion(evidence_refs)` 对可解析为事件 id 的 `evidence_refs` 关联 events 行 patch `metadata.discounted_by_confusion=true` + `signal_strength` 折至 0.2（`sources/event_format.apply_confusion_discount`，幂等）；非 id ref 跳过，不删行、不改其它列。供疑惑 `proxy_behavior` 出口调用。 |
@@ -136,6 +138,10 @@ fresh servable pool predicate，并可按 embedding fingerprint、正维度和 s
 增量补列，旧的无 provenance 行不会被当作当前 embedding namespace 的完成结果。
 
 ## 公开 API
+
+`Database.set_chat_session_persona(session_id, persona=...) -> bool` 原子保存一个会话的
+表达风格，保留 metadata 其他字段，更新 `updated_at`，不存在时返回 false。API 层
+负责验证预设 ID；会话风格不改变已有 turn，创建时冻结的 `agent_persona` 供恢复使用。
 
 ### Durable event ingress 回执
 
@@ -188,9 +194,15 @@ changed = db.complete_chat_turn(turn_id, reply=reply)  # pending -> completed CA
 failed = db.fail_chat_turn(turn_id, error=safe_error)  # pending -> failed CAS
 page = db.list_pending_chat_turn_page(after_rowid=0, limit=500)
 depth = db.count_pending_chat_turns()
+visible_refs = db.get_chat_confirmation_refs(session="popup")
 ```
 
 两个终态写都只允许 pending 行变化并返回 `bool`；调用方在 `False` 时重读行，已有终态视为幂等完成，仍为 pending 则按持久化瞬态故障重试。恢复 page 按 rowid 严格升序，不能用 `created_at` 单独排序（SQLite 时间戳可能同秒）。
+
+`get_chat_confirmation_refs()` 返回该 surface 中已完成且仍活动的确认对象 ref
+集合：hypothesis card 必须为 pending/discussing，confusion 必须是 question，
+且 `payload.ref` 与 `subject_id` 一致。API 每轮读取此集合后过滤已打开对象；
+不会缓存卡片状态，也不改变其它 surface 的可见性。
 
 ### 对象结算 winner 收据
 

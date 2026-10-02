@@ -18,6 +18,10 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 已实现功能
 
+已知聊天配置局部应用：配置队列只在完整候选差异限于已知五项 agent 字段时替换 loop，保留所有后台 owner；严格相等的配置直接完成修订。白名单外差异仍安全排空后完整重建。
+
+资格来自显式聊天配置审批；普通设置保存保持完整重载，以应用 Cookie jar 等配置对象外的变化。合并 pending 修订或接替失败修订时保留完整重建要求。
+
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
@@ -27,7 +31,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 桌面应用统一品牌图标 | ✅ | Windows 安装包 / EXE 使用多尺寸 `packaging/icon.ico`，macOS `.app` 使用完整 iconset 生成的 `packaging/icon.icns`；系统托盘与 macOS 菜单栏从随包 Web 资源 `openbiliclaw/web/icon-192.png` 加载同一官方图标。Windows PyInstaller 启动页直接复用最新品牌源图，并以 560×280 深色渐变卡片展示启动状态、活动进度轨及从 `pyproject.toml` 读取的当前版本号；CJK 字体不可用时保持英文降级。桌面容器与托盘保留去白边后的透明外缘；浏览器标签使用独立 32px 满幅品牌粉 favicon 并以版本 URL 规避旧缓存，页面头图用品牌粉背景承接透明圆角。 |
 | 对话结算单队列生命周期（Wave 1–3） | ✅ | 每个 API runtime generation 只安装一个 `dialogue_settlement_queue`、一个 exhaustive typed dispatcher 与一个 actual worker。11 个 kind 的生产入口已全部 cutover：queued dialogue learning/settles、卡片 confirm/reject/discuss/defer、pending-open/anchor、GET reconcile、probe/confusion reply、confusion open/replay 与 legacy façade 都只 submit；guard 已装到 protected mutator façade，request task 与 inherited-context child 均 fail closed。`card.reconcile` 只在 worker 内补 applied receipt 的 stable audit/projection/exact-generation publication，或把无活锚 orphan discussion 恢复为 pending；没有 restart scanner。队列 self-owned、非 durable、不进入 `BackgroundTaskRegistry`，`create_app()` 注入真实 queued dialogue时采用同一实例。卡片 action 只 shield 等待 1 秒：本地完成返回 200，队头阻塞返回 202 而 job 继续；进程重启丢失未执行 job 后由 action retry/GET reconcile 重新 admission。热重载先保持 old queue 可受理并 drain，最迟等待 25 分钟；队列真正空闲后才无 await 原子切到 paused，再 exact revoke old permit → start/register new → publish new → shutdown old，避免等待期间丢弃用户点击。构造/注册失败只在 permit 单槽为空时用 fresh nonce 恢复 old。CLI/OpenClaw 不属于该 runtime，显式使用 `legacy_direct`，不享受 queue/receipt/guard 保证。上线只观察 queue depth/oldest age、action wait、202 比例与 retry；连续 7 天 `202 >1%` 或 p95 `>5s` 才另开分析，不预埋第二队列。 |
 | Durable reply binding admission（2026-08-01） | ✅ | 带 `reply_to_turn_id` 的 API 请求在首次 user row INSERT 前同步解析 completed card/question 与 queue logical snapshot；capture 与 insert 之间无 `await`，后续 A→B replacement 只能让 A 在学习时 stale-drop，不能改绑 B。`_complete_durable_chat_turn()` 从 row 恢复 binding，bound/ordinary/detached 分别保持 exact、普通和禁止 object settle 的语义；队列仍是进程内非 durable。 |
-| Durable reply lane 与 app-stable dialogue lease | ✅ | `DialogueExecutionCoordinator` 由 FastAPI app 持有，不随 `RuntimeContext` 热重载替换；durable worker、惊喜 chat、legacy chat、兴趣/避雷探针共享 max-active=1 lease，并在 admission 后才解析当前 dialogue/speculator。`DurableChatReplyScheduler` 只有一个 worker，按 SQLite rowid 恢复/执行全部 pending，瞬态失败原位指数退避以阻止后序 overtaking；shutdown/cancel 不写 failed，重启继续。热重载先 pause admission + drain active，再发布新 context；超时自动 resume old 且 rebuild 零调用。`runtime-status` 的 `chat_reply_depth` 读取 durable pending count，另暴露 active/last_error/processed，不含消息内容。该 reply lane 与 `DialogueSettlementQueue` 正交：前者拥有模型回复/可见 CAS，后者拥有回复后的 typed learning/settlement。 |
+| Durable reply lane 与 app-stable dialogue lease | ✅ | `DialogueExecutionCoordinator` 由 FastAPI app 持有，不随 `RuntimeContext` 热重载替换；durable worker、惊喜 chat、legacy chat、兴趣/避雷探针共享 max-active=1 lease，并在 admission 后才解析当前 dialogue/speculator。`DurableChatReplyScheduler` 只有一个 worker，按 SQLite rowid 恢复/执行全部 pending，瞬态失败原位指数退避以阻止后序 overtaking；shutdown/cancel 不写 failed，重启继续。热重载先 pause admission + drain active，再发布新 context；超时自动 resume old 且 rebuild 零调用。`runtime-status` 的 `chat_reply_depth` 读取 durable pending count，另暴露 active/last_error/processed，不含消息内容。有界 lease 准入超时按当前状态区分：paused 提示配置重载，active 提示对话通道忙，不再把另一个长回复误报成重载。该 reply lane 与 `DialogueSettlementQueue` 正交：前者拥有模型回复/可见 CAS，后者拥有回复后的 typed learning/settlement。 |
 | App-owned 配置应用队列 | ✅ | 设置保存先事务性落盘，`PUT /api/config` 统一返回 202，把修订交给 latest-wins 后台队列。正在应用的修订安全 drain，未开始的连续保存合并为最新配置；所有 runtime rebuild 共享同一 app-local reload lock。最终成功更新 last-good 后再广播 `config_reloaded`；最新修订失败恢复 last-good、还原 process proxy 与内存 runtime，并广播 `config_reload_failed`，旧失败遇到更新修订时不覆盖新文件。shutdown 取消内存 worker，但已落盘配置由下次启动接管。 |
 | App-stable 封面抓取 lane | ✅ | `runtime.image_fetch.ImageFetchCoordinator` 由 FastAPI app 持有，`/api/image-proxy` 前台 miss 与 `ContinuousRefreshController` 预取共用 Condition priority gate：总 active≤4、background≤3，始终为前台保留一槽且 queued 前台优先。按归一化 `image_cache_key` singleflight；waiter 用 `shield`，取消单个请求不取消 owned upstream，前台加入 queued background 同 key 时会提升优先级并采用更新的签名 URL。cache glob/read/write 全在线程执行，命中不进 gate；写入为同目录 tmp+fsync+replace。热重载新 controller 重绑同一实例；shutdown 先停 producer，再取消 active/queued owned task。状态只暴露整数计数与峰值，不含 URL/token。 |
 | 桌面安装包升级进程交接 | ✅ | Windows Inno Setup 在覆盖文件前通过 Restart Manager + `taskkill /T /F` 结束旧版进程树；安装成功后的启动按安装模式分流：交互安装由 Finish 页默认勾选的 `postinstall` 复选框（`postinstall nowait skipifsilent`）接管——点「完成」才启动、可取消勾选，向导未结束时绝不抢跑；`/SILENT` / `/VERYSILENT` 下 `postinstall` 条目由 `skipifsilent` 跳过（静默安装会模拟点过隐藏的 Finish 页复选框，单凭「没有 Finish 页」并不足以拦住它），由 `nowait skipifnotsilent` 条目自动从 `{app}\OpenBiliClaw.exe` 拉起新版本，保证静默升级在杀掉旧进程后必有新进程交接；两条条目必须靠各自的 skip 标志保持互斥。`tests/test_installer_script.py` 锁定该 [Run] 契约（恰好一条 postinstall + 一条 silent-only，禁止无条件条目），windows-latest CI 的 `/VERYSILENT` 安装步骤覆盖静默交接：以「安装器拉起的实例写出 profile 标记 `config.toml`」为断言，不再是空管道 no-op（selftest 实例装配完即退出，查存活进程会竞态）。macOS DMG 因系统模型没有安装完成回调，根目录提供显式 `安装并启动 Install OpenBiliClaw.command`：先用 `ditto` 完整暂存并校验 bundle version + code signature，再发起有界的优雅退出请求（连 `osascript` 等待本身也受窗口约束；超时 TERM/KILL，且只清理由旧 OpenBiliClaw.app 拉起的内置 Ollama）、同卷备份后原子替换 `/Applications/OpenBiliClaw.app`，二次校验失败或中断会恢复旧 app，成功后 `open -n` 精确启动安装路径并确认进程出现。助手不自动删除 quarantine；Gatekeeper 决策仍由 macOS 和用户完成。传统拖拽保持兼容，但需手动退出、替换、重开。macOS-only E2E 使用两个 ad-hoc 签名最小 app 和真实只读挂载 DMG，覆盖旧 PID 退出、版本/签名更新、新 PID 启动与暂存清理。 升级交接之外，卸载侧由两层保护：`packaging/entry.py` 的 `_acquire_installer_mutex()` 让每个冻结进程（托盘主进程与 `--openbiliclaw-worker` 子进程）全程持有会话级命名互斥体（`_INSTALLER_MUTEX_NAME`，不加 `Global\` 前缀以免跨用户误拦截，fail-open，进程退出自动释放），Inno `AppMutex` 使 Setup 与 Uninstall 启动即弹标准「应用正在运行」对话框并重检——Restart Manager 不适用于卸载，且卸载器对占用文件的非致命错误会自删残留；`[Code] CurUninstallStepChanged(usUninstall)` 复用 `StopRunningInstance` 的 `taskkill /T /F` 兜底——必须在 AppMutex 门禁**之后**执行（Inno 卸载器先跑 `[Code] InitializeUninstall` 事件再做内部互斥体检查，把强杀放进那里会先杀掉持锁进程、让门禁永远静默通过，真机验证过该反例），清理无互斥体的旧安装与孤儿 worker/ollama 子进程。真机验证：应用运行中触发卸载被拦（日志记录 "Defaulting to Cancel for suppressed message box: Uninstall has detected that OpenBiliClaw is currently running"），应用与文件零改动、可重试。 |
@@ -125,6 +129,8 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 
 ## 公开 API
 
+`RuntimeContext.try_apply_agent_config(config) -> bool` 是配置队列在 reload lock 内使用的同步发布入口：仅允许已知五项聊天配置差异（详见 [配置模块](config.md)），构造新 `AgentLoop` 后同步更新 runtime/tool-context 配置引用。完整候选严格相等时不替换任何组件并返回成功。在途 loop、LLM service、工具、审批 store、画像与学习队列均保留；其他差异返回 `False`，由调用方继续原完整 handoff。成功仍由原队列维护 last-good、修订号和事件通知。
+
 ### Tailnet helper lifecycle
 
 ```python
@@ -181,6 +187,8 @@ scheduler.schedule(turn_id)  # 幂等 wake；pending SQLite row 才是权威事�
 await scheduler.start()       # 分页恢复全部 pending
 await scheduler.close()       # 取消内存 worker，数据库仍保持 pending
 ```
+
+`lease(timeout=...)` 准入到期时抛出 `DialogueLeaseTimeoutError`，其 `safe_message` 区分当前 paused 的配置重载与 active 的对话繁忙。此异常不占用 lease；HTTP agent 流保持已有 durable turn 为 pending，交给 worker 接续。
 
 `pause_and_drain(timeout=...)` 只有在 active lease 结束后才返回；timeout/cancel 会先恢复 admission 再抛出。scheduler 只把 `TerminalChatReplyError` 交给 failed CAS，普通异常与 `CancelledError` 不改变 durable pending 事实。`status_payload()` 返回队列健康摘要，不返回 turn ID、message 或 reply。
 

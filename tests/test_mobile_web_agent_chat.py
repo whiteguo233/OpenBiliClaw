@@ -69,7 +69,7 @@ def test_mobile_chat_wires_sessions_skills_approvals_and_tasks() -> None:
     assert "async function handleCreateSession()" in chat
     assert "async function handleRenameSession(sessionId, title)" in chat
     assert "async function handleArchiveSession(sessionId)" in chat
-    assert "fetchChatSessionDetail(activeSessionId, { limit: 100 })" in chat
+    assert "fetchChatSessionDetail(sessionId, { limit: 100 })" in chat
     # Skill chip + sheet + suggest_skill one-tap switch card.
     assert "function currentSkillName()" in chat
     assert "function handleSkillSwitchCard(button)" in chat

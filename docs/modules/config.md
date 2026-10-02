@@ -1268,6 +1268,7 @@ Web 仅在全局开关开启且至少存在一个 enabled recipe 时参与有效
 | `insight_note_batch_size` | int | `150` | 认知循环洞察每轮 LLM 调用最多携带的新觉察 note 数。默认按 256k+ 上下文模型设计；小上下文模型可调小。范围 `10..450` |
 | `cognition_max_tokens` | int | `32768` | 认知循环觉察/洞察 LLM 调用的输出 token 上限。默认匹配 256k+ 模型的 dense batch；小上下文模型或严格输出限制的 provider 可调小（如 8192）。范围 `1024..128000` |
 | `reply_style` | string | `""` | 自定义 AI 回复语气（issue #255，自由文本，上限 200 字符，超出为 blocking 校验错误）。解析时折叠所有空白为单行；为空时对话回复、推荐文案（单条+批量）、画像文本四类 prompt 输出逐字节不变，非空时在 `_render_tone_profile` 语气块末尾追加一行 `- 回复风格: <文本>`。经 `LLMService.reply_style` / `SoulEngine._reply_style` / `ProfileBuilder.reply_style` / `RecommendationEngine._reply_style` 透传，CLI、`serve-api` 热重载（经 `PUT /api/config` 触发；直接编辑 config.toml 文件需重启后端）与 OpenClaw bootstrap 三处构造点均已接线 |
+| 会话聊天风格（非 TOML 配置） | metadata | `natural` | 聊天页面六种表达预设保存在会话 metadata.persona，保存无需重载。natural 延续现有全局语气；显式其他预设仅在 Agent chat 中优先于旧 reply_style/dialogue_tone_prompt 冲突的表达规则，当前用户要求与工具权限始终优先；推荐文案、画像、CLI/legacy 不受此选择影响 |
 | `dialogue_tone_prompt` | string | `""` | 对话语气块整体替换（issue #255，自由文本，允许多行，上限 1000 字符，超出为 blocking 校验错误）。仅作用于 `build_socratic_dialogue_prompt`：非空（strip 后）时用原文替换 `_render_tone_profile` 语气块整段（此时 `reply_style` 对对话的追加行一并被替换掉），system prompt 的身份、行为说明、能力边界与 core memory 引导段落逐字节不变；推荐文案与画像 prompt 不接受此参数，行为零变化。为空时对话 prompt 逐字节不变。渲染经 `_toml_multiline_string()` 转义换行，round-trip 逐字节还原。经 `LLMService.dialogue_tone_prompt` / `SoulEngine._dialogue_tone_prompt` 透传，CLI、`serve-api` 热重载（同 reply_style，经 `PUT /api/config` 触发）与 OpenClaw bootstrap 均已接线 |
 
 三个 prompt view 从 TOML、`GET/PUT /api/config`、CLI runtime、API 热重载与 OpenClaw
@@ -1340,9 +1341,13 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 安装包 `/setup/` 第一页保存 LLM 配置时会传请求级字段 `suppress_background_llm_work=true`。该字段不写入 `config.toml`，只表示本次保存后热重载组件但暂停 refresh / account-sync 等 LLM 后台循环与 post-reload 探针 / 预热；用户在第二页点击「开始初始化」后，guided init 先严格生成完整画像和首轮可用推荐，init 终态后恢复后台循环并调度兴趣 / 避雷探针。普通设置页保存不传该字段，仍保持原有热重载和后台续跑行为。
 - 首次启动的模板包含一个等待填写 Key 的 DeepSeek 占位实例；若用户在 `/setup/` 改选其他 Provider，向导会读取 `GET /api/config.issues`，只把其中明确指向 `llm.instances.<id>.*` 的 blocking 旧实例设为 `enabled=false` 并从全局链移除。被显式自定义模块链引用的实例不会被自动改写，正常或仅 warning 的既有实例也会保留；完整多实例整理仍由桌面/插件设置页负责。校验 400 会按 `ConfigUpdateResponse.config.issues` 展示具体原因，不再把响应 JSON 截成一段不可读文本。
 - 写盘前会先用新配置构建 LLM registry；blocking issue 会返回 400 且不写入 `config.toml`。
+- 聊天中批准的 `update_config` 与设置页共用保存锁、应用队列和 last-good 基线：保存最新磁盘配置上的单字段补丁并等待实际生效；不会提前修改 live Config，热重载失败回滚且审批报告 failed，后续设置保存失败也不会丢掉先前已批准的成功修改。
+- 单独改变 `[agent]` 的 `loop_enabled`、`loop_max_steps`、`tool_result_max_chars`、`session_title_enabled`、`task_max_steps` 时局部应用，不等待画像/反馈/对话学习任务；在途回合保留原预算，新回合使用新值。判断以完整候选与当前配置的差异为准，不以请求键名为准；只要混有其他未应用配置或未来新增字段变化，就保留完整安全排空。局部成功同样更新 last-good 和审批终态。
+- 上述资格仅限这些键的聊天审批；普通设置保存仍完整重载，以刷新配置对象外的 Cookie 等依赖。队列合并或失败接替不能丢失前一修订的完整重建要求；重复批准设置同值时也只有完整候选与当前配置严格相等才直接完成。
 - 写盘前会生成 `config.toml.bak`。持久化成功后接口统一返回 `202 apply_state="queued"` 和单调 `apply_revision`；后台热重载失败会恢复最后一次已生效的磁盘与内存 runtime 配置，并广播 `config_reload_failed`。如果恢复本身失败，状态接口保留人工恢复提示。
 - `general.data_dir` 是热重载的明确例外：如果请求值解析后的 canonical 路径不同于当前 `RuntimeContext` 已打开并由进程级锁保护的数据目录，接口会把新路径写入 `config.toml`，但本进程排队应用其它字段时仍强制使用旧的 active data dir，并在 202 响应返回 `restart_required=true`。当前数据库 / MemoryManager 和同一请求中的抖音、X 外部凭据读写都继续落在 active data dir；只有完整退出并重新启动、取得新目录的 canonical runtime lock 后才切换。`GET /api/config/apply-status` 的 `applied` 只表示可热重载部分已经应用，不表示新数据目录已启用。
 - 热重载与唯一 `DialogueSettlementQueue` 交接时保持 admission 开放，直到旧 worker 的 active job 与 backlog 真正排空，再在无 `await` 临界段原子暂停、撤销旧 permit 并注册新 worker；因此保存配置期间的聊天/待聊请求不再被直接丢弃。对话 LLM 单请求上限为 20 分钟，安全 drain 窗口相应为 25 分钟；桌面/插件自己的 60 秒请求预算到期只表示后端仍在等待安全切换，不会取消后端保存。超过 25 分钟才回滚，空字符串 `TimeoutError` 会转换为可读诊断。
+- `GET /api/config/apply-status` 保持 `applying` 状态，同时按阶段更新消息：等待画像/反馈任务、等待当前对话、等待对话学习任务并重建运行时、恢复后台任务。画像/反馈任务排空期间尚未暂停对话 lane，仍可按旧配置聊天。阶段消息只说明实际等待位置，不缩短安全排空窗口，也不提前把配置或审批报告为成功。
 
 ## 模型列表发现（不写配置）
 
@@ -1475,3 +1480,10 @@ cookie = ""
 - 非交互终端不会进入引导；服务器脚本、CI 或批量部署仍需预置 `config.toml` 和 Cookie
 - 如需手动编辑容器内配置，可使用 `docker cp` 导出 `/app/runtime/config.toml`，修改后再复制回去
 - 如需彻底清空 Docker 内状态，可执行 `docker compose down -v`
+
+### 聊天网页访问
+
+Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP，不新增密钥或配置项；
+免费端点限流直接报告。read_webpage 为避免代理改变已校验目标，使用不继承环境代理的
+公开 IP 绑定直连，只支持标准 HTTP(S) 端口。无法直达、需登录或依赖脚本的正文会明确
+提示限制，不自动调用用户浏览器会话。

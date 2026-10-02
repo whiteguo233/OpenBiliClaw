@@ -115,10 +115,14 @@ dialogue entries → app-stable execution lease(max active 1; reload pause/drain
                    → visible completion CAS; transient/cancel → pending + bounded in-place retry
                    explicit invalid → failed CAS
   direct chat/probes → same lease through response + ctx-dependent side effects
-  chat agent loop (「聊一聊」) → POST /api/chat/agent/stream → same dialogue lease
-                 → AgentLoop(caller=agent.chat, interactive lane) multi-hop tool calling
-                 → SSE thinking/tool_call/tool_result/approval_request/final → payload.agent_events replay
-                 → hard_write call → ApprovalStore pending card → approve endpoint queues background execution (chat_approval_execute) + ledger audit
+  chat agent loop (「聊一聊」) → POST /api/chat/agent/stream → API-owned durable producer
+                 → session metadata.persona → turn-frozen agent_persona (expression only)
+                 → same dialogue lease + terminal-state recheck → session-local context + bounded saved notes + skill tools + persona + AgentLoop
+                 → public web search / URL reader; note CAS writes / approval-gated deletes
+                 → append payload.agent_events → SSE subscriber (disconnect keeps producer running)
+                 → completion CAS + learning/effects; repeated turn → persisted event replay
+                 → hard_write call → ApprovalStore pending card → approve endpoint queues background execution + config_update_hook → settings apply queue / last-good + ledger audit
+                   → five known agent knobs only: replace loop; other changes: drain owners + rebuild
                  → start_background_task confirm → POST /api/chat/tasks
                  → read-only AgentLoop(caller=agent.task, interactive lane) → steps → agent_tasks
                  → terminal report → agent_task_summary durable turn in source session
@@ -176,7 +180,7 @@ candidate evaluation → effective profile view + exact tail-recall pool + negat
 2. **外部集成层** — OpenClaw adapter / skill wrappers / 本地 API / Codex CLI 凭据导入等对外接入边界
 3. **Agent 核心层** — 自研编排器 + Soul Engine + Discovery Engine + Recommendation Engine + Skill System；抖音手动 discovery 与 daemon 共用正式 producer、统一关键词生命周期和待评估候选链，debug-only `discover-douyin` 才直接调用源服务
 4. **LLM 实例路由层** — `config / Web UI -> [llm.instances.<id>] -> 全局或分模块有序实例链 -> LLMRegistry -> Provider adapter`。实例 ID 是路由、健康与 cooldown 身份，adapter 类型只是协议实现，因此同类型的多个 Base URL / token / model 可以同时存在。模块默认继承全局链；自定义链只在链内降级，耗尽后不越界。配置界面另有两条无写入恢复支路：`draft -> /api/config/probe-service -> temporary registry -> stable total gate` 做目标实例/链真实探测，`draft -> /api/config/discover-models -> exact instance GET /models` 只返回模型 ID 与本地 Effort 建议。两者在 active registry 启动失败的 degraded 状态仍精确放行，但不改变配置、不放开业务 API。
-   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext rebuild -> apply-status/config_reloaded`；失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
+   配置写入的实际切换走独立控制流：`UI -> PUT /api/config -> config.toml + .bak -> 202 queued/apply_revision -> app-owned latest-wins queue -> RuntimeContext 局部应用或 rebuild -> apply-status/config_reloaded`；完整候选仅改变已知五项 agent 设置时替换 loop，在途回合与学习 owner 不动，其他变更保留安全排空后 rebuild。失败从 last-good 同时恢复磁盘、proxy 与内存 runtime，再发 `config_reload_failed`。`data_dir` 是例外：新 canonical 路径只持久化并返回 `restart_required=true`，本进程的 rebuild 与外部凭据写仍绑定已锁住的 active data dir，完整重启取得新目录锁后才切换。
    发布日期偏好按来源配置（`[sources.<name>].recommendation_date_*`），默认 `all`。发现策略在 LLM 评估前硬过滤范围外候选；`RuntimeContext -> Database effective inventory -> PoolCurator -> RecommendationEngine` 继续保留 `weight` 语义（软降分或推荐出口严格忽略）。严格模式还把 UTC 边界下推到 B 站 API / 扩展网页搜索。
    跨机器迁移走第三条、与热重载隔离的控制流：`本机桌面设置 -> export .obcbackup -> 新机器 import(request_id) -> processing(uploading|validating) -> pending -> status 对账 / cancel -> 重启`。导出数据固定来自本进程已锁住的 active data dir；导入端点从不替换 live `Database` / `MemoryManager` 或 UI 偏好。断连后的桌面端保留 request ID，最多强制查 3 次并对 `idle/cancelled` 间隔 500ms 再确认；每次打开「通用」也强制查询。只有下一进程先同时取得项目与 canonical data-dir runtime lock，才通过 journaled replace 激活配置和数据；成功回执用配置 SHA-256 + 严格递增 DB epoch 绑定活动代际，使断电后复活的旧 marker 只能被验证、清理而不能重放。status 报告 `applied` 后，桌面端按 `migration_id` 在每个浏览器只应用一次白名单偏好，避免旧 status 覆盖用户后续修改。来源包会移除整段 `[api.auth]`，机器专属路径 / 网络字段和目标机整段 `api.auth` 继续作为基线；应用时再轮换文件 session secret、把数据库 auth epoch 严格提升到来源 / 目标当前值之上，并关闭 / 清空扩展设备访问。
 5. **多源适配层（v0.3.0+）** — `sources.platforms` 统一注册 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / Web 十三个平台族的别名、strategy 与 URL 身份。Linux.do 通过同源只读插件任务接入公开 discovery 与个人信号；Bangumi 使用官方匿名 API 与可选令牌；V2EX 使用官方匿名 API / Feed、可选 PAT 与四类账号分区 bootstrap；微博公开 discovery 由后端匿名直连，个人初始化由同源扩展任务读取收藏、关注和 mentions；GitHub 使用官方 REST API，公开 repository 以匿名/可选 PAT 方式进入 search/ranked/latest，公开 starred repositories 仅在 init/on-demand 形成画像信号，私有仓库和站内写操作始终拒绝。Web 只消费显式公开 typed recipe；聊天探测只生成草稿，`create_source` 须经写确认才落库。所有来源统一归一化后进入候选评估链，不执行站内写操作。
@@ -240,6 +244,10 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - [Discovery 模块架构图](diagrams/discovery-architecture.html)
 
 ## 模块职责
+
+### Durable agent stream ownership (`api/` / `soul/`)
+
+`POST /api/chat/agent/stream` 的 durable producer 由 API application 持有，与 HTTP SSE 订阅的生命周期分离。浏览器断连后原 loop 继续，逐事件落库并完成回复；同一 turn 的重试在稳定对话 lease 内检查终态，只重放已存过程和回复。应用关闭会取消 producer，剩余 pending 由启动恢复处理。模型短期上下文按 `session_id` 装载，长期画像仍共享；canonical reply binding 同时进入 prompt 与学习任务。
 
 ### Agent Orchestrator (`agent/`)
 - 任务调度和策略决策

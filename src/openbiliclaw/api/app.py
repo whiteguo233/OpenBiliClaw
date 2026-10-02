@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, TypedDict, cast
 from urllib.parse import parse_qsl, quote, urlparse, urlsplit, urlunsplit
@@ -48,6 +49,7 @@ from fastapi.responses import (
 )
 from starlette.background import BackgroundTask
 
+from openbiliclaw.agent.persona import CHAT_PERSONAS, PERSONA_EXAMPLE_PROMPT, resolve_chat_persona
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
     ActivityFeedResponse,
@@ -523,6 +525,8 @@ class _QueuedConfigApply:
     saved_path: Path
     run_post_reload_llm_work: bool
     restart_required: bool = False
+    completion: asyncio.Future[str] | None = None
+    allow_agent_live_apply: bool = False
 
 
 # Guided-init owner-lease heartbeat period. A stage can spend minutes inside one
@@ -2044,6 +2048,7 @@ def create_app(
 ) -> FastAPI:
     """Create the local backend API app."""
     from openbiliclaw.api.runtime_context import (
+        _LIVE_AGENT_CONFIG_FIELDS,
         RuntimeContext,
         build_degraded_runtime_context,
         build_runtime_context,
@@ -3172,6 +3177,14 @@ def create_app(
     app.state.event_ingress = event_ingress
 
     def _bind_runtime_lane_dependencies() -> None:
+        agent_tool_context = getattr(ctx, "agent_tool_context", None)
+        if agent_tool_context is not None:
+            # The ingress belongs to the API; the tool context is rebuilt on
+            # config reload. Bind every replacement before reopening its lane.
+            agent_tool_context.event_ingress = event_ingress
+            agent_tool_context.config_update_hook = lambda key, value: _apply_agent_config_update(
+                key, value
+            )
         runtime_controller = getattr(ctx, "runtime_controller", None)
         if runtime_controller is not None:
             try:
@@ -3336,19 +3349,28 @@ def create_app(
         run_post_reload_llm_work: bool = True,
         resume_execution_lanes: bool = True,
         after_rebuild: Any = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         """Quiesce old owners before publishing and recovering a new runtime."""
         async with config_runtime_reload_lock:
+            if progress is not None:
+                progress("正在等待画像/反馈任务结束，再应用配置；此时仍可继续聊天。")
             await feedback_batch_scheduler.pause_and_drain()
             dialogue_paused = False
             try:
+                if progress is not None:
+                    progress("正在等待当前对话结束，再应用配置。")
                 await dialogue_execution_coordinator.pause_and_drain(
                     timeout=_DIALOGUE_EXECUTION_DRAIN_TIMEOUT_SECONDS
                 )
                 dialogue_paused = True
+                if progress is not None:
+                    progress("正在等待对话学习任务结束并重建运行时配置。")
                 await ctx.rebuild_from_config(_pin_active_runtime_config(new_config))
                 if callable(after_rebuild):
                     after_rebuild()
+                if progress is not None:
+                    progress("配置组件已切换，正在恢复后台任务。")
                 await _restart_background_tasks_after_event_recovery(
                     run_post_reload_llm_work=run_post_reload_llm_work,
                     resume_execution_lanes=resume_execution_lanes,
@@ -3419,6 +3441,18 @@ def create_app(
 
     async def _apply_runtime_config_revision(item: _QueuedConfigApply) -> str:
         """Apply one persisted revision without owning the config-file lock."""
+        # Chat knobs have no dependency on profile/feedback owners. Keep the
+        # same queue, lock and last-good transaction, but don't drain unrelated
+        # work when the complete candidate differs only in known chat fields.
+        if item.allow_agent_live_apply and not item.restart_required:
+            async with config_runtime_reload_lock:
+                if ctx.try_apply_agent_config(item.config):
+                    logger.info(
+                        "Chat config applied without runtime rebuild: revision=%d", item.revision
+                    )
+                    return (
+                        f"配置已保存到 {item.saved_path}。聊天设置已生效，正在进行的任务继续执行。"
+                    )
         was_degraded = bool(getattr(ctx, "degraded", False))
         recovered_from_degraded = False
 
@@ -3434,6 +3468,7 @@ def create_app(
                 item.config,
                 run_post_reload_llm_work=item.run_post_reload_llm_work,
                 after_rebuild=_after_config_runtime_rebuilt,
+                progress=lambda message: _set_config_apply_status("applying", message),
             )
         except Exception:
             if not recovered_from_degraded:
@@ -3507,6 +3542,7 @@ def create_app(
                         "queued",
                         f"配置修订 {item.revision} 已保存，将在后端重启后生效。",
                     )
+                    _settle_config_completion(item, error="配置应用已中断，重启后检查生效状态。")
                     raise
                 except Exception as exc:
                     logger.exception(
@@ -3516,6 +3552,13 @@ def create_app(
                     error = _config_reload_error(exc)
                     async with _CONFIG_SAVE_LOCK:
                         if config_apply_pending is not None:
+                            # A failed ordinary settings revision may have
+                            # persisted credentials outside Config; its next
+                            # revision must still rebuild those consumers.
+                            config_apply_pending.allow_agent_live_apply = (
+                                config_apply_pending.allow_agent_live_apply
+                                and item.allow_agent_live_apply
+                            )
                             _set_config_apply_status(
                                 "queued",
                                 (
@@ -3524,6 +3567,7 @@ def create_app(
                                 ),
                                 error=error,
                             )
+                            _settle_config_completion(item, error=error)
                             continue
                         try:
                             restored_path = save_config(
@@ -3561,6 +3605,7 @@ def create_app(
                                 failure_message,
                                 error=error,
                             )
+                    _settle_config_completion(item, error=config_apply_message)
                     with suppress(Exception):
                         await ctx.event_hub.publish(
                             {
@@ -3582,6 +3627,7 @@ def create_app(
                                 f"修订 {config_apply_pending.revision} 等待应用。"
                             ),
                         )
+                    _settle_config_completion(item, message=message)
                     with suppress(Exception):
                         await ctx.event_hub.publish(
                             {
@@ -3594,8 +3640,29 @@ def create_app(
             config_apply_task = None
             app.state.config_apply_task = None
 
+    def _settle_config_completion(
+        item: _QueuedConfigApply, *, message: str = "", error: str = ""
+    ) -> None:
+        completion = item.completion
+        if completion is None or completion.done():
+            return
+        if error:
+            completion.set_exception(RuntimeError(error))
+        else:
+            completion.set_result(message)
+
     def _enqueue_config_apply(item: _QueuedConfigApply) -> None:
         nonlocal config_apply_pending, config_apply_task
+        if config_apply_pending is not None:
+            # Ordinary settings can update external cookie jars without any
+            # Config field changing. Coalescing must retain their rebuild
+            # requirement even when the newest revision is a small agent edit.
+            item.allow_agent_live_apply = (
+                item.allow_agent_live_apply and config_apply_pending.allow_agent_live_apply
+            )
+            _settle_config_completion(
+                config_apply_pending, error="配置修改已被更新的修订替代，请检查当前设置。"
+            )
         config_apply_pending = item
         _set_config_apply_status(
             "queued",
@@ -3607,6 +3674,53 @@ def create_app(
                 name="config-apply",
             )
             app.state.config_apply_task = config_apply_task
+
+    async def _apply_agent_config_update(key: str, value: Any) -> str:
+        """Apply one approved scalar edit through the settings transaction."""
+        nonlocal config_apply_revision
+        from openbiliclaw.agent.tools.config_tools import (
+            _resolve_config_leaf,
+            _update_config_denial,
+        )
+        from openbiliclaw.config import (
+            _default_config_path,
+            load_config,
+            save_config,
+            validate_runtime_config,
+        )
+
+        denial = _update_config_denial(key)
+        if denial is not None:
+            raise ValueError(denial)
+        async with _CONFIG_SAVE_LOCK:
+            if _init_active_now():
+                raise RuntimeError("初始化进行中，请稍后再修改配置。")
+            candidate = load_config()
+            resolved = _resolve_config_leaf(candidate, key)
+            if resolved is None:
+                raise ValueError(f"配置项不存在: {key}")
+            owner, leaf, _current = resolved
+            setattr(owner, leaf, value)
+            validate_runtime_config(candidate)
+            _snapshot_config_file(_default_config_path())
+            saved_path = save_config(candidate)
+            config_apply_revision += 1
+            completion: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            _enqueue_config_apply(
+                _QueuedConfigApply(
+                    revision=config_apply_revision,
+                    config=_pin_active_runtime_config(candidate),
+                    saved_path=saved_path,
+                    run_post_reload_llm_work=False,
+                    completion=completion,
+                    allow_agent_live_apply=(
+                        key.startswith("agent.") and key[6:] in _LIVE_AGENT_CONFIG_FIELDS
+                    ),
+                )
+            )
+        return await asyncio.shield(completion)
+
+    app.state._apply_agent_config_update = _apply_agent_config_update
 
     def _is_feedback_event(event: dict[str, Any]) -> bool:
         return str(event.get("event_type") or event.get("type") or "").strip() == "feedback"
@@ -3877,6 +3991,44 @@ def create_app(
     def _pending_norm_title(value: object) -> str:
         return re.sub(r"[\W_]+", "", str(value or "")).lower()
 
+    @lru_cache(maxsize=8)
+    def _pending_confirmation_keep_indices(titles: tuple[str, ...]) -> tuple[int, ...]:
+        """Memoize exact title snapshots without retaining mutable card payloads.
+
+        Eight snapshots bound memory while covering hypothesis/confusion polls
+        and recent edits. Eviction only changes performance, never selection.
+        SequenceMatcher's two upper bounds reject impossible matches before its
+        expensive ratio calculation; the existing threshold/order stay intact.
+        """
+        from difflib import SequenceMatcher
+
+        kept: list[int] = []
+        seen_titles: set[str] = set()
+        matchers: list[SequenceMatcher[str]] = []
+        for index, title in enumerate(titles):
+            if not title or len(title) < _PENDING_DEDUP_MIN_TITLE_LENGTH:
+                kept.append(index)
+                continue
+            if title in seen_titles:
+                continue
+            duplicate = False
+            for matcher in matchers:
+                # Keep candidate/representative direction unchanged: ratio is
+                # not symmetric. Reusing seq2 also reuses its character index.
+                matcher.set_seq1(title)
+                if (
+                    matcher.real_quick_ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                    and matcher.quick_ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                    and matcher.ratio() >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
+                ):
+                    duplicate = True
+                    break
+            if not duplicate:
+                seen_titles.add(title)
+                matchers.append(SequenceMatcher(None, "", title))
+                kept.append(index)
+        return tuple(kept)
+
     def _dedupe_pending_confirmations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Collapse pending titles that differ only by wording.
 
@@ -3888,27 +4040,8 @@ def create_app(
         """
         if len(items) < 2:
             return list(items)
-        from difflib import SequenceMatcher
-
-        kept: list[dict[str, Any]] = []
-        seen_titles: list[str] = []
-        for item in items:
-            normalized_title = _pending_norm_title(item.get("title", ""))
-            # Short titles are usually synthetic test labels; applying the
-            # sequence matcher there would collapse "高优先假设一/二/三".
-            if not normalized_title or len(normalized_title) < _PENDING_DEDUP_MIN_TITLE_LENGTH:
-                kept.append(item)
-                continue
-            if any(
-                len(seen) >= _PENDING_DEDUP_MIN_TITLE_LENGTH
-                and SequenceMatcher(None, normalized_title, seen).ratio()
-                >= _PENDING_DEDUP_SIMILARITY_THRESHOLD
-                for seen in seen_titles
-            ):
-                continue
-            seen_titles.append(normalized_title)
-            kept.append(item)
-        return kept
+        titles = tuple(_pending_norm_title(item.get("title", "")) for item in items)
+        return [items[index] for index in _pending_confirmation_keep_indices(titles)]
 
     def _pending_confirmation_candidates(
         *,
@@ -3926,6 +4059,18 @@ def create_app(
         confirmation_state = _load_dialogue_confirmation_state()
         now = datetime.now(UTC)
         normalized_session = session.strip()
+        visible_refs: set[str] | None = None
+        refs_reader = _chat_db_method("get_chat_confirmation_refs")
+        if normalized_session and refs_reader is not None:
+            visible_refs = set(refs_reader(session=normalized_session))
+
+        def already_visible(ref: str) -> bool:
+            if not normalized_session:
+                return False
+            if visible_refs is not None:
+                return ref in visible_refs
+            return _get_chat_confirmation_turn(ref=ref, session=normalized_session) is not None
+
         hypotheses = [
             item
             for item in _hypothesis_confirmation_items()
@@ -3962,15 +4107,7 @@ def create_app(
         if confusions and confusions[0].get("status") == "clarifying":
             active = confusions[0]
             active_ref = str(active.get("ref", ""))
-            already_visible = bool(
-                normalized_session
-                and _get_chat_confirmation_turn(
-                    ref=active_ref,
-                    session=normalized_session,
-                )
-                is not None
-            )
-            confusions = [] if already_visible else [active]
+            confusions = [] if already_visible(active_ref) else [active]
 
         # Deduplicate each kind separately so a hypothesis can never be
         # collapsed into a semantically different confusion.
@@ -3983,13 +4120,7 @@ def create_app(
             # duplicate of the item the user is already looking at.  Dedup runs
             # first so an open representative also hides its near-duplicates.
             deduped_hypotheses = [
-                item
-                for item in deduped_hypotheses
-                if _get_chat_confirmation_turn(
-                    ref=item["ref"],
-                    session=normalized_session,
-                )
-                is None
+                item for item in deduped_hypotheses if not already_visible(item["ref"])
             ]
         deduped_confusions = _dedupe_pending_confirmations(
             sorted(confusions, key=rank, reverse=True),
@@ -4428,6 +4559,11 @@ def create_app(
         requested_session_id = payload.session_id.strip()
         if requested_session_id and str(row.get("session_id", "") or "") != requested_session_id:
             return False
+        stored_payload = row.get("payload")
+        if payload.skill.strip() and isinstance(stored_payload, dict):
+            stored_skill = str(stored_payload.get("agent_skill") or "").strip()
+            if payload.skill.strip() != (stored_skill or _resolve_skill_catalog().default().name):
+                return False
         if str(row.get("reply_to_turn_id", "") or "") != payload.reply_to_turn_id.strip():
             return False
         if stored_binding is None or stored_binding.mode.value != "bound":
@@ -5034,11 +5170,13 @@ def create_app(
         return method
 
     def _normalize_chat_session(row: Mapping[str, Any]) -> ChatSessionOut:
+        metadata = dict(row.get("metadata", {}) or {})
+        metadata["persona"] = resolve_chat_persona(metadata.get("persona")).id
         return ChatSessionOut(
             session_id=str(row.get("session_id", "")),
             title=str(row.get("title", "") or ""),
             archived=bool(row.get("archived", False)),
-            metadata=dict(row.get("metadata", {}) or {}),
+            metadata=metadata,
             turn_count=int(row.get("turn_count", 0) or 0),
             active_turns=int(row.get("active_turns", 0) or 0),
             last_message_preview=str(row.get("last_message_preview", "") or ""),
@@ -5047,6 +5185,13 @@ def create_app(
             updated_at=str(row.get("updated_at", "") or ""),
             last_message_at=str(row.get("last_message_at", "") or ""),
         )
+
+    def _session_persona_id(session_id: str) -> str:
+        """Snapshot a conversation's current style without changing legacy rows."""
+        get_session = _chat_db_method("get_chat_session")
+        row = get_session(session_id) if get_session is not None else None
+        metadata = row.get("metadata", {}) if row else {}
+        return resolve_chat_persona(metadata.get("persona")).id
 
     def _resolve_chat_session_id(payload: ChatTurnIn) -> str:
         """Resolve the owning session for a new turn, validating explicit ids."""
@@ -8670,6 +8815,13 @@ def create_app(
 
     @app.on_event("shutdown")
     async def shutdown_refresh_loop() -> None:
+        # Durable stream producers outlive their HTTP subscribers, but remain
+        # app-owned so shutdown leaves no task using a closed runtime.
+        stream_tasks = list(chat_agent_stream_tasks)
+        for task in stream_tasks:
+            task.cancel()
+        if stream_tasks:
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
         inventory_watch = getattr(app.state, "pool_inventory_watch_task", None)
         if inventory_watch is not None:
             inventory_watch.cancel()
@@ -11418,7 +11570,14 @@ def create_app(
             raise HTTPException(status_code=422, detail="Chat message is required.")
         turn_id = payload.turn_id.strip()
         row = _get_chat_turn_row(turn_id) if turn_id else None
+        if turn_id and row is None:
+            raise HTTPException(status_code=404, detail="Chat turn not found.")
         turn = _normalize_chat_turn(row) if row else None
+        if turn is not None and (
+            message != turn.message
+            or (payload.session_id.strip() and payload.session_id.strip() != turn.session_id)
+        ):
+            _dialogue_context_error(409, "turn_id_conflict", "Chat turn request conflicts.")
 
         progress_events: list[tuple[str, dict[str, object]]] = []
 
@@ -11488,28 +11647,47 @@ def create_app(
                 progress_index = len(progress_events)
                 return pending
 
-            failure: Exception | None = None
             try:
                 async with _dialogue_execution_lease() as current_dialogue:
-                    async for delta in _respond_deltas(current_dialogue):
-                        # Tool-phase progress events are produced between
-                        # deltas; flush them first so they never render
-                        # after the reply text they precede.
-                        for event, data in _drain_progress():
-                            yield sse(event, data)
-                        reply_parts.append(delta)
-                        yield sse("content", {"delta": delta})
+                    # Polling recovery or another stream may have completed this
+                    # durable turn while this request waited for the lease. Reuse
+                    # that result before link ingestion or post-reply learning.
+                    if turn_id:
+                        latest_row = _get_chat_turn_row(turn_id)
+                        latest = _normalize_chat_turn(latest_row) if latest_row else None
+                        if latest is None:
+                            yield sse("error", {"error": "Chat turn not found."})
+                            return
+                        if latest.status != "pending":
+                            reply = latest.error if latest.status == "failed" else latest.reply
+                            yield sse("content", {"delta": reply})
+                            yield sse("done", {"reply": reply})
+                            return
+                    try:
+                        async for delta in _respond_deltas(current_dialogue):
+                            # Tool-phase progress events are produced between
+                            # deltas; flush them first so they never render
+                            # after the reply text they precede.
+                            for event, data in _drain_progress():
+                                yield sse(event, data)
+                            reply_parts.append(delta)
+                            yield sse("content", {"delta": delta})
+                    except Exception as exc:
+                        logger.exception("Chat stream dialogue failed")
+                        reply_parts = [safe_llm_failure_message(exc)]
+                        yield sse("content", {"delta": reply_parts[0]})
+                    reply = "".join(reply_parts)
+                    # Keep completion in the execution lease: releasing it first
+                    # lets the durable worker observe pending and repeat effects.
+                    if turn is not None and turn_id:
+                        _complete_chat_turn_row(turn_id, reply=reply)
             except Exception as exc:
-                logger.exception("Chat stream dialogue failed")
-                failure = exc
-
-            if failure is not None:
-                reply_parts = [safe_llm_failure_message(failure)]
-                yield sse("content", {"delta": reply_parts[0]})
-            reply = "".join(reply_parts)
-
-            if turn is not None and turn_id:
-                _complete_chat_turn_row(turn_id, reply=reply)
+                # Preserve the legacy SSE envelope even when admission or
+                # persistence fails. Leave pending rows recoverable; never
+                # force completion outside the execution lease.
+                logger.exception("Chat stream admission or persistence failed")
+                reply = safe_llm_failure_message(exc)
+                yield sse("content", {"delta": reply})
 
             for event, data in _drain_progress():
                 yield sse(event, data)
@@ -11523,6 +11701,8 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    chat_agent_stream_tasks: set[asyncio.Task[None]] = set()
 
     @app.post("/api/chat/agent/stream")
     async def chat_agent_stream(payload: ChatTurnIn) -> StreamingResponse:
@@ -11571,8 +11751,25 @@ def create_app(
         agent_config = getattr(getattr(ctx, "config", None), "agent", None)
         if agent_config is not None and not bool(getattr(agent_config, "loop_enabled", True)):
             raise HTTPException(status_code=503, detail="Agent loop chat is disabled.")
+        turn_id = payload.turn_id.strip()
+        row = _get_chat_turn_row(turn_id) if turn_id else None
+        if turn_id and row is None:
+            raise HTTPException(status_code=404, detail="Chat turn not found.")
+        turn = _normalize_chat_turn(row) if row else None
+        if turn is not None:
+            if message != turn.message or (
+                payload.session_id.strip() and payload.session_id.strip() != turn.session_id
+            ):
+                _dialogue_context_error(409, "turn_id_conflict", "Chat turn request conflicts.")
+            stored_skill = str(turn.payload.get("agent_skill") or "").strip()
+            if payload.skill.strip() and payload.skill.strip() != (
+                stored_skill or _resolve_skill_catalog().default().name
+            ):
+                _dialogue_context_error(409, "turn_id_conflict", "Chat turn skill conflicts.")
+        else:
+            stored_skill = ""
         skill_catalog = _resolve_skill_catalog()
-        skill_name = payload.skill.strip()
+        skill_name = stored_skill if turn is not None else payload.skill.strip()
         if skill_name:
             skill_definition = skill_catalog.get(skill_name)
             if skill_definition is None:
@@ -11585,9 +11782,6 @@ def create_app(
                 )
         else:
             skill_definition = skill_catalog.default()
-        turn_id = payload.turn_id.strip()
-        row = _get_chat_turn_row(turn_id) if turn_id else None
-        turn = _normalize_chat_turn(row) if row else None
         requested_session_id = payload.session_id.strip()
         if turn is not None:
             effective_session_id = turn.session_id or DEFAULT_CHAT_SESSION_ID
@@ -11599,45 +11793,51 @@ def create_app(
         else:
             effective_session_id = DEFAULT_CHAT_SESSION_ID
 
+        # A durable turn owns its style forever, including old turns whose
+        # missing marker means natural. Only ephemeral requests consult the
+        # current session, once, before waiting for the dialogue lane.
+        persona_id = (
+            resolve_chat_persona(turn.payload.get("agent_persona")).id
+            if turn is not None
+            else _session_persona_id(effective_session_id)
+        )
+
         async def _event_stream() -> AsyncIterator[str]:
             import json as _json
 
             def sse(event: str, data: dict[str, Any]) -> str:
                 return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
-            loop_events: list[dict[str, Any]] = []
             final_reply = ""
             try:
                 async with _dialogue_execution_lease(
                     timeout=_AGENT_STREAM_LEASE_TIMEOUT_SECONDS
                 ) as current_dialogue:
-                    # Polling a pending turn can wake the durable worker. Both
-                    # paths use this same lease, so the row must be checked after
-                    # admission, not against the request-time snapshot above.
-                    current_row = _get_chat_turn_row(turn_id) if turn is not None else None
-                    if current_row is not None:
-                        current_turn = _normalize_chat_turn(current_row)
-                        if current_turn.status in {"completed", "failed"}:
-                            stored_events = current_turn.payload.get("agent_events")
-                            if isinstance(stored_events, list):
-                                for stored_event in stored_events:
-                                    if isinstance(stored_event, dict) and stored_event.get("type"):
-                                        yield sse(str(stored_event["type"]), stored_event)
-                            if current_turn.status == "failed":
-                                yield sse("error", {"error": current_turn.error})
+                    # A retry or the durable worker may have settled this turn
+                    # while admission was queued. Replay before touching tools.
+                    if turn_id:
+                        latest_row = _get_chat_turn_row(turn_id)
+                        latest = _normalize_chat_turn(latest_row) if latest_row else None
+                        if latest is None:
+                            yield sse("error", {"error": "Chat turn not found."})
+                            return
+                        if latest.status != "pending":
+                            saved_events = latest.payload.get("agent_events", [])
+                            if not isinstance(saved_events, list):
+                                saved_events = []
+                            for saved_event in saved_events:
+                                if isinstance(saved_event, dict) and saved_event.get("type"):
+                                    yield sse(str(saved_event["type"]), saved_event)
+                            if latest.status == "failed":
+                                yield sse("error", {"error": latest.error})
                             else:
-                                default_skill = skill_catalog.default()
                                 yield sse(
                                     "done",
                                     {
-                                        "reply": current_turn.reply,
+                                        "reply": latest.reply,
                                         "turn_id": turn_id,
-                                        "skill": str(
-                                            current_turn.payload.get("agent_skill")
-                                            or (default_skill.name if default_skill else "")
-                                        ),
-                                        "session_id": current_turn.session_id
-                                        or DEFAULT_CHAT_SESSION_ID,
+                                        "skill": skill_definition.name if skill_definition else "",
+                                        "session_id": effective_session_id,
                                     },
                                 )
                             return
@@ -11646,13 +11846,18 @@ def create_app(
                         stream_fn = getattr(current_dialogue, "stream_agent_reply", None)
                         if agent_loop is None or not callable(stream_fn):
                             raise RuntimeError("Agent chat is not configured.")
+                        if turn is not None:
+                            binding = _binding_from_turn(turn)
+                            if binding is None or binding.mode.value != "bound":
+                                await _ensure_confusion_dialogue_anchor(turn)
                         chat_message = (
                             _contextual_chat_message(turn) if turn is not None else message
                         )
+                        binding_kwargs = _agent_turn_binding_kwargs(turn, stream_fn)
                         async for event in stream_fn(
                             agent_loop,
                             chat_message,
-                            session=payload.session.strip() or (turn.session if turn else "popup"),
+                            session=turn.session if turn else (payload.session.strip() or "popup"),
                             scope=turn.scope if turn is not None else "chat",
                             turn_id=turn_id,
                             session_id=effective_session_id,
@@ -11663,31 +11868,46 @@ def create_app(
                                 if skill_definition is not None
                                 else ""
                             ),
+                            **binding_kwargs,
+                            **_agent_persona_kwargs(persona_id, stream_fn),
                         ):
                             data = event.to_dict()
-                            # Delta fragments are live-render only; replay
-                            # reconstructs text from thinking/final events.
-                            if event.type != "delta":
-                                loop_events.append(data)
+                            # Persist semantic events incrementally for recovery;
+                            # token deltas are live-only, replay uses final/thinking.
+                            if turn_id and event.type != "delta":
+                                _append_chat_turn_agent_event(turn_id, data)
                             if event.type == "final":
                                 final_reply = event.text
                             yield sse(event.type, data)
+                        if not final_reply.strip():
+                            from openbiliclaw.llm.service import LLMResponseContentError
+
+                            raise LLMResponseContentError("LLM returned an empty response")
                         if turn is not None and turn_id:
-                            # Commit before waking another lease owner. The
-                            # worker already rechecks pending inside this lease.
-                            _store_chat_turn_agent_events(turn_id, loop_events)
-                            _complete_chat_turn_row(turn_id, reply=final_reply)
+                            completed = _complete_chat_turn_row(turn_id, reply=final_reply)
+                            if completed:
+                                try:
+                                    await _apply_durable_chat_success_side_effects(
+                                        turn, final_reply
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to apply agent chat effects: %s", turn_id
+                                    )
                     except Exception as exc:
+                        # Settle execution failure before releasing the lease,
+                        # so a queued worker cannot repeat a partially run turn.
                         if turn_id:
-                            _store_chat_turn_agent_events(turn_id, loop_events)
                             _fail_chat_turn_row(turn_id, error=safe_llm_failure_message(exc))
                         raise
             except DialogueLeaseTimeoutError as exc:
-                # Hot reload held the lane past the admission budget. The
-                # loop never started, so keep the durable turn pending and
+                # Hot reload or another reply held the lane past the admission
+                # budget. The loop never started, so keep the durable turn pending and
                 # re-wake the fallback worker: it re-runs the agent loop
                 # (with full agent_events) once the lane resumes.
-                logger.info("Agent stream admission timed out during reload: %s", turn_id or "-")
+                logger.info(
+                    "Agent stream admission timed out: %s (%s)", turn_id or "-", exc.safe_message
+                )
                 if turn_id:
                     # No loop ran here. In particular, do not overwrite events
                     # from a worker that acquired the lease ahead of this stream.
@@ -11710,8 +11930,29 @@ def create_app(
                 },
             )
 
+        async def _durable_event_stream() -> AsyncIterator[str]:
+            # The producer owns execution; closing one HTTP subscriber must
+            # never restart a partially executed write on the fallback lane.
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+            async def produce() -> None:
+                try:
+                    async for frame in _event_stream():
+                        queue.put_nowait(frame)
+                finally:
+                    queue.put_nowait(None)
+
+            task = asyncio.create_task(produce(), name=f"chat-agent-stream:{turn_id}")
+            chat_agent_stream_tasks.add(task)
+            task.add_done_callback(chat_agent_stream_tasks.discard)
+            while True:
+                frame = await queue.get()
+                if frame is None:
+                    return
+                yield frame
+
         return StreamingResponse(
-            _sse_heartbeat_wrap(_event_stream()),
+            _sse_heartbeat_wrap(_durable_event_stream() if turn_id else _event_stream()),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -12333,6 +12574,24 @@ def create_app(
         """
         return bool(turn.payload.get("agent_stream"))
 
+    def _agent_turn_binding_kwargs(turn: ChatTurnOut | None, stream_fn: Any) -> dict[str, Any]:
+        """Forward the immutable reply target to capable dialogue owners."""
+        if turn is None:
+            return {}
+        binding = _binding_from_turn(turn)
+        if binding is not None and "dialogue_binding" in inspect.signature(stream_fn).parameters:
+            return {"dialogue_binding": binding}
+        return {}
+
+    def _agent_persona_kwargs(persona_id: str, stream_fn: Any) -> dict[str, str]:
+        """Thread style through real owners while retaining narrow legacy doubles."""
+        parameters = inspect.signature(stream_fn).parameters
+        if "persona_id" in parameters or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+        ):
+            return {"persona_id": persona_id}
+        return {}
+
     async def _generate_durable_agent_turn_reply(
         turn: ChatTurnOut, dialogue_owner: Any
     ) -> tuple[str, list[dict[str, Any]]] | None:
@@ -12371,11 +12630,16 @@ def create_app(
                 if skill_definition is not None
                 else ""
             ),
+            **_agent_turn_binding_kwargs(turn, stream_fn),
+            **_agent_persona_kwargs(
+                resolve_chat_persona(turn.payload.get("agent_persona")).id, stream_fn
+            ),
         ):
             # Same rule as the interactive endpoint: delta fragments are
             # live-render only and never persisted into agent_events.
             if event.type != "delta":
                 events.append(event.to_dict())
+                _append_chat_turn_agent_event(turn.turn_id, event.to_dict())
             if event.type == "final":
                 reply = event.text
         if not reply.strip():
@@ -13249,11 +13513,6 @@ def create_app(
                 raise
             _chat_no_provider_streak.pop(turn_id, None)
 
-            if agent_events is not None:
-                # Persist the loop's process stream before the completion CAS
-                # so history replay never shows a completed agent turn
-                # without its steps.
-                _store_chat_turn_agent_events(turn_id, agent_events)
             completed = _complete_chat_turn_row(turn_id, reply=reply)
             if not completed:
                 current = _get_chat_turn_row(turn_id)
@@ -13284,6 +13543,12 @@ def create_app(
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="Chat message is required.")
+        if (
+            payload.streaming
+            and payload.skill.strip()
+            and _resolve_skill_catalog().get(payload.skill.strip()) is None
+        ):
+            raise HTTPException(status_code=422, detail="Unknown chat skill.")
         normalized_scope = _normalize_chat_scope(payload.scope)
         if normalized_scope == "hypothesis" and (
             not payload.subject_id.strip() or not payload.subject_title.strip()
@@ -13398,6 +13663,8 @@ def create_app(
             # and its ``agent_events`` replay stream stay consistent with
             # the interactive path.
             structured_payload["agent_stream"] = True
+            if canonical_scope == "chat":
+                structured_payload["agent_persona"] = _session_persona_id(resolved_session_id)
             if payload.skill.strip():
                 structured_payload["agent_skill"] = payload.skill.strip()
         row = _create_chat_turn_row(
@@ -13837,6 +14104,14 @@ def create_app(
 
     # --- Multi-session chat endpoints (「聊一聊」 M5) ---
 
+    @app.get("/api/chat/personas")
+    async def list_chat_personas() -> dict[str, Any]:
+        """List expression presets independently of the capability skill catalog."""
+        return {
+            "example_prompt": PERSONA_EXAMPLE_PROMPT,
+            "personas": [persona.public_dict() for persona in CHAT_PERSONAS],
+        }
+
     @app.post("/api/chat/sessions", response_model=ChatSessionOut)
     async def create_chat_session(payload: ChatSessionCreateIn) -> ChatSessionOut:
         """Create one chat conversation; title auto-generates on first message."""
@@ -13889,12 +14164,16 @@ def create_app(
 
     @app.patch("/api/chat/sessions/{session_id}", response_model=ChatSessionOut)
     async def update_chat_session(session_id: str, payload: ChatSessionPatchIn) -> ChatSessionOut:
-        """Rename and/or archive one conversation; the default session cannot be archived."""
+        """Edit conversation preferences; the default session cannot be archived."""
         get_session = _chat_session_db_method("get_chat_session")
         get_summary = _chat_session_db_method("get_chat_session_summary")
         normalized_id = session_id.strip()
         if get_session(normalized_id) is None:
             raise HTTPException(status_code=404, detail="Chat session not found.")
+        if payload.archived and normalized_id == DEFAULT_CHAT_SESSION_ID:
+            raise HTTPException(
+                status_code=422, detail="The default chat session cannot be archived"
+            )
         if payload.title is not None:
             title = payload.title.strip()
             if not title:
@@ -13907,6 +14186,10 @@ def create_app(
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if payload.persona is not None:
+            _chat_session_db_method("set_chat_session_persona")(
+                normalized_id, persona=payload.persona
+            )
         row = get_summary(normalized_id)
         if row is None:  # pragma: no cover - guarded by the check above
             raise HTTPException(status_code=404, detail="Chat session not found.")
@@ -23593,6 +23876,7 @@ def create_app(
                 ("assets/css/classic.css", _desktop_dir),
                 ("assets/js/app.js", _desktop_dir),
                 ("assets/js/chat-agent-core.js", _desktop_dir),
+                ("agent-chat.js", _shared_web_dir),
                 ("dialogue-confirmation.js", _shared_web_dir),
                 ("source-status.js", _shared_web_dir),
             ):
@@ -23625,6 +23909,10 @@ def create_app(
             html = html.replace(
                 'src="/web/assets/js/chat-agent-core.js"',
                 f'src="/web/assets/js/chat-agent-core.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/shared/agent-chat.js"',
+                f'src="/shared/agent-chat.js?v={version}"',
             )
             html = html.replace(
                 'src="/shared/dialogue-confirmation.js"',

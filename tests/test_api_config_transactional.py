@@ -646,3 +646,199 @@ async def test_hot_reload_rollback_preserves_persisted_restart_only_data_dir(
     restored = load_config(config_path)
     assert restored.data_dir == str(next_data)
     assert restored.llm.openai.model == "gpt-4o-mini"
+
+
+async def test_agent_config_success_is_retained_by_later_failed_settings_apply(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.agent.tools import AgentToolContext, ToolRegistry
+    from openbiliclaw.agent.tools.config_tools import build_config_tools
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    config_path = tmp_path / "config.toml"
+    save_config(_valid_config(), config_path)
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    ctx = app.state.runtime_context
+    ctx.config = load_config(config_path)
+
+    async def rebuild(self: RuntimeContext, candidate: Config) -> None:
+        if candidate.llm.openai.model == "gpt-4.1-mini":
+            raise RuntimeError("later settings rebuild failed")
+        self.config = candidate
+
+    monkeypatch.setattr(RuntimeContext, "rebuild_from_config", rebuild)
+    tool_context = AgentToolContext(
+        config=ctx.config,
+        config_persist_hook=lambda cfg: save_config(cfg, config_path),
+        config_reload_hook=ctx._request_config_reload,
+        config_update_hook=getattr(app.state, "_apply_agent_config_update", None),
+    )
+    registry = ToolRegistry(build_config_tools(tool_context))
+    changed = await registry.dispatch("update_config", {"key": "language", "value": "en-US"})
+    assert changed.ok, changed.content
+    assert load_config(config_path).language == "en-US"
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.put(
+            "/api/config",
+            json={"llm": {"openai": {"model": "gpt-4.1-mini"}}},
+        )
+        assert response.status_code == 202
+        await _wait_for_apply_state(client, "failed")
+    assert load_config(config_path).language == "en-US"
+    assert ctx.config.language == "en-US"
+
+
+async def test_agent_config_reload_failure_rolls_back_and_reports_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.agent.tools import AgentToolContext, ToolRegistry
+    from openbiliclaw.agent.tools.config_tools import build_config_tools
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    config_path = tmp_path / "config.toml"
+    save_config(_valid_config(), config_path)
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    ctx = app.state.runtime_context
+    ctx.config = load_config(config_path)
+    original_language = ctx.config.language
+
+    async def rebuild(self: RuntimeContext, candidate: Config) -> None:
+        self.config = candidate
+        if candidate.language == "en-US":
+            raise RuntimeError("agent reload failed after publication")
+
+    monkeypatch.setattr(RuntimeContext, "rebuild_from_config", rebuild)
+    tool_context = AgentToolContext(
+        config=ctx.config,
+        config_persist_hook=lambda cfg: save_config(cfg, config_path),
+        config_reload_hook=ctx._request_config_reload,
+        config_update_hook=getattr(app.state, "_apply_agent_config_update", None),
+    )
+    changed = await ToolRegistry(build_config_tools(tool_context)).dispatch(
+        "update_config",
+        {"key": "language", "value": "en-US"},
+    )
+    assert not changed.ok
+    assert load_config(config_path).language == original_language
+    assert ctx.config.language == original_language
+    assert tool_context.config.language == original_language
+
+
+async def test_agent_config_waits_for_handoff_without_mutating_live_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.agent.tools import AgentToolContext, ToolRegistry
+    from openbiliclaw.agent.tools.config_tools import build_config_tools
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    config_path = tmp_path / "config.toml"
+    save_config(_valid_config(), config_path)
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    ctx = app.state.runtime_context
+    ctx.config = load_config(config_path)
+    initial_language = ctx.config.language
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def rebuild(self: RuntimeContext, candidate: Config) -> None:
+        entered.set()
+        await release.wait()
+        self.config = candidate
+
+    monkeypatch.setattr(RuntimeContext, "rebuild_from_config", rebuild)
+    tool_context = AgentToolContext(
+        config=ctx.config,
+        config_update_hook=app.state._apply_agent_config_update,
+    )
+    task = asyncio.create_task(
+        ToolRegistry(build_config_tools(tool_context)).dispatch(
+            "update_config",
+            {"key": "language", "value": "en-US"},
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert ctx.config.language == initial_language
+        assert tool_context.config.language == initial_language
+        assert load_config(config_path).language == "en-US"
+        assert not task.done()
+    finally:
+        release.set()
+    result = await task
+    assert result.ok, result.content
+    assert ctx.config.language == "en-US"
+
+
+async def test_config_apply_reports_which_execution_lane_is_draining(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    save_config(_valid_config(), tmp_path / "config.toml")
+    app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+    feedback_entered = asyncio.Event()
+    release_feedback = asyncio.Event()
+    dialogue_entered = asyncio.Event()
+    release_dialogue = asyncio.Event()
+    rebuild_entered = asyncio.Event()
+    release_rebuild = asyncio.Event()
+
+    async def pause_feedback() -> None:
+        feedback_entered.set()
+        await release_feedback.wait()
+
+    async def hold_dialogue() -> None:
+        async with app.state.dialogue_execution_coordinator.lease():
+            dialogue_entered.set()
+            await release_dialogue.wait()
+
+    async def rebuild(self: RuntimeContext, candidate: Config) -> None:
+        rebuild_entered.set()
+        await release_rebuild.wait()
+        self.config = candidate
+
+    monkeypatch.setattr(app.state.feedback_batch_scheduler, "pause_and_drain", pause_feedback)
+    monkeypatch.setattr(RuntimeContext, "rebuild_from_config", rebuild)
+    dialogue_task = asyncio.create_task(hold_dialogue())
+    await dialogue_entered.wait()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.put("/api/config", json={"language": "en-US"})
+        assert response.status_code == 202
+        try:
+            await asyncio.wait_for(feedback_entered.wait(), timeout=1)
+            status = (await client.get("/api/config/apply-status")).json()
+            assert status["state"] == "applying"
+            assert "画像/反馈" in status["message"]
+            assert "仍可继续聊天" in status["message"]
+            assert not app.state.dialogue_execution_coordinator.paused
+
+            release_feedback.set()
+            for _ in range(100):
+                status = (await client.get("/api/config/apply-status")).json()
+                if "当前对话" in status["message"]:
+                    break
+                await asyncio.sleep(0.01)
+            assert "当前对话" in status["message"]
+            assert not rebuild_entered.is_set()
+
+            release_dialogue.set()
+            await asyncio.wait_for(rebuild_entered.wait(), timeout=1)
+            status = (await client.get("/api/config/apply-status")).json()
+            assert "对话学习任务" in status["message"]
+            assert status["state"] == "applying"
+        finally:
+            release_feedback.set()
+            release_dialogue.set()
+            release_rebuild.set()
+            await dialogue_task
+        await _wait_for_apply_state(client, "applied")

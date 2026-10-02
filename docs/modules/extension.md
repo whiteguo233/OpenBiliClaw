@@ -22,6 +22,12 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
+| 聊一聊会话隔离与流结束校验 | ✅ | popup / 移动 Web 仅在 `done` 后确认流完成；迟到历史与消息按会话隔离，恢复沿用原 turn 的角色；popup 网络断连保持 agent 轮询，仅明确 503 降级旧聊天 |
+| 审批拒绝输入保留 | ✅ | popup / 移动 Web / 桌面共用审批草稿保留助手，周期刷新和流式重绘保留已展开拒绝表单、原因与焦点，终态更新立即移除操作；原因只读取对应 input，避免同名说明元素遮蔽 |
+| 移动/插件聊天风格 | ✅ | 六种独立于角色的风格模板，含说明与回复示例；通过会话 PATCH 保存，详情轮询恢复跨设备选择；保存等待/失败、切会话与旧 GET/PATCH 竞态有独立处理 |
+| 移动/插件会话草稿隔离 | ✅ | 未发送输入按会话保存在本页面内存；切到新会话输入为空，切回恢复自己的草稿，发送/清空后不复活旧文字；不跨刷新、设备或客户端同步 |
+| 聊天连接恢复与会话编辑保护 | ✅ | popup 在对话页从离线恢复可达时重取角色、风格与会话目录，避免启动过早导致空列表/错误默认标签；移动端抽屉重绘按会话保留未保存名称、焦点和选区，改名切到另一会话不串草稿 |
+| 移动聊天即时反馈与键盘布局 | ✅ | 发送立即显示用户气泡和等待态，完成即显示回复而不等待历史刷新；重绘保留输入节点、选区和多行高度，完成回复不打断阅读旧消息；键盘可视区收缩时折叠外层导航，保留对话、输入和待审批入口；320px 窄屏顶部连接状态保持单行 |
 | 统一品牌图标 | ✅ | Chrome / Edge / Brave / Firefox manifest 使用 16 / 32 / 48 / 128px 精确尺寸图标，side panel 顶部品牌标记、普通透明 PWA 图标、专用不透明 `maskable` / Apple 主屏幕图标、32px 根 favicon、首次设置页、桌面 Web、移动 Web 和 GitHub Pages 官网统一从 `assets/brand/openbiliclaw-icon.png` 派生。源图的半透明边缘已去除旧白底消光色；扩展图标、favicon 与 maskable 图标使用满幅品牌粉底，页面头图容器也用品牌粉承接透明圆角。旧字母 `B`、CSS 圆环和官网重复的内联 SVG favicon 已移除；社交分享图、Chrome Web Store 素材与 README / 官网截图通过 `build_social_preview_assets.py`、`capture_chrome_webstore_ui.py --refresh-docs` 和既有构建脚本确定性重建。 |
 | 8.1 行为采集 | ✅ | `content/kernel.ts` + `shared/platforms/*` + `service-worker.ts` 已接通统一事件链；B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Linux.do / V2EX 都通过 `PlatformAdapter` 产出同一 `BehaviorEvent` 形态，平台差异只保留在 selector、内容 ID 和 action 识别中；Reddit 插件任务接入 saved/upvoted/subscribed 初始化与 discovery fallback，Linux.do 另有只读同源任务，V2EX 普通页面采集被动阅读行为、任务页由独立 dispatcher 执行四个只读 bootstrap scope；click 监听在 capture 阶段执行，scroll 同时覆盖页面和内部滚动容器 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调；`/api/events` 在 soul 画像明确未初始化时只返回 `not_initialized` 拒收结果，不写 memory，首轮画像信号由 guided init 的来源任务拉取 |
@@ -237,6 +243,62 @@ extension/
 ```
 
 ## 当前能力
+
+### 聊天风格选择
+
+移动 Web 在现有角色入口中显示当前角色与风格，选择面板分“聊天风格 / 功能角色”，
+保留 320px 的可用空间，模板卡片自然行高并在面板内滚动；插件有独立风格按钮和
+不透明背景的原生 dialog。两端读取
+`GET /api/chat/personas` 的六个模板和同题示例，通过
+`PATCH /api/chat/sessions/{id} {persona}` 写入 `metadata.persona`。不额外写 localStorage
+或全局配置。选择成功从新消息生效；保存等待期间避免抢先发送，失联提示未确认保存，
+切会话后的晚返回只更新来源会话。目录加载失败可重试，不影响原有聊天。
+
+连接状态由离线转为可达且当前在对话页时，popup 补读现有
+`GET /api/chat/skills`、`GET /api/chat/personas`、`GET /api/chat/sessions`；
+不会等用户重新切 Tab，也不会在 online/degraded 之间反复读取目录。
+
+### 聊一聊会话隔离与断线恢复
+
+移动 Web 与 popup 的 `streamAgentChatTurn()` 只有收到终端 `done` 才成功返回；
+仅收到 `final` 后 EOF 会作为连接中断处理，由 durable 历史恢复真实终态。
+popup 仅在明确 503 时回退旧聊天端点，普通网络中断继续轮询原 agent turn，
+恢复时使用该 turn 保存的 `session_id` / `payload.agent_skill`。
+
+两端历史请求保存会话和请求代次，切换会话立即发起新快照，迟到的旧响应不覆盖
+当前会话。popup 的迟到流事件和 turn 更新也按来源会话过滤；移动 Web 旧流结束
+不会解锁另一个仍在回复的会话。角色选择仍按会话保存，当前回合完成不撤回下一回合的选择。
+
+`switchSession()` / `switchPopupChatSession()` 更换会话 ID 前保存输入框实时值，
+同步恢复目标会话的草稿后再加载历史；不新增 API 或本地持久存储。这样未发送文字不会
+随切换混入另一段对话。草稿只属于当前客户端页面，刷新后的权威历史仍由服务端恢复。
+
+移动端 `renderAgentOverlays()` 重绘会话抽屉前记录当前改名输入，仅在会话 ID 相同
+时恢复草稿、焦点和选区；“改名”操作聚焦重建后的新节点。保存仍用现有会话 PATCH。
+新增浏览器回归 `tests/test_mobile_chat_session_controls_e2e.py`，连接恢复回归位于
+`extension/tests/popup-chat-personas.test.ts`。真实三端操作见
+[三端逐项复验](../testing/2026-09-30-chat-three-surfaces-e2e.md)。
+
+回归入口：`tests/js/chat-agent-stream-integrity.test.mjs` 和
+`tests/js/chat-session-isolation.test.mjs`，通过实际 API 读流与三端交互函数验证
+提前 EOF、会话切换竞态、迟到消息与角色隔离。
+其中草稿用例覆盖新会话空输入、切回恢复和清空/发送后不复活；三端真实交互见
+[9 月 30 日完整复查](../testing/2026-09-30-chat-comprehensive-e2e.md)。
+
+共享 `captureApprovalDrafts(root)` / `restoreApprovalDrafts(root, drafts)` 在重绘前后
+保留正在编辑的审批拒绝输入（DOM 节点、内容、焦点），适用于待审批列表与过程卡；
+`tests/js/chat-approval-drafts.test.mjs` 覆盖草稿保留与终态优先。
+
+移动 Web 的乐观消息带 `scope=chat` 和创建时间，使用同一历史选择器即可立即显示在
+记录末尾；流完成直接填充 `reply`，随后历史刷新只校准持久化状态。`mountChatShell()`
+保留已挂载的输入框，回复和卡片刷新不重建正在编辑的 textarea，也不重置选区。
+历史刷新在实际渲染时读取当前滚动位置，不用请求前的旧位置覆盖期间的阅读或发送操作。
+`syncChatViewport()` 同时响应 `visualViewport` resize/scroll、窗口 resize 和焦点变化；
+键盘压缩可视区时按实际高度布局，收起品牌栏和底部导航，待确认/待审批仍可操作。
+空审批面板遵循 `hidden`，不再占用一行。普通尺寸不改变布局，缩放手势不视为键盘。
+360px 及以下缩小顶部状态区的内部间距，保留 44px 按钮，避免“在线”被挤成两行。
+回归入口：`tests/js/mobile-chat-experience.test.mjs`；真实浏览器验收包含 390×844、
+320×568 与 400px 可视高度，不等同于 iOS 实机键盘验收。
 
 ### `content/kernel.ts`
 
@@ -740,3 +802,17 @@ npm run build
 - 自动续页同样依赖 discovery pool 当前已有候选；如果池子暂时不够，续页结果可能少于 10 条，甚至直接提示先等后台再补一点新的
 - 池子摘要里的“最近在补”目前基于策略和候选标签做轻量聚合，属于方向提示，不是精确 taxonomy
 - 小红书初始化导入是 best-effort：后端不登录、不爬取小红书，只等待插件在用户已登录浏览器里解析页面；收藏/点赞/浏览记录任一 scope 不暴露时，会跳过该 scope。普通推荐流不会被标成 `xhs_history`；受控滚动只在任务显式设置 `max_scroll_rounds` 时启用
+
+### Agent 网页与笔记能力
+
+移动 Web 和插件 popup 共用后端 search_web/read_webpage 与聊天笔记读写，无需
+另开页面：现有 SSE 工具过程、来源链接、通用审批卡支持这些能力。delete_memory
+需批准后执行且校验原值，保存/更正仍沿用明确用户请求触发的 soft_write。
+共享 Markdown 渲染器将正文中的裸 http(s) 来源安全转为链接，代码与已有链接不重复
+处理；popup 构建时同步同一脚本，移动端与桌面端直接使用后端共享资源。
+
+### 2026-10-02 聊天真实请求复验
+
+Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复临时正文；`thinking` 清掉工具中间文本，`final`/`done` 权威全文替换，未收到 `done` 仍走恢复流程。新开待聊卡片成功后自动折叠列表并滚动到卡片，防止窄窗口列表把聊天区压到零高度；失败时保留列表重试入口。HTTP 接口不变。
+
+首次发送和历史恢复使用已有 turn 直接建立 agent SSE，不在连接前用 GET 唤醒后台补算；断流后仍回到 durable GET 恢复。这样保留断线恢复，同时避免刚发送就退化为最终正文重放。

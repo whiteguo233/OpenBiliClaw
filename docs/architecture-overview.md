@@ -140,8 +140,10 @@ Agent 宿主（OpenClaw / Hermes / WorkBuddy）
 
 Web/API durable → rowid 顺序回复 worker → app-stable 对话 lease(max active 1) → SocraticDialogue(queued) → 可见 CAS
 惊喜/legacy/兴趣探针/避雷探针 chat ────────────────────────────────┘（回复与必要副作用同 lease）
-聊一聊 agent loop → 同一对话 lease → AgentLoop 多跳（agent.chat，交互车道）→ SSE 过程事件 + agent_events 回放
-                 hard_write → 审批卡 → approve 端点执行 + 台账；后台任务（agent.task，交互车道）只读 loop → 建议清单回写
+聊一聊 → API-owned durable producer → 同一对话 lease + 终态复核 → 会话上下文 + AgentLoop
+       → agent_events 逐事件落库 / SSE 订阅 → 完成 CAS；HTTP 断连原执行继续，完成重试只回放
+                 hard_write → 审批卡 → approve 后台执行 → config_update_hook 共用设置应用队列/last-good + 台账；后台任务（agent.task，交互车道）只读 loop → 建议清单回写
+                 配置仅变已知五项 agent 设置 → 替换 loop、保留在途回合/学习；其他配置 → 安全排空并重建
 回复完成后的 11-kind learning/settlement → 独立 typed 结算单 worker（不属于 reply backlog）
 CLI/OpenClaw → SocraticDialogue(legacy_direct) → user+agent 历史 → 队列/guard 外 direct learning
 学习 → 绕过后台门禁、保留总并发 ── 新避雷：共享清池 → content_cache

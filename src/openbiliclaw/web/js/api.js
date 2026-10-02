@@ -480,7 +480,8 @@ async function postSse(path, body, { signal } = {}) {
 /**
  * Stream one multi-hop agent turn (POST /api/chat/agent/stream).
  * ``onEvent(eventName, data)`` receives every AgentEvent; resolves with the
- * terminal ``done`` payload (or ``null`` when the stream ended without one).
+ * terminal ``done`` payload. EOF before ``done`` rejects so an interrupted
+ * response cannot be mistaken for a durably completed turn.
  * Throws with ``err.status === 503`` when the loop is disabled so callers can
  * fall back to the legacy single-hop stream.
  */
@@ -513,6 +514,7 @@ export async function streamAgentChatTurn({
     }
     onEvent?.(name, data);
   }, watchdog);
+  if (!donePayload) throw new Error("对话连接已中断，等待历史恢复。");
   return donePayload;
 }
 
@@ -557,6 +559,17 @@ export async function fetchChatSkills() {
   return agentChatShared().normalizeChatSkillList(data);
 }
 
+export async function fetchChatPersonas() {
+  const data = await requestJson("/chat/personas", { timeoutMs: QUICK_READ_TIMEOUT_MS });
+  if (!Array.isArray(data?.personas) || data.personas.length === 0) {
+    throw new Error("聊天风格暂不可用，请稍后重试。");
+  }
+  const personas = data.personas.filter((persona) => persona && typeof persona.id === "string"
+    && persona.id && typeof persona.title === "string" && persona.title);
+  if (!personas.length) throw new Error("聊天风格暂不可用，请稍后重试。");
+  return { personas, examplePrompt: typeof data.example_prompt === "string" ? data.example_prompt : "" };
+}
+
 export async function fetchChatSessions({ includeArchived = false, limit = 100 } = {}) {
   const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(500, limit))) });
   if (includeArchived) params.set("include_archived", "true");
@@ -571,12 +584,14 @@ export async function createChatSession({ title = "", sessionId = "" } = {}) {
   return requestJson("/chat/sessions", json(body));
 }
 
-export async function updateChatSession(sessionId, { title, archived } = {}) {
+export async function updateChatSession(sessionId, { title, archived, persona } = {}) {
   const body = {};
   if (typeof title === "string") body.title = title;
   if (typeof archived === "boolean") body.archived = archived;
+  if (typeof persona === "string") body.persona = persona;
   return requestJson(`/chat/sessions/${encodeURIComponent(String(sessionId || ""))}`, {
     method: "PATCH",
+    timeoutMs: DEFAULT_READ_TIMEOUT_MS,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

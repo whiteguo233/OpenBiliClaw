@@ -6132,13 +6132,14 @@
       display: flex;
       gap: 6px;
       align-items: center;
+      flex-wrap: wrap;
       margin-bottom: 6px;
     }
 
     .chat-skill-select {
       flex: 1;
       min-width: 0;
-      min-height: 28px;
+      min-height: 44px;
       border: 1px solid var(--line-strong);
       border-radius: 999px;
       background: var(--brand-soft);
@@ -6146,6 +6147,61 @@
       font-size: 11px;
       padding: 2px 8px;
     }
+
+    .chat-persona-toggle {
+      min-height: 44px;
+      max-width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--text-main);
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .chat-persona-dialog {
+      width: min(420px, calc(100vw - 24px));
+      max-height: calc(100dvh - 32px);
+      box-sizing: border-box;
+      margin: auto;
+      padding: 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+      color: var(--text-main);
+      background: var(--bg-base, #fff);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .chat-persona-dialog::backdrop { background: rgba(20, 20, 35, .4); }
+    .chat-persona-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .chat-persona-dialog-head h2 { margin: 0; font-size: 18px; }
+    .chat-persona-dialog p { font-size: 12px; line-height: 1.6; }
+    .chat-persona-list { display: grid; gap: 8px; }
+    .chat-persona-option {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      text-align: left;
+      color: var(--text-main);
+      background: transparent;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+      cursor: pointer;
+    }
+    .chat-persona-option:hover, .chat-persona-option[aria-pressed="true"] { background: var(--brand-soft); }
+    .chat-persona-option[aria-pressed="true"] { border-color: var(--brand); }
+    .chat-persona-option strong { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+    .chat-persona-option strong span { font-size: 11px; }
+    .chat-persona-example { border-left: 2px solid var(--line-strong); padding-left: 8px; }
+    .chat-persona-toggle:focus-visible, .chat-persona-option:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+    .chat-persona-option:disabled { opacity: .65; cursor: wait; }
+    #chatPersonaStatus:empty { display: none; }
 
     .chat-approvals-toggle {
       flex: 0 0 auto;
@@ -6755,6 +6811,7 @@
           <div id="chatSubpanelChat" class="chat-subpanel">
             <div class="chat-agent-bar">
               <select id="chatSkillSelect" class="chat-skill-select" aria-label="对话角色" title="对话角色（skill）"></select>
+              <button id="chatPersonaToggle" class="chat-persona-toggle" type="button" aria-haspopup="dialog" aria-controls="chatPersonaDialog">风格 · 自然朋友</button>
               <button id="chatApprovalsToggle" class="chat-pending-toggle chat-approvals-toggle" type="button" aria-expanded="false" aria-controls="chatApprovalsList" hidden>
                 <span>待审批 <span id="chatApprovalsCount" class="chat-pending-count">0</span></span>
               </button>
@@ -8717,6 +8774,18 @@
       <div id="activityHistory" class="footer-history" hidden></div>
     </footer>
   </div>
+
+  <dialog id="chatPersonaDialog" class="chat-persona-dialog" aria-labelledby="chatPersonaTitle" aria-describedby="chatPersonaDescription">
+    <div class="chat-persona-dialog-head">
+      <h2 id="chatPersonaTitle">聊天风格</h2>
+      <button class="chat-persona-toggle" type="button" data-persona-close aria-label="关闭聊天风格">关闭</button>
+    </div>
+    <p id="chatPersonaDescription">选择喜欢的说话方式，用于本会话的新消息。功能角色和工具权限保持原样。</p>
+    <p id="chatPersonaExamplePrompt" hidden></p>
+    <div id="chatPersonaList" class="chat-persona-list" aria-label="可选聊天风格"></div>
+    <p id="chatPersonaStatus" role="status" aria-live="polite"></p>
+    <button class="chat-persona-toggle" type="button" data-persona-retry>刷新风格列表</button>
+  </dialog>
 
   <!-- Frontend helpers shared with backend-served pages; copied into the
        package by scripts/build.mjs because MV3's CSP forbids loading them from

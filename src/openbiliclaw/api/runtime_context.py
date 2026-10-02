@@ -2,9 +2,9 @@
 
 All FastAPI endpoint closures access runtime components through a single
 ``RuntimeContext`` instance.  When configuration changes at runtime (via
-``PUT /api/config``), the context atomically rebuilds every swappable
-component so the new settings take effect immediately — no server restart
-required.
+``PUT /api/config``), the context atomically rebuilds swappable components.
+Changes confined to the five explicitly supported chat knobs instead replace
+only the agent loop and configuration, leaving active learning owners intact.
 
 **Stable components** (never rebuilt):
   - ``database`` — owns the SQLite connection
@@ -28,7 +28,7 @@ import inspect
 import logging
 import os
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.config import (
@@ -62,6 +62,15 @@ _BACKGROUND_TASK_CANCEL_TIMEOUT_SECONDS = 1.5
 # timeout in one worker job.  Give it the same 25-minute no-progress envelope
 # as guided preference analysis instead of rolling config.toml back after 30s.
 _DIALOGUE_SETTLEMENT_DRAIN_TIMEOUT_SECONDS = 25 * 60.0
+_LIVE_AGENT_CONFIG_FIELDS = frozenset(
+    {
+        "loop_enabled",
+        "loop_max_steps",
+        "tool_result_max_chars",
+        "session_title_enabled",
+        "task_max_steps",
+    }
+)
 
 
 class _BackgroundTaskHost(Protocol):
@@ -745,6 +754,61 @@ class RuntimeContext:
             payload.get("worker_pid"),
             payload.get("worker_mode"),
         )
+
+    def try_apply_agent_config(self, new_config: Config) -> bool:
+        """Publish only known chat knobs, preserving active owners and loops.
+
+        Called under the API's reload lock after validation and persistence.
+        Any difference outside the explicit whitelist requires a full rebuild.
+        Construction precedes a synchronous publication: existing turns retain
+        their loop and budget, while newly admitted turns use the replacement.
+        """
+        from openbiliclaw.agent.loop import AgentLoop
+        from openbiliclaw.config import Config
+
+        current = self.config
+        if (
+            self.degraded
+            or not isinstance(current, Config)
+            or not isinstance(new_config, Config)
+            or any(
+                component is None
+                for component in (
+                    self.llm_service,
+                    self.agent_loop,
+                    self.agent_tool_registry,
+                    self.agent_tool_context,
+                    self.chat_approval_store,
+                )
+            )
+        ):
+            return False
+        # The API pins data_dir to its canonical process-lifetime path. Alias
+        # normalization alone is not an unrelated configuration change.
+        before = replace(current, data_dir=str(current.data_path.expanduser().resolve()))
+        after = replace(new_config, data_dir=str(new_config.data_path.expanduser().resolve()))
+        if before == after:
+            # Repeating an already-applied value still completes its durable
+            # revision, without replacing a loop or waiting for learning.
+            return True
+        expected_agent = replace(
+            before.agent,
+            **{name: getattr(after.agent, name) for name in _LIVE_AGENT_CONFIG_FIELDS},
+        )
+        if replace(before, agent=expected_agent) != after:
+            return False
+        new_loop = AgentLoop.from_config(
+            self.llm_service,
+            self.agent_tool_registry,
+            new_config,
+            caller="agent.chat",
+            bypass_semaphore=True,
+            approval_gate=self.chat_approval_store,
+        )
+        self.config = new_config
+        self.agent_tool_context.config = new_config
+        self.agent_loop = new_loop
+        return True
 
     async def rebuild_from_config(self, new_config: Config) -> None:
         """Rebuild all swappable components from *new_config*.
@@ -1965,13 +2029,16 @@ class RuntimeContext:
         # machine, so a rebuild mid-execution can never resurrect stale
         # states from a freshly reloaded copy (issue: approved/executing
         # records regressing after a hot reload).
-        approval_store_path = (
-            Path(str(getattr(new_config, "data_dir", "data") or "data")) / "chat_approvals.json"
-        )
+        # Runtime pinning normalizes data_dir during reload. Compare canonical
+        # paths so relative paths and symlink aliases (e.g. /tmp on macOS) keep
+        # the live authority instead of invoking crash recovery mid-execution.
+        approval_store_path = new_config.data_path.expanduser().resolve() / "chat_approvals.json"
         existing_approval_store = getattr(self, "chat_approval_store", None)
+        existing_approval_path = getattr(existing_approval_store, "path", None)
         if (
             existing_approval_store is not None
-            and getattr(existing_approval_store, "path", None) == approval_store_path
+            and existing_approval_path is not None
+            and Path(existing_approval_path).expanduser().resolve() == approval_store_path
         ):
             new_chat_approval_store = existing_approval_store
         else:

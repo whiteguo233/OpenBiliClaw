@@ -209,6 +209,19 @@ def _normalize_explore_domains_block(block: dict[str, object]) -> dict[str, obje
     return normalized
 
 
+_ADAPTIVE_DIALOGUE_STYLE = (
+    "按当前请求决定回应深度：简单问题直接用一两句话答清楚，简单事实直接给结果。"
+    "寒暄或致谢只用一句自然回应，不自我介绍、罗列功能或另起话题；"
+    "例如问候可答「你好呀！」，致谢可答「不客气。」。"
+    "用户指定长度或格式时照做，一句话只讲必要要点，不用长串逗号、括号堆成伪短答。"
+    "概括画像或工具结果时只提炼用户所需的重点，除非用户要求，不展示内部置信度、权重等数据；"
+    "仍需如实说明影响结论的不确定性。复杂任务按需要充分分析、使用工具并完成必要步骤。"
+    "只有缺少影响正确性或执行的关键信息，或当前访谈角色需要探索时，才聚焦澄清，"
+    "无需每次附带追问。自然友善，不嘲讽或评判问题难易。"
+    "历史对话的时间标签仅供理解上下文，不要复制为回复前缀；用户询问时间时正常回答。"
+)
+
+
 def build_socratic_dialogue_prompt(
     *,
     user_message: str,
@@ -218,6 +231,7 @@ def build_socratic_dialogue_prompt(
     source_platform_mix: dict[str, float] | None = None,
     reply_style: str = "",
     dialogue_tone_prompt: str = "",
+    socratic: bool = True,
 ) -> list[dict[str, str]]:
     """Build chat messages for Socratic dialogue generation.
 
@@ -242,6 +256,10 @@ def build_socratic_dialogue_prompt(
     (after strip) it takes the place of ``_render_tone_profile(...)`` —
     including any ``reply_style`` line — while every other system-prompt
     segment stays byte-identical. Empty (default) changes nothing.
+
+    ``socratic=False`` lets the agent's selected skill own any interviewing
+    behavior. The shared style then scales depth to the current request;
+    legacy callers keep the original Socratic instruction by default.
     """
     friend_label = _friend_label_from_mix(source_platform_mix)
     tone_block = dialogue_tone_prompt.strip() or _render_tone_profile(
@@ -253,6 +271,8 @@ def build_socratic_dialogue_prompt(
             (
                 "请使用苏格拉底式对话风格：温和、追问动机、确认理解，"
                 f"但整体更像会接话的{friend_label}，不像客服，也不要像咨询师。"
+                if socratic
+                else _ADAPTIVE_DIALOGUE_STYLE
             ),
             (
                 "能力边界：系统会在回复后尝试把用户明确、稳定的兴趣和避雷写入"

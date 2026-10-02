@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from openbiliclaw.agent.persona import validate_chat_persona
 from openbiliclaw.api.source_auth.contract import SourceAuthContract, SourceCapabilityAuth
 from openbiliclaw.saved_sync.identity import canonical_source_platform, make_item_key
 from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES, normalize_source_platform
@@ -2041,6 +2042,7 @@ class ChatTurnIn(BaseModel):
             # for streaming turns instead of the legacy single-hop reply.
             "agent_stream",
             "agent_skill",
+            "agent_persona",
             # Server-owned background-task summary card (M6): written only by
             # AgentTaskManager when a task terminates; clients must not forge
             # a summary card for an arbitrary task.
@@ -2110,15 +2112,28 @@ class ChatSessionCreateIn(BaseModel):
 
     session_id: str = ""
     title: str = ""
-    # Additive metadata bag; reserved for the skill binding (M4).
+    # Additive metadata bag; persona is a validated expression-style id.
     metadata: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_persona_metadata(cls, value: dict[str, object]) -> dict[str, object]:
+        if "persona" in value:
+            validate_chat_persona(value["persona"])
+        return value
 
 
 class ChatSessionPatchIn(BaseModel):
-    """Rename and/or archive one chat conversation."""
+    """Rename, archive or choose the expression style of one conversation."""
 
     title: str | None = None
     archived: bool | None = None
+    persona: str | None = None
+
+    @field_validator("persona", mode="before")
+    @classmethod
+    def validate_persona(cls, value: object) -> str:
+        return validate_chat_persona(value)
 
 
 class ChatSessionOut(BaseModel):

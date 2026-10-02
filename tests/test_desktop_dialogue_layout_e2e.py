@@ -126,6 +126,32 @@ def _scroll_report(page: Page, selector: str) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize(("width", "height"), [(375, 667), (768, 720), (1440, 1000)])
+def test_chat_toast_does_not_cover_composer(chromium_page: Page, width: int, height: int) -> None:
+    chromium_page.set_viewport_size({"width": width, "height": height})
+    chromium_page.set_content(_dialogue_fixture_html(), wait_until="domcontentloaded")
+    # Keep a notice present, as hovering a real toast pauses its expiry. Use the
+    # production classes/CSS and hit testing so this catches blocked clicks.
+    chromium_page.evaluate(
+        """() => {
+          const container = document.createElement('div');
+          container.className = 'toast-container';
+          container.innerHTML = '<div class="toast-item" style="bottom:0">请稍后重试。</div>';
+          document.body.appendChild(container);
+          document.querySelector('#chatForm').addEventListener('submit', e => {
+            e.preventDefault();
+            window.submissions = (window.submissions || 0) + 1;
+          });
+        }"""
+    )
+    toast = chromium_page.locator(".toast-item").bounding_box()
+    composer = chromium_page.locator("#chatForm").bounding_box()
+    assert toast is not None and composer is not None
+    assert toast["y"] + toast["height"] <= composer["y"], "toast covers chat composer"
+    chromium_page.get_by_role("button", name="发送", exact=True).click(timeout=1000)
+    assert chromium_page.evaluate("window.submissions") == 1
+
+
 @pytest.mark.parametrize(
     ("width", "height"),
     [(375, 667), (768, 720), (1024, 768), (1440, 900)],

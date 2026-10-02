@@ -640,6 +640,10 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
+Chat: `session style → durable turn freezes style → API-owned agent task → conversation context and saved notes + skill tools (web search / URL reading) + expression style → persisted events / SSE → completed reply`. The original task continues after an HTTP disconnect; retries of a completed turn replay its saved events.
+
+Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
+
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 
 Publication date preference: `[sources.<name>].recommendation_date_*` per source → out-of-window candidates are filtered before LLM evaluation → effective inventory → PoolCurator soft/strict serving semantics.

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from openbiliclaw.agent.tools import AgentToolContext, ToolRegistry
 from openbiliclaw.agent.tools.memory_tools import build_memory_tools
 from openbiliclaw.agent.tools.profile_tools import build_profile_tools
+from openbiliclaw.memory.manager import MemoryManager
 from openbiliclaw.soul.engine import SoulProfileNotInitializedError
 from openbiliclaw.soul.profile import OnionProfile
 from openbiliclaw.storage.database import Database
@@ -123,17 +124,18 @@ class TestReadMemory:
 
 
 class TestWriteMemory:
-    async def test_happy_path_namespaced_write(self) -> None:
-        memory = _FakeMemoryManager()
+    async def test_happy_path_namespaced_write(self, tmp_path: Path) -> None:
+        memory = MemoryManager(tmp_path)
+        memory.initialize()
         ctx = AgentToolContext(memory_manager=memory)
         result = await _registry(build_memory_tools, ctx=ctx).dispatch(
             "write_memory",
             {"layer": "insight", "key": "chat_observation", "value": "用户最近对露营感兴趣"},
         )
         assert result.ok
-        notes = memory.layers["insight"].data["agent_notes"]
+        notes = memory.get_layer("insight").data["agent_notes"]
         assert notes["chat_observation"]["value"] == "用户最近对露营感兴趣"
-        assert memory.layers["insight"].saved
+        assert memory.get_layer("insight").storage_path.exists()
 
     async def test_soul_layer_rejected_by_schema(self) -> None:
         memory = _FakeMemoryManager()
@@ -160,7 +162,7 @@ class TestWriteMemory:
         bad_key = await registry.dispatch(
             "write_memory", {"layer": "event", "key": "bad key!", "value": "x"}
         )
-        assert bad_key.ok
+        assert not bad_key.ok
         assert "键名无效" in bad_key.content
         long_value = await registry.dispatch(
             "write_memory", {"layer": "event", "key": "ok", "value": "x" * 2001}

@@ -1039,7 +1039,8 @@ async function readAgentSseStream(response, onEvent, watchdog) {
 /**
  * Stream one multi-hop agent turn (POST /api/chat/agent/stream).
  * ``onEvent(eventName, data)`` receives every AgentEvent; resolves with the
- * terminal ``done`` payload or null. Throws with ``status === 503`` when the
+ * terminal ``done`` payload; EOF without it rejects as an interrupted stream.
+ * Throws with ``status === 503`` when the
  * loop is disabled so callers can fall back to the legacy stream; an SSE
  * ``error`` frame rejects with ``agentStreamError = true``. A read watchdog
  * aborts the request when no byte arrives within the watchdog window.
@@ -1073,12 +1074,21 @@ export async function streamAgentChatTurn({
     }
     onEvent?.(name, data);
   }, watchdog);
+  if (!donePayload) throw new Error("对话连接已中断，等待历史恢复。");
   return donePayload;
 }
 
 export async function fetchChatSkills() {
   const data = await requestJson("/chat/skills", { timeoutMs: 5_000 });
   return agentChatShared().normalizeChatSkillList(data);
+}
+
+export async function fetchChatPersonas() {
+  const data = await requestJson("/chat/personas", { timeoutMs: 5_000 });
+  return {
+    personas: Array.isArray(data?.personas) ? data.personas : [],
+    examplePrompt: String(data?.example_prompt || ""),
+  };
 }
 
 export async function fetchChatSessions({ includeArchived = false, limit = 100 } = {}) {
@@ -1099,12 +1109,14 @@ export async function createChatSession({ title = "", sessionId = "" } = {}) {
   });
 }
 
-export async function updateChatSession(sessionId, { title, archived } = {}) {
+export async function updateChatSession(sessionId, { title, archived, persona } = {}) {
   const body = {};
   if (typeof title === "string") body.title = title;
   if (typeof archived === "boolean") body.archived = archived;
+  if (typeof persona === "string") body.persona = persona;
   return requestJson(`/chat/sessions/${encodeURIComponent(String(sessionId || ""))}`, {
     method: "PATCH",
+    timeoutMs: 10_000,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

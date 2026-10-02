@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .common import clamp_int, maybe_await, require_component, short
+from .common import clamp_int, maybe_await, render_content_reference, require_component, short
 from .registry import Tool
 
 if TYPE_CHECKING:
@@ -28,6 +28,8 @@ def build_recommendation_tools(ctx: AgentToolContext) -> list[Tool]:
             description=(
                 "预览推荐池头部：系统接下来最可能推荐给用户的条目（标题、UP主/作者、"
                 "主题、相关度）。这是只读预览——不消耗推荐池、不标记已展示。"
+                "定位信息含保存所需的 content_id / source_platform / content_url；"
+                "未展示候选没有 recommendation_id，不可猜测 ID 提交推荐反馈。"
             ),
             permission_level="read",
             parameters={
@@ -84,7 +86,7 @@ def _render_pool_row(index: int, row: dict[str, Any]) -> str:
     if topic:
         parts.append(f"主题:{topic}")
     parts.append(f"相关度:{score}")
-    return " ".join(parts)
+    return " ".join(parts) + render_content_reference(row)
 
 
 async def _get_recommendations(ctx: AgentToolContext, args: dict[str, Any]) -> str:

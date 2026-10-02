@@ -342,6 +342,18 @@ async def test_lease_timeout_raises_during_pause_and_recovers_after_resume() -> 
 
 
 @pytest.mark.asyncio
+async def test_busy_lease_timeout_does_not_claim_configuration_reload() -> None:
+    coordinator = DialogueExecutionCoordinator()
+    async with coordinator.lease():
+        with pytest.raises(DialogueLeaseTimeoutError) as exc_info:
+            async with coordinator.lease(timeout=0.01):
+                raise AssertionError("busy lease must not admit another execution")
+        assert "对话" in exc_info.value.safe_message
+        assert "重载配置" not in exc_info.value.safe_message
+    async with coordinator.lease(timeout=1):
+        assert coordinator.active
+
+
 async def test_lease_without_timeout_waits_through_pause() -> None:
     coordinator = DialogueExecutionCoordinator()
     owner_started = asyncio.Event()
