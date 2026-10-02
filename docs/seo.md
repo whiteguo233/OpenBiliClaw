@@ -4,7 +4,7 @@
 <https://whiteguo233.github.io/OpenBiliClaw/>。
 
 本文覆盖首页信息层级、双语内容和搜索引擎维护。HTML 位于 `docs/index.html`，
-样式与交互分别位于 `docs/assets/home.css`、`docs/assets/home.js`；meta / OG /
+主体样式与交互保留在 HTML 内联，媒体增补位于 `docs/assets/home.css`、`docs/assets/home.js`；meta / OG /
 Twitter Card / JSON-LD / `sitemap.xml` / `robots.txt` 随站点一起维护。
 本地改稿不代表已经发布或被搜索引擎收录。
 
@@ -14,69 +14,37 @@ Twitter Card / JSON-LD / `sitemap.xml` / `robots.txt` 随站点一起维护。
 > `docs/robots.txt` 只是冗余备份；真正起作用的是把 sitemap
 > **手动提交到 Search Console / Bing Webmaster**。
 
-## 首页内容约定
+## 首页与媒体维护约定
 
-首页按「原项目定位 → 产品导览 → 桌面 / 插件 / 手机真实画面 → 主要功能截图 → 安装 → 项目立场、学习循环与架构」组织。
-README 与官网沿用“自进化的跨平台内容发现 Agent、本地运行、只为你一个人构建”的定位；前半部优先让用户看清产品长相和操作，不添加长篇痛点、场景营销段落。
-详细安装步骤统一链接到[安装指南](installation.md)。
+主页保留原版深灰、粉色与青色品牌、Hero 截图、卖点、学习闭环、平台卡片、五种使用入口、安装代码和 Star 叙事。
+主体样式和中英翻译仍在 `docs/index.html` 内联维护；`docs/assets/home.css` 与 `docs/assets/home.js`
+只承载新增录屏样式和播放器增强，不是另一套主页实现。
 
-- 产品导览使用 `docs/media/product-tour.mp4`，由真实操作录屏与仓库既有功能截图剪辑。
-  配中英字幕和封面，标为“产品导览”，不能称为全程连续实录。
-- 桌面、浏览器插件、手机 Web 预览默认同时可见；分端操作视频放在展开区域，仍可通过
-  `#desktop-demo`、`#extension-demo`、`#mobile-demo` 直接访问。视频手动播放、`preload="none"`，
-  语言切换只能改字幕，不能重建视频节点或重置进度。启用 JavaScript 时，首次播放前显示真实海报与可键盘操作的播放按钮，点击后使用原生控件；不为冷启动外观提前下载视频。
-- 画像、内容风格、兴趣探针与对话使用仓库既有截图，统一轻量脚注明确界面版本可能不同。
-  手机画面必须标为手机 Web，不能说是 Flutter 原生客户端或物理手机录制。
-  详细来源、录制版本、完整文字稿和成品规格放入[素材说明](media/README.md)，不堆进产品正文。
-- 操作视频展示已有真实推荐上的浏览、反馈与保存；录制时没有运行模型生成或画像学习。
-  对话截图仅展示已有界面，不代表本次重新验证了模型回复。
-- 默认 HTML 直接提供完整中文正文和全部功能图，英文切换同步文字、按钮、图片 alt、标题、描述、
-  分享信息与 JSON-LD。没有 JavaScript 时仍可阅读、播放原生视频、展开分端录屏和进入安装指南。
-- “本地运行”与“本地存储”不能解释成所有推理都在本机。云端 LLM / embedding 的数据边界保留在
-  工作原理和隐私说明；`with-embedding` 包不等于内置可用 LLM。
-- 桌面安装包保留默认安装路线，Docker、源码和 AI 助手部署为其他选择。
-  固定版本的国内镜像不称为“最新版”，当前发布版本以 GitHub Releases 为准。
+- Hero 只增加“看真实操作”入口，跳到原 `#screens` 产品区。
+- 产品区补充桌面 25 秒、插件 18 秒、手机 Web 20 秒实录，保留原推荐、画像、价值、内容风格和聊天介绍，
+  补兴趣探针与内容库截图。70 秒剪辑导览默认折叠，是次级入口，不能称为全程连续实录。
+- 截图直接占满原有展示区域，可点击查看完整原图。功能图包含仓库既有截图；手机截图和视频是手机 Web，
+  不能说是物理手机录制或 Flutter 客户端。
+- 视频保留原生控件、`preload="none"`，无自动播放。启用 JavaScript 时，首次播放前用真实海报和可键盘操作的
+  播放按钮提供入口，开始播放后回到原生控件，不重建媒体节点。中英切换只改字幕，不重置播放进度。
+  关闭 JavaScript 后仍可阅读默认中文、播放原生视频和展开导览。
+- 原版内容仅定点修正已知准确性边界：本地存储不等于所有模型调用都在本机，with-embedding 包不包含可用 LLM，
+  v0.3.221 国内下载入口为历史版本。不要借素材更新重写定位、精简卖点或重新设计首页。
 
-改动后在桌面和手机宽度检查：导航不挤压首屏、主图可以阅读、没有横向溢出、主要链接可用，
-键盘能操作菜单与语言切换；关闭 JavaScript 后仍能阅读中文介绍并进入安装指南。
-资源使用适合 GitHub Pages `/OpenBiliClaw/` 子路径的相对地址。
+媒体来源、录制范围、版本、文字稿与文件规格见[素材说明](media/README.md)及
+[`manifest.json`](media/manifest.json)。独立录制环境演示已有推荐上的浏览、反馈和本地保存，没有录制现场生成或画像学习。
 
----
-
-## 本地预览与验收
-
-官网是静态 HTML / CSS / JavaScript，无需构建或启动业务后端。在仓库根目录运行：
-
-```bash
-python3 -m http.server 8847 --bind 127.0.0.1 --directory docs
-```
-
-上面的轻量服务适合看布局，但不支持视频的 HTTP Range 请求，Chromium 可能无法拖动进度条。
-验收视频时，停止该服务，在已安装项目依赖的 Python 环境中改用支持 Range 的静态服务：
+本地用支持 HTTP Range 的静态服务检查视频播放和拖动：
 
 ```bash
 python -c 'import uvicorn; from starlette.staticfiles import StaticFiles; uvicorn.run(StaticFiles(directory="docs", html=True), host="127.0.0.1", port=8847)'
 ```
 
-打开 `http://127.0.0.1:8847/`；英文可直接用 `?lang=en`，中文用 `?lang=zh`。
-页面会记住主动选择的语言；没有语言参数或已保存偏好时默认中文。禁用浏览器存储不应影响切换。
+默认正文是中文；`?lang=zh` / `?lang=en` 可固定预览语言。未指定参数时保留原版的已保存语言与浏览器语言选择。
+必要验收包括中英首屏、手机宽度无溢出、产品区图片和视频、键盘播放、字幕切换、`#mobile-demo` 与 `#demo` 深链。
+截图保存在忽略的 `output/playwright/`。检查内联 JavaScript 与 `assets/home.js` 的语法；静态内容契约见 `tests/test_docs_index.py`。
 
-检查 320 / 375 / 390 / 768 / 1024 / 1440 像素宽度下的中英布局，并验证各端预览、功能原图链接、
-FAQ 展开、键盘焦点与跳转、语言切换后的 metadata。关闭 JavaScript 时应仍能阅读默认正文、
-查看主图并使用安装链接；减少动态效果模式下不使用平滑滚动。验证截图放到忽略的 `output/playwright/`。
-
-媒体还需分别检查桌面和手机 Web 视频的原生播放控件、封面与按需加载、中文字幕默认状态及英文切换后的字幕选择。
-产品导览、插件实录和既有桌面 / 手机视频的成品规格与录制范围以[素材说明](media/README.md)为准，
-精确文件信息见 [`manifest.json`](media/manifest.json)。手机 GIF 因 10 fps 帧时长量化为 20.5 秒。
-画面原文为中文，两种语言都应写明真实录制范围，并提供[逐步文字稿](media/README.md#逐步文字稿)。
-反馈已接收不能改写成学习已完成，也不能把录制库描述为正在使用用户完整画像生成推荐。
-GIF 在 README 中用于预览，官网优先使用可控制播放的视频；关闭 JavaScript 后仍应能访问视频文件与文字说明。
-不要因为录屏已导出就写入网站已发布的日期。母版与录制数据库放到忽略的 `output/live-media/`，不进入公开站点。
-
-文档检查至少包括 `python scripts/release.py --check`（保留 README 版本标记与 JSON-LD 的发布契约）、
-`node --check docs/assets/home.js` 和本地链接 / 锚点检查。安装细节的契约断言在
-`tests/test_install_contract_docs.py` 与 `tests/test_aggregate_release_workflow.py` 中验证新安装指南，
-README 只保留清楚的入口链接。
+---
 
 ## 提交到 Google Search Console（必做，10 分钟）
 
@@ -156,7 +124,7 @@ README 只保留清楚的入口链接。
 - `og:image` 如果换图，新图建议 1200×630 PNG（社交分享卡片标准比例），更新
   `og:image:width` / `og:image:height` 与 sitemap 内的 `<image:loc>`
 - 标题或描述变了，同时修改 `docs/index.html` 的默认中文 metadata 和
-  `docs/assets/home.js` 的中英文翻译项（page title、description、OG / Twitter 文案）；
+  `docs/index.html` 内联 `translations` 的中英文翻译项（page title、description、OG / Twitter 文案）；
   语言切换后的 metadata 应与当前正文一致，不能只更新可见标题
 - 发布新版本时更新 `<head>` JSON-LD 里 `SoftwareApplication.softwareVersion`。录屏说明中的
   v0.3.224 / `e53f0d3e` 是录制版本，不能跟着网站版本机械替换；只有重录后才更新
