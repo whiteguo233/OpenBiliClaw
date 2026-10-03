@@ -31,7 +31,8 @@ function normalizeSourcePlatform(value, url = "") {
     rednote: "xiaohongshu",
     dy: "douyin",
     douyin: "douyin",
-    tiktok: "douyin",
+    tt: "tiktok",
+    tiktok: "tiktok",
     wb: "weibo",
     weibo: "weibo",
     yt: "youtube",
@@ -57,6 +58,7 @@ function normalizeSourcePlatform(value, url = "") {
   if (lowerUrl.includes("bilibili.com") || lowerUrl.includes("b23.tv")) return "bilibili";
   if (lowerUrl.includes("xiaohongshu.com") || lowerUrl.includes("xhslink.com")) return "xiaohongshu";
   if (lowerUrl.includes("douyin.com")) return "douyin";
+  if (urlHostMatches(url, ["tiktok.com"])) return "tiktok";
   if (urlHostMatches(url, ["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"])) return "weibo";
   if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
   if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
@@ -166,6 +168,8 @@ const PLATFORM_DISPLAY_NAMES = {
   bilibili: "B 站",
   youtube: "YouTube",
   douyin: "抖音",
+  tiktok: "TikTok",
+  tt: "TikTok",
   weibo: "微博",
   wb: "微博",
   xiaohongshu: "小红书",

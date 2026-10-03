@@ -178,7 +178,7 @@ Discovery 可以继续宽搜，普通 dislike 不撤销关键词或来源任务�
 | 策略 | 说明 |
 |------|------|
 | **兴趣关键词搜索** | 根据用户画像生成关键词组合搜索；B 站生产路径在既有请求预算内预留 1 个 `pubdate` 请求（最多 5 条），与普通相关性结果交错进入评估窗口，只补近期供给而不改变 relevance/admission |
-| **搜索灵感脑暴** | 可选地从 like 二级兴趣抽样；`OnionProfile.interest.likes` 会优先展开 specifics，一级 domain 只在缺少 specifics 时兜底，并按 parent 计数降权防止小窗口被同一领域占满；结合 recent interest selection count、关键词覆盖频次、raw candidate 数量 / 占比 / dominant content type 和最终候选池占比降权高频兴趣，coverage join 统一走 `_normalize_match_text()` 折叠大小写 / 空白漂移，画像整理会同步迁移 keyword 与 selection ledger 标签，完整 coverage 只在本地控制环使用，LLM payload 只携带 must-cover + 少量 cooldown 摘要；随后由 `discovery.keyword_brainstorm` 脑暴带 `kind_fit=regular|explore|both` 的搜索 probe branch，每兴趣最多 2 条，regular + explore 同轮触发时共用一次 brainstorm 和一次 grounding stage；按 `[discovery].inspiration_search_backends` 通过 search provider 链（默认已启用平台源 → Exa → You.com free MCP）grounding 具体实体 / 社区词 / 讨论点，stage 级搜索预算由 `inspiration_max_probe_searches_per_stage` 控制，平台源扇出由 `inspiration_platforms_per_probe` 控制，每 probe 翻页 / 扩量由 `inspiration_search_pages_per_probe` 控制，B 站 / 抖音 / X 等 risk-controlled 来源受 `inspiration_riskcontrolled_probe_budget` 与 cooldown / 限流约束；`platform_sources` 可复用已启用且可同步搜索的 B站 / 小红书 / 抖音 / YouTube / X / GitHub / 知乎 / Reddit / Bangumi / V2EX / 微博后端，只把标题 / URL / 摘要作为灵感 evidence，不入候选池；Linux.do 仍由异步扩展任务取数，不冒充同步 grounding 后端。GitHub formal / inspiration 共用 public query sanitizer 与持久 cooldown，私有行或异常结果 fail closed；泛词不是硬错误，会交给 curator 结合画像、平台 guide 和覆盖约束判断；再经 `discovery.keyword_inspiration` 做 Profile Curator / Detail Expander，优先生成按平台 keyed 的 `platform_keywords`；`platform_guides.query_style` 覆盖全部十二来源；写库前由系统侧执行 must-cover 排序、每平台二级兴趣 / lens family 上限、原样证据标题 / URL / 过长 query / 平台语言不匹配 / 平台检索语法不匹配过滤、grounding hint `source_interest` 校正、explore 横向 lens 校验，缺失 must-cover 兴趣时用 `discovery.keyword_inspiration.repair` 做一次 bounded repair，repair 仍缺词时用 deterministic platform-native backfill 补齐；新配置默认以混合模式开启，与旧 merged keyword planner 并行，admission yield 会回填 inspiration / expansion 反馈计数；实验开关可让 due 平台完全跳过旧 merged keyword planner，只用新流程产词，并在 B 站 explore 到期时写入 `keyword_kind="explore"` 的探索词池；`keyword-inspiration-dry-run` 可真实预览中间链路但不写关键词池，且使用独立 preview selection scope，`keyword-inspiration-report` 对比 inspiration / merged cohort、输出 production / preview 抽中分布并给出 replace 门禁 |
+| **搜索灵感脑暴** | 可选地从 like 二级兴趣抽样；`OnionProfile.interest.likes` 会优先展开 specifics，一级 domain 只在缺少 specifics 时兜底，并按 parent 计数降权防止小窗口被同一领域占满；结合 recent interest selection count、关键词覆盖频次、raw candidate 数量 / 占比 / dominant content type 和最终候选池占比降权高频兴趣，coverage join 统一走 `_normalize_match_text()` 折叠大小写 / 空白漂移，画像整理会同步迁移 keyword 与 selection ledger 标签，完整 coverage 只在本地控制环使用，LLM payload 只携带 must-cover + 少量 cooldown 摘要；随后由 `discovery.keyword_brainstorm` 脑暴带 `kind_fit=regular|explore|both` 的搜索 probe branch，每兴趣最多 2 条，regular + explore 同轮触发时共用一次 brainstorm 和一次 grounding stage；按 `[discovery].inspiration_search_backends` 通过 search provider 链（默认已启用平台源 → Exa → You.com free MCP）grounding 具体实体 / 社区词 / 讨论点，stage 级搜索预算由 `inspiration_max_probe_searches_per_stage` 控制，平台源扇出由 `inspiration_platforms_per_probe` 控制，每 probe 翻页 / 扩量由 `inspiration_search_pages_per_probe` 控制，B 站 / 抖音 / X 等 risk-controlled 来源受 `inspiration_riskcontrolled_probe_budget` 与 cooldown / 限流约束；`platform_sources` 可复用已启用且可同步搜索的 B站 / 小红书 / 抖音 / YouTube / X / GitHub / 知乎 / Reddit / Bangumi / V2EX / 微博后端，只把标题 / URL / 摘要作为灵感 evidence，不入候选池；Linux.do 仍由异步扩展任务取数，不冒充同步 grounding 后端。GitHub formal / inspiration 共用 public query sanitizer 与持久 cooldown，私有行或异常结果 fail closed；泛词不是硬错误，会交给 curator 结合画像、平台 guide 和覆盖约束判断；再经 `discovery.keyword_inspiration` 做 Profile Curator / Detail Expander，优先生成按平台 keyed 的 `platform_keywords`；`platform_guides.query_style` 覆盖全部十三来源；写库前由系统侧执行 must-cover 排序、每平台二级兴趣 / lens family 上限、原样证据标题 / URL / 过长 query / 平台语言不匹配 / 平台检索语法不匹配过滤、grounding hint `source_interest` 校正、explore 横向 lens 校验，缺失 must-cover 兴趣时用 `discovery.keyword_inspiration.repair` 做一次 bounded repair，repair 仍缺词时用 deterministic platform-native backfill 补齐；新配置默认以混合模式开启，与旧 merged keyword planner 并行，admission yield 会回填 inspiration / expansion 反馈计数；实验开关可让 due 平台完全跳过旧 merged keyword planner，只用新流程产词，并在 B 站 explore 到期时写入 `keyword_kind="explore"` 的探索词池；`keyword-inspiration-dry-run` 可真实预览中间链路但不写关键词池，且使用独立 preview selection scope，`keyword-inspiration-report` 对比 inspiration / merged cohort、输出 production / preview 抽中分布并给出 replace 门禁 |
 | **相关推荐链探索** | 从已知好内容出发，沿相关推荐不断深入 |
 | **分区热门/排行榜** | 固定全站榜，并按本地洗牌轮转覆盖非 0 分区榜，结合用户画像筛选 |
 | **UP 主追踪** | 追踪关注的和发现的优质 UP 主的新动态 |
@@ -186,7 +186,7 @@ Discovery 可以继续宽搜，普通 dislike 不撤销关键词或来源任务�
 | **跨领域探索** | 刻意推荐用户从未接触过但心理画像暗示可能喜欢的领域；当统一 `KeywordPlanner` 已有 merged keyword 调用、`explore_refresh_hours` 到期或即将到期且 B 站仍有补货空间时，默认会把 `explore_domains` 合并进同一次关键词生成，把探索 query 写入 B 站 `keyword_kind="explore"` query cache。开启 inspiration-only 替换模式后，这部分也改由 search-backed inspiration flow 生成 `query_kind="explore"` 的 B 站探索词。`ExploreStrategy` 后续从该 explore 候选池 claim query 搜索；池为空时不再单独打一次 explore 计划 LLM |
 | **热点关联** | 追踪热点话题，判断是否与用户深层兴趣相关 |
 
-Linux.do 同样纳入统一关键词 planner 的十二平台目标与 `platform_guides.query_style`；其 search query 使用社区话题风格，候选仍只进入统一待评估池。Linux.do 不是 inspiration grounding 的后端直连来源：真实取数依旧由扩展 task tab 完成。
+Linux.do 同样纳入统一关键词 planner 的十三平台目标与 `platform_guides.query_style`；其 search query 使用社区话题风格，候选仍只进入统一待评估池。Linux.do 不是 inspiration grounding 的后端直连来源：真实取数依旧由扩展 task tab 完成。
 
 GitHub 纳入统一关键词 planner 与 `platform_guides.query_style`，使用适合 repository search 的简洁技术主题词；CLI、正式 producer 与 inspiration provider 共用 public query sanitizer，来源级持久 cooldown 也由 formal / inspiration 共用。inspiration 只有在 producer 正常返回且结果仍满足 public-only normalizer 时才提供 evidence，异常、限流、清洗后空 query 或私有行一律 fail closed，不写候选池或推荐池。
 
@@ -324,7 +324,7 @@ embedded tailnet edge (default off): Android/iOS native App tsnet → user's tai
 local settings enrollment: Desktop Web / extension → write-only PUT /api/config → private one-shot stage ─┘
                            real loopback only; no Funnel/Serve/public URL
 publication-date preference: [sources.<name>] config → RuntimeContext → effective inventory → PoolCurator → serving score/gate
-                             ├─ all twelve sources; missing/invalid dates never become discovery time
+                             ├─ all thirteen sources; missing/invalid dates never become discovery time
                              └─ strict only → pre-eval reject + supported API/task date pushdown
 migration control plane: local export → checksummed plaintext .obcbackup
                       → local import + request_id validates/stages ↔ status/cancel
@@ -623,7 +623,7 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ + 各自 producer│ │ bounded task/result│  │             │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ sources.platforms：十二平台 alias / strategy / URL host      │ │
+│  │ sources.platforms：十三平台 alias / strategy / URL host      │ │
 │  │                  → 统一 pool accounting / viewed identity │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -631,6 +631,10 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ TiktokDiscoveryProducer: Web API 访客身份 tiktok_feed/tag/user  │ │
+│  │   (签名+curl_cffi, mode=auto 时 yt-dlp 兜底, 实验性)            │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ XAdapter + XDiscoveryProducer: 服务端 cookie 重放(twitter-cli) │ │

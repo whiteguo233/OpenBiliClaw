@@ -366,6 +366,38 @@ request_interval_seconds = 2
 # YouTube producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
 min_interval_minutes = 3
 
+# ── TikTok 专用配置（实验性）──
+# 主后端是 TikTok Web API（访客身份 + 请求签名，curl_cffi Chrome TLS 指纹），
+# 无需登录、不依赖浏览器扩展；yt-dlp 仅作兜底（创作者/话题标签列表）。
+# 发现面：推荐流（For You）+ 话题标签列表 + 创作者视频列表；配置登录 cookie
+# 后解锁关键词搜索（有账号风险，默认不启用）。未配置搜索时，关键词规划器产出
+# 的词会被映射为话题标签而不是搜索词。
+# enabled=false 时 pool_source_shares 中的 tiktok 配额会被丢弃（避免池子卡在低于目标）。
+# TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
+[sources.tiktok]
+enabled = false
+# 后端选择："auto"（默认，Web API 优先、失败回退 yt-dlp）| "web"（仅 Web API）| "ytdlp"（仅 yt-dlp）。
+# Web API 后端走访客身份 + 请求签名（curl_cffi Chrome TLS 指纹），实测匿名可用：
+# 推荐流 / 创作者列表 / 话题标签列表；关键词搜索被上游 gate，需要登录 cookie。
+mode = "auto"
+# 可选登录 cookie 环境变量（优先级高于 data/tiktok_cookie.json）；不配置也能以访客身份运行，
+# 配置后解锁关键词搜索与更高限额。切勿伪造 msToken。
+cookie_env = "OPENBILICLAW_TIKTOK_COOKIE"
+# Web API 请求携带的地区 / 时区参数，应匹配你的网络出口地区；被风控 gate（空响应）时首先检查这两项。
+region = "JP"
+tz_name = "Asia/Tokyo"
+# 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
+tags = []
+# 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
+creators = []
+daily_feed_budget = 3                    # 推荐流每日拉取上限（高曝光，建议压低）；0 = 不设每日上限
+daily_search_budget = 3                  # 关键词搜索每日上限；搜索需登录 Cookie（有账号风险，默认不启用）
+daily_tag_budget = 0                     # 0 = 不设每日上限
+daily_user_budget = 0                    # 0 = 不设每日上限
+request_interval_seconds = 2
+# TikTok producer 两次执行之间的最小间隔；0 表示每个 refresh tick 都允许检查执行。
+min_interval_minutes = 3
+
 # ── X (Twitter) 专用配置 ──
 # 设为 false 后：后端不再生成 X 搜索/推荐流/账号订阅任务，
 # pool_source_shares 中的 twitter 配额会被丢弃（避免池子卡在低于目标）。
@@ -634,6 +666,7 @@ bilibili = 5
 xiaohongshu = 1
 douyin = 1
 youtube = 1
+tiktok = 1
 twitter = 1
 zhihu = 1
 reddit = 1

@@ -204,6 +204,7 @@ class TestConfigDefaults:
             "xiaohongshu": 1,
             "douyin": 1,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 1,
             "zhihu": 1,
             "reddit": 1,
@@ -1842,6 +1843,7 @@ youtube = 3
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "tiktok": 1,
         "twitter": 1,
         "zhihu": 1,
         "reddit": 1,
@@ -2415,6 +2417,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "xiaohongshu": 2,
         "douyin": 2,
         "youtube": 1,
+        "tiktok": 2,
         "twitter": 3,
         "zhihu": 1,
         "reddit": 2,
@@ -2433,6 +2436,7 @@ def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
         "xiaohongshu": 2,
         "douyin": 2,
         "youtube": 1,
+        "tiktok": 2,
         "twitter": 3,
         "zhihu": 1,
         "reddit": 2,
@@ -4479,3 +4483,95 @@ class TestAgentConfig:
 
         # The [agent] section ships with the defaults commented out.
         assert "agent" in example
+
+
+class TestTiktokSourceConfig:
+    def test_tiktok_source_defaults(self) -> None:
+        config = Config()
+        assert config.sources.tiktok.enabled is False
+        assert config.sources.tiktok.mode == "auto"
+        assert config.sources.tiktok.cookie_env == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert config.sources.tiktok.region == "JP"
+        assert config.sources.tiktok.tz_name == "Asia/Tokyo"
+        assert config.sources.tiktok.daily_feed_budget == 3
+        assert config.sources.tiktok.daily_search_budget == 3
+
+    def test_tiktok_source_fields_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.tiktok.enabled = True
+        config.sources.tiktok.mode = "web"
+        config.sources.tiktok.cookie_env = "MY_TIKTOK_COOKIE"
+        config.sources.tiktok.tags = ("booktok",)
+        config.sources.tiktok.creators = ("@creator",)
+        config.sources.tiktok.daily_feed_budget = 5
+        config.sources.tiktok.daily_search_budget = 7
+        config.sources.tiktok.region = "US"
+        config.sources.tiktok.tz_name = "America/New_York"
+
+        config_path = tmp_path / "config.toml"
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.sources.tiktok.enabled is True
+        assert loaded.sources.tiktok.mode == "web"
+        assert loaded.sources.tiktok.cookie_env == "MY_TIKTOK_COOKIE"
+        assert loaded.sources.tiktok.tags == ("booktok",)
+        assert loaded.sources.tiktok.creators == ("@creator",)
+        assert loaded.sources.tiktok.daily_feed_budget == 5
+        assert loaded.sources.tiktok.daily_search_budget == 7
+        assert loaded.sources.tiktok.region == "US"
+        assert loaded.sources.tiktok.tz_name == "America/New_York"
+
+    def test_tiktok_empty_geo_values_fall_back_to_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[sources.tiktok]\nregion = ""\ntz_name = "  "\n', encoding="utf-8")
+        loaded = load_config(config_path)
+        assert loaded.sources.tiktok.region == "JP"
+        assert loaded.sources.tiktok.tz_name == "Asia/Tokyo"
+
+    def test_example_config_tiktok_section_parses(self) -> None:
+        example_path = Path(__file__).parents[1] / "config.example.toml"
+
+        with example_path.open("rb") as handle:
+            example = tomllib.load(handle)
+
+        tiktok = example["sources"]["tiktok"]
+        assert tiktok["mode"] == "auto"
+        assert tiktok["cookie_env"] == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert tiktok["region"] == "JP"
+        assert tiktok["tz_name"] == "Asia/Tokyo"
+        assert tiktok["daily_feed_budget"] == 3
+        assert tiktok["daily_search_budget"] == 3
+
+
+class TestSuspiciousBudgetWarnings:
+    """``_warn_suspicious_budgets`` flags 1-4 budgets as misused toggles, but
+    shipped defaults (TikTok's official daily_feed_budget=3 / daily_search_budget=3)
+    must not trip their own alarm on every startup."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_warned_keys(self) -> None:
+        config_module._warned_budget_keys.clear()
+
+    def test_tiktok_official_defaults_do_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()  # tiktok budgets stay at their shipped defaults (3/3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "daily_feed_budget" not in caplog.text
+        assert "daily_search_budget" not in caplog.text
+
+    def test_tiktok_handwritten_nondefault_budget_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = Config()
+        config.sources.tiktok.daily_feed_budget = 2  # not the official default (3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.tiktok.daily_feed_budget" in caplog.text
+
+    def test_other_source_low_budget_still_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()
+        config.sources.douyin.daily_feed_budget = 1
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.douyin.daily_feed_budget" in caplog.text

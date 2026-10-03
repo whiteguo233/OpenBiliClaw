@@ -53,6 +53,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | embedding 后台预热 | ✅ | refresh 完成前只保证候选入池与文案可用；`prewarm_supergroup_embeddings()` / `prewarm_pool_mmr_embeddings()` 作为后台 task 运行，慢本地 embedding 后端不会占住 refresh lock 或让界面长时间停在“正在补货”。v0.3.124+（lever 4）：`prewarm_pool_mmr_embeddings()` 返回值区分良性冷启动与真故障——`-1`（无 embedding service / 空池，没东西可暖）让启动重试包装器 `_safe_prewarm_pool_mmr_embeddings` 平静跳过(不再每次装机刷 5 行 `warmed=0 — retry`)，`0`（有候选但全嵌入失败＝后端不可达）才重试到底并在放弃时打 WARNING 点名 embedding 后端不可达、MMR 降级。v0.3.148+ search / trending / explore / `KeywordPlanner` 的 query profile summary 也只通过 `EmbeddingService.lookup_cached()` 读取已缓存向量来保持 interest / dislike 多样性；缺缓存时按权重顺序降级，绝不在查询生成热路径新发 embedding 请求。 |
 | 视觉 / 弹幕 prewarm wiring | ✅ | `RecommendationEngine`、CLI、RuntimeContext 和 OpenClaw 均透传 `keyframe_fetch_limit` / `danmaku_fetch_limit`；prewarm 只领取当前可服务池，结果区分成功空与瞬时失败，provenance 或 sampling 变化自动重建/重嵌入 |
 | YouTube 后台 discovery producer | ✅ | `YoutubeDiscoveryProducer` 独立运行 `yt_search` / `yt_trending` / `yt_channel`，只在 YouTube 平台族低于 quota 时由 `_loop_youtube_producer()` tick，按每日 ledger 和 `min_interval_minutes` 控制执行。 |
+| TikTok 后台 discovery producer（实验性） | ✅ | `TiktokDiscoveryProducer` 独立运行 `tiktok_feed` / `tiktok_tag` / `tiktok_user`，只在 TikTok 平台族低于 quota 时由 `_loop_tiktok_producer()` tick；镜像 YouTube producer 的每日执行 ledger、`min_interval_minutes` 节流与统一 candidate pipeline 入队。后端按 `[sources.tiktok].mode` 分发：默认 Web API 访客身份取数（签名 + curl_cffi），失败回退 yt-dlp；访客身份是完整合法模式，可选登录 Cookie（扩展自动同步或手动粘贴）解锁 `tiktok_search`。 |
 | X 后台 discovery producer | ✅ | `XDiscoveryProducer.produce_if_due()` 在 X 平台族低于 quota 且源健康就绪时，由独立 loop tick 触发 `search` / `feed`（For-You）/ `creator`（账号订阅）三个策略；按 `daily_*_budget` / `min_interval_minutes` / `request_interval_seconds` 节流，For-You 压到很低的每日频次并在连续失败后自动暂停。只 enqueue raw candidates 进 `discovery_candidates`，不写 `content_cache`、不调评估器。`enabled=false` 时是 no-op，不 import `twitter_cli`。 |
 | Reddit 后台 discovery producer | ✅ | `RedditDiscoveryProducer.produce_if_due()` 在 Reddit 平台族低于 quota 且 `[sources.reddit].enabled=true` 时，默认通过随 OpenBiliClaw 安装的 `rdt-cli` 登录态命令后端触发 `search` / `hot` / `subreddit` / `related` 四个分支；已连接插件会同步 `reddit_session` 到 rdt-cli credential store，命令后端不可用或未登录时 fallback 到已安装浏览器插件的真实 `reddit.com` 登录态任务。四个分支各自有独立 daily budget，默认每类 300。producer 只 enqueue raw candidates 到 `discovery_candidates`，不写 `content_cache`、不同步跑 LLM 评估，正式 admission 由共享 evaluator 异步完成。 |
 | Bangumi 后台 discovery producer | ✅ | `BangumiDiscoveryProducer.produce_if_due()` 在 Bangumi 平台族低于 quota 且启用时，调用官方匿名 API 执行 `search / ranked / latest`。它共享关键词 claim/use/fail 生命周期，按 UTC 日条目预算、类型 cursor、最小间隔与持久化 `429 Retry-After` cooldown 调度；429 rollback 在途/未执行关键词。browse 的非零旧 cursor 若因 total 缩小触发 `invalid_request`，先持久化归零再有界重试一次。跨 mode 去重并应用最终 limit 后才按保留候选的 strategy 扣预算，重复/截断条目不占额度。只 enqueue raw candidates。`RuntimeContext` 在 generation 构建/热重载时拥有并关闭 `BangumiClient`，GET 状态页通过独立本地查询读取 cooldown/run ledger，不构造 producer。显式 CLI discover 只服从来源开关，不服从 daemon scheduler 总开关。 |
@@ -505,7 +506,7 @@ status = service.get_runtime_status()
 
 `get_runtime_status()` 经 `/api/runtime-status` 下发 `last_account_sync_error_kind`、`last_account_sync_issues`、仅供诊断的原始 `last_account_sync_error`，以及后端统一计算的 `last_account_sync_message` / `last_account_sync_severity`。多阶段失败会按「域 + 原因」合并成逐项中文说明；全部属于登录生命周期或限流时为 warning，混入网络、接口、画像配置等故障时为 error。文案只在确实可自行恢复时承诺下一轮重试，需用户修复 Cookie、API Key、模型名或连接时给出对应动作；X-only 问题明确说明 B 站等来源不受影响。旧状态文件没有 issue 列表时继续回退旧 kind/detail 文案，畸形或未知 issue 会在 MemoryManager 与 runtime 边界归一化。桌面 Web 消费这些后端成品字段选择 warning/error 样式；扩展 popup / 移动 Web / CLI 目前不展示此横幅。
 
-桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十二个平台中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
+桌面首页同时读取本地-only `/api/sources/status`，把它明确命名为「来源接入」后与上面的「账号同步」组合展示：十三个平台中已启用来源的缺凭据、不完整、过期、失败、受阻、限流或未知状态会点名平台并原样显示后端 `detail`；正常的 `unverified` / `syncing` 不进入故障横幅。GitHub 的匿名 discovery 健康与可选 PAT 验证是两个维度，坏 PAT 不得把匿名公开能力冒充为不可用；GitHub discovery 状态只聚合当前配置 `source_modes`，已关闭分支的旧 run 不参与当前整体结论。正式 discovery 的 401 marker 只绑定当前 PAT 指纹，会同步把 status / init-status 的 GitHub profile 与 bootstrap 轴标成 unavailable；token rotation 或清除后旧 marker 不再匹配。
 
 **X 定时增量**：仅在 `[sources.twitter].enabled=true` 且 `sources.x_auth.resolve_x_cookie` 解析到 Cookie 时，两处装配点才构造 `XClient`；同一 6h 周期内在 B 站各阶段之后拉取 likes / bookmarks（各上限 200，`_X_FETCH_LIMIT`），分别映射为 `like` / `favorite` 事件（`source_platform="twitter"`）。去重用状态集合 `x_like_ids` / `x_bookmark_ids`（归一化 tweet ID，取 URL 的 `/status/<id>` 尾段，兼容 `x.com/i/status/<id>` 与 `x.com/<handle>/status/<id>` 两种形态，集合上限 2000 保最新）；集合为空的首轮从 events 表已持久化的 X 事件播种，init 之后、首轮之前新增的 like 仍会正常发事件。API runtime 把 discovery producer 的同一 `XSourceHealthStore` 注入账号同步；OpenClaw 构造与 Cookie 指纹绑定的同类 store。每轮出网前先查 `is_ready()`，已在 429 cooldown、缺/过期 Cookie 或 403 block 时直接跳过；likes 首个失败会 `record_error()` 并在 store 变为不可用后取消 bookmarks，成功则 `record_success()`。X 子路径失败只记入 errors + WARN，不影响 B 站同步，反之亦然。
 
@@ -541,6 +542,16 @@ result = await producer.produce_if_due(limit=20)
 - `throttled`：距离上次执行未达到 `min_interval_minutes`。
 - `budget_exhausted`：当天 `yt_search` / `yt_trending` / `yt_channel` 的执行 ledger 已耗尽。
 - `disabled` / `no_profile` / `error`：分别表示配置关闭、画像不可用或所有策略失败。
+
+### TiktokDiscoveryProducer
+
+```python
+from openbiliclaw.runtime.tiktok_producer import TiktokDiscoveryProducer
+
+result = await producer.produce_if_due(limit=20)
+```
+
+`TiktokDiscoveryProducer` 与 `YoutubeDiscoveryProducer` 完全同构（实验性 TikTok 源）：调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user`（配置登录 Cookie 且 mode 允许 web 时额外挂载 `tiktok_search`，默认 `daily_search_budget=3`），`tiktok_discovery_runs` 每日执行 ledger + `min_interval_minutes` 节流 + pool 缺口门；`reason` 取值与 YouTube producer 相同（`ok` / `throttled` / `budget_exhausted` / `pool_full` / `disabled` / `no_profile` / `error`）。`tiktok_feed` 按拉取次数计费（默认 `daily_feed_budget=3`，高曝光面压低）。取数后端由 `[sources.tiktok].mode` 选择（`auto` = Web API 访客身份 + yt-dlp 回退，`web`，`ytdlp`）。统一关键词规划器 flag 开启时走 claim → 注入 → `used` / `failed` 的 fetch-only 生命周期，P1.8 keyword id 随候选传递用于 yield 回填；claim 的消费策略随挂载形态切换：`tiktok_search` 挂载（有登录 Cookie）时词原样喂 search（不经 hashtag 压缩），`tiktok_tag` 退回常驻 tags + LLM 自生成；search 未挂载时词喂 `tiktok_tag` 并压缩为 hashtag，used/failed 标记跟随实际消费词的策略。
 
 ### XDiscoveryProducer
 

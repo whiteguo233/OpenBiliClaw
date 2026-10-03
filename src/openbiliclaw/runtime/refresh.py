@@ -377,6 +377,7 @@ class ContinuousRefreshController:
     xhs_producer: Any | None = None
     douyin_producer: Any | None = None
     youtube_producer: Any | None = None
+    tiktok_producer: Any | None = None
     x_producer: Any | None = None
     zhihu_producer: Any | None = None
     reddit_producer: Any | None = None
@@ -1610,6 +1611,7 @@ class ContinuousRefreshController:
             "xiaohongshu": self._tick_xhs_producer,
             "douyin": self._tick_douyin_producer,
             "youtube": self._tick_youtube_producer,
+            "tiktok": self._tick_tiktok_producer,
             "twitter": self._tick_x_producer,
             "zhihu": self._tick_zhihu_producer,
             "reddit": self._tick_reddit_producer,
@@ -1736,6 +1738,7 @@ class ContinuousRefreshController:
             ├─ _loop_xhs_producer()      60s   xhs keyword generation
             ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             ├─ _loop_youtube_producer()  60s   YouTube discovery when under quota
+            ├─ _loop_tiktok_producer()   60s   TikTok discovery when under quota
             ├─ _loop_x_producer()        60s   X (Twitter) discovery when under quota
             ├─ _loop_zhihu_producer()    60s   Zhihu discovery when under quota
             ├─ _loop_reddit_producer()   60s   Reddit command-backed discovery when under quota
@@ -1783,6 +1786,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_xhs_producer()),
             asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_youtube_producer()),
+            asyncio.create_task(self._loop_tiktok_producer()),
             asyncio.create_task(self._loop_x_producer()),
             asyncio.create_task(self._loop_zhihu_producer()),
             asyncio.create_task(self._loop_reddit_producer()),
@@ -2062,6 +2066,16 @@ class ContinuousRefreshController:
                 continue
             with suppress(Exception):
                 await self._tick_youtube_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_tiktok_producer(self) -> None:
+        """TikTok production — backend-direct discovery when TikTok is below quota."""
+        while True:
+            if not self._llm_work_allowed():
+                await asyncio.sleep(self.check_interval_seconds)
+                continue
+            with suppress(Exception):
+                await self._tick_tiktok_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_x_producer(self) -> None:
@@ -2363,6 +2377,14 @@ class ContinuousRefreshController:
         return await self._tick_platform_producer(
             source_family="youtube",
             producer=self.youtube_producer,
+        )
+
+    async def _tick_tiktok_producer(self) -> dict[str, object]:
+        """Invoke the TikTok discovery producer if TikTok is under quota."""
+
+        return await self._tick_platform_producer(
+            source_family="tiktok",
+            producer=self.tiktok_producer,
         )
 
     async def _tick_x_producer(self) -> dict[str, object]:
@@ -3866,6 +3888,8 @@ class ContinuousRefreshController:
                 stranded.append("douyin")
             elif source == "youtube" and self.youtube_producer is None:
                 stranded.append("youtube")
+            elif source == "tiktok" and self.tiktok_producer is None:
+                stranded.append("tiktok")
             elif source == "twitter" and self.x_producer is None:
                 stranded.append("twitter")
             elif source == "github" and self.github_producer is None:
@@ -3887,6 +3911,7 @@ class ContinuousRefreshController:
                 "xiaohongshu",
                 "douyin",
                 "youtube",
+                "tiktok",
                 "twitter",
                 "github",
                 "zhihu",

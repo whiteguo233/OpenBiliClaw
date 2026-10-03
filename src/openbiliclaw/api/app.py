@@ -186,6 +186,7 @@ from openbiliclaw.api.models import (
     SourceVerifyResponse,
     StorageConfigOut,
     TailnetConfigOut,
+    TiktokSourceConfigOut,
     TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
@@ -661,6 +662,7 @@ _SOURCE_SHARE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -673,6 +675,10 @@ _SOURCE_SHARE_ORDER = (
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
 _SOURCE_COUNT_ORDER = _SOURCE_SHARE_ORDER + ("unknown",)
+# Guided-init legal sources: every source family EXCEPT tiktok, whose
+# discovery is creator/tag driven rather than profile-signal driven
+# (guidedInit: false in web/shared/source-status.js). Letting tiktok in here
+# would flip ``sources.tiktok.enabled`` on while collecting no init signals.
 _INIT_SOURCE_ORDER = (
     "bilibili",
     "xiaohongshu",
@@ -8673,6 +8679,29 @@ def create_app(
                             await websocket.send_json(
                                 {
                                     "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
+                    # TikTok without a cookie is a legitimate guest-mode
+                    # state, so this is a quiet pull, not a missing-credential
+                    # complaint: if the browser is logged into tiktok.com the
+                    # extension answers with the jar, otherwise it no-ops.
+                    tt_cfg = getattr(runtime_config.sources, "tiktok", None)
+                    if tt_cfg is not None and bool(getattr(tt_cfg, "enabled", False)):
+                        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+                        tt_cookie = resolve_tiktok_cookie(
+                            data_dir=runtime_config.data_path,
+                            cookie_env=str(
+                                getattr(tt_cfg, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
+                            ),
+                        )
+                        if not str(tt_cookie or "").strip():
+                            await websocket.send_json(
+                                {
+                                    "type": "tiktok_cookie_sync_requested",
                                     "reason": "missing_cookie",
                                     "source": "runtime-stream",
                                 }
@@ -17575,6 +17604,7 @@ def create_app(
         event_type = {
             "bilibili": "bilibili_cookie_synced",
             "douyin": "douyin_cookie_synced",
+            "tiktok": "tiktok_cookie_synced",
             "twitter": "x_cookie_synced",
             "reddit": "reddit_cookie_synced",
         }.get(slug, "")
@@ -17706,6 +17736,7 @@ def create_app(
         from openbiliclaw.config import load_config
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
         from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         cfg = _pin_active_runtime_config(load_config())
         srcs = cfg.sources
@@ -17717,6 +17748,10 @@ def create_app(
         dy_cookie = resolve_douyin_cookie(
             data_dir=cfg.data_path,
             cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+        )
+        tt_cookie = resolve_tiktok_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE"),
         )
         tw_cookie = resolve_x_cookie(
             data_dir=cfg.data_path,
@@ -17840,6 +17875,13 @@ def create_app(
                 "Cookie",
                 "",
                 "YouTube 当前按公开源接入，后端不保存 Cookie。",
+            ),
+            tiktok=item(
+                "tiktok",
+                "Cookie",
+                tt_cookie,
+                "TikTok 默认以访客身份读公开数据无需登录；可选登录 Cookie 用于解锁关键词搜索"
+                "与更高限额（env 优先，兜底 data/tiktok_cookie.json）。",
             ),
             twitter=item("twitter", "Cookie", tw_cookie, "X 当前 resolved Cookie。"),
             zhihu=item(
@@ -19755,12 +19797,19 @@ def create_app(
             effective_llm_routes,
         )
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         dy_cookie = ""
         with suppress(Exception):
             dy_cookie = resolve_douyin_cookie(
                 data_dir=_active_runtime_data_path(),
                 cookie_env=cfg.sources.douyin.cookie_env,
+            )
+        tt_cookie = ""
+        with suppress(Exception):
+            tt_cookie = resolve_tiktok_cookie(
+                data_dir=_active_runtime_data_path(),
+                cookie_env=cfg.sources.tiktok.cookie_env,
             )
         tw_cookie = ""
         with suppress(Exception):
@@ -19983,6 +20032,23 @@ def create_app(
                     request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                     **_source_date_pref_out_kwargs(cfg.sources.youtube),
+                ),
+                tiktok=TiktokSourceConfigOut(
+                    enabled=cfg.sources.tiktok.enabled,
+                    mode=cfg.sources.tiktok.mode,
+                    cookie=_mask(tt_cookie),
+                    cookie_env=cfg.sources.tiktok.cookie_env,
+                    region=cfg.sources.tiktok.region,
+                    tz_name=cfg.sources.tiktok.tz_name,
+                    tags=list(cfg.sources.tiktok.tags),
+                    creators=list(cfg.sources.tiktok.creators),
+                    daily_feed_budget=cfg.sources.tiktok.daily_feed_budget,
+                    daily_search_budget=cfg.sources.tiktok.daily_search_budget,
+                    daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
+                    daily_user_budget=cfg.sources.tiktok.daily_user_budget,
+                    request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.tiktok.min_interval_minutes,
+                    **_source_date_pref_out_kwargs(cfg.sources.tiktok),
                 ),
                 twitter=TwitterSourceConfigOut(
                     enabled=cfg.sources.twitter.enabled,
@@ -22037,6 +22103,75 @@ def create_app(
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
 
+                tt_data = sources_data.get("tiktok")
+                if isinstance(tt_data, dict):
+                    if "enabled" in tt_data:
+                        cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    if "mode" in tt_data:
+                        # Reject invalid backends at save time instead of
+                        # silently clamping them at read time.
+                        from openbiliclaw.sources.tiktok_web import _TIKTOK_MODES
+
+                        new_mode = str(tt_data["mode"]).strip().lower()
+                        if new_mode not in _TIKTOK_MODES:
+                            raise ValueError(
+                                f"sources.tiktok.mode 必须是 {', '.join(_TIKTOK_MODES)} 之一"
+                            )
+                        cfg.sources.tiktok.mode = new_mode
+                    if "cookie_env" in tt_data:
+                        new_env = str(tt_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.tiktok.cookie_env = new_env
+                    for str_key in ("region", "tz_name"):
+                        # Empty geo values would gate every request; ignore
+                        # them rather than persisting a broken identity.
+                        if str_key in tt_data:
+                            new_geo = str(tt_data[str_key]).strip()
+                            if new_geo:
+                                setattr(cfg.sources.tiktok, str_key, new_geo)
+                    if "cookie" in tt_data:
+                        # Manual paste — routed to data/tiktok_cookie.json like
+                        # the unified credential endpoint; never lands in
+                        # config.toml. Same write gate as everywhere else
+                        # (spec D4): the passport-beat probe must accept the
+                        # cookie before it is stored.
+                        from openbiliclaw.sources.tiktok_auth import (
+                            TiktokCookieManager,
+                            resolve_tiktok_cookie,
+                        )
+
+                        new_cookie = str(tt_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_tiktok_cookie(
+                                    data_dir=active_data_path,
+                                    cookie_env=cfg.sources.tiktok.cookie_env,
+                                )
+                            if new_cookie != current:
+                                await _gate_credential("tiktok", new_cookie)
+                                TiktokCookieManager(active_data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
+                    for list_key in ("tags", "creators"):
+                        raw_list = tt_data.get(list_key)
+                        if isinstance(raw_list, list):
+                            setattr(
+                                cfg.sources.tiktok,
+                                list_key,
+                                tuple(str(item).strip() for item in raw_list if str(item).strip()),
+                            )
+                    for key in (
+                        "daily_feed_budget",
+                        "daily_search_budget",
+                        "daily_tag_budget",
+                        "daily_user_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tt_data:
+                            setattr(cfg.sources.tiktok, key, int(tt_data[key]))
+
                 tw_data = sources_data.get("twitter")
                 if isinstance(tw_data, dict):
                     if "enabled" in tw_data:
@@ -22864,6 +22999,7 @@ def create_app(
                 "xiaohongshu": cfg.sources.xiaohongshu,
                 "douyin": cfg.sources.douyin,
                 "youtube": cfg.sources.youtube,
+                "tiktok": cfg.sources.tiktok,
                 "twitter": cfg.sources.twitter,
                 "zhihu": cfg.sources.zhihu,
                 "reddit": cfg.sources.reddit,

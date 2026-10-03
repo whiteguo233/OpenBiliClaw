@@ -2,7 +2,53 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
+
+### 修复：TikTok 后端缺口（审计逐项）
+
+- **头图白名单**：`tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过。
+- **预算误报警**：`_warn_suspicious_budgets` 对等于官方默认值的字段豁免（TikTok 官方默认 `daily_feed_budget=3` / `daily_search_budget=3` 不再每次启动误报）；手写偏离默认的 1–4 值仍提醒。
+- **init 半状态**：`_INIT_SOURCE_ORDER` 移除 tiktok（guidedInit: false 的源不再能被手工 POST `/api/init` 置 enabled 却不采集信号）；tiktok-only 选择归一化为空并按 `no_sources_selected` 拒绝。
+- **CLI 入口**：`openbiliclaw discover --source tiktok` 走正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支）。
+- **inspiration 预览**：`TiktokPlatformSearchBackend` 接入 `build_platform_source_backends`（有 Cookie 走关键词搜索，访客走话题标签列表），`keyword-inspiration-preview --platforms tiktok` 真正可用。
+- **planner claim 语义**：search 策略挂载（有登录 Cookie）时 claim 的词原样喂 `tiktok_search`，`tiktok_tag` 退回常驻 tags + LLM 自生成；未挂载时维持 claim → tag 压缩。used/failed 标记跟随实际消费词的策略。
+- **native-save 误导状态**：tiktok 加入 local-only 名单，本地收藏落 `unsupported` / `local_only_source` 而非误导性"待升级重试"。
+- **latent URL 身份映射**：`_extract_content_id_from_url` 支持 `/@user/video/<id>` 与 `/photo/<id>` → 数字内容 id。
+- 回归锁补齐：`tiktok_tag.generate_tags` / `tiktok_search.generate_keywords` 登记进 core-memory opt-out 政策测试；`config.example.toml` TikTok 段头改为准确的「Web API 主后端 + yt-dlp 兜底」描述。
+
+### 功能：TikTok 前端展示面（issue #88）
+
+- **桌面设置页 TikTok 卡片**：照 YouTube 卡片补齐——启用开关、后端 mode（auto/web/ytdlp）、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好；`SOURCE_ENABLE_SELECT_IDS` / `SOURCE_SHARE_INPUT_IDS` / `SOURCE_CARD_LABELS` / `DESKTOP_SOURCE_DATE_SLUGS` / `buildConfigUpdate` / 占比建议同步。修复保存配置丢 `scheduler.pool_source_shares.tiktok` 的回归点（Playwright E2E 钉死）。
+- **popup 平台归一修正**：`tiktok` 不再归并到 `douyin` 族（此前 TikTok 内容在 popup 显示为"抖音"）；`PLATFORM_DISPLAY_NAMES` 补 TikTok 条目。
+- **popup 设置页 TikTok 卡片**：照 YouTube 卡补齐启用、Cookie、mode、region / tz_name、tags / creators、预算、节流、占比与「测试连接」。
+- **展示一致性**：saved / history 平台名、view-models URL 推断与 `RUNTIME_TOPIC_LABEL_MAP`（tiktok_feed / tiktok_search / tiktok_tag / tiktok_user 中文标签）、saved-sync-core 别名与 host 推断、平台徽章色、推荐页静态过滤 tab 全部覆盖 tiktok。
+- **文档**：十二 → 十三计数修正（discovery / runtime / config / 架构图 / 商店 listing），清除「纯 yt-dlp 无登录态」过时描述，README 中英文平台清单补 TikTok，模块文档同步 planner claim 新语义与设置页卡片。
+
 ## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
+
+### 功能：TikTok Web API 后端（访客身份 + 请求签名，issue #88）
+
+- 新增 TikTok Web API 后端（`sources/tiktok_web.py`）：以访客身份直连 TikTok Web API，请求经 vendored 纯 Python 签名（`sources/tiktok_sign.py`，Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0）+ curl_cffi Chrome TLS 指纹发送；bootstrap 由匿名推荐流响应铸真实 msToken，绝不伪造。2026-10-03 实测访客身份打通推荐流 / 创作者列表 / 话题标签列表，关键词搜索被上游 gate（预留 client 方法，登录 Cookie 可解锁）。
+- 新增 `tiktok_feed` 匿名推荐流策略（默认 `daily_feed_budget=3`）；`tiktok_tag` / `tiktok_user` 支持 web 路径，由 `TiktokRouterClient` 按 `[sources.tiktok].mode`（`auto` / `web` / `ytdlp`，默认 `auto` = web 优先 + yt-dlp 回退）分发；新增可选登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`），source-auth 契约改为可选凭据语义。
+- 新增默认依赖 `curl-cffi>=0.15`（Chrome TLS impersonation，与 yt-dlp 可选依赖同包兼容）。
+
+### 功能：TikTok 登录 Cookie 插件自动同步（issue #88）
+
+- 浏览器插件 `cookie-sync.ts` 覆盖 tiktok.com：检测到登录（sessionid / sessionid_ss / sid_tt）后把完整 Cookie jar 推送到统一凭据端点 `POST /api/sources/tiktok/credential`（结构校验 + passport 心跳 live probe，与设置页粘贴同一验证强度），落盘 `data/tiktok_cookie.json`；支持 `tiktok_cookie_sync_requested` runtime-stream 主动拉取、`cookies.onChanged` 按平台防抖与独立小时 alarm。访客身份下无 Cookie 是合法状态，未登录 / 登出时静默跳过。
+- manifest（Chrome / Firefox）host_permissions 增加 `*://*.tiktok.com/*`；桌面 dashboard 在 `tiktok_cookie_synced` 事件后刷新来源状态。
+
+### 功能：TikTok Cookie 探针、凭据写入门面、地区配置与搜索策略（issue #88）
+
+- **Cookie 主动探针**：新增 `probe_tiktok_login()`，调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳）验证可选登录 Cookie；`success` → verified，401/403 / 显式 error → failed，传输失败与风控空响应 → indeterminate。`VERIFY_ACTIONS["tiktok"]` 登记为 `live_probe`，契约在无 Cookie 时仍诚实报 `verify_method="none"`。
+- **凭据写入门面**：`CREDENTIAL_SPECS["tiktok"]` 开通 `POST /api/sources/tiktok/credential`（结构门 sessionid / sessionid_ss / sid_tt 至少其一 + live gate），`PUT /api/config` 粘贴同强度验证，落盘 `data/tiktok_cookie.json`。
+- **地区参数配置化**：`[sources.tiktok].region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）注入访客身份 base params；空值回退默认。
+- **`tiktok_search` 搜索策略**（默认不启用）：仅当配置登录 Cookie 且 mode 允许 web 时挂载；planner 注入词原样使用（不做 hashtag 压缩），搜索响应混合卡片只收视频条目；`daily_search_budget` 默认 3。登录态抓取违反 TikTok ToS 有账号风险，文档与配置注释已明确。
+
+### 功能：新增 TikTok 内容源（yt-dlp 轻量后端，实验性，issue #88）
+
+- 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。
+- 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
+- `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
 
 ### 修复：最新聊天链路真实请求复验（2026-10-02）
 

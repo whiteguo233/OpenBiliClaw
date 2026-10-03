@@ -133,6 +133,7 @@ const SOURCE_LABEL_MAP = {
   douyin: "Douyin",
   weibo: "微博",
   youtube: "YouTube",
+  tiktok: "TikTok",
   twitter: "X (Twitter)",
   github: "GitHub",
   zhihu: "知乎",
@@ -151,7 +152,8 @@ const SOURCE_ALIAS_MAP = {
   rednote: "xiaohongshu",
   dy: "douyin",
   douyin: "douyin",
-  tiktok: "douyin",
+  tiktok: "tiktok",
+  tt: "tiktok",
   wb: "weibo",
   weibo: "weibo",
   yt: "youtube",
@@ -199,6 +201,14 @@ const RUNTIME_TOPIC_LABEL_MAP = {
   youtube_search: "YouTube 搜索",
   youtube_trending: "YouTube 热榜",
   youtube_channel: "YouTube 频道",
+  tiktok_feed: "TikTok 推荐流",
+  tiktok_search: "TikTok 搜索",
+  tiktok_tag: "TikTok 话题标签",
+  tiktok_user: "TikTok 创作者",
+  "tiktok-feed": "TikTok 推荐流",
+  "tiktok-search": "TikTok 搜索",
+  "tiktok-tag": "TikTok 话题标签",
+  "tiktok-user": "TikTok 创作者",
   zhihu_search: "知乎搜索",
   zhihu_hot: "知乎热榜",
   zhihu_feed: "知乎首页",
@@ -267,6 +277,7 @@ export function normalizeSourcePlatform(item) {
     if (lowerUrl.includes("bilibili.com") || lowerUrl.includes("b23.tv")) return "bilibili";
     if (lowerUrl.includes("xiaohongshu.com") || lowerUrl.includes("xhslink.com")) return "xiaohongshu";
     if (lowerUrl.includes("douyin.com")) return "douyin";
+    if (urlHostMatches(url, ["tiktok.com"])) return "tiktok";
     if (urlHostMatches(url, ["weibo.com", "weibo.cn", "sinaimg.cn", "sinaimg.com"])) return "weibo";
     if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) return "youtube";
     if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
@@ -313,6 +324,7 @@ function formatRuntimeTopicLabel(value) {
   if (key.startsWith("dy-plugin-") || key.startsWith("douyin-")) return "抖音";
   if (key.startsWith("weibo-")) return "微博";
   if (key.startsWith("yt-") || key.startsWith("youtube-")) return "YouTube";
+  if (key.startsWith("tiktok-")) return "TikTok";
   if (key.startsWith("reddit-")) return "Reddit";
   if (key.startsWith("bangumi-")) return "Bangumi";
   if (key.startsWith("github-")) return "GitHub";
@@ -370,9 +382,11 @@ export function buildContentUrl(item) {
       ? `https://linux.do/t/${encodeURIComponent(topicId)}`
       : "";
   }
-  // GitHub repository ids are numeric and cannot reconstruct owner/name.
+  // GitHub repository ids are numeric and cannot reconstruct owner/name; a
+  // TikTok numeric video id likewise cannot reconstruct the @author segment.
   // Use the canonical HTTPS URL supplied by the adapter, or fail closed.
   if (platform === "github" || platform === "zhihu" || platform === "reddit") return "";
+  if (platform === "tiktok") return "";
   if (platform === "v2ex") return `https://www.v2ex.com/t/${encodeURIComponent(vid)}`;
   if (platform === "zhihu" || platform === "reddit" || platform === "weibo") return "";
   return buildVideoUrl(vid);

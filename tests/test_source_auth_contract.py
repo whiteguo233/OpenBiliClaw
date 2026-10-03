@@ -1147,6 +1147,7 @@ def contract_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Env:
     for var in (
         "OPENBILICLAW_DOUYIN_COOKIE",
         "OPENBILICLAW_X_COOKIE",
+        "OPENBILICLAW_TIKTOK_COOKIE",
         "OPENBILICLAW_GITHUB_TOKEN",
         "GITHUB_TOKEN",
         "GH_TOKEN",
@@ -1563,6 +1564,11 @@ _EXPECTED_VERIFY_METHODS = {
     "xiaohongshu": "browser_heartbeat",
     "douyin": "live_probe",
     "youtube": "none",
+    # TikTok runs on a guest identity, so without a login cookie there is
+    # nothing to verify (invariant I3) — same ``none`` as YouTube. With a
+    # cookie configured the contract reports ``live_probe`` (passport beat);
+    # see the tiktok probe tests below.
+    "tiktok": "none",
     "twitter": "live_probe",
     "zhihu": "browser_heartbeat",
     "reddit": "local_file",
@@ -1825,6 +1831,136 @@ def test_douyin_probe_distinguishes_login(
         ("ready", True) if expected_verification == "verified" else ("unverified", False)
     )
     assert check_legacy_consistency("douyin", contract) == []
+
+
+# ── TikTok passport-beat probe ────────────────────────────────────────
+
+
+def _tt_cookie_file(env: _Env) -> None:
+    from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+    env.cfg.sources.tiktok.enabled = True
+    TiktokCookieManager(env.cfg.data_path).set_cookie(
+        "sessionid=tt-test; ttwid=guest", source="test"
+    )
+
+
+def _install_tiktok_probe(env: _Env, payload: object) -> list[str]:
+    """Fake TikTok's transport; keep the verdict mapping itself real.
+
+    Same discipline as ``_install_douyin_probe``: patched at the identity
+    (the transport seam), not at ``probe_tiktok_login``, so the test runs the
+    real HTTP-status / ``message`` → verdict mapping. *payload* is either a
+    ``TiktokWebResponse`` to return or an exception to raise.
+    """
+    from openbiliclaw.sources.tiktok_web import LOGIN_PROBE_PATH
+
+    calls: list[str] = []
+
+    class _FakeIdentity:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def unsigned_get(self, path: str, _params: dict[str, str]) -> object:
+            calls.append(path)
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    env.monkeypatch.setattr("openbiliclaw.sources.tiktok_web.TiktokWebIdentity", _FakeIdentity)
+    assert LOGIN_PROBE_PATH
+    return calls
+
+
+def _tt_response(body: bytes, *, status: int = 200) -> object:
+    from openbiliclaw.sources.tiktok_web import TiktokWebResponse
+
+    return TiktokWebResponse(status, body, {})
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_verification", "expected_outcome"),
+    [
+        (_tt_response(b'{"message":"success"}'), "verified", "verified"),
+        (_tt_response(b'{"message":"error"}'), "failed", "failed"),
+        (_tt_response(b"", status=401), "failed", "failed"),
+    ],
+    ids=["session-alive", "explicit-error", "unauthorized"],
+)
+def test_tiktok_probe_distinguishes_login(
+    contract_env: _Env,
+    payload: object,
+    expected_verification: str,
+    expected_outcome: str,
+) -> None:
+    """The passport-beat discriminator: success / explicit rejection.
+
+    A beat answering ``{"message": "success"}`` means the session is alive;
+    an explicit error message or 401/403 is the platform refusing the session
+    — a real ``failed`` verdict. The cookie is optional (guest identity
+    remains a complete mode), so ``legacy_state`` stays ``no_auth`` either
+    way and ``auth_required`` never flips.
+    """
+    _tt_cookie_file(contract_env)
+    calls = _install_tiktok_probe(contract_env, payload)
+
+    body = _verify_post(contract_env, "tiktok")
+
+    assert calls == ["/passport/token/beat/web/"]
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.verification == expected_verification
+    assert contract.verify_method == "live_probe"
+    assert contract.credential == "present"
+    assert contract.credential_origin == "data_file"
+    assert contract.auth_required is False
+    assert body["outcome"] == expected_outcome
+    assert contract.verified_at
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ConnectionError("tls reset"),
+        # Risk-control gate: an empty body is not a cookie verdict.
+        _tt_response(b""),
+        # A 200 the probe cannot interpret says nothing about the cookie.
+        _tt_response(b"not-json"),
+    ],
+    ids=["transport", "empty-body", "unparseable"],
+)
+def test_tiktok_probe_transport_failures_stay_indeterminate(
+    contract_env: _Env, payload: object
+) -> None:
+    """A flaky proxy / risk control is not an expired cookie (invariant I3)."""
+    _tt_cookie_file(contract_env)
+    _install_tiktok_probe(contract_env, payload)
+
+    body = _verify_post(contract_env, "tiktok")
+
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.verification == "unverified"
+    assert body["outcome"] == "indeterminate"
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
+
+
+def test_tiktok_verify_without_cookie_stays_guest_and_offline(contract_env: _Env) -> None:
+    """Guest mode is legitimate: no cookie → indeterminate, no network."""
+    _install_tiktok_probe(contract_env, AssertionError("must not go out"))
+
+    body = _verify_post(contract_env, "tiktok")
+
+    contract = SourceAuthContract.model_validate(body["auth"])
+    assert contract.credential == "none"
+    # Without a credential the contract honestly reports ``none`` even though
+    # the platform's verify *action* is live_probe (the Bangumi split).
+    assert contract.verify_method == "none"
+    assert contract.auth_required is False
+    assert body["outcome"] == "indeterminate"
+    assert (contract.legacy_state, contract.legacy_logged_in) == ("no_auth", True)
+    assert check_legacy_consistency("tiktok", contract) == []
 
 
 def test_verify_debounce(contract_env: _Env) -> None:
@@ -2537,6 +2673,8 @@ _INVALID_CREDENTIALS: dict[str, tuple[str, str]] = {
     "twitter": ("auth_token=at-only; guest_id=gx", "missing_x_cookies"),
     # rdt-cli's hard requirement.
     "reddit": ("loid=abc; token_v2=tok", "missing_reddit_session"),
+    # A guest TikTok jar: ttwid / msToken but no session family.
+    "tiktok": ("ttwid=guest-tt; msToken=abc", "cookie_invalid"),
 }
 
 #: Where each platform's credential would land. Asserting on these is the point
@@ -2545,6 +2683,7 @@ _INVALID_CREDENTIALS: dict[str, tuple[str, str]] = {
 _CREDENTIAL_STORES: dict[str, str] = {
     "bilibili": "bilibili_cookie.json",
     "douyin": "douyin_cookie.json",
+    "tiktok": "tiktok_cookie.json",
     "twitter": "x_cookie.json",
 }
 
@@ -2708,6 +2847,7 @@ def test_credential_write_states_what_it_could_not_verify(contract_env: _Env) ->
         for slug, body in (
             ("bilibili", {"value": _FULL_BILI_COOKIE}),
             ("douyin", {"value": "sessionid=dy-sess; ttwid=tw"}),
+            ("tiktok", {"value": "sessionid=tt-sess; ttwid=tw"}),
             ("twitter", {"value": "auth_token=at; ct0=csrf"}),
             ("reddit", {"value": "reddit_session=rs; loid=l"}),
             ("xiaohongshu", {"kind": "login_state", "value": True}),
@@ -2732,6 +2872,7 @@ def test_credential_write_states_what_it_could_not_verify(contract_env: _Env) ->
     # Probed platforms say so...
     assert accepted["bilibili"]["checked"] == "live_probe"
     assert accepted["douyin"]["checked"] == "live_probe"
+    assert accepted["tiktok"]["checked"] == "live_probe"
     # ...and the ones that cannot be probed say *that*, with a reason.
     for slug in ("twitter", "reddit", "xiaohongshu", "zhihu", "linuxdo", "v2ex"):
         assert accepted[slug]["checked"] != "live_probe", slug

@@ -36,10 +36,9 @@ const PRESENTATION = {
   failed: ["同步失败", "error", true],
 };
 const PLATFORM_NAMES = {
-  bilibili: "B站", youtube: "YouTube", twitter: "X", github: "GitHub", xiaohongshu: "小红书",
-  douyin: "抖音", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi",
-  linuxdo: "Linux.do",
-  douyin: "抖音", weibo: "微博", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", v2ex: "V2EX",
+  bilibili: "B站", youtube: "YouTube", tiktok: "TikTok", twitter: "X", github: "GitHub",
+  xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", zhihu: "知乎", reddit: "Reddit",
+  bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX",
 };
 
 function esc(s) {

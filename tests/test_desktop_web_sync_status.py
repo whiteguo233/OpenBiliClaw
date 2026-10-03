@@ -114,6 +114,7 @@ def test_desktop_refreshes_source_status_after_credential_sync_events() -> None:
     for event_type in (
         "bilibili_cookie_synced",
         "douyin_cookie_synced",
+        "tiktok_cookie_synced",
         "x_cookie_synced",
         "reddit_cookie_synced",
     ):
