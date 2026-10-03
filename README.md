@@ -49,11 +49,13 @@
   <sub>喜欢这个方向？<a href="https://github.com/whiteguo233/OpenBiliClaw">欢迎 Star 支持项目继续适配更多平台</a>。</sub>
 </p>
 
+**70 秒看懂 OpenBiliClaw：推荐、画像、兴趣探针、对话，以及桌面、插件和手机界面。**
+
 <p align="center">
-  <a href="docs/media/recommendation-walkthrough.mp4"><img src="docs/media/recommendation-save.gif" width="820" alt="OpenBiliClaw 桌面真实操作：展开推荐理由、加入稍后再看，再到内容库确认" /></a>
+  <video src="https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe" controls width="820"></video>
 </p>
 
-[桌面实录 · 25 秒](docs/media/recommendation-walkthrough.mp4) · [插件实录 · 18 秒](docs/media/extension-walkthrough.mp4) · [手机实录 · 20 秒](docs/media/mobile-feedback.mp4) · [完整产品导览 · 70 秒](docs/media/product-tour.mp4)
+[桌面实录 · 25 秒](#desktop-demo) · [插件实录 · 18 秒](#extension-demo) · [手机 Web 实录 · 20 秒](#mobile-demo) · [GIF 快速预览](docs/media/product-tour.gif) · [下载视频](docs/media/product-tour.mp4)
 
 <sub>实录使用隔离本地后端中的已有真实推荐，展示浏览、保存与反馈；完整导览另含仓库既有功能截图，不代表现场完成画像学习或推荐生成。[字幕、文字稿与素材说明](docs/media/README.md)</sub>
 
@@ -161,13 +163,15 @@
   </tr>
 </table>
 
+<a id="extension-demo"></a>
+
 <table>
   <tr>
     <td align="center" width="50%" valign="top">
-      <a href="docs/media/extension-walkthrough.mp4"><img src="docs/images/live-extension-recommend.jpg" width="260" alt="浏览器插件真实推荐面板：跨平台内容、推荐理由和反馈入口" /></a><br/>
+      <video src="https://github.com/user-attachments/assets/1604886b-7446-496c-896c-4c197457ef43" controls width="260"></video><br/>
       <b>浏览器插件实录</b><br/>
       <sub>真实扩展页面独立打开，查看推荐并进入内容库。</sub><br/>
-      <a href="docs/media/extension-walkthrough.mp4">观看 18 秒实录</a>
+      <a href="docs/media/extension-walkthrough.mp4">下载 18 秒视频</a> · <a href="docs/media/extension-walkthrough.gif">GIF</a> · <a href="docs/images/live-extension-recommend.jpg">截图</a>
     </td>
     <td align="center" width="50%" valign="top">
       <a href="docs/images/screenshot-interest-probe.png"><img src="docs/images/screenshot-interest-probe.png" width="260" alt="兴趣探针：从已有理解猜测新兴趣，并提供确认、否定和继续聊聊入口" /></a><br/>
@@ -178,11 +182,19 @@
   </tr>
 </table>
 
+<a id="desktop-demo"></a>
+
 ### 🖥️ 桌面端 Web 预览
 
 启动后端后访问 `http://127.0.0.1:8420/web`（或直接 `http://127.0.0.1:8420/`，会自动跳转），即可在浏览器大屏上使用推荐首页。
 
-[观看桌面实录：推荐理由 → 稍后再看 → 内容库（25 秒）](docs/media/recommendation-walkthrough.mp4) · [本次桌面截图](docs/images/live-desktop-home.jpg)
+**桌面实录 · 25 秒：** 展开推荐理由 → 加入稍后再看 → 到内容库确认。
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504" controls width="820"></video>
+</p>
+
+[下载视频](docs/media/recommendation-walkthrough.mp4) · [GIF 预览](docs/media/recommendation-save.gif) · [本次桌面截图](docs/images/live-desktop-home.jpg)
 
 <table>
   <tr>
@@ -206,9 +218,17 @@
   </tr>
 </table>
 
+<a id="mobile-demo"></a>
+
 ### 📱 移动端 Web 预览
 
-[观看手机实录：喜欢反馈 → 共享内容库（20 秒）](docs/media/mobile-feedback.mp4) · [本次手机截图](docs/images/live-mobile-recommend.jpg)
+**手机 Web 实录 · 20 秒：** 点喜欢反馈 → 查看共享内容库。
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d" controls width="300"></video>
+</p>
+
+[下载视频](docs/media/mobile-feedback.mp4) · [GIF 预览](docs/media/mobile-feedback.gif) · [本次手机截图](docs/images/live-mobile-recommend.jpg)
 
 <table>
   <tr>

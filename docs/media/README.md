@@ -1,8 +1,8 @@
 # 产品导览与真实操作演示 / Product tour and recordings
 
-本目录提供桌面、浏览器插件和手机 Web 的连续操作实录，以及补充性的 70 秒产品导览。
+本目录提供桌面、浏览器插件和手机 Web 的连续操作实录，以及 70 秒产品导览。
 导览由真实操作片段与仓库既有功能截图编排，包含八个带文字介绍的章节；画像、口味、探针和对话章节明确标注为既有截图。
-官网提供可切换中英文字幕的视频播放器，GitHub README 首图使用桌面真实操作 GIF，并提供各端视频链接；20 秒章节预览 GIF 作为补充素材保留。视频均无音轨。
+GitHub README 首屏嵌入产品导览，三端介绍分别嵌入短片；播放器引用上传到本仓库的 GitHub 附件，地址与上传日期见 [manifest.json](manifest.json)。GIF、截图与仓库 MP4 保留为替代入口。官网提供可切换中英文字幕的视频播放器；GitHub README 不提供独立字幕轨，可在官网看字幕或阅读下方文字稿。视频均无音轨。
 
 ## 素材清单
 
@@ -132,10 +132,13 @@ public repository screenshots (profile, content style, interest probes, and chat
 Those screenshots use an earlier interface version and do not demonstrate new model replies or profile learning in this session.
 The 20-second GIF takes 2.5 seconds from each chapter without accelerating individual excerpts. On-screen chapter text
 was added during editing; the embedded product interfaces were not altered. All videos are silent, with separate Chinese
-and English captions explaining the Chinese interface.
+and English captions explaining the Chinese interface. The GitHub READMEs embed uploaded video attachments; the website
+provides selectable captions. GitHub's players do not include separate caption tracks, so transcripts and GIF / MP4 links
+remain available here. Attachment URLs and upload dates are recorded alongside the original file hashes in the manifest.
 
 ## 替换素材时
 
 先核对[产品演示素材指南](../media-guide.md)中的真实性、隐私和压缩要求。更新视频或 GIF 时，同时更新
 本页的版本、日期、内容范围、文字稿、两套字幕和 [manifest.json](manifest.json)；截图与封面也应来自同一轮经过检查的真实运行。
+视频内容变化后重新上传 GitHub 附件，同步中英文 README 的播放器地址，并以未登录访问检查公开播放与文件校验值。
 不要只替换文件而保留旧的来源说明。网页引用、字幕语言切换和静态封面按[主页维护指南](../seo.md)验证。

@@ -46,11 +46,13 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
   <sub><a href="https://github.com/whiteguo233/OpenBiliClaw">Star the project if you like the direction</a>.</sub>
 </p>
 
+**70-second product tour: recommendations, your profile, interest probes, chat, and all three interfaces.**
+
 <p align="center">
-  <a href="docs/media/recommendation-walkthrough.mp4"><img src="docs/media/recommendation-save.gif" width="820" alt="Real OpenBiliClaw desktop interaction: expand a recommendation reason, save it for later, and find it in the library" /></a>
+  <video src="https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe" controls width="820"></video>
 </p>
 
-[Desktop recording · 25 sec](docs/media/recommendation-walkthrough.mp4) · [Extension recording · 18 sec](docs/media/extension-walkthrough.mp4) · [Mobile recording · 20 sec](docs/media/mobile-feedback.mp4) · [Full product tour · 70 sec](docs/media/product-tour.mp4)
+[Desktop recording · 25 sec](#desktop-demo) · [Extension recording · 18 sec](#extension-demo) · [Mobile Web recording · 20 sec](#mobile-demo) · [GIF preview](docs/media/product-tour.gif) · [Download video](docs/media/product-tour.mp4)
 
 <sub>The recordings use existing real recommendations in an isolated local backend to show browsing, saving, and feedback; the full tour also includes existing repository screenshots and does not show live profile learning or recommendation generation. [Captions, transcripts, and media notes](docs/media/README.md)</sub>
 
@@ -141,13 +143,15 @@ Five core surfaces: the browser extension handles in-page interaction and login 
   </tr>
 </table>
 
+<a id="extension-demo"></a>
+
 <table>
   <tr>
     <td align="center" width="50%" valign="top">
-      <a href="docs/media/extension-walkthrough.mp4"><img src="docs/images/live-extension-recommend.jpg" width="260" alt="Real browser extension recommendations: content from different platforms, recommendation reasons, and feedback controls" /></a><br/>
+      <video src="https://github.com/user-attachments/assets/1604886b-7446-496c-896c-4c197457ef43" controls width="260"></video><br/>
       <b>Browser Extension Recording</b><br/>
       <sub>The actual extension page opened separately to browse recommendations and the library.</sub><br/>
-      <a href="docs/media/extension-walkthrough.mp4">Watch the 18-second recording</a>
+      <a href="docs/media/extension-walkthrough.mp4">Download 18-second video</a> · <a href="docs/media/extension-walkthrough.gif">GIF</a> · <a href="docs/images/live-extension-recommend.jpg">Screenshot</a>
     </td>
     <td align="center" width="50%" valign="top">
       <a href="docs/images/screenshot-interest-probe.png"><img src="docs/images/screenshot-interest-probe.png" width="260" alt="Interest probe: a proposed new interest with confirm, reject, and chat actions" /></a><br/>
@@ -158,11 +162,19 @@ Five core surfaces: the browser extension handles in-page interaction and login 
   </tr>
 </table>
 
+<a id="desktop-demo"></a>
+
 ### 🖥️ Desktop Web Preview
 
 After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://127.0.0.1:8420/`, which redirects automatically) for a full-screen recommendation dashboard.
 
-[Desktop recording: reason → watch later → library (25 sec)](docs/media/recommendation-walkthrough.mp4) · [New desktop screenshot](docs/images/live-desktop-home.jpg)
+**Desktop recording · 25 sec:** expand a reason → save for later → confirm in the library.
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504" controls width="820"></video>
+</p>
+
+[Download video](docs/media/recommendation-walkthrough.mp4) · [GIF preview](docs/media/recommendation-save.gif) · [New desktop screenshot](docs/images/live-desktop-home.jpg)
 
 <table>
   <tr>
@@ -186,9 +198,17 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
   </tr>
 </table>
 
+<a id="mobile-demo"></a>
+
 ### 📱 Mobile Web Preview
 
-[Mobile recording: like feedback → shared library (20 sec)](docs/media/mobile-feedback.mp4) · [New mobile screenshot](docs/images/live-mobile-recommend.jpg)
+**Mobile Web recording · 20 sec:** send Like feedback → open the shared library.
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d" controls width="300"></video>
+</p>
+
+[Download video](docs/media/mobile-feedback.mp4) · [GIF preview](docs/media/mobile-feedback.gif) · [New mobile screenshot](docs/images/live-mobile-recommend.jpg)
 
 <table>
   <tr>

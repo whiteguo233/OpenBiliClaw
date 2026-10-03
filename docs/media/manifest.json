@@ -145,7 +145,9 @@
       "codec": "h264",
       "frame_rate": "20/1",
       "frames": 357,
-      "audio": false
+      "audio": false,
+      "github_attachment_url": "https://github.com/user-attachments/assets/1604886b-7446-496c-896c-4c197457ef43",
+      "uploaded_on": "2026-10-03"
     },
     {
       "file": "media/extension-walkthrough.zh.vtt",
@@ -176,7 +178,9 @@
       "codec": "h264",
       "frame_rate": "20/1",
       "frames": 409,
-      "audio": false
+      "audio": false,
+      "github_attachment_url": "https://github.com/user-attachments/assets/1313ee0c-9a49-44cd-ac5e-4cffd9dce02d",
+      "uploaded_on": "2026-10-03"
     },
     {
       "file": "media/mobile-feedback.zh.vtt",
@@ -207,7 +211,9 @@
       "codec": "h264",
       "frame_rate": "20/1",
       "frames": 1400,
-      "audio": false
+      "audio": false,
+      "github_attachment_url": "https://github.com/user-attachments/assets/80c126da-09c8-418f-ab77-9dc8e7f12ffe",
+      "uploaded_on": "2026-10-03"
     },
     {
       "file": "media/product-tour.zh.vtt",
@@ -238,7 +244,9 @@
       "codec": "h264",
       "frame_rate": "20/1",
       "frames": 506,
-      "audio": false
+      "audio": false,
+      "github_attachment_url": "https://github.com/user-attachments/assets/b5239531-397f-41a2-a546-49635cc4b504",
+      "uploaded_on": "2026-10-03"
     },
     {
       "file": "media/recommendation-walkthrough.zh.vtt",
