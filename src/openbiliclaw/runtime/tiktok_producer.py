@@ -35,6 +35,7 @@ TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH = (
     "tiktok_user",
 )
 _TIKTOK_TAG = "tiktok_tag"
+_TIKTOK_SEARCH = "tiktok_search"
 _TIKTOK_SCORE_THRESHOLDS = {
     "tiktok_feed": 0.60,
     "tiktok_search": 0.60,
@@ -79,10 +80,12 @@ class TiktokDiscoveryProducer:
     # inline drain path.
     candidate_evaluation_owned_by_coordinator: bool = False
     # Unified keyword planner fetch coordinator (P1.7). When wired AND the flag
-    # is on, the ``tiktok_tag`` strategy claims words from the keyword store and
-    # injects them as ``queries`` (mapped onto hashtags by the strategy); the
-    # words are marked ``used`` once the raw candidates are handed off to the
-    # candidate pipeline. ``None`` (default / flag off) → legacy self-gen path.
+    # is on, the producer claims words from the keyword store and injects them
+    # as ``queries``: ``tiktok_search`` (when mounted — login cookie) gets them
+    # verbatim, otherwise ``tiktok_tag`` gets them and maps them onto hashtags.
+    # The words are marked ``used`` once the raw candidates are handed off to
+    # the candidate pipeline. ``None`` (default / flag off) → legacy self-gen
+    # path.
     keyword_fetch: Any | None = None
     _last_run_at: datetime | None = field(default=None, init=False)
     _last_skip_reason: str = field(default="", init=False)
@@ -116,34 +119,45 @@ class TiktokDiscoveryProducer:
         error_count = 0
 
         # Unified keyword planner fetch path (P1.7, flag-gated): claim words
-        # once for ``tiktok_tag`` and inject them as ``queries``; the strategy
-        # maps them onto hashtags. The deficit gate is upstream; the distinct
-        # floor is ``min_interval`` / ``_is_due`` above; the per-strategy daily
-        # budget still gates the run.
-        claimed_tag: list[Any] = []
+        # once and inject them as ``queries``. When keyword search is mounted
+        # (login cookie) the words feed ``tiktok_search`` verbatim — search
+        # consumes raw keywords while tag would lossily compress them onto
+        # hashtags — and ``tiktok_tag`` falls back to its baseline tags + LLM
+        # generation. Without search the words keep feeding ``tiktok_tag``.
+        # The deficit gate is upstream; the distinct floor is
+        # ``min_interval`` / ``_is_due`` above; the per-strategy daily budget
+        # still gates the run.
+        claimed: list[Any] = []
+        claim_strategy = ""
         coordinator = self.keyword_fetch
         flag_on = coordinator is not None and bool(
             getattr(coordinator, "should_claim", lambda: False)()
         )
-        if flag_on and coordinator is not None and _TIKTOK_TAG in runnable:
-            claimed_tag = coordinator.claim(_PLATFORM_TIKTOK)
-            if not claimed_tag:
-                # Flag on but the store has no claimable pending words → drop
-                # tiktok_tag this cycle (the planner refills); tiktok_user still
-                # runs on its own budget.
-                runnable = [s for s in runnable if s != _TIKTOK_TAG]
+        if flag_on and coordinator is not None:
+            if _TIKTOK_SEARCH in runnable:
+                claim_strategy = _TIKTOK_SEARCH
+            elif _TIKTOK_TAG in runnable:
+                claim_strategy = _TIKTOK_TAG
+            if claim_strategy:
+                claimed = coordinator.claim(_PLATFORM_TIKTOK)
+                if not claimed:
+                    # Flag on but the store has no claimable pending words →
+                    # drop the claim-consuming strategy this cycle (the planner
+                    # refills); other strategies still run on their own budget.
+                    runnable = [s for s in runnable if s != claim_strategy]
+                    claim_strategy = ""
 
-        tag_handed_off = False
+        claim_handed_off = False
         for strategy in runnable:
             unit_budget = max(0, int(remaining.get(strategy, 0)))
             if unit_budget <= 0:
                 continue
             extra: dict[str, Any] = {}
-            if strategy == _TIKTOK_TAG and claimed_tag:
-                extra["queries"] = [item.keyword for item in claimed_tag]
+            if claim_strategy and strategy == claim_strategy:
+                extra["queries"] = [item.keyword for item in claimed]
                 # P1.8: thread the producing word's id onto each candidate for
                 # admit-time yield backfill.
-                extra["keyword_ids"] = {item.keyword: int(item.id) for item in claimed_tag}
+                extra["keyword_ids"] = {item.keyword: int(item.id) for item in claimed}
             try:
                 result = await self.discover(
                     profile,
@@ -185,18 +199,19 @@ class TiktokDiscoveryProducer:
                         source_context=strategy,
                     )
                 )
-            if strategy == _TIKTOK_TAG:
+            if claim_strategy and strategy == claim_strategy:
                 # Fetch-only: the claimed words are consumed on the handoff of
                 # raw candidates to the candidate pipeline — mark them ``used``.
-                tag_handed_off = True
+                claim_handed_off = True
 
-        # Fetch-only lifecycle: tiktok_tag words → ``used`` once handed off
-        # (yield backfill is P1.8). If the strategy errored (never handed off),
-        # leave them claimed — the lease reclaim returns them to pending.
-        if claimed_tag and self.keyword_fetch is not None and tag_handed_off:
-            self.keyword_fetch.mark_used(claimed_tag)
-        elif claimed_tag and self.keyword_fetch is not None:
-            self.keyword_fetch.mark_failed(claimed_tag)
+        # Fetch-only lifecycle: claimed words → ``used`` once handed off by the
+        # consuming strategy (yield backfill is P1.8). If the strategy errored
+        # (never handed off), leave them claimed — the lease reclaim returns
+        # them to pending.
+        if claimed and self.keyword_fetch is not None and claim_handed_off:
+            self.keyword_fetch.mark_used(claimed)
+        elif claimed and self.keyword_fetch is not None:
+            self.keyword_fetch.mark_failed(claimed)
 
         self._stamp_run(discovered_total)
         if discovered_total <= 0 and error_count >= len(runnable):

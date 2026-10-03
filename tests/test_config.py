@@ -4542,3 +4542,36 @@ class TestTiktokSourceConfig:
         assert tiktok["tz_name"] == "Asia/Tokyo"
         assert tiktok["daily_feed_budget"] == 3
         assert tiktok["daily_search_budget"] == 3
+
+
+class TestSuspiciousBudgetWarnings:
+    """``_warn_suspicious_budgets`` flags 1-4 budgets as misused toggles, but
+    shipped defaults (TikTok's official daily_feed_budget=3 / daily_search_budget=3)
+    must not trip their own alarm on every startup."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_warned_keys(self) -> None:
+        config_module._warned_budget_keys.clear()
+
+    def test_tiktok_official_defaults_do_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()  # tiktok budgets stay at their shipped defaults (3/3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "daily_feed_budget" not in caplog.text
+        assert "daily_search_budget" not in caplog.text
+
+    def test_tiktok_handwritten_nondefault_budget_still_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = Config()
+        config.sources.tiktok.daily_feed_budget = 2  # not the official default (3)
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.tiktok.daily_feed_budget" in caplog.text
+
+    def test_other_source_low_budget_still_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        config = Config()
+        config.sources.douyin.daily_feed_budget = 1
+        with caplog.at_level("WARNING"):
+            config_module._warn_suspicious_budgets(config.sources)
+        assert "sources.douyin.daily_feed_budget" in caplog.text

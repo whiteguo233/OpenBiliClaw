@@ -243,6 +243,127 @@ async def test_tiktok_keyword_fetch_marks_failed_on_strategy_error(tmp_path: Any
     assert row["status"] == "failed"
 
 
+async def test_tiktok_keyword_fetch_prefers_search_when_mounted(tmp_path: Any) -> None:
+    """With the search strategy mounted (login cookie), claimed words feed
+    ``tiktok_search`` verbatim; ``tiktok_tag`` falls back to its baseline tags
+    + LLM self-generation (no ``queries`` injection)."""
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+    )
+
+    db = _mk_db(tmp_path)
+    db.insert_pending_keywords("tiktok", ["machine learning"], "digest-3")
+    coordinator = KeywordFetchCoordinator(
+        database=db,
+        discovery_config=_DiscoveryCfg(unified_keyword_planner_enabled=True),  # type: ignore[arg-type]
+    )
+    seen: list[dict[str, Any]] = []
+
+    async def discover(profile: Any, **kwargs: Any) -> TiktokStrategyRunResult:
+        seen.append(kwargs)
+        return _result(str(kwargs["strategy"]), 1)
+
+    producer = TiktokDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        candidate_pipeline=_FakeCandidatePipeline(),
+        keyword_fetch=coordinator,
+    )
+
+    result = await producer.produce_if_due(limit=5)
+
+    search_call = next(call for call in seen if call["strategy"] == "tiktok_search")
+    assert search_call["queries"] == ["machine learning"]
+    assert search_call["keyword_ids"] == {"machine learning": 1}
+    tag_call = next(call for call in seen if call["strategy"] == "tiktok_tag")
+    assert "queries" not in tag_call
+    row = db.conn.execute(
+        "SELECT status FROM discovery_keywords WHERE platform = 'tiktok' AND keyword = ?",
+        ("machine learning",),
+    ).fetchone()
+    assert row["status"] == "used"
+    assert result["discovered"] == 4
+
+
+async def test_tiktok_keyword_fetch_search_error_marks_failed_and_tag_still_runs(
+    tmp_path: Any,
+) -> None:
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+    )
+
+    db = _mk_db(tmp_path)
+    db.insert_pending_keywords("tiktok", ["cooking"], "digest-4")
+    coordinator = KeywordFetchCoordinator(
+        database=db,
+        discovery_config=_DiscoveryCfg(unified_keyword_planner_enabled=True),  # type: ignore[arg-type]
+    )
+    seen: list[dict[str, Any]] = []
+
+    async def discover(profile: Any, **kwargs: Any) -> TiktokStrategyRunResult:
+        seen.append(kwargs)
+        if kwargs["strategy"] == "tiktok_search":
+            raise RuntimeError("search backend gated")
+        return _result(str(kwargs["strategy"]), 0)
+
+    producer = TiktokDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        keyword_fetch=coordinator,
+    )
+
+    await producer.produce_if_due(limit=5)
+
+    tag_call = next(call for call in seen if call["strategy"] == "tiktok_tag")
+    assert "queries" not in tag_call
+    row = db.conn.execute(
+        "SELECT status FROM discovery_keywords WHERE platform = 'tiktok' AND keyword = ?",
+        ("cooking",),
+    ).fetchone()
+    assert row["status"] == "failed"
+
+
+async def test_tiktok_keyword_fetch_empty_store_drops_search_when_mounted(tmp_path: Any) -> None:
+    from openbiliclaw.runtime.tiktok_producer import (
+        TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+    )
+
+    db = _mk_db(tmp_path)
+    coordinator = KeywordFetchCoordinator(
+        database=db,
+        discovery_config=_DiscoveryCfg(unified_keyword_planner_enabled=True),  # type: ignore[arg-type]
+    )
+    calls: list[str] = []
+
+    async def discover(profile: Any, **kwargs: Any) -> TiktokStrategyRunResult:
+        calls.append(str(kwargs["strategy"]))
+        return _result(str(kwargs["strategy"]), 1)
+
+    producer = TiktokDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        strategies=TIKTOK_DISCOVERY_STRATEGIES_WITH_SEARCH,
+        keyword_fetch=coordinator,
+    )
+
+    await producer.produce_if_due(limit=5)
+
+    # No claimable words → tiktok_search drops out; feed/tag/user still run,
+    # tag on its baseline + self-gen path.
+    assert calls == ["tiktok_feed", "tiktok_tag", "tiktok_user"]
+
+
 async def test_tiktok_producer_feed_budget_gates_feed_strategy(tmp_path: Any) -> None:
     db = _mk_db(tmp_path)
     calls: list[str] = []

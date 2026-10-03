@@ -367,10 +367,11 @@ request_interval_seconds = 2
 min_interval_minutes = 3
 
 # ── TikTok 专用配置（实验性）──
-# 轻量 yt-dlp 后端：无需登录、无 Cookie、不依赖浏览器扩展。
-# 发现面以 yt-dlp 的 TikTok extractor 为准：话题标签列表（tiktok:tag）+
-# 创作者视频列表（tiktok:user）；yt-dlp 没有 TikTok 搜索 extractor，因此
-# 关键词规划器产出的词会被映射为话题标签而不是搜索词。
+# 主后端是 TikTok Web API（访客身份 + 请求签名，curl_cffi Chrome TLS 指纹），
+# 无需登录、不依赖浏览器扩展；yt-dlp 仅作兜底（创作者/话题标签列表）。
+# 发现面：推荐流（For You）+ 话题标签列表 + 创作者视频列表；配置登录 cookie
+# 后解锁关键词搜索（有账号风险，默认不启用）。未配置搜索时，关键词规划器产出
+# 的词会被映射为话题标签而不是搜索词。
 # enabled=false 时 pool_source_shares 中的 tiktok 配额会被丢弃（避免池子卡在低于目标）。
 # TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
 [sources.tiktok]

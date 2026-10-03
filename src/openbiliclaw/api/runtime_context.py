@@ -355,14 +355,18 @@ def build_tiktok_discovery_producer(
     concurrency: Any,
     candidate_pipeline: Any | None = None,
     keyword_fetch: Any | None = None,
+    enabled_override: bool | None = None,
 ) -> Any | None:
     """Build the runtime TikTok producer if TikTok discovery is enabled."""
     tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
     if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
         return None
     scheduler = getattr(config, "scheduler", None)
-    if not bool(getattr(scheduler, "enabled", True)):
-        return None
+    producer_enabled = (
+        bool(getattr(scheduler, "enabled", True))
+        if enabled_override is None
+        else bool(enabled_override)
+    )
     if not hasattr(database, "conn"):
         logger.info("tiktok producer disabled: database does not expose sqlite connection")
         return None
@@ -405,8 +409,9 @@ def build_tiktok_discovery_producer(
         discovery_engine.register_strategy(selected_strategy)
         # Unified keyword planner injection (P1.7): forward claimed words to the
         # engine as ``keywords``; the engine maps them onto the strategy's
-        # ``queries`` param (only ``tiktok_tag`` declares it, and maps them onto
-        # hashtags). ``None`` keeps the legacy self-generating behavior.
+        # ``queries`` param (``tiktok_search`` consumes them verbatim,
+        # ``tiktok_tag`` maps them onto hashtags). ``None`` keeps the legacy
+        # self-generating behavior.
         inject: dict[str, Any] = {}
         if queries is not None:
             inject["keywords"] = list(queries)
@@ -454,7 +459,7 @@ def build_tiktok_discovery_producer(
         database=database,
         soul_engine=soul_engine,
         discover=_discover,
-        enabled=True,
+        enabled=producer_enabled,
         min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
         daily_feed_budget=int(getattr(tt_cfg, "daily_feed_budget", 3)),
         daily_search_budget=int(getattr(tt_cfg, "daily_search_budget", 3)),

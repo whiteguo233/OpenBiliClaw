@@ -2544,6 +2544,87 @@ def test_discover_douyin_uses_formal_producer_and_ignores_scheduler_master_switc
     assert "本轮分支正常完成" in result.stdout
 
 
+def test_discover_tiktok_requires_enabled_config(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = False
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok"])
+
+    assert result.exit_code == 1
+    assert "TikTok discovery 未启用" in result.stdout
+
+
+def test_discover_tiktok_uses_formal_producer_and_ignores_scheduler_master_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = True
+    config.scheduler.enabled = False
+    captured: dict[str, object] = {}
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDatabase:
+        conn = object()
+
+    class FakePipeline:
+        last_admitted_items: list[DiscoveredContent] = []
+
+    class FakeProducer:
+        async def produce_if_due(self, *, limit: int) -> dict[str, object]:
+            captured["limit"] = limit
+            return {
+                "reason": "ok",
+                "discovered": 0,
+                "enqueued": 0,
+                "source_counts": {},
+            }
+
+    def fake_build_producer(**kwargs: object) -> FakeProducer:
+        captured.update(kwargs)
+        return FakeProducer()
+
+    import openbiliclaw.api.runtime_context as runtime_context_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine())
+    monkeypatch.setattr(cli_module, "_build_discovery_engine", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_usage_recorder", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_candidate_pipeline",
+        lambda **kwargs: FakePipeline(),
+    )
+    monkeypatch.setattr(
+        runtime_context_module,
+        "build_tiktok_discovery_producer",
+        fake_build_producer,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok", "--limit", "7"])
+
+    assert result.exit_code == 0
+    assert captured["enabled_override"] is True
+    assert captured["limit"] == 7
+    assert "正式 producer" in result.stdout
+    assert "本轮分支正常完成" in result.stdout
+
+
 def test_discover_douyin_debug_runs_direct_strategy(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,

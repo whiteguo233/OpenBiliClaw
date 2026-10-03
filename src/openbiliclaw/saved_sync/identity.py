@@ -5,7 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from openbiliclaw.sources.platforms import normalize_source_platform
 
-_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"github", "weibo"})
+_LOCAL_ONLY_NATIVE_SAVE_PLATFORMS = frozenset({"github", "weibo", "tiktok"})
 
 
 def canonical_source_platform(value: str) -> str:

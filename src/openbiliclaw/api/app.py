@@ -675,12 +675,15 @@ _SOURCE_SHARE_ORDER = (
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
 _SOURCE_COUNT_ORDER = _SOURCE_SHARE_ORDER + ("unknown",)
+# Guided-init legal sources: every source family EXCEPT tiktok, whose
+# discovery is creator/tag driven rather than profile-signal driven
+# (guidedInit: false in web/shared/source-status.js). Letting tiktok in here
+# would flip ``sources.tiktok.enabled`` on while collecting no init signals.
 _INIT_SOURCE_ORDER = (
     "bilibili",
     "xiaohongshu",
     "douyin",
     "youtube",
-    "tiktok",
     "twitter",
     "github",
     "zhihu",

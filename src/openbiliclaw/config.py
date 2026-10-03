@@ -13,7 +13,7 @@ import re
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -2035,6 +2035,11 @@ def _warn_suspicious_budgets(sources: SourcesConfig) -> None:
             if not isinstance(value, int) or isinstance(value, bool):
                 continue
             if not (_SUSPICIOUS_BUDGET_LOW <= value <= _SUSPICIOUS_BUDGET_HIGH):
+                continue
+            # The shipped default cannot be a misused toggle — TikTok's official
+            # daily_feed_budget/daily_search_budget default is 3, which sits in
+            # the suspicious 1-4 band. A hand-written non-default still warns.
+            if source_field.default is not MISSING and value == source_field.default:
                 continue
             key = f"sources.{source_name}.{name}"
             if key in _warned_budget_keys:
