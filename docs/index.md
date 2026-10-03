@@ -70,7 +70,7 @@
 | 微博接入 | [modules/weibo.md](modules/weibo.md) | `src/openbiliclaw/sources/weibo*.py` + `runtime/weibo_producer.py` + `extension/src/**/weibo*` | ✅ 匿名公开 search/hot/creator discovery + 登录态 init-only 收藏 / 关注 / mentions 任务桥；后端不接收 Cookie |
 | 平台来源接入契约 | [modules/source-auth.md](modules/source-auth.md) | `src/openbiliclaw/api/source_auth/` | ✅ 十三来源契约正交化 + `verify_method` 证据强度 + 一键验证；GitHub 为匿名可用、可选 PAT，移动端凭据管理仍为有意排除 |
 | YouTube 接入 | [modules/youtube.md](modules/youtube.md) | `src/openbiliclaw/youtube/` + `src/openbiliclaw/sources/yt_tasks.py` | ✅ init / fetch smoke / Google Takeout 导入 |
-| TikTok 接入（实验性） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ yt-dlp 匿名 hashtag / creator discovery（issue #88）；无登录态、无扩展依赖 |
+| TikTok 接入（实验性） | [modules/tiktok.md](modules/tiktok.md) | `src/openbiliclaw/sources/tiktok.py` + `sources/tiktok_web.py` + `sources/tiktok_sign.py` + `src/openbiliclaw/discovery/strategies/tiktok.py` + `runtime/tiktok_producer.py` | ✅ Web API 访客身份（签名 + curl_cffi）feed / hashtag / creator discovery，yt-dlp 兜底（issue #88）；无登录态、无扩展依赖 |
 | 知乎接入 | [modules/zhihu.md](modules/zhihu.md) | `src/openbiliclaw/sources/zhihu_tasks.py` + `runtime/zhihu_producer.py` + `extension/src/**/zhihu*` | ✅ 登录态任务桥、五路 discovery、账号信号与原生保存确认 |
 | 记忆系统 | [modules/memory.md](modules/memory.md) | `src/openbiliclaw/memory/` | ✅ 完成 |
 | 灵魂引擎 | [modules/soul.md](modules/soul.md) | `src/openbiliclaw/soul/` | ✅ 完成 |

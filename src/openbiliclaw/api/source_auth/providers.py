@@ -665,22 +665,70 @@ def auth_youtube(ctx: SourceAuthContext) -> SourceAuthContract:
 # ── TikTok ───────────────────────────────────────────────────────────
 
 
-def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
-    """TikTok: a public source that legitimately needs no login.
+_TIKTOK_GUEST_DETAIL = (
+    "公开源 · 无需登录。Web API 后端以 TikTok 自己签发的访客身份读取公开数据"
+    "（推荐流 / 创作者 / 话题标签）；可选登录 Cookie 仅用于解锁关键词搜索与更高限额。"
+)
+_TIKTOK_COOKIE_DETAIL = (
+    "已配置可选登录 Cookie（访客身份仍是默认路径）：关键词搜索与更高限额已解锁。"
+    "TikTok 凭据暂无主动探针，验证状态以运行时表现为准。"
+)
 
-    Same shape as YouTube (invariant I3): the yt-dlp backed discovery path
-    reads public hashtag / creator listings anonymously, so there is no
-    credential and ``verify_method`` stays ``none``.
+
+def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
+    """TikTok: a public source with an *optional* login cookie.
+
+    Guest identity is a legitimate, complete operating mode (the web API
+    backend reads public feed / creator / hashtag data anonymously), so
+    ``auth_required`` stays ``False`` and ``legacy_state`` stays ``no_auth``
+    in both branches — same public-source treatment as YouTube.
+
+    What makes it *not* exactly YouTube is the optional login cookie
+    (``[sources.tiktok].cookie_env`` / ``data/tiktok_cookie.json``), which
+    unlocks keyword search (gated for guests upstream, verified 2026-10-03)
+    and higher rate limits. Unlike Bangumi's token there is no live probe
+    for it yet, so ``verify_method`` stays ``none`` even when a cookie is
+    configured — reporting ``live_probe`` without a probe would be the
+    I3 violation the contract exists to prevent. The configured state is
+    still surfaced honestly through ``credential`` / ``credential_origin``
+    and the detail string.
     """
+    tt_cfg = ctx.source_cfg("tiktok")
+    cookie_env = str(getattr(tt_cfg, "cookie_env", "") or "OPENBILICLAW_TIKTOK_COOKIE")
+    cookie = ""
+    try:
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+        cookie = resolve_tiktok_cookie(data_dir=ctx.cfg.data_path, cookie_env=cookie_env)
+    except Exception:  # pragma: no cover - defensive
+        cookie = ""
+
+    if not cookie.strip():
+        return SourceAuthContract(
+            auth_required=False,
+            credential="none",
+            credential_origin="none",
+            verification="unverified",
+            verify_method="none",
+            verify_ttl_seconds=None,
+            can_verify_now=False,
+            detail=_TIKTOK_GUEST_DETAIL,
+            legacy_state="no_auth",
+            legacy_logged_in=True,
+        )
+
+    origin: CredentialOrigin = "env" if os.environ.get(cookie_env, "").strip() else "data_file"
     return SourceAuthContract(
+        # Still False: a configured cookie is an *enhancement* (search,
+        # limits), never a requirement — guest identity covers discovery.
         auth_required=False,
-        credential="none",
-        credential_origin="none",
+        credential="present",
+        credential_origin=origin,
         verification="unverified",
         verify_method="none",
         verify_ttl_seconds=None,
         can_verify_now=False,
-        detail="公开源 · 无需登录。",
+        detail=_TIKTOK_COOKIE_DETAIL,
         legacy_state="no_auth",
         legacy_logged_in=True,
     )

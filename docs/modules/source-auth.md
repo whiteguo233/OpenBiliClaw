@@ -285,6 +285,19 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 统一验证动作登记为 `VERIFY_ACTIONS["v2ex"] = "live_probe"`，相关契约回归见
 `tests/test_source_auth_contract.py`。
 
+## TikTok 的接入
+
+TikTok 是「匿名可用 + 可选凭据（暂不可验证）」形态。Web API 后端以 TikTok 自己签发的
+**访客身份**读取公开推荐流 / 创作者 / 话题标签列表，访客身份是完整合法的运行模式，因此
+`auth_required` 恒为 `False`、`legacy_state` 恒为 `no_auth`：无 Cookie 时返回与 YouTube 同形的
+`credential=none` / `verify_method=none`。
+
+可选登录 Cookie（`[sources.tiktok].cookie_env`，默认 `OPENBILICLAW_TIKTOK_COOKIE`，兜底
+`data/tiktok_cookie.json`）解锁关键词搜索（访客身份被上游 gate，2026-10-03 实测）与更高限额。
+配置后契约报 `credential=present`（origin `env` / `data_file`），但 `verify_method` 诚实保持
+`none`——TikTok 凭据暂无主动探针，报 `live_probe` 会是 I3 的过度声称；`VERIFY_ACTIONS["tiktok"]`
+同样保持 `none`。与 Bangumi 令牌的差别只在验证能力有无，凭据存在性都如实上报。
+
 ## 新增平台的强制契约
 
 新平台必须在 `providers.py` 填全契约字段、在 `verify.py` 的 `VERIFY_ACTIONS` 登记动作，否则过不了 `tests/test_source_auth_contract.py` 的参数化测试。若动作是 `browser_heartbeat`，还必须同步登记 `_BROWSER_HEARTBEAT_PREFIXES`，提供对应数据库 getter、extension runtime-stream event handler 与来源专属 round-trip test；未知 slug 必须 fail closed，不能落到某个既有平台的 else 分支。

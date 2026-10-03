@@ -1,17 +1,29 @@
-"""TikTok discovery strategies (experimental, yt-dlp backed).
+"""TikTok discovery strategies (experimental).
 
-Two strategies backed by :class:`~openbiliclaw.sources.tiktok.TiktokClient`:
+Three strategies over a TikTok client (yt-dlp backend, web API backend, or
+the mode-dispatching ``TiktokRouterClient`` — all expose the same async
+surface):
+
+TiktokFeedStrategy
+    Anonymous For-You feed via the web API backend
+    (``/api/recommend/item_list/``) → LLM evaluates. No configuration
+    dependency; yields nothing under ``mode = "ytdlp"`` (yt-dlp has no
+    feed surface).
 
 TiktokTagStrategy
     LLM generates TikTok hashtags from the soul profile (or the unified
     keyword planner injects words, which are mapped onto hashtags) →
-    ``tiktok:tag`` listing per hashtag → LLM evaluates candidates. yt-dlp
-    ships no TikTok search extractor, so this hashtag mapping is the
-    keyword-driven path.
+    hashtag listing per hashtag → LLM evaluates candidates. yt-dlp ships
+    no TikTok search extractor and guest search is gated upstream, so this
+    hashtag mapping stays the keyword-driven path.
 
 TiktokUserStrategy
-    Reads configured creator handles → fetches recent uploads via
-    ``tiktok:user`` → LLM evaluates.
+    Reads configured creator handles → fetches recent uploads → LLM
+    evaluates.
+
+Client methods may return raw yt-dlp entry dicts (yt-dlp backend) or
+ready-made ``DiscoveredContent`` (web backend); ``_coerce_candidate``
+normalizes both.
 """
 
 from __future__ import annotations
@@ -20,7 +32,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.discovery.engine import (
     DiscoveredContent,
@@ -33,7 +45,6 @@ from openbiliclaw.discovery.engine import (
 from openbiliclaw.discovery.strategies._utils import build_query_generation_profile_summary
 from openbiliclaw.llm.task_options import without_core_memory_kwargs
 from openbiliclaw.sources.tiktok import (
-    TiktokClient,
     normalize_tiktok_handle,
     normalize_tiktok_tag,
     normalize_tiktok_video,
@@ -46,6 +57,22 @@ if TYPE_CHECKING:
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+class SupportsTiktokDiscovery(Protocol):
+    """The async client surface the TikTok strategies consume.
+
+    Implemented by the yt-dlp ``TiktokClient`` (raw entry dicts), the web
+    ``TiktokWebClient`` (``DiscoveredContent`` | ``None``), and the
+    mode-dispatching ``TiktokRouterClient``.
+    """
+
+    async def get_feed(self, *, limit: int = 12) -> Any: ...
+
+    async def get_tag_videos(self, tag: str, *, limit: int = 15) -> list[Any]: ...
+
+    async def get_user_videos(self, handle: str, *, limit: int = 10) -> list[Any]: ...
+
 
 _TAGS_SYSTEM_PROMPT = """\
 你要为 TikTok 内容发现生成一组适合 TikTok 话题标签（hashtag）的词。
@@ -72,6 +99,17 @@ def _extract_llm_json_payload(raw: object) -> object:
     return raw
 
 
+def _coerce_candidate(raw: object, source_strategy: str) -> DiscoveredContent | None:
+    """Accept both backend shapes: yt-dlp entry dict or web DiscoveredContent."""
+    if isinstance(raw, DiscoveredContent):
+        if not raw.source_strategy:
+            raw.source_strategy = source_strategy
+        return raw
+    if isinstance(raw, dict):
+        return normalize_tiktok_video(raw, source_strategy=source_strategy)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # TiktokTagStrategy
 # ---------------------------------------------------------------------------
@@ -81,7 +119,7 @@ def _extract_llm_json_payload(raw: object) -> object:
 class TiktokTagStrategy(DiscoveryStrategy):
     """Discover TikTok content by hashtag listing (tiktok:tag)."""
 
-    client: TiktokClient
+    client: SupportsTiktokDiscovery
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
@@ -149,7 +187,7 @@ class TiktokTagStrategy(DiscoveryStrategy):
                         keyword_id = word_id
                         break
             for raw in batch:
-                content = normalize_tiktok_video(raw, source_strategy=self.name)
+                content = _coerce_candidate(raw, self.name)
                 if content is None or content.content_id in seen:
                     continue
                 content.source_keyword_id = keyword_id
@@ -237,7 +275,7 @@ class TiktokUserStrategy(DiscoveryStrategy):
     config-owned.
     """
 
-    client: TiktokClient
+    client: SupportsTiktokDiscovery
     llm_service: SupportsStructuredTask
     concurrency: DiscoveryConcurrencyController | None = None
     database: Database | None = None
@@ -281,13 +319,87 @@ class TiktokUserStrategy(DiscoveryStrategy):
                 logger.warning("tiktok_user batch failed: %s", batch)
                 continue
             for raw in batch:
-                content = normalize_tiktok_video(raw, source_strategy=self.name)
+                content = _coerce_candidate(raw, self.name)
                 if content is None or content.content_id in seen:
                     continue
                 seen.add(content.content_id)
                 candidates.append(content)
 
         logger.info("tiktok_user: %d creators → %d candidates", len(handles), len(candidates))
+        if not candidates:
+            return []
+
+        if not self.llm_evaluation or discovery_raw_candidate_mode_enabled():
+            return candidates[:limit]
+
+        evaluator = self.content_evaluator()
+        candidates = self.filter_candidates_for_eval(candidates)
+        trimmed = trim_candidates_for_llm(candidates, limit=limit, source_context=self.name)
+        scores = await evaluator.evaluate_content_batch(trimmed, profile)
+        results: list[DiscoveredContent] = []
+        for content, score in zip(trimmed, scores, strict=True):
+            if score < self.score_threshold:
+                continue
+            results.append(content)
+            if len(results) >= limit:
+                break
+        return results
+
+
+# ---------------------------------------------------------------------------
+# TiktokFeedStrategy
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TiktokFeedStrategy(DiscoveryStrategy):
+    """Discover from the anonymous TikTok For-You feed (web API backend).
+
+    ``/api/recommend/item_list/`` needs no configuration and no login: the
+    same guest identity bootstrap that mints ``msToken`` also serves the
+    feed. The feed is a high-visibility surface, so the producer keeps its
+    daily budget small by default. Under ``mode = "ytdlp"`` the router
+    returns ``None`` (yt-dlp has no feed surface) and the strategy yields
+    nothing.
+    """
+
+    client: SupportsTiktokDiscovery
+    llm_service: SupportsStructuredTask
+    concurrency: DiscoveryConcurrencyController | None = None
+    database: Database | None = None
+    results_per_run: int = 12
+    score_threshold: float = 0.60
+    date_preference: PublicationDatePreference | None = None
+    llm_evaluation: bool = True
+    last_intermediates: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def name(self) -> str:
+        return "tiktok_feed"
+
+    @property
+    def source_platform(self) -> str:
+        return "tiktok"
+
+    async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
+        batch = await self.client.get_feed(limit=max(1, self.results_per_run))
+        if not batch:
+            # ``None`` (backend unavailable / ytdlp mode) and ``[]`` both mean
+            # "nothing this run"; the router already logged the reason.
+            self.last_intermediates = {"fetched": 0}
+            return []
+
+        seen: set[str] = set()
+        candidates: list[DiscoveredContent] = []
+        for raw in batch:
+            content = _coerce_candidate(raw, self.name)
+            if content is None or content.content_id in seen:
+                continue
+            seen.add(content.content_id)
+            candidates.append(content)
+
+        self.last_intermediates = {"fetched": len(candidates)}
+        logger.info("tiktok_feed: %d candidates", len(candidates))
         if not candidates:
             return []
 

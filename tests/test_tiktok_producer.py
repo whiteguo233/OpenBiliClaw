@@ -77,14 +77,19 @@ async def test_tiktok_producer_runs_strategies_and_enqueues(tmp_path: Any) -> No
 
     result = await producer.produce_if_due(limit=5)
 
-    assert [call["strategy"] for call in seen] == ["tiktok_tag", "tiktok_user"]
-    assert result["discovered"] == 4
-    assert result["enqueued"] == 4
-    assert [ctx for _, ctx in pipeline.enqueued] == ["tiktok_tag", "tiktok_user"]
+    assert [call["strategy"] for call in seen] == ["tiktok_feed", "tiktok_tag", "tiktok_user"]
+    assert result["discovered"] == 6
+    assert result["enqueued"] == 6
+    assert [ctx for _, ctx in pipeline.enqueued] == [
+        "tiktok_feed",
+        "tiktok_tag",
+        "tiktok_user",
+    ]
     rows = db.conn.execute(
         "SELECT strategy, units, discovered, reason FROM tiktok_discovery_runs ORDER BY id"
     ).fetchall()
     assert [(r["strategy"], r["discovered"], r["reason"]) for r in rows] == [
+        ("tiktok_feed", 2, "ok"),
         ("tiktok_tag", 2, "ok"),
         ("tiktok_user", 2, "ok"),
     ]
@@ -104,6 +109,7 @@ async def test_tiktok_producer_daily_budget_gates_strategy(tmp_path: Any) -> Non
         discover=discover,
         enabled=True,
         min_interval_minutes=0,
+        daily_feed_budget=-1,
         daily_tag_budget=1,
         daily_user_budget=-1,
     )
@@ -176,7 +182,7 @@ async def test_tiktok_keyword_fetch_marks_words_used_after_handoff(tmp_path: Any
         ("machine learning",),
     ).fetchone()
     assert row["status"] == "used"
-    assert result["discovered"] == 2
+    assert result["discovered"] == 3
 
 
 async def test_tiktok_keyword_fetch_empty_store_drops_tag_strategy(tmp_path: Any) -> None:
@@ -202,8 +208,8 @@ async def test_tiktok_keyword_fetch_empty_store_drops_tag_strategy(tmp_path: Any
 
     await producer.produce_if_due(limit=5)
 
-    # No claimable words → tiktok_tag drops out; tiktok_user still runs.
-    assert calls == ["tiktok_user"]
+    # No claimable words → tiktok_tag drops out; feed and user still run.
+    assert calls == ["tiktok_feed", "tiktok_user"]
 
 
 async def test_tiktok_keyword_fetch_marks_failed_on_strategy_error(tmp_path: Any) -> None:
@@ -235,3 +241,31 @@ async def test_tiktok_keyword_fetch_marks_failed_on_strategy_error(tmp_path: Any
         ("cooking",),
     ).fetchone()
     assert row["status"] == "failed"
+
+
+async def test_tiktok_producer_feed_budget_gates_feed_strategy(tmp_path: Any) -> None:
+    db = _mk_db(tmp_path)
+    calls: list[str] = []
+
+    async def discover(profile: Any, **kwargs: Any) -> TiktokStrategyRunResult:
+        calls.append(str(kwargs["strategy"]))
+        # One unit = one feed pull, regardless of the items it returned.
+        return _result(str(kwargs["strategy"]), 1, units=1)
+
+    producer = TiktokDiscoveryProducer(
+        database=db,
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        enabled=True,
+        min_interval_minutes=0,
+        daily_feed_budget=1,
+        daily_tag_budget=-1,
+        daily_user_budget=-1,
+    )
+
+    first = await producer.produce_if_due(limit=5)
+    second = await producer.produce_if_due(limit=5)
+
+    assert first["reason"] == "ok"
+    assert calls == ["tiktok_feed"]
+    assert second["reason"] == "budget_exhausted"

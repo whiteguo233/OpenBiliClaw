@@ -1294,18 +1294,29 @@ class TiktokSourceConfig(SourceDatePreferenceConfig):
     """TikTok experimental source configuration.
 
     TikTok steady-state discovery runs through a backend-direct runtime
-    producer backed by yt-dlp (no login, no browser extension, no cookie):
-    hashtag listing via ``tiktok:tag`` and creator uploads via ``tiktok:user``.
-    yt-dlp ships no TikTok *search* extractor, so keyword-planner words are
-    mapped onto hashtags instead of a search endpoint. ``tags`` / ``creators``
-    seed the two strategies; the budget knobs cap per-day execution units.
+    producer. Two backends exist, selected by ``mode``: the signed web API
+    backend (``sources/tiktok_web.py``, guest identity, no login needed;
+    ``auto`` default with yt-dlp fallback) and the yt-dlp backend
+    (``sources/tiktok.py``). yt-dlp ships no TikTok *search* extractor and
+    guest keyword search is gated upstream, so keyword-planner words are
+    mapped onto hashtags instead of a search endpoint. ``tags`` /
+    ``creators`` seed the two listing strategies; the budget knobs cap
+    per-day execution units. A login cookie (``cookie_env`` /
+    ``data/tiktok_cookie.json``) is optional and unlocks keyword search.
     """
 
     enabled: bool = False
+    # Backend selector: "auto" (web with yt-dlp fallback) | "web" | "ytdlp".
+    mode: str = "auto"
+    # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
+    # is the fallback. Guest identity remains a legitimate mode without it.
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
     # Baseline hashtags for the tag strategy (without the leading ``#``).
     tags: tuple[str, ...] = ()
     # TikTok creator handles for the user strategy (``@`` prefix optional).
     creators: tuple[str, ...] = ()
+    # For-You feed pulls per day (high-visibility surface; kept small).
+    daily_feed_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     request_interval_seconds: int = 2
@@ -2422,8 +2433,11 @@ def _build_config(
         ),
         tiktok=TiktokSourceConfig(
             enabled=bool(tiktok_raw.get("enabled", False)),
+            mode=str(tiktok_raw.get("mode", "auto")),
+            cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
             tags=tuple(_coerce_str_list(tiktok_raw.get("tags", []))),
             creators=tuple(_coerce_str_list(tiktok_raw.get("creators", []))),
+            daily_feed_budget=int(tiktok_raw.get("daily_feed_budget", 3)),
             daily_tag_budget=int(tiktok_raw.get("daily_tag_budget", 0)),
             daily_user_budget=int(tiktok_raw.get("daily_user_budget", 0)),
             request_interval_seconds=int(tiktok_raw.get("request_interval_seconds", 2)),
@@ -5965,8 +5979,11 @@ def _render_config_toml(
             "",
             "[sources.tiktok]",
             f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"mode = {_toml_string(config.sources.tiktok.mode)}",
+            f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
             f"tags = {_toml_str_list(list(config.sources.tiktok.tags))}",
             f"creators = {_toml_str_list(list(config.sources.tiktok.creators))}",
+            f"daily_feed_budget = {config.sources.tiktok.daily_feed_budget}",
             f"daily_tag_budget = {config.sources.tiktok.daily_tag_budget}",
             f"daily_user_budget = {config.sources.tiktok.daily_user_budget}",
             f"request_interval_seconds = {config.sources.tiktok.request_interval_seconds}",

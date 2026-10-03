@@ -2373,8 +2373,15 @@ class YoutubeSourceConfigOut(SourceDatePreferenceOut):
 
 class TiktokSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    mode: str = "auto"
+    # Resolved optional login Cookie header (env override, else
+    # data/tiktok_cookie.json); masked on the way out. Guest identity is a
+    # legitimate mode, so an empty cookie is not an error state.
+    cookie: str = ""
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
     tags: list[str] = Field(default_factory=list)
     creators: list[str] = Field(default_factory=list)
+    daily_feed_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     request_interval_seconds: int = 2

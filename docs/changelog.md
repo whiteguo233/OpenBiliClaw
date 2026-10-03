@@ -4,6 +4,12 @@
 
 ## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
 
+### 功能：TikTok Web API 后端（访客身份 + 请求签名，issue #88）
+
+- 新增 TikTok Web API 后端（`sources/tiktok_web.py`）：以访客身份直连 TikTok Web API，请求经 vendored 纯 Python 签名（`sources/tiktok_sign.py`，Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0）+ curl_cffi Chrome TLS 指纹发送；bootstrap 由匿名推荐流响应铸真实 msToken，绝不伪造。2026-10-03 实测访客身份打通推荐流 / 创作者列表 / 话题标签列表，关键词搜索被上游 gate（预留 client 方法，登录 Cookie 可解锁）。
+- 新增 `tiktok_feed` 匿名推荐流策略（默认 `daily_feed_budget=3`）；`tiktok_tag` / `tiktok_user` 支持 web 路径，由 `TiktokRouterClient` 按 `[sources.tiktok].mode`（`auto` / `web` / `ytdlp`，默认 `auto` = web 优先 + yt-dlp 回退）分发；新增可选登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`），source-auth 契约改为可选凭据语义。
+- 新增默认依赖 `curl-cffi>=0.15`（Chrome TLS impersonation，与 yt-dlp 可选依赖同包兼容）。
+
 ### 功能：新增 TikTok 内容源（yt-dlp 轻量后端，实验性，issue #88）
 
 - 新增 `[sources.tiktok]` 实验性内容源：`TiktokClient` 基于 yt-dlp 匿名读取 `tiktok:tag` 话题标签列表、`tiktok:user` 创作者视频列表与单视频元数据，不登录、不用 Cookie、不依赖浏览器扩展、不下载视频；yt-dlp 无 TikTok 搜索 extractor，关键词统一压缩为 hashtag。

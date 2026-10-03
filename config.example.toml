@@ -375,10 +375,18 @@ min_interval_minutes = 3
 # TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
 [sources.tiktok]
 enabled = false
+# 后端选择："auto"（默认，Web API 优先、失败回退 yt-dlp）| "web"（仅 Web API）| "ytdlp"（仅 yt-dlp）。
+# Web API 后端走访客身份 + 请求签名（curl_cffi Chrome TLS 指纹），实测匿名可用：
+# 推荐流 / 创作者列表 / 话题标签列表；关键词搜索被上游 gate，需要登录 cookie。
+mode = "auto"
+# 可选登录 cookie 环境变量（优先级高于 data/tiktok_cookie.json）；不配置也能以访客身份运行，
+# 配置后解锁关键词搜索与更高限额。切勿伪造 msToken。
+cookie_env = "OPENBILICLAW_TIKTOK_COOKIE"
 # 话题标签策略的常驻标签（不带 #）；画像/关键词规划器生成的话题标签会在此之上叠加。
 tags = []
 # 创作者策略跟踪的 TikTok 账号 handle（@ 前缀可省略）。
 creators = []
+daily_feed_budget = 3                    # 推荐流每日拉取上限（高曝光，建议压低）；0 = 不设每日上限
 daily_tag_budget = 0                     # 0 = 不设每日上限
 daily_user_budget = 0                    # 0 = 不设每日上限
 request_interval_seconds = 2

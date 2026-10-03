@@ -833,13 +833,16 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 
 ### `[sources.tiktok]`
 
-TikTok discovery 配置（实验性，issue #88）。走轻量 yt-dlp 后端：不登录、不用 Cookie、不依赖浏览器扩展，steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_tag` / `tiktok_user` 两个策略。yt-dlp 没有 TikTok 搜索 extractor，统一关键词规划器产出的搜索词会被压缩成无空格 hashtag 后走 `tiktok:tag` 通道。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。
+TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，无搜索策略；统一关键词规划器产出的搜索词会被压缩成无空格 hashtag 后走话题标签通道，配置登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`）后 `TiktokWebClient.search_videos()` 预留方法可用。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `false` | 是否让 TikTok 参与候选池配比和后台 discovery；实验性来源，默认关闭，只能显式 opt-in |
+| `mode` | str | `"auto"` | 后端选择：`auto`（Web API 优先、后端级失败回退 yt-dlp）/ `web`（仅 Web API）/ `ytdlp`（仅 yt-dlp）；非法值在 `PUT /api/config` 保存时拒绝 |
+| `cookie_env` | str | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量（优先于 `data/tiktok_cookie.json`）；不配置时访客身份是完整合法模式，配置后解锁关键词搜索与更高限额 |
 | `tags` | list[str] | `[]` | `tiktok_tag` 的常驻 hashtag（不带 `#`）；画像 / 规划器生成的标签在此之上叠加，按 `tags_per_run` 截断 |
 | `creators` | list[str] | `[]` | `tiktok_user` 跟踪的创作者 handle（`@` 前缀可省略）；TikTok 无账号 bootstrap，创作者列表完全由配置维护 |
+| `daily_feed_budget` | int | `3` | `tiktok_feed` 每日推荐流拉取上限（1 单位 = 1 次拉取，高曝光面默认压低）；`0` 表示不设每日上限 |
 | `daily_tag_budget` | int | `0` | `tiktok_tag` 每天最多执行的话题标签批次数；`0` 表示不设每日上限 |
 | `daily_user_budget` | int | `0` | `tiktok_user` 每天最多抓取的创作者数；`0` 表示不设每日上限 |
 | `request_interval_seconds` | int | `2` | 预留的 TikTok 请求间隔配置；当前策略主要由单轮预算和 runtime 补池节奏控制 |

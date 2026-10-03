@@ -4483,3 +4483,43 @@ class TestAgentConfig:
 
         # The [agent] section ships with the defaults commented out.
         assert "agent" in example
+
+
+class TestTiktokSourceConfig:
+    def test_tiktok_source_defaults(self) -> None:
+        config = Config()
+        assert config.sources.tiktok.enabled is False
+        assert config.sources.tiktok.mode == "auto"
+        assert config.sources.tiktok.cookie_env == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert config.sources.tiktok.daily_feed_budget == 3
+
+    def test_tiktok_source_fields_round_trip(self, tmp_path: Path) -> None:
+        config = Config()
+        config.sources.tiktok.enabled = True
+        config.sources.tiktok.mode = "web"
+        config.sources.tiktok.cookie_env = "MY_TIKTOK_COOKIE"
+        config.sources.tiktok.tags = ("booktok",)
+        config.sources.tiktok.creators = ("@creator",)
+        config.sources.tiktok.daily_feed_budget = 5
+
+        config_path = tmp_path / "config.toml"
+        save_config(config, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded.sources.tiktok.enabled is True
+        assert loaded.sources.tiktok.mode == "web"
+        assert loaded.sources.tiktok.cookie_env == "MY_TIKTOK_COOKIE"
+        assert loaded.sources.tiktok.tags == ("booktok",)
+        assert loaded.sources.tiktok.creators == ("@creator",)
+        assert loaded.sources.tiktok.daily_feed_budget == 5
+
+    def test_example_config_tiktok_section_parses(self) -> None:
+        example_path = Path(__file__).parents[1] / "config.example.toml"
+
+        with example_path.open("rb") as handle:
+            example = tomllib.load(handle)
+
+        tiktok = example["sources"]["tiktok"]
+        assert tiktok["mode"] == "auto"
+        assert tiktok["cookie_env"] == "OPENBILICLAW_TIKTOK_COOKIE"
+        assert tiktok["daily_feed_budget"] == 3

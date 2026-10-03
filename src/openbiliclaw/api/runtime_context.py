@@ -191,6 +191,7 @@ def build_tiktok_discovery_strategies(
     """Build TikTok discovery strategies from `[sources.tiktok]` config."""
 
     from openbiliclaw.discovery.strategies.tiktok import (
+        TiktokFeedStrategy,
         TiktokTagStrategy,
         TiktokUserStrategy,
     )
@@ -207,9 +208,18 @@ def build_tiktok_discovery_strategies(
         configured = int(getattr(tt_cfg, attr, 0))
         return default_run_budget if configured <= 0 else configured
 
+    feed_budget = _strategy_budget("tiktok_feed", "daily_feed_budget")
     tag_budget = _strategy_budget("tiktok_tag", "daily_tag_budget")
     user_budget = _strategy_budget("tiktok_user", "daily_user_budget")
     return [
+        TiktokFeedStrategy(
+            client=client,
+            llm_service=llm_service,
+            concurrency=concurrency,
+            database=database,
+            results_per_run=max(1, feed_budget),
+            date_preference=tt_date_preference,
+        ),
         TiktokTagStrategy(
             client=client,
             llm_service=llm_service,
@@ -235,6 +245,11 @@ def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
     """Return the execution units consumed by one TikTok strategy run."""
     name = str(getattr(strategy, "name", ""))
     intermediates = getattr(strategy, "last_intermediates", {}) or {}
+    if name == "tiktok_feed":
+        # One unit = one feed pull (the daily budget caps pulls, not items).
+        fetched = intermediates.get("fetched")
+        if isinstance(fetched, int):
+            return 1
     if name == "tiktok_tag":
         tags = intermediates.get("tags")
         if isinstance(tags, list):
@@ -246,10 +261,59 @@ def _tiktok_strategy_units_used(strategy: Any, *, fallback: int) -> int:
     return max(0, int(fallback))
 
 
-def _build_tiktok_client() -> Any:
-    from openbiliclaw.sources.tiktok import TiktokClient
+def _build_tiktok_client(config: Any, tt_cfg: Any) -> Any:
+    """Build the mode-dispatching TikTok router client.
 
-    return TiktokClient()
+    ``mode`` (``[sources.tiktok].mode``): ``auto`` = web API backend with
+    yt-dlp fallback, ``web`` = web API only, ``ytdlp`` = yt-dlp only. The
+    web backend needs ``curl_cffi``; in ``auto`` mode a missing dependency
+    degrades to yt-dlp-only with a log line, while ``web`` mode lets the
+    ``ImportError`` propagate so the producer stays disabled loudly.
+    """
+    from openbiliclaw.sources.tiktok import TiktokClient
+    from openbiliclaw.sources.tiktok_web import (
+        _TIKTOK_MODES,
+        TiktokRouterClient,
+        TiktokWebClient,
+        TiktokWebIdentity,
+    )
+
+    mode = str(getattr(tt_cfg, "mode", "auto") or "auto").strip().lower()
+    if mode not in _TIKTOK_MODES:
+        logger.warning("tiktok: unsupported mode %r, falling back to 'auto'", mode)
+        mode = "auto"
+
+    web_client: Any = None
+    if mode in {"auto", "web"}:
+        try:
+            from openbiliclaw.network import outbound_ytdlp_proxy
+            from openbiliclaw.sources.tiktok_auth import (
+                TIKTOK_COOKIE_ENV,
+                resolve_tiktok_cookie,
+            )
+
+            cookie_env = str(getattr(tt_cfg, "cookie_env", TIKTOK_COOKIE_ENV) or TIKTOK_COOKIE_ENV)
+            cookie = ""
+            try:
+                cookie = resolve_tiktok_cookie(
+                    data_dir=config.data_path,
+                    cookie_env=cookie_env,
+                )
+            except Exception as exc:  # defensive: guest mode stays legitimate
+                logger.debug("tiktok cookie resolution failed (guest mode): %s", exc)
+            # Same outbound policy as the yt-dlp backend: None = inherit env,
+            # "" = force direct, URL = pinned proxy.
+            identity = TiktokWebIdentity(
+                proxy=outbound_ytdlp_proxy(),
+                login_cookie=cookie,
+            )
+            web_client = TiktokWebClient(identity=identity)
+        except ImportError:
+            if mode == "web":
+                raise
+            logger.info("tiktok web backend unavailable (curl_cffi?); yt-dlp only")
+
+    return TiktokRouterClient(web=web_client, ytdlp=TiktokClient(), mode=mode)
 
 
 def build_tiktok_discovery_producer(
@@ -280,7 +344,7 @@ def build_tiktok_discovery_producer(
     )
 
     try:
-        tt_client = _build_tiktok_client()
+        tt_client = _build_tiktok_client(config, tt_cfg)
     except ImportError as exc:
         logger.info("tiktok producer disabled: TikTok dependencies unavailable: %s", exc)
         return None
@@ -356,6 +420,7 @@ def build_tiktok_discovery_producer(
         discover=_discover,
         enabled=True,
         min_interval_minutes=int(getattr(tt_cfg, "min_interval_minutes", 3)),
+        daily_feed_budget=int(getattr(tt_cfg, "daily_feed_budget", 3)),
         daily_tag_budget=int(getattr(tt_cfg, "daily_tag_budget", 0)),
         daily_user_budget=int(getattr(tt_cfg, "daily_user_budget", 0)),
         candidate_pipeline=candidate_pipeline,

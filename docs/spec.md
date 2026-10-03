@@ -633,7 +633,8 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ TiktokDiscoveryProducer: yt-dlp 匿名 tiktok_tag/tiktok_user(实验性) │ │
+│  │ TiktokDiscoveryProducer: Web API 访客身份 tiktok_feed/tag/user  │ │
+│  │   (签名+curl_cffi, mode=auto 时 yt-dlp 兜底, 实验性)            │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ XAdapter + XDiscoveryProducer: 服务端 cookie 重放(twitter-cli) │ │

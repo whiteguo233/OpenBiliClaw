@@ -17709,6 +17709,7 @@ def create_app(
         from openbiliclaw.config import load_config
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
         from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         cfg = _pin_active_runtime_config(load_config())
         srcs = cfg.sources
@@ -17720,6 +17721,10 @@ def create_app(
         dy_cookie = resolve_douyin_cookie(
             data_dir=cfg.data_path,
             cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+        )
+        tt_cookie = resolve_tiktok_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE"),
         )
         tw_cookie = resolve_x_cookie(
             data_dir=cfg.data_path,
@@ -17847,8 +17852,9 @@ def create_app(
             tiktok=item(
                 "tiktok",
                 "Cookie",
-                "",
-                "TikTok 当前按公开源接入（yt-dlp 匿名抓取），后端不保存 Cookie。",
+                tt_cookie,
+                "TikTok 默认以访客身份读公开数据无需登录；可选登录 Cookie 用于解锁关键词搜索"
+                "与更高限额（env 优先，兜底 data/tiktok_cookie.json）。",
             ),
             twitter=item("twitter", "Cookie", tw_cookie, "X 当前 resolved Cookie。"),
             zhihu=item(
@@ -19764,12 +19770,19 @@ def create_app(
             effective_llm_routes,
         )
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         dy_cookie = ""
         with suppress(Exception):
             dy_cookie = resolve_douyin_cookie(
                 data_dir=_active_runtime_data_path(),
                 cookie_env=cfg.sources.douyin.cookie_env,
+            )
+        tt_cookie = ""
+        with suppress(Exception):
+            tt_cookie = resolve_tiktok_cookie(
+                data_dir=_active_runtime_data_path(),
+                cookie_env=cfg.sources.tiktok.cookie_env,
             )
         tw_cookie = ""
         with suppress(Exception):
@@ -19995,8 +20008,12 @@ def create_app(
                 ),
                 tiktok=TiktokSourceConfigOut(
                     enabled=cfg.sources.tiktok.enabled,
+                    mode=cfg.sources.tiktok.mode,
+                    cookie=_mask(tt_cookie),
+                    cookie_env=cfg.sources.tiktok.cookie_env,
                     tags=list(cfg.sources.tiktok.tags),
                     creators=list(cfg.sources.tiktok.creators),
+                    daily_feed_budget=cfg.sources.tiktok.daily_feed_budget,
                     daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
                     daily_user_budget=cfg.sources.tiktok.daily_user_budget,
                     request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
@@ -22060,6 +22077,33 @@ def create_app(
                 if isinstance(tt_data, dict):
                     if "enabled" in tt_data:
                         cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    if "mode" in tt_data:
+                        # Reject invalid backends at save time instead of
+                        # silently clamping them at read time.
+                        from openbiliclaw.sources.tiktok_web import _TIKTOK_MODES
+
+                        new_mode = str(tt_data["mode"]).strip().lower()
+                        if new_mode not in _TIKTOK_MODES:
+                            raise ValueError(
+                                f"sources.tiktok.mode 必须是 {', '.join(_TIKTOK_MODES)} 之一"
+                            )
+                        cfg.sources.tiktok.mode = new_mode
+                    if "cookie_env" in tt_data:
+                        new_env = str(tt_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.tiktok.cookie_env = new_env
+                    if "cookie" in tt_data:
+                        # Manual paste — routed to data/tiktok_cookie.json;
+                        # never lands in config.toml. Optional credential:
+                        # no gate probe exists for TikTok yet, so the cookie
+                        # is stored as-is (guest identity stays the fallback).
+                        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+                        new_cookie = str(tt_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            TiktokCookieManager(active_data_path).set_cookie(
+                                new_cookie, source="config-update"
+                            )
                     for list_key in ("tags", "creators"):
                         raw_list = tt_data.get(list_key)
                         if isinstance(raw_list, list):
@@ -22069,6 +22113,7 @@ def create_app(
                                 tuple(str(item).strip() for item in raw_list if str(item).strip()),
                             )
                     for key in (
+                        "daily_feed_budget",
                         "daily_tag_budget",
                         "daily_user_budget",
                         "request_interval_seconds",

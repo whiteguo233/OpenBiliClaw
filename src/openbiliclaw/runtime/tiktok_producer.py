@@ -1,8 +1,10 @@
-"""Runtime TikTok discovery producer (experimental, yt-dlp backed).
+"""Runtime TikTok discovery producer (experimental).
 
 TikTok steady-state discovery is backend-direct: the runtime calls the
-yt-dlp backed strategies itself and needs neither the browser-extension
-task queue nor any credential. Mirrors the YouTube producer shape.
+strategies itself and needs neither the browser-extension task queue nor
+any credential. The backend is selected by ``[sources.tiktok].mode``
+(web API / yt-dlp / auto); see ``openbiliclaw.sources.tiktok_web``.
+Mirrors the YouTube producer shape.
 """
 
 from __future__ import annotations
@@ -24,9 +26,10 @@ from openbiliclaw.runtime.producer_cadence import (
 
 logger = logging.getLogger(__name__)
 
-TIKTOK_DISCOVERY_STRATEGIES = ("tiktok_tag", "tiktok_user")
+TIKTOK_DISCOVERY_STRATEGIES = ("tiktok_feed", "tiktok_tag", "tiktok_user")
 _TIKTOK_TAG = "tiktok_tag"
 _TIKTOK_SCORE_THRESHOLDS = {
+    "tiktok_feed": 0.60,
     "tiktok_tag": 0.60,
     "tiktok_user": 0.60,
 }
@@ -53,6 +56,9 @@ class TiktokDiscoveryProducer:
     discover: TiktokDiscoverCallable
     enabled: bool = True
     min_interval_minutes: int = 3
+    # The For-You feed is a high-visibility surface; keep its daily pull
+    # count small by default (one unit = one feed pull, not one item).
+    daily_feed_budget: int = 3
     daily_tag_budget: int = 0
     daily_user_budget: int = 0
     strategies: tuple[str, ...] = TIKTOK_DISCOVERY_STRATEGIES
@@ -208,6 +214,7 @@ class TiktokDiscoveryProducer:
         """
         run_budget = max(1, int(per_run_budget or 10))
         configured = {
+            "tiktok_feed": int(self.daily_feed_budget),
             "tiktok_tag": int(self.daily_tag_budget),
             "tiktok_user": int(self.daily_user_budget),
         }
