@@ -8681,6 +8681,29 @@ def create_app(
                                 }
                             )
                 with suppress(Exception):
+                    # TikTok without a cookie is a legitimate guest-mode
+                    # state, so this is a quiet pull, not a missing-credential
+                    # complaint: if the browser is logged into tiktok.com the
+                    # extension answers with the jar, otherwise it no-ops.
+                    tt_cfg = getattr(runtime_config.sources, "tiktok", None)
+                    if tt_cfg is not None and bool(getattr(tt_cfg, "enabled", False)):
+                        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+                        tt_cookie = resolve_tiktok_cookie(
+                            data_dir=runtime_config.data_path,
+                            cookie_env=str(
+                                getattr(tt_cfg, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
+                            ),
+                        )
+                        if not str(tt_cookie or "").strip():
+                            await websocket.send_json(
+                                {
+                                    "type": "tiktok_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
                     from openbiliclaw.sources.reddit_tasks import _rdt_saved_credential_state
 
                     rd_cfg = getattr(runtime_config.sources, "reddit", None)
@@ -17578,6 +17601,7 @@ def create_app(
         event_type = {
             "bilibili": "bilibili_cookie_synced",
             "douyin": "douyin_cookie_synced",
+            "tiktok": "tiktok_cookie_synced",
             "twitter": "x_cookie_synced",
             "reddit": "reddit_cookie_synced",
         }.get(slug, "")

@@ -10,6 +10,11 @@
 - 新增 `tiktok_feed` 匿名推荐流策略（默认 `daily_feed_budget=3`）；`tiktok_tag` / `tiktok_user` 支持 web 路径，由 `TiktokRouterClient` 按 `[sources.tiktok].mode`（`auto` / `web` / `ytdlp`，默认 `auto` = web 优先 + yt-dlp 回退）分发；新增可选登录 Cookie（`cookie_env` / `data/tiktok_cookie.json`），source-auth 契约改为可选凭据语义。
 - 新增默认依赖 `curl-cffi>=0.15`（Chrome TLS impersonation，与 yt-dlp 可选依赖同包兼容）。
 
+### 功能：TikTok 登录 Cookie 插件自动同步（issue #88）
+
+- 浏览器插件 `cookie-sync.ts` 覆盖 tiktok.com：检测到登录（sessionid / sessionid_ss / sid_tt）后把完整 Cookie jar 推送到统一凭据端点 `POST /api/sources/tiktok/credential`（结构校验 + passport 心跳 live probe，与设置页粘贴同一验证强度），落盘 `data/tiktok_cookie.json`；支持 `tiktok_cookie_sync_requested` runtime-stream 主动拉取、`cookies.onChanged` 按平台防抖与独立小时 alarm。访客身份下无 Cookie 是合法状态，未登录 / 登出时静默跳过。
+- manifest（Chrome / Firefox）host_permissions 增加 `*://*.tiktok.com/*`；桌面 dashboard 在 `tiktok_cookie_synced` 事件后刷新来源状态。
+
 ### 功能：TikTok Cookie 探针、凭据写入门面、地区配置与搜索策略（issue #88）
 
 - **Cookie 主动探针**：新增 `probe_tiktok_login()`，调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳）验证可选登录 Cookie；`success` → verified，401/403 / 显式 error → failed，传输失败与风控空响应 → indeterminate。`VERIFY_ACTIONS["tiktok"]` 登记为 `live_probe`，契约在无 Cookie 时仍诚实报 `verify_method="none"`。

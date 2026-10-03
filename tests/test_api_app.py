@@ -6933,6 +6933,79 @@ class TestBackendAPI:
                 "source": "runtime-stream",
             }
 
+    def test_runtime_stream_requests_tiktok_cookie_sync_for_background_client(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            assert websocket.receive_json() == {
+                "type": "xhs_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "zhihu_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "tiktok_cookie_sync_requested",
+                "reason": "missing_cookie",
+                "source": "runtime-stream",
+            }
+
+    def test_runtime_stream_skips_tiktok_sync_request_when_cookie_present(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Guest mode is legitimate: a configured cookie means no request."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+        TiktokCookieManager(cfg.data_path).set_cookie("sessionid=tt", source="test")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            # Only the two login-state pings; no tiktok cookie request.
+            assert websocket.receive_json()["type"] == "xhs_login_state_sync_requested"
+            assert websocket.receive_json()["type"] == "zhihu_login_state_sync_requested"
+
     def test_runtime_stream_requests_reddit_cookie_sync_for_background_client(
         self, monkeypatch, tmp_path: Path
     ) -> None:

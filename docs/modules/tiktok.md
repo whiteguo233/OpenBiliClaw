@@ -24,7 +24,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 2. **签名**：每个请求用 vendor 的 `sources/tiktok_sign.py`（来源 Evil0ctal/Douyin_TikTok_Download_API，Apache-2.0，纯 stdlib）产出 `X-Dynosaur` / `msToken` / `X-Bogus` / `X-Gnarly` 四个签名参数；签名时的 `user_agent` 与发送 UA 完全一致（`browser_version` 参数同）。
 3. **失效检测**：响应 0 字节 + `tt_orcas_res: 1` = 被 gate（身份/参数问题，**不是传输问题，不无脑重试**）。触发一次重新 bootstrap 后重试；仍被 gate 则该次调用降级为"后端不可用"（`auto` 模式下 router 回退 yt-dlp）。
 4. **传输重试**：TikTok 边缘对数据中心 IP 做 TLS 指纹级重置（实测约 5/6 失败率），每次请求最多重试 5 次传输错误。
-5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于解锁关键词搜索与更高限额；不配置时访客身份是完整合法的运行模式。已配置的 Cookie 可通过 `/passport/token/beat/web/` 主动探针验证（无签名、仅带 cookie 的会话心跳），写入门面（`PUT /api/config` 与 `POST /api/sources/tiktok/credential`）在保存前都会先过该探针，验证不通过不落盘。
+5. **可选登录 Cookie**：`cookie_env`（默认 `OPENBILICLAW_TIKTOK_COOKIE`）或 `data/tiktok_cookie.json` 提供登录 Cookie 后并入同一会话 jar，用于解锁关键词搜索与更高限额；不配置时访客身份是完整合法的运行模式。已配置的 Cookie 可通过 `/passport/token/beat/web/` 主动探针验证（无签名、仅带 cookie 的会话心跳），写入门面（`PUT /api/config` 与 `POST /api/sources/tiktok/credential`）在保存前都会先过该探针，验证不通过不落盘。**浏览器插件自动同步**：安装了扩展的用户只需在浏览器登录 tiktok.com，service worker 检测到 sessionid 家族 Cookie 后会把完整 jar 推送到统一凭据端点（与手动粘贴同一验证强度）；未登录 / 登出时静默跳过（访客身份照常工作），无任何报错打扰。
 6. **地区参数**：`region` / `tz_name`（默认 `JP` / `Asia/Tokyo`）随每个请求发送，应匹配代理出口地区；被风控 gate（空响应）时首先检查这两项。
 
 请求构造要点（2026-10-03 spike 实测固化）：`aid=1988`、`device_platform=web_pc`、19 位随机 `device_id`（**缺失会导致 0 字节空响应**）、`region` / `priority_region` / `tz_name` 默认匹配东京出口（JP / Asia/Tokyo）；HTTP 层用 curl_cffi `impersonate="chrome"`；代理策略与 yt-dlp 后端一致（`outbound_ytdlp_proxy()`：`system` 继承环境、`direct` 强制直连、`custom` 固定代理）。
@@ -74,6 +74,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | 可选登录 Cookie | ✅ | `sources/tiktok_auth.py`（env 优先、`data/tiktok_cookie.json` 兜底，仿 douyin_auth）；`PUT /api/config` 与统一凭据端点粘贴都先过探针再落盘；GET 只回脱敏预览 |
 | Cookie 主动探针 | ✅ | `probe_tiktok_login()` 调 `/passport/token/beat/web/`（无签名、仅 cookie）；verified / failed / indeterminate 三态映射（传输失败与风控 gate 绝不误判为失效）；`VERIFY_ACTIONS["tiktok"]="live_probe"` |
 | 凭据写入门面 | ✅ | `CREDENTIAL_SPECS["tiktok"]`：结构门要求 sessionid / sessionid_ss / sid_tt 至少其一，live gate 接 passport 探针；store 落 `data/tiktok_cookie.json` |
+| 插件 Cookie 自动同步 | ✅ | `cookie-sync.ts` 覆盖 tiktok.com：登录检测（sessionid 家族）→ 完整 jar → `/api/sources/tiktok/credential`；按平台防抖 + 小时 alarm + runtime-stream `tiktok_cookie_sync_requested`；登出静默；manifest host_permissions 加 `*://*.tiktok.com/*` |
 | `tiktok_search` discovery | ✅（默认不启用） | 仅当配置登录 Cookie 且 mode 允许 web 时挂载；planner 注入词**原样使用**（不做 hashtag 压缩），LLM 画像兜底生成；搜索响应混合卡片只收视频条目（`require_video` 过滤）；`daily_search_budget` 默认 3 |
 | 地区参数配置化 | ✅ | `region` / `tz_name` 配置项注入 `TiktokWebIdentity`，空值回退默认；应匹配网络出口地区 |
 | yt-dlp 轻量 client | ✅ | `TiktokClient` 封装 `tiktok:user` / `tiktok:tag` flat-extract 与单视频 `TikTok` extract；阻塞调用全部跑在线程池 executor，永不下载媒体 |
