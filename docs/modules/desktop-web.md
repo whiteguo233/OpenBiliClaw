@@ -17,6 +17,7 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 动态网站来源管理 | ✅ | 来源设置独立列出每个自定义网站，复用 `shared/custom-sources.js`；可保存名称、候选池占比、发现间隔，启停、归档、查看最近运行与重新登录。每个网站在占比总览中与内置平台平级；推荐/惊喜卡展示 `source_name`，内容平台仍为 `web`。旧版公开 Feed/Sitemap/listing 编辑器继续保留 |
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |
 | M8 会话列表 | ✅ | 侧栏（新建/切换/内联改名/归档/显示已归档），默认会话徽标，`active_turns>0` 活跃圆点，标题与预览轮询刷新（复用 2.5s 共享聊天轮询），当前会话持久化到 localStorage |
 | M8 skill 切换 | ✅ | 会话条 skill chip（图标+名称）弹出角色选择浮层（`GET /api/chat/skills`），按会话记忆选择、下一回合生效；`suggest_skill` 工具调用渲染为切换卡（一键切换/忽略） |
@@ -121,3 +122,42 @@ start_background_task）、会话/任务/审批/skill 列表 markup、异步审�
 展示网页资料；共享渲染器也将正文中的裸 http(s) 来源转为可点击链接，跳过代码和已有
 链接，保留 HTML 转义。口味伙伴/探寻师可定位、更正聊天笔记；delete_memory 走现有审批卡，
 待批准不表示已删除，执行时原值冲突则失败并保留新笔记。本次无需额外页面入口。
+
+
+### 自定义网站设置与登录接管
+
+首次设置完成页介绍自定义网站并提供 `/web/?chat=1` 入口，桌面加载后直接进入聊一聊；
+不把动态网站当作账号画像初始化来源，也不会在点击入口时自动保存来源。
+
+桌面设置的「自定义网站」使用 `OpenBiliClawCustomSources.createManager()`；宿主传入
+已有 `requestJsonStrict` 鉴权请求、后端 base URL 和进入聊一聊的回调。组件只调用
+`/api/custom-sources`，不把来源编辑混入全局配置保存：名称、1–20 份占比和
+5–10080 分钟间隔按站点 `PATCH`，启停也是独立补丁，归档为 `DELETE`。
+失败保留输入与可重试按钮，保存成功但列表刷新失败时分别报告。
+
+这些设置按钮是用户显式操作，直接调用来源 API；聊天中的
+`prepare_discovery_source/trial_discovery_source` 是 `soft_write`，
+`activate_discovery_source/manage_discovery_source` 则必须通过 `hard_write` 确认卡。
+创建流程仍从聊一聊开始，不因设置页可以直接保存而绕过聊天启用审批。
+确认卡使用服务端从草稿或来源生成的持久摘要，展示网站与将执行的配置；工具进度标签
+复用共享聊天映射，刷新与回放不退化成只有草稿 ID 的说明。
+
+组件仅在 Playwright 不可用时显示「安装浏览器」。点击后向
+`POST /api/custom-sources/executors/playwright/install` 提交请求，HTTP `202`
+与 `{status:"installing"}` 表示安装已开始。安装中只在页面及来源设置区域可见时每 3 秒
+刷新执行器状态，来源表单不重绘，未保存的编辑保留；`ready/failed` 及 `detail` 决定
+完成或失败提示。这里不安装 Ego，也不把安装请求已接受当作浏览器已可用。
+
+重新登录先向 `POST /api/custom-sources/{source_id}/login` 创建接管请求，然后打开
+后端返回的 `/web/source-login.html?draft_id=…`。组件只接受同后端 origin 的接管页面，
+不在设置或聊天中收集网站密码、Cookie；浏览器拦截新窗口时仍显示可点击链接。
+用户在接管页继续后，回到设置刷新健康状态。该页面实现和执行环境契约见 [API](api.md)。
+
+接管页同时适配桌面与窄屏：长登录 origin 按行换行，网站输入框选择器不撑宽页面。
+`blocked_navigation_origins` 仅显示为逐项授权按钮；点击后才提交所选 `login_origin`。
+手动填入前立即清空本页输入值，失败也不回填；继续试跑失败时重新打开接管窗口并保留
+错误提示，避免画面永久停止刷新。试跑成功后停止截图轮询，新来源仍须返回聊天确认启用。
+
+自定义网站以各自 `source_id` 加入候选池占比图例，使用数据库保存的 `target_share`；
+旧版 Web 总额只对应兼容订阅，不用于二次分摊自定义网站。推荐与惊喜规范化保留
+`source_id/source_name`，只替换可见来源名称，Web 内容类型、打开链接与收藏身份保持。

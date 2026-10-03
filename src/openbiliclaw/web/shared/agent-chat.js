@@ -48,6 +48,27 @@
     return escapeHtml(value).replace(/\n/g, "<br>");
   }
 
+  const DISCOVERY_TOOL_LABELS = {
+    prepare_discovery_source: "准备网站发现",
+    trial_discovery_source: "试跑网站发现",
+    activate_discovery_source: "启用网站来源",
+    manage_discovery_source: "修改网站来源",
+  };
+
+  function toolDisplayName(name) {
+    return DISCOVERY_TOOL_LABELS[name] || String(name || "操作");
+  }
+
+  function toolSummary(name, summary) {
+    const value = String(summary || "");
+    // Human-authored backend summaries may carry the exact source and change.
+    // Only replace technical fallback summaries; full arguments stay in details.
+    if (DISCOVERY_TOOL_LABELS[name] && (!value || value === name || value.startsWith(`${name}(`))) {
+      return toolDisplayName(name);
+    }
+    return value || `${name}()`;
+  }
+
   // ── SSE parsing ──────────────────────────────────────────────
   /**
    * Incremental parser for ``text/event-stream`` bodies. Feed decoded text
@@ -529,7 +550,7 @@
       `<div class="agent-approval-card${compact ? " is-compact" : ""}" data-approval-id="${escapeHtml(approval.approval_id)}" data-status="${escapeHtml(status)}">`,
     );
     parts.push(
-      `<div class="agent-approval-head"><span class="agent-approval-title">需要批准：${escapeHtml(approval.tool_name || "操作")}</span>`,
+      `<div class="agent-approval-head"><span class="agent-approval-title">需要批准：${escapeHtml(toolDisplayName(approval.tool_name))}</span>`,
       `<span class="agent-approval-status" data-tone="${escapeHtml(status)}">${escapeHtml(statusLabel)}</span></div>`,
     );
     if (approval.summary) {
@@ -601,7 +622,7 @@
 
   function renderToolItemMarkup(item, { compact = false } = {}) {
     const statusIcon = item.status === "ok" ? "✓" : item.status === "failed" ? "✗" : "…";
-    const summary = item.summary || `${item.name}()`;
+    const summary = toolSummary(item.name, item.summary);
     const detail = [
       '<div class="agent-tool-detail">',
       renderJsonBlock(item.arguments),
@@ -763,6 +784,8 @@
 
   global.OpenBiliClawAgentChat = {
     escapeHtml,
+    toolDisplayName,
+    toolSummary,
     createAgentSseParser,
     createSseReadWatchdog,
     SSE_READ_WATCHDOG_MS,

@@ -191,6 +191,10 @@ export function platformDisplayName(value) {
   return PLATFORM_DISPLAY_NAMES[key] || normalizeText(value);
 }
 
+export function recommendationSourceName(item) {
+  return normalizeText(item?.source_name) || platformDisplayName(item?.source_platform || "bilibili");
+}
+
 const WEB_SOURCE_STRATEGY_LABELS = {
   "web-feed": "网页订阅（RSS/Atom/JSON Feed）",
   "web-sitemap": "网页站点地图（Sitemap）",
@@ -369,6 +373,8 @@ export function normalizeRecommendation(item) {
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     content_type: normalizeText(item?.content_type)
       || (sourcePlatform === "bilibili" && contentId ? "video" : ""),
     body_text: normalizeText(item?.body_text),
@@ -482,6 +488,8 @@ export function normalizeDelightCandidate(item) {
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url) || "",
     source_platform: normalizeSourcePlatform(item?.source_platform, item?.content_url) || "",
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     published_at: normalizeText(item?.published_at),
     published_label: String(item?.published_label ?? "").replace(/\s+/g, " ").trim().slice(0, 64),
     content_type: normalizeText(item?.content_type),

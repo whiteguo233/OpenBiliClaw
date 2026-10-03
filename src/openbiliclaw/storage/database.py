@@ -1552,9 +1552,21 @@ CREATE INDEX IF NOT EXISTS idx_confusions_status
 """
 
 
-def _pool_source_family(source: object, source_platform: object = "") -> str:
+def _pool_source_family(
+    source: object, source_platform: object = "", source_id: object = ""
+) -> str:
     """Return the source family key used by pool share accounting."""
+    if source_id:
+        return str(source_id)
     return _source_family(source, source_platform)
+
+
+def _pool_row_source_family(row: Any, strategy_key: str = "source") -> str:
+    """Resolve inventory ownership independently of canonical content identity."""
+    value = dict(row)
+    return _pool_source_family(
+        value.get(strategy_key), value.get("source_platform"), value.get("source_id")
+    )
 
 
 def _normalize_source_platform_key(source_platform: object) -> str:
@@ -2316,10 +2328,7 @@ class Database:
             decision = evaluate_publication_preference(
                 # Older pool rows may have an empty platform column; derive
                 # their canonical family from the persisted source strategy.
-                source_platform=(
-                    row.get("source_platform")
-                    or _pool_source_family(row.get("source"), row.get("source_platform"))
-                ),
+                source_platform=(row.get("source_platform") or _pool_row_source_family(row)),
                 published_at=row.get("published_at", ""),
                 preference=cast("PublicationDatePreference", preference),
                 now=now,
@@ -2361,6 +2370,9 @@ class Database:
         self._ensure_recommendation_read_indexes()
         self._ensure_source_recipes_table()
         self._ensure_web_source_tables()
+        from openbiliclaw.sources.custom_sources import ensure_custom_source_schema
+
+        ensure_custom_source_schema(self.conn)
         self._ensure_xhs_observed_urls_table()
         self._ensure_discovery_candidate_columns()
         self._normalize_legacy_style_keys()
@@ -2814,7 +2826,7 @@ class Database:
             isolated.close()
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
-            counts[_pool_source_family(row["source"], row["source_platform"])] += 1
+            counts[_pool_row_source_family(row)] += 1
         return PoolPlatformAvailability(
             total_available=len(rows),
             by_platform=dict(counts),
@@ -6166,6 +6178,70 @@ class Database:
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [payload for _, _, payload in scored[: max(1, int(limit))]]
 
+    def _custom_source_attribution(self, source_id: str, platform: str) -> tuple[str, str]:
+        if not source_id:
+            return "", ""
+        from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+        source = CustomSourceStore(self).get_source(source_id)
+        if source is None or platform != "web":
+            raise ValueError("Custom content requires a registered source and Web content family")
+        return source_id, str(source["name"])
+
+    def get_content_source_provenance(self, item_key: str) -> list[dict[str, Any]]:
+        """Return every discovering source without duplicating a canonical inventory item."""
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                """SELECT p.source_id, COALESCE(s.name, p.source_name) AS source_name
+               FROM content_source_provenance p
+               LEFT JOIN custom_sources s ON s.source_id = p.source_id
+               WHERE p.item_key = ? ORDER BY p.first_seen_at, p.source_id""",
+                (item_key,),
+            ).fetchall()
+        ]
+
+    def _record_content_source_provenance(
+        self, item_key: str, source_id: str, source_name: str
+    ) -> list[dict[str, Any]]:
+        if source_id:
+            self._execute_write(
+                """INSERT INTO content_source_provenance (item_key, source_id, source_name)
+                   VALUES (?, ?, ?) ON CONFLICT(item_key, source_id) DO UPDATE SET
+                   source_name = excluded.source_name, last_seen_at = CURRENT_TIMESTAMP""",
+                (item_key, source_id, source_name),
+            )
+        provenance = self.get_content_source_provenance(item_key)
+        if provenance:
+            import json
+
+            encoded = json.dumps(provenance, ensure_ascii=False)
+            # Rediscovery can occur after admission. Preserve the evidence in
+            # both durable projections without replacing evaluation snapshots.
+            self._execute_write(
+                """UPDATE content_cache SET source_metadata = json_set(
+                   COALESCE(source_metadata, '{}'), '$.source_provenance', json(?))
+                   WHERE item_key = ?""",
+                (encoded, item_key),
+            )
+            self._execute_write(
+                """UPDATE discovery_candidates SET raw_payload = json_set(
+                   COALESCE(raw_payload, '{}'), '$.source_provenance', json(?))
+                   WHERE candidate_key = ?""",
+                (encoded, item_key),
+            )
+        return provenance
+
+    def record_discovery_source_provenance(self, candidate: Any) -> None:
+        """Retain a validated rediscovery even when the shared pipeline deduplicates it."""
+        source_id, name = self._custom_source_attribution(
+            str(self._candidate_value(candidate, "source_id", "") or ""),
+            str(self._candidate_value(candidate, "source_platform", "") or ""),
+        )
+        key = str(self._candidate_value(candidate, "candidate_key", "") or "")
+        if key and source_id:
+            self._record_content_source_provenance(key, source_id, name)
+
     def cache_content(self, bvid: str, **kwargs: Any) -> CacheContentWriteResult:
         """Cache discovered content and return the lock-held admission outcome.
 
@@ -6225,6 +6301,16 @@ class Database:
             identity_content_id,
             str(kwargs.get("content_url", "") or ""),
         )
+        source_id, source_name = self._custom_source_attribution(
+            str(kwargs.get("source_id") or ""), source_platform
+        )
+        provenance = (
+            self._record_content_source_provenance(item_key, source_id, source_name)
+            if source_platform == "web"
+            else []
+        )
+        if provenance:
+            normalized_source_metadata["source_provenance"] = provenance
 
         def _cache_write_params(
             connection: sqlite3.Connection,
@@ -6401,6 +6487,8 @@ class Database:
                 kwargs.get("content_id", resolved_bvid),
                 kwargs.get("content_url", ""),
                 kwargs.get("source_platform", "bilibili"),
+                source_id,
+                source_name,
                 kwargs.get("author_name", ""),
                 kwargs.get("body_text", ""),
                 kwargs.get("content_type", "video") or "video",
@@ -6491,6 +6579,8 @@ class Database:
                 content_id,
                 content_url,
                 source_platform,
+                source_id,
+                source_name,
                 author_name,
                 body_text,
                 content_type,
@@ -6504,7 +6594,7 @@ class Database:
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
@@ -6701,6 +6791,10 @@ class Database:
                     THEN excluded.source_metadata
                     ELSE COALESCE(content_cache.source_metadata, '{}')
                 END,
+                source_id = CASE WHEN content_cache.source_id != ''
+                    THEN content_cache.source_id ELSE excluded.source_id END,
+                source_name = CASE WHEN content_cache.source_id != ''
+                    THEN content_cache.source_name ELSE excluded.source_name END,
                 -- P1.8: keep the producing-keyword provenance once set; a later
                 -- re-ingest from a source that doesn't carry the id (NULL) must
                 -- not wipe it.
@@ -6749,6 +6843,21 @@ class Database:
         except TypeError:
             return json.dumps(default, ensure_ascii=False)
 
+    def discovery_candidate_policy_exclusion_reason(self, candidate: object) -> str:
+        """Explain a terminal pre-enqueue policy skip for a normalized candidate.
+
+        An empty reason does not imply retention: callers must still verify a
+        durable row before advancing their frontier after a short enqueue.
+        This uses the same date gate as ``enqueue_discovery_candidates`` and
+        never treats queue pressure or a missing row as a policy exclusion.
+        """
+        source_platform = str(self._candidate_value(candidate, "source_platform", "") or "")
+        if not self._source_publication_date_candidate_is_eligible(
+            source_platform, self._candidate_value(candidate, "published_at", "")
+        ):
+            return "publication_date"
+        return ""
+
     def enqueue_discovery_candidates(
         self,
         candidates: Sequence[Any],
@@ -6773,12 +6882,12 @@ class Database:
             if not candidate_key:
                 continue
             source_platform = str(self._candidate_value(candidate, "source_platform", "") or "")
+            source_id, source_name = self._custom_source_attribution(
+                str(self._candidate_value(candidate, "source_id", "") or ""), source_platform
+            )
             stats_source = source_platform or "unknown"
             input_by_source[stats_source] += 1
-            if not self._source_publication_date_candidate_is_eligible(
-                source_platform,
-                self._candidate_value(candidate, "published_at", ""),
-            ):
+            if self.discovery_candidate_policy_exclusion_reason(candidate):
                 filtered_by_date += 1
                 filtered_by_source[stats_source] += 1
                 continue
@@ -6795,12 +6904,24 @@ class Database:
                 label=self._candidate_value(candidate, "published_label", ""),
             )
             score_threshold = float(self._candidate_value(candidate, "score_threshold", 0.0) or 0.0)
+            if source_platform == "web":
+                provenance = self._record_content_source_provenance(
+                    candidate_key, source_id, source_name
+                )
+                if provenance:
+                    import json
+
+                    decoded = json.loads(raw_payload)
+                    decoded["source_provenance"] = provenance
+                    raw_payload = json.dumps(decoded, ensure_ascii=False)
             cursor = self._execute_write(
                 """
                 INSERT OR IGNORE INTO discovery_candidates (
                     candidate_key,
                     status,
                     source_platform,
+                    source_id,
+                    source_name,
                     source_strategy,
                     source_context,
                     content_type,
@@ -6837,13 +6958,15 @@ class Database:
                     source_rank
                 )
                 VALUES (
-                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, 'pending_eval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
                     candidate_key,
                     source_platform,
+                    source_id,
+                    source_name,
                     str(self._candidate_value(candidate, "source_strategy", "") or ""),
                     str(self._candidate_value(candidate, "source_context", "") or ""),
                     str(self._candidate_value(candidate, "content_type", "video") or "video"),
@@ -6883,7 +7006,7 @@ class Database:
                 ),
             )
             if source_platform:
-                touched_sources.add(source_platform)
+                touched_sources.add(source_id or source_platform)
             if cursor.rowcount > 0:
                 inserted += 1
                 inserted_by_source[stats_source] += 1
@@ -6975,7 +7098,7 @@ class Database:
         excess = current - cap
         if excess <= 0:
             return 0
-        family = _pool_source_family("", source)
+        family = source if source.startswith("custom_") else _pool_source_family("", source)
         victims = sorted(
             (
                 row
@@ -7007,7 +7130,7 @@ class Database:
                 claimed_at = NULL,
                 claim_token = NULL
             WHERE id = ?
-              AND source_platform = ?
+              AND COALESCE(NULLIF(source_id, ''), source_platform) = ?
               AND status IN ('pending_eval', 'evaluated')
               AND claim_token IS NULL
             """,
@@ -7136,7 +7259,10 @@ class Database:
         # cannot monopolize a mixed evaluator batch.
         if platforms:
             placeholders = ", ".join("?" for _ in platforms)
-            order_prefix = f"CASE WHEN source_platform IN ({placeholders}) THEN 0 ELSE 1 END, "
+            order_prefix = (
+                f"CASE WHEN COALESCE(NULLIF(source_id, ''), source_platform) "
+                f"IN ({placeholders}) THEN 0 ELSE 1 END, "
+            )
             window_params: tuple[Any, ...] = (*platforms, window_limit)
         else:
             order_prefix = ""
@@ -7162,7 +7288,7 @@ class Database:
         source_order: list[str] = []
         by_source: dict[str, list[dict[str, Any]]] = {}
         for row in pending:
-            source = str(row.get("source_platform") or "unknown")
+            source = str(row.get("source_id") or row.get("source_platform") or "unknown")
             if source not in by_source:
                 source_order.append(source)
                 by_source[source] = []
@@ -7278,7 +7404,10 @@ class Database:
         ]
         if platforms:
             placeholders = ", ".join("?" for _ in platforms)
-            order_prefix = f"CASE WHEN source_platform IN ({placeholders}) THEN 0 ELSE 1 END, "
+            order_prefix = (
+                f"CASE WHEN COALESCE(NULLIF(source_id, ''), source_platform) "
+                f"IN ({placeholders}) THEN 0 ELSE 1 END, "
+            )
             params: tuple[Any, ...] = tuple(platforms)
         else:
             order_prefix = ""
@@ -8027,10 +8156,11 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT source_platform, status, COUNT(*) AS count
+            SELECT COALESCE(NULLIF(source_id, ''), source_platform) AS source_platform,
+                   status, COUNT(*) AS count
             FROM discovery_candidates
-            GROUP BY source_platform, status
-            ORDER BY source_platform ASC, status ASC
+            GROUP BY COALESCE(NULLIF(source_id, ''), source_platform), status
+            ORDER BY 1 ASC, status ASC
             """
         )
         counts: dict[str, dict[str, int]] = {}
@@ -8059,10 +8189,12 @@ class Database:
         """
 
         source = str(source_platform or "").strip()
-        source_clause = " AND source_platform = ?" if source else ""
+        source_clause = (
+            " AND COALESCE(NULLIF(source_id, ''), source_platform) = ?" if source else ""
+        )
         cursor = conn.execute(
             f"""
-            SELECT id, status, source_platform, source_strategy,
+            SELECT id, status, source_platform, source_id, source_name, source_strategy,
                    relevance_score, last_seen_at, claim_token, eval_error,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
@@ -8203,7 +8335,7 @@ class Database:
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            counts[str(row.get("source_platform") or "unknown")] += 1
+            counts[_pool_row_source_family(row, "source_strategy")] += 1
         return dict(sorted(counts.items()))
 
     def _count_pending_discovery_raw_material(self) -> int:
@@ -8669,7 +8801,7 @@ class Database:
         )
         selected: list[dict[str, Any]] = []
         for row in rows:
-            if _pool_source_family(row["source"], row["source_platform"]) != canonical:
+            if _pool_row_source_family(row) != canonical:
                 continue
             selected.append(row)
             if limit is not None and len(selected) >= limit:
@@ -8832,7 +8964,8 @@ class Database:
             "*"
             if full_rows
             else (
-                "bvid, content_id, source, source_platform, content_url, topic_group, "
+                "bvid, content_id, source, source_platform, source_id, source_name, "
+                "content_url, topic_group, "
                 "candidate_tier, relevance_score, last_scored_at, view_count, "
                 "published_at, temporal_class, temporal_confidence, "
                 "temporal_policy_version, temporal_validity_mode, "
@@ -9013,7 +9146,7 @@ class Database:
         )
         counts: dict[str, int] = defaultdict(int)
         for row in rows:
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         return dict(counts)
 
@@ -9041,7 +9174,7 @@ class Database:
             SELECT
                 bvid,
                 source,
-                source_platform,
+                source_platform, source_id, source_name,
                 content_url,
                 relevance_score,
                 last_scored_at,
@@ -9118,13 +9251,10 @@ class Database:
         """
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_pool_raw_material_rows():
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9140,10 +9270,7 @@ class Database:
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
             if str(row.get("status", "")) != "evaluated":
                 continue
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9162,10 +9289,7 @@ class Database:
         self._ensure_fresh_read()
         counts: dict[str, int] = defaultdict(int)
         for row in self._load_temporally_eligible_admission_waiting_rows_on(self.conn):
-            source_family = _pool_source_family(
-                row.get("source_strategy"),
-                row.get("source_platform"),
-            )
+            source_family = _pool_row_source_family(row, "source_strategy")
             counts[source_family] += 1
         return dict(counts)
 
@@ -9187,7 +9311,8 @@ class Database:
         self._ensure_fresh_read()
         cursor = self.conn.execute(
             """
-            SELECT bvid, source, source_platform, relevance_score, last_scored_at,
+            SELECT bvid, source, source_platform, source_id, source_name,
+                   relevance_score, last_scored_at,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9210,7 +9335,7 @@ class Database:
                 continue
             if not self._temporal_eligibility_for_row(row_dict, now=temporal_now):
                 continue
-            if _pool_source_family(row_dict["source"], row_dict["source_platform"]) != family:
+            if _pool_row_source_family(row_dict) != family:
                 continue
             candidates.append(row_dict)
         candidates.sort(
@@ -9257,7 +9382,7 @@ class Database:
         guard_params = _xhs_self_author_guard_params(xhs_self_nickname)
         raw_cursor = self.conn.execute(
             f"""
-            SELECT bvid, published_at, source, source_platform,
+            SELECT bvid, published_at, source, source_platform, source_id, source_name,
                    temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9289,7 +9414,7 @@ class Database:
                 bvid,
                 content_id,
                 source,
-                source_platform,
+                source_platform, source_id, source_name,
                 content_url,
                 pool_expression,
                 pool_topic_label,
@@ -9505,7 +9630,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url,
+            SELECT bvid, source, source_platform, source_id, source_name, content_url,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9541,7 +9666,7 @@ class Database:
                 row["content_url"],
             ):
                 continue
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             counts[source_family] += 1
         return dict(counts)
 
@@ -9551,7 +9676,7 @@ class Database:
         cursor = self.conn.execute(
             f"""
             SELECT bvid, topic_group, style_key, franchise_key,
-                   source, source_platform, content_url,
+                   source, source_platform, source_id, source_name, content_url,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
                    temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9612,7 +9737,7 @@ class Database:
             cursor = self.conn.execute(
                 f"""
                 SELECT bvid, topic_group, style_key, franchise_key,
-                       source, source_platform, content_url,
+                       source, source_platform, source_id, source_name, content_url,
                        published_at, temporal_class, temporal_confidence,
                        temporal_policy_version, temporal_validity_mode,
                        temporal_valid_until, temporal_scope, temporal_state, temporal_evidence,
@@ -9649,7 +9774,7 @@ class Database:
                 row["source"], row["source_platform"], row["content_url"]
             ):
                 continue
-            platform = str(row["source_platform"] or "").strip()
+            platform = _pool_row_source_family(row)
             topic = str(row["topic_group"] or "").strip()
             if not platform or not topic:
                 continue
@@ -9672,7 +9797,7 @@ class Database:
             admission_sql, admission_params = self._pool_admission_sql()
             cursor = self.conn.execute(
                 f"""
-                SELECT topic_group, source, source_platform, content_url
+                SELECT topic_group, source, source_platform, source_id, source_name, content_url
                 FROM content_cache
                 WHERE COALESCE(feedback_type, '') != 'dislike'
                   AND {admission_sql}
@@ -9689,7 +9814,7 @@ class Database:
                 row["source"], row["source_platform"], row["content_url"]
             ):
                 continue
-            platform = str(row["source_platform"] or "").strip()
+            platform = _pool_row_source_family(row)
             topic = str(row["topic_group"] or "").strip()
             if not platform or not topic:
                 continue
@@ -9911,12 +10036,17 @@ class Database:
         )
         return [(group, by_group[group]) for group in ranked[:top_n_groups]]
 
-    @staticmethod
-    def _clean_pool_quotas(quotas: Mapping[str, int]) -> dict[str, int]:
+    def _clean_pool_quotas(self, quotas: Mapping[str, int]) -> dict[str, int]:
+        from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+        registered = {row["source_id"] for row in CustomSourceStore(self).list_sources(True)}
         clean: dict[str, int] = {}
         for source, quota in quotas.items():
             try:
-                clean[_pool_source_family("", source)] = max(0, int(quota))
+                if source.startswith("custom_") and source not in registered:
+                    continue
+                key = source if source in registered else _pool_source_family("", source)
+                clean[key] = max(0, int(quota))
             except (TypeError, ValueError):
                 continue
         return clean
@@ -10023,7 +10153,8 @@ class Database:
             dict(row)
             for row in conn.execute(
                 f"""
-                SELECT bvid, source, source_platform, content_url, topic_group,
+                SELECT bvid, source, source_platform, source_id, source_name,
+                       content_url, topic_group,
                        relevance_score, last_scored_at, pool_expression,
                        pool_topic_label, style_key,
                        published_at, temporal_class, temporal_confidence,
@@ -10085,7 +10216,7 @@ class Database:
         ):
             if not self._content_is_ready_reserve(row):
                 continue
-            grouped[_pool_source_family(row["source"], row["source_platform"])].append(row)
+            grouped[_pool_row_source_family(row)].append(row)
         victims: list[str] = []
         deferred = 0
         for family, quota in source_share_quotas.items():
@@ -10120,7 +10251,7 @@ class Database:
         candidate: bool = False,
     ) -> tuple[int, float, float, int, str]:
         source = row.get("source_strategy" if candidate else "source", "")
-        family = _pool_source_family(source, row.get("source_platform", ""))
+        family = _pool_source_family(source, row.get("source_platform", ""), row.get("source_id"))
         quota = quotas.get(family)
         over_quota = quota is not None and family_counts.get(family, 0) > quota
         timestamp = row.get("last_seen_at" if candidate else "last_scored_at", "")
@@ -10158,9 +10289,9 @@ class Database:
 
         family_counts: dict[str, int] = defaultdict(int)
         for row in content_rows:
-            family_counts[_pool_source_family(row["source"], row["source_platform"])] += 1
+            family_counts[_pool_row_source_family(row)] += 1
         for row in candidate_rows:
-            family_counts[_pool_source_family(row["source_strategy"], row["source_platform"])] += 1
+            family_counts[_pool_row_source_family(row, "source_strategy")] += 1
 
         unprotected_content = [row for row in content_rows if str(row["bvid"]) not in protected_ids]
         unready = sorted(
@@ -10322,9 +10453,7 @@ class Database:
         current_family_count: dict[str, int] = defaultdict(int)
         current_topic_count: dict[str, int] = defaultdict(int)
         for row in available_rows:
-            current_family_count[
-                _pool_source_family(row.get("source"), row.get("source_platform"))
-            ] += 1
+            current_family_count[_pool_row_source_family(row)] += 1
             topic = str(row.get("topic_group", "") or "").strip().lower()
             if topic:
                 current_topic_count[topic] += 1
@@ -10387,15 +10516,9 @@ class Database:
                 fillable_rows,
                 key=lambda candidate: (
                     0
-                    if current_family_count[
-                        _pool_source_family(
-                            candidate.get("source"), candidate.get("source_platform")
-                        )
-                    ]
+                    if current_family_count[_pool_row_source_family(candidate)]
                     < source_share_quotas.get(
-                        _pool_source_family(
-                            candidate.get("source"), candidate.get("source_platform")
-                        ),
+                        _pool_row_source_family(candidate),
                         0,
                     )
                     else 1,
@@ -10419,9 +10542,7 @@ class Database:
                 topic = str(row.get("topic_group", "") or "").strip().lower()
                 simulated_available += 1
                 current_topic_count[topic] += 1
-                current_family_count[
-                    _pool_source_family(row.get("source"), row.get("source_platform"))
-                ] += 1
+                current_family_count[_pool_row_source_family(row)] += 1
         return restored_ids
 
     def maintain_pool_inventory(
@@ -10729,20 +10850,18 @@ class Database:
             for bvid in all_content_victims:
                 row = initial_raw_rows.get(bvid)
                 if row is not None:
-                    by_source[_pool_source_family(row["source"], row["source_platform"])] += 1
+                    by_source[_pool_row_source_family(row)] += 1
             if raw_plan.candidate_ids:
                 placeholders = ", ".join("?" for _ in raw_plan.candidate_ids)
                 for row in conn.execute(
                     f"""
-                    SELECT source_platform, source_strategy
+                    SELECT source_platform, source_id, source_name, source_strategy
                     FROM discovery_candidates
                     WHERE id IN ({placeholders})
                     """,
                     raw_plan.candidate_ids,
                 ).fetchall():
-                    by_source[
-                        _pool_source_family(row["source_strategy"], row["source_platform"])
-                    ] += 1
+                    by_source[_pool_row_source_family(row, "source_strategy")] += 1
             trimmed_by_source = dict(by_source)
 
             write_started = time.perf_counter()
@@ -11118,10 +11237,7 @@ class Database:
             # untracked sources eating slots.
             counts_per_source: dict[str, int] = defaultdict(int)
             for row in rows:
-                source_family = _pool_source_family(
-                    row.get("source", ""),
-                    row.get("source_platform", ""),
-                )
+                source_family = _pool_row_source_family(row)
                 counts_per_source[source_family] += 1
 
             protected: list[dict[str, Any]] = []
@@ -11129,10 +11245,7 @@ class Database:
             negotiable_untracked: list[dict[str, Any]] = []
             seen: dict[str, int] = defaultdict(int)
             for row in ranked:
-                source_family = _pool_source_family(
-                    row.get("source", ""),
-                    row.get("source_platform", ""),
-                )
+                source_family = _pool_row_source_family(row)
                 quota = source_share_quotas.get(source_family)
                 if quota is None:
                     negotiable_untracked.append(row)
@@ -11169,10 +11282,7 @@ class Database:
         # discovery cycle, not the recommender).
         per_source: dict[str, int] = defaultdict(int)
         for row in overflow_rows:
-            family = _pool_source_family(
-                row.get("source", ""),
-                row.get("source_platform", ""),
-            )
+            family = _pool_row_source_family(row)
             per_source[family] += 1
         breakdown = ", ".join(
             f"{src}:{cnt}" for src, cnt in sorted(per_source.items(), key=lambda kv: -kv[1])
@@ -11206,7 +11316,7 @@ class Database:
 
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in self._load_pool_raw_material_rows():
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             if source_family in clean_quotas:
                 grouped[source_family].append(row)
 
@@ -11237,10 +11347,7 @@ class Database:
         )
         per_source: dict[str, int] = defaultdict(int)
         for row in overflow_rows:
-            family = _pool_source_family(
-                row.get("source", ""),
-                row.get("source_platform", ""),
-            )
+            family = _pool_row_source_family(row)
             per_source[family] += 1
         breakdown = ", ".join(
             f"{src}:{cnt}" for src, cnt in sorted(per_source.items(), key=lambda kv: -kv[1])
@@ -11292,7 +11399,7 @@ class Database:
         admission_sql, admission_params = self._pool_admission_sql()
         cursor = self.conn.execute(
             f"""
-            SELECT bvid, source, source_platform, content_url,
+            SELECT bvid, source, source_platform, source_id, source_name, content_url,
                    relevance_score, last_scored_at,
                    published_at, temporal_class, temporal_confidence,
                    temporal_policy_version, temporal_validity_mode,
@@ -11335,7 +11442,7 @@ class Database:
                 row["content_url"],
             ):
                 continue
-            source_family = _pool_source_family(row["source"], row["source_platform"])
+            source_family = _pool_row_source_family(row)
             deficit = deficits.get(source_family, 0)
             if deficit <= 0 or selected_counts[source_family] >= deficit:
                 continue
@@ -12539,6 +12646,8 @@ class Database:
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
                 COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name,
                 COALESCE(c.content_type, 'video') AS content_type,
                 COALESCE(c.description, '') AS description,
                 COALESCE(c.body_text, '') AS body_text,
@@ -12746,7 +12855,9 @@ class Database:
                 c.up_name AS up_name,
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name
             FROM recommendations AS r
             LEFT JOIN content_cache AS c ON c.bvid = COALESCE(
                 (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
@@ -12785,7 +12896,9 @@ class Database:
                 c.up_name AS up_name,
                 COALESCE(c.content_id, r.bvid) AS content_id,
                 COALESCE(c.content_url, '') AS content_url,
-                COALESCE(c.source_platform, '') AS source_platform
+                COALESCE(c.source_platform, '') AS source_platform,
+                COALESCE(c.source_id, '') AS source_id,
+                COALESCE(c.source_name, '') AS source_name
             FROM recommendations AS r
             LEFT JOIN content_cache AS c ON c.bvid = COALESCE(
                 (SELECT bvid FROM content_cache WHERE bvid = r.bvid),
@@ -14387,6 +14500,8 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
         }
         required_columns = {
+            "source_id": "TEXT NOT NULL DEFAULT ''",
+            "source_name": "TEXT NOT NULL DEFAULT ''",
             "content_id": "TEXT DEFAULT ''",
             "content_url": "TEXT DEFAULT ''",
             "source_platform": "TEXT DEFAULT 'bilibili'",
@@ -14883,6 +14998,8 @@ class Database:
             for row in self.conn.execute("PRAGMA table_info(discovery_candidates)").fetchall()
         }
         required_columns = {
+            "source_id": "TEXT NOT NULL DEFAULT ''",
+            "source_name": "TEXT NOT NULL DEFAULT ''",
             "score_threshold": "REAL NOT NULL DEFAULT 0.0",
             "eval_attempts": "INTEGER NOT NULL DEFAULT 0",
             "batch_eval_attempts": "INTEGER NOT NULL DEFAULT 0",
@@ -16052,7 +16169,9 @@ class Database:
             conn.close()
         return recycled
 
-    def expire_pending_by_digest(self, platform: str, current_digest: str) -> int:
+    def expire_pending_by_digest(
+        self, platform: str, current_digest: str, *, keyword_kind: str | None = None
+    ) -> int:
         """Expire ``pending`` keywords generated under a stale profile digest.
 
         When the profile changes the planner expires any ``pending`` word from
@@ -16066,8 +16185,14 @@ class Database:
             UPDATE discovery_keywords
             SET status = 'expired'
             WHERE platform = ? AND status = 'pending' AND profile_kw_digest != ?
+              AND (? IS NULL OR keyword_kind = ?)
             """,
-            (platform.strip(), current_digest.strip()),
+            (
+                platform.strip(),
+                current_digest.strip(),
+                keyword_kind,
+                _normalize_keyword_kind(keyword_kind) if keyword_kind is not None else None,
+            ),
         )
         return int(cursor.rowcount or 0)
 
@@ -18805,6 +18930,11 @@ class Database:
                 m.list_kind,
                 i.item_key,
                 i.source_platform,
+                COALESCE((SELECT cc.source_id FROM content_cache cc
+                    WHERE cc.item_key = i.item_key LIMIT 1), '') AS source_id,
+                COALESCE((SELECT COALESCE(s.name, cc.source_name) FROM content_cache cc
+                    LEFT JOIN custom_sources s ON s.source_id = cc.source_id
+                    WHERE cc.item_key = i.item_key LIMIT 1), '') AS source_name,
                 i.content_id,
                 i.content_url,
                 i.content_type,

@@ -73,6 +73,10 @@ class _FakeHost:
     def _history(self, platform: str) -> list[str]:
         return []
 
+    def _platform_context(self, platform: str) -> dict[str, object]:
+        """Canonical platforms have no dynamic source registry context."""
+        return {}
+
     def _novel_keywords(
         self,
         platform: str,

@@ -512,3 +512,15 @@ curl -s http://127.0.0.1:8420/api/health | python -m json.tool
 ```
 
 v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，但手动 init 能获得更完整的初始画像（包含历史标题、作者等上下文信息）。
+
+### 自定义网站来源的浏览器执行
+
+镜像默认包含 Playwright Python 依赖、匹配的 Chromium 及系统库；浏览器文件位于
+`/opt/openbiliclaw-browsers`，运行时使用 headless 模式，无须桌面环境或宿主 Mac。
+网站登录通过应用的人工接管页面完成，使用专属浏览器 profile；profile 保存在
+应用数据目录，继续使用现有数据卷，重启容器后仍可复用登录状态。
+
+浏览器版镜像只支持 `linux/amd64` 和 `linux/arm64`。`python:3.11-slim` 本身包含更多
+架构，但 Playwright Chromium 没有相应的 32 位运行环境，因此不再声称支持 arm/v7
+或 386。首次构建需要下载浏览器及 Debian 系统依赖，离线部署应预先构建镜像。
+Ego Lite 宿主 CLI 不属于容器的默认执行链路；当前可用执行器为 Chromium。

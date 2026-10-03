@@ -46,6 +46,7 @@
     .hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
     .hint a { color: var(--accent); text-decoration: none; }
     .hint a:hover { text-decoration: underline; }
+    .source-chat-link { display: inline-block; min-height: 44px; padding: 12px 0; }
     .model-discovery-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }
     .model-discovery-row button { min-width: 96px; padding-inline: 14px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
     .model-discovery-row button:hover { border-color: var(--accent); color: var(--accent); }
@@ -262,6 +263,7 @@
           <li id="biliDone" class="pending"><span class="tick">…</span><div><b>平台账号</b><br><span class="hint" id="doneBili">B 站可稍后连接；Reddit 等来源按初始化勾选项检查</span></div></li>
           <li id="initDoneRow"><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint" id="doneInit">完整画像和首轮可用推荐均已就绪</span></div></li>
         </ul>
+        <p class="hint" data-source-setup="custom-sources">想关注其他网站？可以稍后在「聊一聊」提供网址和想看的内容；需要登录时按提示操作，试跑后确认启用。每个网站可单独设置推荐份额和发现频率。<a class="source-chat-link" href="/web/?chat=1">去聊一聊添加网站 →</a></p>
         <div class="row-actions">
           <button class="ghost" id="back2">← 上一步</button>
           <button class="primary" id="finish">开始使用 OpenBiliClaw →</button>

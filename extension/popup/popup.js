@@ -33,6 +33,7 @@ import {
   normalizeProfileSummary,
   isPublicWebSource,
   platformDisplayName,
+  recommendationSourceName,
   probeMessageKey,
   reconcileRecommendationReplacement,
   resolveInitBangumiUsername,
@@ -107,6 +108,7 @@ import {
   actOnChatCard,
   checkBackendStatus,
   createWebSourceRecipe,
+  requestJson,
   deleteWebSourceRecipe,
   fetchActivityFeed,
   fetchUpdateStatus,
@@ -1414,7 +1416,8 @@ function buildSavedCard(listKind, item, { list, empty, toggles }) {
   const platform = document.createElement("span");
   platform.className = "saved-card-platform";
   platform.dataset.source = item.source_platform || "bilibili";
-  platform.textContent = platformDisplayName(item.source_platform || "bilibili");
+  platform.textContent = recommendationSourceName(item);
+  platform.title = platform.textContent;
   const up = document.createElement("p");
   up.className = "saved-card-up";
   up.textContent = item.author_name || item.up_name || "";
@@ -4304,7 +4307,8 @@ function buildDelightCard(delight) {
 
   const platformChip = document.createElement("span");
   platformChip.className = "message-delight-platform";
-  platformChip.textContent = platformDisplayName(delight.source_platform || "bilibili");
+  platformChip.textContent = recommendationSourceName(delight);
+  platformChip.title = platformChip.textContent;
   textCol.append(platformChip);
 
   const title = document.createElement("div");
@@ -7432,7 +7436,8 @@ function renderDelightSlot() {
   kickerLine.append(kicker);
   const platformChip = document.createElement("span");
   platformChip.className = "delight-banner-platform";
-  platformChip.textContent = platformDisplayName(delight.source_platform || "bilibili");
+  platformChip.textContent = recommendationSourceName(delight);
+  platformChip.title = platformChip.textContent;
   kickerLine.append(platformChip);
   appendPublishedTime(kickerLine, delight);
   if (queueLength > 1) {
@@ -8038,7 +8043,8 @@ function renderRecommendations(items, { append = false } = {}) {
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
     sourceCorner.className = `recommendation-source-corner source-platform-${platformKey}`;
-    sourceCorner.textContent = platformLabel;
+    sourceCorner.textContent = recommendationSourceName(item) || platformLabel;
+    sourceCorner.title = sourceCorner.textContent;
     cover.append(sourceCorner);
     top.append(stateBadge);
 
@@ -12154,6 +12160,29 @@ function bindSettings() {
     }
   }
 
+  const customSourceManager = globalThis.OpenBiliClawCustomSources?.createManager({
+    root: document.getElementById("customSourceManager"),
+    request: (path, options) => requestJson(path, { timeoutMs: 45_000, ...options }),
+    baseUrl: getBackendOrigin,
+    openUrl: (url) => chrome.tabs.create({ url }),
+    onChat: () => {
+      closePopupOverlay(overlay);
+      setActiveTab("chat");
+      elements.chatInput?.focus();
+    },
+    onChange(items) {
+      const peers = document.getElementById("customSourceSharePeers");
+      if (!peers) return;
+      peers.replaceChildren();
+      for (const entry of globalThis.OpenBiliClawCustomSources.shareEntries(items)) {
+        const peer = document.createElement("span");
+        peer.className = "custom-source-share-peer";
+        peer.textContent = `${entry.label}：${entry.enabled ? `${entry.weight} 份` : "停用"}`;
+        peers.append(peer);
+      }
+    },
+  });
+
   function initWebRecipeManager() {
     const form = document.getElementById("webRecipeForm");
     const list = document.getElementById("webRecipeList");
@@ -12570,6 +12599,7 @@ function bindSettings() {
     void autostartControl.reload();
     void refreshReinitStatus();
     void loadWebRecipes();
+    void customSourceManager?.load();
     try {
       const cfg = await fetchConfig();
       populateForm(cfg);

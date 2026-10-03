@@ -104,6 +104,7 @@ export async function requestJson(path, options = {}) {
       error.details = details;
       throw error;
     }
+    if (response.status === 204) return null;
     return await awaitWithAbort(response.json(), timeout.signal);
   } finally {
     timeout.cleanup();

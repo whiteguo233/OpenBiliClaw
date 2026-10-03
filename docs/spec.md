@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 和显式公开 Web recipe 等来源帮你发现那些你会喜欢但自己找不到的内容。
+OpenBiliClaw 是一个**本地优先、开源的跨平台个性化内容发现 AI Agent**。它像一个深度了解你的朋友或专属内容编辑——不仅知道你喜欢看什么，更理解你**为什么**喜欢，你**是一个什么样的人**，然后主动去 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 和自定义网站发现流程（兼容公开 Web recipe）等来源帮你发现那些你会喜欢但自己找不到的内容。
 
 **核心理念**：
 - 不是冷冰冰的推荐算法，而是一个**有温度的 AI 朋友**
@@ -336,6 +336,11 @@ XHS/DY/YT/Zhihu/Reddit/Linux.do/V2EX/Weibo task final: canonical staged result (
 V2EX identity ladder: PAT verified > browser observed > config/accepted
                     → mismatch pauses account projection only
                     → resolved identity-scoped seen/affinity + complete favorite 2-miss outbox
+Dynamic website chat → prepare/trial → approval → source_id (independent share/cadence)
+                     → same-site versioned workflows → HTTP / Playwright → ordinary pending_eval → pool
+                     login required → human takeover → resume/trial → same draft/workflow
+                     desktop / popup / mobile → peer source settings cards + source_name labels
+                     Ego executor unavailable; optional host bridge not integrated
 GitHub official REST API → public repository search/ranked/latest → raw text-card candidate
 GitHub account scope: PAT `/user` verified > explicit public username accepted
                     → durable id mismatch pauses personal bootstrap only
@@ -617,10 +622,10 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 ├──────────────────────────────────────────────────────────────┤
 │           多源适配层 (SourceAdapter Protocol, v0.3.0+)         │
 │  ┌──────────────┐  ┌──────────────────┐  ┌─────────────┐    │
-│  │ 后端 API 来源 │  │ 登录态扩展任务桥   │  │ Public Web  │    │
-│  │ Bili/BGM/WB/GH│  │ XHS/DY/YT/ZH/RD   │  │ typed recipe│    │
-│  │ 官方/只读 HTTP│  │ Linux/V2EX/Weibo   │  │ feed/map/list│   │
-│  │ + 各自 producer│ │ bounded task/result│  │ 匿名 HTTP   │    │
+│  │ 后端 API 来源 │  │ 登录态扩展任务桥   │  │ Web 来源    │    │
+│  │ Bili/BGM/WB/GH│  │ XHS/DY/YT/ZH/RD   │  │ source_id   │    │
+│  │ 官方/只读 HTTP│  │ Linux/V2EX/Weibo   │  │ workflows   │    │
+│  │ + 各自 producer│ │ bounded task/result│  │ HTTP/浏览器 │    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ sources.platforms：十三平台 alias / strategy / URL host      │ │
@@ -667,12 +672,13 @@ local Desktop Web / extension Settings → write-only /api/config → private bo
 │  │   首个 complete 收藏 scope 种基线；后续连续两次缺失 -> durable retract/restore │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ Web URL probe: desktop/popup/CLI -> exact-origin anonymous GET -> draft/preview │ │
-│  │   feed -> sitemap -> deterministic listing；设置页采用只回填，显式添加才保存；mobile 无独立表单 │ │
-│  │ Chat: probe_web_source -> draft -> create_source approval -> shared typed recipe │ │
-│  │ Web recipe: explicit feed/sitemap/listing -> exact-origin + robots fail-closed │ │
-│  │   public DNS/socket pin -> deterministic parser -> shared eval；无登录/JS/任意 crawl │ │
-│  │   token-fenced lease + validator/cursor/health + recipe-scoped seen ledger │ │
+│  │ Dynamic Web: chat prepare/trial -> approval -> source_id + 独立份额/间隔 │ │
+│  │   同站多个 versioned workflow -> HTTP/Playwright -> ordinary eval/pool │ │
+│  │   人工登录 takeover/resume；desktop/popup/mobile 平级来源卡 + source_name │ │
+│  │   Ego 可选边界当前 unavailable；宿主 bridge 未接入，不保证任意网站成功 │ │
+│  │ Legacy HTTP recipe: URL probe -> draft -> explicit add/create_source approval │ │
+│  │   feed/sitemap/listing -> exact-origin + robots + DNS pin -> shared eval │ │
+│  │   token-fenced lease + state/seen；此兼容路径不支持登录/JS/任意 crawl │ │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ Cookie/登录态、runtime-stream presence、任务持久化/claim、seen-key 去重 │ │
@@ -806,7 +812,7 @@ localhost。两个入口互斥，默认 HTTP 不变。
 - [ ] 完善的安装和使用文档
 - [ ] 插件商店发布
 - [ ] 社区 Skill 市场
-- [x] 跨平台内容发现（已落地 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 显式公开 Web recipe，后续继续扩展更多 adapter；GitHub 分支验收状态以专用 ledger 为准）
+- [x] 跨平台内容发现（已落地 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub / 动态网站来源及旧版公开 Web recipe，后续继续扩展更多 adapter；来源与执行环境的真实验收状态以各自 ledger 为准）
 
 ---
 

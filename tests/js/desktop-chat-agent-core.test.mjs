@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import "../../src/openbiliclaw/web/shared/agent-chat.js";
 import core from "../../src/openbiliclaw/web/desktop/assets/js/chat-agent-core.js";
 
 const {
@@ -28,6 +29,17 @@ const {
   taskSummaryCardMarkup,
   turnAgentEvents,
 } = core;
+
+test("desktop discovery progress shares readable tool labels and preserves source approval evidence", () => {
+  const model = buildAgentProcess([
+    { type: "tool_call", step: 1, tool_name: "prepare_discovery_source", arguments: {}, summary: "prepare_discovery_source()" },
+    { type: "approval_request", step: 2, tool_name: "activate_discovery_source", approval_id: "ap_web", arguments: { draft_id: "opaque" }, summary: "启用 Research · https://example.com · 论文更新 · 3 份 / 30 分钟" },
+  ]);
+  const markup = agentProcessMarkup(model);
+  assert.match(markup, /准备网站发现/);
+  assert.match(markup, /Research · https:\/\/example.com · 论文更新 · 3 份 \/ 30 分钟/);
+  assert.match(markup, /data-approval-action="approve"/);
+});
 
 // ── SSE 解析 ──────────────────────────────────────────────────
 

@@ -1315,6 +1315,9 @@ class DiscoveryCandidatePipeline:
         """Resolve an admission row's pool source family (invariant: use _source_family)."""
 
         platform = row.get("source_platform") or getattr(item, "source_platform", "")
+        source_id = str(row.get("source_id") or getattr(item, "source_id", "") or "")
+        if source_id:
+            return source_id
         strategy = (
             row.get("source_strategy") or row.get("source") or getattr(item, "source_strategy", "")
         )
@@ -1414,6 +1417,14 @@ class DiscoveryCandidatePipeline:
         }
         if not writes:
             return [], diagnostics, set()
+
+        record_provenance = getattr(self.database, "record_discovery_source_provenance", None)
+        if callable(record_provenance):
+            for write in writes:
+                if write.source_id:
+                    # The normal known-content filter intentionally avoids an
+                    # enqueue. Rediscovery still contributes source provenance.
+                    record_provenance(write)
 
         candidate_keys = [write.candidate_key for write in writes if write.candidate_key]
         known_candidate_keys = self._existing_candidate_keys(candidate_keys)

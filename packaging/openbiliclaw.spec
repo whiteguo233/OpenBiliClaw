@@ -31,6 +31,10 @@ application_icon = (
     else None
 )
 
+# Browser discovery works in frozen desktop builds using its bundled Node driver.
+# Chromium itself is installed per-user on demand by browser-install.
+_browser_datas, _browser_binaries, _browser_hiddenimports = collect_all("playwright")
+
 # --- X (Twitter) discovery dependency collection ---
 # packaging/build.py ensures twitter-cli is installed and sets OPENBILICLAW_BUNDLE_X=1 when
 # the desktop bundle should ship X discovery (the default; spec §8 = always
@@ -118,7 +122,7 @@ else:
 a = Analysis(
     [str(project_root / "packaging" / "entry.py")],
     pathex=[str(project_root / "src")],
-    binaries=[] + _tailnet_binaries + _x_binaries + _reddit_binaries,
+    binaries=[] + _tailnet_binaries + _x_binaries + _reddit_binaries + _browser_binaries,
     datas=[
         (str(project_root / "config.example.toml"), "."),
         (str(project_root / "LICENSE"), "."),
@@ -136,7 +140,8 @@ a = Analysis(
         ),
     ]
     + _x_datas
-    + _reddit_datas,
+    + _reddit_datas
+    + _browser_datas,
     hiddenimports=[
         # --- FastAPI / Uvicorn ---
         "uvicorn",
@@ -228,7 +233,8 @@ a = Analysis(
     ]
     + _tray_hiddenimports
     + _x_hiddenimports
-    + _reddit_hiddenimports,
+    + _reddit_hiddenimports
+    + _browser_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

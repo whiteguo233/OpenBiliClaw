@@ -143,6 +143,8 @@ export function normalizeSavedListItem(item = {}) {
     ...item,
     item_key: safeText(item.item_key || `${platform}:${contentId}`, 2048),
     source_platform: platform,
+    ...(item.source_id != null ? { source_id: safeText(item.source_id, 240) } : {}),
+    ...(item.source_name != null ? { source_name: safeText(item.source_name, 200) } : {}),
     content_id: contentId,
     content_url: safeText(item.content_url, 2048),
     content_type: safeText(item.content_type || "video", 128),
@@ -512,7 +514,7 @@ function createSavedView(cfg) {
         <button class="saved-card-open" data-saved-action="open" type="button" ${url ? `data-url="${esc(url)}"` : "disabled"} aria-label="打开 ${esc(it.title || it.content_id)}">${coverHtml}</button>
         <div class="saved-card-body">
           <div class="saved-card-title">${esc(it.title || it.content_id)}</div>
-          <div class="saved-card-up">${esc([it.author_name, PLATFORM_NAMES[it.source_platform] || it.source_platform].filter(Boolean).join(" · "))}</div>
+          <div class="saved-card-up">${esc([it.author_name, it.source_name || PLATFORM_NAMES[it.source_platform] || it.source_platform].filter(Boolean).join(" · "))}</div>
           <div class="saved-sync-line"><span class="saved-sync-chip" data-tone="${esc(it.tone)}">${esc(it.label)}</span><span>${esc(it.detail)}</span></div>
         </div>
         <div class="saved-card-actions">

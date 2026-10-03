@@ -8491,6 +8491,8 @@ def create_app(
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
+                source_id=str(getattr(item.content, "source_id", "") or ""),
+                source_name=str(getattr(item.content, "source_name", "") or ""),
                 published_at=str(getattr(item.content, "published_at", "") or ""),
                 published_label=str(getattr(item.content, "published_label", "") or ""),
                 content_type=str(getattr(item.content, "content_type", "") or "video"),
@@ -9513,6 +9515,8 @@ def create_app(
                     content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                     content_url=str(row.get("content_url", "") or ""),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     published_at=str(row.get("published_at", "") or ""),
                     published_label=str(row.get("published_label", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
@@ -9992,6 +9996,8 @@ def create_app(
                     cover_url=str(row.get("cover_url", "")),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
                     added_at=str(row.get("added_at", "")),
                     sync_status=_safe_native_status(row.get("sync_status")),
@@ -10073,6 +10079,8 @@ def create_app(
                     cover_url=str(row.get("cover_url", "")),
                     content_url=str(row.get("content_url", "")),
                     source_platform=str(row.get("source_platform", "") or "bilibili"),
+                    source_id=str(row.get("source_id", "") or ""),
+                    source_name=str(row.get("source_name", "") or ""),
                     content_type=str(row.get("content_type", "") or "video"),
                     added_at=str(row.get("added_at", "")),
                     sync_status=_safe_native_status(row.get("sync_status")),
@@ -23780,6 +23788,7 @@ def create_app(
             payload.enabled_sources if payload else None,
             source_enabled_map(
                 cfg,
+                database=ctx.database,
                 enabled_recipe_available=lambda source: enabled_source_recipe_available(
                     ctx.database, source
                 ),
@@ -23835,6 +23844,19 @@ def create_app(
 
     # ── Mobile Web UI ───────────────────────────────────────────
     from pathlib import Path as _Path
+
+    from openbiliclaw.api.custom_sources import create_custom_sources_router
+    from openbiliclaw.sources.workflow_service import WorkflowService
+
+    app.include_router(
+        create_custom_sources_router(
+            lambda: WorkflowService(
+                ctx.database,
+                config=getattr(ctx, "config", None),
+                llm_service=getattr(ctx, "llm_service", None),
+            )
+        )
+    )
 
     from fastapi.staticfiles import StaticFiles as _StaticFiles
 

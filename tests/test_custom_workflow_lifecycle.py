@@ -1,0 +1,526 @@
+"""Behavioural coverage for trial, approval, durable runs and independent sources."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from openbiliclaw.api.custom_sources import create_custom_sources_router
+from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.runtime.custom_workflow_producer import CustomWorkflowProducer
+from openbiliclaw.sources.protocol import SourceFetchResult
+from openbiliclaw.sources.web_recipe import build_web_recipe
+from openbiliclaw.sources.workflow_service import WorkflowService
+from openbiliclaw.storage.database import Database
+
+
+@pytest.fixture
+def service(tmp_path):
+    db = Database(tmp_path / "custom.db")
+    db.initialize()
+    manager = WorkflowService(db)
+    yield manager
+    db.close()
+
+
+def draft(service, **overrides):
+    value = {
+        "entry_url": "https://example.com/feed",
+        "origin": "https://example.com",
+        "name": "Example articles",
+        "intent": "Follow the latest articles",
+        "source_id": "",
+        "session_id": "session-a",
+        "executor": "http",
+        "query_mode": "none",
+        "query": "",
+        "status": "ready",
+        "trial_success": True,
+        "workflow": build_web_recipe(
+            {
+                "name": "Example",
+                "strategy": "feed",
+                "config": {"entry_url": "https://example.com/feed"},
+            }
+        ),
+    }
+    value.update(overrides)
+    return service.store.save_draft(value)
+
+
+def item():
+    return DiscoveredContent(
+        title="A discovered article",
+        content_id="one",
+        content_url="https://example.com/articles/one",
+        source_platform="web",
+        source_strategy="web-feed",
+    )
+
+
+def test_draft_never_reserves_capacity_and_activation_is_idempotent(service):
+    pending = draft(service, status="needs_login", trial_success=False)
+    assert service.sources.list_sources() == []
+    with pytest.raises(ValueError, match="trial"):
+        service.activate(pending["draft_id"])
+    ready = draft(service)
+    first = service.activate(ready["draft_id"], target_share=3)
+    second = service.activate(ready["draft_id"], target_share=9)
+    assert first["source_id"] == second["source_id"]
+    assert second["target_share"] == 3
+    assert len(service.store.list_workflows(first["source_id"])) == 1
+
+
+def test_second_workflow_preserves_source_policy_and_disabled_state(service):
+    source = service.activate(draft(service)["draft_id"], target_share=4)
+    service.sources.update_source(source["source_id"], enabled=False)
+    another = draft(service, source_id=source["source_id"], intent="Latest release notes")
+    result = service.activate(another["draft_id"], target_share=1)
+    assert result["enabled"] is False and result["target_share"] == 4
+    assert len(service.store.list_workflows(source["source_id"])) == 2
+
+
+def test_activation_rolls_back_source_if_publishing_fails(service, monkeypatch):
+    prepared = draft(service)
+
+    def reject(*args):
+        raise RuntimeError("version storage unavailable")
+
+    monkeypatch.setattr(service.store, "publish", reject)
+    with pytest.raises(RuntimeError, match="storage"):
+        service.activate(prepared["draft_id"])
+    assert service.sources.list_sources() == []
+
+
+def test_concurrent_activation_allocates_one_source(service):
+    from concurrent.futures import ThreadPoolExecutor
+
+    prepared = draft(service)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        calls = [pool.submit(service.activate, prepared["draft_id"]) for _ in range(2)]
+        results = [call.result() for call in calls]
+    assert results[0]["source_id"] == results[1]["source_id"]
+    assert len(service.sources.list_sources()) == 1
+
+
+def test_version_and_disable_fence_block_late_worker(service):
+    source = service.activate(draft(service)["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    run = service.store.claim(workflow["workflow_id"], {"query": "today"})
+    assert run
+    service.sources.update_source(source["source_id"], enabled=False)
+    calls = []
+    result = service.store.complete(
+        run,
+        status="ok",
+        items=[item()],
+        enqueue=lambda items: calls.append(items) or 1,
+        interval_minutes=30,
+    )
+    assert result["status"] == "stale" and calls == []
+    service.sources.update_source(source["source_id"], enabled=True)
+    replacement = draft(
+        service, source_id=source["source_id"], workflow_id=workflow["workflow_id"], base_version=1
+    )
+    service.store.publish(replacement["draft_id"], source["source_id"])
+    result = service.store.complete(
+        run,
+        status="ok",
+        items=[item()],
+        enqueue=lambda items: calls.append(items) or 1,
+        interval_minutes=30,
+    )
+    assert result["status"] == "stale" and calls == []
+
+
+@pytest.mark.asyncio
+async def test_periodic_handoff_dedupes_and_preserves_canonical_identity(service):
+    source = service.activate(draft(service)["draft_id"])
+    service.fetch = AsyncMock(return_value=SourceFetchResult(items=[item()]))
+    accepted = []
+    pipeline = SimpleNamespace(
+        enqueue_candidates=lambda items, **_: accepted.extend(items) or len(items)
+    )
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], pipeline, service=service
+    )
+    first = await producer.produce_if_due(force=True)
+    second = await producer.produce_if_due(force=True)
+    assert first["enqueued"] == 1 and second["enqueued"] == 0
+    assert len(accepted) == 1
+    assert accepted[0].source_platform == "web"
+    assert accepted[0].content_id == "one"
+    assert accepted[0].source_id == source["source_id"]
+    assert len(service.store.runs(source["source_id"])) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_handoff_does_not_mark_seen_or_advance_cursor(service):
+    source = service.activate(draft(service)["draft_id"])
+    service.fetch = AsyncMock(return_value=SourceFetchResult(items=[item()], cursor={"page": 2}))
+
+    def reject(*args, **kwargs):
+        raise RuntimeError("storage unavailable")
+
+    pipeline = SimpleNamespace(enqueue_candidates=reject)
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], pipeline, service=service
+    )
+    result = await producer.produce_if_due(force=True)
+    assert result["reason"] == "failed"
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    assert workflow["cursor"] == {}
+    pipeline.enqueue_candidates = lambda items, **_: len(items)
+    assert (await producer.produce_if_due(force=True))["enqueued"] == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_login_pauses_until_manual_resume(service):
+    source = service.activate(draft(service)["draft_id"])
+    service.fetch = AsyncMock(
+        return_value=SourceFetchResult(status="login_required", scope_complete=False)
+    )
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], object(), service=service
+    )
+    await producer.produce_if_due(force=True)
+    assert service.list_sources()[0]["health"]["status"] == "login_required"
+    assert (await producer.produce_if_due(force=True))["ran"] is False
+    assert service.fetch.await_count == 1
+
+
+def test_api_projects_public_state_and_rejects_scope_mutation(service):
+    service.executor = lambda name: SimpleNamespace(availability=lambda: {"available": False})
+    source = service.activate(draft(service)["draft_id"])
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+    client = TestClient(app)
+    items = client.get("/api/custom-sources").json()["items"]
+    assert items[0]["source_id"] == source["source_id"]
+    assert items[0]["workflows"][0]["version"] == 1
+    assert (
+        client.patch(
+            f"/api/custom-sources/{source['source_id']}",
+            json={"entry_url": "https://other.example"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.patch(f"/api/custom-sources/{source['source_id']}", json={"target_share": 8}).json()[
+            "source"
+        ]["target_share"]
+        == 8
+    )
+    assert client.delete(f"/api/custom-sources/{source['source_id']}").status_code == 200
+    assert service.sources.get_source(source["source_id"])["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_queue_pressure_leaves_unaccepted_items_retryable(service):
+    source = service.activate(draft(service)["draft_id"])
+    service.fetch = AsyncMock(return_value=SourceFetchResult(items=[item()], cursor={"next": 2}))
+    pipeline = SimpleNamespace(enqueue_candidates=lambda items, **_: 0)
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], pipeline, service=service
+    )
+    assert (await producer.produce_if_due(force=True))["reason"] == "degraded"
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    assert workflow["cursor"] == {}
+    pipeline.enqueue_candidates = lambda items, **_: len(items)
+    assert (await producer.produce_if_due(force=True))["enqueued"] == 1
+
+
+def test_chat_summary_preserves_resume_identity_with_long_intent():
+    import json
+
+    from openbiliclaw.agent.tools.custom_source_tools import _bounded_summary
+
+    draft_id = "08c1f0c7-7823-428e-af46-49a2ab568a74"
+    payload = {
+        "draft_id": draft_id,
+        "status": "needs_login",
+        "intent": "x" * 4000,
+        "detail": "a" * 2000,
+        "sample_items": [{"title": "y" * 3000}],
+        "takeover_url": f"/web/source-login.html?draft_id={draft_id}",
+    }
+    encoded = _bounded_summary(
+        payload, SimpleNamespace(agent=SimpleNamespace(tool_result_max_chars=200))
+    )
+    assert len(encoded) <= 200
+    assert json.loads(encoded)["draft_id"] == draft_id
+    assert json.loads(encoded)["takeover_url"] == payload["takeover_url"]
+
+
+def test_bounded_success_stays_healthy_without_committing_frontier(service):
+    source = service.activate(draft(service)["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    run = service.store.claim(workflow["workflow_id"], {})
+    service.store.complete(
+        run,
+        status="ok",
+        items=[item()],
+        enqueue=lambda items: len(items),
+        interval_minutes=30,
+        cursor={"etag": "new"},
+        scope_complete=False,
+    )
+    current = service.store.get_workflow(workflow["workflow_id"])
+    assert current["consecutive_failures"] == 0
+    assert current["last_success_at"] > 0
+    assert current["cursor"] == {}
+
+
+def test_partial_recovery_moves_retry_cursor_without_committing_validators(service):
+    source = service.activate(draft(service)["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    run = service.store.claim(workflow["workflow_id"], {})
+    service.store.complete(
+        run,
+        status="degraded",
+        items=[item()],
+        enqueue=lambda items: len(items),
+        interval_minutes=30,
+        scope_complete=False,
+        cursor={"etag": "unsafe", "cursor": {"page": 9}, "retry_cursor": {"page": 2}},
+    )
+    current = service.store.get_workflow(workflow["workflow_id"])
+    assert current["cursor"] == {"retry_cursor": {"page": 2}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_status", ["draft", "failed", "needs_details"])
+async def test_author_observes_resources_but_never_accepts_model_scope_expansion(
+    service, previous_status
+):
+    from openbiliclaw.sources.browser_workflow import BrowserWorkflowResult
+
+    snapshots = [
+        {"blocked_resource_origins": ["https://static.example.com"], "elements": []},
+        {"elements": [{"tag": "article", "selector": "article"}]},
+    ]
+    plans, sessions = [], []
+
+    async def open_session(plan, **kwargs):
+        plans.append(plan)
+        assert kwargs["observation_only"] is True
+        session = SimpleNamespace(
+            snapshot=AsyncMock(return_value=snapshots.pop(0)), close=AsyncMock()
+        )
+        sessions.append(session)
+        return session
+
+    executor = SimpleNamespace(
+        open_session=open_session, run=AsyncMock(return_value=BrowserWorkflowResult(status="empty"))
+    )
+    service._executor_factory = lambda name: executor
+    authored = {
+        "plan": {
+            "version": 1,
+            "entry_url": "https://example.com/feed",
+            "allowed_origins": ["https://example.com"],
+            "resource_origins": ["https://invented.example.com"],
+            "auth": {"login_origins": ["https://invented.example.com"]},
+            "steps": [
+                {
+                    "action": "collect",
+                    "item_selector": "article",
+                    "link_selector": "a",
+                    "empty_selector": ".empty",
+                }
+            ],
+        },
+        "query_mode": "none",
+        "query": "",
+    }
+    service._json_task = AsyncMock(return_value=authored)
+    prepared = draft(
+        service, executor="playwright", workflow=None, status=previous_status, trial_success=False
+    )
+    result = await service.author_browser(prepared)
+    assert result["status"] == "ready"
+    assert plans[0].resource_origins == ()
+    assert plans[1].resource_origins == ("https://static.example.com",)
+    assert result["workflow"]["resource_origins"] == ["https://static.example.com"]
+    assert result["workflow"]["auth"]["login_origins"] == []
+    assert all(session.close.await_count == 1 for session in sessions)
+
+
+def test_manual_takeover_requires_observed_login_origin(service):
+    prepared = draft(
+        service,
+        executor="playwright",
+        workflow=None,
+        status="needs_login",
+        suggested_login_origins=["https://login.example.com"],
+    )
+    observed = []
+    session = SimpleNamespace(close=AsyncMock())
+
+    async def observe(value, *, interactive):
+        assert interactive
+        observed.append(value)
+        return session, {"elements": [], "blocked_navigation_origins": []}
+
+    service.observe_session = observe
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+    with TestClient(app) as client:
+        path = f"/api/custom-sources/drafts/{prepared['draft_id']}/takeover"
+        assert (
+            client.post(path, json={"login_origin": "https://unknown.example.com"}).status_code
+            == 409
+        )
+        assert observed == []
+        assert (
+            client.post(path, json={"login_origin": "https://login.example.com"}).status_code == 200
+        )
+        assert observed[0]["login_origins"] == ["https://login.example.com"]
+        assert observed[0]["origin"] == "https://example.com"
+    session.close.assert_awaited_once()
+
+
+def test_cli_activation_and_policy_use_shared_service(service, monkeypatch):
+    from typer.testing import CliRunner
+
+    from openbiliclaw import cli_custom_sources
+    from openbiliclaw.cli import app
+
+    prepared = draft(service)
+    monkeypatch.setattr(cli_custom_sources, "_service", lambda **kwargs: service)
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["sources", "activate", prepared["draft_id"], "--share", "4", "--interval", "60"]
+    )
+    assert result.exit_code == 0, result.output
+    source = service.sources.list_sources()[0]
+    assert source["target_share"] == 4 and source["interval_minutes"] == 60
+    result = runner.invoke(app, ["sources", "set", source["source_id"], "--disabled"])
+    assert result.exit_code == 0, result.output
+    assert service.sources.get_source(source["source_id"])["enabled"] is False
+    assert (
+        runner.invoke(app, ["sources", "set", source["source_id"], "--share", "0"]).exit_code != 0
+    )
+
+
+def test_browser_install_api_shares_one_background_job(service, monkeypatch):
+    import asyncio
+
+    from openbiliclaw.sources import browser_install
+
+    started = []
+
+    async def install():
+        started.append(True)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(browser_install, "install_browser_runtime", install)
+    service.executor = lambda name: SimpleNamespace(availability=lambda: {"available": False})
+    app = FastAPI()
+    app.include_router(create_custom_sources_router(lambda: service))
+    with TestClient(app) as client:
+        for _ in range(2):
+            response = client.post("/api/custom-sources/executors/playwright/install")
+            assert response.status_code == 202
+            assert response.json()["status"] == "installing"
+        assert len(started) == 1
+        status = client.get("/api/custom-sources").json()["executors"]
+        assert next(row for row in status if row["id"] == "playwright")["status"] == "installing"
+
+
+def test_same_site_prepared_drafts_merge_unless_explicitly_separated(service):
+    first, second, separate = draft(service), draft(service), draft(service, separate_source=True)
+    source = service.activate(first["draft_id"], target_share=4)
+    service.sources.update_source(source["source_id"], enabled=False)
+    merged = service.activate(second["draft_id"], target_share=8)
+    assert merged["source_id"] == source["source_id"]
+    assert merged["target_share"] == 4 and not merged["enabled"]
+    split = service.activate(separate["draft_id"], target_share=2)
+    assert split["source_id"] != source["source_id"]
+    assert len(service.store.list_workflows(source["source_id"])) == 2
+    assert len(service.sources.list_sources()) == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_failed_run_cannot_repair_a_replacement_version(service):
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/feed",
+        "allowed_origins": ["https://example.com"],
+        "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+    }
+    source = service.activate(draft(service, executor="playwright", workflow=plan)["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    replacement = draft(
+        service,
+        source_id=source["source_id"],
+        workflow_id=workflow["workflow_id"],
+        base_version=1,
+        executor="playwright",
+        workflow=plan,
+    )
+
+    async def late_result(*args, **kwargs):
+        service.store.publish(replacement["draft_id"], source["source_id"])
+        return SourceFetchResult(
+            status="failed", scope_complete=False, error_code="extraction_unverified"
+        )
+
+    service.fetch = late_result
+    service.author_browser = AsyncMock()
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], object(), service=service, llm_service=object()
+    )
+    result = await producer.produce_if_due(force=True)
+    assert result["reason"] == "stale"
+    service.author_browser.assert_not_awaited()
+    assert service.store.get_workflow(workflow["workflow_id"])["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_author_accepts_json_fences_and_rejects_unrelated_model_text(service):
+    service.llm_service = SimpleNamespace(
+        complete_structured_task=AsyncMock(
+            return_value=SimpleNamespace(content='```json\n{"needs_details":"Which section?"}\n```')
+        )
+    )
+    assert await service._json_task("compile", {}) == {"needs_details": "Which section?"}
+    service.llm_service.complete_structured_task.return_value.content = (
+        "I think this site looks nice."
+    )
+    with pytest.raises(ValueError, match="invalid object"):
+        await service._json_task("compile", {})
+
+
+@pytest.mark.asyncio
+async def test_repair_trial_cannot_publish_after_source_is_disabled(service):
+    plan = {
+        "version": 1,
+        "entry_url": "https://example.com/feed",
+        "allowed_origins": ["https://example.com"],
+        "steps": [{"action": "collect", "item_selector": "article", "link_selector": "a"}],
+    }
+    source = service.activate(draft(service, executor="playwright", workflow=plan)["draft_id"])
+    workflow = service.store.list_workflows(source["source_id"])[0]
+    service.fetch = AsyncMock(
+        return_value=SourceFetchResult(
+            status="failed", scope_complete=False, error_code="extraction_unverified"
+        )
+    )
+
+    async def complete_trial(prepared):
+        service.sources.update_source(source["source_id"], enabled=False)
+        prepared.update(status="ready", trial_success=True)
+        return service.store.save_draft(prepared, draft_id=prepared["draft_id"])
+
+    service.author_browser = AsyncMock(side_effect=complete_trial)
+    producer = CustomWorkflowProducer(
+        service.database, source["source_id"], object(), service=service, llm_service=object()
+    )
+    await producer.produce_if_due(force=True)
+    service.author_browser.assert_awaited_once()
+    assert service.store.get_workflow(workflow["workflow_id"])["version"] == 1

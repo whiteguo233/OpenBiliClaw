@@ -300,6 +300,14 @@ class AgentLoop:
                         continue
                     content = ""
                     try:
+                        if tool.approval_summary is not None:
+                            resolved_summary = tool.approval_summary(dict(call.arguments))
+                            if (
+                                not isinstance(resolved_summary, str)
+                                or not resolved_summary.strip()
+                            ):
+                                raise ValueError("审批摘要为空，操作未执行")
+                            summary = resolved_summary.strip()
                         record = self._approval_gate.submit(
                             tool_name=call.name,
                             arguments=call.arguments,

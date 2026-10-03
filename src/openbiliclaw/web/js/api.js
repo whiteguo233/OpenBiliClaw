@@ -120,6 +120,7 @@ export async function requestJson(path, options = {}) {
       err.details = details;
       throw err;
     }
+    if (res.status === 204) return null;
     return await res.json();
   } finally {
     timeout.cleanup();

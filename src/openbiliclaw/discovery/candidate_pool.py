@@ -48,6 +48,8 @@ class DiscoveryCandidateWrite:
     candidate_key: str
     source_platform: str
     source_strategy: str
+    source_id: str = ""
+    source_name: str = ""
     content_type: str = "video"
     body_text: str = ""
     bvid: str = ""
@@ -203,6 +205,8 @@ def discovered_content_to_candidate_write(
         candidate_key=candidate_key_for(item),
         source_platform=platform,
         source_strategy=item.source_strategy,
+        source_id=item.source_id,
+        source_name=item.source_name,
         content_type=resolve_content_type(item.content_type, platform),
         body_text=item.body_text,
         bvid=bvid,
@@ -281,6 +285,12 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
             decoded_payload = {}
     else:
         decoded_payload = raw_payload_value if isinstance(raw_payload_value, dict) else {}
+    provenance = decoded_payload.get("source_provenance")
+    if isinstance(provenance, list):
+        metadata = decoded_payload.get("source_metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata["source_provenance"] = provenance
+        decoded_payload["source_metadata"] = metadata
     available = decoded_payload.get("engagement_available")
     engagement_available = (
         [
@@ -372,6 +382,8 @@ def row_to_discovered_content(row: dict[str, Any]) -> DiscoveredContent:
         body_text=str(row.get("body_text") or ""),
         content_type=str(row.get("content_type") or "video"),
         source_metadata=source_metadata,
+        source_id=str(row.get("source_id") or ""),
+        source_name=str(row.get("source_name") or ""),
         source_recipe_id=str(decoded_payload.get("source_recipe_id") or ""),
         source_site=str(decoded_payload.get("source_site") or ""),
         source_keyword_id=_coerce_optional_int(row.get("source_keyword_id")),

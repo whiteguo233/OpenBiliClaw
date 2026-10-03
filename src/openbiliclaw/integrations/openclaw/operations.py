@@ -106,10 +106,20 @@ def _as_text(value: object, default: str = "") -> str:
     return text or default
 
 
-def _source_scope(value: object) -> str:
+def _source_scope(value: object, *, database: Any = None) -> str:
     """Normalize and validate the optional recommendation platform scope."""
     scope = normalize_source_platform(value)
     if scope and scope not in CANONICAL_SOURCE_FAMILIES:
+        from sqlite3 import Connection
+
+        from openbiliclaw.sources.custom_sources import CustomSourceStore, is_custom_source_id
+
+        if (
+            is_custom_source_id(scope)
+            and isinstance(getattr(database, "conn", None), Connection)
+            and CustomSourceStore(database).get_source(scope) is not None
+        ):
+            return scope
         supported = ", ".join(CANONICAL_SOURCE_FAMILIES)
         raise AdapterValidationError(
             f"unsupported source_platform {str(value).strip()!r}; expected one of: {supported}"
@@ -159,6 +169,8 @@ def _recommendation_from_row(row: dict[str, object]) -> RecommendationItem:
         content_id=content_id,
         content_url=_as_text(row.get("content_url")),
         source_platform=source_platform,
+        source_id=_as_text(row.get("source_id")),
+        source_name=_as_text(row.get("source_name")),
         author_name=author_name,
         published_at=_as_text(row.get("published_at")),
         published_label=_as_text(row.get("published_label")),
@@ -193,6 +205,8 @@ def _recommendation_from_object(item: object) -> RecommendationItem:
         "author_name": getattr(content, "author_name", ""),
         "cover_url": getattr(content, "cover_url", ""),
         "source_platform": getattr(content, "source_platform", ""),
+        "source_id": getattr(content, "source_id", ""),
+        "source_name": getattr(content, "source_name", ""),
         "published_at": getattr(content, "published_at", ""),
         "published_label": getattr(content, "published_label", ""),
         "content_type": getattr(content, "content_type", "video"),
@@ -230,6 +244,8 @@ def _delight_from_row(row: dict[str, object]) -> DelightItem:
             row.get("source_platform"),
             default="bilibili" if bvid else "",
         ),
+        source_id=_as_text(row.get("source_id")),
+        source_name=_as_text(row.get("source_name")),
         published_at=_as_text(row.get("published_at")),
         published_label=_as_text(row.get("published_label")),
         content_type=_as_text(row.get("content_type"), "video"),
@@ -380,7 +396,7 @@ class OpenClawAdapter:
             raise AdapterValidationError("recommendation limit must be positive.")
         if limit > 50:
             raise AdapterValidationError("recommendation limit must not exceed 50.")
-        scope = _source_scope(source_platform)
+        scope = _source_scope(source_platform, database=self.services.database)
         excluded = {str(item).strip() for item in (excluded_item_ids or []) if str(item).strip()}
         try:
             profile = await self.services.soul_engine.get_profile()
@@ -444,7 +460,11 @@ class OpenClawAdapter:
                         and not str(row.get("feedback_type", "") or "").strip()
                         and (
                             not scope
-                            or normalize_source_platform(row.get("source_platform")) == scope
+                            or (
+                                row.get("source_id")
+                                or normalize_source_platform(row.get("source_platform"))
+                            )
+                            == scope
                         )
                         and not excluded.intersection(
                             {
@@ -501,7 +521,8 @@ class OpenClawAdapter:
             response_items = [
                 item
                 for item in response_items
-                if not item.source_platform or item.source_platform == scope
+                if (item.source_id or item.source_platform) == scope
+                or (not item.source_id and not item.source_platform)
             ]
         if excluded:
             response_items = [
@@ -553,7 +574,7 @@ class OpenClawAdapter:
             raise AdapterValidationError("recommendation limit must be positive.")
         if limit > 50:
             raise AdapterValidationError("recommendation limit must not exceed 50.")
-        scope = _source_scope(source_platform)
+        scope = _source_scope(source_platform, database=self.services.database)
         excluded = [str(item).strip() for item in (excluded_item_ids or []) if str(item).strip()]
         try:
             profile = await self.services.soul_engine.get_profile()
@@ -617,7 +638,8 @@ class OpenClawAdapter:
             response_items = [
                 item
                 for item in response_items
-                if not item.source_platform or item.source_platform == scope
+                if (item.source_id or item.source_platform) == scope
+                or (not item.source_id and not item.source_platform)
             ]
         if excluded:
             excluded_set = set(excluded)

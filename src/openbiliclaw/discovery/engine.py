@@ -845,6 +845,8 @@ class DiscoveredContent:
     # Recipe provenance is metadata, never part of Web's canonical item key.
     # It survives candidate evaluation in raw_payload so operators can trace
     # which explicit subscription authorized and discovered an item.
+    source_id: str = ""
+    source_name: str = ""
     source_recipe_id: str = ""
     source_site: str = ""
     # P1.8 yield provenance: the ``discovery_keywords.id`` of the search word
@@ -953,6 +955,8 @@ class DiscoveredContent:
             "body_text": self.body_text,
             "content_type": self.content_type,
             "source_metadata": self.source_metadata,
+            "source_id": self.source_id,
+            "source_name": self.source_name,
             "source_keyword_id": self.source_keyword_id,
         }
 

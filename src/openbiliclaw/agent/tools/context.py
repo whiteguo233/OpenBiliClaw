@@ -46,6 +46,7 @@ class AgentToolContext:
     memory_manager: Any = None
     recommendation_engine: Any = None
     config: Any = None
+    llm_service: Any = None
     event_ingress: Any = None
     saved_sync_service: Any = None
     config_persist_hook: Any = None
@@ -67,6 +68,11 @@ def build_agent_tool_registry(ctx: AgentToolContext) -> ToolRegistry:
             tool = source_registry.get(name)
             if tool is not None:
                 registry.register(tool)
+    if ctx.database is not None:
+        from .custom_source_tools import build_custom_source_tools
+
+        for tool in build_custom_source_tools(ctx):
+            registry.register(tool)
     for builder in (
         build_profile_tools,
         build_memory_tools,

@@ -73,6 +73,7 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 动态来源注册与多来源证据 | ✅ | `custom_sources` 管理实例与份额；候选/cache 新增 `source_id/source_name`，`content_source_provenance` 保留同一 canonical 内容的多来源发现证据。相同 URL 仅占一份库存与反馈身份。 |
 | 待确认列表批量可见性读取 | ✅ | `get_chat_confirmation_refs(session=...)` 用一次连接/查询读取当前 surface 已打开的活动对象，过滤条件与逐 ref 的 `get_chat_confirmation_turn()` 一致；避免数百个待聊对象每次轮询都创建数百个 SQLite 连接 |
 | 推荐读取事务内复用 | ✅ | 隔离快照和库存读取复用同一事务的动态阈值及相同 SQL 原始行；每次仍执行完整资格过滤与独立 topic window，事务结束清空。 |
 | Tailnet 节点身份 / helper / 待用凭据迁移隔离 | ✅ | `data/tailnet/` 同时属于导出排除根与目标应用保留根；`.obcbackup` 不含 tsnet 私钥、状态或 `.bootstrap-credential.json`。后者只在本机设置页提交后以私有权限等待下一次启动，仅在 helper 进入 `ready` 后删除（失败/卡住保留以便重试）。目标保留根含嵌套 symlink 时 fail closed。`data/bin/` 的任何大小写变体在导出与导入都被排除；只保留目标机 exact native helper 普通文件，POSIX 还要求原文件可执行再恢复 `0700`，来源包不能迁入 executable。 |
@@ -138,6 +139,15 @@ fresh servable pool predicate，并可按 embedding fingerprint、正维度和 s
 增量补列，旧的无 provenance 行不会被当作当前 embedding namespace 的完成结果。
 
 ## 公开 API
+
+### 动态来源注册与身份
+
+`CustomSourceStore(database)` 位于 `sources/custom_sources.py`，提供 `list_sources(enabled_only=False)`、`get_source(source_id)`、`upsert_source(...)`、`update_source(source_id, **policy)`、`archive_source(source_id)` 和底层 `delete_source(source_id)`。注册行包含名称、入口 URL、origin、用途、份额、周期、启停、归档标志与不透明 `session_id`；不保存 Cookie/令牌。列表排除归档行，按 ID 查询仍可读取历史；归档关闭调度并拒绝后续 policy 更新。`update_source` 只接受名称、份额、周期和启停，入口/目标/登录变更由流程试跑与确认路径处理。
+
+`upsert_source` / `update_source` 的服务端 `commit=False` 让写入加入发布流程的外层事务，默认仍使用数据库短写提交。schema 创建与 `archived` 列迁移幂等。`content_source_provenance` 以 `(item_key, source_id)` 唯一，重复候选即使被 shared pipeline 过滤也保留证据；`get_content_source_provenance(item_key)` 返回来源 ID 与显示名。
+
+内容仍使用 `source_platform=web` 和原 `item_key`；`source_id` 仅决定库存归属与显示来源，不参与 canonical 内容、收藏或反馈键。同 URL 由首个入库实例占一次库存，后续发现追加 provenance；`source_metadata.source_provenance` 和候选 raw payload 同步保留该列表。计数、claim 优先级、raw caps、admission、维护淘汰按实例分桶；未注册 ID 不能写入自定义候选或预留 quota。推荐/保存列表按 canonical 键关联显示字段，重命名不改内容身份。
+
 
 `Database.set_chat_session_persona(session_id, persona=...) -> bool` 原子保存一个会话的
 表达风格，保留 metadata 其他字段，更新 `updated_at`，不存在时返回 false。API 层
@@ -470,6 +480,7 @@ cached_bilibili = db.get_unrecommended_content(
 
 行为说明：
 
+- `discovery_candidate_policy_exclusion_reason(candidate)` 复用入队日期策略，返回明确的 `publication_date` 排除原因或空串；它不把队列压力、缺失行或去重视为政策排除。动态 workflow 在短计数交接后，可将这种合法排除记入自己的 seen 并推进完整扫描前沿；未保留且无政策排除证据的内容仍须重试。`enqueue_discovery_candidates()` 继续返回整数插入数。
 - `enqueue_discovery_candidates()` 用 `candidate_key` 去重；重复发现刷新 `last_seen_at` 与来源目录指标，不生成第二行。传入 `max_pending_per_source` 时，cap 统计 active `pending_eval/evaluating` 与 disposition 仍为 `eligible` 的 `evaluated`；生命周期扫描会把 `review_due` 重新排到 `pending_eval`，只有 `expired` 才终态化为 `rejected_temporal_stale`。超额且未领取的 active 行进入 `trimmed_capacity`，保留 `source_raw_ceiling:<family>` 审计原因，terminal history 不占 cap，`evaluating` / 非空 token 永不成为 victim。
 - `rating_score / rating_count / source_rank` 是 additive 目录指标列，同时存在于 `discovery_candidates` 与 `content_cache`；旧数据库启动时自动补列。重复候选会刷新这些上游目录值，claim → evaluation → admission → cache round-trip 不丢失；评分不会写进 like/comment 字段。
 - temporal v2 在 `discovery_candidates` 与 `content_cache` 同时保存 Agent 原子字段 `temporal_class / temporal_confidence / temporal_reason / temporal_validity_mode / temporal_valid_until / temporal_scope / temporal_evidence / temporal_state`，以及代码拥有的 `temporal_evaluated_at / temporal_next_review_at / temporal_policy_version / temporal_evidence_complete`。两表另有本地调度字段 `temporal_review_attempts / temporal_review_retry_at`，不属于 Agent 证据：候选复审和正式池复审都按 1 / 2 / 4 / 8 / 16 / 24 小时有界退避；未到 `retry_at` 的 candidate 不可 claim，也不计 raw、projected 或来源容量。若模型执行时间超过 claim 时租约，失败 / 中性结果与 orphan/release 出口会从落库时重新续到未来，不能立刻热循环。旧库 additive 补为中性 v1 缺省；v2 parser 会整组校验 class/mode/scope/state 组合、UTC 时钟与逐字 evidence，非法类别、非有限置信度、字段缺失或未 grounding 全部 fail-neutral；`freshness_only` 的 evidence 同样必须逐字存在，否则整组降为中性且不生成复审时钟。`cache_content()` 只允许权威复审证据原子覆盖已有强分类：必须完整、非中性、置信度 `>=0.80`，且为 grounded `scope=core`，或高置信 `evergreen/historical + mode=none` 的耐久结论；显式 `unknown`、低置信、hook-only、malformed、未 grounding、旧缓存或 raw 重抓都不能洗掉强证据，也不能从不同轮结果拼接字段。已带强证据的同 identity 发布时间采用保守的不前移合并，`discovery_candidates` 一旦被 claim 也冻结本轮 publication snapshot。候选评估持久化后，pipeline 重读 durable row，只有最终状态仍为 `evaluated` 才可 admission；旧 `suppressed` 或 `temporal_review_hold` 行只有在写锁内收到上述权威复审证据且 disposition 为 `eligible` 时才能恢复为 `fresh`；成功收敛后复审 attempts/lease 一并清零。

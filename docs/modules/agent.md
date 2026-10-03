@@ -34,6 +34,7 @@ M9 交付移动 Web（`web/js/views/chat.js`）与插件 popup（`extension/popu
 | M4 skill 加载与切换 | ✅ | `agent/skill.py`：`SkillDefinition` + `*/SKILL.md` 解析（手写 frontmatter 子集，无 YAML 依赖）+ `load_skill_catalog()`（内置 → `data/skills/` 覆盖，非法文件跳过记日志）；4 个内置 skill；`suggest_skill` 元工具 + 端点 skill 绑定，见下文「Skill 体系（M4）」 |
 | M6 任务中心（durable 后台任务） | ✅ | `agent/tasks.py`：`AgentTaskRunner` 在 `BackgroundTaskRegistry` 登记的 asyncio task 里跑**只读** AgentLoop（`filter_by_permission("read")` ∩ skill 白名单），事件逐步落 `agent_tasks.steps`；写动作只经 `propose_suggestion` 元工具产出结构化建议清单，完成后往来源会话写汇总消息；交互侧另有 `start_background_task` 元工具（同 suggest_skill 确认卡模式）。见下文「任务中心（M6）」 |
 | M7 L2 审批门 | ✅ | `agent/approvals.py`：loop 拦截 hard_write 调用 → `approval_request` SSE 事件 + durable 审批记录（JSON 文件存储，免迁移）；`/api/chat/approvals` 端点批准（立即返回 + 后台任务二次 dispatch 真执行，幂等）/拒绝；审计落 `profile_update_ledger`。见下文「L2 审批门（M7）」 |
+| 来源审批可信摘要 | ✅ | `Tool.approval_summary` 在参数校验后读取实际草稿/来源，再写入既有审批 summary；名称、URL、目标与实际份额/间隔随 SSE 与 replay 持久化，读取失败不落卡。 |
 
 ## 聊天风格：与功能角色独立
 
@@ -129,6 +130,9 @@ async for event in loop.run(
 
 ### ToolRegistry
 
+`Tool.approval_summary: Callable[[dict[str, Any]], str] | None` 是 hard-write 审批前的只读摘要扩展点。`AgentLoop` 先执行参数校验，再调用 resolver 并写入 `ApprovalStore.summary`；异常、非字符串或空摘要返回失败工具结果，既不提交审批也不执行 handler。省略 resolver 的工具保持原参数摘要。动态来源 activate 从真实草稿读取网站与发现目标，已关联来源则显示其实际名称、份额、周期和启停；manage 显示真实来源与将发生的配置变更，不由模型重复提供可信显示字段。
+
+
 ```python
 from openbiliclaw.agent.tools import Tool, ToolRegistry, build_source_tool_registry
 
@@ -203,7 +207,39 @@ chat scope 且当前角色含 read_memory 才注入，不进入 system 指令或
 `recommendation_id` 时一并返回，供 `submit_feedback` 使用；未展示的推荐池
 候选不伪造推荐记录 ID，也不能把列表序号或缓存键用作反馈 ID。
 
-### 对话新增 Web 来源（capability increment）
+### 动态网站来源的对话与管理
+
+动态来源的启用与管理工具由服务端 `approval_summary` 从已保存的草稿或来源生成确认摘要，
+明确列出网站、目标和实际份额/间隔；摘要随审批记录保存，不要求模型重复传入展示字段。
+三端显示四个工具的中文进度标签，审批回放保留同一份具体摘要。
+
+动态网站以独立 `source_id` 表示，可关联多个发现 workflow。聊一聊负责询问网址、
+内容意图和是否需要登录，建立草稿、试跑并展示样例。工具由
+`agent/tools/custom_source_tools.py` 注册，权限边界如下：
+
+| 工具 | 权限 | 行为 |
+|---|---|---|
+| `prepare_discovery_source` | `soft_write` | 建立持久草稿并试跑，返回最多两条样例；不会启用来源 |
+| `trial_discovery_source` | `soft_write` | 登录完成或继续草稿时重新试跑；返回 `ready` 才可提交启用审批 |
+| `activate_discovery_source` | `hard_write` | 生成真实确认卡，批准后才启用试跑成功的草稿 |
+| `manage_discovery_source` | `hard_write` | 修改名称、份额、间隔或启停同样须经确认卡批准 |
+
+需要登录时只提供后端生成的接管页面，不要求用户把网站密码或 Cookie 粘贴到聊天中。
+登录完成或失效后的继续操作使用同一个草稿/来源身份。试跑成功不代表已启用，启用后
+抓取的候选仍须经过现有 Discover 评估才能入池。
+
+桌面、popup 和移动端的来源设置复用 `shared/custom-sources.js`，显示健康状态与
+最近运行，可按网站单独调整份额和发现间隔、启停、归档或重新登录。「去聊一聊添加网站」
+返回既有会话入口。来源管理 API 与草稿状态见 [API 动态网站来源](api.md#动态网站来源)。
+推荐展示 `source_name`，内容平台仍为 `web`；每个动态网站的候选池份额与内置平台平级。
+设置页点击保存或启停是用户直接操作，按站点调用管理 API；它不经过聊天工具确认卡，
+归档另有界面确认。Playwright 不可用时，设置页提供显式「安装浏览器」入口；安装请求
+被接受不代表安装成功，界面根据后续执行器状态显示结果，不由 Agent 静默安装。
+
+以下 `probe_web_source/create_source` 流程是保留的**旧版匿名 HTTP recipe 路径**；
+它的公开页面限制与 CLI chat 排除不代表动态网站来源的完整产品范围。
+
+### 旧版对话新增 Web recipe（capability increment）
 
 桌面 Web、移动 Web 与插件的「聊一聊」共用同一 Agent 工具与已有审批卡。默认口味伙伴和
 系统管家都可执行以下链路；CLI `chat` 仍走旧对话路径，本轮不接入该 Agent 能力，CLI 用户

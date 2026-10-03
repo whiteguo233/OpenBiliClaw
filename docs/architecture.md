@@ -79,7 +79,16 @@ GitHub account scope: PAT `/user` verified > explicit public username accepted
                       ├─ durable id mismatch → pause personal bootstrap only
                       └─ public starred repositories → favorite events → guided init
 
-Web URL authoring (desktop / popup / CLI; init + degraded 可用)
+Dynamic website authoring (desktop / popup / mobile chat)
+        → prepare / trial (soft_write) → bounded samples → activate / manage approval (hard_write)
+        → custom source_id + independent share/cadence → same-site versioned workflows
+        → CustomWorkflowProducer → HTTP or Playwright executor → ordinary pending_eval → evaluated pool
+        → source_id/source_name attribution; source_platform remains web
+        login required → human /web/source-login.html takeover → resume + trial → same draft/workflow
+        source settings cards (desktop / popup / mobile) → explicit management API actions
+        Ego: optional executor boundary; unavailable until a compatible host bridge exists
+
+Legacy public HTTP recipe authoring (desktop / popup / CLI; init + degraded 可用)
         → POST /api/sources/web/probe → web_probe → exact-origin anonymous SafeWebTransport
         → feed → sitemap → deterministic listing → bounded preview + compiler-ready draft
         → 「采用」只回填表单 → 用户显式 POST /api/sources（mobile 无 authoring surface）
@@ -88,7 +97,7 @@ explicit saved Web recipe → typed compiler → source_recipes
                     → exact origin + robots fail-closed + public DNS/socket pin
                     → deterministic feed/sitemap/listing parser → pending_eval
                     → web_source_state validators/cursor/health + recipe-scoped seen ledger
-Chat source authoring: probe_web_source (read-only) → bounded draft / preview
+Legacy HTTP authoring: probe_web_source (read-only) → bounded draft / preview
                     → create_source hard-write approval → same typed compiler / producer
 extension-online periodic re-pull: explicit opt-in → presence + profile/init/config gates → persisted round-robin
                                  → one active bootstrap across seven periodic task tables → EventHub → extension
@@ -352,7 +361,8 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 - `sources.bangumi_client` / `runtime.bangumi_producer` — 固定官方 `api.bgm.tv/v0` 的匿名只读 client 与 fetch-only producer；search 复用统一关键词，ranked/latest 维护按条目类型 cursor，三分支按 UTC 日条目预算和最小间隔执行，`429 Retry-After` 落 `bangumi_discovery_state` cooldown。Subject 归一化后写 `discovery_candidates`，公开用户名的收藏只在显式 guided init/fetch smoke 中转为事件；默认匿名，可选个人令牌（Bearer）读取私密收藏，令牌被拒（401/403）自动降级匿名；没有扩展 task queue、无 Cookie、无站内写方法。扩展在 `bgm.tv` / `bangumi.tv` 上仅上报公开 uid + 用户名做账号身份识别（`POST /api/sources/bangumi/identity`，含 uid↔用户名交叉校验），不采集浏览行为、不上传令牌
 - `sources.github_client` / `sources.github` / `runtime.github_producer` — 固定官方 `api.github.com` REST 的公开只读 client、repository normalizer 与 fetch-only producer；三分支为 search、ranked 和 latest，所有查询都带 `is:public`，normalizer 再拒绝 `private=true`。repository canonical identity 为 numeric REST `id`，`node_id` 只作审计字段；公开用户名的 starred repositories 仅在 init/on-demand 转为 `favorite`。匿名 discovery 可用，PAT 只从 GitHub 专用配置或 `OPENBILICLAW_GITHUB_TOKEN` 解析；没有扩展任务、Cookie、增量账号同步、媒体处理、native-save 或站内写方法。
 - `sources.weibo_client` / `sources.weibo` / `runtime.weibo_producer` / `sources.weibo_tasks` — 项目自有 `httpx` 匿名公开 client、fail-closed normalizer、fetch-only producer 与 init-only 账号任务队列。client 固定 `trust_env=false` 国内直连，为移动 H5 search / creator 在内存申请短期 visitor `SUB`；hot endpoint 只产 query seed，随后搜索并只接纳真实 `content_type="post"`。个人收藏、关注和 mentions 由同源扩展任务读取，账号 key 和 scope 去重后进入画像事件；search / hot / creator 复用统一关键词、份额 pool gate、UTC 日预算、成功 cadence、持久化 `429 Retry-After` cooldown 和共享 candidate pipeline；schema drift / visitor reject / 429 都是 typed 终态。后端不接收用户 Cookie，普通微博页不做行为采集，不提供 native-save 或站内写方法
-- `web_probe.py` / `web_recipe.py` / `web_public.py` / `web_adapter.py` / `runtime.web_producer` — 通用 Web 的只读 URL authoring probe、typed recipe compiler、安全匿名 HTTP transport、确定性 feed/sitemap/listing parser、canonical adapter 与 token-fenced producer。probe 与正式 producer 共用 exact-origin / robots / DNS pin 安全边界，但只返回有界样例和 compiler-ready 草稿，不写 recipe/state/seen/candidate；真正保存仍是独立的 `/api/sources` CRUD。默认 transport 使用受限 `httpx[socks]>=0.27,<1`，并直接依赖 `httpcore>=1,<2` 的 network backend primitive 把已验证地址 pin 到实际 socket（原 hostname 仍用于 Host / TLS SNI）。它不使用 CDP / Playwright / 登录态 / JavaScript，也不回退到历史 `web_extract` 浏览器 + LLM 实验；完整边界见 [Web 来源文档](modules/web.md)
+- `sources.custom_sources` / `workflow_store` / `workflow_service` / `browser_workflow` / `workflow_executors` / `runtime.custom_workflow_producer` — 动态网站的来源身份、版本化发现流程、试跑与执行分层；`source_id` 独立参与候选池份额，同站默认合用来源而可持有多个 workflow。HTTP 和 Playwright 执行器返回候选，producer 经既有候选 admission / 评估链路入池，不直接把试跑样例变成推荐。`api.custom_sources` 提供管理与人工登录接管 / resume，聊天启用与修改走 hard-write 确认卡，桌面 / popup / 移动设置复用共享来源组件。内容平台仍为 `web`，来源名另由 `source_name` 展示。Ego 仅保留可选执行器边界，当前返回不可用，宿主 bridge 未接入；执行器存在不等于任意网站可运行。
+- `web_probe.py` / `web_recipe.py` / `web_public.py` / `web_adapter.py` / `runtime.web_producer` — 旧版匿名 HTTP recipe 的只读 URL authoring probe、typed recipe compiler、安全匿名 HTTP transport、确定性 feed/sitemap/listing parser、canonical adapter 与 token-fenced producer。probe 与正式 producer 共用 exact-origin / robots / DNS pin 安全边界，但只返回有界样例和 compiler-ready 草稿，不写 recipe/state/seen/candidate；真正保存仍是独立的 `/api/sources` CRUD。默认 transport 使用受限 `httpx[socks]>=0.27,<1`，并直接依赖 `httpcore>=1,<2` 的 network backend primitive 把已验证地址 pin 到实际 socket（原 hostname 仍用于 Host / TLS SNI）。它不使用 CDP / Playwright / 登录态 / JavaScript，也不回退到历史 `web_extract` 浏览器 + LLM 实验；完整边界见 [Web 来源文档](modules/web.md)
 - `SourceRecipe` — 源任务持久化与分发
 
 ### Recommendation Engine (`recommendation/`)

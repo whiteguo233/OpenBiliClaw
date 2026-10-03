@@ -745,7 +745,7 @@ class RecommendationEngine:
         kept: list[DiscoveredContent] = []
         leaked: list[str] = []
         for item in candidates:
-            family = source_family(item.source_strategy, item.source_platform)
+            family = item.source_id or source_family(item.source_strategy, item.source_platform)
             if family == scope:
                 kept.append(item)
             else:
@@ -5421,6 +5421,8 @@ class RecommendationEngine:
                 content_type=str(row.get("content_type", "") or "video"),
                 body_text=str(row.get("body_text", "") or ""),
                 source_metadata=self._parse_source_metadata(row.get("source_metadata", "{}")),
+                source_id=str(row.get("source_id") or ""),
+                source_name=str(row.get("source_name") or ""),
             )
             for row in rows
         ]

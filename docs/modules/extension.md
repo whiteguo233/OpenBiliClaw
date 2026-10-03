@@ -36,6 +36,7 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 | Issue #147 聊聊口味 Markdown 渲染 | ✅ | 主聊天、惊喜推荐和兴趣/避雷探针内嵌聊天复用 `web/shared/dialogue-confirmation.js` 的安全 Markdown renderer；popup、桌面 Web、移动 Web 的 AI 回复支持加粗、斜体、标题、列表、代码块、引用和 `http(s)` 链接，原始 HTML / `javascript:` 等不安全内容不会进入 DOM，用户消息仍按纯文本展示。 |
 | Issue #184 AI 文案换行保留 | ✅ | 除聊天 Markdown 外，推荐理由、惊喜理由、探针理由等 AI 生成文案在三端统一保留换行（`white-space: pre-wrap`），不再把多行输出显示成一整段。 |
 | 对话确认入口（Wave C/D + 单队列 cutover） | ✅ | popup、移动 Web 与桌面 Web 共用 `web/shared/dialogue-confirmation.js` 渲染 `hypothesis` 卡片、纯提问气泡和普通文字 turn：卡片提供「准 / 不准 / 聊聊 / 稍后」四动作、可展开依据与原地结算态；纯数字、UUID、事件 / note 前缀、BVID 或裸哈希等只有机器 ID 的依据会整项过滤，过滤后为空则不渲染「依据」区。桌面「待聊确认」与插件保持同一套紧凑视觉：柔和品牌色折叠条、数字徽标、轻量箭头和单列小卡片，不再额外加入说明文案或桌面仪表盘式重容器；猜测卡片仍按标题、依据、结算状态、主次动作分层，430px 以下动作改两列，深浅主题、可见 focus 与 reduced-motion 继续沿用全局设计令牌。action 先乐观更新；同步 `200` 直接采用服务端状态，`already_settled`（包括相反 verdict）覆盖本地乐观结果。收到 `202 processing` 才复用各端既有 `fetchChatTurn` 按 `1s/2s/5s`（随后 5s）读取 durable turn，30 秒总截止；终态立即停，连续读取失败、截止或页面 abort 只把本地卡片标为 `retryable_error`，允许刷新/重试，不伪造 durable 失败。三端各自持有 action AbortController，页面卸载会终止轮询。popup 与移动 Web 的「待聊确认」列表调用 `GET /api/chat/pending-confirmations`，主动打开用 `session="popup"`；桌面端镜像相同语义并用 `session="popup"`，侧栏「聊聊口味」显示待聊计数。三端对话记录和待聊列表都使用有界独立滚动，重绘保留读者位置与已展开依据；聊天可见且在线时约每 2.5 秒增量刷新历史，快照未变化不重绘；移动端动作保持两列 44px 触控目标。待聊数字只在三端对话入口显示；service worker 不请求 `?count_only=1`，也不把待聊数写入工具栏，工具栏角标只表达后端不可达或未初始化。三端的画像/认知更新区均只读，主动确认只存在于 durable 对话卡片。后端 deprecated legacy 端点继续保留，新客户端不调用。 |
+| 自定义网站来源（三端） | ✅ | popup 与移动 Web 设置复用 `shared/custom-sources.js/.css`，独立保存来源名称/占比/发现间隔、启停、归档、运行记录和登录接管。网站份额与内置平台平级；推荐与惊喜卡保留 `source_id/source_name` 并显示网站名称 |
 | 聊一聊 Agent Loop 前端（M9，2026-09-23） | ✅ | popup 与移动 Web 的「聊一聊」主聊天切到 `POST /api/chat/agent/stream` 多跳真流式：thinking / tool_call / tool_result 过程逐跳流式铺开（每步一行折叠摘要、可展开参数与结果，完成后整体折叠），`final` 为答复气泡，`error` 给中文友好提示，历史经 `payload.agent_events` 回放；`loop_enabled=false`（503）两端都回退旧 `/api/chat/stream` 单跳流式。token streaming（issue #83）新增的 `delta` 事件对 popup 透明：`applyAgentEvent` 忽略未知事件，答复仍在 `final` 到达时落成气泡；移动 Web（`web/js/views/chat.js`）会把 `delta` 逐 token 渲染进实时气泡。两端共用新的 `web/shared/agent-chat.js`（SSE 增量解析 + 过程流 run 归约 + 卡片 markup，popup 由 build.mjs 复制进 `popup/shared/`）。popup 在对话 tab 内以「对话 / 会话 / 任务」子 tab 适配小窗：紧凑过程流（11px 单行摘要）、skill 下拉选择（按会话持久化）、`suggest_skill` 建议卡一键切换、L2 审批卡（批准/拒绝可填理由，「待审批」折叠列表轮询；2026-09-25 起适配 approve 异步执行协议：批准只入队，卡片转「执行中…」防重复点击，终态由 2.5s 轮询 executing 列表 + 全量快照恢复，旧协议同步 ok/result 经 `normalizeApproveResponse` 兜底，刷新/回放用 `applyApprovalRecordToRun` 恢复 executing 中间态）、会话新建/切换/归档、精简任务中心（进行中徽标、取消、内联详情、建议「带入对话」）；移动 Web 为抽屉式会话列表（含改名）、skill chip + 选择浮层、待审批面板（复用待聊确认折叠习惯，并列展示 executing 记录）与完整任务中心浮层。两端都渲染 `start_background_task` 确认卡与 `agent_task_summary` 汇总卡；delight / 探针内嵌聊天保持旧单跳路径不变。 |
 | Turn binding 与三端对话 surface（2026-08-01） | ✅ | 本行 supersede 上一行 Wave C/D 的历史移动端只读描述：popup、mobile web、desktop web 共用 `web/shared/dialogue-confirmation.js` 的 context preview、context bar、reply quote、opaque-evidence 过滤与 stick-to-bottom 规则。`聊聊` 只 POST `reply_to_turn_id`，服务端 canonicalize；context GET 只读，失败保留 draft/target。三端都为历史与待聊列表提供独立有界滚动，重绘恢复已展开依据；移动端额外恢复草稿与焦点，并保留卡片 action/processing poll。卡片进入 terminal state 后，各端在下一次历史同步中静默清除已完成 context，避免把预期结算误报成英文错误；已知 context error 统一优先显示中文。移动端聊天页的回顶按钮对 360px 窄屏保留额外垂直间距，不与发送按钮相交。 |
 | Runtime stream 合并刷新 | ✅ | 插件 side panel、桌面 Web 和移动 Web 对 `activity.added` / `profile_updated` 等运行时事件做 debounce 与 single-flight；`refresh.pool_updated` 只合并池子状态并刷新 header / pool chips / 底部可换提示 / 空态文案，不再重拉推荐列表，避免覆盖用户已经 append 出来的历史卡片。`dy_task_available` 是扩展 dispatcher 的 transport wake-up，桌面 Web 不把它投影成用户可见活动。插件 side panel 从离线转在线时（包括首次 `/api/ping` 瞬时失败但 `/api/runtime-stream` 随后连上的竞态）会立即调度推荐刷新；popup 离线期间会每 1 秒轻量重探测 `/api/ping`，runtime-stream 自身也固定每 1 秒重连，成功后停止轮询并切回在线刷新流程，避免后端已启动但插件仍停在“后端还没开张”的旧空态。 |
@@ -816,3 +817,35 @@ npm run build
 Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复临时正文；`thinking` 清掉工具中间文本，`final`/`done` 权威全文替换，未收到 `done` 仍走恢复流程。新开待聊卡片成功后自动折叠列表并滚动到卡片，防止窄窗口列表把聊天区压到零高度；失败时保留列表重试入口。HTTP 接口不变。
 
 首次发送和历史恢复使用已有 turn 直接建立 agent SSE，不在连接前用 GET 唤醒后台补算；断流后仍回到 durable GET 恢复。这样保留断线恢复，同时避免刚发送就退化为最终正文重放。
+
+
+### 自定义网站设置 API
+
+popup 打开设置时，移动 Web 打开设置弹层时调用 `GET /api/custom-sources`。
+三端共用来源管理组件，API 请求沿用各端既有鉴权：popup 使用 `popup-api.requestJson`，
+移动端使用 `web/js/api.requestJson`。名称、1–20 份候选池占比、5–10080 分钟间隔由
+`PATCH /api/custom-sources/{source_id}` 单独保存，启停也使用 PATCH；归档前显示确认，
+随后 DELETE。最近运行通过 `GET /{source_id}/runs` 读取，来源卡片与运行列表不做
+周期刷新，打开设置也不触发站点探测。插件与移动端请求 helper 接受 DELETE 的 JSON
+成功响应，也将无响应体的 HTTP `204` 视为成功并返回 `null`。
+
+保存与启停按钮是用户显式操作，直接调用管理 API；聊天工具
+`prepare_discovery_source/trial_discovery_source` 为 `soft_write`，
+`activate_discovery_source/manage_discovery_source` 为 `hard_write`，仍由确认卡批准后执行。
+共享聊天组件显示中文工具进度与确认动作名称，保留服务端从草稿或来源生成的具体审批
+摘要；恢复待批准记录后仍显示网站、目标及配置，而不是仅显示 opaque draft ID。
+
+共享组件仅为不可用的 Playwright 显示「安装浏览器」。用户点击后 POST
+`/api/custom-sources/executors/playwright/install`，HTTP `202` 和 `{status:"installing"}`
+仅表示开始安装。安装中，每 3 秒读取来源列表里的 `executors`，仅更新执行器提示，
+不覆盖来源字段编辑；页面或设置区域不可见时不发送轮询，组件销毁后清理定时器。
+`status=ready/failed` 与 `available/detail` 用于显示结果，Ego 不提供此安装按钮。
+
+「去聊一聊添加网站」复用当前对话入口；登录失效的来源可点「重新登录」，先 POST
+`/{source_id}/login`，再进入同后端 origin 的 `takeover_url`。popup 在新标签打开；
+移动端在当前页进入接管页，避免异步弹窗被浏览器拦截。设置不采集网站密码或 Cookie。
+移动设置关闭或重开时销毁旧组件，晚到响应不会覆盖新界面。
+
+组件脚本和样式由现有 extension build 的 `web/shared/` 复制流程打包，不依赖远程脚本。
+popup 候选池比例区按网站名称逐项显示独立份额；移动设置直接编辑同一站点份额。
+旧版公开 Web recipe 设置仍是兼容入口，与新的动态来源分开显示。

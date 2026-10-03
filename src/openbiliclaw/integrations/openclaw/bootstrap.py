@@ -386,9 +386,63 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     def _source_shares() -> dict[str, int]:
         return effective_pool_source_shares(
             config,
+            database=database,
             enabled_recipe_available=lambda source: enabled_source_recipe_available(
                 database, source
             ),
+        )
+
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.runtime.keyword_planner import KeywordPlanner
+
+    keyword_fetch = KeywordFetchCoordinator(database=database, discovery_config=config.discovery)
+    inspiration_provider = None
+    if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
+        from openbiliclaw.config import derive_inspiration_breadth_params
+        from openbiliclaw.discovery.inspiration_provider import (
+            build_inspiration_search_provider,
+            build_platform_source_backends,
+        )
+
+        inspiration_params = derive_inspiration_breadth_params(
+            getattr(discovery_cfg, "inspiration_breadth", "medium")
+        )
+        inspiration_provider = build_inspiration_search_provider(
+            getattr(discovery_cfg, "inspiration_search_backends", None),
+            database=database,
+            exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
+            you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
+            serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
+            platform_backends=build_platform_source_backends(
+                config,
+                database=database,
+                bilibili_client=bilibili_client,
+            ),
+            platforms_per_probe=int(inspiration_params.platforms_per_probe),
+            riskcontrolled_probe_budget=int(inspiration_params.riskcontrolled_probe_budget),
+            pages_per_probe=int(inspiration_params.search_pages_per_probe),
+        )
+    keyword_planner = KeywordPlanner(
+        llm_service=llm_service,
+        database=database,
+        config=config,
+        soul_engine=soul_engine,
+        pool_target_count=config.scheduler.pool_target_count,
+        embedding_service=embedding_service,
+        inspiration_provider=inspiration_provider,
+    )
+
+    def _custom_source_producer(source_id: str) -> Any:
+        from openbiliclaw.runtime.custom_workflow_producer import CustomWorkflowProducer
+
+        return CustomWorkflowProducer(
+            database=database,
+            source_id=source_id,
+            candidate_pipeline=candidate_pipeline,
+            soul_engine=soul_engine,
+            config=config,
+            llm_service=llm_service,
+            keyword_fetch_coordinator=keyword_fetch,
         )
 
     runtime_controller: ContinuousRefreshController
@@ -459,6 +513,9 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         douyin_producer=douyin_producer,
         youtube_producer=youtube_producer,
         web_producer=web_producer,
+        custom_source_producer_provider=_custom_source_producer,
+        keyword_fetch=keyword_fetch,
+        keyword_planner=keyword_planner,
         scheduler_config=config.scheduler,
         presence=presence,
         llm_concurrency_gate=llm_gate,
@@ -470,6 +527,10 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     # above; unlike a notify-only coordinator this leaves no dormant owner or
     # background copy task behind.
     candidate_pipeline.on_candidates_admitted = _copy_after_inline_admission
+    keyword_planner.bind_deficit_source(runtime_controller)
+    source_targets = getattr(runtime_controller, "_source_target_counts", None)
+    if callable(source_targets):
+        candidate_pipeline.source_share_targets = source_targets
     set_pool_commit_callback = getattr(
         recommendation_engine,
         "set_pool_inventory_commit_callback",

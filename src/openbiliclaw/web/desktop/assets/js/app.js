@@ -1449,6 +1449,8 @@
         ),
         platform: canonical.source_platform,
         source_platform: canonical.source_platform,
+        source_id: String(item?.source_id || ""),
+        source_name: String(item?.source_name || ""),
         content_type: contentType,
         body_text: bodyText,
         duration: Number(item?.duration ?? 0) || 0,
@@ -3167,6 +3169,7 @@
       showMainPage("settingsPage");
       window.scrollTo({ top: 0, behavior: "smooth" });
       renderSettingsReinitStatus();
+      void customSourceManager?.load();
       if (!state.degraded) {
         void renderSourcesStatus();
         void renderSourceCredentials();
@@ -3364,7 +3367,7 @@
         const savedCoverClass = recommendationCoverClass(item);
         const coverContent = `
             ${recommendationMediaHtml(item)}
-            <span class="platform" data-platform="${escapeHtml(item.source_platform || item.platform || "bilibili")}">${escapeHtml(platformName(item.source_platform || item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.source_platform || item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
           `;
         card.innerHTML = `
           ${url
@@ -3817,6 +3820,10 @@ ${savedCardFeedbackBarHtml(listKind)}
       const panel = event.target.closest(".drawer, .overlay");
       if (panel?.id) closePanel(panel.id);
       openMobileMenu();
+    }
+
+    function recommendationSourceName(item) {
+      return String(item?.source_name || "").trim() || platformName(item?.source_platform || item?.platform || "bilibili");
     }
 
     function platformName(value) {
@@ -5104,12 +5111,12 @@ ${savedCardFeedbackBarHtml(listKind)}
           ${url
           ? `<a class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="打开 ${escapeHtml(item.title)}">
             ${recommendationMediaHtml(item, index)}
-            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}">${escapeHtml(platformName(item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
             ${durationBadge}
           </a>`
           : `<button class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
             ${recommendationMediaHtml(item, index)}
-            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}">${escapeHtml(platformName(item.platform))}</span>
+            <span class="platform" data-platform="${escapeHtml(item.platform || "bilibili")}" title="${escapeHtml(recommendationSourceName(item))}">${escapeHtml(recommendationSourceName(item))}</span>
             ${durationBadge}
           </button>`}
           <div>
@@ -10441,7 +10448,7 @@ ${cardFeedbackBarHtml()}`;
       github: "GitHub",
       linuxdo: "Linux.do",
       v2ex: "V2EX",
-      web: "Web"
+      web: "Web 旧版订阅"
     };
     const SOURCE_CARD_INLINE_COLORS = { linuxdo: "#1f6f43", web: "#2563eb" };
 
@@ -10468,6 +10475,16 @@ ${cardFeedbackBarHtml()}`;
       });
     }
 
+    let customSourceItems = [];
+    const customSourceManager = window.OpenBiliClawCustomSources?.createManager({
+      root: $("#customSourceManager"),
+      request: (path, options) => requestJsonStrict(path, { timeoutMs: 45000, ...options }),
+      baseUrl: () => new URL(getApiBase(), window.location.href).href,
+      openUrl: (url) => window.open(url, "_blank", "noopener,noreferrer"),
+      onChat: () => openChatPage(),
+      onChange(items) { customSourceItems = items; renderShareOverview(); },
+    });
+
     function renderShareOverview() {
       const bar = $("#shareOverviewBar");
       const legend = $("#shareOverviewLegend");
@@ -10482,6 +10499,7 @@ ${cardFeedbackBarHtml()}`;
           enabled: select ? select.value === "on" : true
         };
       });
+      entries.push(...(window.OpenBiliClawCustomSources?.shareEntries(customSourceItems) || []).map((item) => ({ ...item, custom: true })));
       const active = entries.filter((item) => item.enabled && item.weight > 0);
       const total = active.reduce((sum, item) => sum + item.weight, 0);
       bar.textContent = "";
@@ -10489,7 +10507,7 @@ ${cardFeedbackBarHtml()}`;
         const seg = document.createElement("i");
         seg.dataset.sourceKey = item.key;
         seg.style.width = `${(item.weight / total * 100).toFixed(2)}%`;
-        if (SOURCE_CARD_INLINE_COLORS[item.key]) seg.style.background = SOURCE_CARD_INLINE_COLORS[item.key];
+        if (SOURCE_CARD_INLINE_COLORS[item.key] || item.custom) seg.style.background = SOURCE_CARD_INLINE_COLORS[item.key] || SOURCE_CARD_INLINE_COLORS.web;
         seg.title = `${item.label}：${item.weight} 份`;
         bar.appendChild(seg);
       });
@@ -10502,7 +10520,7 @@ ${cardFeedbackBarHtml()}`;
         cell.dataset.off = item.enabled ? "false" : "true";
         const swatch = document.createElement("em");
         swatch.dataset.sourceKey = item.key;
-        if (SOURCE_CARD_INLINE_COLORS[item.key]) swatch.style.background = SOURCE_CARD_INLINE_COLORS[item.key];
+        if (SOURCE_CARD_INLINE_COLORS[item.key] || item.custom) swatch.style.background = SOURCE_CARD_INLINE_COLORS[item.key] || SOURCE_CARD_INLINE_COLORS.web;
         const name = document.createElement("span");
         name.textContent = item.label;
         const value = document.createElement("b");
@@ -10555,6 +10573,7 @@ ${cardFeedbackBarHtml()}`;
     }
     initSourceCards();
     initWebRecipeManager();
+    void customSourceManager?.load();
 
     // Login happens outside this page (user signs into a platform in another
     // tab). Runtime events make the normal update immediate; this visible-page
@@ -11704,6 +11723,8 @@ ${cardFeedbackBarHtml()}`;
         cover_url: normalizeImageUrl(item.cover_url ?? item.cover ?? item.pic ?? item.thumbnail_url ?? item.thumbnail ?? item.image_url),
         content_url: canonical.content_url,
         source_platform: canonical.source_platform,
+        source_id: String(item?.source_id || ""),
+        source_name: String(item?.source_name || ""),
         chat_turn_id: String(item.chat_turn_id ?? ""),
         chat_reply: String(item.chat_reply ?? item.reply ?? ""),
         chat_draft: String(item.chat_draft ?? ""),
@@ -11739,7 +11760,8 @@ ${cardFeedbackBarHtml()}`;
       text.textContent = bodyText;
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       thumb.append(text, badge);
     }
@@ -11756,7 +11778,8 @@ ${cardFeedbackBarHtml()}`;
       if (!delight) return;
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       thumb.append(badge);
     }
@@ -11780,7 +11803,8 @@ ${cardFeedbackBarHtml()}`;
       // 平台徽章不依赖封面 —— 图片正常加载时也始终标明内容来源。
       const badge = document.createElement("span");
       badge.className = "platform";
-      badge.textContent = platformName(delight.source_platform);
+      badge.textContent = recommendationSourceName(delight);
+      badge.title = badge.textContent;
       badge.dataset.platform = String(delight.source_platform || "bilibili").toLowerCase();
       const image = document.createElement("img");
       if (isCrossOriginBase()) image.crossOrigin = "anonymous";
@@ -14422,6 +14446,8 @@ ${cardFeedbackBarHtml()}`;
     const requestedSettingsPanel = new URLSearchParams(window.location.search).get("settings");
     if (["models", "sources", "scheduler", "advanced", "general", "frontend", "logging"].includes(requestedSettingsPanel)) {
       openSettingsPage(requestedSettingsPanel);
+    } else if (new URLSearchParams(window.location.search).get("chat") === "1") {
+      openChatPage();
     }
     void startDesktopBackendSession({ forceHydrate: true });
     })();

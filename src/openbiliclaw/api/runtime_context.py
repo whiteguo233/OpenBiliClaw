@@ -93,6 +93,7 @@ def _pool_source_shares_from_config(
 
     return effective_pool_source_shares(
         config,
+        database=database,
         enabled_recipe_available=lambda source: enabled_source_recipe_available(database, source),
     )
 
@@ -1735,6 +1736,20 @@ class RuntimeContext:
             kick=_kick_source_incremental,
         )
 
+        def _custom_source_producer(source_id: str) -> Any:
+            from openbiliclaw.runtime.custom_workflow_producer import CustomWorkflowProducer
+
+            return CustomWorkflowProducer(
+                database=self.database,
+                source_id=source_id,
+                candidate_pipeline=new_candidate_pipeline,
+                soul_engine=new_soul_engine,
+                config=new_config,
+                llm_service=new_llm_service,
+                keyword_fetch_coordinator=new_keyword_fetch,
+                candidate_evaluation_owned_by_coordinator=True,
+            )
+
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
             database=self.database,
@@ -1781,6 +1796,7 @@ class RuntimeContext:
             linuxdo_producer=new_linuxdo_producer,
             v2ex_producer=new_v2ex_producer,
             web_producer=new_web_producer,
+            custom_source_producer_provider=_custom_source_producer,
             weibo_producer=new_weibo_producer,
             scheduler_config=new_config.scheduler,
             presence=self.presence,
@@ -2045,6 +2061,7 @@ class RuntimeContext:
             new_chat_approval_store = ApprovalStore(approval_store_path)
         new_agent_tool_context = AgentToolContext(
             database=self.database,
+            llm_service=new_llm_service,
             soul_engine=new_soul_engine,
             memory_manager=self.memory_manager,
             recommendation_engine=new_recommendation_engine,

@@ -1163,6 +1163,19 @@ class Inventory:
             dict.fromkeys((self.contract.canonical_slug, *self.contract.transport.route_aliases))
         )
 
+    def _uses_dynamic_workflows(self) -> bool:
+        """Select the portable workflow registry by declared implementation seams.
+
+        Instance IDs are allocated at runtime, so a fixed canonical-family key
+        in a planner/auth dictionary cannot prove (or disprove) their wiring.
+        This adapter only applies when the contract names both shared seams;
+        each check below still requires concrete implementation evidence.
+        """
+        return {
+            "src/openbiliclaw/sources/workflow_service.py",
+            "src/openbiliclaw/runtime/custom_workflow_producer.py",
+        }.issubset(self.contract.transport.entrypoints)
+
     def _evidence(self, path: Path, line: int, excerpt: str) -> Evidence:
         rel = path.relative_to(self.root).as_posix()
         changed = None if self.changed_files is None else rel in self.changed_files
@@ -2005,8 +2018,10 @@ class Inventory:
             if loaded is None:
                 continue
             _, source = loaded
-            if any(self._path_key_match(path.stem, key) for key in keys) or any(
-                re.search(rf"[\"']{re.escape(key)}[\"']", source) for key in content_keys
+            if (
+                relative in self.contract.transport.entrypoints
+                or any(self._path_key_match(path.stem, key) for key in keys)
+                or any(re.search(rf"[\"']{re.escape(key)}[\"']", source) for key in content_keys)
             ):
                 matches.append(relative)
         self._producer_files_cache = tuple(matches)
@@ -2631,6 +2646,8 @@ class Inventory:
         )
 
     def _source_auth(self) -> list[AuditResult]:
+        if self._uses_dynamic_workflows():
+            return self._dynamic_workflow_auth()
         slug = self.contract.canonical_slug
         provider = self._pass_or_missing(
             "source-auth.provider",
@@ -2820,6 +2837,63 @@ class Inventory:
             )
         return results
 
+    def _dynamic_workflow_auth(self) -> list[AuditResult]:
+        service = "src/openbiliclaw/sources/workflow_service.py"
+        api = "src/openbiliclaw/api/custom_sources.py"
+        executor = "src/openbiliclaw/sources/workflow_executors.py"
+        return [
+            self._pass_or_missing(
+                "source-auth.provider",
+                "per-instance workflow health projection",
+                [
+                    ("persistent source registry", self._word(service, "CustomSourceStore")),
+                    ("workflow login state projection", self._word(service, "login_required")),
+                    ("instance list API", self._route_decorator(api, "get", "")),
+                ],
+            ),
+            self._pass_or_missing(
+                "source-auth.verify",
+                "per-workflow login trial and explicit resume",
+                [
+                    (
+                        "read-only trial API",
+                        self._route_decorator(api, "post", "/drafts/{draft_id}/trial"),
+                    ),
+                    (
+                        "manual resume API",
+                        self._route_decorator(api, "post", "/drafts/{draft_id}/resume"),
+                    ),
+                    ("runtime auth prerequisite", self._regex(executor, r"if\s+auth\.required")),
+                    (
+                        "login expiry pauses claims",
+                        self._regex(
+                            "src/openbiliclaw/sources/workflow_store.py",
+                            r'workflow\["status"\]\s*==\s*"login_required"',
+                        ),
+                    ),
+                ],
+            ),
+            self._pass_or_missing(
+                "source-auth.write",
+                "unified backend manual session takeover",
+                [
+                    (
+                        "human takeover API",
+                        self._route_decorator(api, "post", "/drafts/{draft_id}/takeover"),
+                    ),
+                    (
+                        "manual input API",
+                        self._route_decorator(api, "post", "/drafts/{draft_id}/action"),
+                    ),
+                    (
+                        "interactive-only input guard",
+                        self._regex(executor, r"if not self\.interactive"),
+                    ),
+                    ("opaque per-workflow session", self._word(service, "session_id")),
+                ],
+            ),
+        ]
+
     def _source_policy(self) -> AuditResult:
         slug = self.contract.canonical_slug
         relative = "src/openbiliclaw/runtime/source_policy.py"
@@ -2910,6 +2984,8 @@ class Inventory:
             ]
         slug = self.contract.canonical_slug
         producers = self._producer_files()
+        if self._uses_dynamic_workflows():
+            return self._dynamic_workflow_discover()
         producer_evidence = self._file(producers[0]) if producers else None
         formal = self._pass_or_missing(
             "discover.formal",
@@ -2934,6 +3010,50 @@ class Inventory:
         )
         return [formal, modes]
 
+    def _dynamic_workflow_discover(self) -> list[AuditResult]:
+        producer = "src/openbiliclaw/runtime/custom_workflow_producer.py"
+        service = "src/openbiliclaw/sources/workflow_service.py"
+        requirements: list[tuple[str, Evidence | None]] = []
+        for mode in self.contract.discover.modes:
+            if mode == "browser-workflow":
+                evidence = self._word(service, "compile_browser_workflow")
+            elif mode == "search":
+                evidence = self._regex(producer, r'workflow\["query_mode"\]\s*==\s*"interest"')
+            else:
+                evidence = self._first_word(("src/openbiliclaw/sources/web_recipe.py",), mode)
+            requirements.append((f"discover mode {mode!r}", evidence))
+        return [
+            self._pass_or_missing(
+                "discover.formal",
+                "dynamic producer and runtime registry",
+                [
+                    ("instance producer", self._word(producer, "CustomWorkflowProducer")),
+                    (
+                        "canonical content family",
+                        self._regex(
+                            service,
+                            rf'source_platform\s*=\s*["\']{re.escape(self.contract.canonical_slug)}["\']',
+                        ),
+                    ),
+                    (
+                        "live runtime registry",
+                        self._word(
+                            "src/openbiliclaw/api/runtime_context.py", "CustomWorkflowProducer"
+                        ),
+                    ),
+                    (
+                        "live scheduler registry",
+                        self._word(
+                            "src/openbiliclaw/runtime/refresh.py", "custom_source_producer_provider"
+                        ),
+                    ),
+                ],
+            ),
+            self._pass_or_missing(
+                "discover.modes", "declared HTTP/browser workflow modes", requirements
+            ),
+        ]
+
     def _search(self) -> list[AuditResult]:
         if "search" not in self.contract.discover.modes:
             return [
@@ -2943,6 +3063,8 @@ class Inventory:
                     "discover.modes excludes 'search'",
                 )
             ]
+        if self._uses_dynamic_workflows():
+            return self._dynamic_workflow_search()
         slug = self.contract.canonical_slug
         planner_file = "src/openbiliclaw/runtime/keyword_planner.py"
         planner = self._pass_or_missing(
@@ -3003,6 +3125,104 @@ class Inventory:
             ],
         )
         return [planner, prompts, claim, provenance, inspiration]
+
+    def _dynamic_workflow_search(self) -> list[AuditResult]:
+        planner = "src/openbiliclaw/runtime/keyword_planner.py"
+        inspiration = "src/openbiliclaw/runtime/inspiration_pipeline.py"
+        producer = "src/openbiliclaw/runtime/custom_workflow_producer.py"
+        return [
+            self._pass_or_missing(
+                "search.planner",
+                "active instance keyword registry",
+                [
+                    (
+                        "active workflow registry query",
+                        self._word(planner, "_custom_keyword_sources"),
+                    ),
+                    (
+                        "merged instance planner keys",
+                        self._regex(
+                            planner,
+                            r"return\s+\(\*_PLANNER_PLATFORMS,\s*\*self\._custom_keyword_sources\(\)\)",
+                        ),
+                    ),
+                    ("source intent context", self._word(planner, "source_intent")),
+                ],
+            ),
+            self._pass_or_missing(
+                "search.prompts",
+                "instance scope in both keyword prompt tracks",
+                [
+                    (
+                        "regular source context",
+                        self._regex(planner, r"\*\*self\._platform_context\(platform\)"),
+                    ),
+                    (
+                        "exploration source context",
+                        self._regex(inspiration, r"_host\._platform_context\(platform\)"),
+                    ),
+                    (
+                        "claimable source-scoped prompt regression",
+                        self._python_named_test(
+                            "tests/test_custom_source_runtime.py",
+                            "dynamic_planner",
+                            ("run_once", "source_intent", "coordinator.claim", "private-session"),
+                        ),
+                    ),
+                ],
+            ),
+            self._pass_or_missing(
+                "search.keyword-claim",
+                "KeywordFetchCoordinator.claim(instance source_id)",
+                [
+                    (
+                        "instance claim",
+                        self._regex(producer, r"coordinator\.claim\(\s*self\.source_id"),
+                    ),
+                    (
+                        "regular/exploration tracks",
+                        self._regex(producer, r"keyword_kind\s*=\s*kind"),
+                    ),
+                    (
+                        "failed claim rollback",
+                        self._regex(producer, r"coordinator\.rollback\(keyword\)"),
+                    ),
+                ],
+            ),
+            self._pass_or_missing(
+                "search.provenance-tests",
+                "instance keyword candidate provenance regression",
+                [
+                    (
+                        "producer source_keyword_id regression",
+                        self._python_named_test(
+                            "tests/test_custom_source_contract.py",
+                            "keyword",
+                            ("source_keyword_id", "produce_if_due"),
+                        ),
+                    ),
+                ],
+            ),
+            self._pass_or_missing(
+                "search.inspiration-axis",
+                "instance exploration materializes durable keyword rows",
+                [
+                    (
+                        "explore ledger and claim regression",
+                        self._python_named_test(
+                            "tests/test_custom_source_runtime.py",
+                            "custom_explore",
+                            (
+                                "_generate_custom_explore",
+                                "ledger[source_id]",
+                                'keyword_kind="explore"',
+                                "coordinator.claim",
+                            ),
+                        ),
+                    ),
+                ],
+            ),
+        ]
 
     def _inspiration_materialization_test(self) -> Evidence | None:
         """Find one test that calls the stage and asserts ledger plus inserted rows."""
@@ -3655,6 +3875,8 @@ class Inventory:
                 f"surfaces.{surface}=false",
                 self.contract.exclusions[f"surface.{surface}"],
             )
+        if self._uses_dynamic_workflows():
+            return self._dynamic_workflow_surface(surface)
         slug = self.contract.canonical_slug
         if surface == "cli":
             result = self._cli()
@@ -3697,6 +3919,107 @@ class Inventory:
             ]
         requirements = [(name, self._first_word(paths, slug)) for name, paths in groups]
         return self._pass_or_missing(f"surface.{surface}", label, requirements)
+
+    def _dynamic_workflow_surface(self, surface: str) -> AuditResult:
+        """Do not accept a legacy family label as instance-management wiring."""
+        probes = {
+            "cli": [
+                ("CLI command group", "src/openbiliclaw/cli.py", "sources_app"),
+                (
+                    "workflow CLI service",
+                    "src/openbiliclaw/cli_custom_sources.py",
+                    "WorkflowService",
+                ),
+            ],
+            "setup": [
+                (
+                    "explicit dynamic-source setup entry",
+                    "src/openbiliclaw/web/setup/index.html",
+                    "custom-sources",
+                ),
+            ],
+            "desktop": [
+                (
+                    "instance source panel",
+                    "src/openbiliclaw/web/desktop/index.html",
+                    "customSourceManager",
+                ),
+                (
+                    "shared manager mount",
+                    "src/openbiliclaw/web/desktop/assets/js/app.js",
+                    "OpenBiliClawCustomSources",
+                ),
+            ],
+            "mobile": [
+                (
+                    "shared manager mount",
+                    "src/openbiliclaw/web/js/app.js",
+                    "OpenBiliClawCustomSources",
+                ),
+                (
+                    "mobile instance attribution",
+                    "src/openbiliclaw/web/js/view-models.js",
+                    "source_id",
+                ),
+            ],
+            "extension_popup": [
+                ("instance source panel", "extension/popup/popup.html", "customSourceManager"),
+                ("shared manager mount", "extension/popup/popup.js", "OpenBiliClawCustomSources"),
+            ],
+            "source_status": [
+                (
+                    "instance health projection",
+                    "src/openbiliclaw/sources/workflow_service.py",
+                    "health",
+                ),
+                (
+                    "instance list endpoint",
+                    "src/openbiliclaw/api/custom_sources.py",
+                    "list_sources",
+                ),
+                (
+                    "shared health renderer",
+                    "src/openbiliclaw/web/shared/custom-sources.js",
+                    "statusLabel",
+                ),
+            ],
+            "credentials": [
+                ("manual login API", "src/openbiliclaw/api/custom_sources.py", "takeover"),
+                (
+                    "manual login surface",
+                    "src/openbiliclaw/web/desktop/source-login.html",
+                    "custom-sources",
+                ),
+                (
+                    "shared login entry",
+                    "src/openbiliclaw/web/shared/custom-sources.js",
+                    "takeoverUrl",
+                ),
+            ],
+            "recommendation": [
+                ("source attribution DTO", "src/openbiliclaw/api/models.py", "source_name"),
+                (
+                    "desktop source label",
+                    "src/openbiliclaw/web/desktop/assets/js/app.js",
+                    "recommendationSourceName",
+                ),
+                (
+                    "mobile source label",
+                    "src/openbiliclaw/web/js/views/recommend.js",
+                    "getRecommendationSourceLabel",
+                ),
+                (
+                    "popup source label",
+                    "extension/popup/popup-helpers.js",
+                    "recommendationSourceName",
+                ),
+            ],
+        }
+        return self._pass_or_missing(
+            f"surface.{surface}",
+            f"dynamic {surface.replace('_', ' ')} product surface",
+            [(label, self._word(path, token)) for label, path, token in probes[surface]],
+        )
 
     def _media(self) -> list[AuditResult]:
         media = self.contract.media

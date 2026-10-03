@@ -9,6 +9,7 @@ import {
   fetchAuthStatus,
   fetchConfig,
   updateConfig,
+  requestJson,
 } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
@@ -132,7 +133,7 @@ function renderStatusBar() {
   settings.id = "mobile-settings-button";
   settings.className = "badge-btn";
   settings.type = "button";
-  settings.setAttribute("aria-label", "打开保存与同步设置");
+  settings.setAttribute("aria-label", "打开内容来源与保存设置");
   settings.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5v.2h-4v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.8-2.8.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3v-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.8-2.8.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3h4v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.2v4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg>';
   settings.addEventListener("click", () => { void openMobileSettings(settings); });
   right.appendChild(settings);
@@ -156,12 +157,26 @@ function renderStatusBar() {
   }
 }
 
+let closeMobileSettings = null;
+
+function openMobileSourceLogin(value) {
+  if (!String(value || "").trim()) throw new Error("登录入口暂不可用，请重试。");
+  const url = new URL(value, window.location.origin);
+  if (url.origin !== window.location.origin || url.username || url.password
+    || !["https:", "http:"].includes(url.protocol)) {
+    throw new Error("登录入口无效，请刷新来源列表后重试。");
+  }
+  // Login creation is asynchronous. Same-tab navigation also works when the
+  // mobile browser blocks windows opened after the original tap has finished.
+  window.location.assign(url.href);
+}
+
 async function openMobileSettings(opener) {
-  document.getElementById("mobile-settings-overlay")?.remove();
+  closeMobileSettings?.();
   const overlay = document.createElement("section");
   overlay.id = "mobile-settings-overlay";
   overlay.className = "mobile-settings-overlay";
-  overlay.setAttribute("aria-label", "保存与同步设置");
+  overlay.setAttribute("aria-label", "内容来源与保存设置");
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.tabIndex = -1;
@@ -169,9 +184,16 @@ async function openMobileSettings(opener) {
   card.className = "mobile-settings-card";
   card.innerHTML = `
     <div class="mobile-settings-head">
-      <div><p class="eyebrow">Settings</p><h2>保存与同步</h2></div>
+      <div><p class="eyebrow">Settings</p><h2>设置</h2></div>
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
+    <section class="mobile-source-settings" aria-labelledby="mobile-custom-sources-title">
+      <h3 id="mobile-custom-sources-title">内容来源</h3>
+      <p class="mobile-settings-hint">在对话中添加网站，在这里管理已添加的来源。目标份额与内置来源一起分配，数值越大，候选内容占比越高。</p>
+      <div id="mobile-custom-sources"></div>
+    </section>
+    <section class="mobile-sync-settings" aria-labelledby="mobile-saved-sync-title">
+    <h3 id="mobile-saved-sync-title">保存与同步</h3>
     <label class="mobile-settings-field" for="mobile-saved-auto-sync">
       <input id="mobile-saved-auto-sync" type="checkbox">
       <span>保存时自动同步到对应平台</span>
@@ -179,7 +201,8 @@ async function openMobileSettings(opener) {
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
     <p class="mobile-settings-status" aria-live="polite"></p>
     <button class="mobile-settings-retry btn btn-outline" type="button" hidden>重试加载</button>
-    <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>`;
+    <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>
+    </section>`;
   overlay.append(card);
   document.body.append(overlay);
   const close = card.querySelector(".mobile-settings-close");
@@ -189,11 +212,16 @@ async function openMobileSettings(opener) {
   const status = card.querySelector(".mobile-settings-status");
   save.disabled = true;
   toggle.disabled = true;
+  let sourceManager = null;
   let focusController = null;
   const closeDialog = () => {
+    sourceManager?.destroy();
+    sourceManager = null;
     focusController?.deactivate();
     overlay.remove();
+    if (closeMobileSettings === closeDialog) closeMobileSettings = null;
   };
+  closeMobileSettings = closeDialog;
   focusController = createDialogFocusController({
     dialog: overlay,
     opener,
@@ -201,6 +229,23 @@ async function openMobileSettings(opener) {
   });
   focusController.activate();
   close.addEventListener("click", closeDialog);
+  const sourceRoot = card.querySelector("#mobile-custom-sources");
+  if (globalThis.OpenBiliClawCustomSources?.createManager) {
+    sourceManager = globalThis.OpenBiliClawCustomSources.createManager({
+      root: sourceRoot,
+      request: (path, options = {}) => requestJson(path, { timeoutMs: 30_000, ...options }),
+      baseUrl: window.location.origin,
+      openUrl: openMobileSourceLogin,
+      onChat: () => {
+        closeDialog();
+        navigateToTab("chat");
+      },
+    });
+    void sourceManager.load();
+  } else {
+    sourceRoot.setAttribute("role", "alert");
+    sourceRoot.textContent = "来源管理未能加载，请刷新页面后重试。";
+  }
   let storedValue = false;
   let configLoaded = false;
   const loadConfig = async () => {
@@ -455,6 +500,7 @@ async function startApp() {
 }
 
 function showLogin() {
+  closeMobileSettings?.();
   patchState({ needsLogin: true });
   document.body.classList.add("auth-locked");
   $statusBar.innerHTML = "";

@@ -1,12 +1,60 @@
 # 通用 Web 来源
 
+## 动态网站来源与兼容订阅
+
+新增网站从「聊一聊」开始：用户说明网址与内容意图，Agent 建立草稿、试跑并展示样例；
+需要登录时引导到独立的浏览器接管页。确认启用后，每个网站有稳定 `source_id`，按自己的
+间隔运行发现任务，并以独立 `target_share` 参与候选池分配。一个网站可以包含多个
+workflow；不把这些网站当成旧版 Web 总份额下的子权重。
+
+动态工具为 `prepare_discovery_source`（建立持久草稿并试跑）和
+`trial_discovery_source`（继续试跑），两者是 `soft_write`；
+`activate_discovery_source`（启用）与 `manage_discovery_source`（修改来源配置）为
+`hard_write`，均须聊天确认卡批准。设置页的保存、启停是用户显式操作，直接调用
+来源 API；归档另有界面确认。完整工具边界见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
+
+三端设置共用 `shared/custom-sources.js/.css`，管理名称、份额、频率、启停、归档、
+最近运行和重新登录。推荐与惊喜 DTO 保留 `source_id/source_name`，网站名用于显示，
+内容平台仍是 `web`。API 草稿、试跑、启用和登录接管协议见 [API 模块](api.md#动态网站来源)。
+用户不向聊天或设置粘贴网站密码、Cookie。执行器能力随运行环境报告，不能仅安装
+Ego Skill 就宣称具备服务器或 Docker 浏览器能力。
+
+当前浏览器的内容导航与提取严格限定原站 `allowed_origins`。页面中实际观察到的公共
+静态资源 origin 可单独加入 `resource_origins`；跨站登录 origin 必须由用户在接管页
+明确选择，只允许人工登录期间使用，不扩大后台内容发现范围。不能把 Playwright 可用
+等同于任意网站可成功。Ego 只保留可选执行器接口，
+当前返回不可用，满足该隔离策略的宿主 bridge 尚未接入。重新登录按钮只为包含
+Playwright/Ego workflow 的来源显示，HTTP 公开流程没有登录按钮。
+
+设置组件只在 Playwright 不可用时显示「安装浏览器」，不替 Ego 安装宿主应用。
+显式点击向 `POST /api/custom-sources/executors/playwright/install` 提交请求；HTTP `202`
+的 `{status:"installing"}` 只表示开始安装，结果从 `GET /api/custom-sources` 的
+`executors[].status`（`installing/ready/failed`）及 `available/detail` 读取。安装中仅在
+页面和来源设置区域可见时每 3 秒刷新执行器提示，不重绘来源卡片或丢弃字段编辑；
+安装结束或设置隐藏后停止轮询。安装成功后仍需回到聊一聊试跑网站，再批准启用来源。
+
+以下章节描述**兼容的匿名 HTTP recipe 路径**。其中「不支持登录/JavaScript」和
+旧版 CLI chat 排除仅约束该路径，不代表动态网站来源的产品边界。
+
+动态增量契约位于 [platform-source-contract.dynamic-web.toml](../platform-source-contract.dynamic-web.toml)。
+来源族的 `discover=optional-credential` 表示匿名 workflow 仍可工作；某个流程声明
+`auth.required=true` 后，登录即为该流程的硬前置，过期必须暂停到人工接管后继续。
+注册审计按契约声明的 `workflow_service.py/custom_workflow_producer.py` 识别动态实例路径，
+检查实例健康、trial/resume、planner 两轨、实例 claim 和 provenance 测试，不用旧 `web`
+固定字典项替代。审计只确认接线与测试节点存在，不执行这些测试或证明真实网站可用。
+契约中的 `smoke.sinks` 专指不产生派生投影的 `smoke_only` 预览；正式隔离生命周期/评估
+验收会写 draft/run/seen/schedule，并可使用合成画像与 memory，实际写入须记入验收账本，
+不导入真实用户历史或账号画像。
+
+## 旧版公开 HTTP recipe
+
 > Web 是一个 **discovery-only** 的匿名公开来源。用户可以粘贴一个公开 URL，让只读
 > authoring probe 识别 Feed、Sitemap 或保守的静态列表结构；探测结果只是待检查的 recipe
 > 草稿。正式运行仍只跟随用户显式确认并保存的 `feed`、`sitemap` 或 `listing` recipe，且
 > recipe 同时也是网络权限清单。它不是搜索引擎或递归浏览器爬虫，也不读取登录态页面或执行
 > JavaScript。
 
-## 已实现功能
+## 旧版 HTTP 路径已实现功能
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
@@ -436,9 +484,9 @@ selector），并单条启停或删除；后端 422 原因原样展示。移动 
 保持只读，formal discover 才可写入候选/状态；
 `/api/sources` 是所有界面的权威 CRUD 契约。
 
-## 明确排除与 Ego Lite 决策
+## 旧版 HTTP 路径排除项与历史 Ego Lite 决策
 
-当前仍明确排除以下能力：
+旧版 typed HTTP recipe 路径明确排除以下能力：
 
 - 探测后自动保存、自动启用或无人确认地调度 recipe；
 - 全站搜索、KeywordPlanner 关键词生成、链接递归、无限翻页或通用 crawl；
@@ -449,10 +497,11 @@ selector），并单条启停或删除；后端 422 原因原样展示。移动 
 仓库仍保留历史 `web_extract` 浏览器 + LLM 兼容实现，但 typed Web API 不接受该 strategy，正式
 producer 也不调度它；它不是本模块的 canonical Web source 或安全 fallback。
 
-Ego Lite 已调研但本阶段明确 deferred。未来如果产品选择支持“用户显式授权的登录态/JS 页面”，
-它可以作为独立、可选的 browser transport 或 recipe authoring 辅助重新评估；在完成新的 auth、
-host、task、隐私和 E2E 契约之前，不能让它成为公开 HTTP lane 的隐式 fallback。当前安装、运行
-和验收均不依赖 Ego Lite。
+历史 Phase A/B 草稿将 Ego Lite 列为 deferred；该结论仅记录旧版匿名 HTTP 路径的范围。
+动态来源将执行器独立建模，HTTP 路径仍不隐式升级权限或回退到登录浏览器。
+[Ego Lite 官方下载说明](https://lite.ego.app/download)当前仅提供 macOS 桌面应用；
+[官方宿主桥接指南](https://lite.ego.app/document/en/docs/custom-agent-harness)要求在应用所在电脑
+执行命令。该部署方式与服务器原生执行不同，具体可用性必须依据运行环境与实际执行证据。
 
 ## 关键文件与测试
 

@@ -311,6 +311,10 @@ export function getSourceLabel(source) {
   return SOURCE_LABEL_MAP[source] || source || "Web";
 }
 
+export function getRecommendationSourceLabel(item) {
+  return normalizeText(item?.source_name) || getSourceLabel(normalizeSourcePlatform(item));
+}
+
 export function getSourceStrategyLabel(value) {
   const text = normalizeText(value);
   return WEB_SOURCE_STRATEGY_LABEL_MAP[text.toLowerCase()] || text;
@@ -432,6 +436,8 @@ export function normalizeRecommendation(item) {
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     content_type: normalizeText(item?.content_type)
       || (sourcePlatform === "bilibili" && contentId ? "video" : ""),
     body_text: normalizeText(item?.body_text),
@@ -595,6 +601,8 @@ export function normalizeDelightCandidate(item) {
     cover_url: normalizeCoverUrl(item?.cover_url),
     content_url: normalizeText(item?.content_url),
     source_platform: normalizeSourcePlatform(item),
+    source_id: normalizeText(item?.source_id),
+    source_name: normalizeText(item?.source_name),
     published_at: normalizeText(item?.published_at),
     published_label: String(item?.published_label ?? "").replace(/\s+/g, " ").trim().slice(0, 64),
     content_type: normalizeText(item?.content_type),

@@ -84,6 +84,7 @@ def source_enabled_map(
     config: Any,
     *,
     enabled_recipe_available: Callable[[str], bool] | None = None,
+    database: Any | None = None,
 ) -> dict[str, bool]:
     """Return enabled state for pool-accounted discovery sources.
 
@@ -106,13 +107,16 @@ def source_enabled_map(
             enabled[source] = configured and recipe_available
         else:
             enabled[source] = configured
-    return {source: enabled.get(source, False) for source in SOURCE_ORDER}
+    for row in _custom_source_rows(database):
+        enabled[str(row["source_id"])] = bool(row["enabled"])
+    return enabled
 
 
 def effective_pool_source_shares(
     config: Any,
     *,
     enabled_recipe_available: Callable[[str], bool] | None = None,
+    database: Any | None = None,
 ) -> dict[str, int]:
     """Return configured source shares after disabled sources are removed."""
 
@@ -122,8 +126,25 @@ def effective_pool_source_shares(
     enabled = source_enabled_map(
         config,
         enabled_recipe_available=enabled_recipe_available,
+        database=database,
     )
+    # Registry-owned shares are independent of the legacy aggregate Web switch.
+    # Arbitrary keys in config cannot reserve capacity for nonexistent sources.
+    for row in _custom_source_rows(database):
+        shares[str(row["source_id"])] = int(row["target_share"])
     return {source: share for source, share in shares.items() if enabled.get(source, False)}
+
+
+def _custom_source_rows(database: Any | None) -> list[dict[str, Any]]:
+    if database is None:
+        return []
+    from sqlite3 import Connection
+
+    from openbiliclaw.sources.custom_sources import CustomSourceStore
+
+    if not isinstance(getattr(database, "conn", None), Connection):
+        return []
+    return CustomSourceStore(database).list_sources()
 
 
 def suggest_pool_source_shares(

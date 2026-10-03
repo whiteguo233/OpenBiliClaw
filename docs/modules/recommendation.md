@@ -24,6 +24,7 @@ HTTPS URL。
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 自定义网站来源显示与独立库存 | ✅ | 推荐数据保留 `source_id/source_name` 与 canonical `web` 身份；来源筛选按实例核对，重复 URL 只计一次库存，收藏/稍后再看继续共用原内容键。 |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
@@ -123,6 +124,13 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+### 自定义网站归属
+
+`Recommendation.content` 经 `DiscoveredContent.source_id/source_name` 保留网站实例。池读取和 scoped serve 使用实例 ID 作为配额/筛选键；内容的 `source_platform=web` 与 `item_key` 继续用于打开、反馈及保存。`RecommendationOut`、`WatchLaterItem`、`FavoriteItem` 暴露同名显示字段，默认空字符串保持旧来源兼容。
+
+多个来源发现同一个 URL 时，卡片只有一份 canonical 内容，`source_metadata.source_provenance` 保存多个发现来源。首个入库实例持有一份库存额度，后续发现不重复占用来源份额或创建独立反馈；修改来源名称不改变内容键。归档移除后续调度资格，历史推荐和本地保存仍保留。
+
 
 2026-09-08：公开方法签名、候选窗口和返回协议不变；批次选择内部仅复用同一候选对的精确余弦值，下一批重新计算，完整多样性规则与补满流程保持不变。
 

@@ -58,6 +58,9 @@ dependencies = [
     "pydantic>=2.0",
     "apscheduler>=3.10",
     "uvicorn>=0.32",
+    # Include the driver for chat-created browser sources in every install mode;
+    # Chromium itself is downloaded explicitly through the UI or browser install.
+    "playwright>=1.48",
 ]
 
 [project.optional-dependencies]
@@ -80,7 +83,8 @@ eval = [
     "claude-agent-sdk>=0.1",
 ]
 browser = [
-    "playwright>=1.40",
+    # Compatibility alias; the runtime driver is now a core dependency.
+    "playwright>=1.48",
 ]
 tls = [
     "cryptography>=41",

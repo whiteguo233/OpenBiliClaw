@@ -303,10 +303,16 @@ def _create_source(db: Any, args: dict[str, Any], *, config: Any = None) -> str:
 
 def _list_sources(db: Any, _args: dict[str, Any]) -> str:
     recipes = db.get_all_recipes()
-    if not recipes:
-        return "当前没有任何内容源订阅。"
-
     lines = []
+    if getattr(db, "_conn", None) is not None:
+        from openbiliclaw.sources.workflow_service import WorkflowService
+
+        for source in WorkflowService(db).list_sources():
+            lines.append(
+                f"{source['name']} ID: {source['source_id']} "
+                f"启用: {source['enabled']} 独立比例: {source['target_share']} "
+                f"间隔: {source['interval_minutes']} 分钟 状态: {source['health']['status']}"
+            )
     for r in recipes:
         status = "✅" if r["enabled"] else "⏸️"
         config = json.dumps(r.get("config") or {}, ensure_ascii=False, sort_keys=True)
@@ -314,7 +320,7 @@ def _list_sources(db: Any, _args: dict[str, Any]) -> str:
             f"{status} {r['name']} ({r['source_type']}/{r['strategy']})"
             f" ID: {r['id']} 配置: {config}"
         )
-    return "当前内容源订阅：\n" + "\n".join(lines)
+    return "当前内容源订阅：\n" + "\n".join(lines) if lines else "当前没有任何内容源订阅。"
 
 
 def _toggle_source(db: Any, args: dict[str, Any]) -> str:

@@ -911,3 +911,29 @@ system-level package the user must consent to.
 - `docs/openclaw-quickstart.md` — OpenClaw-specific integration after install
 - `scripts/install.sh` — the installer itself (the command above)
 - `scripts/agent_bootstrap.py` — the Python contract core invoked by install.sh
+
+### Dynamic website discovery browser runtime
+
+Public Feed/Sitemap/static-list sources still use the default HTTP dependency set.
+The default Python installation includes the Playwright driver. Dynamic website workflows
+need its matching Chromium, installed on first use from settings or the CLI. The
+`browser` extra remains a backwards-compatible alias:
+
+```bash
+pip install -e .
+openbiliclaw browser install
+# Linux only, when OS libraries are missing and the operator has package-manager privileges:
+openbiliclaw browser install --with-system-deps
+```
+
+The desktop build bundles Playwright's Node driver; the same command and the settings
+installation action download Chromium without invoking a system Python interpreter.
+Docker builds install the default driver, Chromium and its Linux dependencies, storing
+browser binaries at `/opt/openbiliclaw-browsers`. Browser-capable Docker images support
+`linux/amd64` and `linux/arm64`; 32-bit `arm/v7` and `386` are not supported.
+Login profiles remain in the application's persistent data directory. No real account
+credentials are copied from the installer or the agent's personal browser.
+
+Ego Lite is optional and currently reports an unavailable capability: its macOS host CLI
+alone does not provide the isolated execution/network contract implemented here. The
+portable workflow path uses Chromium. See [browser workflow module](modules/browser-workflows.md).

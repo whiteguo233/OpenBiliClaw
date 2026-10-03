@@ -1,0 +1,177 @@
+# Dynamic workflow increment; legacy anonymous recipe contract remains separately applicable.
+# Audit is registration evidence only. Real execution evidence: platform-source-acceptance.dynamic-web.md.
+"schema_version" = 2
+"canonical_slug" = "web"
+"display_name" = "自定义 Web Discover 来源"
+"integration_level" = "capability-increment"
+"host_policy" = "recipe-allowlist"
+"aliases" = []
+"hosts" = []
+"content_types" = ["article"]
+
+["transport"]
+"kind" = "hybrid"
+"owner" = "backend"
+"entrypoints" = ["src/openbiliclaw/sources/workflow_service.py", "src/openbiliclaw/sources/workflow_store.py", "src/openbiliclaw/sources/browser_workflow.py", "src/openbiliclaw/sources/workflow_executors.py", "src/openbiliclaw/runtime/custom_workflow_producer.py"]
+"route_aliases" = []
+"fallback_owner" = "none"
+"requires_overseas_network" = false
+"routed_by_network_mode" = false
+"network_policy" = "Compiled public HTTP or portable read-only browser plans. Content navigation and extraction are restricted to approved exact origins; public DNS/IP validation and bounded execution are enforced by each available executor. Only explicit human takeover accepts credential input; secrets stay in private browser profiles. Unsupported Ego capabilities are reported unavailable, never silently enabled."
+
+["transport"."capability_routes"]
+"discover" = "backend:hybrid:per-workflow-auth:exact-origin"
+
+["identity"]
+"item_id" = "Canonical URL SHA-256 prefix as url-<24 lowercase hex>, stored under the canonical item key web:url-<24 lowercase hex>."
+"url" = "Absolute canonical http(s) item URL after host/port normalization, tracking-query removal, query sorting, and fragment removal; it must remain in the compiled HTTP recipe or browser workflow's approved content origins."
+"dedupe" = "Canonical URL identity remains web:url-<hash>. custom_<uuid> source_id is a quota/provenance identity, never part of item identity. One content row has one inventory owner and multiple source provenance records."
+"account_scope" = "Public workflows need no credential; an authenticated workflow requires its selected session and pauses on expiry. Opaque persistent session references may be shared by explicitly related same-origin source instances. A workflow fixes its session reference, goal, version and parameter mode; no upstream account identity is inferred from a cookie."
+
+["auth"]
+"mode" = "anonymous-with-optional-credentials"
+"credential_kinds" = ["browser-profile"]
+"verify_action" = "live_probe"
+"write_path" = "unified"
+"account_resolution" = "Discover is optional-credential at the family level because anonymous workflows are usable. For each workflow whose auth.required is true, login is a hard prerequisite: positive readiness is required and expiry pauses execution until explicit human login/resume. No verified external account ID is inferred."
+"identity_evidence" = "Positive ready selector and negative login wall, followed by a successful read-only trial. The workflow stores only an opaque session reference."
+"login_cookie_names" = []
+"login_state_path" = "callback"
+
+["auth"."capability_modes"]
+"discover" = "optional-credential"
+
+["auth"."capability_required"]
+"discover" = true
+
+["upstream"]
+"success_content_types" = ["application/rss+xml", "application/atom+xml", "application/feed+json", "application/json", "application/xml", "text/xml", "text/html"]
+"pagination" = "Compiled HTTP recipes and browser plans cap max_pages at 1..5 and max_items at 1..50. HTTP sitemap/listing/detail branches consume bounded transport budgets; browser collect/pagination consumes declared page/item/time budgets and only validated content navigation."
+"terminal_evidence" = "HTTP success plus an expected MIME family and a valid RSS/Atom/JSON Feed/sitemap envelope, or an HTML selector plan that yields rows or matches its explicit empty selector."
+"terminal_policy" = "Only a valid decoded envelope or affirmative configured empty marker is complete/empty; login pages, challenge HTML, wrong MIME, malformed XML/JSON, selector drift, timeouts, and rate limits are degraded or failed."
+"partial_policy" = "Retain valid rows from completed bounded branches, but do not commit validators/cursors or infer complete scope when any required page, child sitemap, feed, or detail branch is partial."
+"publication_time_policy" = "Use only upstream publication metadata parsed to UTC; discovery time, HTTP Date, sitemap lastmod, and local fetch time never become publication time."
+
+["discover"]
+"modes" = ["feed", "sitemap", "listing", "search", "browser-workflow"]
+"search_generation" = "Enabled active interest workflows join the existing regular and exploration keyword planners by registered source_id; the producer claims and settles keyword identities through KeywordFetchCoordinator."
+"budget" = "Per-instance existing pool shares, cadence 5..10080 minutes; per-plan bounded pages/items/time and read-only operations. Automatic same-scope repair has at most two attempts per failing version."
+"cursor" = "Durable versioned runs freeze parameters and session references. Token/version/source-enabled fencing protects handoff; only durably accepted or already-present content becomes seen. Partial admission retains the retry frontier."
+
+["profile"]
+"signals" = false
+"incremental" = false
+"refresh_mode" = "none"
+
+["extension"]
+"task" = "none"
+"hosts" = []
+"task_marker" = false
+"background" = false
+"early_response" = false
+"cookie_sync" = false
+
+["surfaces"]
+"cli" = true
+"setup" = true
+"desktop" = true
+"mobile" = true
+"extension_popup" = true
+"source_status" = true
+"credentials" = true
+"recommendation" = true
+
+["engagement"]
+"view" = "unavailable"
+"like" = "unavailable"
+"favorite" = "unavailable"
+"comment" = "unavailable"
+"share" = "unavailable"
+"danmaku" = "unavailable"
+
+["media"]
+"image" = "none"
+"image_hosts" = []
+"deep_link" = "browser-fallback"
+"native_save" = false
+
+["e2e"]
+"safe_actions" = ["fetch-public-feed", "read-public-page"]
+"mutating_actions" = ["manual-login"]
+
+["e2e"."safe_assertions"]
+"fetch-public-feed" = "upstream-state-unchanged"
+"read-public-page" = "upstream-state-unchanged"
+
+["e2e"."safe_postconditions"]
+"fetch-public-feed" = "Only anonymous bounded GET/HEAD-equivalent reads occur inside recipe origins; no upstream account, subscription, or collection state changes."
+"read-public-page" = "Only bounded read-only browsing under declared scope; all acceptance writes use isolated data roots. Human login is separate and no upstream post/follow/save action is exercised."
+
+["events"]
+"strategy_prefixes" = ["web-", "web_"]
+"mappings" = "Dynamic source_id/source_name accompany source_platform=web through candidate/cache/recommendation and saved DTOs. No account-profile or engagement events are fabricated."
+"scope_caps" = "Source quota identity is independent of portable workflow execution and canonical content identity."
+
+["task"]
+"lease" = "Backend workflow claims freeze active version and parameters under a token-fenced finite lease."
+"idle_deadline" = "Each HTTP operation has a bounded timeout and a stalled run loses its finite backend lease."
+"absolute_deadline" = "Bounded browser plan timeout, HTTP page/detail budgets and at most two authoring-repair attempts; interactive takeover expires after 15 minutes."
+"retry" = "Login expiry pauses that workflow until human resume; transient failures back off; selector repair must trial successfully before activating a new version."
+"buffer" = "Only bounded normalized metadata and scrubbed observation enter drafts. Browser credentials and manual form input are never serialized to model tools or workflow storage."
+
+["smoke"]
+"storage_scope" = "isolated-only"
+
+["smoke"."sinks"]
+# This table describes smoke_only previews, not formal lifecycle/evaluation
+# acceptance. Formal E2E runs use a fresh isolated data root and may create
+# workflow/seen/schedule records plus synthetic memory/profile/runtime outputs;
+# the acceptance ledger records those writes. Actual user-data imports remain
+# prohibited. Authoring/trial persists drafts and is not a zero-write smoke.
+"task" = "forbidden"
+"task_result" = "forbidden"
+"seen" = "forbidden"
+"affinity" = "forbidden"
+"snapshot" = "forbidden"
+"schedule" = "forbidden"
+"event_ingress" = "forbidden"
+"memory" = "forbidden"
+"profile" = "forbidden"
+
+["exclusions"]
+"profile.signals" = "Public or manually authenticated website results are discovery inputs only; no upstream account bootstrap, personal-history import or profile-signal event ingestion is registered. Synthetic isolated profile fixtures for evaluation do not add a product profile-import capability."
+"profile.incremental" = "No profile signal corpus exists, so there is no post-init profile delta to synchronize."
+"profile.refresh-mode" = "Profile signals are out of scope, therefore no init, on-demand, or incremental profile refresh mode is exposed."
+"extension.task" = "HTTP/browser workflows execute in the backend; no extension task dispatch or upstream task-result protocol is registered for dynamic sites."
+"extension.task-marker" = "Without an extension task, Web pages must not receive a task-mode URL marker."
+"extension.background" = "The extension is a chat/settings client. The backend owns periodic workflow scheduling, private browser profiles and recovery; no extension worker performs dynamic-site requests."
+"extension.early-response" = "No extension response interception is registered. A backend Playwright executor may observe its own controlled page without introducing a MAIN/isolated-world extension tap."
+"extension.cookie-sync" = "Browser login is owned by the backend executor profile, never copied from or synchronized by the browser extension."
+"engagement.view" = "Generic feeds and pages have no portable canonical view-count field."
+"engagement.like" = "Generic feeds and pages have no portable canonical like-count field."
+"engagement.favorite" = "Generic workflow extraction has no portable upstream save-count field; manual login does not authorize native favorite/save mutations."
+"engagement.comment" = "Generic feeds and pages have no portable canonical comment-count field."
+"engagement.share" = "Generic feeds and pages have no portable canonical share-count field."
+"engagement.danmaku" = "Generic Web content has no portable Bilibili-style danmaku metric."
+"media.image" = "Discovery cards do not add arbitrary image proxying; the separate human takeover endpoint serves authenticated, no-store viewport screenshots."
+"media.deep-link" = "No generic native URL scheme exists; mobile opens the canonical public http(s) URL in a browser."
+"media.native-save" = "The integration is read-only and has no upstream bookmark, favorite, or save mutation adapter."
+
+["exclusion_tests"]
+"profile.signals" = ["tests/test_custom_source_contract.py::test_custom_web_discovery_does_not_bootstrap_or_ingest_profile"]
+"profile.incremental" = ["tests/test_custom_source_contract.py::test_custom_web_discovery_does_not_bootstrap_or_ingest_profile"]
+"profile.refresh-mode" = ["tests/test_custom_source_contract.py::test_custom_web_discovery_does_not_bootstrap_or_ingest_profile"]
+"extension.task" = ["tests/test_custom_source_contract.py::test_custom_web_extension_tasks_and_cookie_sync_are_absent"]
+"extension.task-marker" = ["tests/test_custom_source_contract.py::test_custom_web_extension_tasks_and_cookie_sync_are_absent"]
+"extension.background" = ["tests/test_custom_source_contract.py::test_custom_web_extension_tasks_and_cookie_sync_are_absent"]
+"extension.early-response" = ["tests/test_custom_source_contract.py::test_custom_web_extension_tasks_and_cookie_sync_are_absent"]
+"extension.cookie-sync" = ["tests/test_custom_source_contract.py::test_custom_web_extension_tasks_and_cookie_sync_are_absent"]
+"engagement.view" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"engagement.like" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"engagement.favorite" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"engagement.comment" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"engagement.share" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"engagement.danmaku" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"media.image" = ["tests/test_custom_source_contract.py::test_custom_web_browser_normalization_omits_unsupported_metadata"]
+"media.deep-link" = ["tests/test_custom_source_contract.py::test_custom_web_link_has_no_native_scheme"]
+"media.native-save" = ["tests/test_custom_source_contract.py::test_custom_web_native_save_is_unsupported"]

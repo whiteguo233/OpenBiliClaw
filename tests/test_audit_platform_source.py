@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,104 @@ from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/audit_platform_source.py"
+
+
+def _dynamic_inventory(tmp_path: Path, *, replacements: dict[str, tuple[str, str]] | None = None):
+    """Copy only the portable registry seams, without legacy fixed-slug evidence."""
+    module = runpy.run_path(str(SCRIPT))
+    contract = module["load_contract"](ROOT / "docs/platform-source-contract.dynamic-web.toml")
+    files = (
+        "src/openbiliclaw/sources/platforms.py",
+        "src/openbiliclaw/sources/custom_sources.py",
+        "src/openbiliclaw/sources/workflow_service.py",
+        "src/openbiliclaw/sources/workflow_store.py",
+        "src/openbiliclaw/sources/workflow_executors.py",
+        "src/openbiliclaw/sources/web_recipe.py",
+        "src/openbiliclaw/runtime/custom_workflow_producer.py",
+        "src/openbiliclaw/runtime/keyword_planner.py",
+        "src/openbiliclaw/runtime/inspiration_pipeline.py",
+        "src/openbiliclaw/runtime/refresh.py",
+        "src/openbiliclaw/api/runtime_context.py",
+        "src/openbiliclaw/api/custom_sources.py",
+        "tests/test_custom_source_runtime.py",
+        "tests/test_custom_source_contract.py",
+    )
+    for relative in files:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / relative, target)
+        if relative in (replacements or {}):
+            old, new = replacements[relative]
+            content = target.read_text(encoding="utf-8")
+            assert old in content
+            target.write_text(content.replace(old, new), encoding="utf-8")
+    return module["Inventory"](tmp_path, contract)
+
+
+def test_dynamic_workflow_audit_uses_declared_instance_registry_without_fixed_slug(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(tmp_path)
+    results = [*inventory._source_auth(), *inventory._discover(), *inventory._search()]
+    assert all(result.status == "PASS" for result in results), [
+        (result.capability, result.detail) for result in results if result.status != "PASS"
+    ]
+    assert "src/openbiliclaw/runtime/custom_workflow_producer.py" in inventory._producer_files()
+    assert not (tmp_path / "src/openbiliclaw/api/source_auth/verify.py").exists()
+
+
+def test_dynamic_workflow_audit_reports_removed_claim_and_resume_even_with_legacy_web(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(
+        tmp_path,
+        replacements={
+            "src/openbiliclaw/runtime/custom_workflow_producer.py": (
+                "coordinator.claim(",
+                "coordinator.other(",
+            ),
+            "src/openbiliclaw/api/custom_sources.py": (
+                '@router.post("/drafts/{draft_id}/resume")',
+                '@router.post("/unrelated")',
+            ),
+        },
+    )
+    _write(
+        tmp_path,
+        "src/openbiliclaw/api/source_auth/verify.py",
+        'VERIFY_ACTIONS = {"web": "live_probe"}\n',
+    )
+    _write(tmp_path, "src/openbiliclaw/runtime/web_producer.py", 'coordinator.claim("web")\n')
+    results = {
+        result.capability: result for result in [*inventory._source_auth(), *inventory._search()]
+    }
+    assert results["source-auth.verify"].status == "MISSING"
+    assert results["search.keyword-claim"].status == "MISSING"
+
+
+def test_dynamic_workflow_audit_does_not_hide_missing_instance_planner(
+    tmp_path: Path,
+) -> None:
+    inventory = _dynamic_inventory(
+        tmp_path,
+        replacements={
+            "src/openbiliclaw/runtime/keyword_planner.py": (
+                "return (*_PLANNER_PLATFORMS, *self._custom_keyword_sources())",
+                "return _PLANNER_PLATFORMS",
+            ),
+        },
+    )
+    results = {result.capability: result for result in inventory._search()}
+    assert results["search.planner"].status == "MISSING"
+
+
+def test_dynamic_surface_audit_does_not_accept_an_unrelated_web_login_link(tmp_path: Path) -> None:
+    inventory = _dynamic_inventory(tmp_path)
+    _write(tmp_path, "src/openbiliclaw/web/setup/index.html", '<a href="/web">登录后重试</a>')
+    result = inventory._surface_result("setup")
+    assert result.status == "MISSING"
+    assert "explicit dynamic-source setup entry" in result.detail
+
 
 CONTRACT = """\
 schema_version = 1

@@ -1117,6 +1117,7 @@ def test_login_codex_import_uses_source_path(
     tmp_path: Path,
 ) -> None:
     from openbiliclaw.llm.codex_auth import CodexCredentials
+    from openbiliclaw.llm.codex_chatgpt_provider import CodexProbeResult
 
     source = tmp_path / "auth.json"
     calls: list[Path | None] = []
@@ -1127,6 +1128,12 @@ def test_login_codex_import_uses_source_path(
 
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
     monkeypatch.setattr("openbiliclaw.llm.codex_auth.import_codex_credentials", fake_import)
+    monkeypatch.setattr("openbiliclaw.llm.codex_auth.load_codex_credentials", lambda: None)
+
+    async def fake_probe(**kwargs):
+        return CodexProbeResult(ok=True, model="test-model")
+
+    monkeypatch.setattr("openbiliclaw.llm.codex_chatgpt_provider.probe_codex_llm", fake_probe)
 
     result = runner.invoke(app, ["login", "codex", "--import", "--source", str(source)])
 

@@ -30,6 +30,7 @@
       if (accent === "classic") document.documentElement.dataset.accent = "classic";
     })();
   </script>
+  <link rel="stylesheet" href="/shared/custom-sources.css">
   <link rel="stylesheet" href="/web/assets/css/app.css">
   <link rel="stylesheet" href="/web/assets/css/classic.css">
 </head>
@@ -1222,24 +1223,30 @@
               </div>
             </article>
 
+            <section class="source-aux-card" aria-labelledby="customSourcesHeading" style="grid-column: 1 / -1">
+              <h3 id="customSourcesHeading">自定义网站</h3>
+              <p class="settings-note-inline">在聊一聊提供网址和想看的内容，试跑后确认启用。每个网站独立设置候选池占比，与上面的平台来源平级。需要登录时在独立接管页操作。</p>
+              <div id="customSourceManager"></div>
+            </section>
+
             <article class="source-status-row source-card" data-source-status="web" data-open="0">
               <div class="source-card-face" role="button" tabindex="0" aria-expanded="false" aria-controls="sourceCardBody-web">
                 <span class="source-card-logo" data-source-logo="web" aria-hidden="true">W</span>
                 <span class="source-card-head">
-                  <strong class="source-card-name">Web</strong>
+                  <strong class="source-card-name">Web 旧版订阅</strong>
                   <span class="source-status-badges"><span class="source-source-badge">来源：加载中</span><span class="source-access-badge">接入：加载中</span><span class="source-evidence-badge" hidden></span></span>
                   <p class="src-detail">加载中…</p>
                   <span class="source-card-hint-slot"></span>
                 </span>
                 <span class="source-card-right">
-                  <label class="source-card-share"><span>占比</span><input id="shareWeb" value="1" inputmode="numeric" aria-label="Web 候选池占比"></label>
+                  <label class="source-card-share"><span>占比</span><input id="shareWeb" value="1" inputmode="numeric" aria-label="旧版 Web 订阅候选池占比"></label>
                   <label class="source-card-enable"><span class="sr-only">启用 Web</span><select id="webEnabled"><option value="on">启用</option><option value="off">停用</option></select></label>
                   <span class="source-card-chev" aria-hidden="true">▾</span>
                 </span>
               </div>
               <div class="source-card-body" id="sourceCardBody-web">
                 <section class="source-seg">
-                  <h4>公开网页发现</h4>
+                  <h4>公开网页订阅（兼容旧版）</h4>
                   <p class="seg-note">添加一个明确入口，后端会按 Feed、Sitemap 或列表页 recipe 定时发现内容。仅访问你批准的公开 origin，遵守 robots.txt；不带 Cookie、不登录，也不执行网页脚本。</p>
                   <div class="inline-row">
                     <label class="settings-field"><span>请求超时（秒）</span><input id="webRequestTimeout" type="number" min="1" max="60" value="15"></label>
@@ -1249,7 +1256,7 @@
                   </div>
                 </section>
                 <section class="source-seg web-recipe-manager" aria-labelledby="webRecipeHeading">
-                  <h4 id="webRecipeHeading">网站 Recipe</h4>
+                  <h4 id="webRecipeHeading">旧版 Feed / Sitemap / 列表订阅</h4>
                   <div id="webProbePanel" class="web-probe-panel" aria-busy="false">
                     <div class="web-probe-head">
                       <strong>粘贴网站 URL，自动找入口</strong>
@@ -1812,6 +1819,7 @@
   <script src="/shared/dialogue-confirmation.js" defer></script>
   <script src="/shared/agent-chat.js" defer></script>
   <script src="/shared/source-status.js" defer></script>
+  <script src="/shared/custom-sources.js" defer></script>
   <script src="/web/assets/js/chat-agent-core.js" defer></script>
   <script src="/web/assets/js/app.js" defer></script>
 </body></html>

@@ -1725,3 +1725,20 @@ $ openbiliclaw db-repair
 ### 初始化中的 Web 份额建议
 
 初始化 CLI 的候选池份额建议同步查询当前有效 enabled Web recipe；Web 不作为画像初始化来源，但已有有效 recipe 可参与后续 discovery 配额，停用最后一个 recipe 后立即排除。新增 Web 来源仍通过图形端 Agent 审批卡或来源设置页；`openbiliclaw chat` 不包含本轮新增的 probe / 审批能力。
+## 动态 Discover 来源命令增量（2026-10-03）
+
+`openbiliclaw sources` 复用 `WorkflowService`，与聊天和三端设置共用来源、草稿、流程版本及运行状态：
+
+| 命令 | 行为 |
+| --- | --- |
+| `sources list` | 来源独立比例、流程与健康状态 |
+| `sources prepare URL --intent '自然语言发现目标'` | 观察网站并建草稿、试跑；`--executor http/playwright/ego/auto`，`--separate` 可拆分独立来源 |
+| `sources trial DRAFT_ID` | 重试已有草稿，不启用调度 |
+| `sources activate DRAFT_ID --share 2 --interval 30` | 明确启用已成功试跑的流程；已有来源保留原比例和启停 |
+| `sources set SOURCE_ID --share 3 --interval 60 --disabled` | 修改独立来源策略 |
+| `sources runs SOURCE_ID` | 查看版本、时间、状态、抓取与入队数量 |
+| `sources login SOURCE_ID` | 创建人工登录入口，在同一数据目录的 API 服务中打开 |
+| `sources run SOURCE_ID --limit 20` | 单次有界抓取与现有候选评估；持续定时运行依赖 `start` / `serve-api` |
+| `browser install` | 安装 Playwright 对应 Chromium；Linux 管理员可显式加 `--with-system-deps` |
+
+pip/uv 默认安装和桌面包均携带 Playwright driver，`browser` extra 保留兼容；Chromium 可通过设置页或安装命令获取。浏览器凭据保存在活动数据库旁的私有 `browser-sessions/`，不要在 CLI 参数或聊天里输入密码/Cookie。Ego 当前没有可用执行桥接，明确返回 unavailable。

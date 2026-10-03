@@ -8104,6 +8104,7 @@ def _maybe_update_init_source_shares(event_counts: Mapping[str, int]) -> None:
         cfg = load_config()
         enabled_sources = source_enabled_map(
             cfg,
+            database=_get_runtime_database(),
             enabled_recipe_available=lambda source: enabled_source_recipe_available(
                 _get_runtime_database(), source
             ),
@@ -17243,6 +17244,17 @@ def health_check() -> None:
             console.print(f"    原因: {result.error}")
 
 
+@browser_app.command("install")
+def browser_install(with_system_deps: bool = False) -> None:
+    """安装自定义 Discover 流程使用的 Chromium（Linux 可包含系统依赖）。"""
+    from openbiliclaw.sources.browser_install import install_browser_runtime
+
+    result = asyncio.run(install_browser_runtime(with_system_deps=with_system_deps))
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["installed"]:
+        raise typer.Exit(code=1)
+
+
 @browser_app.command("status")
 def browser_status() -> None:
     """检查 agent-browser 是否可用."""
@@ -17292,6 +17304,11 @@ def browser_content(url: str) -> None:
 
     _print_page_title("页面内容")
     console.print(Panel(content, border_style="cyan"))
+
+
+from openbiliclaw.cli_custom_sources import sources_app  # noqa: E402
+
+app.add_typer(sources_app, name="sources")
 
 
 if __name__ == "__main__":

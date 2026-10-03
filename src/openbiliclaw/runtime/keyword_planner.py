@@ -46,6 +46,7 @@ import logging
 import math
 import re
 import socket
+import sqlite3
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -1148,7 +1149,7 @@ class KeywordPlanner:
             return 0
         min_age = self._retire_min_age_minutes()
         total = 0
-        for platform in _PLANNER_PLATFORMS:
+        for platform in self._planner_platforms():
             try:
                 total += int(retire(platform, min_age_minutes=min_age))
             except Exception:
@@ -1249,6 +1250,7 @@ class KeywordPlanner:
             blocks.append(
                 {
                     "platform": platform,
+                    **self._platform_context(platform),
                     "need": shown_need,
                     "recent_keywords": self._history(platform),
                     "avoid_topics": _as_str_list(avoid.get("avoid_topics")),
@@ -1280,6 +1282,13 @@ class KeywordPlanner:
                     profile=profile,
                     digest=digest,
                     query_kind="regular",
+                )
+            custom_explore = await self._generate_custom_explore(
+                due, profile=profile, digest=digest
+            )
+            for platform, inserted in custom_explore.items():
+                inspiration_only_ledger[platform] = (
+                    inspiration_only_ledger.get(platform, 0) + inserted
                 )
             self._emit_cycle_ledger(inspiration_only_ledger, digest)
             return inspiration_only_ledger
@@ -1430,6 +1439,9 @@ class KeywordPlanner:
         for platform, inserted in inspiration_ledger.items():
             ledger[platform] = int(ledger.get(platform, 0)) + int(inserted)
 
+        custom_explore = await self._generate_custom_explore(due, profile=profile, digest=digest)
+        for platform, inserted in custom_explore.items():
+            ledger[platform] = ledger.get(platform, 0) + inserted
         self._emit_cycle_ledger(ledger, digest)
         return ledger
 
@@ -1514,6 +1526,11 @@ class KeywordPlanner:
             cache_blocks.append(
                 {
                     "platform": str(block.get("platform", "")),
+                    **{
+                        key: block[key]
+                        for key in ("source_name", "source_origin", "source_intent")
+                        if key in block
+                    },
                     "need": int(cast("Any", block.get("need", 0)) or 0),
                     # The prompt already receives this list. It must also shape
                     # the cache key: omitting it made a stable profile replay the
@@ -1629,13 +1646,93 @@ class KeywordPlanner:
 
     # ── due computation ─────────────────────────────────────────────────
 
+    def _custom_keyword_sources(self) -> dict[str, dict[str, str]]:
+        """Read active search capabilities; credentials and workflow steps stay private."""
+        conn = getattr(self._db, "conn", None)
+        if not isinstance(conn, sqlite3.Connection):
+            return {}
+        # Workflows are optional on upgraded databases until the first source
+        # is authored. This read must never create tables or commit a run lease.
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+                "('custom_sources', 'custom_workflows', 'custom_workflow_versions')"
+            )
+        }
+        if len(tables) != 3:
+            return {}
+        rows = conn.execute(
+            "SELECT c.source_id, c.name, c.origin, c.intent, v.payload "
+            "FROM custom_sources c JOIN custom_workflows w ON w.source_id = c.source_id "
+            "JOIN custom_workflow_versions v ON v.workflow_id = w.workflow_id "
+            "AND v.version = w.active_version WHERE c.enabled = 1 AND c.archived = 0 "
+            "ORDER BY c.created_at, c.source_id"
+        ).fetchall()
+        result: dict[str, dict[str, str]] = {}
+        for row in rows:
+            try:
+                workflow = json.loads(row["payload"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(workflow, dict) or workflow.get("query_mode") != "interest":
+                continue
+            if workflow.get("enabled", True) is False:
+                continue
+            result[str(row["source_id"])] = {
+                "source_name": str(row["name"]),
+                "source_origin": str(row["origin"]),
+                "source_intent": str(row["intent"]),
+            }
+        return result
+
+    def _planner_platforms(self) -> tuple[str, ...]:
+        return (*_PLANNER_PLATFORMS, *self._custom_keyword_sources())
+
+    def _platform_context(self, platform: str) -> dict[str, str]:
+        return self._custom_keyword_sources().get(platform, {})
+
+    def _custom_explore_due(self, platforms: list[str] | tuple[str, ...], digest: str) -> list[str]:
+        if self._inspiration_provider is None or not bool(
+            getattr(self._discovery, "inspiration_search_enabled", False)
+        ):
+            return []
+        registered = self._custom_keyword_sources()
+        low = int(self._discovery.kw_cache_low)
+        result = []
+        for platform in platforms:
+            if platform not in registered or self._real_deficit(platform) <= 0:
+                continue
+            self._db.expire_pending_by_digest(platform, digest, keyword_kind="explore")
+            if self._db.count_pending_keywords(platform, digest, keyword_kind="explore") < low:
+                result.append(platform)
+        return result
+
+    async def _generate_custom_explore(
+        self,
+        platforms: list[str],
+        *,
+        profile: SoulProfile,
+        digest: str,
+    ) -> dict[str, int]:
+        due = self._custom_explore_due(platforms, digest)
+        if not due:
+            return {}
+        return await self._run_inspiration_stage(
+            due,
+            profile=profile,
+            digest=digest,
+            query_kind="explore",
+        )
+
     def _due_platforms(self, digest: str) -> list[str]:
         low = int(self._discovery.kw_cache_low)
         due: list[str] = []
-        for platform in _PLANNER_PLATFORMS:
+        custom_explore_due = set(self._custom_explore_due(self._planner_platforms(), digest))
+        for platform in self._planner_platforms():
             cache_below_low = self._count_pending(platform, digest) < low
             has_deficit = self._real_deficit(platform) > 0
-            platform_due = cache_below_low and has_deficit
+            platform_due = (cache_below_low and has_deficit) or platform in custom_explore_due
             if platform == _BILIBILI and not platform_due and self._bilibili_catalyst():
                 platform_due = True
             if platform_due:
@@ -1742,7 +1839,7 @@ class KeywordPlanner:
         count_all = getattr(self._db, "count_pending_keywords_all_digests", None)
         grace_hours = int(getattr(self._discovery, "keyword_digest_grace_hours", 0))
 
-        for platform in _PLANNER_PLATFORMS:
+        for platform in self._planner_platforms():
             if not callable(reconcile) or not callable(count_all):
                 self._legacy_expire_pending(platform, digest)
                 continue
@@ -2049,7 +2146,7 @@ class KeywordPlanner:
                 logger.exception("keyword planner failed to read per-platform topic counts")
 
         result: dict[str, dict[str, object]] = {}
-        for platform in _PLANNER_PLATFORMS:
+        for platform in self._planner_platforms():
             topic_counts = per_platform.get(platform, {})
             total = sum(int(count) for count in topic_counts.values())
             if total < _PER_PLATFORM_AVOID_FLOOR:
@@ -2095,7 +2192,7 @@ class KeywordPlanner:
                     "keyword planner failed to read per-platform admitted topic counts"
                 )
         result: dict[str, list[str]] = {}
-        for platform in _PLANNER_PLATFORMS:
+        for platform in self._planner_platforms():
             topic_counts = admitted.get(platform, {})
             total = sum(int(count) for count in topic_counts.values())
             if total < _PER_PLATFORM_SUPPLY_FLOOR:

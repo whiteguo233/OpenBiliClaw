@@ -384,6 +384,7 @@ class ContinuousRefreshController:
     linuxdo_producer: Any | None = None
     v2ex_producer: Any | None = None
     web_producer: Any | None = None
+    custom_source_producer_provider: Callable[[str], Any] | None = None
     weibo_producer: Any | None = None
     github_producer: Any | None = None
     scheduler_config: Any = field(default_factory=SchedulerConfig)
@@ -824,16 +825,38 @@ class ContinuousRefreshController:
             await self._publish_pool_status_if_changed()
 
             profile = await self.soul_engine.get_profile()
+            custom_results: dict[str, dict[str, object]] = {}
+            # OpenClaw's bounded request has no daemon planner or producer loop.
+            # Supply calls already tick these producers, so do not run them twice.
+            if (
+                self.one_shot_inline_eval_limit > 0
+                and self.custom_source_producer_provider is not None
+                and not self._candidate_supply_lock.locked()
+            ):
+                planner = self.keyword_planner
+                if planner is not None and bool(getattr(planner, "enabled", False)):
+                    planner.bind_deficit_source(self)
+                    await planner.run_once()
+                custom_results = await self._tick_custom_source_producers()
             plan = self._build_refresh_plan(state)
             if not plan:
-                return _result({"refreshed": False, "strategies": [], "reason": "below_threshold"})
-
-            return await self._run_refresh_plan(
-                state=state,
-                profile=profile,
-                plan=plan,
-                reason="triggered",
-            )
+                result: dict[str, object] = {
+                    "refreshed": False,
+                    "strategies": [],
+                    "reason": "below_threshold",
+                }
+            else:
+                result = await self._run_refresh_plan(
+                    state=state,
+                    profile=profile,
+                    plan=plan,
+                    reason="triggered",
+                )
+            if custom_results:
+                result["custom_source_results"] = custom_results
+                if any(_producer_supply_progress_count(row) > 0 for row in custom_results.values()):
+                    result["refreshed"] = True
+            return _result(result)
 
     async def run_init_backfill(
         self,
@@ -1630,7 +1653,8 @@ class ContinuousRefreshController:
             *(ticker() for ticker in tickers.values()),
             return_exceptions=True,
         )
-        results: dict[str, dict[str, object]] = {}
+        custom_results = await self._tick_custom_source_producers()
+        results: dict[str, dict[str, object]] = dict(custom_results)
         for (source, _ticker), raw_result in zip(
             tickers.items(),
             raw_results,
@@ -1798,6 +1822,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_linuxdo_producer()),
             asyncio.create_task(self._loop_v2ex_producer()),
             asyncio.create_task(self._loop_web_producer()),
+            asyncio.create_task(self._loop_custom_source_producers()),
             asyncio.create_task(self._loop_weibo_producer()),
             asyncio.create_task(self._loop_github_producer()),
             asyncio.create_task(self._loop_proactive_push()),
@@ -2166,6 +2191,39 @@ class ContinuousRefreshController:
                 await self._tick_web_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
+    async def _loop_custom_source_producers(self) -> None:
+        """Discover each registered website against its own share deficit."""
+        while True:
+            if self._llm_work_allowed():
+                with suppress(Exception):
+                    await self._tick_custom_source_producers()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _tick_custom_source_producers(self) -> dict[str, dict[str, object]]:
+        provider = self.custom_source_producer_provider
+        if provider is None:
+            return {}
+        result: dict[str, dict[str, object]] = {}
+        # Resolve the live registry every tick: toggles, new sources, and share
+        # changes take effect in the worker without a runtime rebuild.
+        for source_id in self._normalized_pool_source_shares():
+            if not source_id.startswith("custom_"):
+                continue
+            try:
+                result[source_id] = await self._tick_platform_producer(
+                    source_family=source_id, producer=provider(source_id)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("custom source producer failed: source=%s", source_id, exc_info=True)
+                result[source_id] = {
+                    "source_family": source_id,
+                    "reason": "error",
+                    "error": type(exc).__name__,
+                }
+        return result
+
     async def _loop_keyword_planner(self) -> None:
         """P1.6: deficit-pulled merged keyword generation (flag-gated).
 
@@ -2342,7 +2400,9 @@ class ContinuousRefreshController:
             produce_fn = getattr(producer, "produce_if_due", None)
             if not callable(produce_fn):
                 return {"source_family": source_family, "reason": "not_callable"}
-            limit = max(1, min(deficit, self.discovery_limit))
+            limit = self._bounded_one_shot_inline_eval_limit(
+                max(1, min(deficit, self.discovery_limit))
+            )
             if _call_accepts_limit(produce_fn):
                 raw_result = await produce_fn(limit=limit)
             else:
@@ -3912,6 +3972,9 @@ class ContinuousRefreshController:
                 stranded.append("web")
             elif source == "weibo" and self.weibo_producer is None:
                 stranded.append("weibo")
+            elif source.startswith("custom_"):
+                if self.custom_source_producer_provider is None:
+                    stranded.append(source)
             elif source not in {
                 "bilibili",
                 "xiaohongshu",
@@ -3950,6 +4013,11 @@ class ContinuousRefreshController:
                 if isinstance(projected, Mapping):
                     raw = projected
         normalized: dict[str, int] = {}
+        from openbiliclaw.runtime.source_policy import _custom_source_rows
+
+        registered = {
+            str(row["source_id"]) for row in _custom_source_rows(self.database) if row["enabled"]
+        }
         for source in _PLATFORM_SOURCE_ORDER:
             try:
                 share = int(raw.get(source, 0))
@@ -3961,13 +4029,19 @@ class ContinuousRefreshController:
             source_key = str(source).strip().lower()
             if not source_key or source_key in normalized:
                 continue
+            if source_key not in _PLATFORM_SOURCE_ORDER and source_key not in registered:
+                continue
             try:
                 share = int(raw_share)
             except (TypeError, ValueError):
                 continue
             if share > 0:
                 normalized[source_key] = share
-        return normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+        return (
+            normalized
+            if callable(provider)
+            else (normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES))
+        )
 
     def _requested_refresh_limit(
         self,

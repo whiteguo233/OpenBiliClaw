@@ -660,6 +660,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 动态来源身份贯通 | ✅ | `DiscoveredContent` 与候选写入携带 `source_id/source_name`；共享 pipeline 按实例做配额，按 canonical URL 去重，保留跨来源 provenance。 |
 | 5.1 搜索策略 | ✅ | compact 画像生成搜索词（关闭 thinking / core-memory 注入）+ 6 小时 query 缓存 + B 站搜索 + `bvid` 去重 + `DiscoveredContent` 映射 |
 | B 站近期供给 lane | ✅ | 生产 composition 在既有 SearchStrategy 请求预算内预留 1 个 `pubdate` 请求、最多 5 条；普通/近期结果交错进入评估窗口，并以 `search:recent` + raw provenance 留痕。它不改变 relevance、admission、来源策略或配额。 |
 | 5.2 排行榜策略 | ✅ | 全站榜 + 非 0 分区 rid 本地洗牌轮转覆盖 + LLM 评分筛选 |
@@ -742,6 +743,13 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+### 动态网站候选
+
+`DiscoveredContent.source_id/source_name` 和 `DiscoveryCandidateWrite` 的同名字段将网站实例从 producer 传入持久候选、cache 与推荐 DTO。`source_platform` 仍是 `web`；流程 ID、版本和运行 ID 属于 `source_metadata`，不成为另一份内容身份。
+
+`DiscoveryCandidatePipeline.enqueue_candidates()` 在过滤已知内容前记录来源证据；同站不同流程或不同来源发现相同 URL 时只保留一条候选。共享 evaluator、时效判断、分数阈值和两轮 share-aware admission 不变，来源实例只影响配额归属。正常发现与灵感探索均从当前画像规划查询，按实例 claim `regular` / `explore` 词池，再通过同一个流程执行器发现候选。
+
 
 ### Learned scorer 校准 API
 

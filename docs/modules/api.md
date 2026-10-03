@@ -157,7 +157,48 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 配置 / accepted 证据不一致时账号投影暂停但公开 discovery 不停。端点不接收或保存 Cookie 值、
 页面 HTML、私信或 CSRF 字段。
 
-## Web recipe 与来源状态
+## 动态网站来源
+
+动态来源使用独立的 `/api/custom-sources` 命名空间。一个网站有稳定 `source_id`、
+独立占比与间隔，可持有多个发现 workflow；推荐 DTO 添加 `source_id/source_name`，
+内容平台仍为 `source_platform="web"`。三端显示网站名，各站点与内置平台平级分配候选池。
+旧 `/api/sources` typed HTTP recipe 的兼容边界见下一节。
+
+| 方法与路径 | 契约 |
+|---|---|
+| `GET /api/custom-sources` | `{items,executors}`；每项含 `source_id,name,entry_url,origin,intent,target_share,interval_minutes,enabled,session_id,health,workflows`；executors 返回 `id,available,detail`，Playwright 安装进度通过 `status` 表达：`installing/ready/failed` |
+| `POST /api/custom-sources/executors/playwright/install` | 显式请求后台安装 Playwright 浏览器；接受后 HTTP `202`、`{status:"installing"}`，通过来源列表中的执行器状态查询结果 |
+| `PATCH /api/custom-sources/{source_id}` | 部分更新 `name,target_share,interval_minutes,enabled`，返回 `{source}`；占比 1–20，间隔 5–10080 分钟 |
+| `DELETE /api/custom-sources/{source_id}` | 归档来源并停止后续发现 |
+| `GET /api/custom-sources/{source_id}/runs` | `{items}`；摘要包括 `run_id,workflow_id,version,executor,status,started_at,completed_at,discovered_count,enqueued_count,error` |
+| `POST /api/custom-sources/drafts` | `{url,intent,name?,executor,source_id?,separate_source?,session_id?}`，executor 为 `auto/http/playwright/ego`；创建待试跑草稿，尚不启用定期发现 |
+| `POST /api/custom-sources/drafts/{draft_id}/trial` | 重试该草稿，返回相同草稿响应形状 |
+| `POST /api/custom-sources/drafts/{draft_id}/activate` | 接受可选 `target_share,interval_minutes`，确认启用后返回 `{source}` |
+| `POST /api/custom-sources/{source_id}/login` | 创建人工登录接管，返回 `draft_id,takeover_url,…` |
+
+草稿公开响应含 `draft_id,status,source_id?,name,intent,executor,sample_items,detail`，
+按草稿状态可另含 `entry_url,takeover_url,query_mode,trial_success`，不回传内部 workflow 或会话凭据。
+`status` 为 `ready/needs_login/needs_details/failed`。`health` 提供
+`status,last_error,last_success_at,next_run_at`，workflow 摘要提供
+`workflow_id,version,executor,status,intent`；UI 根据实际健康与运行证据显示结果，
+不会把「已创建草稿」当成已启用或成功发现。
+
+聊天工具 `prepare_discovery_source/trial_discovery_source` 为 `soft_write`；
+`activate_discovery_source/manage_discovery_source` 为 `hard_write`，由聊天确认卡批准后调用。
+设置页的保存、启停和安装按钮属于用户显式动作，直接调用已鉴权 API，不另走聊天审批；
+归档在界面确认后发送 DELETE。工具职责见 [Agent 模块](agent.md#动态网站来源的对话与管理)。
+
+共享设置组件只为不可用的 Playwright 显示「安装浏览器」，不提供 Ego 安装入口。
+安装中且页面与来源设置区域可见时，每 3 秒读取一次 `GET /api/custom-sources`，只更新
+执行器提示，保留正在编辑的来源字段；隐藏、销毁或安装结束后停止该轮询。`202` 只代表
+已开始安装，完成或失败以随后 `executors` 返回的 `available/status/detail` 为准。
+
+登录交互使用后端页面 `/web/source-login.html?draft_id=…`。三端来源管理只接受同后端
+origin、该路径并带 draft ID 的跳转地址。用户在接管页面登录并继续，不向聊天或来源
+配置粘贴 Cookie/密码。执行器能力由 `executors` 的 available/detail 表达；Ego 所需的
+宿主应用不能从安装 Skill 或从 CLI 可调用这一点推断为 Linux/Docker 原生可用。
+
+## 旧版公开 Web recipe 与来源状态
 
 通用 Web 是匿名、discovery-only 的 recipe 来源。只读 probe 可以从用户粘贴的公开 URL 生成
 待检查的 `feed / sitemap / listing` 草稿；正式端点仍只管理用户显式确认保存的计划。它不会把

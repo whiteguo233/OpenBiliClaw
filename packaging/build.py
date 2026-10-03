@@ -152,6 +152,15 @@ def build_x_extra_install_command(*, pip_available: bool | None = None) -> list[
     return [sys.executable, "-m", "pip", "install", target]
 
 
+def ensure_browser_dependency() -> None:
+    """Bundle Playwright's matching Node driver; users install Chromium on first use."""
+
+    if importlib.util.find_spec("playwright") is not None:
+        return
+    target = str(PROJECT_ROOT)
+    subprocess.check_call([sys.executable, "-m", "pip", "install", target])
+
+
 def project_dependency_spec(package_name: str) -> str:
     """Return the default runtime dependency spec for one package."""
 
@@ -894,6 +903,7 @@ def build(
 ) -> None:
     """Run PyInstaller."""
     ensure_pyinstaller()
+    ensure_browser_dependency()
     bundle_version = make_bundle_version(archive_version or read_project_version())
 
     # X (Twitter) discovery is bundled by default (spec §8 = always-bundle).

@@ -33,7 +33,9 @@
 - [GitHub 来源文档](modules/github.md) / [冻结契约](platform-source-contract.github.toml) / [验收记录](platform-source-acceptance.github.md) — 官方只读 REST API、公开 repository discovery、starred repositories 初始化与三端文字卡
 - [Linux.do 来源文档](modules/linuxdo.md) — 扩展同源只读 GET、五路 discovery、三类个人 bootstrap、布尔登录态与隐私边界
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
-- [通用 Web 来源文档](modules/web.md) — 粘贴 URL 的只读 authoring probe、显式 feed / sitemap / static listing recipe、匿名安全传输、状态账本、formal discover 与确认保存边界
+- [动态网站与兼容 Web 来源文档](modules/web.md) — 独立来源份额、同站多版本 workflow、HTTP / Playwright、人工登录接管、普通候选评估与三端管理；旧公开 recipe 单独保留兼容边界
+- [动态网站来源验收](platform-source-acceptance.dynamic-web.md) — 按执行环境与实际证据区分自动化、隔离 UI 和真实网站验收；Ego bridge 未接入
+- [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求
 - [聊天真实请求复验（9月28日）](testing/2026-09-28-chat-real-request-recheck.md) — 19 次真实模型请求、三端 UI、延迟样本与仍存在的限制
 - [聊天完整复查（9月30日）](testing/2026-09-30-chat-comprehensive-e2e.md) — 最新 main 合并验收、三端草稿修复、审批冲突/任务恢复、真实限流与功能流程优化优先级
@@ -64,7 +66,8 @@
 | LLM 多模型支持 | [modules/llm.md](modules/llm.md) | `src/openbiliclaw/llm/` | ✅ 统一结构化 JSON 容错 + Ollama embedding 空凭据静默；十二来源 planner 与 GitHub repository 查询约束已记录 |
 | B 站接入层 | [modules/bilibili.md](modules/bilibili.md) | `src/openbiliclaw/bilibili/` | ✅ M3 完成 |
 | 多源适配层 | [modules/discovery.md](modules/discovery.md#多源适配层) | `src/openbiliclaw/sources/` | ✅ 既有多源 discovery；GitHub repository source 为本分支 🧪 接线，验收见专用 ledger |
-| 通用 Web 接入 | [modules/web.md](modules/web.md) | `src/openbiliclaw/sources/web_probe.py` + `web_recipe.py` + `web_public.py` + `web_adapter.py` + `runtime/web_producer.py` | ✅ Phase B capability increment：桌面/插件/CLI URL probe 只生成草稿，采用不保存；Phase A formal discovery 仍只运行显式公开 feed / sitemap / listing recipe |
+| 动态网站 / Web 接入 | [modules/web.md](modules/web.md) | `sources/custom_sources.py` + `workflow_store.py` + `workflow_service.py` + `workflow_executors.py` + `runtime/custom_workflow_producer.py`；旧 `web_*` recipe 保留 | 🧪 独立 `source_id` 份额、多版本 workflow、HTTP / Playwright、人工登录接管与三端来源管理已接线；Ego 不可用，真实验收见专用 ledger |
+| 浏览器发现工作流 | [modules/browser-workflows.md](modules/browser-workflows.md) | `sources/browser_workflow.py` + `workflow_executors.py` | 🧪 声明式计划编译、持久登录会话、人工接管与精确域权限；Playwright 执行，Ego 适配器尚未接入 |
 | Bangumi 接入 | [modules/bangumi.md](modules/bangumi.md) | `src/openbiliclaw/sources/bangumi*.py` + `runtime/bangumi_producer.py` | ✅ 官方匿名只读 API + 公开收藏 init + search/ranked/latest discovery |
 | GitHub 接入 | [modules/github.md](modules/github.md) | `src/openbiliclaw/sources/github*.py` + `runtime/github_producer.py` | 🧪 官方匿名/可选 PAT API + public starred init + repository search/ranked/latest 已接线；真实门禁以 [acceptance ledger](platform-source-acceptance.github.md) 为准 |
 | Linux.do 接入 | [modules/linuxdo.md](modules/linuxdo.md) | `src/openbiliclaw/sources/linuxdo_tasks.py` + `runtime/linuxdo_producer.py` + `extension/src/**/linuxdo*` | ✅ 只读实现、fixture、双浏览器构建与真实已登录 Chrome E2E 已完成 |

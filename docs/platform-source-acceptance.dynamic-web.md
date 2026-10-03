@@ -1,0 +1,119 @@
+# 动态 Web Discover 来源验收
+
+日期：2026-10-02 至 2026-10-03。范围：`capability-increment`，发现能力与登录接管；不包括账号历史导入、互动事件或站内发布/收藏。契约：[dynamic-web](platform-source-contract.dynamic-web.toml)。兼容的公开 HTTP recipe 仍遵守 [web](platform-source-contract.web.toml)。
+
+本轮已验证真实网站的自然语言浏览器建源、持久化后无模型重复执行，以及独立的真实 Feed 评估、推荐与反馈链路。仍非全范围完成声明：首次全量 Python 回归失败，修复后完成分组回归，尚未再次完成全量运行。Ego Lite 执行桥接未接入，真实账号、桌面安装态及 Docker 运行态证据单列，不能以本机 fixture 代替。
+
+## 工作区与数据边界
+
+- 分支：`feat/dynamic-discovery-sources`。
+- worktree：`.worktrees/dynamic-discovery-sources`；从 `58da9380` 接手公开 Web 对话订阅，再以 `fe5ec41e` 整合 main `5daad72c` 的聊天生命周期。
+- Python：主工作区 `.venv/bin/python`，所有命令设置 `PYTHONPATH="$PWD/src"`；真实运行已打印并确认导入位于当前 worktree。
+- 未写入用户生产数据库、记忆或配置；没有合入 main、部署、发布或推送。
+- 浏览器 fixture、API 与真实 Feed 验收使用独立数据目录；浏览器执行器另使用独立 profile。真实模型验收从当前配置读取 provider/model/route 和既有评分门槛，在构造服务前把 `data_dir` 重定向到临时目录，仅使用合成 Django/Python 兴趣画像，不导入真实用户画像。
+- 已获准的正式生命周期与推荐 E2E 可以在隔离目录写草稿、来源、流程版本、运行/调度/seen 状态、候选、内容缓存、推荐文案、embedding 缓存、LLM usage、合成记忆初始化和合成画像，以及测试推荐的本地反馈事件。这些写入是验证正式路径的一部分；没有向网站发布、关注、收藏或保存。
+- 契约 `smoke.sinks` 的零投影约束描述 `smoke_only` 预览，不适用于上述明确获准的隔离正式 E2E。创建持久草稿本身也不是零写入预览。合成画像和本地推荐反馈不构成网站账号历史导入或网站互动事件采集能力。
+- 推荐 E2E 的持久证据根为 `/tmp/dynamic-source-recommendation-e2e-xv6pouwn/`：`data/smoke.db`、`data/embedding_cache.db` 及脱敏日志；`MemoryManager.initialize()` 仅指向该根下的 `data/memory`。证据确认 `production_data_written=false`、`config_write_attempts=0`。API 使用真实 ASGI 路由及隔离依赖注入，不启动服务 lifespan，也不代理到现有生产 API。
+
+## 已实现的产品路径
+
+`聊一聊 → prepare_discovery_source → 持久草稿与试跑 → 登录接管（需要时）→ activate_discovery_source 审批卡 → 来源实例与流程版本 → 既有 quota/关键词/候选评估 → 推荐池`。
+
+`custom_<uuid>` 是独立配比与来源归属；`source_platform=web` 和 canonical URL 内容 ID 保持稳定。同站默认追加流程，可以拆成多个来源；重复内容只有一个库存归属，同时保存多来源证据。浏览器只持久化不含代码、凭证的受限流程，账号会话由本机或服务器上的私有 profile 保存。
+
+试跑不占库存份额；审批前不启用调度。启用事务覆盖来源创建、版本发布及草稿幂等标记。周期任务固定版本、参数与会话引用；停用/归档/版本变化阻止旧任务继续提交。入队异常或容量不足不能把未接受的条目标记为 seen。登录失效暂停对应流程；修复在原目标与范围内有界试跑，成功后才发布新版本。
+
+## 验证记录
+
+| 项目 | 适用性 | 执行 | 证据与边界 |
+| --- | --- | --- | --- |
+| 合并后的旧聊天与公开 Web 回归 | required | PASS | 111 tests，覆盖流式生命周期、审批、skills、来源 API |
+| 动态 registry / 独立配比 / 双轨关键词 / OpenClaw | required | PASS | 最新广泛组合 643 tests / 55.70s，覆盖 quota、候选 admission、关键词、inspiration、OpenClaw、Agent 审批、身份与 Web 状态；命令清单 `/tmp/dynamic-source-backend-final-broad.sh`，日志同名 `.log` |
+| 来源发布原子性、重复确认、停用 fence、入队重试 | required | PASS | 生命周期初组 11 tests；最后补充 repair 试跑期间停用不能 publish、100 次之后关键词仍轮换，组合 35 passed / 7.02s，`/tmp/dynamic-source-last-lifecycle.log`；队列满后重试可接纳 |
+| stale / superseded 运行历史结算 | required | PASS | 新增 6 个边界 case，相关组合 61 passed / 11.17s，`/tmp/custom-workflow-run-history-green.log`，过期或被替换的运行保留准确终态 |
+| 真实 SSE 审批卡 | required | PASS | 从真实草稿生成可读摘要；未批准不启用、拒绝不建源、重复批准不重复创建 |
+| 全局静态检查 | required | PASS | `/tmp/dynamic-source-ruff-final.log`：All checks passed；`/tmp/dynamic-source-mypy-final.log`：318 source files 无问题；`/tmp/dynamic-source-format-final.log`：767 files already formatted。首次 format check 指出 `api/app.py`，格式化后最终复核通过 |
+| 全量 Python 回归 | required | FAIL（首次） | 10188 passed / 68 skipped / 34 failed，2127.60s；`/tmp/dynamic-source-pytest-full.log`。34 项已分别修复并定向回归通过，见下表；尚无修后全量全绿证据 |
+| 自定义来源 / 安装器 / 浏览器组合回归 | required | PASS | 141 passed / 57.42s，`/tmp/dynamic-source-acceptance-final-tests.log`，覆盖 custom、installer、compiler、executor、install 与 proc-no-window；后续生命周期组合及真实结构观察建源另列，不与独立 audit/contract 64 项混算 |
+| 最终改动后的发布前回归 | required | PASS | 122 passed / 57.66s，`/tmp/dynamic-source-release-check-tests.log`；覆盖自定义生命周期/历史/日期/审批/契约、compiler/executor/browser install、Windows no-window、packaging extra/installer。与此前 141 等组合有重叠，不累计为独立覆盖数，也不等同全量重跑 |
+| 桌面 / 移动 / popup 共享组件 | required | PASS | 最终 Web JS 142（含接管页 5），`/tmp/dynamic-source-js-final.log`；扩展完整串行 1539；Python surface 21；typecheck/build/preflight 19 项。扩展默认并发首次遇到既有 native-save 150ms 时序断言失败，串行完整重跑通过，未改产品绕开该断言 |
+| 渲染及操作 | required | PASS | 隔离 fixture API 的桌面与 360px 移动比例、间隔、启停、标签和接管跳转；`output/playwright/dynamic-sources/`。这不是安装态扩展或真实网站流程证据 |
+| 登录接管页面 | required | PASS（隔离 UI） | 真实 Chrome 操作真实 `source-login.html`，后端为合成 fixture：1280/360px、两个授权按钮、单个 `login_origin` POST、两次填入后本页值为空、一次 resume 为 ready；详见下文 |
+| Django 官方真实 Feed 建源与试跑 | required | PASS | 系统 DNS/TLS 读取 `https://www.djangoproject.com/rss/weblog/`，ready 后启用独立来源，份额 2 |
+| 真实 Feed → LLM / embedding → 入池（早期独立轮次） | required | PASS | 10 fetched / 10 retained / 10 evaluated / 9 admitted，DeepSeek V4 Flash + Ollama nomic-embed-text；146.62s，门槛未修改。`/tmp/dynamic-source-live-eval-10-final.log`、`/tmp/dynamic-source-live-eval-10.json`；与下一行不是同一运行 |
+| 真实 Feed → 评估 → 文案 → 推荐 API / 反馈（独立完整后段） | required | PASS | 10 fetched / retained / evaluated → 7 admitted → 5 durable copy → API 首次 5 张卡；规范身份和本地 feedback 幂等已验。`/tmp/dynamic-source-recommendation-e2e-xv6pouwn/evidence.json`；详见下文。此行的推荐后段与下方浏览器建源是独立运行证据 |
+| 首次小批次真实评估 | required | PASS | 10 fetched / 3 retained / 3 evaluated / 0 admitted，原因是低相关分数；不将抓取成功写成入池成功 |
+| 真 Chromium 执行器 / fixture 登录持久化 / SSO / 越界 | required | PASS（受控网站） | 浏览器组合 114 tests；实际 executor 访问本地 fixture，覆盖登录后重开复用、清 Cookie 后 `login_required`、显式人工 SSO、资源/内容权限区分与越界阻断。不是接管页的 mocked API，也不等同真实外站账号；详见下文 |
+| Hugging Face Papers 动态检索 | required | BLOCKED | 真实 Chromium 访问 `https://huggingface.co/papers`，11.31s 后 `Website did not load before the browser timeout`，模型调用 0、样例 0、未启用、未登录；`/tmp/dynamic-browser-hf-smoke.json`。不能记为未尝试或抓取成功 |
+| Django 真实浏览器自然语言建源与持久复用 | required | PASS | `/tmp/dynamic-browser-django-action-schema-smoke.json`：真实 Chromium / DNS / TLS，DeepSeek V4 Flash 单次调用 → 严格编译 → trial ready 5 条 → 隔离启用（2 份 / 30 分钟 / version 1）→ fetch 5 条；DB 关闭重开且无 LLM 服务仍 fetch 5 条、计划 SHA 相同，`persisted_repeat_passed=true`；42.94s，无真实登录或生产写入。历史失败轮次保留，详见下文 |
+| Python wheel 构建与资源完整性 | required | PASS | 最终改动后再次 `uv build --offline --wheel` 成功，`/tmp/dynamic-source-wheel-build.log`；产物 `/tmp/openbiliclaw-dynamic-source-dist/openbiliclaw-0.3.225-py3-none-any.whl` 含新服务、浏览器 helper、接管 HTML 与共享来源 JS，metadata 默认依赖 `playwright>=1.48`；这不是桌面安装或容器运行验收 |
+| 豆瓣小组真实登录 | required | NOT_RUN | 未取得当前账号的现场登录证据；fixture 登录不替代真实账号证明 |
+| Docker 运行态 | required | NOT_RUN | 当前机器没有 Docker CLI，未构建或运行容器；Dockerfile/安装代码与测试不能替代容器运行证明 |
+| macOS / Windows 桌面安装态 | required | NOT_RUN | 本机 macOS 源码及真实 Chromium 验证不证明打包安装态；本轮没有完成两系统桌面安装验收 |
+| 安装态浏览器扩展 | required | NOT_RUN | 当前动态来源仅有构建、完整组件测试与隔离 Web UI；此前旧 Web recipe 分支的安装态截图不是本轮动态来源的证据 |
+| Ego Lite 可选执行器 | required | BLOCKED | 当前只诊断 capability unavailable；不能把 pluggable 接口或安装检测写成真实执行桥接 |
+| iframe / 弹窗依赖的登录 | 当前未支持 | NOT_RUN（成功路径） | 第一版只支持顶层页面，嵌入页/额外页面被阻止；fixture 的拒绝行为验证不能推导为嵌入式验证码、弹窗 SSO 可用 |
+| 账号画像导入、增量兴趣事件、站内发布/收藏 | N/A | PASS（排除验证） | `tests/test_custom_source_contract.py` 执行生产路径，验证无账号 bootstrap/信号导入、无扩展任务/Cookie 同步、原生保存不支持及无虚构指标；17 个契约排除项均有节点依据 |
+| 来源注册审计 | required | PASS（注册） | 31 PASS / 17 N/A / 11 MANUAL / 0 MISSING；`required_missing=0`、`registration_check_passed=true`、`fully_verified=false`，`/tmp/dynamic-source-audit-final.json` |
+
+一次 10 条模型 smoke 在 240 秒外层验收预算内超时，保留原失败记录；把验收进程预算调整为 600 秒后重跑通过，未改变产品的聚合等待、模型路由或入池门槛。
+
+## 首次全量失败与修后分组回归
+
+以下数字是各组完整定向回归的测试数，不能相加后宣称等价于重跑整套 Python。首次全量的 34 项失败分布为 DTO 5、来源工具 1、inspiration 20、CLI 1、无窗口子进程检查 1、浏览器执行器 6；原始 FAIL 日志保留。
+
+| 首次失败组 | 修后结果 | 复核入口 |
+| --- | --- | --- |
+| API / favorite / watch-later 精确 DTO 断言 5 项 | PASS，627 tests | `tests/test_api_app.py`、`tests/test_favorites_api.py`、`tests/test_watch_later_api.py`；补齐兼容默认 `source_id/source_name=""`，不改变既有内容身份 |
+| inspiration 20 项 + 工具来源识别 1 项 | PASS，56 tests | `/tmp/dynamic-source-backend-regression.log`；`tests/test_inspiration_pipeline.py`、`tests/test_agent_tool_action_contracts.py` |
+| CLI 1 项 | PASS，260 tests | `/tmp/dynamic-source-cli-final.log`；`tests/test_cli.py` |
+| 浏览器执行器 6 项及相关流程组合 | PASS，114 tests | `/tmp/dynamic-browser-tests-final.log`；修复实际浏览器启动/网络执行兼容后复测，未跳过执行器边界 |
+| Windows 无窗口子进程静态检查 1 项 | PASS（定向复测） | `tests/test_proc_no_window.py::test_every_backend_spawn_site_hides_the_console_window`，亦包含于 `/tmp/dynamic-source-acceptance-final-tests.log` 的 141 项组合；这是 spawn 约束检查，不是 Windows 安装态验收 |
+| 动态注册 audit + capability 排除 + skill 约束 | PASS，64 tests | `/tmp/dynamic-audit-final-tests.log`；`tests/test_audit_platform_source.py`、`tests/test_custom_source_contract.py`、`tests/test_add_platform_source_skill.py` |
+
+## 真实推荐后段的独立证据
+
+`/tmp/dynamic-source-recommendation-e2e-xv6pouwn/evidence.json` 记录实际系统 DNS/TLS、Django 官方 RSS、配置中的 `openai_compatible/deepseek-v4-flash` 与 `ollama/nomic-embed-text`。`discovery.evaluate_batch` 和 `recommendation.write_expression` 均记录成功的真实调用。10 条候选中 7 条入池、3 条因原始 0.60 门槛被拒绝；explore 0.58 与其余门槛也没有改动。
+
+5 条文案持久化后，初次按既有多样性规则选出 3 条，真实 `GET /api/recommendations` 按正常薄页补齐返回 5 张卡。5 个 DTO 均验证 `source_platform=web`、同一独立 `source_id`、`source_name=“Django 官方博客”`，canonical `item_key` 各自对应唯一 content-cache 行。随后实际 `POST /api/feedback` 使用过期 recommendation ID 加 canonical item key，能定位正确推荐；同一请求重放两次均 200，重放 `duplicate=true`，数据库仅一条对应事件。忽略一张卡后最终 GET 为 4 张，不能把这个 4 与初始 5 混淆为丢卡。
+
+该轮评估耗时 306.74s，文案与首个 API 验证另 24.74s，后续 API 复核 0.46s。验收脚本曾取错 `reply_style` 配置位置、查询反馈事件时遗漏 `feedback:` 命名空间，修正脚本后续验，不为此修改产品代码。保留 `initial-attempt.json`、`api-projection-attempt.json` 及最终证据。这组 ASGI 验证不包含可视化浏览器卡片，也没有跑完整后台服务生命周期。
+
+## 真实浏览器建源与无模型重复执行
+
+最终 `/tmp/dynamic-browser-django-action-schema-smoke.json` 使用真实 Chromium 观察 `https://www.djangoproject.com/weblog/`，再由实际 `openai_compatible/deepseek-v4-flash` 单次调用生成声明式计划，经严格 compiler 与真实试跑获得 5 条样例。最终计划以 `ul.list-news > li` 为条目、`h2 > a` 为链接，内容 origin 仍只有 Django 原站；资源 origin 单独声明。样例只包含已获得的标题和 URL，作者、发布时间为空，没有用猜测值补全。
+
+随后在隔离临时数据库启用 1 个来源，`target_share=2`、`interval_minutes=30`、workflow version 1，首次执行得到 5 条。关闭数据库再重开，以 `llm_service=None` 构造服务，读取已保存的计划再次得到同样 5 条 URL；两次 plan SHA-256 均为 `555e47cc5d9a946ea2e2ad8aa4ed26e6c10d8de891b252c3e7434d5cb78f0063`，`persisted_repeat_passed=true`。全轮 42.94s、模型调用 1 次、`source_activated=true`、`production_data_written=false`、`login_attempted=false`。该重复执行验证持久计划不依赖再次让模型生成；并未等待完整 30 分钟调度周期，也不替代真实账号登录证明。
+
+先前失败保留：`/tmp/dynamic-browser-django-follow-fixed-smoke.json` 为模型 JSON 解析失败；`/tmp/dynamic-browser-django-final-smoke.json` 在格式适配后为 `Collection selectors need verification`（1 次调用、44.18s）。补充 DOM 父节点结构观察与 action schema 后，同一真实网站的最终结果为上面的 PASS；不删除这些暴露产品问题的轮次。Hugging Face 仍为实际加载超时的 BLOCKED。
+
+## 登录证据分层
+
+接管页面使用真实 Chrome 与真实工作树 HTML，API 在 `127.0.0.1:18482` 提供固定合成响应，没有运行网站执行器或连接外站账号。桌面 1280px、手机 360px 均可读；修复前长字段使 `scrollWidth=384`，修复后为 345，未出现横向溢出。两个观测登录域显示为按钮，点击只向 `/takeover` 提交一次选定的 `https://login.synthetic.example`；两个合成字段各填一次，提交后本页输入均为空；一次 `/resume` 后显示成功并提醒新来源回聊天确认。
+
+页面还修复了 `/resume` 失败后 `closed` 状态使画面永久停止刷新的问题。5 项脚本回归覆盖显式域授权、填入前清空且失败不回填、失败重新打开接管、成功后停止轮询，以及缺草稿 ID 的初始错误；最新全部 Web JS 为 142 PASS。浏览器和 fixture 服务已关闭。证据在 `output/playwright/dynamic-sources/`：
+
+- `login-ui-evidence.json`：页面 SHA-256、视口尺寸、请求计数与 UI-only 范围。
+- `login-fixture-requests.jsonl`：填入值已脱敏，只留长度与 selector。
+- `login-mobile-360.png`、`login-mobile-ready.png`、`login-desktop-ready.png`：已实际查看的授权/完成状态。
+
+另一组 `tests/test_workflow_executors.py` 是实际 Playwright Chromium 执行器访问受控 HTTP 网站，具有不同证据含义：`test_real_browser_login_handoff_persists_session_and_detects_expiry` 执行人工表单、确认私有内容、关闭重开复用 Cookie，并在清 Cookie 后得到 `login_required`；`test_real_browser_requires_explicit_manual_sso_origin` 证明后台发现不自动走登录域、明确配置后的人工接管可完成 fixture SSO 并恢复只读采集。CDN 资源放行仍不允许作为内容导航，未授权登录域只被观测、不被跟随，私网/跨端口重定向和后台 POST 被阻止。私网 fixture 能运行来自仅测试依赖注入，不能从计划、配置或 API 开启。
+
+这些测试尚不能证明豆瓣等真实账号、嵌入式验证码、弹窗 SSO 或任意网站登录成功。Django 的真实匿名浏览器建源已单独通过，Hugging Face 的真实加载超时仍保留在上表。
+
+## 注册审计与剩余门槛
+
+注册审计已适配实例 registry 的实际入口，既有固定 `web` 文件不能冒充动态来源接线。17 个 N/A 指向执行生产路径的动态契约测试，而非旧 HTTP-only 边界测试；64 项 audit/contract/skill 回归通过。Discover 在来源家族层面为 optional-credential，因为匿名流程可用；每个 `auth.required=true` 流程的登录是硬前置，过期暂停，不能用家族级可选登录绕过。
+
+11 项 MANUAL 仍为：`identity.semantics`、`auth.identity-evidence`、`upstream.response-contract`、`engagement.branch-coverage`、`discover.operational-contract`、`e2e.action-boundary`、`transport.fallback-ownership`、`events.mapping-and-scope`、`task.runtime-bounds`、`e2e.smoke-sinks`、`manual.semantic-e2e`。本记录提供逐层证据，但不把静态审计的 `registration_check_passed` 改写为全范围完成；真实账号、尚未运行的目标环境、Hugging Face 加载与 Ego bridge 仍保留各自门槛。
+
+## 命令与复核入口
+
+```bash
+PYTHONPATH="$PWD/src" /Users/white/workspace/OpenBiliClaw/.venv/bin/python -m pytest -q
+PYTHONPATH="$PWD/src" /Users/white/workspace/OpenBiliClaw/.venv/bin/python -m mypy src/
+PYTHONPATH="$PWD/src" /Users/white/workspace/OpenBiliClaw/.venv/bin/python -m ruff check src/ tests/
+PYTHONPATH="$PWD/src" /Users/white/workspace/OpenBiliClaw/.venv/bin/python scripts/audit_platform_source.py --contract docs/platform-source-contract.dynamic-web.toml --check --json
+```
+
+注册审计只证明接线，不能关闭真实登录、浏览器或跨系统运行的验收门槛。所列 `/tmp` 日志是本次本机证据；可复现的行为测试在仓库中。

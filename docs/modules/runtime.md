@@ -24,6 +24,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 动态网站来源独立调度 | ✅ | 注册的 `custom_<uuid>` 逐个参与现有 share/deficit 算法与来源锁；daemon 和 OpenClaw 一次性执行均接入同一候选评估链。普通与探索关键词以实例 ID 隔离，禁用或归档后停止新调度。 |
 | Web 独立宿主与动态配额 | ✅ | API daemon 与 OpenClaw standalone 均注册 Web adapter/producer；`pool_source_shares_provider` 按数据库当前有效 enabled recipe 动态重算配额，新增/停用立即反映。无 daemon 的短请求复用有界 inline evaluation 与 durable copy，剩余工作留待后续请求 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
 | Windows 后台子进程不再弹控制台窗口 | ✅ | 新增 `openbiliclaw/proc.py::no_window_kwargs()`：Windows 下返回 `creationflags=CREATE_NO_WINDOW`，其它平台返回空 dict，可无条件 splat。后端自行发起的全部外部命令都已接入——Reddit 的 `rdt` / `opencli`（含状态探测与每个关键词一条的发现命令）、自动更新的 `git`、`agent-browser` 版本探测与命令、mcporter 灵感检索、SQLite 修复用的 `sqlite3` / `lsof`、托管 ollama 退出用的 `taskkill`。用户在终端主动敲的命令（`openbiliclaw` CLI、`codex login`、dev 用 optimizer）保持原样，它们本来就有自己的控制台且需要交互提示。`tests/test_proc_no_window.py` 用 AST 扫描 `src/` 全量守住这条约定：任何新的 `subprocess.run` / `Popen` / `create_subprocess_exec` 漏掉该 kwarg 即测试失败（`os.name == "nt"` 分支的 else 支路自动豁免）。第三方库自己起的孙进程不在该 flag 覆盖范围内，已知的一处是 rdt-cli 凭据超 TTL 时的 `uv run --with browser-cookie3`，靠 `_RDT_CREDENTIAL_TTL_SECONDS` 比 rdt 阈值提前 6 小时判过期来规避（见 `sources/reddit_tasks.py` 常量注释）。X 的 twitter-cli 与 YouTube 的 yt-dlp 均为进程内库调用，不起子进程。 |
@@ -128,6 +129,19 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+### 动态来源与运行模式
+
+流程发布新版本时，在同一事务把旧版本未结束的运行记录结算为 `superseded`。停用、租约过期或版本变化后的迟到完成，只把匹配旧 run/token 的历史记录结算为 `stale`，不能修改新版本状态、seen 或 cursor；历史页面不会永久显示旧任务正在运行。普通与探索查询按每个流程的完整运行次数轮换，不受最近 100 条历史分页影响。
+
+动态工作流交接候选时区分日期策略排除与临时队列压力：严格日期窗口排除的内容不入候选池，但可记入该流程的 seen 并在完整扫描后推进 cursor；真正未保留的合格内容不记 seen，保留旧前沿重试。混合批次逐条判断，不因部分合法排除吞掉其它内容的重试机会。
+
+`effective_pool_source_shares(config, database=...)` 从显式数据库读取来源注册表，将每个启用的 `source_id` 与内置平台一起送入既有比例分配算法。来源增删、份额和启停在下一次 tick 生效；未知自定义 ID 不会占配额。旧 HTTP recipes 继续由原 `web` producer 管理，其聚合份额不吸收动态实例。
+
+`ContinuousRefreshController.custom_source_producer_provider(source_id)` 负责构造轻量 `CustomWorkflowProducer`；实际执行沿用来源锁、可用库存缺额和 raw headroom。单个网站失败保留诊断并继续其它来源。API/发现 worker 用 generation-owned evaluator；OpenClaw standalone 没有常驻循环，`refresh_if_needed()` 在有界 one-shot 模式先执行关键词规划，再运行来源 producer，复用原先最多 4 条的 inline admission 与 awaited copy 路径。两种装配都把 `source_share_targets` 绑定到 controller。OpenClaw 推荐 DTO 也携带 `source_id/source_name`，`source_platform` 筛选参数可接受已注册实例 ID；scope 校验不会开放任意未注册 key。
+
+`KeywordPlanner` 仅把启用来源中 active `query_mode=interest` 的流程纳入普通和探索词池，HTTP feed / 固定查询流程不消耗动态关键词。提示词带网站名称、origin 与用途，不带 session 引用或执行步骤；关键词按当前画像生成，claim/rollback/yield 仍走共享 `discovery_keywords` 生命周期。探索词池需要既有 inspiration 开关和可用 provider；无查询可领取时 producer 保持 `keyword_unavailable`。
+
 
 `RuntimeContext.try_apply_agent_config(config) -> bool` 是配置队列在 reload lock 内使用的同步发布入口：仅允许已知五项聊天配置差异（详见 [配置模块](config.md)），构造新 `AgentLoop` 后同步更新 runtime/tool-context 配置引用。完整候选严格相等时不替换任何组件并返回成功。在途 loop、LLM service、工具、审批 store、画像与学习队列均保留；其他差异返回 `False`，由调用方继续原完整 handoff。成功仍由原队列维护 last-good、修订号和事件通知。
 
