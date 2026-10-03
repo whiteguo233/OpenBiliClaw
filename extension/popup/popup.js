@@ -8025,7 +8025,7 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX" }[
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", weibo: "微博", youtube: "YouTube", tiktok: "TikTok", twitter: "X", github: "GitHub", zhihu: "知乎", reddit: "Reddit", bangumi: "Bangumi", linuxdo: "Linux.do", v2ex: "V2EX" }[
         platformKey
       ] || item.source_platform;
     const sourceCorner = document.createElement("span");
@@ -10764,6 +10764,7 @@ function bindSettings() {
     "douyin",
     "weibo",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -10965,6 +10966,21 @@ function bindSettings() {
     setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
     setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
+    const tiktokEnabled = document.getElementById("cfgTiktokEnabled");
+    if (tiktokEnabled) tiktokEnabled.checked = cfg.sources?.tiktok?.enabled === true;
+    setVal("cfgTiktokMode", cfg.sources?.tiktok?.mode || "auto");
+    setVal("cfgTiktokCookie", cfg.sources?.tiktok?.cookie);
+    setVal("cfgTiktokCookieEnv", cfg.sources?.tiktok?.cookie_env);
+    setVal("cfgTiktokRegion", cfg.sources?.tiktok?.region);
+    setVal("cfgTiktokTzName", cfg.sources?.tiktok?.tz_name);
+    setVal("cfgTiktokTags", (cfg.sources?.tiktok?.tags || []).join(", "));
+    setVal("cfgTiktokCreators", (cfg.sources?.tiktok?.creators || []).join(", "));
+    setVal("cfgTiktokDailyFeedBudget", cfg.sources?.tiktok?.daily_feed_budget);
+    setVal("cfgTiktokDailySearchBudget", cfg.sources?.tiktok?.daily_search_budget);
+    setVal("cfgTiktokDailyTagBudget", cfg.sources?.tiktok?.daily_tag_budget);
+    setVal("cfgTiktokDailyUserBudget", cfg.sources?.tiktok?.daily_user_budget);
+    setVal("cfgTiktokRequestInterval", cfg.sources?.tiktok?.request_interval_seconds);
+    setVal("cfgTiktokMinInterval", cfg.sources?.tiktok?.min_interval_minutes);
     const twitterEnabled = document.getElementById("cfgTwitterEnabled");
     if (twitterEnabled) twitterEnabled.checked = cfg.sources?.twitter?.enabled === true;
     setVal("cfgTwitterCookie", cfg.sources?.twitter?.cookie);
@@ -11199,6 +11215,7 @@ function bindSettings() {
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
+    setVal("cfgPoolShareTiktok", cfg.scheduler?.pool_source_shares?.tiktok);
     setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgPoolShareGithub", cfg.scheduler?.pool_source_shares?.github);
     setVal("cfgPoolShareZhihu", cfg.scheduler?.pool_source_shares?.zhihu);
@@ -11345,6 +11362,29 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 3),
           ...popupSourceDateFieldsForUpdate("youtube")
+        },
+        tiktok: {
+          enabled: checked("cfgTiktokEnabled"),
+          mode: getVal("cfgTiktokMode") || "auto",
+          ...(getVal("cfgTiktokCookie") ? { cookie: getVal("cfgTiktokCookie") } : {}),
+          cookie_env: getVal("cfgTiktokCookieEnv"),
+          region: getVal("cfgTiktokRegion"),
+          tz_name: getVal("cfgTiktokTzName"),
+          tags: getVal("cfgTiktokTags")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+          creators: getVal("cfgTiktokCreators")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean),
+          daily_feed_budget: getInt("cfgTiktokDailyFeedBudget", 3),
+          daily_search_budget: getInt("cfgTiktokDailySearchBudget", 3),
+          daily_tag_budget: getInt("cfgTiktokDailyTagBudget", 0),
+          daily_user_budget: getInt("cfgTiktokDailyUserBudget", 0),
+          request_interval_seconds: getInt("cfgTiktokRequestInterval", 2),
+          min_interval_minutes: getInt("cfgTiktokMinInterval", 3),
+          ...popupSourceDateFieldsForUpdate("tiktok")
         },
         twitter: {
           enabled: checked("cfgTwitterEnabled"),
@@ -11500,6 +11540,7 @@ function bindSettings() {
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
           youtube: getInt("cfgPoolShareYoutube", 1),
+          tiktok: getInt("cfgPoolShareTiktok", 1),
           twitter: getInt("cfgPoolShareTwitter", 1),
           github: getInt("cfgPoolShareGithub", 1),
           zhihu: getInt("cfgPoolShareZhihu", 1),
@@ -11617,6 +11658,7 @@ function bindSettings() {
     douyin: "cfgDouyinEnabled",
     weibo: "cfgWeiboEnabled",
     youtube: "cfgYoutubeEnabled",
+    tiktok: "cfgTiktokEnabled",
     twitter: "cfgTwitterEnabled",
     github: "cfgGithubEnabled",
     zhihu: "cfgZhihuEnabled",
@@ -12114,6 +12156,7 @@ function bindSettings() {
             douyin: checked("cfgDouyinEnabled"),
             weibo: checked("cfgWeiboEnabled"),
             youtube: checked("cfgYoutubeEnabled"),
+            tiktok: checked("cfgTiktokEnabled"),
             twitter: checked("cfgTwitterEnabled"),
             github: checked("cfgGithubEnabled"),
             zhihu: checked("cfgZhihuEnabled"),
@@ -12128,6 +12171,7 @@ function bindSettings() {
             douyin: getInt("cfgPoolShareDouyin", 1),
             weibo: getInt("cfgPoolShareWeibo", 1),
             youtube: getInt("cfgPoolShareYoutube", 1),
+            tiktok: getInt("cfgPoolShareTiktok", 1),
             twitter: getInt("cfgPoolShareTwitter", 1),
             github: getInt("cfgPoolShareGithub", 1),
             zhihu: getInt("cfgPoolShareZhihu", 1),
@@ -12143,6 +12187,7 @@ function bindSettings() {
         if (shares.douyin !== undefined) setVal("cfgPoolShareDouyin", shares.douyin);
         if (shares.weibo !== undefined) setVal("cfgPoolShareWeibo", shares.weibo);
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
+        if (shares.tiktok !== undefined) setVal("cfgPoolShareTiktok", shares.tiktok);
         if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         if (shares.github !== undefined) setVal("cfgPoolShareGithub", shares.github);
         if (shares.zhihu !== undefined) setVal("cfgPoolShareZhihu", shares.zhihu);

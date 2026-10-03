@@ -748,7 +748,7 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 >
 > `127.0.0.1` 与 `localhost` 并非总是等价：macOS 上 Chrome 常只绑定 IPv6 `::1:9222`，而 Python urllib 默认走 IPv4。用 `localhost` 最稳妥（`getaddrinfo` 会同时尝试两边）。
 
-> **关于 `daily_*_budget`：** 多数来源的这些字段是**每 UTC 日、按任务类型的入队次数上限**；微博例外，三个 budget 只计最终经全局去重和 candidate pipeline 实际保留的候选条数。它们都不是启用 / 关闭来源的开关（来源开关是各段的 `enabled`）。显式填 `0` 表示不设每日上限，补池只受平台缺口 / `discovery_limit` / producer 节流控制；字段缺省时使用各来源表格所列默认值，其中小红书搜索为 `20`。对按任务计数的来源，填 `1` 只会把该任务类型限制到每天 1 次——配置加载时对落在 1–4 的可疑值会打印一次 WARN 提示。
+> **关于 `daily_*_budget`：** 多数来源的这些字段是**每 UTC 日、按任务类型的入队次数上限**；微博例外，三个 budget 只计最终经全局去重和 candidate pipeline 实际保留的候选条数。它们都不是启用 / 关闭来源的开关（来源开关是各段的 `enabled`）。显式填 `0` 表示不设每日上限，补池只受平台缺口 / `discovery_limit` / producer 节流控制；字段缺省时使用各来源表格所列默认值，其中小红书搜索为 `20`。对按任务计数的来源，填 `1` 只会把该任务类型限制到每天 1 次——配置加载时对落在 1–4 的可疑值会打印一次 WARN 提示；但等于官方默认值的字段不触发该警告（例如 TikTok 官方默认 `daily_feed_budget=3` / `daily_search_budget=3` 落在 1–4 区间，官方默认不可能是不小心当成了开关），只有手写偏离默认的 1–4 值才提醒。
 
 ### `[sources.bilibili]`
 
@@ -833,7 +833,7 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 
 ### `[sources.tiktok]`
 
-TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，因此 `tiktok_search` 策略默认不启用——仅在配置登录 Cookie 且 mode 允许 web 时挂载（登录态抓取违反 TikTok ToS，有账号风险）；未配置 Cookie 时统一关键词规划器产出的搜索词会被压缩成无空格 hashtag 后走话题标签通道。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
+TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，因此 `tiktok_search` 策略默认不启用——仅在配置登录 Cookie 且 mode 允许 web 时挂载（登录态抓取违反 TikTok ToS，有账号风险）；统一关键词规划器 claim 的词在搜索挂载时原样喂 `tiktok_search`（tag 退回常驻 tags + LLM 自生成），未挂载时压缩成无空格 hashtag 后喂 `tiktok_tag`。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
@@ -1317,7 +1317,7 @@ Awareness seam 固定为 `legacy`。未发布的聚合字段
 - 基础：`language`、`data_dir`、`storage.db_path`
 - LLM：展示实例、全局调用链与四个模块链摘要，允许调整全局并发 / 超时、测试默认链，并跳转桌面 Web 完整编辑；插件保存其他字段时不会回写或压扁实例路由
 - B 站与多源：`bilibili.browser.*`、`sources.bilibili.enabled`、`sources.browser.*`，以及小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / Bangumi / V2EX / 微博 / GitHub 的来源配置
-- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十二个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
+- 调度：`scheduler.enabled`、`pause_on_extension_disconnect`、`extension_disconnect_grace_seconds`、`pool_target_count`、`account_sync_interval_hours`、eval drain 凑批参数、refresh / signal / trending / explore / discovery limit / proactive push / speculator idle 等 runtime 频率参数、十三个平台的 `pool_source_shares`、猜测兴趣参数、不喜欢领域探针参数、自动更新参数；设置页可调用 `/api/config/source-share-suggestion` 按已有事件和当前表单开关填入建议比例
 - 高级功能（桌面 Web 与插件设置页均有「认知循环预算」区块）：`soul.awareness_event_batch_size`、`soul.insight_note_batch_size`、`soul.cognition_max_tokens`（issue #169）
 - 日志：控制台 / 文件级别、完整日志路径（保存时拆回 `directory` / `filename`）、轮转与非托管日志清理参数
 

@@ -2,6 +2,28 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
+
+### 修复：TikTok 后端缺口（审计逐项）
+
+- **头图白名单**：`tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过。
+- **预算误报警**：`_warn_suspicious_budgets` 对等于官方默认值的字段豁免（TikTok 官方默认 `daily_feed_budget=3` / `daily_search_budget=3` 不再每次启动误报）；手写偏离默认的 1–4 值仍提醒。
+- **init 半状态**：`_INIT_SOURCE_ORDER` 移除 tiktok（guidedInit: false 的源不再能被手工 POST `/api/init` 置 enabled 却不采集信号）；tiktok-only 选择归一化为空并按 `no_sources_selected` 拒绝。
+- **CLI 入口**：`openbiliclaw discover --source tiktok` 走正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支）。
+- **inspiration 预览**：`TiktokPlatformSearchBackend` 接入 `build_platform_source_backends`（有 Cookie 走关键词搜索，访客走话题标签列表），`keyword-inspiration-preview --platforms tiktok` 真正可用。
+- **planner claim 语义**：search 策略挂载（有登录 Cookie）时 claim 的词原样喂 `tiktok_search`，`tiktok_tag` 退回常驻 tags + LLM 自生成；未挂载时维持 claim → tag 压缩。used/failed 标记跟随实际消费词的策略。
+- **native-save 误导状态**：tiktok 加入 local-only 名单，本地收藏落 `unsupported` / `local_only_source` 而非误导性"待升级重试"。
+- **latent URL 身份映射**：`_extract_content_id_from_url` 支持 `/@user/video/<id>` 与 `/photo/<id>` → 数字内容 id。
+- 回归锁补齐：`tiktok_tag.generate_tags` / `tiktok_search.generate_keywords` 登记进 core-memory opt-out 政策测试；`config.example.toml` TikTok 段头改为准确的「Web API 主后端 + yt-dlp 兜底」描述。
+
+### 功能：TikTok 前端展示面（issue #88）
+
+- **桌面设置页 TikTok 卡片**：照 YouTube 卡片补齐——启用开关、后端 mode（auto/web/ytdlp）、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好；`SOURCE_ENABLE_SELECT_IDS` / `SOURCE_SHARE_INPUT_IDS` / `SOURCE_CARD_LABELS` / `DESKTOP_SOURCE_DATE_SLUGS` / `buildConfigUpdate` / 占比建议同步。修复保存配置丢 `scheduler.pool_source_shares.tiktok` 的回归点（Playwright E2E 钉死）。
+- **popup 平台归一修正**：`tiktok` 不再归并到 `douyin` 族（此前 TikTok 内容在 popup 显示为"抖音"）；`PLATFORM_DISPLAY_NAMES` 补 TikTok 条目。
+- **popup 设置页 TikTok 卡片**：照 YouTube 卡补齐启用、Cookie、mode、region / tz_name、tags / creators、预算、节流、占比与「测试连接」。
+- **展示一致性**：saved / history 平台名、view-models URL 推断与 `RUNTIME_TOPIC_LABEL_MAP`（tiktok_feed / tiktok_search / tiktok_tag / tiktok_user 中文标签）、saved-sync-core 别名与 host 推断、平台徽章色、推荐页静态过滤 tab 全部覆盖 tiktok。
+- **文档**：十二 → 十三计数修正（discovery / runtime / config / 架构图 / 商店 listing），清除「纯 yt-dlp 无登录态」过时描述，README 中英文平台清单补 TikTok，模块文档同步 planner claim 新语义与设置页卡片。
+
 ## v0.3.225：聊一聊链接分享、多行输入与逐字流式（2026-10-01）
 
 ### 功能：TikTok Web API 后端（访客身份 + 请求签名，issue #88）

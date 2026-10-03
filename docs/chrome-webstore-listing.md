@@ -14,7 +14,7 @@
 ## Short Description
 
 ```text
-需本地后端的十二来源内容发现 AI Agent：跨平台推荐、私有画像与可反馈侧边栏
+需本地后端的十三来源内容发现 AI Agent：跨平台推荐、私有画像与可反馈侧边栏
 ```
 
 ## Detailed Description
@@ -22,7 +22,7 @@
 将下面的纯文本完整复制到 Chrome Web Store 的 `Detailed description` 字段。
 
 ```text
-OpenBiliClaw 是一个需要本地后端运行的、本地优先、私有、开源的个性化内容发现 Agent。它把你授权范围内的 B站、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与 GitHub 内容汇合成跨来源推荐、可查看和纠正的个人画像，以及能继续反馈调教的浏览器侧边栏。数据默认保存在你的本机。
+OpenBiliClaw 是一个需要本地后端运行的、本地优先、私有、开源的个性化内容发现 Agent。它把你授权范围内的 B站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博与 GitHub 内容汇合成跨来源推荐、可查看和纠正的个人画像，以及能继续反馈调教的浏览器侧边栏。数据默认保存在你的本机。
 
 项目主页：
 https://whiteguo233.github.io/OpenBiliClaw/
@@ -45,6 +45,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 小红书
 - 抖音
 - YouTube
+- TikTok（实验性；后端 Web API 访客身份匿名发现，可选登录 Cookie 由插件同步以解锁关键词搜索）
 - X（Twitter）
 - 知乎
 - Reddit
@@ -72,6 +73,7 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 插件在 `bgm.tv` / `bangumi.tv` 上申请的 host permission 仅用于账号身份识别：读取页面公开的用户 uid 与用户名，实现零配置识别你的 Bangumi 账号；在这两个站点上不读取 Cookie、不采集浏览行为，也不上传任何个人令牌。Bangumi 内容本身由本地后端通过官方匿名只读 API 获取。
 - 插件在 `*.v2ex.com` 上申请的 host permission 仅用于只读 Topic / Node 阅读事件，以及你主动触发的四类初始化或增量任务：本人主题、本人公开回复、收藏主题和收藏 Node。插件只检查 A2 Cookie 是否存在并向你配置的后端发送登录布尔值，不访问、存储或发送 Cookie 值；任务只返回有界的公开渲染字段，不返回页面 HTML、请求头、CSRF / once、私信或浏览器完整历史。V2EX 公开发现由本地后端通过官方只读 API / Feed 完成；OpenBiliClaw 不向 V2EX 发帖、回复、感谢、收藏、取消收藏或关注 Node。
 - GitHub 不申请任何新增 host permission、content script、Cookie 或来源任务能力；公开 repository discovery 与公开 starred 初始化均由本地后端调用官方 REST API。插件只展示配置、状态和 repository 文字卡，本地收藏不会调用 GitHub Star。
+- 插件在 `tiktok.com` 上申请的 host permission 仅用于可选登录 Cookie 同步：在你登录 tiktok.com 后把 Cookie 头回传给你配置的本地后端，解锁 TikTok 关键词搜索；不执行页面任务、不采集浏览行为。TikTok 推荐流 / 话题标签 / 创作者发现由本地后端以 Web API 访客身份匿名完成，不需要该权限。
 - 「个人通讯」采集范围除侧边栏聊天消息外，还包含你在受支持平台上**成功提交**的评论正文与 B 站弹幕正文（经网络层在提交成功后采集，仅送本机后端，用于更准确地构建兴趣画像）。
 
 > **发版待办（商店后台隐私披露表单）**：Chrome Web Store 与 Firefox AMO 的数据用途申报中，「个人通讯 / Personal communications」条目需更新描述，覆盖新增的用户提交评论与弹幕正文采集（Firefox manifest 已声明 `personalCommunications`，无需改动权限，仅需同步商店后台文案）。
@@ -125,7 +127,7 @@ npm run webstore:metadata -- \
 
 ## 提交前检查
 
-- 发版时把本文件的 `Short description` 与 `Detailed description` 粘贴到后台，确认十二类来源名称完整，并单独解释 Linux.do / V2EX / 微博任务权限理由，以及 GitHub 不扩展权限、后端官方 REST 只读的能力边界；本分支尚未执行粘贴或提审。
+- 发版时把本文件的 `Short description` 与 `Detailed description` 粘贴到后台，确认十三类来源名称完整，并单独解释 Linux.do / V2EX / 微博任务权限理由，以及 GitHub 不扩展权限、后端官方 REST 只读的能力边界；本分支尚未执行粘贴或提审。
 - 3 张截图已按上面的文件名顺序上传，尺寸均为 1280×800。
 - `Website URL` 使用项目主页：`https://whiteguo233.github.io/OpenBiliClaw/`。
 - `Support URL` 使用 GitHub Issues：`https://github.com/whiteguo233/OpenBiliClaw/issues`。

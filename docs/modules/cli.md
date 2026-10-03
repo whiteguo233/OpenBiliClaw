@@ -1235,7 +1235,7 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。TikTok 复用正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态）：推荐流 / 话题标签 / 创作者按预算执行，配置登录 Cookie 时搜索分支一并挂载。
 
 手动 `discover` 是一次性进程，其 candidate pipeline 固定 `eval_min_batch_size=1`、`eval_max_wait_seconds=0`，立即 drain 本次已入队候选；只有常驻 API daemon 才读取 `[scheduler]` 的默认 15 / 90 秒聚合策略。这样 CLI 不会在退出时遗失只存在内存里的凑批等待状态。
 
@@ -1263,6 +1263,15 @@ $ openbiliclaw discover --source xiaohongshu
 
 # 忽略 4 小时节流
 $ openbiliclaw discover --source xiaohongshu --force
+
+# 触发 TikTok discovery（需先在配置启用 [sources.tiktok]）
+$ openbiliclaw discover --source tiktok --limit 20
+TikTok 内容发现
+发现摘要
+  发现条数: 6
+  入池候选: 6
+  来源: tiktok
+  来源分布: tiktok_feed:3, tiktok_tag:3
 
 # 触发 douyin discovery
 # Cookie 可由扩展自动同步；下面的环境变量仅用于调试时显式覆盖

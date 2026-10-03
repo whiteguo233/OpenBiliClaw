@@ -12,9 +12,9 @@ TikTok 模块把 TikTok 公开短视频接入 OpenBiliClaw 的 discovery 候选�
 - `/api/recommend/item_list/` — 匿名 For-You 推荐流（`tiktok_feed` 策略），同时是访客身份 bootstrap 铸 msToken 的路径
 - `/api/user/detail/` + `/api/post/item_list/` — 创作者资料（handle → secUid）与作品列表（`tiktok_user` 策略）
 - `/api/challenge/detail/` + `/api/challenge/item_list/` — 话题标签（tag → challenge id）与标签视频列表（`tiktok_tag` 策略）
-- `/api/search/item/full/` — 关键词搜索（**访客身份被上游 gate，预留 client 方法，无策略**）
+- `/api/search/item/full/` — 关键词搜索（访客身份被上游 gate；`tiktok_search` 策略按凭据挂载——配置登录 Cookie 且 mode 允许 web 时才存在，默认不启用）
 
-两个后端都不提供可用的匿名搜索：yt-dlp 没有 TikTok 搜索 extractor，Web API 搜索端点对访客身份返回空响应。统一关键词规划器产出的搜索词由 `tag_from_query()` 压缩成无空格 hashtag 后走话题标签通道。
+两个后端都不提供可用的匿名搜索：yt-dlp 没有 TikTok 搜索 extractor，Web API 搜索端点对访客身份返回空响应。统一关键词规划器产出的搜索词有两个消费方：搜索策略挂载（配置登录 Cookie）时原样喂 `tiktok_search`（多词短语是搜索相对 hashtag 的核心价值），此时 `tiktok_tag` 退回常驻 tags + LLM 自生成；未挂载时词由 `tag_from_query()` 压缩成无空格 hashtag 后喂 `tiktok_tag`。
 
 ## 访客身份机制
 
@@ -82,7 +82,11 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | 后台 discovery producer | ✅ | `TiktokDiscoveryProducer` 镜像 YouTube producer：`tiktok_discovery_runs` 每日执行 ledger、`min_interval_minutes` 节流、`daily_feed_budget` / `daily_tag_budget` / `daily_user_budget`、pool 缺口门、统一 candidate pipeline 入队 |
 | 平台族注册 | ✅ | `tiktok` 独立平台族（`requires_overseas_network=True`、`routed_by_network_mode=True`、host `tiktok.com`） |
 | source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录，`verify_method="none"`）；配置 Cookie 后 `credential="present"` + `verify_method="live_probe"`（passport beat 探针） |
-| 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；`tiktok_tag` 走 claim → 注入（压缩为 hashtag）→ used/failed 生命周期（P1.7），P1.8 keyword id 随候选传递 |
+| 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；claim 的词优先喂 `tiktok_search`（原词不压缩，search 挂载时），未挂载时喂 `tiktok_tag`（压缩为 hashtag）；used/failed 生命周期跟随实际消费词的策略（P1.7），P1.8 keyword id 随候选传递 |
+| 头图 CDN 白名单 | ✅ | `tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过 |
+| `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |
+| 桌面 / 插件设置页卡片 | ✅ | desktop 设置页与 popup 各有 TikTok 卡片：启用开关、后端 mode、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好 |
+| guided init 排除 | ✅ | `guidedInit: false`：`_INIT_SOURCE_ORDER` 不含 tiktok，手工 POST `/api/init {"sources":["tiktok"]}` 归一化为空并按 `no_sources_selected` 拒绝（不会把来源置 enabled 却不采集信号） |
 | 配置面 | ✅ | `TiktokSourceConfig`（`mode` / `cookie_env` / `daily_feed_budget` 等）+ `config.example.toml` + `[scheduler.pool_source_shares] tiktok` + API config GET/PUT（非法 `mode` 保存时拒绝）+ credentials 只读行 |
 | 依赖 | ✅ | `curl-cffi>=0.15` 进入默认依赖（Chrome TLS 指纹；与 yt-dlp 可选依赖同包，版本天然兼容） |
 
@@ -158,7 +162,8 @@ result = await producer.produce_if_due(limit=20)
 - **为什么新增 Web API 后端**：yt-dlp 的 `tiktok:tag` / `tiktok:user` 列表 extractor 上游失效且短期无修复迹象；2026-10-03 spike 实测证明纯 Python 签名 + 访客身份可以打通 TikTok Web API 的 feed / 创作者 / 话题标签列表，覆盖与 yt-dlp 路径相同甚至更多（feed 是新增面）。yt-dlp 路径保留为 `auto` / `ytdlp` 模式的兜底，上游修复后仍可用。
 - **Router 而不是双 client 注入策略**：`TiktokRouterClient` 实现与 `TiktokClient` 相同的 async 接口并按 `mode` 分发，策略只拿一个 client，改动最小；回退语义（`None` = 后端不可用、`[]` = 无内容）集中在 router 一处。
 - **web client 直接产 `DiscoveredContent`**：itemStruct 字段齐全（id / desc / createTime / author / stats / video），`parse_tiktok_item()` 一次映射到位；策略侧用 `_coerce_candidate` 兼容 yt-dlp dict 形态，单一策略代码服务两个后端。
-- **搜索策略按凭据挂载**：访客身份搜索被上游 gate（实测），因此 `tiktok_search` 只在"配置了登录 Cookie 且 mode 允许 web"时才由装配处挂载（router 的 `search_available` 判定），否则 producer 策略元组里根本没有它。登录态抓取违反 TikTok ToS、有账号风险，文档与配置注释都明确写出，默认不启用。planner 注入词原样使用（搜索相对 hashtag 的核心价值就是多词短语），但 producer 的 planner claim 生命周期仍只接 `tiktok_tag`，搜索走 LLM 画像生成 / 手动注入。
+- **搜索策略按凭据挂载**：访客身份搜索被上游 gate（实测），因此 `tiktok_search` 只在"配置了登录 Cookie 且 mode 允许 web"时才由装配处挂载（router 的 `search_available` 判定），否则 producer 策略元组里根本没有它。登录态抓取违反 TikTok ToS、有账号风险，文档与配置注释都明确写出，默认不启用。planner claim 语义随挂载形态切换：search 挂载时 claim 的词原样喂 search（多词短语不被 hashtag 压缩浪费），tag 退回常驻 tags + LLM 自生成；search 未挂载时维持 claim → tag 压缩的旧语义。used/failed 标记跟随实际消费词的策略。
+- **planner 词只喂一个策略**：同一份 claim 的词若同时喂 search 和 tag 会产生重复采集，且 used 语义无法归属；search 是词的无损消费者、tag 是有损（压缩）消费者，因此 search 优先。search 预算耗尽但 tag 仍有预算时自动回落 tag（`runnable` 判定）。
 - **feed 预算按"次"计费**：推荐流一次拉取即一批候选，`daily_feed_budget` 计拉取次数而非条目数，默认 3 次/天压低高曝光面。
 - **签名 vendor 而非自研**：复用上游已逐字节验证过的纯 Python 实现（Apache-2.0 兼容 MIT），文件头注明来源与修改；算法正确性测试归上游，本仓只测调用契约。
 - **`tiktok` 拆出 douyin 族**：过去 `tiktok` 是 douyin 平台族别名，URL / 平台归属会把 tiktok.com 错记到 douyin。拆分后两族的配额、海外网络提示和事件归因各自独立。

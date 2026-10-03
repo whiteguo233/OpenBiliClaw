@@ -324,7 +324,7 @@ embedded tailnet edge (default off): Android/iOS native App tsnet → user's tai
 local settings enrollment: Desktop Web / extension → write-only PUT /api/config → private one-shot stage ─┘
                            real loopback only; no Funnel/Serve/public URL
 publication-date preference: [sources.<name>] config → RuntimeContext → effective inventory → PoolCurator → serving score/gate
-                             ├─ all twelve sources; missing/invalid dates never become discovery time
+                             ├─ all thirteen sources; missing/invalid dates never become discovery time
                              └─ strict only → pre-eval reject + supported API/task date pushdown
 migration control plane: local export → checksummed plaintext .obcbackup
                       → local import + request_id validates/stages ↔ status/cancel
