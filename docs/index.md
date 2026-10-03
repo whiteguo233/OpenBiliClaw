@@ -35,6 +35,7 @@
 - [知乎来源文档](modules/zhihu.md) — 浏览器任务、布尔登录态、全局 `知乎收藏` 开关与新文档零点击确认边界
 - [动态网站与兼容 Web 来源文档](modules/web.md) — 独立来源份额、同站多版本 workflow、HTTP / Playwright、人工登录接管、普通候选评估与三端管理；旧公开 recipe 单独保留兼容边界
 - [动态网站来源验收](platform-source-acceptance.dynamic-web.md) — 按执行环境与实际证据区分自动化、隔离 UI 和真实网站验收；Ego bridge 未接入
+- [动态网站完整服务复验](testing/2026-10-03-dynamic-source-live-e2e.md) — 真实聊天审批、连续定时发现、模型评估、重启与停用，以及桌面/移动/插件来源归属
 - [动态网站来源契约](platform-source-contract.dynamic-web.toml) — 独立实例、逐 workflow 登录前置、只读能力及可执行排除项；注册审计不替代真实验收
 - [网页工具与聊天笔记验收](testing/2026-09-26-chat-web-memory.md) — 搜索、公开链接阅读、笔记更正/审批删除与三端真实请求
 - [聊天真实请求复验（9月28日）](testing/2026-09-28-chat-real-request-recheck.md) — 19 次真实模型请求、三端 UI、延迟样本与仍存在的限制

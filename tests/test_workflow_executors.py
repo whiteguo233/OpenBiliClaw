@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import threading
+import time
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -43,6 +45,21 @@ class _FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         self.requests_seen.append(("GET", self.path))
         path = urlsplit(self.path).path
+        if path == "/slow-script.js":
+            time.sleep(6)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript")
+            self.end_headers()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                self.wfile.write(b"window.loaded=true")
+            return
+        if path == "/blocked-core.js":
+            self.send_response(418)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Set-Cookie", "private_response_cookie=do-not-observe")
+            self.end_headers()
+            self.wfile.write(b"<html><body>Access denied</body></html>")
+            return
         if path == "/redirect":
             self.send_response(302)
             self.send_header("Location", parse_qs(urlsplit(self.path).query)["to"][0])
@@ -90,6 +107,10 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             self.wfile.write(content.encode())
             return
         pages = {
+            "/slow-navigation": '<script src="/slow-script.js"></script>',
+            "/blocked-login": '<a href="/"> </a>'
+            f'<script src="http://cdn.fixture.test:{self.server.server_port}'
+            '/blocked-core.js?token=do-not-observe"></script>',
             "/iframe": '<article><h2><a href="/content/1">First</a></h2></article>'
             '<iframe src="/forbidden"></iframe>',
             "/cdn-resource": '<article><h2><a href="/content/1">First</a></h2></article>'
@@ -212,6 +233,44 @@ async def test_real_browser_collects_paginates_and_applies_metadata(
     assert result.items[0].published_at == "2026-10-02"
     assert result.items[0].description == "One"
     assert result.scope_complete
+
+
+async def test_real_browser_reports_blocked_script_without_response_secrets(
+    tmp_path: Path, fixture_site: str
+) -> None:
+    cdn_origin = fixture_site.replace("fixture.test", "cdn.fixture.test")
+    executor = PlaywrightWorkflowExecutor(
+        tmp_path / "profiles",
+        policy=BrowserNetworkPolicy(
+            resolver=_loopback_resolver, test_loopback_origins=[fixture_site, cdn_origin]
+        ),
+    )
+    plan = _plan(fixture_site, "/blocked-login", resource_origins=[cdn_origin])
+    session = await executor.open_session(plan, session_id="blocked-script")
+    try:
+        snapshot = await session.snapshot()
+        failures = snapshot["resource_failures"]
+        assert any(
+            row["origin"] == cdn_origin
+            and row["resource_type"] == "Script"
+            and row.get("status") == 418
+            for row in failures
+        )
+        assert "do-not-observe" not in json.dumps(failures)
+        assert "private_response_cookie" not in json.dumps(failures)
+    finally:
+        await session.close()
+
+
+async def test_real_browser_total_budget_cancels_navigation_and_releases_profile(
+    tmp_path: Path, fixture_site: str
+) -> None:
+    executor = _executor(tmp_path, fixture_site)
+    slow = _plan(fixture_site, "/slow-navigation", budgets={"timeout_seconds": 5})
+    result = await executor.run(slow, session_id="navigation-budget")
+    assert result.error_code == "timeout"
+    resumed = await executor.run(_plan(fixture_site), session_id="navigation-budget")
+    assert resumed.status == "ok", resumed
 
 
 async def test_real_browser_empty_requires_positive_evidence(

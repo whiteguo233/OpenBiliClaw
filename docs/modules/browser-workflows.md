@@ -31,6 +31,10 @@
   parent、ancestor、前后兄弟及相对 child-link selector。数组顺序不是 DOM 邻接证据。
   同时返回 `blocked_resource_origins` 和
   `blocked_navigation_origins`，供用户判断是否增加授权。
+  `resource_failures` 最多保留 12 项资源 origin、类型、HTTP 失败状态及固定网络
+  错误码；不包含 URL query、响应正文或 Cookie。核心资源失败导致页面完全没有
+  可见文字／控件时，建源直接报告访问失败，不把空白页面误判为需要更多用户信息。
+  明确的登录墙或待授权跳转证据优先进入人工接管；先前可选资源失败不能遮蔽这些证据。
 - `BrowserWorkflowSession.act()` 仅供已授权的人工接管 API 使用，不能作为模型采集工具。
 - `browser_runtime_status()` 检查匹配的 Chromium 文件是否存在；仅装 Python 模块不算就绪。
 - `install_browser_runtime(with_system_deps=False)` 调用随 Playwright 打包的 Node driver，
@@ -53,6 +57,13 @@ iframe 和弹窗请求会被阻止；强制依赖嵌入式验证码的网站目�
 proxy bypass 防止系统代理代替浏览器解析域名，破坏 DNS pin；未使用的本机代理端口
 只作为 fail-closed 兜底。服务工作线程、WebSocket、下载和额外页面被禁用或关闭。
 重定向另用 CDP 响应阶段检查，因为 Playwright `route` 不会重新回调同一重定向链。
+单次导航最多等待 30 秒，整个发现运行仍受计划的总时间预算约束；总预算取消后
+会释放 profile，允许后续重新打开。
+
+当前浏览器执行不继承 `[network]` 的系统／自定义代理。把普通代理直接传给
+Chromium 会让代理重新解析目标域名，失去已校验 IP 与实际连接目标一致的保证。
+需要代理才能访问的网站当前可能超时；HTTP 客户端可通过代理访问，并不意味着
+浏览器工作流也已支持该路由。
 
 本地浏览器测试仅通过 Python 依赖注入，允许受控 fixture DNS 名解析到 `127.0.0.1`。
 该开关不属于计划、配置或 API 输入，不能通过聊天启用。
@@ -79,4 +90,20 @@ profile、Cookie、截图或接管输入写入流程版本、模型提示、公�
 
 本地真实浏览器 fixture 覆盖分页、登录持久化与失效、跨域登录授权、私网与多跳
 重定向阻断、资源域与内容域分离，以及正文优先观察和选择器跨会话复用。
-Ego Lite 实际执行、Docker 镜像构建和 Windows 冻结程序尚需对应环境验收。
+Linux/amd64 Docker 已完成镜像构建、默认入口与健康检查、匹配 Chromium 的连续分页
+回放、总预算取消后 profile 复用和资源失败诊断；采用容器内匿名 fixture，外网关闭。
+这不替代外站账号、Linux/arm64、Ego Lite 或 macOS/Windows 冻结程序验收。
+
+同日真实豆瓣验证中，`/group/` 未登录时转到公开讨论精选；其实际登录入口的
+核心脚本对 Chromium 返回 HTTP 418，并被浏览器 ORB 阻止。此时尚无登录表单
+或 iframe，已验证诊断会明确报告资源访问失败。没有向用户交接空白页面，也没有
+输入凭据、导入 Cookie 或绕过网站限制。Hugging Face Papers 的当前网络则表现为
+直接连接超时、既有 HTTP 代理路由可响应；尚未通过浏览器建源验收。
+
+真实 Django 5.2 文档搜索另完成“按当前关键词，每轮第一页前 5 条”的自然语言
+建源、试跑和启用。模型生成 `{query}` 导航参数与 5 条／1 页预算；同一流程从
+`database` 改为 `authentication` 后取得两组不同的文档 URL。关闭数据库再重开且
+不配置模型，原查询仍返回相同 5 条，流程版本与内容散列一致。
+此前未限制分页的尝试在第二页遇到另一个 origin 的官方博客链接，严格报告降级，
+未扩大允许域；Python 文档的 JavaScript 搜索虽曾成功呈现，但后续索引加载反复
+超时，未通过持久执行验收。查询参数验收不等于复杂 JavaScript 页面全部已支持。

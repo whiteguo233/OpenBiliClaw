@@ -16,6 +16,8 @@ workflow；不把这些网站当成旧版 Web 总份额下的子权重。
 三端设置共用 `shared/custom-sources.js/.css`，管理名称、份额、频率、启停、归档、
 最近运行和重新登录。推荐与惊喜 DTO 保留 `source_id/source_name`，网站名用于显示，
 内容平台仍是 `web`。API 草稿、试跑、启用和登录接管协议见 [API 模块](api.md#动态网站来源)。
+运行记录的 `enqueued_count` 显示为「入队待评估」，仅表示已交给候选评估队列；
+不表示已通过评分或进入可推荐库存。旧版 HTTP recipe 的运行计数遵守同一语义。
 用户不向聊天或设置粘贴网站密码、Cookie。执行器能力随运行环境报告，不能仅安装
 Ego Skill 就宣称具备服务器或 Docker 浏览器能力。
 
@@ -45,6 +47,11 @@ Playwright/Ego workflow 的来源显示，HTTP 公开流程没有登录按钮。
 契约中的 `smoke.sinks` 专指不产生派生投影的 `smoke_only` 预览；正式隔离生命周期/评估
 验收会写 draft/run/seen/schedule，并可使用合成画像与 memory，实际写入须记入验收账本，
 不导入真实用户历史或账号画像。
+
+CI 的 `web-guided-init-e2e` job 在安装 Chromium 后同时执行
+`tests/test_web_guided_init_e2e.py` 与 `tests/test_workflow_executors.py`，覆盖真实浏览器
+登录会话持久化、分页、请求边界和结构观察。该受控网站回归不替代外站、Docker 或
+桌面安装态验收；真实网站与运行环境的结果单列在[验收记录](../platform-source-acceptance.dynamic-web.md)。
 
 ## 旧版公开 HTTP recipe
 

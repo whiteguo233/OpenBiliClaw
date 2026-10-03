@@ -40,6 +40,9 @@ if TYPE_CHECKING:
 # These limits are operational resource ceilings, not relevance thresholds.
 _MAX_REQUESTS = 250
 _STEP_TIMEOUT_MS = 10_000
+# Large deferred search indexes can delay DOMContentLoaded on otherwise healthy
+# public sites. The enclosing workflow timeout remains the total run ceiling.
+_NAVIGATION_TIMEOUT_MS = 30_000
 _SESSION_LOCKS: dict[str, asyncio.Lock] = {}
 _SNAPSHOT_JS = r"""() => {
   const visible = e => !!(e && e.getClientRects().length);
@@ -254,6 +257,62 @@ class BrowserWorkflowSession:
         self._response_cdp: CDPSession | None = None
         self._observation_stopped = False
         self._embedded_blocked = False
+        self._network_requests: dict[str, tuple[str, str]] = {}
+        self._resource_failures: dict[str, dict[str, Any]] = {}
+
+    def _observe_request(self, event: dict[str, Any]) -> None:
+        """Keep only body-free origin/type metadata for bounded response diagnostics."""
+
+        request_id = str(event.get("requestId", ""))
+        if not request_id or len(self._network_requests) >= _MAX_REQUESTS:
+            return
+        try:
+            origin = workflow_origin(str(event.get("request", {}).get("url", "")))
+        except BrowserWorkflowValidationError:
+            return
+        resource_type = str(event.get("type", "Other"))
+        if resource_type not in {
+            "Document",
+            "Script",
+            "Stylesheet",
+            "Image",
+            "Font",
+            "XHR",
+            "Fetch",
+            "Other",
+        }:
+            resource_type = "Other"
+        self._network_requests[request_id] = (origin, resource_type)
+
+    def _record_resource_failure(
+        self, request_id: str, *, status: int = 0, error_code: str = ""
+    ) -> None:
+        metadata = self._network_requests.get(request_id)
+        if metadata is None or (
+            request_id not in self._resource_failures and len(self._resource_failures) >= 12
+        ):
+            return
+        failure = self._resource_failures.setdefault(
+            request_id, {"origin": metadata[0], "resource_type": metadata[1]}
+        )
+        if status:
+            failure["status"] = status
+        if error_code:
+            failure["error_code"] = error_code
+
+    def _observe_response(self, event: dict[str, Any]) -> None:
+        """ORB may hide normal response events; extra-info retains its HTTP status."""
+
+        status = event.get("statusCode")
+        if isinstance(status, int) and 400 <= status <= 599:
+            self._record_resource_failure(str(event.get("requestId", "")), status=status)
+
+    def _observe_loading_failure(self, event: dict[str, Any]) -> None:
+        match = re.search(r"net::(ERR_[A-Z_]+)", str(event.get("errorText", "")))
+        if match:
+            self._record_resource_failure(
+                str(event.get("requestId", "")), error_code=match.group(1).lower()
+            )
 
     async def _route(self, route: Route, request: Request) -> None:
         self._requests += 1
@@ -389,7 +448,9 @@ class BrowserWorkflowSession:
             navigation_origins += self.plan.auth.login_origins
         checked = self._policy.require_url(url, navigation_origins)
         try:
-            await self.page.goto(checked, wait_until="domcontentloaded", timeout=_STEP_TIMEOUT_MS)
+            await self.page.goto(
+                checked, wait_until="domcontentloaded", timeout=_NAVIGATION_TIMEOUT_MS
+            )
         except Exception:
             if self._login_redirect:
                 raise BrowserWorkflowExecutionError(
@@ -417,6 +478,7 @@ class BrowserWorkflowSession:
         result["unsupported_embedded_pages"] = self._embedded_blocked
         result["blocked_resource_origins"] = sorted(self._blocked_resources)
         result["blocked_navigation_origins"] = sorted(self._blocked_navigation)
+        result["resource_failures"] = list(self._resource_failures.values())
         if self._last_block_code:
             result["last_block_code"] = self._last_block_code
         return result
@@ -779,6 +841,10 @@ class PlaywrightWorkflowExecutor:
                 interactive=interactive,
             )
             session._response_cdp = await context.new_cdp_session(page)
+            session._response_cdp.on("Network.requestWillBeSent", session._observe_request)
+            session._response_cdp.on("Network.responseReceivedExtraInfo", session._observe_response)
+            session._response_cdp.on("Network.loadingFailed", session._observe_loading_failure)
+            await session._response_cdp.send("Network.enable")
             session._response_cdp.on("Fetch.requestPaused", session._guard_redirect_response)
             await session._response_cdp.send(
                 "Fetch.enable",

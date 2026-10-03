@@ -7,7 +7,7 @@
     needs_login: "需要重新登录", login_required: "需要重新登录",
     needs_details: "需要补充说明", failed: "运行失败", error: "运行失败",
     rate_limited: "暂时限流", unavailable: "执行环境不可用", disabled: "已停用",
-    empty: "本轮暂无新内容", archived: "已归档", interrupted: "运行中断",
+    empty: "本轮暂无新内容", not_modified: "内容未变化", archived: "已归档", interrupted: "运行中断",
     stale: "本次结果已失效", superseded: "已由新流程替代", cancelled: "已取消", degraded: "发现能力受限",
   };
   const text = (value) => String(value ?? "").trim();
@@ -304,7 +304,7 @@
           if (!entries.length) runs.append(node("p", "custom-source-note", "尚无运行记录。"));
           entries.slice(0, 10).forEach((run) => runs.append(node("p", "custom-source-note", [
             formatTime(run.started_at || run.created_at), statusLabel(run.status),
-            `发现 ${Number(run.discovered_count) || 0} / 入池 ${Number(run.enqueued_count) || 0}`,
+            `发现 ${Number(run.discovered_count) || 0} / 入队待评估 ${Number(run.enqueued_count) || 0}`,
             text(run.error || run.last_error),
           ].filter(Boolean).join(" · "))));
         }, "已读取最近运行。"));

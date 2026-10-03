@@ -576,6 +576,8 @@ class PendingDelightOut(BaseModel):
     cover_url: str = ""
     content_url: str = ""
     source_platform: str = ""
+    source_id: str = ""
+    source_name: str = ""
     published_at: str = ""
     published_label: str = ""
     content_type: str = "video"

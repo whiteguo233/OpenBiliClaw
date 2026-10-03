@@ -155,7 +155,8 @@ test("archive and pause are different source operations; runs remain read-only",
   });
   await h.manager.load();
   h.button("最近运行").handlers.click(); await settle();
-  assert.match(h.root.textContent, /发现 3 \/ 入池 2/);
+  assert.match(h.root.textContent, /发现 3 \/ 入队待评估 2/);
+  assert.doesNotMatch(h.root.textContent, /入池 2/);
   h.button("停用").handlers.click(); await settle();
   assert.ok(h.button("启用"));
   h.button("归档").handlers.click(); await settle();

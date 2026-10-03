@@ -10252,7 +10252,7 @@ ${cardFeedbackBarHtml()}`;
         status.dataset.tone = statusTone;
         const discovered = Number(recipe.runtime?.last_discovered_count || 0);
         const enqueued = Number(recipe.runtime?.last_enqueued_count || 0);
-        status.textContent = `${recipe.enabled === false ? "已停用" : statusText}${discovered || enqueued ? ` · 发现 ${discovered} / 入池 ${enqueued}` : ""}`;
+        status.textContent = `${recipe.enabled === false ? "已停用" : statusText}${discovered || enqueued ? ` · 发现 ${discovered} / 入队待评估 ${enqueued}` : ""}`;
         title.append(name, status);
 
         const meta = document.createElement("span");

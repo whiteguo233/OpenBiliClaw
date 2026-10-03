@@ -11154,6 +11154,8 @@ def create_app(
                 "cover_url": str(row.get("cover_url", "")),
                 "content_url": str(row.get("content_url", "")),
                 "source_platform": str(row.get("source_platform", "bilibili")),
+                "source_id": str(row.get("source_id", "") or ""),
+                "source_name": str(row.get("source_name", "") or ""),
                 "published_at": str(row.get("published_at", "") or ""),
                 "published_label": str(row.get("published_label", "") or ""),
                 # body_text / content_type let the desktop delight card derive a
@@ -11256,6 +11258,8 @@ def create_app(
                 "cover_url": str(row.get("cover_url", "")),
                 "content_url": str(row.get("content_url", "")),
                 "source_platform": str(row.get("source_platform", "bilibili")),
+                "source_id": str(row.get("source_id", "") or ""),
+                "source_name": str(row.get("source_name", "") or ""),
                 "published_at": str(row.get("published_at", "") or ""),
                 "published_label": str(row.get("published_label", "") or ""),
                 # body_text / content_type let the desktop delight card derive a

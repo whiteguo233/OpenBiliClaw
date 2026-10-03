@@ -62,6 +62,92 @@ def item():
     )
 
 
+@pytest.mark.asyncio
+async def test_blank_login_resource_failure_does_not_ask_for_more_user_details(service):
+    pending = draft(service, executor="playwright", status="draft", workflow=None)
+    session = SimpleNamespace(close=AsyncMock())
+    service.observe_session = AsyncMock(
+        return_value=(
+            session,
+            {
+                "elements": [{"tag": "a", "text": ""}],
+                "resource_failures": [
+                    {"origin": "https://cdn.example.com", "resource_type": "Script", "status": 418}
+                ],
+            },
+        )
+    )
+    service._json_task = AsyncMock()
+    result = await service.author_browser(pending)
+    assert result["status"] == "failed"
+    assert "HTTP 418" in result["detail"]
+    service._json_task.assert_not_called()
+    session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "login_evidence",
+    [
+        {"login_wall": True},
+        {"blocked_navigation_origins": ["https://accounts.example.com"]},
+    ],
+)
+async def test_login_evidence_takes_priority_over_blank_page_resource_failure(
+    service, login_evidence
+):
+    pending = draft(
+        service, executor="playwright", status="draft", workflow=None, trial_success=False
+    )
+    session = SimpleNamespace(close=AsyncMock())
+    service.observe_session = AsyncMock(
+        return_value=(
+            session,
+            {
+                "elements": [],
+                "resource_failures": [
+                    {"origin": "https://cdn.example.com", "resource_type": "Script", "status": 404}
+                ],
+                **login_evidence,
+            },
+        )
+    )
+    service._json_task = AsyncMock()
+    result = await service.author_browser(pending)
+    assert result["status"] == "needs_login"
+    assert result["requires_login"] is True
+    assert result["trial_success"] is False
+    assert result["takeover_url"] == f"/web/source-login.html?draft_id={pending['draft_id']}"
+    assert service.store.get_draft(pending["draft_id"])["status"] == "needs_login"
+    service._json_task.assert_not_called()
+    session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reauthor_receives_failed_trial_evidence_without_changing_user_scope(service):
+    pending = draft(
+        service,
+        executor="playwright",
+        status="failed",
+        detail="Collection selectors need verification",
+        sample_items=[{"title": "A real result"}],
+    )
+    session = SimpleNamespace(close=AsyncMock())
+    service.observe_session = AsyncMock(
+        return_value=(session, {"elements": [{"tag": "h2", "text": "A real result"}]})
+    )
+    service._json_task = AsyncMock(return_value={"needs_details": "Which content list?"})
+    await service.author_browser(pending)
+    author_input = service._json_task.call_args.args[1]
+    assert author_input["previous_trial"] == {
+        "status": "failed",
+        "detail": "Collection selectors need verification",
+        "sample_count": 1,
+    }
+    assert author_input["entry_url"] == pending["entry_url"]
+    assert author_input["intent"] == pending["intent"]
+
+
 def test_draft_never_reserves_capacity_and_activation_is_idempotent(service):
     pending = draft(service, status="needs_login", trial_success=False)
     assert service.sources.list_sources() == []

@@ -524,3 +524,8 @@ v0.3.80+ 后端会在首次同步到行为数据后自动尝试生成画像，�
 架构，但 Playwright Chromium 没有相应的 32 位运行环境，因此不再声称支持 arm/v7
 或 386。首次构建需要下载浏览器及 Debian 系统依赖，离线部署应预先构建镜像。
 Ego Lite 宿主 CLI 不属于容器的默认执行链路；当前可用执行器为 Chromium。
+
+2026-10-03 已在 Linux/amd64 镜像中验证默认入口和健康检查、匹配 Chromium 的连续分页
+回放、超时释放 profile 以及资源失败诊断。测试使用无外网的容器内匿名 fixture，
+没有导入网站账号；arm64 和真实外站登录仍需对应环境验证，详见
+[动态网站来源验收](platform-source-acceptance.dynamic-web.md)。

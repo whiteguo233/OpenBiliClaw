@@ -12016,7 +12016,7 @@ function bindSettings() {
       status.dataset.tone = statusTone;
       const discovered = Number(recipe?.runtime?.last_discovered_count || 0);
       const enqueued = Number(recipe?.runtime?.last_enqueued_count || 0);
-      const counts = discovered || enqueued ? ` · 发现 ${discovered} / 入池 ${enqueued}` : "";
+      const counts = discovered || enqueued ? ` · 发现 ${discovered} / 入队待评估 ${enqueued}` : "";
       status.textContent = `${recipe?.enabled === false ? "已停用" : statusText}${counts}`;
       const errorCode = String(recipe?.runtime?.last_error_code || "").trim();
       if (errorCode) status.title = `最近错误：${errorCode}`;

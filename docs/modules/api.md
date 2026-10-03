@@ -161,6 +161,7 @@ result，再经过后端身份门禁转换统一事件和账号分区 Node affin
 
 动态来源使用独立的 `/api/custom-sources` 命名空间。一个网站有稳定 `source_id`、
 独立占比与间隔，可持有多个发现 workflow；推荐 DTO 添加 `source_id/source_name`，
+惊喜单条、批量、手动推送和后台推送同样保留这两个字段，缺失时为兼容的空字符串；
 内容平台仍为 `source_platform="web"`。三端显示网站名，各站点与内置平台平级分配候选池。
 旧 `/api/sources` typed HTTP recipe 的兼容边界见下一节。
 

@@ -38,6 +38,12 @@ Use path_selector, parent_path_selector, ancestor_selectors and child_links to
 choose the observed content container and its relative link selector. Only use
 sibling combinators when previous_sibling_selector or next_sibling_selector
 explicitly proves that relation; never infer adjacency from array order.
+Scope item_selector to the observed result/list container. Every matched item
+must contain the observed relative link_selector; generic page-wide li/dt/div
+selectors can include unrelated sidebar or navigation nodes. Use an observed
+ancestor path or :has(observed relative link selector) to exclude such nodes.
+When previous_trial failed, use its diagnostics and the new observation to repair
+the previous plan within the same approved entry, origin and discovery intent.
 Plan: {"version":1,"entry_url":entry_url,"allowed_origins":[the exact origin],
 "steps":[...],"auth":{"required":false,"ready_selector":"","login_selector":""},
 "budgets":{"max_items":20,"max_pages":3,"timeout_seconds":45}}.
@@ -57,6 +63,9 @@ do not invent metadata or ask the user to supply it. Use a literal representativ
 query for the trial whenever query_mode is fixed or interest.
 Entry URL is automatically visited first. If requires_login is true, auth.required
 must be true with observed readiness evidence.
+Copy the supplied entry_url exactly, including its query string, into plan.entry_url.
+Never remove or replace its query parameters. Put changing query parameters in a
+goto step URL or fill_search value using {query}; allowed_origins stays the exact origin.
 No JavaScript, credentials, buttons,
 upstream writes or arbitrary code. Login uses manual user takeover, never a plan
 that fills credentials. For login-required pages use affirmative ready_selector
@@ -295,12 +304,35 @@ class WorkflowService:
             session, observation = await self.observe_session(draft)
             await session.close()
             session = None
+            # A blocked login redirect deliberately leaves an empty observation;
+            # earlier optional resource failures must not suppress user takeover.
             if observation.get("login_wall") or observation.get("blocked_navigation_origins"):
                 draft.update(
                     status="needs_login",
                     requires_login=True,
                     detail="请在网站窗口完成登录或验证后继续。",
                     takeover_url=f"/web/source-login.html?draft_id={draft['draft_id']}",
+                )
+                return self.store.save_draft(draft, draft_id=draft["draft_id"])
+            failures = [
+                item
+                for item in observation.get("resource_failures", [])
+                if item.get("resource_type") in {"Document", "Script", "Stylesheet"}
+                and item.get("status", 0) >= 400
+            ]
+            visible_content = any(
+                item.get("text") or item.get("tag") in {"input", "button", "form", "textarea"}
+                for item in observation.get("elements", [])
+            )
+            if failures and not visible_content:
+                failure = failures[0]
+                draft.update(
+                    status="failed",
+                    detail=(
+                        f"网站页面未能呈现可操作内容：{failure['origin']} 的"
+                        f" {failure['resource_type']} 请求返回 HTTP {failure['status']}。"
+                        "请先处理网站访问限制，再重试。"
+                    ),
                 )
                 return self.store.save_draft(draft, draft_id=draft["draft_id"])
             authored = await self._json_task(
@@ -311,6 +343,13 @@ class WorkflowService:
                     "intent": draft["intent"],
                     "observation": observation,
                     "previous_plan": draft.get("workflow"),
+                    "previous_trial": {
+                        "status": draft.get("status", ""),
+                        "detail": draft.get("detail", ""),
+                        "sample_count": len(draft.get("sample_items", [])),
+                    }
+                    if draft.get("workflow")
+                    else None,
                     "requires_login": bool(draft.get("requires_login")),
                 },
             )
